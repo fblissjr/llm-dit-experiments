@@ -44,7 +44,7 @@ docs/                   # Technical documentation
 Prompt -> Qwen3Formatter -> TextEncoderBackend -> embeddings -> diffusers -> Image
 ```
 
-We handle the LLM encoding layer with full template control. diffusers handles DiT + VAE.
+This code base will handle the LLM encoding layer with full template control - LLM inference will be handled by your inference engine of choice. diffusers handles DiT + VAE.
 
 ## Key Technical Details (Z-Image)
 
