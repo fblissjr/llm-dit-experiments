@@ -1,0 +1,47 @@
+[project]
+name = "llm-dit-experiments"
+version = "0.1.0"
+description = "LLM-DiT experimentation platform with pluggable backends"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "torch>=2.0",
+    "diffusers>=0.30.0",
+    "transformers>=4.40.0",
+    "accelerate",
+    "safetensors",
+    "pillow",
+    "pyyaml",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ipython",
+    "jupyter",
+    "pytest",
+    "ruff",
+]
+analysis = [
+    "matplotlib",
+    "seaborn",
+    "scikit-learn",  # For t-SNE, clustering
+    "umap-learn",
+]
+# Note: vllm and sglang require CUDA, will be added back when needed
+# vllm = ["vllm"]
+# sglang = ["sglang"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/llm_dit"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+ignore = ["E501"]  # Line too long handled by formatter
