@@ -11,6 +11,16 @@ from typing import Literal
 import torch
 
 
+def _detect_best_device() -> str:
+    """Auto-detect the best available device."""
+    if torch.cuda.is_available():
+        return "cuda"
+    elif torch.backends.mps.is_available():
+        return "mps"
+    else:
+        return "cpu"
+
+
 @dataclass
 class BackendConfig:
     """
@@ -21,7 +31,7 @@ class BackendConfig:
         model_path: Path to model (local or HuggingFace hub ID)
         max_length: Maximum sequence length for tokenization
         torch_dtype: Model dtype as string ("bfloat16", "float16", "float32")
-        device: Target device ("cuda", "cpu", "mps")
+        device: Target device ("cuda", "cpu", "mps", "auto")
         trust_remote_code: Allow loading custom model code
         use_flash_attention: Enable flash attention if available
         tensor_parallel_size: For vLLM/SGLang distributed inference
@@ -39,7 +49,7 @@ class BackendConfig:
     subfolder: str = "text_encoder"  # Z-Image stores encoder in subfolder
     max_length: int = 512
     torch_dtype: str = "bfloat16"
-    device: str = "cuda"
+    device: str = field(default_factory=_detect_best_device)
     trust_remote_code: bool = True
     use_flash_attention: bool = True
     tensor_parallel_size: int = 1  # For vLLM/SGLang

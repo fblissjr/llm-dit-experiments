@@ -57,7 +57,8 @@ class TransformersBackend:
     def from_pretrained(
         cls,
         model_path: str,
-        subfolder: str = "text_encoder",
+        model_subfolder: str = "text_encoder",
+        tokenizer_subfolder: str = "tokenizer",
         config: BackendConfig | None = None,
         **kwargs,
     ) -> "TransformersBackend":
@@ -66,7 +67,10 @@ class TransformersBackend:
 
         Args:
             model_path: Path to model directory or HuggingFace ID
-            subfolder: Subfolder containing text encoder (default: "text_encoder")
+            model_subfolder: Subfolder containing text encoder model (default: "text_encoder")
+            tokenizer_subfolder: Subfolder containing tokenizer (default: "tokenizer")
+                For diffusers pipelines, tokenizer is typically in a separate folder.
+                Set to None to load from model_subfolder.
             config: Optional BackendConfig, created from defaults if not provided
             **kwargs: Additional arguments passed to from_pretrained
 
@@ -79,44 +83,62 @@ class TransformersBackend:
 
             # Load from local path
             backend = TransformersBackend.from_pretrained("/path/to/model")
+
+            # Custom subfolder layout
+            backend = TransformersBackend.from_pretrained(
+                "/path/to/model",
+                model_subfolder="text_encoder",
+                tokenizer_subfolder="tokenizer",
+            )
         """
         if config is None:
-            config = BackendConfig.for_z_image(model_path, subfolder=subfolder)
+            config = BackendConfig.for_z_image(model_path, subfolder=model_subfolder)
 
         # Merge kwargs with config
         torch_dtype = kwargs.pop("torch_dtype", config.get_torch_dtype())
         device_map = kwargs.pop("device_map", config.device)
         trust_remote_code = kwargs.pop("trust_remote_code", config.trust_remote_code)
 
-        # Determine model path
-        model_path_full = model_path
-        if subfolder and Path(model_path).exists():
-            # Local path with subfolder
-            model_path_full = str(Path(model_path) / subfolder)
-        elif subfolder:
-            # HuggingFace ID with subfolder
-            pass  # transformers handles subfolder param
+        # Determine paths based on whether this is a local path or HuggingFace ID
+        is_local = Path(model_path).exists()
 
-        logger.info(f"Loading tokenizer from {model_path}")
-        tokenizer = AutoTokenizer.from_pretrained(
-            model_path,
-            subfolder=subfolder if not Path(model_path_full).exists() else None,
-            trust_remote_code=trust_remote_code,
+        # Resolve tokenizer path
+        if tokenizer_subfolder is None:
+            tokenizer_subfolder = model_subfolder
+
+        if is_local:
+            tokenizer_path = str(Path(model_path) / tokenizer_subfolder) if tokenizer_subfolder else model_path
+            model_load_path = str(Path(model_path) / model_subfolder) if model_subfolder else model_path
+            hf_subfolder = None  # Don't use subfolder param for local paths
+        else:
+            tokenizer_path = model_path
+            model_load_path = model_path
+            hf_subfolder = model_subfolder  # Let transformers handle subfolder for HF
+
+        logger.info(f"Loading tokenizer from {tokenizer_path}")
+        tokenizer_kwargs = {
+            "trust_remote_code": trust_remote_code,
             **kwargs,
-        )
+        }
+        # Only add subfolder if it's not None (transformers bugs on subfolder=None)
+        if not is_local and tokenizer_subfolder:
+            tokenizer_kwargs["subfolder"] = tokenizer_subfolder
+        tokenizer = AutoTokenizer.from_pretrained(tokenizer_path, **tokenizer_kwargs)
 
         # Qwen3 uses left padding
         tokenizer.padding_side = "left"
 
-        logger.info(f"Loading model from {model_path} (dtype={torch_dtype})")
-        model = AutoModel.from_pretrained(
-            model_path,
-            subfolder=subfolder if not Path(model_path_full).exists() else None,
-            torch_dtype=torch_dtype,
-            device_map=device_map,
-            trust_remote_code=trust_remote_code,
+        logger.info(f"Loading model from {model_load_path} (dtype={torch_dtype})")
+        model_kwargs = {
+            "torch_dtype": torch_dtype,
+            "device_map": device_map,
+            "trust_remote_code": trust_remote_code,
             **kwargs,
-        )
+        }
+        # Only add subfolder if it's not None (transformers bugs on subfolder=None)
+        if hf_subfolder and not is_local:
+            model_kwargs["subfolder"] = hf_subfolder
+        model = AutoModel.from_pretrained(model_load_path, **model_kwargs)
         model.eval()
 
         logger.info(

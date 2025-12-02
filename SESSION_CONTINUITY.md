@@ -1,6 +1,6 @@
 # Session Continuity
 
-> **Last Updated**: 2025-12-01 | **Status**: Phase 1 Complete - Ready for Phase 2
+> **Last Updated**: 2025-12-02 | **Status**: Phase 1 Complete - Backend Loading Verified
 
 ---
 
@@ -11,16 +11,21 @@
 ### Current State
 
 - **Phase 1 COMPLETE**: All core infrastructure implemented and tested
-- **Smoke test passing**: Imports, templates, conversation formatting all verified
+- **Smoke test passing**: Imports, templates, conversation, AND backend loading verified
+- **Backend tested on macOS MPS**: Loads model, encodes text, outputs correct dimensions
 - **Ready for Phase 2**: Pipeline implementation and first experiments
 
 ### What's Working
 
 - `TextEncoderBackend` Protocol with duck typing
 - `TransformersBackend` with attention mask filtering (matches DiffSynth)
+  - Auto-detects best device (CUDA, MPS, CPU)
+  - Handles diffusers-style layout (separate tokenizer/ and text_encoder/ folders)
+  - Fixed transformers subfolder=None bug
 - `EncodingOutput` with variable-length embeddings
 - `Conversation` types with `Message`, `Role`
 - `Qwen3Formatter` for chat template formatting
+- `format_prompt()` convenience function
 - Template loader with YAML frontmatter support
 - 144 Z-Image templates copied from ComfyUI
 - Full research documentation in `docs/research/`
@@ -30,7 +35,7 @@
 1. Implement `ZImageTextEncoder` (wires backend + templates + formatter)
 2. Implement `ZImagePipeline` (wraps diffusers with our encoder)
 3. Run first experiment: thinking block effect on embeddings
-4. Test on RTX 4090 Ubuntu server
+4. Test full end-to-end generation on RTX 4090 Ubuntu server
 
 ---
 
@@ -120,6 +125,14 @@ Key research from ComfyUI project copied to `docs/research/`:
 ---
 
 ## Recent Changes
+
+### 2025-12-02: Backend Loading Verified
+- Fixed TransformersBackend path handling for diffusers-style model layout
+- Added auto-detect for CUDA/MPS/CPU device
+- Fixed transformers subfolder=None bug (omit param entirely when None)
+- Added `format_prompt()` convenience function
+- Smoke test now passes with actual model loading and encoding on MPS
+- Verified: 22 tokens encoded to torch.Size([22, 2560]) on mps:0
 
 ### 2025-12-01: Phase 1 Complete
 - Smoke test passing
