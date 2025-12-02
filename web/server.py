@@ -168,14 +168,17 @@ async def generate(request: GenerateRequest):
 @app.get("/api/templates")
 async def list_templates():
     """List available templates."""
-    if pipeline is None or pipeline.encoder.templates is None:
+    # Use encoder from pipeline or standalone encoder
+    enc = encoder if encoder is not None else (pipeline.encoder if pipeline else None)
+    if enc is None or enc.templates is None:
         return {"templates": []}
 
     templates = []
-    for name, tpl in pipeline.encoder.templates.items():
+    for name in enc.templates:
+        tpl = enc.templates.get(name)
         templates.append({
             "name": name,
-            "has_thinking": bool(tpl.thinking_content),
+            "has_thinking": bool(tpl.thinking_content) if tpl else False,
         })
 
     return {"templates": templates}
@@ -275,10 +278,48 @@ def load_encoder_only(model_path: str, templates_dir: Optional[str] = None):
     logger.info(f"Device: {encoder.device}")
 
 
+def load_api_encoder(
+    api_url: str,
+    model_id: str,
+    templates_dir: Optional[str] = None,
+):
+    """Load encoder that uses heylookitsanllm API backend."""
+    global encoder, encoder_only_mode
+
+    from llm_dit.backends.api import APIBackend, APIBackendConfig
+    from llm_dit.encoders import ZImageTextEncoder
+    from llm_dit.templates import TemplateRegistry
+
+    logger.info(f"Connecting to API backend at {api_url}...")
+
+    # Create API backend
+    api_config = APIBackendConfig(
+        base_url=api_url,
+        model_id=model_id,
+        encoding_format="base64",
+    )
+    backend = APIBackend(api_config)
+
+    # Load templates if provided
+    templates = None
+    if templates_dir:
+        templates = TemplateRegistry.from_directory(templates_dir)
+        logger.info(f"Loaded {len(templates)} templates")
+
+    # Create encoder with API backend
+    encoder = ZImageTextEncoder(
+        backend=backend,
+        templates=templates,
+    )
+
+    encoder_only_mode = True
+    logger.info(f"API encoder ready (model: {model_id})")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Z-Image web server")
-    parser.add_argument("--host", default="127.0.0.1", help="Host to bind to")
-    parser.add_argument("--port", type=int, default=7860, help="Port to bind to")
+    parser.add_argument("--host", type=str, help="Host to bind to")
+    parser.add_argument("--port", type=int, help="Port to bind to")
     parser.add_argument("--config", type=str, help="Path to config.toml")
     parser.add_argument("--profile", type=str, default="default", help="Config profile")
     parser.add_argument("--model-path", type=str, help="Path to Z-Image model")
@@ -288,13 +329,39 @@ def main():
         action="store_true",
         help="Load only encoder (fast mode for Mac, no image generation)",
     )
+    parser.add_argument(
+        "--api-url",
+        type=str,
+        help="Use heylookitsanllm API backend (e.g., http://localhost:8080)",
+    )
+    parser.add_argument(
+        "--api-model",
+        type=str,
+        default="Qwen3-4B-mxfp4-mlx",
+        help="Model ID for API backend",
+    )
     args = parser.parse_args()
 
-    # Load config or use CLI args
+    # Defaults
+    host = args.host or "127.0.0.1"
+    port = args.port or 7860
     model_path = args.model_path
     templates_dir = args.templates_dir
 
+    # Load config if provided
     if args.config:
+        import tomllib
+        with open(args.config, "rb") as f:
+            toml_data = tomllib.load(f)
+
+        # Server settings from [server] section
+        server_cfg = toml_data.get("server", {})
+        if args.host is None:
+            host = server_cfg.get("host", host)
+        if args.port is None:
+            port = server_cfg.get("port", port)
+
+        # Profile settings
         from llm_dit.config import Config
         cfg = Config.from_toml(args.config, args.profile)
         if model_path is None:
@@ -302,21 +369,33 @@ def main():
         if templates_dir is None:
             templates_dir = cfg.templates_dir
 
-    if model_path is None:
-        logger.error("No model path specified. Use --model-path or --config.")
-        return 1
-
-    # Load pipeline or encoder only
-    if args.encoder_only:
+    # Determine which mode to use
+    if args.api_url:
+        # API backend mode - use heylookitsanllm
+        # Default to templates/z_image if not specified
+        if templates_dir is None:
+            templates_dir = str(Path(__file__).parent.parent / "templates" / "z_image")
+        load_api_encoder(args.api_url, args.api_model, templates_dir)
+        mode = f"API ({args.api_model})"
+    elif args.encoder_only:
+        # Local encoder only
+        if model_path is None:
+            logger.error("No model path specified. Use --model-path or --config.")
+            return 1
         load_encoder_only(model_path, templates_dir)
+        mode = "encoder-only"
     else:
+        # Full pipeline
+        if model_path is None:
+            logger.error("No model path specified. Use --model-path or --config.")
+            return 1
         load_pipeline(model_path, templates_dir)
+        mode = "full"
 
     # Run server
     import uvicorn
-    mode = "encoder-only" if args.encoder_only else "full"
-    logger.info(f"Starting server at http://{args.host}:{args.port} ({mode} mode)")
-    uvicorn.run(app, host=args.host, port=args.port)
+    logger.info(f"Starting server at http://{host}:{port} ({mode} mode)")
+    uvicorn.run(app, host=host, port=port)
 
 
 if __name__ == "__main__":

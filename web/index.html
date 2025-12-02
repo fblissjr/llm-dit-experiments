@@ -86,12 +86,7 @@
                 <div>
                     <label for="template" class="block text-sm font-medium text-gray-300 mb-1">Template (optional)</label>
                     <select id="template" class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
-                        <option value="">None</option>
-                        <option value="photorealistic">Photorealistic</option>
-                        <option value="artistic">Artistic</option>
-                        <option value="cinematic">Cinematic</option>
-                        <option value="anime">Anime</option>
-                        <option value="portrait">Portrait</option>
+                        <option value="">None (loading...)</option>
                     </select>
                 </div>
 
@@ -343,6 +338,25 @@
                 generateBtn.disabled = false;
             }
         });
+
+        // Load templates on page load
+        async function loadTemplates() {
+            try {
+                const response = await fetch(`${API_BASE}/api/templates`);
+                const data = await response.json();
+                const select = document.getElementById('template');
+                select.innerHTML = '<option value="">None</option>';
+                data.templates.forEach(t => {
+                    const opt = document.createElement('option');
+                    opt.value = t.name;
+                    opt.textContent = t.name + (t.has_thinking ? ' (thinking)' : '');
+                    select.appendChild(opt);
+                });
+            } catch (err) {
+                console.error('Failed to load templates:', err);
+            }
+        }
+        loadTemplates();
 
         // Save embeddings button
         document.getElementById('saveEmbeddingsBtn').addEventListener('click', async () => {
