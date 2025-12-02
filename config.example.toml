@@ -1,0 +1,126 @@
+# llm-dit-experiments configuration
+# Copy to config.toml and customize for your setup
+
+# ============================================================================
+# DEFAULT PROFILE - Mac with MPS or CUDA with plenty of VRAM
+# ============================================================================
+[default]
+model_path = "/path/to/z-image"  # <-- Change this to your model path
+templates_dir = "templates/z_image"
+
+[default.encoder]
+device = "auto"  # auto, cuda, mps, cpu
+torch_dtype = "bfloat16"
+load_in_8bit = false
+load_in_4bit = false
+cpu_offload = false
+max_length = 512
+
+[default.pipeline]
+device = "auto"
+torch_dtype = "bfloat16"
+enable_model_cpu_offload = false
+enable_sequential_cpu_offload = false
+
+[default.generation]
+height = 1024
+width = 1024
+num_inference_steps = 9
+guidance_scale = 0.0  # Z-Image-Turbo has CFG baked in
+enable_thinking = true
+
+# ============================================================================
+# LOW VRAM PROFILE - CUDA with limited memory (8-12GB)
+# Uses 8-bit quantization and CPU offloading
+# ============================================================================
+[low_vram]
+model_path = "/path/to/z-image"
+templates_dir = "templates/z_image"
+
+[low_vram.encoder]
+device = "cuda"
+torch_dtype = "bfloat16"
+load_in_8bit = true  # Requires bitsandbytes
+cpu_offload = true   # Offload LLM after encoding
+max_length = 512
+
+[low_vram.pipeline]
+device = "cuda"
+torch_dtype = "bfloat16"
+enable_model_cpu_offload = true  # Sequential offload during generation
+
+[low_vram.generation]
+height = 768   # Smaller output for memory
+width = 768
+num_inference_steps = 9
+
+# ============================================================================
+# DISTRIBUTED PROFILE - LLM on Mac, DiT on CUDA server
+# Step 1: Run encode_and_save() on Mac
+# Step 2: Transfer embeddings file to CUDA server
+# Step 3: Run load_and_generate() on CUDA server
+# ============================================================================
+[distributed_mac]
+# Run this on your Mac to generate embeddings
+model_path = "/path/to/z-image"  # <-- Change this to your model path
+templates_dir = "templates/z_image"
+
+[distributed_mac.encoder]
+device = "mps"  # Fast MPS encoding
+torch_dtype = "bfloat16"
+load_in_8bit = false
+cpu_offload = false
+
+[distributed_cuda]
+# Run this on your CUDA server to generate images from embeddings
+model_path = "/path/to/z-image"
+
+[distributed_cuda.pipeline]
+device = "cuda"
+torch_dtype = "bfloat16"
+
+[distributed_cuda.generation]
+height = 1024
+width = 1024
+num_inference_steps = 9
+
+# ============================================================================
+# API BACKEND PROFILE - Use heylookitsanllm server for encoding
+# Requires: heylookitsanllm running with hidden_states endpoint
+# ============================================================================
+[api_backend]
+model_path = "/path/to/z-image"  # Still needed for DiT/VAE
+templates_dir = "templates/z_image"
+
+[api_backend.encoder]
+# API backend settings (instead of local model)
+backend_type = "api"
+api_base_url = "http://localhost:8000"
+api_model_id = "qwen3-4b"
+api_key = ""  # Optional auth
+max_length = 512
+
+[api_backend.pipeline]
+device = "cuda"
+torch_dtype = "bfloat16"
+
+# ============================================================================
+# CPU ONLY PROFILE - No GPU available
+# Very slow but works anywhere
+# ============================================================================
+[cpu_only]
+model_path = "/path/to/z-image"
+templates_dir = "templates/z_image"
+
+[cpu_only.encoder]
+device = "cpu"
+torch_dtype = "float32"  # CPU doesn't support bfloat16 well
+
+[cpu_only.pipeline]
+device = "cpu"
+torch_dtype = "float32"
+
+[cpu_only.generation]
+height = 512   # Smaller for speed
+width = 512
+num_inference_steps = 4  # Fewer steps

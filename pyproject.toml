@@ -6,12 +6,19 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "torch>=2.0",
-    "diffusers>=0.30.0",
+    # Z-Image-Turbo requires diffusers 0.36+ with ZImagePipeline
+    "diffusers @ git+https://github.com/huggingface/diffusers",
     "transformers>=4.40.0",
     "accelerate",
     "safetensors",
     "pillow",
     "pyyaml",
+    "tomli; python_version < '3.11'",  # TOML config support
+    "bitsandbytes; sys_platform != 'darwin'",  # 8-bit quantization (Linux/CUDA only)
+    "httpx",  # API backend support
+    "uvicorn>=0.38.0",
+    "fastapi>=0.123.4",
+    "python-multipart>=0.0.20",
 ]
 
 [project.optional-dependencies]
@@ -37,6 +44,9 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/llm_dit"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [tool.ruff]
 line-length = 100

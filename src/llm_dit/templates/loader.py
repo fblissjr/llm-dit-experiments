@@ -36,7 +36,7 @@ class Template:
 
     Attributes:
         name: Template identifier (from frontmatter or filename)
-        system_prompt: The system prompt content (markdown body)
+        content: The system prompt content (markdown body)
         description: Human-readable description
         category: Template category for grouping
         add_think_block: Whether to enable thinking by default
@@ -46,7 +46,7 @@ class Template:
     """
 
     name: str
-    system_prompt: str
+    content: str  # System prompt content
     description: str = ""
     category: str = ""
     add_think_block: bool = True
@@ -54,11 +54,16 @@ class Template:
     assistant_content: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
 
+    @property
+    def system_prompt(self) -> str:
+        """Alias for content (backward compatibility)."""
+        return self.content
+
     def to_dict(self) -> dict[str, Any]:
         """Serialize to dict."""
         return {
             "name": self.name,
-            "system_prompt": self.system_prompt,
+            "content": self.content,
             "description": self.description,
             "category": self.category,
             "add_think_block": self.add_think_block,
@@ -96,14 +101,14 @@ def load_template(path: str | Path) -> Template:
     if not content.startswith("---"):
         # No frontmatter, entire content is system prompt
         name = path.stem
-        return Template(name=name, system_prompt=content.strip())
+        return Template(name=name, content=content.strip())
 
     # Parse frontmatter
     parts = content.split("---", 2)
     if len(parts) < 3:
         # Invalid format, treat as plain text
         name = path.stem
-        return Template(name=name, system_prompt=content.strip())
+        return Template(name=name, content=content.strip())
 
     # Parse YAML frontmatter
     try:
@@ -131,7 +136,7 @@ def load_template(path: str | Path) -> Template:
 
     return Template(
         name=name,
-        system_prompt=system_prompt,
+        content=system_prompt,  # Body is the system prompt content
         description=description,
         category=category,
         add_think_block=add_think_block,

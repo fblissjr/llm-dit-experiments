@@ -1,0 +1,298 @@
+"""
+API-based text encoder backend for remote LLM inference.
+
+Connects to an OpenAI-compatible embeddings API that returns raw hidden states
+(not pooled embeddings). This enables distributed inference where the LLM runs
+on a different machine than the DiT.
+
+For Z-Image, we need hidden_states[-2] from Qwen3-4B with NO pooling.
+
+This can work with:
+1. Custom heylookitsanllm endpoint with raw hidden states support
+2. vLLM serving endpoint with hidden states output
+3. Any API that returns [seq_len, embed_dim] tensors
+
+Example:
+    backend = APIBackend(
+        base_url="http://localhost:8000",
+        model_id="qwen3-4b",
+    )
+    output = backend.encode(["A beautiful sunset"])
+"""
+
+import base64
+import logging
+from dataclasses import dataclass
+from typing import List
+
+import numpy as np
+import torch
+
+try:
+    import httpx
+
+    HTTPX_AVAILABLE = True
+except ImportError:
+    HTTPX_AVAILABLE = False
+
+from llm_dit.backends.protocol import EncodingOutput
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class APIBackendConfig:
+    """Configuration for API backend."""
+
+    base_url: str = "http://localhost:8000"
+    model_id: str = "qwen3-4b"
+    api_key: str | None = None
+    timeout: float = 60.0
+    max_length: int = 512
+    # Z-Image specific: which hidden layer to use
+    hidden_layer: int = -2  # Second to last layer
+    # Whether the API returns raw hidden states or pooled
+    returns_raw_hidden_states: bool = True
+    # Request base64 encoding for smaller, faster responses
+    encoding_format: str = "base64"  # "float" or "base64"
+
+
+class APIBackend:
+    """
+    API-based text encoder backend.
+
+    Connects to a remote LLM server that exposes hidden states via API.
+    This enables running the LLM on a different machine than the DiT.
+
+    For Z-Image, we need:
+    - hidden_states[-2] (second-to-last layer)
+    - Raw sequence embeddings (no pooling)
+    - Shape: [seq_len, 2560]
+    """
+
+    def __init__(self, config: APIBackendConfig):
+        """Initialize API backend."""
+        if not HTTPX_AVAILABLE:
+            raise ImportError("httpx required for API backend. Install with: pip install httpx")
+
+        self.config = config
+        self._client: httpx.Client | None = None
+        self._embedding_dim = 2560  # Qwen3-4B hidden size
+        self._device = torch.device("cpu")  # API returns CPU tensors
+        self._dtype = torch.bfloat16
+
+    @classmethod
+    def from_url(
+        cls,
+        base_url: str,
+        model_id: str = "qwen3-4b",
+        api_key: str | None = None,
+        **kwargs,
+    ) -> "APIBackend":
+        """Create backend from URL."""
+        config = APIBackendConfig(
+            base_url=base_url,
+            model_id=model_id,
+            api_key=api_key,
+            **kwargs,
+        )
+        return cls(config)
+
+    @property
+    def client(self) -> httpx.Client:
+        """Get or create HTTP client."""
+        if self._client is None:
+            headers = {"Content-Type": "application/json"}
+            if self.config.api_key:
+                headers["Authorization"] = f"Bearer {self.config.api_key}"
+
+            self._client = httpx.Client(
+                base_url=self.config.base_url,
+                headers=headers,
+                timeout=self.config.timeout,
+            )
+        return self._client
+
+    @property
+    def embedding_dim(self) -> int:
+        """Return embedding dimension (2560 for Qwen3-4B)."""
+        return self._embedding_dim
+
+    @property
+    def max_sequence_length(self) -> int:
+        """Return max sequence length."""
+        return self.config.max_length
+
+    @property
+    def device(self) -> torch.device:
+        """Return device (always CPU for API backend)."""
+        return self._device
+
+    @property
+    def dtype(self) -> torch.dtype:
+        """Return dtype."""
+        return self._dtype
+
+    def encode(
+        self,
+        texts: List[str],
+        return_padded: bool = False,
+    ) -> EncodingOutput:
+        """
+        Encode texts via API.
+
+        Args:
+            texts: List of formatted prompt strings
+            return_padded: Also return padded batch tensors
+
+        Returns:
+            EncodingOutput with variable-length embeddings
+        """
+        embeddings_list = []
+        attention_masks_list = []
+
+        for text in texts:
+            embedding = self._encode_single(text)
+            embeddings_list.append(embedding)
+            # Create attention mask (all 1s since API returns only valid tokens)
+            attention_masks_list.append(torch.ones(embedding.shape[0], dtype=torch.bool))
+
+        # Build output
+        if return_padded:
+            # Pad to max length
+            max_len = max(e.shape[0] for e in embeddings_list)
+            padded = torch.zeros(
+                len(embeddings_list), max_len, self.embedding_dim, dtype=self._dtype
+            )
+            padded_mask = torch.zeros(len(embeddings_list), max_len, dtype=torch.bool)
+
+            for i, emb in enumerate(embeddings_list):
+                seq_len = emb.shape[0]
+                padded[i, :seq_len] = emb
+                padded_mask[i, :seq_len] = True
+
+            return EncodingOutput(
+                embeddings=embeddings_list,
+                attention_masks=attention_masks_list,
+                padded_embeddings=padded,
+                padded_mask=padded_mask,
+            )
+
+        return EncodingOutput(
+            embeddings=embeddings_list,
+            attention_masks=attention_masks_list,
+        )
+
+    def _encode_single(self, text: str) -> torch.Tensor:
+        """Encode a single text via API."""
+        if self.config.returns_raw_hidden_states:
+            return self._encode_raw_hidden_states(text)
+        else:
+            return self._encode_pooled(text)
+
+    def _encode_raw_hidden_states(self, text: str) -> torch.Tensor:
+        """
+        Request raw hidden states from API.
+
+        Expects API endpoint: POST /v1/hidden_states
+        Request: {"input": str, "model": str, "layer": int, "encoding_format": str}
+        Response: {"hidden_states": [[float, ...], ...] or base64_str, "shape": [seq_len, dim]}
+        """
+        try:
+            response = self.client.post(
+                "/v1/hidden_states",
+                json={
+                    "input": text,
+                    "model": self.config.model_id,
+                    "layer": self.config.hidden_layer,
+                    "max_length": self.config.max_length,
+                    "encoding_format": self.config.encoding_format,
+                },
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            # Handle base64 or float encoding
+            if data.get("encoding_format") == "base64":
+                tensor = self._decode_base64_hidden_states(
+                    data["hidden_states"],
+                    data["shape"],
+                )
+            else:
+                # Standard float array
+                hidden_states = data["hidden_states"]
+                tensor = torch.tensor(hidden_states, dtype=self._dtype)
+
+            logger.debug(f"API returned hidden states shape: {tensor.shape}")
+            return tensor
+
+        except httpx.HTTPStatusError as e:
+            logger.error(f"API error: {e.response.status_code} - {e.response.text}")
+            raise
+        except Exception as e:
+            logger.error(f"Failed to encode via API: {e}")
+            raise
+
+    def _decode_base64_hidden_states(
+        self,
+        data: str,
+        shape: list[int],
+    ) -> torch.Tensor:
+        """Decode base64-encoded hidden states to torch tensor."""
+        raw = base64.b64decode(data)
+        arr = np.frombuffer(raw, dtype=np.float32).reshape(shape).copy()  # copy for writability
+        return torch.from_numpy(arr).to(dtype=self._dtype)
+
+    def _encode_pooled(self, text: str) -> torch.Tensor:
+        """
+        Request pooled embeddings from standard /v1/embeddings endpoint.
+
+        Note: This returns a single vector per text, not a sequence.
+        For Z-Image, you should use raw hidden states mode instead.
+        """
+        logger.warning(
+            "Using pooled embeddings from /v1/embeddings. "
+            "This may not work correctly for Z-Image which needs sequence embeddings."
+        )
+
+        try:
+            response = self.client.post(
+                "/v1/embeddings",
+                json={
+                    "input": text,
+                    "model": self.config.model_id,
+                },
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            # Extract embedding from OpenAI-style response
+            embedding = data["data"][0]["embedding"]
+            tensor = torch.tensor(embedding, dtype=self._dtype)
+
+            # Pooled embedding is 1D, reshape to [1, dim] to match expected format
+            if tensor.dim() == 1:
+                tensor = tensor.unsqueeze(0)
+
+            return tensor
+
+        except Exception as e:
+            logger.error(f"Failed to get embeddings from API: {e}")
+            raise
+
+    def to(self, device: torch.device) -> "APIBackend":
+        """API backend always returns CPU tensors (move after receiving)."""
+        logger.info(
+            f"APIBackend returns CPU tensors. Move embeddings to {device} after receiving."
+        )
+        return self
+
+    def close(self):
+        """Close HTTP client."""
+        if self._client is not None:
+            self._client.close()
+            self._client = None
+
+    def __del__(self):
+        """Cleanup on deletion."""
+        self.close()
