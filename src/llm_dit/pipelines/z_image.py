@@ -215,13 +215,22 @@ class ZImagePipeline:
 
     @property
     def device(self) -> torch.device:
-        """Return pipeline device."""
-        return self.encoder.device
+        """Return pipeline device (based on transformer, not encoder)."""
+        # Use transformer device since encoder might be API-backed (returns CPU)
+        if self.transformer is not None:
+            return next(self.transformer.parameters()).device
+        if self.encoder is not None:
+            return self.encoder.device
+        return torch.device("cpu")
 
     @property
     def dtype(self) -> torch.dtype:
         """Return pipeline dtype."""
-        return self.encoder.dtype
+        if self.transformer is not None:
+            return next(self.transformer.parameters()).dtype
+        if self.encoder is not None:
+            return self.encoder.dtype
+        return torch.float32
 
     def to(self, device: torch.device) -> "ZImagePipeline":
         """Move pipeline to device."""
@@ -306,7 +315,8 @@ class ZImagePipeline:
             template=template,
             enable_thinking=enable_thinking,
         )
-        prompt_embeds = [prompt_output.embeddings[0]]
+        # Move embeddings to device (API backend returns CPU tensors)
+        prompt_embeds = [prompt_output.embeddings[0].to(device=device, dtype=dtype)]
 
         # Encode negative prompt if using CFG
         negative_prompt_embeds = []
@@ -315,14 +325,14 @@ class ZImagePipeline:
                 negative_prompt,
                 enable_thinking=enable_thinking,
             )
-            negative_prompt_embeds = [neg_output.embeddings[0]]
+            negative_prompt_embeds = [neg_output.embeddings[0].to(device=device, dtype=dtype)]
         elif guidance_scale > 0:
             # Empty negative prompt
             neg_output = self.encoder.encode(
                 "",
                 enable_thinking=enable_thinking,
             )
-            negative_prompt_embeds = [neg_output.embeddings[0]]
+            negative_prompt_embeds = [neg_output.embeddings[0].to(device=device, dtype=dtype)]
 
         # 2. Prepare latents
         latent_height = 2 * (height // vae_scale)
