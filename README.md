@@ -27,23 +27,39 @@ uv run scripts/smoke_test.py --model-path /path/to/Tongyi-MAI_Z-Image-Turbo
 
 The web server provides a UI for encoding prompts and generating images.
 
-### API Backend Mode (Mac - uses heylookitsanllm)
+### Distributed Mode (Recommended for Mac + CUDA setup)
 
+Run heylookitsanllm on Mac for encoding, web server on CUDA for generation:
+
+**Mac:**
 ```bash
-# Start heylookitsanllm first (in another terminal)
-# Then run the web server pointing to it:
-uv run web/server.py --api-url http://localhost:8080 --api-model Qwen3-4B-mxfp4-mlx
-
-# Open http://127.0.0.1:7860 in your browser
+cd ~/workspace/heylookitsanllm
+uv run heylook --host 0.0.0.0 --port 8080
 ```
 
-### Encoder-Only Mode (local model, no generation)
+**CUDA Box:**
+```bash
+uv run web/server.py \
+    --api-url http://mac-ip:8080 \
+    --model-path /path/to/Tongyi-MAI_Z-Image-Turbo \
+    --host 0.0.0.0
+
+# Open http://cuda-box-ip:7860 in your browser
+```
+
+This encodes via Mac's heylookitsanllm and generates on CUDA - best of both worlds.
+
+### Encoder-Only Mode (Mac - testing/encoding only)
 
 ```bash
+# With heylookitsanllm backend (no local model needed)
+uv run web/server.py --api-url http://localhost:8080
+
+# Or with local model
 uv run web/server.py --encoder-only --model-path /path/to/Tongyi-MAI_Z-Image-Turbo
 ```
 
-### Full Pipeline Mode (CUDA - full generation)
+### Full Local Pipeline Mode (single machine with GPU)
 
 ```bash
 uv run web/server.py --model-path /path/to/Tongyi-MAI_Z-Image-Turbo

@@ -283,7 +283,7 @@ def load_api_encoder(
     model_id: str,
     templates_dir: Optional[str] = None,
 ):
-    """Load encoder that uses heylookitsanllm API backend."""
+    """Load encoder that uses heylookitsanllm API backend (encoder-only mode)."""
     global encoder, encoder_only_mode
 
     from llm_dit.backends.api import APIBackend, APIBackendConfig
@@ -314,6 +314,59 @@ def load_api_encoder(
 
     encoder_only_mode = True
     logger.info(f"API encoder ready (model: {model_id})")
+
+
+def load_api_pipeline(
+    api_url: str,
+    model_id: str,
+    model_path: str,
+    templates_dir: Optional[str] = None,
+):
+    """Load full pipeline with API backend for encoding + local DiT/VAE for generation."""
+    global pipeline, encoder_only_mode
+
+    from llm_dit.backends.api import APIBackend, APIBackendConfig
+    from llm_dit.encoders import ZImageTextEncoder
+    from llm_dit.pipelines import ZImagePipeline
+    from llm_dit.templates import TemplateRegistry
+
+    logger.info(f"Connecting to API backend at {api_url}...")
+
+    # Create API backend for encoding
+    api_config = APIBackendConfig(
+        base_url=api_url,
+        model_id=model_id,
+        encoding_format="base64",
+    )
+    backend = APIBackend(api_config)
+
+    # Load templates if provided
+    templates = None
+    if templates_dir:
+        templates = TemplateRegistry.from_directory(templates_dir)
+        logger.info(f"Loaded {len(templates)} templates")
+
+    # Create encoder with API backend
+    api_encoder = ZImageTextEncoder(
+        backend=backend,
+        templates=templates,
+    )
+
+    logger.info(f"Loading DiT/VAE from {model_path}...")
+    start = time.time()
+
+    # Load generator-only pipeline, then attach our API encoder
+    pipeline = ZImagePipeline.from_pretrained_generator_only(
+        model_path,
+        torch_dtype=torch.bfloat16,
+    )
+    # Replace the encoder with our API-backed one
+    pipeline.encoder = api_encoder
+
+    load_time = time.time() - start
+    encoder_only_mode = False
+    logger.info(f"Pipeline loaded in {load_time:.1f}s (API encoder + local DiT/VAE)")
+    logger.info(f"Device: {pipeline.device}")
 
 
 def main():
@@ -370,13 +423,18 @@ def main():
             templates_dir = cfg.templates_dir
 
     # Determine which mode to use
-    if args.api_url:
-        # API backend mode - use heylookitsanllm
-        # Default to templates/z_image if not specified
+    if args.api_url and model_path:
+        # Distributed mode: API encoding + local DiT/VAE generation
+        if templates_dir is None:
+            templates_dir = str(Path(__file__).parent.parent / "templates" / "z_image")
+        load_api_pipeline(args.api_url, args.api_model, model_path, templates_dir)
+        mode = f"distributed (API encoder + local DiT)"
+    elif args.api_url:
+        # API backend mode - encoder only (no model path)
         if templates_dir is None:
             templates_dir = str(Path(__file__).parent.parent / "templates" / "z_image")
         load_api_encoder(args.api_url, args.api_model, templates_dir)
-        mode = f"API ({args.api_model})"
+        mode = f"API encoder-only ({args.api_model})"
     elif args.encoder_only:
         # Local encoder only
         if model_path is None:
