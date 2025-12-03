@@ -695,10 +695,12 @@ class ZImagePipeline:
         logger.info(f"Loading generator components from {model_path}...")
 
         # Load only the components we need (skip text encoder entirely)
+        # Use low_cpu_mem_usage to avoid OOM during dtype conversion
         logger.info("Loading transformer...")
         transformer = ZImageTransformer2DModel.from_pretrained(
             model_path / "transformer",
             torch_dtype=torch_dtype,
+            low_cpu_mem_usage=True,
             **kwargs,
         )
 
@@ -706,6 +708,7 @@ class ZImagePipeline:
         vae = AutoencoderKL.from_pretrained(
             model_path / "vae",
             torch_dtype=torch_dtype,
+            low_cpu_mem_usage=True,
             **kwargs,
         )
 
