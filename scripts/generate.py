@@ -23,6 +23,9 @@ Usage:
 
     # Save embeddings for distributed inference
     uv run scripts/generate.py --model-path /path/to/z-image --save-embeddings emb.safetensors "A cat"
+
+    # DISTRIBUTED: Encode via remote API (Mac), generate locally (CUDA)
+    uv run scripts/generate.py --api-url http://mac-ip:8080 --model-path /path/to/z-image "A cat"
 """
 
 import argparse
@@ -159,6 +162,21 @@ def main():
         default=None,
         help="Load embeddings from file (skip encoding)",
     )
+
+    # API backend (distributed inference)
+    parser.add_argument(
+        "--api-url",
+        type=str,
+        default=None,
+        help="Use remote API for encoding (e.g., http://mac-ip:8080)",
+    )
+    parser.add_argument(
+        "--api-model",
+        type=str,
+        default="Qwen3-4B-mxfp4-mlx",
+        help="Model ID for API backend (default: Qwen3-4B-mxfp4-mlx)",
+    )
+
     parser.add_argument(
         "--verbose",
         "-v",
@@ -276,6 +294,95 @@ def main():
             guidance_scale = config.generation.guidance_scale
         if not args.no_thinking:
             enable_thinking = config.generation.enable_thinking
+
+    # Check if using API for encoding (distributed inference - encode remote, generate local)
+    if args.api_url:
+        logger.info("Running in distributed mode (API encoding + local generation)")
+        logger.info(f"Using API backend: {args.api_url}")
+
+        from llm_dit.backends.api import APIBackend, APIBackendConfig
+        from llm_dit.encoders import ZImageTextEncoder
+        from llm_dit.pipelines import ZImagePipeline
+        from llm_dit.templates import TemplateRegistry
+
+        # Create API backend for encoding
+        api_config = APIBackendConfig(
+            base_url=args.api_url,
+            model_id=args.api_model,
+            encoding_format="base64",
+        )
+        backend = APIBackend(api_config)
+
+        # Load templates locally
+        templates = None
+        if templates_dir:
+            templates = TemplateRegistry.from_directory(templates_dir)
+            logger.info(f"Loaded {len(templates)} templates")
+
+        # Create encoder with API backend
+        encoder = ZImageTextEncoder(
+            backend=backend,
+            templates=templates,
+        )
+
+        # Encode via API
+        logger.info(f"Encoding prompt via API: {args.prompt[:50]}...")
+        start = time.time()
+        output = encoder.encode(
+            args.prompt,
+            template=args.template,
+            enable_thinking=enable_thinking,
+        )
+        encode_time = time.time() - start
+        embeds = output.embeddings[0]
+        logger.info(f"Encoding complete in {encode_time:.3f}s")
+        logger.info(f"  Shape: {embeds.shape}")
+
+        # Load generator-only pipeline (no LLM)
+        logger.info(f"Loading generator from {model_path}...")
+        start = time.time()
+
+        try:
+            pipe = ZImagePipeline.from_pretrained_generator_only(
+                model_path,
+                torch_dtype=torch.bfloat16,
+            )
+        except ImportError as e:
+            logger.error(f"Missing diffusers components: {e}")
+            return 1
+        except Exception as e:
+            logger.error(f"Failed to load pipeline: {e}")
+            return 1
+
+        load_time = time.time() - start
+        logger.info(f"Generator loaded in {load_time:.1f}s")
+
+        # Progress callback
+        def progress_callback(step: int, total: int, latents: torch.Tensor):
+            logger.info(f"Step {step + 1}/{total}")
+
+        # Generate from embeddings
+        logger.info(f"Generating {width}x{height} image...")
+
+        start = time.time()
+        image = pipe.generate_from_embeddings(
+            embeds,
+            height=height,
+            width=width,
+            num_inference_steps=steps,
+            guidance_scale=guidance_scale,
+            generator=generator,
+            callback=progress_callback if args.verbose else None,
+        )
+        gen_time = time.time() - start
+
+        # Save
+        output_path = Path(args.output)
+        image.save(output_path)
+        logger.info(f"Image saved to {output_path}")
+        logger.info(f"Total time: encode={encode_time:.1f}s + generate={gen_time:.1f}s")
+
+        return 0
 
     # Check if loading embeddings (distributed inference - CUDA side)
     if args.load_embeddings:
