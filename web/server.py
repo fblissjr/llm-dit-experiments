@@ -445,6 +445,11 @@ def main():
         default="Qwen3-4B-mxfp4-mlx",
         help="Model ID for API backend",
     )
+    parser.add_argument(
+        "--cpu-offload",
+        action="store_true",
+        help="Enable CPU offload for transformer (slower but less VRAM)",
+    )
     args = parser.parse_args()
 
     # Defaults
@@ -479,8 +484,15 @@ def main():
         # Distributed mode: API encoding + local DiT/VAE generation
         if templates_dir is None:
             templates_dir = str(Path(__file__).parent.parent / "templates" / "z_image")
-        load_api_pipeline(args.api_url, args.api_model, model_path, templates_dir)
-        mode = f"distributed (API encoder + local DiT)"
+        load_api_pipeline(
+            args.api_url,
+            args.api_model,
+            model_path,
+            templates_dir,
+            enable_cpu_offload=args.cpu_offload,
+        )
+        offload_str = " + CPU offload" if args.cpu_offload else ""
+        mode = f"distributed (API encoder + local DiT{offload_str})"
     elif args.api_url:
         # API backend mode - encoder only (no model path)
         if templates_dir is None:

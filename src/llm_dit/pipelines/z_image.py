@@ -378,64 +378,94 @@ class ZImagePipeline:
 
         # 4. Denoising loop
         logger.info(f"[Pipeline] Starting {num_inference_steps} denoising steps...")
-        for i, t in enumerate(timesteps):
-            # Prepare timestep (inverted for Z-Image)
-            timestep = t.expand(latents.shape[0])
-            timestep = (1000 - timestep) / 1000
 
-            # Handle CFG
-            apply_cfg = guidance_scale > 0
+        # Check if using CPU offload mode
+        cpu_offload = getattr(self, '_enable_cpu_offload', False)
+        if cpu_offload:
+            logger.info("[Pipeline] CPU offload mode - moving transformer to GPU for forward pass")
 
-            if apply_cfg:
-                latent_input = latents.to(dtype).repeat(2, 1, 1, 1)
-                embeds_input = prompt_embeds + negative_prompt_embeds
-                timestep_input = timestep.repeat(2)
-            else:
-                latent_input = latents.to(dtype)
-                embeds_input = prompt_embeds
-                timestep_input = timestep
+        # Run denoising loop with no_grad to prevent gradient accumulation
+        with torch.no_grad():
+            for i, t in enumerate(timesteps):
+                # Move transformer to GPU for this step if using CPU offload
+                if cpu_offload:
+                    self.transformer.to(device)
+                    if torch.cuda.is_available():
+                        torch.cuda.synchronize()
 
-            # Add temporal dimension for transformer
-            latent_input = latent_input.unsqueeze(2)
-            latent_list = list(latent_input.unbind(dim=0))
+                # Prepare timestep (inverted for Z-Image)
+                timestep = t.expand(latents.shape[0])
+                timestep = (1000 - timestep) / 1000
 
-            # Run transformer
-            model_output = self.transformer(
-                latent_list,
-                timestep_input,
-                embeds_input,
-            )[0]
+                # Handle CFG
+                apply_cfg = guidance_scale > 0
 
-            # Process output
-            if apply_cfg:
-                pos_out = model_output[:1]
-                neg_out = model_output[1:]
-                noise_pred = []
-                for pos, neg in zip(pos_out, neg_out):
-                    pred = pos.float() + guidance_scale * (pos.float() - neg.float())
-                    noise_pred.append(pred)
-                noise_pred = torch.stack(noise_pred, dim=0)
-            else:
-                noise_pred = torch.stack([t.float() for t in model_output], dim=0)
+                if apply_cfg:
+                    latent_input = latents.to(dtype).repeat(2, 1, 1, 1)
+                    embeds_input = prompt_embeds + negative_prompt_embeds
+                    timestep_input = timestep.repeat(2)
+                else:
+                    latent_input = latents.to(dtype)
+                    embeds_input = prompt_embeds
+                    timestep_input = timestep
 
-            noise_pred = noise_pred.squeeze(2)
-            noise_pred = -noise_pred  # Negate output for Z-Image
+                # Add temporal dimension for transformer
+                latent_input = latent_input.unsqueeze(2)
+                latent_list = list(latent_input.unbind(dim=0))
 
-            # Scheduler step
-            latents = self.scheduler.step(
-                noise_pred.to(torch.float32),
-                t,
-                latents,
-                return_dict=False,
-            )[0]
+                # Run transformer
+                model_output = self.transformer(
+                    latent_list,
+                    timestep_input,
+                    embeds_input,
+                )[0]
 
-            # Callback
-            if callback is not None:
-                callback(i, len(timesteps), latents)
+                # Move transformer back to CPU after forward pass if using CPU offload
+                if cpu_offload:
+                    self.transformer.to("cpu")
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
 
-            # Progress logging (every few steps)
-            if i == 0 or (i + 1) % 3 == 0 or i == len(timesteps) - 1:
-                logger.info(f"[Pipeline] Step {i+1}/{len(timesteps)} complete")
+                # Process output
+                if apply_cfg:
+                    pos_out = model_output[:1]
+                    neg_out = model_output[1:]
+                    noise_pred = []
+                    for pos, neg in zip(pos_out, neg_out):
+                        pred = pos.float() + guidance_scale * (pos.float() - neg.float())
+                        noise_pred.append(pred)
+                    noise_pred = torch.stack(noise_pred, dim=0)
+                else:
+                    noise_pred = torch.stack([o.float() for o in model_output], dim=0)
+
+                noise_pred = noise_pred.squeeze(2)
+                noise_pred = -noise_pred  # Negate output for Z-Image
+
+                # Scheduler step
+                latents = self.scheduler.step(
+                    noise_pred.to(torch.float32),
+                    t,
+                    latents,
+                    return_dict=False,
+                )[0]
+
+                # Free intermediate tensors
+                del latent_input, latent_list, model_output, noise_pred, timestep
+                if apply_cfg:
+                    del pos_out, neg_out
+
+                # Callback
+                if callback is not None:
+                    callback(i, len(timesteps), latents)
+
+                # Progress logging (every few steps)
+                if i == 0 or (i + 1) % 3 == 0 or i == len(timesteps) - 1:
+                    if torch.cuda.is_available():
+                        free_mem = torch.cuda.mem_get_info()[0] / 1024**3
+                        alloc_mem = torch.cuda.memory_allocated() / 1024**3
+                        logger.info(f"[Pipeline] Step {i+1}/{len(timesteps)} complete (GPU: {alloc_mem:.1f}GB alloc, {free_mem:.1f}GB free)")
+                    else:
+                        logger.info(f"[Pipeline] Step {i+1}/{len(timesteps)} complete")
 
         logger.info(f"[Pipeline] Denoising complete, latents shape: {latents.shape}")
 
@@ -762,13 +792,13 @@ class ZImagePipeline:
         # Move to device (unless using CPU offload)
         logger.info("-" * 60)
         if enable_cpu_offload:
-            logger.info("CPU offload enabled - models stay on CPU until needed")
-            # For CPU offload, we keep models on CPU and move them during inference
-            # This requires modifying the generation loop - for now just use regular loading
-            # but with lower memory footprint since we skipped the text encoder
-            logger.info(f"Moving pipeline to {device}...")
-            transformer = transformer.to(device)
+            logger.info("CPU offload enabled - VAE on GPU, transformer uses sequential offload")
+            # Keep transformer on CPU - will move layers sequentially during forward pass
+            # Only move VAE to GPU (small, needed for final decode)
+            logger.info(f"Moving VAE to {device}...")
             vae = vae.to(device)
+            logger.info(f"  VAE now on: {next(vae.parameters()).device}")
+            logger.info("  Transformer stays on CPU for sequential offload")
         else:
             logger.info(f"Moving transformer to {device}...")
             transformer = transformer.to(device)
@@ -789,6 +819,7 @@ class ZImagePipeline:
         pipeline.vae = vae
         pipeline.scheduler = scheduler
         pipeline.vae_scale_factor = 2 ** (len(vae.config.block_out_channels) - 1)
+        pipeline._enable_cpu_offload = enable_cpu_offload
 
         logger.info("-" * 60)
         logger.info("Generator loaded successfully (encoder-free mode)")
