@@ -199,6 +199,15 @@ class APIBackend:
         Response: {"hidden_states": [[float, ...], ...] or base64_str, "shape": [seq_len, dim]}
         """
         try:
+            url = f"{self.config.base_url}/v1/hidden_states"
+            logger.info(f"[APIBackend] Requesting hidden states from: {url}")
+            logger.info(f"[APIBackend]   model: {self.config.model_id}")
+            logger.info(f"[APIBackend]   layer: {self.config.hidden_layer}")
+            logger.info(f"[APIBackend]   max_length: {self.config.max_length}")
+            logger.info(f"[APIBackend]   encoding_format: {self.config.encoding_format}")
+            logger.info(f"[APIBackend]   text length: {len(text)} chars")
+            logger.info(f"[APIBackend]   text preview: {text[:100]}...")
+
             response = self.client.post(
                 "/v1/hidden_states",
                 json={
@@ -212,6 +221,8 @@ class APIBackend:
             response.raise_for_status()
             data = response.json()
 
+            logger.info(f"[APIBackend] Response received: encoding_format={data.get('encoding_format')}, shape={data.get('shape')}")
+
             # Handle base64 or float encoding
             if data.get("encoding_format") == "base64":
                 tensor = self._decode_base64_hidden_states(
@@ -223,14 +234,16 @@ class APIBackend:
                 hidden_states = data["hidden_states"]
                 tensor = torch.tensor(hidden_states, dtype=self._dtype)
 
-            logger.debug(f"API returned hidden states shape: {tensor.shape}")
+            logger.info(f"[APIBackend] Decoded tensor: shape={tensor.shape}, dtype={tensor.dtype}, device={tensor.device}")
             return tensor
 
         except httpx.HTTPStatusError as e:
-            logger.error(f"API error: {e.response.status_code} - {e.response.text}")
+            logger.error(f"[APIBackend] HTTP error: {e.response.status_code} - {e.response.text}")
             raise
         except Exception as e:
-            logger.error(f"Failed to encode via API: {e}")
+            logger.error(f"[APIBackend] Failed to encode via API: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             raise
 
     def _decode_base64_hidden_states(

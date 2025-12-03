@@ -309,14 +309,23 @@ class ZImagePipeline:
         dtype = self.dtype
 
         # 1. Encode prompt
-        logger.debug("Encoding prompt...")
+        logger.info(f"[Pipeline] Encoding prompt on device={device}, dtype={dtype}")
+        logger.info(f"[Pipeline] Encoder type: {type(self.encoder).__name__}")
+        backend = getattr(self.encoder, 'backend', None)
+        logger.info(f"[Pipeline] Encoder backend: {type(backend).__name__ if backend else 'local'}")
+
         prompt_output = self.encoder.encode(
             prompt,
             template=template,
             enable_thinking=enable_thinking,
         )
+
+        raw_embeds = prompt_output.embeddings[0]
+        logger.info(f"[Pipeline] Raw embeddings: shape={raw_embeds.shape}, device={raw_embeds.device}, dtype={raw_embeds.dtype}")
+
         # Move embeddings to device (API backend returns CPU tensors)
-        prompt_embeds = [prompt_output.embeddings[0].to(device=device, dtype=dtype)]
+        prompt_embeds = [raw_embeds.to(device=device, dtype=dtype)]
+        logger.info(f"[Pipeline] Moved embeddings to: device={prompt_embeds[0].device}, dtype={prompt_embeds[0].dtype}")
 
         # Encode negative prompt if using CFG
         negative_prompt_embeds = []
@@ -363,8 +372,12 @@ class ZImagePipeline:
         self.scheduler.set_timesteps(num_inference_steps, device=device, mu=mu)
         timesteps = self.scheduler.timesteps
 
+        logger.info(f"[Pipeline] Latent shape: {latents.shape}, device={latents.device}")
+        logger.info(f"[Pipeline] Prompt embeds: shape={prompt_embeds[0].shape}, device={prompt_embeds[0].device}")
+        logger.info(f"[Pipeline] Timesteps: {len(timesteps)}, device={timesteps.device}")
+
         # 4. Denoising loop
-        logger.debug(f"Running {num_inference_steps} denoising steps...")
+        logger.info(f"[Pipeline] Starting {num_inference_steps} denoising steps...")
         for i, t in enumerate(timesteps):
             # Prepare timestep (inverted for Z-Image)
             timestep = t.expand(latents.shape[0])
@@ -419,6 +432,12 @@ class ZImagePipeline:
             # Callback
             if callback is not None:
                 callback(i, len(timesteps), latents)
+
+            # Progress logging (every few steps)
+            if i == 0 or (i + 1) % 3 == 0 or i == len(timesteps) - 1:
+                logger.info(f"[Pipeline] Step {i+1}/{len(timesteps)} complete")
+
+        logger.info(f"[Pipeline] Denoising complete, latents shape: {latents.shape}")
 
         # 5. Decode latents
         if output_type == "latent":
@@ -692,32 +711,56 @@ class ZImagePipeline:
             ) from e
 
         model_path = Path(model_path)
-        logger.info(f"Loading generator components from {model_path}...")
+        logger.info("=" * 60)
+        logger.info("LOADING GENERATOR COMPONENTS (encoder-free mode)")
+        logger.info("=" * 60)
+        logger.info(f"  model_path: {model_path}")
+        logger.info(f"  torch_dtype: {torch_dtype}")
+        logger.info(f"  device: {device}")
+        logger.info(f"  enable_cpu_offload: {enable_cpu_offload}")
+        logger.info("-" * 60)
+
+        # Check available GPU memory before loading
+        if device == "cuda" and torch.cuda.is_available():
+            free_mem = torch.cuda.mem_get_info()[0] / 1024**3
+            total_mem = torch.cuda.mem_get_info()[1] / 1024**3
+            logger.info(f"  GPU memory: {free_mem:.1f}GB free / {total_mem:.1f}GB total")
 
         # Load only the components we need (skip text encoder entirely)
         # Use low_cpu_mem_usage to avoid OOM during dtype conversion
-        logger.info("Loading transformer...")
+        logger.info("Loading transformer (low_cpu_mem_usage=True)...")
         transformer = ZImageTransformer2DModel.from_pretrained(
             model_path / "transformer",
             torch_dtype=torch_dtype,
             low_cpu_mem_usage=True,
             **kwargs,
         )
+        logger.info(f"  Transformer loaded: {transformer.__class__.__name__}")
+        logger.info(f"  Transformer dtype: {next(transformer.parameters()).dtype}")
+        logger.info(f"  Transformer device (before move): {next(transformer.parameters()).device}")
 
-        logger.info("Loading VAE...")
+        if device == "cuda" and torch.cuda.is_available():
+            free_mem = torch.cuda.mem_get_info()[0] / 1024**3
+            logger.info(f"  GPU memory after transformer load: {free_mem:.1f}GB free")
+
+        logger.info("Loading VAE (low_cpu_mem_usage=True)...")
         vae = AutoencoderKL.from_pretrained(
             model_path / "vae",
             torch_dtype=torch_dtype,
             low_cpu_mem_usage=True,
             **kwargs,
         )
+        logger.info(f"  VAE loaded: {vae.__class__.__name__}")
+        logger.info(f"  VAE dtype: {next(vae.parameters()).dtype}")
 
         logger.info("Loading scheduler...")
         scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(
             model_path / "scheduler",
         )
+        logger.info(f"  Scheduler: {scheduler.__class__.__name__}")
 
         # Move to device (unless using CPU offload)
+        logger.info("-" * 60)
         if enable_cpu_offload:
             logger.info("CPU offload enabled - models stay on CPU until needed")
             # For CPU offload, we keep models on CPU and move them during inference
@@ -727,9 +770,17 @@ class ZImagePipeline:
             transformer = transformer.to(device)
             vae = vae.to(device)
         else:
-            logger.info(f"Moving pipeline to {device}...")
+            logger.info(f"Moving transformer to {device}...")
             transformer = transformer.to(device)
+            logger.info(f"  Transformer now on: {next(transformer.parameters()).device}")
+
+            if device == "cuda" and torch.cuda.is_available():
+                free_mem = torch.cuda.mem_get_info()[0] / 1024**3
+                logger.info(f"  GPU memory after transformer move: {free_mem:.1f}GB free")
+
+            logger.info(f"Moving VAE to {device}...")
             vae = vae.to(device)
+            logger.info(f"  VAE now on: {next(vae.parameters()).device}")
 
         # Create pipeline without encoder
         pipeline = cls.__new__(cls)
@@ -739,5 +790,11 @@ class ZImagePipeline:
         pipeline.scheduler = scheduler
         pipeline.vae_scale_factor = 2 ** (len(vae.config.block_out_channels) - 1)
 
+        logger.info("-" * 60)
         logger.info("Generator loaded successfully (encoder-free mode)")
+        if device == "cuda" and torch.cuda.is_available():
+            free_mem = torch.cuda.mem_get_info()[0] / 1024**3
+            used_mem = (torch.cuda.mem_get_info()[1] - torch.cuda.mem_get_info()[0]) / 1024**3
+            logger.info(f"  Final GPU memory: {used_mem:.1f}GB used, {free_mem:.1f}GB free")
+        logger.info("=" * 60)
         return pipeline

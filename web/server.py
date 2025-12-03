@@ -121,7 +121,27 @@ async def generate(request: GenerateRequest):
         raise HTTPException(status_code=503, detail="Pipeline not loaded")
 
     try:
-        logger.info(f"Generating: {request.prompt[:50]}...")
+        logger.info("=" * 60)
+        logger.info("GENERATION REQUEST")
+        logger.info("=" * 60)
+        logger.info(f"  Prompt: {request.prompt[:80]}...")
+        logger.info(f"  Size: {request.width}x{request.height}")
+        logger.info(f"  Steps: {request.steps}")
+        logger.info(f"  Seed: {request.seed}")
+        logger.info(f"  Template: {request.template}")
+        logger.info(f"  Thinking: {request.enable_thinking}")
+        logger.info(f"  Guidance: {request.guidance_scale}")
+        logger.info("-" * 60)
+        logger.info("Pipeline state:")
+        logger.info(f"  pipeline.device: {pipeline.device}")
+        logger.info(f"  pipeline.dtype: {pipeline.dtype}")
+        logger.info(f"  pipeline.encoder: {type(pipeline.encoder).__name__ if pipeline.encoder else 'None'}")
+        logger.info(f"  pipeline.transformer: {pipeline.transformer is not None}")
+        logger.info(f"  pipeline.vae: {pipeline.vae is not None}")
+        if pipeline.encoder:
+            backend = getattr(pipeline.encoder, 'backend', None)
+            logger.info(f"  encoder.backend: {type(backend).__name__ if backend else 'None'}")
+        logger.info("-" * 60)
 
         # Set up generator for reproducibility
         generator = None
@@ -132,6 +152,7 @@ async def generate(request: GenerateRequest):
         start = time.time()
 
         # Generate image
+        logger.info("Calling pipeline()...")
         image = pipeline(
             request.prompt,
             height=request.height,
@@ -145,6 +166,7 @@ async def generate(request: GenerateRequest):
 
         gen_time = time.time() - start
         logger.info(f"Generated in {gen_time:.1f}s")
+        logger.info("=" * 60)
 
         # Convert to PNG bytes
         img_bytes = io.BytesIO()
@@ -331,28 +353,42 @@ def load_api_pipeline(
     from llm_dit.pipelines import ZImagePipeline
     from llm_dit.templates import TemplateRegistry
 
-    logger.info(f"Connecting to API backend at {api_url}...")
+    logger.info("=" * 60)
+    logger.info("DISTRIBUTED MODE SETUP")
+    logger.info("=" * 60)
+    logger.info(f"  API URL: {api_url}")
+    logger.info(f"  API Model: {model_id}")
+    logger.info(f"  Local Model: {model_path}")
+    logger.info(f"  Templates: {templates_dir}")
+    logger.info(f"  CPU Offload: {enable_cpu_offload}")
+    logger.info("-" * 60)
 
     # Create API backend for encoding
+    logger.info("Creating API backend...")
     api_config = APIBackendConfig(
         base_url=api_url,
         model_id=model_id,
         encoding_format="base64",
     )
     backend = APIBackend(api_config)
+    logger.info(f"  Backend created: {backend}")
 
     # Load templates if provided
     templates = None
     if templates_dir:
         templates = TemplateRegistry.from_directory(templates_dir)
-        logger.info(f"Loaded {len(templates)} templates")
+        logger.info(f"  Loaded {len(templates)} templates")
 
     # Create encoder with API backend
+    logger.info("Creating API-backed encoder...")
     api_encoder = ZImageTextEncoder(
         backend=backend,
         templates=templates,
     )
+    logger.info(f"  Encoder created: {api_encoder}")
+    logger.info(f"  Encoder device: {getattr(api_encoder, 'device', 'N/A')}")
 
+    logger.info("-" * 60)
     logger.info(f"Loading DiT/VAE from {model_path}...")
     start = time.time()
 
@@ -362,14 +398,27 @@ def load_api_pipeline(
         torch_dtype=torch.bfloat16,
         enable_cpu_offload=enable_cpu_offload,
     )
-    # Replace the encoder with our API-backed one
-    pipeline.encoder = api_encoder
 
     load_time = time.time() - start
+    logger.info(f"  DiT/VAE loaded in {load_time:.1f}s")
+    logger.info(f"  Transformer device: {pipeline.transformer.device if pipeline.transformer else 'None'}")
+    logger.info(f"  Transformer dtype: {next(pipeline.transformer.parameters()).dtype if pipeline.transformer else 'None'}")
+    logger.info(f"  VAE device: {next(pipeline.vae.parameters()).device if pipeline.vae else 'None'}")
+
+    # Replace the encoder with our API-backed one
+    logger.info("Attaching API encoder to pipeline...")
+    pipeline.encoder = api_encoder
+
+    logger.info("-" * 60)
     encoder_only_mode = False
     offload_str = " with CPU offload" if enable_cpu_offload else ""
-    logger.info(f"Pipeline loaded in {load_time:.1f}s (API encoder + local DiT/VAE{offload_str})")
-    logger.info(f"Device: {pipeline.device}")
+    logger.info(f"Pipeline ready (API encoder + local DiT/VAE{offload_str})")
+    logger.info(f"  pipeline.device: {pipeline.device}")
+    logger.info(f"  pipeline.dtype: {pipeline.dtype}")
+    logger.info(f"  pipeline.encoder: {pipeline.encoder}")
+    logger.info(f"  pipeline.transformer: {pipeline.transformer}")
+    logger.info(f"  pipeline.vae: {pipeline.vae}")
+    logger.info("=" * 60)
 
 
 def main():
