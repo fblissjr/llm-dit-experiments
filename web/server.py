@@ -52,14 +52,14 @@ class GenerateRequest(BaseModel):
     steps: int = 9
     seed: Optional[int] = None
     template: Optional[str] = None
-    enable_thinking: bool = True
+    enable_thinking: bool = False  # Default False to match diffusers/DiffSynth
     guidance_scale: float = 0.0
 
 
 class EncodeRequest(BaseModel):
     prompt: str
     template: Optional[str] = None
-    enable_thinking: bool = True
+    enable_thinking: bool = False  # Default False to match diffusers/DiffSynth
 
 
 @app.get("/")
@@ -344,6 +344,8 @@ def load_api_pipeline(
     model_path: str,
     templates_dir: Optional[str] = None,
     enable_cpu_offload: bool = False,
+    enable_flash_attn: bool = False,
+    enable_compile: bool = False,
 ):
     """Load full pipeline with API backend for encoding + local DiT/VAE for generation."""
     global pipeline, encoder_only_mode
@@ -361,6 +363,8 @@ def load_api_pipeline(
     logger.info(f"  Local Model: {model_path}")
     logger.info(f"  Templates: {templates_dir}")
     logger.info(f"  CPU Offload: {enable_cpu_offload}")
+    logger.info(f"  Flash Attention: {enable_flash_attn}")
+    logger.info(f"  Torch Compile: {enable_compile}")
     logger.info("-" * 60)
 
     # Create API backend for encoding
@@ -405,14 +409,39 @@ def load_api_pipeline(
     logger.info(f"  Transformer dtype: {next(pipeline.transformer.parameters()).dtype if pipeline.transformer else 'None'}")
     logger.info(f"  VAE device: {next(pipeline.vae.parameters()).device if pipeline.vae else 'None'}")
 
+    # Apply optimizations
+    if enable_flash_attn:
+        logger.info("Enabling Flash Attention...")
+        try:
+            pipeline.transformer.set_attention_backend("flash")
+            logger.info("  Flash Attention enabled")
+        except Exception as e:
+            logger.warning(f"  Failed to enable Flash Attention: {e}")
+            logger.warning("  Install with: pip install flash-attn --no-build-isolation")
+
+    if enable_compile:
+        logger.info("Compiling transformer with torch.compile...")
+        try:
+            pipeline.transformer = torch.compile(pipeline.transformer, mode="reduce-overhead")
+            logger.info("  Transformer compiled (first run will be slow)")
+        except Exception as e:
+            logger.warning(f"  Failed to compile: {e}")
+
     # Replace the encoder with our API-backed one
     logger.info("Attaching API encoder to pipeline...")
     pipeline.encoder = api_encoder
 
     logger.info("-" * 60)
     encoder_only_mode = False
-    offload_str = " with CPU offload" if enable_cpu_offload else ""
-    logger.info(f"Pipeline ready (API encoder + local DiT/VAE{offload_str})")
+    opts = []
+    if enable_cpu_offload:
+        opts.append("CPU offload")
+    if enable_flash_attn:
+        opts.append("Flash Attn")
+    if enable_compile:
+        opts.append("compiled")
+    opts_str = f" ({', '.join(opts)})" if opts else ""
+    logger.info(f"Pipeline ready (API encoder + local DiT/VAE{opts_str})")
     logger.info(f"  pipeline.device: {pipeline.device}")
     logger.info(f"  pipeline.dtype: {pipeline.dtype}")
     logger.info(f"  pipeline.encoder: {pipeline.encoder}")
@@ -449,6 +478,16 @@ def main():
         "--cpu-offload",
         action="store_true",
         help="Enable CPU offload for transformer (slower but less VRAM)",
+    )
+    parser.add_argument(
+        "--flash-attn",
+        action="store_true",
+        help="Enable Flash Attention (requires flash-attn package)",
+    )
+    parser.add_argument(
+        "--compile",
+        action="store_true",
+        help="Compile transformer with torch.compile (slower first run)",
     )
     args = parser.parse_args()
 
@@ -490,9 +529,18 @@ def main():
             model_path,
             templates_dir,
             enable_cpu_offload=args.cpu_offload,
+            enable_flash_attn=args.flash_attn,
+            enable_compile=args.compile,
         )
-        offload_str = " + CPU offload" if args.cpu_offload else ""
-        mode = f"distributed (API encoder + local DiT{offload_str})"
+        opts = []
+        if args.cpu_offload:
+            opts.append("CPU offload")
+        if args.flash_attn:
+            opts.append("Flash Attn")
+        if args.compile:
+            opts.append("compiled")
+        opts_str = f" + {', '.join(opts)}" if opts else ""
+        mode = f"distributed (API encoder + local DiT{opts_str})"
     elif args.api_url:
         # API backend mode - encoder only (no model path)
         if templates_dir is None:

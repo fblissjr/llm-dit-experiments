@@ -250,7 +250,7 @@ class ZImagePipeline:
         generator: Optional[torch.Generator] = None,
         latents: Optional[torch.Tensor] = None,
         template: Optional[str] = None,
-        enable_thinking: bool = True,
+        enable_thinking: bool = False,  # Default False to match diffusers/DiffSynth
         output_type: str = "pil",
         callback: Optional[Callable[[int, int, torch.Tensor], None]] = None,
     ) -> Union[Image.Image, List[Image.Image], torch.Tensor]:
@@ -322,6 +322,7 @@ class ZImagePipeline:
 
         raw_embeds = prompt_output.embeddings[0]
         logger.info(f"[Pipeline] Raw embeddings: shape={raw_embeds.shape}, device={raw_embeds.device}, dtype={raw_embeds.dtype}")
+        logger.info(f"[Pipeline] Embedding stats: min={raw_embeds.min().item():.4f}, max={raw_embeds.max().item():.4f}, mean={raw_embeds.mean().item():.4f}, std={raw_embeds.std().item():.4f}")
 
         # Move embeddings to device (API backend returns CPU tensors)
         prompt_embeds = [raw_embeds.to(device=device, dtype=dtype)]
@@ -375,6 +376,8 @@ class ZImagePipeline:
         logger.info(f"[Pipeline] Latent shape: {latents.shape}, device={latents.device}")
         logger.info(f"[Pipeline] Prompt embeds: shape={prompt_embeds[0].shape}, device={prompt_embeds[0].device}")
         logger.info(f"[Pipeline] Timesteps: {len(timesteps)}, device={timesteps.device}")
+        logger.info(f"[Pipeline] Timestep values: {timesteps.tolist()}")
+        logger.info(f"[Pipeline] Scheduler sigmas: {self.scheduler.sigmas.tolist() if hasattr(self.scheduler, 'sigmas') else 'N/A'}")
 
         # 4. Denoising loop
         logger.info(f"[Pipeline] Starting {num_inference_steps} denoising steps...")
@@ -387,6 +390,10 @@ class ZImagePipeline:
         # Run denoising loop with no_grad to prevent gradient accumulation
         with torch.no_grad():
             for i, t in enumerate(timesteps):
+                # Clear cache before each step to minimize peak memory
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+
                 # Move transformer to GPU for this step if using CPU offload
                 if cpu_offload:
                     self.transformer.to(device)
@@ -511,7 +518,7 @@ class ZImagePipeline:
         self,
         prompt: Union[str, Conversation],
         template: Optional[str] = None,
-        enable_thinking: bool = True,
+        enable_thinking: bool = False,  # Default False to match diffusers/DiffSynth
     ) -> torch.Tensor:
         """
         Encode a prompt without running generation.

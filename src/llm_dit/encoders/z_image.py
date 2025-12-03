@@ -158,7 +158,7 @@ class ZImageTextEncoder:
         system_prompt: str | None = None,
         thinking_content: str | None = None,
         assistant_content: str | None = None,
-        enable_thinking: bool = True,
+        enable_thinking: bool = False,  # Default False to match diffusers/ComfyUI
         return_padded: bool = False,
     ) -> EncodingOutput:
         """
@@ -231,7 +231,7 @@ class ZImageTextEncoder:
         self,
         prompts: List[Union[str, Conversation]],
         template: str | Template | None = None,
-        enable_thinking: bool = True,
+        enable_thinking: bool = False,  # Default False to match diffusers/ComfyUI
         return_padded: bool = False,
     ) -> EncodingOutput:
         """
