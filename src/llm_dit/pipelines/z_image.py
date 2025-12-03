@@ -473,11 +473,26 @@ class ZImagePipeline:
         if output_type == "latent":
             return latents
 
-        logger.debug("Decoding latents...")
+        logger.info("[Pipeline] Decoding latents with VAE...")
+
+        # Move VAE to GPU if using CPU offload
+        if cpu_offload:
+            logger.info("[Pipeline] Moving VAE to GPU for decode...")
+            self.vae.to(device)
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
         latents = latents.to(self.vae.dtype)
         latents = (latents / self.vae.config.scaling_factor) + self.vae.config.shift_factor
 
-        image = self.vae.decode(latents, return_dict=False)[0]
+        with torch.no_grad():
+            image = self.vae.decode(latents, return_dict=False)[0]
+
+        # Move VAE back to CPU if using CPU offload
+        if cpu_offload:
+            self.vae.to("cpu")
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
         # Post-process
         if output_type == "pt":
@@ -792,13 +807,9 @@ class ZImagePipeline:
         # Move to device (unless using CPU offload)
         logger.info("-" * 60)
         if enable_cpu_offload:
-            logger.info("CPU offload enabled - VAE on GPU, transformer uses sequential offload")
-            # Keep transformer on CPU - will move layers sequentially during forward pass
-            # Only move VAE to GPU (small, needed for final decode)
-            logger.info(f"Moving VAE to {device}...")
-            vae = vae.to(device)
-            logger.info(f"  VAE now on: {next(vae.parameters()).device}")
-            logger.info("  Transformer stays on CPU for sequential offload")
+            logger.info("CPU offload enabled - both transformer and VAE stay on CPU")
+            logger.info("  Transformer: moves to GPU for each denoising step")
+            logger.info("  VAE: moves to GPU only for final decode")
         else:
             logger.info(f"Moving transformer to {device}...")
             transformer = transformer.to(device)
