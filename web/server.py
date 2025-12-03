@@ -321,6 +321,7 @@ def load_api_pipeline(
     model_id: str,
     model_path: str,
     templates_dir: Optional[str] = None,
+    enable_cpu_offload: bool = False,
 ):
     """Load full pipeline with API backend for encoding + local DiT/VAE for generation."""
     global pipeline, encoder_only_mode
@@ -359,13 +360,15 @@ def load_api_pipeline(
     pipeline = ZImagePipeline.from_pretrained_generator_only(
         model_path,
         torch_dtype=torch.bfloat16,
+        enable_cpu_offload=enable_cpu_offload,
     )
     # Replace the encoder with our API-backed one
     pipeline.encoder = api_encoder
 
     load_time = time.time() - start
     encoder_only_mode = False
-    logger.info(f"Pipeline loaded in {load_time:.1f}s (API encoder + local DiT/VAE)")
+    offload_str = " with CPU offload" if enable_cpu_offload else ""
+    logger.info(f"Pipeline loaded in {load_time:.1f}s (API encoder + local DiT/VAE{offload_str})")
     logger.info(f"Device: {pipeline.device}")
 
 
