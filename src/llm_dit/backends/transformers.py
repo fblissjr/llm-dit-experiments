@@ -198,6 +198,7 @@ class TransformersBackend:
         self,
         texts: List[str],
         return_padded: bool = False,
+        layer_index: int = -2,
     ) -> EncodingOutput:
         """
         Encode pre-formatted text to embeddings.
@@ -208,6 +209,9 @@ class TransformersBackend:
         Args:
             texts: List of pre-formatted text strings
             return_padded: If True, also return padded batch tensors
+            layer_index: Which hidden layer to extract (default: -2, penultimate).
+                        Useful values: -1 (last), -2 (penultimate), -3, -4.
+                        Z-Image uses -2 by default.
 
         Returns:
             EncodingOutput with variable-length embeddings per input
@@ -215,7 +219,7 @@ class TransformersBackend:
         Implementation matches DiffSynth z_image.py lines 174-196:
         1. Tokenize with padding="max_length"
         2. Forward through model with output_hidden_states=True
-        3. Extract hidden_states[-2] (penultimate layer)
+        3. Extract hidden_states[layer_index] (default: penultimate layer)
         4. Filter by attention_mask to get valid tokens only
         """
         # Tokenize
@@ -243,9 +247,10 @@ class TransformersBackend:
                 output_hidden_states=True,
             )
 
-        # Extract penultimate layer (hidden_states[-2])
-        # This matches Z-Image reference: hidden_states[-2]
-        hidden_states = outputs.hidden_states[-2]
+        # Extract specified layer (default: hidden_states[-2] for Z-Image)
+        # Negative indices: -1 = last, -2 = penultimate, etc.
+        hidden_states = outputs.hidden_states[layer_index]
+        logger.debug(f"[TransformersBackend] Extracting layer {layer_index} of {len(outputs.hidden_states)} layers")
 
         # Filter by attention mask to get variable-length outputs
         # This matches diffusers behavior

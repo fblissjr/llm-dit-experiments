@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0]
+
+### Added
+- Prompt rewriting using the loaded Qwen3 model
+  - Uses same model for both embedding extraction and text generation (no extra memory)
+  - Rewriter templates in `templates/z_image/rewriter/` category
+  - Web UI: Collapsible "Prompt Rewriter" section with style selection
+  - API: `GET /api/rewriters` lists available rewriter templates
+  - API: `POST /api/rewrite` rewrites prompts using selected template
+- Text generation support in backends
+  - `TransformersBackend.generate()` for local text generation
+  - `APIBackend.generate()` via `/v1/chat/completions` endpoint
+  - `supports_generation` property on backends
+
+### Changed
+- `TransformersBackend` now uses `AutoModelForCausalLM` instead of `AutoModel`
+  - Enables both embedding extraction (hidden states) and text generation
+  - No change to embedding output format
+- Template loader now searches subdirectories recursively by default
+  - Pattern changed from `*.md` to `**/*.md`
+  - Supports template categories in subdirectories (e.g., `rewriter/`)
+
 ## [0.2.0]
 
 ### Added

@@ -317,6 +317,8 @@ uv run scripts/generate.py \
 | `/api/encode` | POST | Encode prompt to embeddings |
 | `/api/format-prompt` | POST | Preview formatted prompt (no encoding) |
 | `/api/templates` | GET | List available templates |
+| `/api/rewriters` | GET | List available rewriter templates |
+| `/api/rewrite` | POST | Rewrite prompt using Qwen3 model |
 | `/api/save-embeddings` | POST | Save embeddings to file |
 | `/api/history` | GET | Get generation history |
 | `/api/history/{index}` | DELETE | Delete specific history item |
@@ -370,6 +372,57 @@ pipe.load_lora(["lora1.safetensors", "lora2.safetensors"], scale=[0.5, 0.3])
 ```
 
 Note: LoRAs are fused (permanently merged) into weights. To remove, reload the model.
+
+## Prompt Rewriting
+
+The loaded Qwen3 model can be used for prompt rewriting/expansion in addition to embedding extraction. This enables creative prompt enhancement without loading additional models.
+
+**Rewriter Templates:**
+Place templates in `templates/z_image/rewriter/` with `category: rewriter` in frontmatter.
+
+```markdown
+---
+name: rewriter_character_generator
+description: Character Generator (prompt rewriter)
+model: z-image
+category: rewriter
+---
+You are an expert character designer...
+```
+
+**Via Web UI:**
+1. Enter a basic prompt
+2. Open "Prompt Rewriter (Qwen3)" section
+3. Select a rewriter style
+4. Click "Rewrite Prompt"
+5. Click "Use This Prompt" to apply
+
+**Via API:**
+```bash
+# List available rewriters
+curl http://localhost:8000/api/rewriters
+
+# Rewrite a prompt
+curl -X POST http://localhost:8000/api/rewrite \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "An Israeli woman", "rewriter": "rewriter_z_image_character_generator"}'
+```
+
+**Via Python:**
+```python
+# Using local encoder
+backend = TransformersBackend.from_pretrained(...)
+rewritten = backend.generate(
+    prompt="A cat sleeping",
+    system_prompt="You are an expert at writing image prompts...",
+    max_new_tokens=512,
+    temperature=0.7,
+)
+
+# Using API backend
+backend = APIBackend.from_url("http://localhost:8000", "qwen3-4b")
+rewritten = backend.generate(...)
+```
 
 ## Related Projects
 
