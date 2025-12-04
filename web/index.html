@@ -225,6 +225,10 @@
                     <div class="text-gray-400 mb-1">Embedding Stats</div>
                     <div class="text-white font-mono text-sm" id="encStats">-</div>
                 </div>
+                <div id="encFormattedPromptContainer" class="mt-4 bg-gray-700 rounded p-3 hidden">
+                    <div class="text-gray-400 mb-1">Formatted Prompt</div>
+                    <pre class="text-white font-mono text-xs whitespace-pre-wrap break-all" id="encFormattedPrompt">-</pre>
+                </div>
                 <div class="mt-4">
                     <button
                         id="saveEmbeddingsBtn"
@@ -329,6 +333,14 @@
                     document.getElementById('encSeqLen').textContent = data.shape[0];
                     document.getElementById('encHiddenDim').textContent = data.shape[1];
                     document.getElementById('encStats').textContent = `dtype: ${data.dtype}`;
+
+                    // Display formatted prompt if available
+                    if (data.formatted_prompt) {
+                        document.getElementById('encFormattedPrompt').textContent = data.formatted_prompt;
+                        document.getElementById('encFormattedPromptContainer').classList.remove('hidden');
+                    } else {
+                        document.getElementById('encFormattedPromptContainer').classList.add('hidden');
+                    }
 
                     status.classList.add('hidden');
                     encoderResult.classList.remove('hidden');
