@@ -282,6 +282,9 @@ class ZImagePipeline:
         generator: Optional[torch.Generator] = None,
         latents: Optional[torch.Tensor] = None,
         template: Optional[str] = None,
+        system_prompt: Optional[str] = None,
+        thinking_content: Optional[str] = None,
+        assistant_content: Optional[str] = None,
         enable_thinking: bool = False,  # Default False to match diffusers/DiffSynth
         output_type: str = "pil",
         callback: Optional[Callable[[int, int, torch.Tensor], None]] = None,
@@ -290,7 +293,7 @@ class ZImagePipeline:
         Generate an image from a text prompt.
 
         Args:
-            prompt: Text prompt or Conversation object
+            prompt: Text prompt (user message) or Conversation object
             height: Output image height (default: 1024, must be divisible by 16)
             width: Output image width (default: 1024, must be divisible by 16)
             num_inference_steps: Number of denoising steps (default: 9 for turbo)
@@ -299,7 +302,10 @@ class ZImagePipeline:
             generator: Random generator for reproducibility
             latents: Pre-generated latents (optional)
             template: Template name for encoding
-            enable_thinking: Whether to include thinking tags
+            system_prompt: System prompt (optional, e.g., "You are a painter.")
+            thinking_content: Content inside <think>...</think> (optional)
+            assistant_content: Content after </think> (optional)
+            enable_thinking: Whether to include <think></think> structure
             output_type: Output format ("pil", "latent", or "pt")
             callback: Optional callback for progress updates
 
@@ -310,20 +316,20 @@ class ZImagePipeline:
             # Basic generation
             image = pipe("A cat sleeping")
 
-            # With template
-            image = pipe("A cat", template="photorealistic")
+            # With system prompt
+            image = pipe("Paint a cat", system_prompt="You are a painter.")
+
+            # With thinking
+            image = pipe(
+                "A sunset",
+                enable_thinking=True,
+                thinking_content="Warm orange and pink hues.",
+            )
 
             # With seed
             image = pipe(
                 "A cat sleeping",
                 generator=torch.Generator().manual_seed(42),
-            )
-
-            # CFG (not recommended for Z-Image-Turbo)
-            image = pipe(
-                "A cat",
-                guidance_scale=5.0,
-                negative_prompt="blurry, low quality",
             )
         """
         # Validate dimensions (must be divisible by 16 for Z-Image)
@@ -349,6 +355,9 @@ class ZImagePipeline:
         prompt_output = self.encoder.encode(
             prompt,
             template=template,
+            system_prompt=system_prompt,
+            thinking_content=thinking_content,
+            assistant_content=assistant_content,
             enable_thinking=enable_thinking,
         )
 

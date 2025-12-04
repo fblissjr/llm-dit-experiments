@@ -46,20 +46,26 @@ encoder_only_mode = False
 
 
 class GenerateRequest(BaseModel):
-    prompt: str
+    prompt: str  # User prompt
+    system_prompt: Optional[str] = None  # System prompt (optional)
+    thinking_content: Optional[str] = None  # Content inside <think>...</think> (optional)
+    assistant_content: Optional[str] = None  # Content after </think> (optional)
+    enable_thinking: bool = False  # Add <think></think> structure
     width: int = 1024
     height: int = 1024
     steps: int = 9
     seed: Optional[int] = None
     template: Optional[str] = None
-    enable_thinking: bool = False  # Default False to match diffusers/DiffSynth
     guidance_scale: float = 0.0
 
 
 class EncodeRequest(BaseModel):
-    prompt: str
+    prompt: str  # User prompt
+    system_prompt: Optional[str] = None  # System prompt (optional)
+    thinking_content: Optional[str] = None  # Content inside <think>...</think> (optional)
+    assistant_content: Optional[str] = None  # Content after </think> (optional)
+    enable_thinking: bool = False  # Add <think></think> structure
     template: Optional[str] = None
-    enable_thinking: bool = False  # Default False to match diffusers/DiffSynth
 
 
 @app.get("/")
@@ -92,6 +98,9 @@ async def encode(request: EncodeRequest):
         output = enc.encode(
             request.prompt,
             template=request.template,
+            system_prompt=request.system_prompt,
+            thinking_content=request.thinking_content,
+            assistant_content=request.assistant_content,
             enable_thinking=request.enable_thinking,
         )
         encode_time = time.time() - start
@@ -171,6 +180,9 @@ async def generate(request: GenerateRequest):
             guidance_scale=request.guidance_scale,
             generator=generator,
             template=request.template,
+            system_prompt=request.system_prompt,
+            thinking_content=request.thinking_content,
+            assistant_content=request.assistant_content,
             enable_thinking=request.enable_thinking,
         )
 
@@ -212,6 +224,9 @@ async def format_prompt_endpoint(request: EncodeRequest):
         conv = enc._build_conversation(
             prompt=request.prompt,
             template=request.template,
+            system_prompt=request.system_prompt,
+            thinking_content=request.thinking_content,
+            assistant_content=request.assistant_content,
             enable_thinking=request.enable_thinking,
         )
         formatted = enc.formatter.format(conv)
@@ -220,6 +235,9 @@ async def format_prompt_endpoint(request: EncodeRequest):
             "formatted_prompt": formatted,
             "char_count": len(formatted),
             "prompt": request.prompt,
+            "system_prompt": request.system_prompt,
+            "thinking_content": request.thinking_content,
+            "assistant_content": request.assistant_content,
             "template": request.template,
             "enable_thinking": request.enable_thinking,
         }
