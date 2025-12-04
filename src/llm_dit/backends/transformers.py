@@ -205,6 +205,11 @@ class TransformersBackend:
         input_ids = inputs.input_ids.to(self.device)
         attention_mask = inputs.attention_mask.to(self.device).bool()
 
+        # Debug: log tokenization details
+        valid_tokens = attention_mask[0].sum().item()
+        logger.debug(f"[TransformersBackend] Tokenized: {valid_tokens} valid tokens (max_length={self.config.max_length})")
+        logger.debug(f"[TransformersBackend] Token IDs (first 20): {input_ids[0][:20].tolist()}")
+
         # Encode
         with torch.no_grad():
             outputs = self.model(
@@ -226,6 +231,12 @@ class TransformersBackend:
             valid_embeds = hidden_states[i][mask]
             embeddings_list.append(valid_embeds)
             masks_list.append(mask[mask])  # All True for valid positions
+
+            # Debug: log embedding stats for comparison with other backends
+            logger.debug(f"[TransformersBackend] Embedding [{i}]: shape={valid_embeds.shape}, dtype={valid_embeds.dtype}")
+            logger.debug(f"[TransformersBackend] Embedding [{i}] stats: min={valid_embeds.min().item():.4f}, max={valid_embeds.max().item():.4f}, mean={valid_embeds.mean().item():.4f}, std={valid_embeds.std().item():.4f}")
+            logger.debug(f"[TransformersBackend] Embedding [{i}] first 5 values: {valid_embeds[0, :5].tolist()}")
+            logger.debug(f"[TransformersBackend] Embedding [{i}] last 5 values: {valid_embeds[-1, -5:].tolist()}")
 
         result = EncodingOutput(
             embeddings=embeddings_list,

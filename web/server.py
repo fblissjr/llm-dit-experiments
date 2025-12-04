@@ -98,11 +98,21 @@ async def encode(request: EncodeRequest):
 
         embeddings = output.embeddings[0]
 
+        # Get formatted prompt if available
+        formatted_prompt = None
+        if output.formatted_prompts:
+            formatted_prompt = output.formatted_prompts[0]
+            logger.info(f"Formatted prompt ({len(formatted_prompt)} chars):")
+            logger.info(f"---BEGIN FORMATTED PROMPT---")
+            logger.info(formatted_prompt)
+            logger.info(f"---END FORMATTED PROMPT---")
+
         return {
             "shape": list(embeddings.shape),
             "dtype": str(embeddings.dtype),
             "encode_time": encode_time,
             "prompt": request.prompt,
+            "formatted_prompt": formatted_prompt,
         }
     except Exception as e:
         logger.error(f"Encoding failed: {e}")
@@ -184,6 +194,37 @@ async def generate(request: GenerateRequest):
 
     except Exception as e:
         logger.error(f"Generation failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/format-prompt")
+async def format_prompt_endpoint(request: EncodeRequest):
+    """Preview the formatted prompt without encoding (fast, no GPU needed)."""
+    # Use encoder from pipeline or standalone encoder
+    enc = encoder if encoder is not None else (pipeline.encoder if pipeline else None)
+    if enc is None:
+        raise HTTPException(status_code=503, detail="Encoder not loaded")
+
+    try:
+        # Build conversation and format without encoding
+        from llm_dit.conversation import Conversation
+
+        conv = enc._build_conversation(
+            prompt=request.prompt,
+            template=request.template,
+            enable_thinking=request.enable_thinking,
+        )
+        formatted = enc.formatter.format(conv)
+
+        return {
+            "formatted_prompt": formatted,
+            "char_count": len(formatted),
+            "prompt": request.prompt,
+            "template": request.template,
+            "enable_thinking": request.enable_thinking,
+        }
+    except Exception as e:
+        logger.error(f"Format failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -609,7 +650,19 @@ def main():
         default="auto",
         help="Device for VAE (default: auto)",
     )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable debug logging (shows token IDs, embedding values for comparison)",
+    )
     args = parser.parse_args()
+
+    # Set up debug logging if requested
+    if args.debug:
+        logging.getLogger("llm_dit").setLevel(logging.DEBUG)
+        logging.getLogger("llm_dit.backends").setLevel(logging.DEBUG)
+        logging.getLogger("llm_dit.pipelines").setLevel(logging.DEBUG)
+        logger.info("Debug logging enabled for llm_dit module")
 
     # Defaults
     host = args.host or "127.0.0.1"

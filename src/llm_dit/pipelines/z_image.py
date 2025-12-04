@@ -352,6 +352,15 @@ class ZImagePipeline:
             enable_thinking=enable_thinking,
         )
 
+        # Log formatted prompt for debugging
+        if prompt_output.formatted_prompts:
+            formatted = prompt_output.formatted_prompts[0]
+            logger.info(f"[Pipeline] Formatted prompt ({len(formatted)} chars):")
+            # Show the full prompt with special tokens visible
+            logger.info(f"[Pipeline] ---BEGIN FORMATTED PROMPT---")
+            logger.info(formatted)
+            logger.info(f"[Pipeline] ---END FORMATTED PROMPT---")
+
         raw_embeds = prompt_output.embeddings[0]
         logger.info(f"[Pipeline] Raw embeddings: shape={raw_embeds.shape}, device={raw_embeds.device}, dtype={raw_embeds.dtype}")
         logger.info(f"[Pipeline] Embedding stats: min={raw_embeds.min().item():.4f}, max={raw_embeds.max().item():.4f}, mean={raw_embeds.mean().item():.4f}, std={raw_embeds.std().item():.4f}")

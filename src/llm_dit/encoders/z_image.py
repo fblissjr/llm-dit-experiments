@@ -225,7 +225,11 @@ class ZImageTextEncoder:
         logger.debug(f"Formatted prompt ({len(formatted)} chars)")
 
         # Encode via backend
-        return self.backend.encode([formatted], return_padded=return_padded)
+        output = self.backend.encode([formatted], return_padded=return_padded)
+
+        # Attach formatted prompt for debugging
+        output.formatted_prompts = [formatted]
+        return output
 
     def encode_batch(
         self,
@@ -264,7 +268,11 @@ class ZImageTextEncoder:
                 formatted = self.formatter.format(conv)
             formatted_list.append(formatted)
 
-        return self.backend.encode(formatted_list, return_padded=return_padded)
+        output = self.backend.encode(formatted_list, return_padded=return_padded)
+
+        # Attach formatted prompts for debugging
+        output.formatted_prompts = formatted_list
+        return output
 
     def _build_conversation(
         self,

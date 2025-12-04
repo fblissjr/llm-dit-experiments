@@ -235,6 +235,12 @@ class APIBackend:
                 tensor = torch.tensor(hidden_states, dtype=self._dtype)
 
             logger.info(f"[APIBackend] Decoded tensor: shape={tensor.shape}, dtype={tensor.dtype}, device={tensor.device}")
+
+            # Debug: log embedding stats for comparison with local backends
+            logger.debug(f"[APIBackend] Embedding stats: min={tensor.min().item():.4f}, max={tensor.max().item():.4f}, mean={tensor.mean().item():.4f}, std={tensor.std().item():.4f}")
+            logger.debug(f"[APIBackend] Embedding first 5 values: {tensor[0, :5].tolist()}")
+            logger.debug(f"[APIBackend] Embedding last 5 values: {tensor[-1, -5:].tolist()}")
+
             return tensor
 
         except httpx.HTTPStatusError as e:

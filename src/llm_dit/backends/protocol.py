@@ -32,12 +32,15 @@ class EncodingOutput:
         padded_embeddings: Optional padded batch tensor [batch, max_seq_len, hidden_dim].
                           Useful when downstream needs uniform shapes.
         padded_mask: Optional padded attention mask [batch, max_seq_len].
+        formatted_prompts: Optional list of formatted prompt strings (with chat template).
+                          Useful for debugging template formatting.
     """
 
     embeddings: List[torch.Tensor]
     attention_masks: List[torch.Tensor]
     padded_embeddings: torch.Tensor | None = None
     padded_mask: torch.Tensor | None = None
+    formatted_prompts: List[str] | None = None
 
     @property
     def batch_size(self) -> int:
