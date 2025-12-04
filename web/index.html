@@ -164,6 +164,38 @@
                     </div>
                 </div>
 
+                <!-- System Prompt -->
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-1">System Prompt</label>
+                    <textarea
+                        id="systemPrompt"
+                        rows="2"
+                        class="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500 text-sm resize-none"
+                        placeholder="You are a painter. (optional)"
+                    ></textarea>
+                </div>
+
+                <!-- Thinking toggle + content -->
+                <div class="flex items-start gap-3">
+                    <div class="flex items-center pt-1">
+                        <input
+                            type="checkbox"
+                            id="enableThinking"
+                            checked
+                            class="w-4 h-4 text-blue-600 bg-gray-700 border-gray-600 rounded focus:ring-blue-500"
+                        >
+                        <label for="enableThinking" class="ml-2 text-sm text-gray-300">Think</label>
+                    </div>
+                    <div class="flex-1">
+                        <textarea
+                            id="thinkingContent"
+                            rows="2"
+                            class="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500 text-sm resize-none"
+                            placeholder="Thinking content (leave empty for default)"
+                        ></textarea>
+                    </div>
+                </div>
+
                 <!-- Advanced Options (collapsible) -->
                 <details class="group">
                     <summary class="cursor-pointer text-sm font-medium text-gray-400 hover:text-gray-300 flex items-center gap-2">
@@ -173,37 +205,6 @@
                         Advanced Options
                     </summary>
                     <div class="mt-3 space-y-3 p-4 bg-gray-800/50 rounded-xl border border-gray-700">
-                        <!-- System Prompt -->
-                        <div>
-                            <label class="block text-sm font-medium text-gray-300 mb-1">System Prompt</label>
-                            <textarea
-                                id="systemPrompt"
-                                rows="2"
-                                class="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500 text-sm resize-none"
-                                placeholder="You are a painter. (optional)"
-                            ></textarea>
-                        </div>
-
-                        <!-- Thinking toggle + content -->
-                        <div class="flex items-start gap-3">
-                            <div class="flex items-center pt-1">
-                                <input
-                                    type="checkbox"
-                                    id="enableThinking"
-                                    class="w-4 h-4 text-blue-600 bg-gray-700 border-gray-600 rounded focus:ring-blue-500"
-                                >
-                                <label for="enableThinking" class="ml-2 text-sm text-gray-300">Think</label>
-                            </div>
-                            <div class="flex-1">
-                                <textarea
-                                    id="thinkingContent"
-                                    rows="2"
-                                    class="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500 text-sm resize-none"
-                                    placeholder="Thinking content (optional)"
-                                ></textarea>
-                            </div>
-                        </div>
-
                         <!-- Assistant Content -->
                         <div>
                             <label class="block text-sm font-medium text-gray-300 mb-1">Assistant Content</label>
@@ -211,7 +212,7 @@
                                 type="text"
                                 id="assistantContent"
                                 class="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500 text-sm"
-                                placeholder="Here is your image: (optional)"
+                                placeholder="Here is your image: (optional, after thinking)"
                             >
                         </div>
 
@@ -267,7 +268,7 @@
                 <div class="bg-gray-800 rounded-xl overflow-hidden">
                     <img id="resultImage" class="w-full" alt="Generated image">
                     <div class="p-4">
-                        <div class="flex items-center justify-between gap-4">
+                        <div class="flex items-center justify-between gap-4 mb-3">
                             <div class="text-sm text-gray-400 truncate flex-1" id="resultInfo"></div>
                             <div class="flex gap-2">
                                 <button
@@ -285,6 +286,11 @@
                                     Save
                                 </a>
                             </div>
+                        </div>
+                        <!-- Formatted Prompt (always visible) -->
+                        <div class="bg-gray-900 rounded-lg p-3">
+                            <div class="text-xs text-gray-400 mb-1">Formatted Prompt</div>
+                            <pre class="text-xs text-gray-300 overflow-x-auto whitespace-pre-wrap font-mono" id="resultFormattedPrompt">-</pre>
                         </div>
                     </div>
                 </div>
@@ -534,6 +540,7 @@
             resultImage.src = `data:image/png;base64,${item.image_b64}`;
             downloadBtn.href = `data:image/png;base64,${item.image_b64}`;
             resultInfo.textContent = `${item.width}x${item.height}, ${item.steps} steps, ${item.gen_time.toFixed(1)}s`;
+            document.getElementById('resultFormattedPrompt').textContent = item.formatted_prompt || '-';
             currentParams = item;
             result.classList.remove('hidden');
             encoderResult.classList.add('hidden');
@@ -640,6 +647,21 @@
                     progressFill.style.width = '100%';
 
                 } else {
+                    progressFill.style.width = '20%';
+                    statusText.textContent = 'Formatting prompt...';
+
+                    // Get formatted prompt first (fast, no GPU)
+                    const formatResponse = await fetch(`${API_BASE}/api/format-prompt`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(params),
+                    });
+                    let formattedPrompt = '-';
+                    if (formatResponse.ok) {
+                        const formatData = await formatResponse.json();
+                        formattedPrompt = formatData.formatted_prompt || '-';
+                    }
+
                     progressFill.style.width = '30%';
                     statusText.textContent = 'Generating...';
 
@@ -666,6 +688,7 @@
                     resultImage.src = imageUrl;
                     downloadBtn.href = imageUrl;
                     resultInfo.textContent = `${width}x${height}, ${params.steps} steps${genTime ? `, ${parseFloat(genTime).toFixed(1)}s` : ''}${seed && seed !== 'random' ? `, seed ${seed}` : ''}`;
+                    document.getElementById('resultFormattedPrompt').textContent = formattedPrompt;
 
                     status.classList.add('hidden');
                     result.classList.remove('hidden');

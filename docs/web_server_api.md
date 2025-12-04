@@ -209,6 +209,64 @@ Health check endpoint.
 }
 ```
 
+---
+
+### GET /api/history
+
+Get generation history (stored in memory, cleared on server restart).
+
+**Response:**
+```json
+{
+  "history": [
+    {
+      "id": 0,
+      "timestamp": 1733285000.0,
+      "prompt": "A cat sleeping",
+      "system_prompt": null,
+      "thinking_content": null,
+      "assistant_content": null,
+      "enable_thinking": false,
+      "width": 1024,
+      "height": 1024,
+      "steps": 9,
+      "seed": null,
+      "template": null,
+      "guidance_scale": 0.0,
+      "gen_time": 12.5,
+      "image_b64": "iVBORw0KGgo..."
+    }
+  ]
+}
+```
+
+---
+
+### DELETE /api/history/{index}
+
+Delete a specific history item by index.
+
+**Response:**
+```json
+{
+  "deleted": {...},
+  "remaining": 4
+}
+```
+
+---
+
+### DELETE /api/history
+
+Clear all history.
+
+**Response:**
+```json
+{
+  "cleared": 5
+}
+```
+
 ## Chat Template Format
 
 The Qwen3-4B chat template has 4 components:

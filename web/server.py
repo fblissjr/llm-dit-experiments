@@ -205,6 +205,24 @@ async def generate(request: GenerateRequest):
         image.save(img_bytes_copy, format="PNG")
         img_b64 = base64.b64encode(img_bytes_copy.getvalue()).decode("ascii")
 
+        # Get formatted prompt for history
+        formatted_prompt = None
+        enc = encoder if encoder is not None else (pipeline.encoder if pipeline else None)
+        if enc:
+            try:
+                from llm_dit.conversation import Conversation
+                conv = enc._build_conversation(
+                    prompt=request.prompt,
+                    template=request.template,
+                    system_prompt=request.system_prompt,
+                    thinking_content=request.thinking_content,
+                    assistant_content=request.assistant_content,
+                    enable_thinking=request.enable_thinking,
+                )
+                formatted_prompt = enc.formatter.format(conv)
+            except Exception as e:
+                logger.warning(f"Failed to get formatted prompt: {e}")
+
         # Store in history
         history_entry = {
             "id": len(generation_history),
@@ -222,6 +240,7 @@ async def generate(request: GenerateRequest):
             "guidance_scale": request.guidance_scale,
             "gen_time": gen_time,
             "image_b64": img_b64,
+            "formatted_prompt": formatted_prompt,
         }
         generation_history.insert(0, history_entry)
         # Trim history
