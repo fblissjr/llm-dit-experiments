@@ -51,6 +51,24 @@ packages = ["src/llm_dit"]
 [tool.hatch.metadata]
 allow-direct-references = true
 
+[tool.uv]
+# Exclude torch from uv resolution - install separately
+# This prevents uv sync from downgrading your torch nightly to stable
+#
+# IMPORTANT: Always use --inexact flag to preserve manually-installed torch:
+#   uv sync --inexact
+#
+# Install PyTorch manually AFTER uv sync --inexact:
+#   Stable CUDA 13.0:  uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu130
+#   Nightly CUDA 13.0: uv pip install --pre torch torchvision --index-url https://download.pytorch.org/whl/nightly/cu130
+#   CPU only:          uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+#   MPS (macOS):       uv pip install torch torchvision (uses default PyPI)
+exclude-dependencies = [
+    "torch",
+    "torchvision",
+    "torchaudio",
+]
+
 [tool.ruff]
 line-length = 100
 target-version = "py310"

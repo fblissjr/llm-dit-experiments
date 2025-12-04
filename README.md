@@ -16,8 +16,16 @@ Standalone diffusers-based platform for experimenting with LLM-DiT image generat
 ## Quick Start
 
 ```bash
-# Install dependencies
-uv sync
+# Install dependencies (use --inexact to preserve any existing torch)
+uv sync --inexact
+
+# Install PyTorch separately (choose one):
+# Stable CUDA 13.0
+uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu130
+# Nightly CUDA 13.0
+uv pip install --pre torch torchvision --index-url https://download.pytorch.org/whl/nightly/cu130
+# CPU only
+uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
 
 # Run web server with local model
 uv run web/server.py --model-path /path/to/z-image-turbo
