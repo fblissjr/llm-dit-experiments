@@ -148,14 +148,16 @@ def load_template(path: str | Path) -> Template:
 
 def load_templates_from_dir(
     directory: str | Path,
-    pattern: str = "*.md",
+    pattern: str = "**/*.md",
+    recursive: bool = True,
 ) -> dict[str, Template]:
     """
     Load all templates from a directory.
 
     Args:
         directory: Path to templates directory
-        pattern: Glob pattern for template files (default: *.md)
+        pattern: Glob pattern for template files (default: **/*.md for recursive)
+        recursive: Whether to search subdirectories (default: True)
 
     Returns:
         Dict mapping template names to Template objects
@@ -163,18 +165,23 @@ def load_templates_from_dir(
     Example:
         templates = load_templates_from_dir("templates/z_image/")
         photo = templates["photorealistic"]
+        rewriter = templates["rewriter_z_image_character_generator"]
     """
     directory = Path(directory)
     if not directory.exists():
         logger.warning(f"Templates directory not found: {directory}")
         return {}
 
+    # Use non-recursive pattern if requested
+    if not recursive and "**" in pattern:
+        pattern = pattern.replace("**/", "")
+
     templates = {}
     for path in sorted(directory.glob(pattern)):
         try:
             template = load_template(path)
             templates[template.name] = template
-            logger.debug(f"Loaded template: {template.name}")
+            logger.debug(f"Loaded template: {template.name} (category={template.category})")
         except Exception as e:
             logger.warning(f"Failed to load template {path}: {e}")
 

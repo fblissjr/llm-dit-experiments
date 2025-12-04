@@ -306,6 +306,77 @@ class APIBackend:
         )
         return self
 
+    @property
+    def supports_generation(self) -> bool:
+        """Whether this backend supports text generation."""
+        return True  # API backends typically support chat completions
+
+    def generate(
+        self,
+        prompt: str,
+        system_prompt: str | None = None,
+        max_new_tokens: int = 512,
+        temperature: float = 0.7,
+        top_p: float = 0.9,
+        do_sample: bool = True,
+    ) -> str:
+        """
+        Generate text via API chat completions endpoint.
+
+        Args:
+            prompt: User prompt/message
+            system_prompt: Optional system prompt (rewriter template content)
+            max_new_tokens: Maximum tokens to generate
+            temperature: Sampling temperature
+            top_p: Nucleus sampling threshold
+            do_sample: Whether to use sampling (ignored for API, always samples)
+
+        Returns:
+            Generated text (assistant response)
+
+        Example:
+            backend = APIBackend.from_url("http://localhost:8000", "qwen3-4b")
+            rewritten = backend.generate(
+                prompt="A cat sleeping",
+                system_prompt="You are an expert at writing image prompts...",
+            )
+        """
+        # Build messages
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+
+        try:
+            logger.info(f"[APIBackend.generate] Requesting chat completion from API")
+            logger.debug(f"[APIBackend.generate] Messages: {len(messages)}, max_tokens: {max_new_tokens}")
+
+            response = self.client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": self.config.model_id,
+                    "messages": messages,
+                    "max_tokens": max_new_tokens,
+                    "temperature": temperature if do_sample else 0.0,
+                    "top_p": top_p,
+                },
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            # Extract assistant message from OpenAI-compatible response
+            generated_text = data["choices"][0]["message"]["content"]
+            logger.debug(f"[APIBackend.generate] Generated {len(generated_text)} chars")
+
+            return generated_text.strip()
+
+        except httpx.HTTPStatusError as e:
+            logger.error(f"[APIBackend.generate] HTTP error: {e.response.status_code} - {e.response.text}")
+            raise
+        except Exception as e:
+            logger.error(f"[APIBackend.generate] Failed to generate via API: {e}")
+            raise
+
     def close(self):
         """Close HTTP client."""
         if self._client is not None:

@@ -73,6 +73,13 @@ class EncodeRequest(BaseModel):
     template: Optional[str] = None
 
 
+class RewriteRequest(BaseModel):
+    prompt: str  # User prompt to rewrite/expand
+    rewriter: str  # Name of rewriter template to use
+    max_tokens: int = 512  # Maximum tokens to generate
+    temperature: float = 0.7  # Sampling temperature
+
+
 @app.get("/")
 async def index():
     """Serve the main page."""
@@ -317,6 +324,94 @@ async def list_templates():
         })
 
     return {"templates": templates}
+
+
+@app.get("/api/rewriters")
+async def list_rewriters():
+    """List available rewriter templates."""
+    # Use encoder from pipeline or standalone encoder
+    enc = encoder if encoder is not None else (pipeline.encoder if pipeline else None)
+    if enc is None or enc.templates is None:
+        return {"rewriters": []}
+
+    # Get rewriter templates (category == "rewriter")
+    rewriters = []
+    for tpl in enc.templates.list_by_category("rewriter"):
+        rewriters.append({
+            "name": tpl.name,
+            "description": tpl.description,
+        })
+
+    return {"rewriters": rewriters}
+
+
+@app.post("/api/rewrite")
+async def rewrite_prompt(request: RewriteRequest):
+    """
+    Rewrite/expand a prompt using a rewriter template.
+
+    Uses the same Qwen3 model loaded for text encoding to generate expanded prompts.
+    This enables prompt enhancement without loading additional models.
+    """
+    # Use encoder from pipeline or standalone encoder
+    enc = encoder if encoder is not None else (pipeline.encoder if pipeline else None)
+    if enc is None:
+        raise HTTPException(status_code=503, detail="Encoder not loaded")
+
+    # Check if backend supports generation
+    backend = getattr(enc, 'backend', None)
+    if backend is None:
+        raise HTTPException(status_code=503, detail="No backend available for generation")
+
+    if not getattr(backend, 'supports_generation', False):
+        raise HTTPException(
+            status_code=400,
+            detail="Backend does not support text generation"
+        )
+
+    # Get the rewriter template
+    if enc.templates is None:
+        raise HTTPException(status_code=400, detail="No templates loaded")
+
+    rewriter_template = enc.templates.get(request.rewriter)
+    if rewriter_template is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Rewriter template not found: {request.rewriter}"
+        )
+
+    if rewriter_template.category != "rewriter":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Template '{request.rewriter}' is not a rewriter template"
+        )
+
+    try:
+        start = time.time()
+        logger.info(f"[Rewrite] Using template: {request.rewriter}")
+        logger.info(f"[Rewrite] Input prompt: {request.prompt[:100]}...")
+
+        # Generate using the backend
+        generated = backend.generate(
+            prompt=request.prompt,
+            system_prompt=rewriter_template.content,
+            max_new_tokens=request.max_tokens,
+            temperature=request.temperature,
+        )
+
+        gen_time = time.time() - start
+        logger.info(f"[Rewrite] Generated {len(generated)} chars in {gen_time:.2f}s")
+
+        return {
+            "original_prompt": request.prompt,
+            "rewritten_prompt": generated,
+            "rewriter": request.rewriter,
+            "gen_time": gen_time,
+        }
+
+    except Exception as e:
+        logger.error(f"Rewrite failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/history")

@@ -1,15 +1,16 @@
 """
-HuggingFace transformers backend for text encoding.
+HuggingFace transformers backend for text encoding and generation.
 
 This is the reference implementation, matching the behavior of:
 - DiffSynth-Studio z_image.py encode_prompt()
 - diffusers ZImagePipeline._encode_prompt()
 
 Key implementation details:
-- Uses AutoModel (not ForCausalLM) since we only need embeddings
-- Extracts hidden_states[-2] (penultimate layer)
+- Uses AutoModelForCausalLM to support both embedding extraction and text generation
+- Extracts hidden_states[-2] (penultimate layer) for embeddings
 - Filters by attention mask to get variable-length outputs
 - Tokenizer padding_side="left" as per Qwen3 convention
+- Supports generate() for prompt rewriting using the same loaded model
 
 Transformers v5 Migration:
 - Uses quantization_config parameter instead of deprecated load_in_8bit/load_in_4bit
@@ -21,7 +22,7 @@ from pathlib import Path
 from typing import List
 
 import torch
-from transformers import AutoModel, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from llm_dit.backends.config import BackendConfig
 from llm_dit.backends.protocol import EncodingOutput
@@ -46,7 +47,7 @@ class TransformersBackend:
 
     def __init__(
         self,
-        model: AutoModel,
+        model: AutoModelForCausalLM,
         tokenizer: AutoTokenizer,
         config: BackendConfig,
     ):
@@ -56,6 +57,7 @@ class TransformersBackend:
         self._embedding_dim = model.config.hidden_size
         self._device = next(model.parameters()).device
         self._dtype = next(model.parameters()).dtype
+        self._supports_generation = True
 
     @classmethod
     def from_pretrained(
@@ -161,7 +163,7 @@ class TransformersBackend:
         # Only add subfolder if it's not None (transformers bugs on subfolder=None)
         if hf_subfolder and not is_local:
             model_kwargs["subfolder"] = hf_subfolder
-        model = AutoModel.from_pretrained(model_load_path, **model_kwargs)
+        model = AutoModelForCausalLM.from_pretrained(model_load_path, **model_kwargs)
         model.eval()
 
         logger.info(
@@ -277,3 +279,88 @@ class TransformersBackend:
         self.model = self.model.to(device)
         self._device = device
         return self
+
+    @property
+    def supports_generation(self) -> bool:
+        """Whether this backend supports text generation."""
+        return self._supports_generation
+
+    def generate(
+        self,
+        prompt: str,
+        system_prompt: str | None = None,
+        max_new_tokens: int = 512,
+        temperature: float = 0.7,
+        top_p: float = 0.9,
+        do_sample: bool = True,
+    ) -> str:
+        """
+        Generate text using the loaded model.
+
+        This method enables using the same Qwen3 model for prompt rewriting
+        in addition to embedding extraction.
+
+        Args:
+            prompt: User prompt/message
+            system_prompt: Optional system prompt (rewriter template content)
+            max_new_tokens: Maximum tokens to generate
+            temperature: Sampling temperature (higher = more creative)
+            top_p: Nucleus sampling threshold
+            do_sample: Whether to use sampling (False = greedy)
+
+        Returns:
+            Generated text (assistant response only, no special tokens)
+
+        Example:
+            backend = TransformersBackend.from_pretrained(...)
+            rewritten = backend.generate(
+                prompt="A cat sleeping",
+                system_prompt="You are an expert at writing image prompts...",
+            )
+        """
+        # Build messages for chat template
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+
+        # Apply chat template with generation prompt
+        formatted = self.tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True,
+        )
+
+        logger.debug(f"[TransformersBackend.generate] Formatted prompt length: {len(formatted)} chars")
+
+        # Tokenize
+        inputs = self.tokenizer(
+            formatted,
+            return_tensors="pt",
+            padding=True,
+            truncation=True,
+            max_length=self.config.max_length,
+        ).to(self.device)
+
+        input_length = inputs.input_ids.shape[1]
+        logger.debug(f"[TransformersBackend.generate] Input tokens: {input_length}")
+
+        # Generate
+        with torch.no_grad():
+            outputs = self.model.generate(
+                **inputs,
+                max_new_tokens=max_new_tokens,
+                temperature=temperature if do_sample else None,
+                top_p=top_p if do_sample else None,
+                do_sample=do_sample,
+                pad_token_id=self.tokenizer.pad_token_id or self.tokenizer.eos_token_id,
+                eos_token_id=self.tokenizer.eos_token_id,
+            )
+
+        # Decode only the generated part (skip input tokens)
+        generated_ids = outputs[0, input_length:]
+        generated_text = self.tokenizer.decode(generated_ids, skip_special_tokens=True)
+
+        logger.debug(f"[TransformersBackend.generate] Generated {len(generated_ids)} tokens")
+
+        return generated_text.strip()

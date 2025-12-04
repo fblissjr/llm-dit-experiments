@@ -142,6 +142,82 @@
                     </select>
                 </div>
 
+                <!-- Prompt Rewriter (collapsible) -->
+                <details class="group" id="rewriterSection">
+                    <summary class="cursor-pointer text-sm font-medium text-gray-400 hover:text-gray-300 flex items-center gap-2 select-none">
+                        <svg class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                        </svg>
+                        Prompt Rewriter (Qwen3)
+                    </summary>
+                    <div class="mt-3 space-y-4 p-4 bg-gray-800/50 rounded-xl border border-gray-700">
+                        <p class="text-xs text-gray-400">Use the loaded Qwen3 model to expand or rewrite your prompt</p>
+
+                        <!-- Rewriter Template -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-2">Rewriter Style</label>
+                            <select id="rewriterTemplate" class="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:ring-2 focus:ring-blue-500 text-sm">
+                                <option value="">Select a rewriter...</option>
+                            </select>
+                        </div>
+
+                        <!-- Rewriter Controls -->
+                        <div class="grid grid-cols-2 gap-3">
+                            <div>
+                                <label class="block text-xs font-medium text-gray-400 mb-1">Max Tokens</label>
+                                <input type="number" id="rewriterMaxTokens" value="512" min="64" max="2048" class="w-full px-2 py-1.5 bg-gray-800 border border-gray-700 rounded-lg text-white text-sm focus:ring-2 focus:ring-blue-500">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-medium text-gray-400 mb-1">Temperature</label>
+                                <input type="number" id="rewriterTemperature" value="0.7" min="0" max="2" step="0.1" class="w-full px-2 py-1.5 bg-gray-800 border border-gray-700 rounded-lg text-white text-sm focus:ring-2 focus:ring-blue-500">
+                            </div>
+                        </div>
+
+                        <!-- Rewrite Button -->
+                        <button
+                            type="button"
+                            id="rewriteBtn"
+                            class="w-full py-2 px-4 bg-purple-600 hover:bg-purple-700 active:bg-purple-800 disabled:bg-gray-700 disabled:cursor-not-allowed text-white font-medium rounded-lg transition-colors text-sm"
+                        >
+                            Rewrite Prompt
+                        </button>
+
+                        <!-- Rewrite Status -->
+                        <div id="rewriteStatus" class="hidden">
+                            <div class="flex items-center gap-2 text-sm text-gray-400">
+                                <div class="w-4 h-4 border-2 border-purple-500 border-t-transparent rounded-full animate-spin"></div>
+                                <span>Rewriting...</span>
+                            </div>
+                        </div>
+
+                        <!-- Rewritten Result -->
+                        <div id="rewrittenResult" class="hidden">
+                            <label class="block text-sm font-medium text-gray-300 mb-2">Rewritten Prompt</label>
+                            <div class="bg-gray-900 rounded-lg p-3 max-h-48 overflow-y-auto">
+                                <pre class="text-xs text-gray-300 whitespace-pre-wrap font-mono" id="rewrittenText"></pre>
+                            </div>
+                            <div class="flex gap-2 mt-2">
+                                <button
+                                    type="button"
+                                    id="useRewrittenBtn"
+                                    class="flex-1 py-2 px-3 bg-green-600 hover:bg-green-700 text-white text-sm font-medium rounded-lg transition-colors"
+                                >
+                                    Use This Prompt
+                                </button>
+                                <button
+                                    type="button"
+                                    id="copyRewrittenBtn"
+                                    class="py-2 px-3 bg-gray-600 hover:bg-gray-500 text-white text-sm font-medium rounded-lg transition-colors"
+                                    title="Copy to clipboard"
+                                >
+                                    Copy
+                                </button>
+                            </div>
+                            <p class="text-xs text-gray-500 mt-2" id="rewriteInfo"></p>
+                        </div>
+                    </div>
+                </details>
+
                 <!-- Resolution & Steps Row -->
                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <!-- Resolution Preset -->
@@ -522,6 +598,120 @@
             }
         }
 
+        // Load rewriters
+        async function loadRewriters() {
+            try {
+                const response = await fetch(`${API_BASE}/api/rewriters`);
+                const data = await response.json();
+                const select = document.getElementById('rewriterTemplate');
+                select.innerHTML = '<option value="">Select a rewriter...</option>';
+
+                if (data.rewriters && data.rewriters.length > 0) {
+                    data.rewriters.forEach(r => {
+                        const opt = document.createElement('option');
+                        opt.value = r.name;
+                        opt.textContent = r.description || r.name;
+                        select.appendChild(opt);
+                    });
+                } else {
+                    // Hide rewriter section if no rewriters available
+                    document.getElementById('rewriterSection').style.display = 'none';
+                }
+            } catch (err) {
+                console.error('Failed to load rewriters:', err);
+                // Hide rewriter section on error
+                document.getElementById('rewriterSection').style.display = 'none';
+            }
+        }
+
+        // Rewrite prompt
+        const rewriteBtn = document.getElementById('rewriteBtn');
+        const rewriteStatus = document.getElementById('rewriteStatus');
+        const rewrittenResult = document.getElementById('rewrittenResult');
+        const rewrittenText = document.getElementById('rewrittenText');
+        const rewriteInfo = document.getElementById('rewriteInfo');
+        const useRewrittenBtn = document.getElementById('useRewrittenBtn');
+        const copyRewrittenBtn = document.getElementById('copyRewrittenBtn');
+
+        let lastRewrittenPrompt = '';
+
+        rewriteBtn.addEventListener('click', async () => {
+            const prompt = document.getElementById('prompt').value.trim();
+            const rewriter = document.getElementById('rewriterTemplate').value;
+            const maxTokens = parseInt(document.getElementById('rewriterMaxTokens').value) || 512;
+            const temperature = parseFloat(document.getElementById('rewriterTemperature').value) || 0.7;
+
+            if (!prompt) {
+                alert('Please enter a prompt first');
+                return;
+            }
+            if (!rewriter) {
+                alert('Please select a rewriter style');
+                return;
+            }
+
+            // Show status
+            rewriteBtn.disabled = true;
+            rewriteStatus.classList.remove('hidden');
+            rewrittenResult.classList.add('hidden');
+
+            try {
+                const response = await fetch(`${API_BASE}/api/rewrite`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        prompt,
+                        rewriter,
+                        max_tokens: maxTokens,
+                        temperature,
+                    }),
+                });
+
+                if (!response.ok) {
+                    const data = await response.json();
+                    throw new Error(data.detail || 'Rewrite failed');
+                }
+
+                const data = await response.json();
+                lastRewrittenPrompt = data.rewritten_prompt;
+                rewrittenText.textContent = data.rewritten_prompt;
+                rewriteInfo.textContent = `Generated in ${data.gen_time.toFixed(2)}s using ${data.rewriter}`;
+                rewrittenResult.classList.remove('hidden');
+
+            } catch (err) {
+                alert('Rewrite failed: ' + err.message);
+            } finally {
+                rewriteBtn.disabled = false;
+                rewriteStatus.classList.add('hidden');
+            }
+        });
+
+        // Use rewritten prompt
+        useRewrittenBtn.addEventListener('click', () => {
+            if (lastRewrittenPrompt) {
+                document.getElementById('prompt').value = lastRewrittenPrompt;
+                // Scroll to prompt
+                document.getElementById('prompt').scrollIntoView({ behavior: 'smooth', block: 'center' });
+                document.getElementById('prompt').focus();
+            }
+        });
+
+        // Copy rewritten prompt
+        copyRewrittenBtn.addEventListener('click', async () => {
+            if (lastRewrittenPrompt) {
+                try {
+                    await navigator.clipboard.writeText(lastRewrittenPrompt);
+                    const originalText = copyRewrittenBtn.textContent;
+                    copyRewrittenBtn.textContent = 'Copied!';
+                    setTimeout(() => {
+                        copyRewrittenBtn.textContent = originalText;
+                    }, 1500);
+                } catch (err) {
+                    console.error('Failed to copy:', err);
+                }
+            }
+        });
+
         // Load history
         async function loadHistory() {
             try {
@@ -806,6 +996,7 @@
 
         // Initialize
         loadTemplates();
+        loadRewriters();
         loadHistory();
     </script>
 </body>
