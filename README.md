@@ -1,6 +1,6 @@
 # llm-dit-experiments
 
-Standalone diffusers-based platform for experimenting with LLM-DiT image generation models. Currently supports Z-Image (Alibaba/Tongyi) with Qwen3-4B text encoder, either locally via `transformers` or distributed via [`heylookitsanllm`](https://github.com/fblissjr/heylookitsanllm), an LLM API server (with hidden state output support) that can run Apple MLX models or llama.cpp GGUF models.
+Standalone diffusers-based platform for experimenting with LLM-DiT image generation models. Currently supports Z-Image (Alibaba/Tongyi) with Qwen3-4B text encoder, either locally via `transformers` or distributed via [`heylookitsanllm`](https://github.com/fblissjr/heylookitsanllm), an LLM API server (with hidden state output support) that can run Apple MLX models (llama.cpp does not expose hidden states at the level we need it here yet)
 
 ## Features
 

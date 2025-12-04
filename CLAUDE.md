@@ -176,8 +176,19 @@ compile = false
 cpu_offload = false
 
 [default.lora]
-paths = []
-scales = []
+loras_dir = "/path/to/loras"  # Directory to scan for LoRA files
+
+[[default.lora.entries]]
+path = "style.safetensors"
+scale = 0.8
+trigger_words = "anime style"
+enabled = true
+
+[[default.lora.entries]]
+path = "detail.safetensors"
+scale = 0.5
+trigger_words = ""
+enabled = true
 ```
 
 ## Web Server
@@ -207,10 +218,12 @@ uv run web/server.py \
   --dit-device cuda \
   --vae-device cuda
 
-# Run with LoRA
+# Run with LoRA (with trigger words)
 uv run web/server.py \
   --model-path /path/to/z-image-turbo \
-  --lora /path/to/style.safetensors:0.8 \
+  --loras-dir /path/to/loras \
+  --lora style.safetensors:0.8 --lora-trigger "anime style" \
+  --lora detail.safetensors:0.5 \
   --dit-device cuda
 
 # Enable debug logging for backend comparison
@@ -309,7 +322,9 @@ uv run scripts/generate.py \
 ### LoRA
 | Flag | Description |
 |------|-------------|
+| `--loras-dir` | Directory to scan for LoRA files |
 | `--lora` | LoRA path with optional scale (path:scale). Repeatable. |
+| `--lora-trigger` | Trigger words for preceding `--lora` flag. Repeatable. |
 
 ## REST API Endpoints
 
@@ -320,6 +335,10 @@ uv run scripts/generate.py \
 | `/api/format-prompt` | POST | Preview formatted prompt (no encoding) |
 | `/api/templates` | GET | List available templates |
 | `/api/schedulers` | GET | List available scheduler types |
+| `/api/loras` | GET | List available LoRAs from configured directory |
+| `/api/loras/active` | GET | Get currently active LoRAs with settings |
+| `/api/loras/apply` | POST | Apply LoRA configuration |
+| `/api/loras/clear` | POST | Remove all LoRAs and restore base weights |
 | `/api/save-embeddings` | POST | Save embeddings to file |
 | `/api/history` | GET | Get generation history |
 | `/api/history/{index}` | DELETE | Delete specific history item |
@@ -348,32 +367,78 @@ uv run scripts/generate.py \
 
 ## LoRA Support
 
-LoRAs are loaded and fused into the transformer weights at startup.
+LoRAs are managed via a ComfyUI-style backup+patch system that allows reversible loading/unloading at runtime without reloading the model.
+
+**Features:**
+- Load/unload LoRAs at runtime (no model reload required)
+- Per-LoRA strength control (0.0-2.0 range)
+- Trigger words automatically prepended to prompts
+- Load order control (order matters for stacking)
+- Directory scanning for LoRA discovery
+
+**Memory Strategy:**
+- Base weights stay in VRAM
+- Backup weights stored in CPU RAM
+- LoRA state dicts cached in CPU RAM
 
 **Via CLI:**
 ```bash
-# Single LoRA
---lora style.safetensors:0.8
+# Single LoRA with trigger words
+--lora style.safetensors:0.8 --lora-trigger "anime style"
 
-# Multiple LoRAs (stackable)
---lora style.safetensors:0.5 --lora detail.safetensors:0.3
+# Multiple LoRAs with trigger words
+--lora style.safetensors:0.8 --lora-trigger "anime style" \
+--lora detail.safetensors:0.5 --lora-trigger "highly detailed"
+
+# With directory scanning
+--loras-dir /path/to/loras \
+--lora anime.safetensors:0.8 --lora-trigger "anime style"
 ```
 
 **Via config.toml:**
 ```toml
 [default.lora]
-paths = ["style.safetensors", "detail.safetensors"]
-scales = [0.5, 0.3]
+loras_dir = "/path/to/loras"
+
+[[default.lora.entries]]
+path = "style.safetensors"
+scale = 0.8
+trigger_words = "anime style"
+enabled = true
+
+[[default.lora.entries]]
+path = "detail.safetensors"
+scale = 0.5
+trigger_words = ""
+enabled = true
 ```
 
 **Via Python:**
 ```python
 pipe = ZImagePipeline.from_pretrained(...)
-pipe.load_lora("style.safetensors", scale=0.8)
-pipe.load_lora(["lora1.safetensors", "lora2.safetensors"], scale=[0.5, 0.3])
+
+# Initialize LoRA manager
+lora_manager = pipe.init_lora_manager(loras_dir="/path/to/loras")
+
+# Add LoRAs
+lora_manager.add_lora("style.safetensors", scale=0.8, trigger_words="anime style")
+lora_manager.add_lora("detail.safetensors", scale=0.5)
+
+# Apply to model
+lora_manager.apply()
+
+# Get combined trigger words
+trigger_words = lora_manager.get_trigger_words()  # "anime style"
+
+# Remove all LoRAs and restore original weights
+lora_manager.clear_all()
 ```
 
-Note: LoRAs are fused (permanently merged) into weights. To remove, reload the model.
+**Via Web UI:**
+- LoRA Settings panel (collapsible)
+- Add LoRAs from dropdown of scanned files
+- Per-LoRA controls: enable/disable, strength slider, trigger words input
+- Apply/Clear buttons for batch operations
 
 ## Related Projects
 
