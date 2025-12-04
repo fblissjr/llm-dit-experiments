@@ -116,6 +116,7 @@ templates/z_image/      # 140+ prompt templates (markdown + YAML frontmatter)
 config.toml             # Example configuration file
 
 docs/                   # User-facing documentation
+    distributed_inference.md  # Running encoder on Mac, DiT on CUDA
     web_server_api.md   # REST API reference
     models/             # Model-specific documentation
 
