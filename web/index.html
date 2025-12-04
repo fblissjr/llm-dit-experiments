@@ -21,9 +21,48 @@
         <!-- Main Form -->
         <div class="bg-gray-800 rounded-lg p-6 mb-6">
             <form id="generateForm" class="space-y-4">
-                <!-- Prompt -->
+                <!-- System Prompt (collapsible) -->
+                <details class="group">
+                    <summary class="cursor-pointer text-sm font-medium text-gray-400 hover:text-gray-300 mb-2">
+                        Advanced: System/Thinking/Assistant
+                    </summary>
+                    <div class="space-y-3 mt-2 p-3 bg-gray-750 rounded-lg border border-gray-600">
+                        <!-- System Prompt -->
+                        <div>
+                            <label for="systemPrompt" class="block text-sm font-medium text-gray-300 mb-1">System Prompt</label>
+                            <textarea
+                                id="systemPrompt"
+                                rows="2"
+                                class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                                placeholder="You are a painter. (optional)"
+                            ></textarea>
+                        </div>
+                        <!-- Thinking Content -->
+                        <div>
+                            <label for="thinkingContent" class="block text-sm font-medium text-gray-300 mb-1">Thinking Content</label>
+                            <textarea
+                                id="thinkingContent"
+                                rows="2"
+                                class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                                placeholder="Orange fur, green eyes. (optional, requires Enable thinking)"
+                            ></textarea>
+                        </div>
+                        <!-- Assistant Content -->
+                        <div>
+                            <label for="assistantContent" class="block text-sm font-medium text-gray-300 mb-1">Assistant Content</label>
+                            <textarea
+                                id="assistantContent"
+                                rows="1"
+                                class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                                placeholder="Here is your image: (optional, after thinking)"
+                            ></textarea>
+                        </div>
+                    </div>
+                </details>
+
+                <!-- User Prompt -->
                 <div>
-                    <label for="prompt" class="block text-sm font-medium text-gray-300 mb-2">Prompt</label>
+                    <label for="prompt" class="block text-sm font-medium text-gray-300 mb-2">User Prompt</label>
                     <textarea
                         id="prompt"
                         name="prompt"
@@ -247,6 +286,9 @@
 
             const params = {
                 prompt: document.getElementById('prompt').value,
+                system_prompt: document.getElementById('systemPrompt').value || null,
+                thinking_content: document.getElementById('thinkingContent').value || null,
+                assistant_content: document.getElementById('assistantContent').value || null,
                 width: parseInt(document.getElementById('width').value),
                 height: parseInt(document.getElementById('height').value),
                 steps: parseInt(document.getElementById('steps').value),
@@ -265,6 +307,9 @@
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
                             prompt: params.prompt,
+                            system_prompt: params.system_prompt,
+                            thinking_content: params.thinking_content,
+                            assistant_content: params.assistant_content,
                             template: params.template,
                             enable_thinking: params.enable_thinking,
                         }),

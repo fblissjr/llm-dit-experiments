@@ -5,10 +5,11 @@ This file provides guidance to Claude Code when working with this repository.
 ## Project Overview
 
 A standalone diffusers-based experimentation platform for LLM-DiT image generation, starting with Z-Image (Alibaba/Tongyi). Designed for hobbyist exploration with:
-- Pluggable LLM backends (transformers, vLLM, SGLang, mlx)
+- Pluggable LLM backends (transformers, API/heylookitsanllm, vLLM, SGLang)
 - Rich template system (140+ templates from ComfyUI)
-- Experiment infrastructure with reproducibility tracking
-- Living documentation for session continuity
+- Distributed inference support (encode on Mac, generate on CUDA)
+- Web UI and REST API for generation
+- Granular device placement (encoder/DiT/VAE on CPU/GPU independently)
 
 ## Critical Rules
 
@@ -65,57 +66,124 @@ Image Output
 {assistant_content}
 ```
 
-- `add_think_block=True` by default (matches DiffSynth reference)
-- Empty assistant_content = no closing `<|im_end|>` (model generating)
-- With assistant_content = close with `<|im_end|>` (complete message)
+**Important**: DiffSynth/diffusers use `enable_thinking=False` (no think block by default).
+The Qwen3 tokenizer parameter is counterintuitive:
+- `enable_thinking=True` in tokenizer = NO think block
+- `enable_thinking=False` in tokenizer = ADDS empty think block
+
+Our `enable_thinking` parameter matches the semantic meaning (True = add think block).
+
+All 4 components exposed via API:
+- `prompt` (required) - User message
+- `system_prompt` (optional) - System message
+- `thinking_content` (optional) - Content inside `<think>...</think>`
+- `assistant_content` (optional) - Content after `</think>`
 
 ## Directory Structure
 
 ```
 src/llm_dit/
     backends/           # LLM backend abstraction (Protocol-based)
-        protocol.py     # TextEncoderBackend Protocol
+        protocol.py     # TextEncoderBackend Protocol, EncodingOutput
         config.py       # BackendConfig dataclass
         transformers.py # HuggingFace transformers backend
+        api.py          # API backend (heylookitsanllm)
     conversation/       # Chat formatting
         types.py        # Message, Conversation dataclasses
         formatter.py    # Qwen3Formatter
     templates/          # Template loading system
         loader.py       # YAML frontmatter parsing
         registry.py     # Template caching
-    encoder/            # Text encoding pipeline
+    encoders/           # Text encoding pipeline
         z_image.py      # ZImageTextEncoder
-    pipeline/           # Diffusion pipeline wrappers
+    pipelines/          # Diffusion pipeline wrappers
         z_image.py      # ZImagePipeline
-    analysis/           # Experiment analysis utilities
-        embedding_compare.py
-        visualization.py
+
+web/
+    server.py           # FastAPI web server
+    index.html          # Web UI
 
 templates/z_image/      # 140+ prompt templates (markdown + YAML frontmatter)
-experiments/            # Structured experiment tracking
+internal/               # Session logs and debug notes
+    LOG.md              # Detailed session log with all changes
 docs/                   # Technical documentation
 ```
 
 ## Living Documentation
 
-- **SESSION_CONTINUITY.md**: Current state, what's working, next steps
-- **GUIDING_PRINCIPLES.md**: Architectural decisions and rationale
+- **internal/LOG.md**: Detailed session log with all changes and investigations
 - **CHANGELOG.md**: Version history (semantic versioning)
 
-## Commands
+## Web Server
 
 ```bash
-# Setup
+# Install torch separately (not pinned in pyproject.toml)
+uv pip install torch --index-url https://download.pytorch.org/whl/cu124
+
+# Sync other dependencies
 uv sync
 
-# Run smoke test
-uv run scripts/smoke_test.py
+# Run web server with local encoder (RTX 4090 recommended)
+uv run web/server.py \
+  --model-path /path/to/z-image-turbo \
+  --text-encoder-device cpu \
+  --dit-device cuda \
+  --vae-device cuda
 
-# Run with specific backend
-uv run scripts/generate.py --prompt "A cat" --template photorealistic
+# Run with API encoder (distributed inference)
+uv run web/server.py \
+  --model-path /path/to/z-image-turbo \
+  --api-url http://mac-host:8080 \
+  --api-model Qwen3-4B \
+  --dit-device cuda \
+  --vae-device cuda
 
-# Run experiment
-uv run experiments/001_thinking_block_effect/run.py
+# Enable debug logging for backend comparison
+uv run web/server.py --model-path ... --debug
+```
+
+## CLI Flags
+
+| Flag | Description |
+|------|-------------|
+| `--model-path` | Path to Z-Image model |
+| `--text-encoder-device` | cpu/cuda/mps/auto |
+| `--dit-device` | cpu/cuda/mps/auto |
+| `--vae-device` | cpu/cuda/mps/auto |
+| `--api-url` | URL for heylookitsanllm API |
+| `--api-model` | Model ID for API backend |
+| `--local-encoder` | Force local encoder with API (for A/B testing) |
+| `--debug` | Enable debug logging (embedding stats, token IDs) |
+| `--cpu-offload` | Enable CPU offload for transformer |
+| `--flash-attn` | Enable Flash Attention |
+| `--compile` | Compile transformer with torch.compile |
+
+## REST API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/generate` | POST | Generate image from prompt |
+| `/api/encode` | POST | Encode prompt to embeddings |
+| `/api/format-prompt` | POST | Preview formatted prompt (no encoding) |
+| `/api/templates` | GET | List available templates |
+| `/api/save-embeddings` | POST | Save embeddings to file |
+| `/health` | GET | Health check |
+
+## API Request Fields
+
+```json
+{
+  "prompt": "A cat sleeping",
+  "system_prompt": "You are a painter.",
+  "thinking_content": "Orange fur, green eyes.",
+  "assistant_content": "Here is your cat:",
+  "enable_thinking": true,
+  "template": "photorealistic",
+  "width": 1024,
+  "height": 1024,
+  "steps": 9,
+  "seed": 42
+}
 ```
 
 ## Related Projects
