@@ -167,6 +167,7 @@ steps = 9
 guidance_scale = 0.0
 
 [default.scheduler]
+type = "flow_euler"  # flow_euler, flow_heun, dpm_solver, unipc
 shift = 3.0
 
 [default.optimization]
@@ -292,6 +293,7 @@ uv run scripts/generate.py \
 | `--height` | Image height (default: 1024) |
 | `--steps` | Inference steps (default: 9) |
 | `--guidance-scale` | CFG scale (default: 0.0) |
+| `--scheduler` | Scheduler type: flow_euler, flow_heun, dpm_solver, unipc |
 | `--shift` | Scheduler shift/mu (default: 3.0) |
 | `--seed` | Random seed |
 
@@ -317,6 +319,7 @@ uv run scripts/generate.py \
 | `/api/encode` | POST | Encode prompt to embeddings |
 | `/api/format-prompt` | POST | Preview formatted prompt (no encoding) |
 | `/api/templates` | GET | List available templates |
+| `/api/schedulers` | GET | List available scheduler types |
 | `/api/save-embeddings` | POST | Save embeddings to file |
 | `/api/history` | GET | Get generation history |
 | `/api/history/{index}` | DELETE | Delete specific history item |
@@ -338,7 +341,8 @@ uv run scripts/generate.py \
   "steps": 9,
   "seed": 42,
   "guidance_scale": 0.0,
-  "shift": 3.0
+  "shift": 3.0,
+  "scheduler": "flow_euler"
 }
 ```
 

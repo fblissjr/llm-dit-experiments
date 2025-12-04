@@ -1,29 +1,393 @@
 """
 LoRA loading utilities for Z-Image DiT.
 
-Supports loading LoRA weights and fusing them into the DiT transformer.
-Based on DiffSynth-Studio's LoRA implementation for compatibility.
+Supports loading LoRA weights with reversible patching (ComfyUI-style).
+Weights are backed up before patching and can be restored without model reload.
 
 Usage:
-    from llm_dit.utils.lora import load_lora, fuse_lora
+    from llm_dit.utils.lora import LoRAManager, LoRAEntry
 
-    # Simple loading (fuses into model)
+    # Create manager for a model
+    manager = LoRAManager(pipeline.transformer, loras_dir="/path/to/loras")
+
+    # Add LoRAs (reversible)
+    manager.add_lora("anime_style.safetensors", scale=0.8, trigger_words="anime style")
+    manager.add_lora("detail.safetensors", scale=0.5)
+    manager.apply()
+
+    # Clear all LoRAs (restore original weights)
+    manager.clear_all()
+
+    # Legacy API (permanent fusion - still supported)
     load_lora(pipeline.transformer, "/path/to/lora.safetensors", scale=0.8)
-
-    # Multiple LoRAs
-    load_lora(pipeline.transformer, "/path/to/lora1.safetensors", scale=0.5)
-    load_lora(pipeline.transformer, "/path/to/lora2.safetensors", scale=0.3)
 """
 
 import logging
+import threading
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Optional, Union
+from typing import Dict, List, Optional, Union
 
 import torch
 import torch.nn as nn
 from safetensors.torch import load_file as load_safetensors
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class LoRAEntry:
+    """Configuration for a single LoRA."""
+
+    path: str  # Path to LoRA file
+    name: str = ""  # Display name (defaults to filename without extension)
+    scale: float = 1.0  # Scale factor (0.0-2.0 typical)
+    trigger_words: str = ""  # Trigger words to prepend to prompt
+    enabled: bool = True  # Whether this LoRA is active
+
+    def __post_init__(self):
+        """Set default name from path if not provided."""
+        if not self.name:
+            self.name = Path(self.path).stem
+
+    def to_dict(self) -> dict:
+        """Serialize to dictionary."""
+        return {
+            "path": self.path,
+            "name": self.name,
+            "scale": self.scale,
+            "trigger_words": self.trigger_words,
+            "enabled": self.enabled,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "LoRAEntry":
+        """Create from dictionary."""
+        return cls(
+            path=data["path"],
+            name=data.get("name", ""),
+            scale=data.get("scale", 1.0),
+            trigger_words=data.get("trigger_words", ""),
+            enabled=data.get("enabled", True),
+        )
+
+
+class LoRAManager:
+    """
+    Manages LoRA loading with reversible patching.
+
+    Uses ComfyUI-style backup+patch pattern:
+    1. Before applying LoRAs, backup original weights to CPU RAM
+    2. Apply LoRA patches to model weights
+    3. To clear, restore from backup (no model reload needed)
+
+    Thread-safe for concurrent apply/clear operations.
+    """
+
+    def __init__(
+        self,
+        model: nn.Module,
+        loras_dir: Optional[str] = None,
+        device: Optional[Union[str, torch.device]] = None,
+        torch_dtype: Optional[torch.dtype] = None,
+    ):
+        """
+        Initialize LoRA manager.
+
+        Args:
+            model: Target model (typically transformer)
+            loras_dir: Directory to scan for LoRA files
+            device: Device for computation (defaults to model device)
+            torch_dtype: Data type (defaults to model dtype)
+        """
+        self.model = model
+        self.loras_dir = Path(loras_dir) if loras_dir else None
+
+        # Infer device/dtype from model
+        if device is None:
+            try:
+                device = next(model.parameters()).device
+            except StopIteration:
+                device = "cpu"
+        if torch_dtype is None:
+            try:
+                torch_dtype = next(model.parameters()).dtype
+            except StopIteration:
+                torch_dtype = torch.float32
+
+        self.device = device
+        self.torch_dtype = torch_dtype
+
+        # State
+        self.backup: Dict[str, torch.Tensor] = {}  # Original weights (on CPU)
+        self.active_loras: List[LoRAEntry] = []  # Currently applied LoRAs
+        self.lora_cache: Dict[str, Dict[str, torch.Tensor]] = {}  # path -> state_dict
+
+        # Thread safety
+        self._lock = threading.Lock()
+
+        # Internal loader
+        self._loader = LoRALoader(device=device, torch_dtype=torch_dtype)
+
+    def scan_directory(self) -> List[str]:
+        """
+        Scan loras_dir for LoRA files.
+
+        Returns:
+            List of absolute paths to LoRA files (.safetensors, .bin)
+        """
+        if self.loras_dir is None or not self.loras_dir.exists():
+            return []
+
+        lora_files = []
+        for ext in ["*.safetensors", "*.bin"]:
+            lora_files.extend(self.loras_dir.glob(ext))
+
+        return sorted([str(p.absolute()) for p in lora_files])
+
+    def get_available_loras(self) -> List[LoRAEntry]:
+        """
+        Get list of available LoRAs from directory.
+
+        Returns:
+            List of LoRAEntry objects (not yet applied)
+        """
+        paths = self.scan_directory()
+        return [LoRAEntry(path=p, enabled=False) for p in paths]
+
+    def _load_lora_state_dict(self, path: str) -> Dict[str, torch.Tensor]:
+        """Load LoRA state dict, using cache if available."""
+        if path in self.lora_cache:
+            return self.lora_cache[path]
+
+        path_obj = Path(path)
+        if not path_obj.exists():
+            raise FileNotFoundError(f"LoRA file not found: {path}")
+
+        if path_obj.suffix == ".safetensors":
+            state_dict = load_safetensors(str(path_obj))
+        else:
+            state_dict = torch.load(str(path_obj), map_location="cpu", weights_only=True)
+
+        self.lora_cache[path] = state_dict
+        return state_dict
+
+    def _backup_weights(self) -> None:
+        """Backup current model weights to CPU."""
+        if self.backup:
+            return  # Already backed up
+
+        logger.info("Backing up model weights to CPU...")
+        for name, module in self.model.named_modules():
+            if hasattr(module, "weight") and module.weight is not None:
+                # Clone to CPU to save VRAM
+                self.backup[name] = module.weight.data.clone().to("cpu")
+
+        logger.info(f"Backed up {len(self.backup)} layers")
+
+    def _restore_weights(self) -> None:
+        """Restore model weights from backup."""
+        if not self.backup:
+            logger.warning("No backup to restore from")
+            return
+
+        logger.info("Restoring model weights from backup...")
+        restored = 0
+        for name, module in self.model.named_modules():
+            if name in self.backup:
+                weight = self.backup[name].to(device=self.device, dtype=self.torch_dtype)
+                module.weight.data.copy_(weight)
+                restored += 1
+
+        logger.info(f"Restored {restored} layers")
+
+    def add_lora(
+        self,
+        path: str,
+        scale: float = 1.0,
+        trigger_words: str = "",
+        enabled: bool = True,
+    ) -> None:
+        """
+        Add a LoRA to the active list.
+
+        Does not apply immediately - call apply() to patch weights.
+
+        Args:
+            path: Path to LoRA file
+            scale: Scale factor
+            trigger_words: Trigger words to prepend to prompt
+            enabled: Whether this LoRA is active
+        """
+        # Resolve relative paths against loras_dir
+        path_obj = Path(path)
+        if not path_obj.is_absolute() and self.loras_dir:
+            path_obj = self.loras_dir / path_obj
+
+        entry = LoRAEntry(
+            path=str(path_obj),
+            scale=scale,
+            trigger_words=trigger_words,
+            enabled=enabled,
+        )
+
+        # Remove existing entry with same path
+        self.active_loras = [l for l in self.active_loras if l.path != entry.path]
+        self.active_loras.append(entry)
+
+    def remove_lora(self, path: str) -> bool:
+        """
+        Remove a LoRA from the active list.
+
+        Does not apply immediately - call apply() to update weights.
+
+        Args:
+            path: Path to LoRA file
+
+        Returns:
+            True if removed, False if not found
+        """
+        original_len = len(self.active_loras)
+        self.active_loras = [l for l in self.active_loras if l.path != path]
+        return len(self.active_loras) < original_len
+
+    def set_scale(self, path: str, scale: float) -> bool:
+        """
+        Update scale for a LoRA.
+
+        Does not apply immediately - call apply() to update weights.
+
+        Args:
+            path: Path to LoRA file
+            scale: New scale factor
+
+        Returns:
+            True if updated, False if not found
+        """
+        for lora in self.active_loras:
+            if lora.path == path:
+                lora.scale = scale
+                return True
+        return False
+
+    def set_enabled(self, path: str, enabled: bool) -> bool:
+        """
+        Enable/disable a LoRA.
+
+        Does not apply immediately - call apply() to update weights.
+
+        Args:
+            path: Path to LoRA file
+            enabled: New enabled state
+
+        Returns:
+            True if updated, False if not found
+        """
+        for lora in self.active_loras:
+            if lora.path == path:
+                lora.enabled = enabled
+                return True
+        return False
+
+    def reorder(self, paths: List[str]) -> None:
+        """
+        Reorder active LoRAs.
+
+        Does not apply immediately - call apply() to update weights.
+
+        Args:
+            paths: List of paths in new order
+        """
+        # Build lookup
+        lora_by_path = {l.path: l for l in self.active_loras}
+
+        # Reorder
+        new_order = []
+        for path in paths:
+            if path in lora_by_path:
+                new_order.append(lora_by_path[path])
+
+        # Add any missing (shouldn't happen but defensive)
+        for lora in self.active_loras:
+            if lora not in new_order:
+                new_order.append(lora)
+
+        self.active_loras = new_order
+
+    def apply(self) -> int:
+        """
+        Apply all active LoRAs to model weights.
+
+        Thread-safe. Backs up weights before first application.
+
+        Returns:
+            Number of layers updated
+        """
+        with self._lock:
+            # Backup original weights if not done
+            self._backup_weights()
+
+            # Restore to clean state
+            self._restore_weights()
+
+            # Apply enabled LoRAs in order
+            total_updated = 0
+            for lora in self.active_loras:
+                if not lora.enabled:
+                    continue
+
+                try:
+                    state_dict = self._load_lora_state_dict(lora.path)
+                    updated = self._loader.fuse_lora_to_base_model(
+                        self.model, state_dict, alpha=lora.scale
+                    )
+                    total_updated += updated
+                    logger.info(f"Applied {lora.name} (scale={lora.scale}): {updated} layers")
+                except Exception as e:
+                    logger.error(f"Failed to apply {lora.name}: {e}")
+
+            return total_updated
+
+    def clear_all(self) -> None:
+        """
+        Clear all LoRAs and restore original weights.
+
+        Thread-safe.
+        """
+        with self._lock:
+            self._restore_weights()
+            self.active_loras.clear()
+            logger.info("Cleared all LoRAs")
+
+    def get_trigger_words(self) -> str:
+        """
+        Get combined trigger words from all enabled LoRAs.
+
+        Returns:
+            Space-separated trigger words
+        """
+        words = []
+        for lora in self.active_loras:
+            if lora.enabled and lora.trigger_words:
+                words.append(lora.trigger_words.strip())
+        return " ".join(words)
+
+    def get_active_entries(self) -> List[LoRAEntry]:
+        """Get list of active LoRA entries."""
+        return list(self.active_loras)
+
+    def set_loras(self, entries: List[LoRAEntry]) -> int:
+        """
+        Replace all LoRAs with new list and apply.
+
+        Args:
+            entries: List of LoRAEntry objects
+
+        Returns:
+            Number of layers updated
+        """
+        self.active_loras = list(entries)
+        return self.apply()
 
 
 class LoRALoader:
@@ -280,14 +644,20 @@ def clear_lora(model: nn.Module) -> None:
     """
     Clear LoRA weights from a model.
 
-    NOTE: Fused LoRAs cannot be cleared - they are permanently merged
-    into the base weights. To clear, you must reload the original model.
+    NOTE: For permanently fused LoRAs (using load_lora/fuse_lora), this is not possible.
+    Use LoRAManager for reversible LoRA application.
 
-    This function is provided for API compatibility but will raise an error.
+    This function is provided for API compatibility but will raise an error
+    unless the model has an attached LoRAManager.
     """
+    # Check if model has a LoRAManager attached
+    if hasattr(model, "_lora_manager") and model._lora_manager is not None:
+        model._lora_manager.clear_all()
+        return
+
     raise NotImplementedError(
         "Fused LoRAs cannot be cleared. Reload the model to remove LoRA weights. "
-        "For unfusable LoRAs, consider using diffusers' PEFT-based LoRA loading."
+        "For reversible LoRAs, use LoRAManager instead of load_lora()."
     )
 
 

@@ -24,10 +24,54 @@ from typing import Any, Callable, Dict, List, Optional, Union
 import torch
 from PIL import Image
 
+from llm_dit.config import SCHEDULER_TYPES
 from llm_dit.conversation import Conversation
 from llm_dit.encoders import ZImageTextEncoder
 
 logger = logging.getLogger(__name__)
+
+
+def get_scheduler_class(scheduler_type: str):
+    """
+    Get the appropriate scheduler class for the given type.
+
+    Args:
+        scheduler_type: One of SCHEDULER_TYPES
+
+    Returns:
+        Scheduler class from diffusers
+
+    Raises:
+        ValueError: If scheduler_type is not recognized
+        ImportError: If diffusers is not installed
+    """
+    try:
+        from diffusers import (
+            FlowMatchEulerDiscreteScheduler,
+            FlowMatchHeunDiscreteScheduler,
+            DPMSolverMultistepScheduler,
+            UniPCMultistepScheduler,
+        )
+    except ImportError as e:
+        raise ImportError(
+            "diffusers is required for ZImagePipeline. "
+            "Install with: pip install diffusers[torch]"
+        ) from e
+
+    scheduler_map = {
+        "flow_euler": FlowMatchEulerDiscreteScheduler,
+        "flow_heun": FlowMatchHeunDiscreteScheduler,
+        "dpm_solver": DPMSolverMultistepScheduler,
+        "unipc": UniPCMultistepScheduler,
+    }
+
+    if scheduler_type not in scheduler_map:
+        raise ValueError(
+            f"Unknown scheduler type: {scheduler_type}. "
+            f"Valid options: {', '.join(SCHEDULER_TYPES)}"
+        )
+
+    return scheduler_map[scheduler_type]
 
 
 def calculate_shift(
@@ -86,6 +130,9 @@ class ZImagePipeline:
         # VAE scale factor (8 for Z-Image)
         self.vae_scale_factor = 2 ** (len(vae.config.block_out_channels) - 1)
 
+        # LoRA manager (initialized lazily)
+        self._lora_manager = None
+
     @classmethod
     def from_pretrained(
         cls,
@@ -97,6 +144,7 @@ class ZImagePipeline:
         encoder_device: str = "auto",
         dit_device: str = "auto",
         vae_device: str = "auto",
+        scheduler_type: str = "flow_euler",
         **kwargs,
     ) -> "ZImagePipeline":
         """
@@ -111,6 +159,7 @@ class ZImagePipeline:
             encoder_device: Device for text encoder (cpu, cuda, mps, auto)
             dit_device: Device for DiT/transformer (cpu, cuda, mps, auto)
             vae_device: Device for VAE (cpu, cuda, mps, auto)
+            scheduler_type: Scheduler type (flow_euler, flow_heun, dpm_solver, unipc)
             **kwargs: Additional arguments
 
         Returns:
@@ -124,6 +173,7 @@ class ZImagePipeline:
                 encoder_device="cpu",
                 dit_device="cuda",
                 vae_device="cuda",
+                scheduler_type="flow_heun",  # 2nd order, better quality
             )
 
         Note:
@@ -159,6 +209,7 @@ class ZImagePipeline:
         logger.info(f"  Encoder: {encoder_device_resolved}")
         logger.info(f"  DiT: {dit_device_resolved}")
         logger.info(f"  VAE: {vae_device_resolved}")
+        logger.info(f"  Scheduler: {scheduler_type}")
 
         # Load encoder (our custom encoder with template support)
         encoder = ZImageTextEncoder.from_pretrained(
@@ -183,7 +234,13 @@ class ZImagePipeline:
         # Extract components from diffusers pipeline
         transformer = diffusers_pipe.transformer
         vae = diffusers_pipe.vae
-        scheduler = diffusers_pipe.scheduler
+
+        # Create scheduler based on scheduler_type
+        # We use the config from the loaded scheduler as a base, but create the requested type
+        SchedulerClass = get_scheduler_class(scheduler_type)
+        base_scheduler_config = diffusers_pipe.scheduler.config
+        scheduler = SchedulerClass.from_config(base_scheduler_config)
+        logger.info(f"  Scheduler class: {SchedulerClass.__name__}")
 
         # Move components to their designated devices
         logger.info(f"Moving transformer to {dit_device_resolved}...")
@@ -270,6 +327,67 @@ class ZImagePipeline:
         self.transformer.to(device)
         self.vae.to(device)
         return self
+
+    def set_scheduler(self, scheduler_type: str) -> None:
+        """
+        Change the scheduler type at runtime.
+
+        Args:
+            scheduler_type: One of SCHEDULER_TYPES (flow_euler, flow_heun, dpm_solver, unipc)
+
+        Example:
+            pipe = ZImagePipeline.from_pretrained(...)
+            pipe.set_scheduler("flow_heun")  # Switch to 2nd order scheduler
+        """
+        SchedulerClass = get_scheduler_class(scheduler_type)
+        self.scheduler = SchedulerClass.from_config(self.scheduler.config)
+        logger.info(f"Scheduler changed to: {SchedulerClass.__name__}")
+
+    @property
+    def lora_manager(self):
+        """
+        Get the LoRA manager for this pipeline.
+
+        Returns None if not initialized. Use init_lora_manager() first.
+        """
+        return self._lora_manager
+
+    def init_lora_manager(self, loras_dir: Optional[str] = None) -> "LoRAManager":
+        """
+        Initialize the LoRA manager for reversible LoRA loading.
+
+        Args:
+            loras_dir: Directory to scan for LoRA files
+
+        Returns:
+            LoRAManager instance
+
+        Example:
+            pipe.init_lora_manager("/path/to/loras")
+            pipe.lora_manager.add_lora("style.safetensors", scale=0.8)
+            pipe.lora_manager.apply()
+        """
+        from llm_dit.utils.lora import LoRAManager
+
+        self._lora_manager = LoRAManager(
+            model=self.transformer,
+            loras_dir=loras_dir,
+            device=next(self.transformer.parameters()).device,
+            torch_dtype=next(self.transformer.parameters()).dtype,
+        )
+        # Attach to transformer for clear_lora() compatibility
+        self.transformer._lora_manager = self._lora_manager
+        return self._lora_manager
+
+    def get_trigger_words(self) -> str:
+        """
+        Get combined trigger words from active LoRAs.
+
+        Returns empty string if no LoRA manager or no trigger words.
+        """
+        if self._lora_manager is None:
+            return ""
+        return self._lora_manager.get_trigger_words()
 
     def load_lora(
         self,
@@ -410,6 +528,12 @@ class ZImagePipeline:
 
         device = self.device
         dtype = self.dtype
+
+        # Prepend trigger words from LoRA manager if available
+        trigger_words = self.get_trigger_words()
+        if trigger_words and isinstance(prompt, str):
+            prompt = f"{trigger_words} {prompt}"
+            logger.info(f"[Pipeline] Prepended LoRA trigger words: {trigger_words}")
 
         # 1. Encode prompt
         logger.info(f"[Pipeline] Encoding prompt on device={device}, dtype={dtype}")
@@ -853,6 +977,7 @@ class ZImagePipeline:
         enable_cpu_offload: bool = False,
         dit_device: str = "auto",
         vae_device: str = "auto",
+        scheduler_type: str = "flow_euler",
         **kwargs,
     ) -> "ZImagePipeline":
         """
@@ -868,6 +993,7 @@ class ZImagePipeline:
             enable_cpu_offload: Enable model CPU offload for low VRAM
             dit_device: Device for DiT/transformer (cpu, cuda, mps, auto)
             vae_device: Device for VAE (cpu, cuda, mps, auto)
+            scheduler_type: Scheduler type (flow_euler, flow_heun, dpm_solver, unipc)
             **kwargs: Additional arguments for diffusers
 
         Returns:
@@ -878,11 +1004,12 @@ class ZImagePipeline:
                 "/path/to/z-image",
                 dit_device="cuda",
                 vae_device="cuda",
+                scheduler_type="flow_heun",
             )
             image = pipe.generate_from_embeddings(embeddings)
         """
         try:
-            from diffusers import AutoencoderKL, FlowMatchEulerDiscreteScheduler
+            from diffusers import AutoencoderKL
             from diffusers.models import ZImageTransformer2DModel
         except ImportError as e:
             raise ImportError(
@@ -953,10 +1080,15 @@ class ZImagePipeline:
         logger.info(f"  VAE loaded: {vae.__class__.__name__}")
         logger.info(f"  VAE dtype: {next(vae.parameters()).dtype}")
 
-        logger.info("Loading scheduler...")
-        scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(
+        logger.info(f"Loading scheduler ({scheduler_type})...")
+        # Load the base scheduler config first
+        from diffusers import FlowMatchEulerDiscreteScheduler
+        base_scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(
             model_path / "scheduler",
         )
+        # Create the requested scheduler type using the base config
+        SchedulerClass = get_scheduler_class(scheduler_type)
+        scheduler = SchedulerClass.from_config(base_scheduler.config)
         logger.info(f"  Scheduler: {scheduler.__class__.__name__}")
 
         # Move to device (unless using CPU offload)

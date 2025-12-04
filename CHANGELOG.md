@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0]
+
+### Added
+- Multiple scheduler support: `flow_euler` (default), `flow_heun`, `dpm_solver`, `unipc`
+  - CLI: `--scheduler flow_heun`
+  - Config: `[default.scheduler] type = "flow_heun"`
+  - Web UI: Scheduler dropdown in "Scheduler Options"
+  - Runtime: `pipeline.set_scheduler("flow_heun")`
+- New `/api/schedulers` endpoint lists available scheduler types with descriptions
+- Scheduler selection persisted in generation history
+
+### Changed
+- Scheduler shift description updated to clarify it applies to flow matching schedulers
+
 ## [0.2.0]
 
 ### Added

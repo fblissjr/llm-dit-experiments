@@ -22,7 +22,7 @@ from typing import Literal
 
 import torch
 
-from .config import Config
+from .config import Config, SCHEDULER_TYPES
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +85,7 @@ class RuntimeConfig:
     compile: bool = False
 
     # Scheduler
+    scheduler_type: str = "flow_euler"
     shift: float = 3.0
 
     # Generation defaults
@@ -106,8 +107,10 @@ class RuntimeConfig:
     local_encoder: bool = False
 
     # LoRA
+    loras_dir: str | None = None  # Directory to scan for LoRA files
     lora_paths: list[str] = field(default_factory=list)
     lora_scales: list[float] = field(default_factory=list)
+    lora_trigger_words: list[str] = field(default_factory=list)  # Parallel to lora_paths
 
     # Server (web only)
     host: str = "127.0.0.1"
@@ -253,6 +256,13 @@ def create_base_parser(
     # Scheduler
     sched_group = parser.add_argument_group("Scheduler")
     sched_group.add_argument(
+        "--scheduler",
+        type=str,
+        choices=SCHEDULER_TYPES,
+        default=None,
+        help=f"Scheduler type (default: flow_euler). Options: {', '.join(SCHEDULER_TYPES)}",
+    )
+    sched_group.add_argument(
         "--shift",
         type=float,
         default=None,
@@ -262,6 +272,12 @@ def create_base_parser(
     # LoRA
     lora_group = parser.add_argument_group("LoRA")
     lora_group.add_argument(
+        "--loras-dir",
+        type=str,
+        default=None,
+        help="Directory to scan for LoRA files",
+    )
+    lora_group.add_argument(
         "--lora",
         type=str,
         action="append",
@@ -269,6 +285,15 @@ def create_base_parser(
         dest="loras",
         metavar="PATH:SCALE",
         help="Load LoRA weights (repeatable). Format: path/to/lora.safetensors:0.8",
+    )
+    lora_group.add_argument(
+        "--lora-trigger",
+        type=str,
+        action="append",
+        default=None,
+        dest="lora_triggers",
+        metavar="WORDS",
+        help="Trigger words for preceding --lora (repeatable). Prepended to prompt.",
     )
 
     # Prompt control
@@ -448,13 +473,23 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
             # Check for scheduler section
             if hasattr(toml_config, 'scheduler'):
                 sched = toml_config.scheduler
+                config.scheduler_type = getattr(sched, 'type', 'flow_euler')
                 config.shift = getattr(sched, 'shift', 3.0)
 
             # Check for LoRA section
             if hasattr(toml_config, 'lora'):
                 lora = toml_config.lora
-                config.lora_paths = getattr(lora, 'paths', [])
-                config.lora_scales = getattr(lora, 'scales', [])
+                config.loras_dir = getattr(lora, 'loras_dir', None)
+                # Use new entries format if available
+                entries = lora.get_entries()
+                if entries:
+                    config.lora_paths = [e.path for e in entries]
+                    config.lora_scales = [e.scale for e in entries]
+                    config.lora_trigger_words = [e.trigger_words for e in entries]
+                else:
+                    # Fallback to legacy format
+                    config.lora_paths = getattr(lora, 'paths', [])
+                    config.lora_scales = getattr(lora, 'scales', [])
 
         except Exception as e:
             logger.warning(f"Failed to load config: {e}")
@@ -497,17 +532,26 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
         config.torch_dtype = args.torch_dtype
 
     # Scheduler overrides
+    if getattr(args, 'scheduler', None) is not None:
+        config.scheduler_type = args.scheduler
     if getattr(args, 'shift', None) is not None:
         config.shift = args.shift
 
     # LoRA overrides
+    if getattr(args, 'loras_dir', None) is not None:
+        config.loras_dir = args.loras_dir
     if getattr(args, 'loras', None):
         config.lora_paths = []
         config.lora_scales = []
-        for lora_str in args.loras:
+        config.lora_trigger_words = []
+        triggers = getattr(args, 'lora_triggers', None) or []
+        for i, lora_str in enumerate(args.loras):
             path, scale = parse_lora_arg(lora_str)
             config.lora_paths.append(path)
             config.lora_scales.append(scale)
+            # Match trigger words to LoRAs (optional, defaults to empty)
+            trigger = triggers[i] if i < len(triggers) else ""
+            config.lora_trigger_words.append(trigger)
 
     # Prompt control overrides
     if getattr(args, 'template', None) is not None:

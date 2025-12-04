@@ -212,19 +212,74 @@ class OptimizationConfig:
     cpu_offload: bool = False  # Enable CPU offload for transformer
 
 
+# Supported scheduler types for Z-Image (flow matching compatible)
+SCHEDULER_TYPES = [
+    "flow_euler",      # FlowMatchEulerDiscreteScheduler (default, 1st order)
+    "flow_heun",       # FlowMatchHeunDiscreteScheduler (2nd order, better quality)
+    "dpm_solver",      # DPMSolverMultistepScheduler (fast, configurable)
+    "unipc",           # UniPCMultistepScheduler (fast convergence)
+]
+
+
 @dataclass
 class SchedulerConfig:
     """Scheduler settings."""
 
-    shift: float = 3.0  # Flow matching scheduler shift parameter
+    type: str = "flow_euler"  # Scheduler type (see SCHEDULER_TYPES)
+    shift: float = 3.0  # Flow matching scheduler shift parameter (mu)
+
+    def __post_init__(self):
+        """Validate scheduler type."""
+        if self.type not in SCHEDULER_TYPES:
+            raise ValueError(
+                f"Unknown scheduler type: {self.type}. "
+                f"Valid options: {', '.join(SCHEDULER_TYPES)}"
+            )
+
+
+@dataclass
+class LoRAEntryConfig:
+    """Configuration for a single LoRA entry."""
+
+    path: str = ""  # Path to LoRA file (relative to loras_dir or absolute)
+    scale: float = 1.0  # Scale factor (0.0-2.0 typical)
+    trigger_words: str = ""  # Trigger words to prepend to prompt
+    enabled: bool = True  # Whether this LoRA is active
 
 
 @dataclass
 class LoRAConfig:
-    """LoRA configuration."""
+    """LoRA configuration.
 
+    Supports both legacy format (paths/scales lists) and new format (loras_dir + entries).
+    """
+
+    # New API: Directory-based with entries
+    loras_dir: str | None = None  # Directory to scan for LoRA files
+    entries: list[LoRAEntryConfig] = field(default_factory=list)  # Individual LoRA configs
+
+    # Legacy API: Simple lists (deprecated but still supported)
     paths: list[str] = field(default_factory=list)  # Paths to LoRA files
     scales: list[float] = field(default_factory=list)  # Scale for each LoRA
+
+    def get_entries(self) -> list[LoRAEntryConfig]:
+        """Get LoRA entries, converting from legacy format if needed.
+
+        Returns:
+            List of LoRAEntryConfig objects
+        """
+        # If entries are specified, use them
+        if self.entries:
+            return self.entries
+
+        # Otherwise, convert from legacy paths/scales format
+        entries = []
+        scales = self.scales if self.scales else [1.0] * len(self.paths)
+        for i, path in enumerate(self.paths):
+            scale = scales[i] if i < len(scales) else 1.0
+            entries.append(LoRAEntryConfig(path=path, scale=scale))
+
+        return entries
 
 
 @dataclass
@@ -251,6 +306,19 @@ class Config:
         scheduler_data = data.pop("scheduler", {})
         lora_data = data.pop("lora", {})
 
+        # Parse LoRA entries if present
+        lora_entries = []
+        if "entries" in lora_data:
+            for entry_data in lora_data.pop("entries"):
+                lora_entries.append(LoRAEntryConfig(**entry_data))
+
+        lora_config = LoRAConfig(
+            loras_dir=lora_data.get("loras_dir"),
+            entries=lora_entries,
+            paths=lora_data.get("paths", []),
+            scales=lora_data.get("scales", []),
+        )
+
         return cls(
             model_path=data.get("model_path", ""),
             templates_dir=data.get("templates_dir"),
@@ -259,7 +327,7 @@ class Config:
             generation=GenerationConfig(**generation_data),
             optimization=OptimizationConfig(**optimization_data),
             scheduler=SchedulerConfig(**scheduler_data),
-            lora=LoRAConfig(**lora_data),
+            lora=lora_config,
         )
 
     @classmethod
@@ -345,9 +413,21 @@ class Config:
                 "cpu_offload": self.optimization.cpu_offload,
             },
             "scheduler": {
+                "type": self.scheduler.type,
                 "shift": self.scheduler.shift,
             },
             "lora": {
+                "loras_dir": self.lora.loras_dir,
+                "entries": [
+                    {
+                        "path": e.path,
+                        "scale": e.scale,
+                        "trigger_words": e.trigger_words,
+                        "enabled": e.enabled,
+                    }
+                    for e in self.lora.entries
+                ],
+                # Legacy format (for backwards compatibility)
                 "paths": self.lora.paths,
                 "scales": self.lora.scales,
             },

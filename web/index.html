@@ -142,6 +142,72 @@
                     </select>
                 </div>
 
+                <!-- LoRA Panel (collapsible) -->
+                <details class="group" id="loraPanel">
+                    <summary class="cursor-pointer text-sm font-medium text-gray-400 hover:text-gray-300 flex items-center gap-2 select-none">
+                        <svg class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                        </svg>
+                        LoRA Settings
+                        <span id="loraCount" class="ml-auto text-xs text-blue-400"></span>
+                    </summary>
+                    <div class="mt-3 space-y-4 p-4 bg-gray-800/50 rounded-xl border border-gray-700">
+                        <!-- LoRA Directory Status -->
+                        <div id="loraDirStatus" class="text-xs text-gray-500">
+                            Loading...
+                        </div>
+
+                        <!-- Add LoRA Dropdown -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-2">Add LoRA</label>
+                            <div class="flex gap-2">
+                                <select id="loraSelect" class="flex-1 px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white text-sm focus:ring-2 focus:ring-blue-500">
+                                    <option value="">Select a LoRA...</option>
+                                </select>
+                                <button
+                                    type="button"
+                                    id="addLoraBtn"
+                                    class="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors"
+                                >
+                                    Add
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Active LoRAs List -->
+                        <div>
+                            <div class="flex items-center justify-between mb-2">
+                                <label class="block text-sm font-medium text-gray-300">Active LoRAs</label>
+                                <button
+                                    type="button"
+                                    id="clearLorasBtn"
+                                    class="text-xs text-gray-400 hover:text-red-400 transition-colors"
+                                >
+                                    Clear all
+                                </button>
+                            </div>
+                            <div id="activeLorasList" class="space-y-2">
+                                <div class="text-sm text-gray-500 italic">No LoRAs loaded</div>
+                            </div>
+                        </div>
+
+                        <!-- Trigger Words Preview -->
+                        <div id="triggerWordsPreview" class="hidden">
+                            <label class="block text-xs font-medium text-gray-400 mb-1">Trigger words (prepended to prompt)</label>
+                            <div class="text-sm text-blue-300 bg-gray-900 rounded-lg px-3 py-2 font-mono" id="triggerWordsText"></div>
+                        </div>
+
+                        <!-- Apply Changes Button -->
+                        <button
+                            type="button"
+                            id="applyLorasBtn"
+                            class="w-full py-2 px-4 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-700 disabled:cursor-not-allowed text-white font-medium rounded-lg transition-colors text-sm"
+                        >
+                            Apply LoRA Changes
+                        </button>
+                    </div>
+                </details>
+
                 <!-- Resolution & Steps Row -->
                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <!-- Resolution Preset -->
@@ -276,6 +342,18 @@
                         Scheduler Options
                     </summary>
                     <div class="mt-3 space-y-4 p-4 bg-gray-800/50 rounded-xl border border-gray-700">
+                        <!-- Scheduler Type -->
+                        <div>
+                            <label for="scheduler" class="block text-sm font-medium text-gray-300 mb-2">Scheduler</label>
+                            <select id="scheduler" class="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-white focus:ring-2 focus:ring-blue-500">
+                                <option value="flow_euler">Flow Euler (default)</option>
+                                <option value="flow_heun">Flow Heun (better quality)</option>
+                                <option value="dpm_solver">DPM Solver (fast)</option>
+                                <option value="unipc">UniPC (fast convergence)</option>
+                            </select>
+                            <p class="text-xs text-gray-500 mt-1">Different sampling algorithms for image generation</p>
+                        </div>
+
                         <!-- Guidance Scale -->
                         <div>
                             <label class="block text-sm font-medium text-gray-300 mb-2">
@@ -315,7 +393,7 @@
                                 <span>0.5</span>
                                 <span>10.0</span>
                             </div>
-                            <p class="text-xs text-gray-500 mt-1">FlowMatchEuler scheduler shift parameter (default: 3.0)</p>
+                            <p class="text-xs text-gray-500 mt-1">Flow matching scheduler shift parameter (default: 3.0)</p>
                         </div>
                     </div>
                 </details>
@@ -599,7 +677,7 @@
             stepsSlider.value = item.steps || 9;
             stepsValue.textContent = stepsSlider.value;
 
-            // Set guidance_scale and shift if they exist
+            // Set guidance_scale, shift, and scheduler if they exist
             if (item.guidance_scale !== undefined) {
                 guidanceScaleSlider.value = item.guidance_scale;
                 guidanceScaleValue.textContent = parseFloat(item.guidance_scale).toFixed(1);
@@ -607,6 +685,9 @@
             if (item.shift !== undefined) {
                 shiftSlider.value = item.shift;
                 shiftValue.textContent = parseFloat(item.shift).toFixed(1);
+            }
+            if (item.scheduler) {
+                document.getElementById('scheduler').value = item.scheduler;
             }
 
             // Set resolution
@@ -638,6 +719,9 @@
             downloadBtn.href = `data:image/png;base64,${item.image_b64}`;
 
             let infoText = `${item.width}x${item.height}, ${item.steps} steps, ${item.gen_time.toFixed(1)}s`;
+            if (item.scheduler && item.scheduler !== 'flow_euler') {
+                infoText += `, ${item.scheduler}`;
+            }
             if (item.guidance_scale !== undefined && item.guidance_scale !== 0) {
                 infoText += `, CFG ${item.guidance_scale}`;
             }
@@ -724,6 +808,7 @@
                 seed: document.getElementById('seed').value ? parseInt(document.getElementById('seed').value) : null,
                 guidance_scale: parseFloat(guidanceScaleSlider.value),
                 shift: parseFloat(shiftSlider.value),
+                scheduler: document.getElementById('scheduler').value,
             };
 
             currentParams = params;
@@ -771,6 +856,9 @@
                 downloadBtn.href = imageUrl;
 
                 let infoText = `${width}x${height}, ${params.steps} steps${genTime ? `, ${parseFloat(genTime).toFixed(1)}s` : ''}${seed && seed !== 'random' ? `, seed ${seed}` : ''}`;
+                if (params.scheduler && params.scheduler !== 'flow_euler') {
+                    infoText += `, ${params.scheduler}`;
+                }
                 if (params.guidance_scale !== 0) {
                     infoText += `, CFG ${params.guidance_scale}`;
                 }
@@ -804,9 +892,259 @@
             return div.innerHTML;
         }
 
+        // =========================================================================
+        // LoRA Management
+        // =========================================================================
+
+        // LoRA state
+        let availableLoras = [];
+        let activeLoras = [];  // Local state, synced with server
+
+        // LoRA DOM elements
+        const loraSelect = document.getElementById('loraSelect');
+        const addLoraBtn = document.getElementById('addLoraBtn');
+        const activeLorasList = document.getElementById('activeLorasList');
+        const clearLorasBtn = document.getElementById('clearLorasBtn');
+        const applyLorasBtn = document.getElementById('applyLorasBtn');
+        const loraDirStatus = document.getElementById('loraDirStatus');
+        const loraCount = document.getElementById('loraCount');
+        const triggerWordsPreview = document.getElementById('triggerWordsPreview');
+        const triggerWordsText = document.getElementById('triggerWordsText');
+
+        // Load available LoRAs from server
+        async function loadAvailableLoras() {
+            try {
+                const response = await fetch(`${API_BASE}/api/loras`);
+                const data = await response.json();
+                availableLoras = data.loras || [];
+
+                // Update directory status
+                if (data.loras_dir) {
+                    loraDirStatus.textContent = `Directory: ${data.loras_dir}`;
+                } else {
+                    loraDirStatus.textContent = 'No LoRA directory configured (use --loras-dir)';
+                }
+
+                // Populate dropdown
+                loraSelect.innerHTML = '<option value="">Select a LoRA...</option>';
+                availableLoras.forEach(lora => {
+                    const opt = document.createElement('option');
+                    opt.value = lora.path;
+                    opt.textContent = lora.name;
+                    loraSelect.appendChild(opt);
+                });
+
+            } catch (err) {
+                console.error('Failed to load LoRAs:', err);
+                loraDirStatus.textContent = 'Failed to load LoRAs';
+            }
+        }
+
+        // Load active LoRAs from server
+        async function loadActiveLoras() {
+            try {
+                const response = await fetch(`${API_BASE}/api/loras/active`);
+                const data = await response.json();
+                activeLoras = data.active_loras || [];
+                renderActiveLoras();
+                updateTriggerWordsPreview(data.trigger_words || '');
+            } catch (err) {
+                console.error('Failed to load active LoRAs:', err);
+            }
+        }
+
+        // Render active LoRAs list
+        function renderActiveLoras() {
+            if (activeLoras.length === 0) {
+                activeLorasList.innerHTML = '<div class="text-sm text-gray-500 italic">No LoRAs loaded</div>';
+                loraCount.textContent = '';
+                return;
+            }
+
+            loraCount.textContent = `(${activeLoras.length} active)`;
+
+            activeLorasList.innerHTML = activeLoras.map((lora, index) => `
+                <div class="lora-item bg-gray-900 rounded-lg p-3 border border-gray-700" data-index="${index}" data-path="${escapeHtml(lora.path)}">
+                    <div class="flex items-center justify-between mb-2">
+                        <div class="flex items-center gap-2">
+                            <input
+                                type="checkbox"
+                                class="lora-enabled w-4 h-4 text-blue-600 bg-gray-700 border-gray-600 rounded focus:ring-blue-500"
+                                ${lora.enabled ? 'checked' : ''}
+                            >
+                            <span class="text-sm font-medium text-white">${escapeHtml(lora.name)}</span>
+                        </div>
+                        <button class="lora-remove text-gray-400 hover:text-red-400 p-1" title="Remove">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                            </svg>
+                        </button>
+                    </div>
+                    <div class="space-y-2">
+                        <div>
+                            <label class="block text-xs text-gray-400 mb-1">
+                                Strength: <span class="lora-scale-value text-blue-400">${lora.scale.toFixed(2)}</span>
+                            </label>
+                            <input
+                                type="range"
+                                class="lora-scale w-full"
+                                min="0"
+                                max="2"
+                                step="0.05"
+                                value="${lora.scale}"
+                            >
+                        </div>
+                        <div>
+                            <label class="block text-xs text-gray-400 mb-1">Trigger words</label>
+                            <input
+                                type="text"
+                                class="lora-trigger w-full px-2 py-1 bg-gray-800 border border-gray-700 rounded text-white text-xs focus:ring-2 focus:ring-blue-500"
+                                value="${escapeHtml(lora.trigger_words || '')}"
+                                placeholder="Optional trigger words..."
+                            >
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+
+            // Add event listeners
+            activeLorasList.querySelectorAll('.lora-item').forEach((item, index) => {
+                const lora = activeLoras[index];
+
+                // Enable checkbox
+                item.querySelector('.lora-enabled').addEventListener('change', (e) => {
+                    lora.enabled = e.target.checked;
+                    updateTriggerWordsFromLocal();
+                });
+
+                // Scale slider
+                const scaleSlider = item.querySelector('.lora-scale');
+                const scaleValue = item.querySelector('.lora-scale-value');
+                scaleSlider.addEventListener('input', (e) => {
+                    lora.scale = parseFloat(e.target.value);
+                    scaleValue.textContent = lora.scale.toFixed(2);
+                });
+
+                // Trigger words input
+                item.querySelector('.lora-trigger').addEventListener('input', (e) => {
+                    lora.trigger_words = e.target.value;
+                    updateTriggerWordsFromLocal();
+                });
+
+                // Remove button
+                item.querySelector('.lora-remove').addEventListener('click', () => {
+                    activeLoras.splice(index, 1);
+                    renderActiveLoras();
+                    updateTriggerWordsFromLocal();
+                });
+            });
+        }
+
+        // Update trigger words preview from local state
+        function updateTriggerWordsFromLocal() {
+            const words = activeLoras
+                .filter(l => l.enabled && l.trigger_words)
+                .map(l => l.trigger_words.trim())
+                .join(' ');
+            updateTriggerWordsPreview(words);
+        }
+
+        // Update trigger words preview
+        function updateTriggerWordsPreview(words) {
+            if (words) {
+                triggerWordsPreview.classList.remove('hidden');
+                triggerWordsText.textContent = words;
+            } else {
+                triggerWordsPreview.classList.add('hidden');
+            }
+        }
+
+        // Add LoRA button handler
+        addLoraBtn.addEventListener('click', () => {
+            const path = loraSelect.value;
+            if (!path) return;
+
+            // Check if already added
+            if (activeLoras.some(l => l.path === path)) {
+                alert('This LoRA is already added');
+                return;
+            }
+
+            // Find the LoRA info
+            const loraInfo = availableLoras.find(l => l.path === path);
+            if (!loraInfo) return;
+
+            // Add to active list
+            activeLoras.push({
+                path: loraInfo.path,
+                name: loraInfo.name,
+                scale: 1.0,
+                trigger_words: '',
+                enabled: true,
+            });
+
+            renderActiveLoras();
+            loraSelect.value = '';  // Reset dropdown
+        });
+
+        // Clear all LoRAs
+        clearLorasBtn.addEventListener('click', async () => {
+            if (activeLoras.length === 0) return;
+
+            if (confirm('Clear all LoRAs and restore original weights?')) {
+                try {
+                    const response = await fetch(`${API_BASE}/api/loras/clear`, { method: 'POST' });
+                    if (response.ok) {
+                        activeLoras = [];
+                        renderActiveLoras();
+                        updateTriggerWordsPreview('');
+                    } else {
+                        const data = await response.json();
+                        alert('Failed to clear LoRAs: ' + (data.detail || 'Unknown error'));
+                    }
+                } catch (err) {
+                    alert('Failed to clear LoRAs: ' + err.message);
+                }
+            }
+        });
+
+        // Apply LoRA changes
+        applyLorasBtn.addEventListener('click', async () => {
+            applyLorasBtn.disabled = true;
+            applyLorasBtn.textContent = 'Applying...';
+
+            try {
+                const response = await fetch(`${API_BASE}/api/loras/apply`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ loras: activeLoras }),
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    updateTriggerWordsPreview(data.trigger_words || '');
+                    applyLorasBtn.textContent = `Applied (${data.layers_updated} layers)`;
+                    setTimeout(() => {
+                        applyLorasBtn.textContent = 'Apply LoRA Changes';
+                    }, 2000);
+                } else {
+                    alert('Failed to apply LoRAs: ' + (data.detail || 'Unknown error'));
+                    applyLorasBtn.textContent = 'Apply LoRA Changes';
+                }
+            } catch (err) {
+                alert('Failed to apply LoRAs: ' + err.message);
+                applyLorasBtn.textContent = 'Apply LoRA Changes';
+            } finally {
+                applyLorasBtn.disabled = false;
+            }
+        });
+
         // Initialize
         loadTemplates();
         loadHistory();
+        loadAvailableLoras();
+        loadActiveLoras();
     </script>
 </body>
 </html>

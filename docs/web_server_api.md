@@ -61,6 +61,7 @@ steps = 9
 guidance_scale = 0.0
 
 [default.scheduler]
+type = "flow_euler"  # flow_euler, flow_heun, dpm_solver, unipc
 shift = 3.0
 
 [default.optimization]
@@ -115,6 +116,7 @@ scales = [0.8, 0.5]
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
+| `--scheduler` | str | flow_euler | Scheduler type (flow_euler, flow_heun, dpm_solver, unipc) |
 | `--shift` | float | 3.0 | Scheduler shift/mu parameter |
 | `--guidance-scale` | float | 0.0 | CFG scale (0.0 for Z-Image Turbo) |
 
@@ -146,7 +148,8 @@ Generate an image from a text prompt.
   "steps": 9,
   "seed": null,
   "guidance_scale": 0.0,
-  "shift": 3.0
+  "shift": 3.0,
+  "scheduler": "flow_euler"
 }
 ```
 
@@ -165,6 +168,7 @@ Generate an image from a text prompt.
 | seed | int | No | null | Random seed for reproducibility |
 | guidance_scale | float | No | 0.0 | CFG scale (0.0 recommended for Z-Image) |
 | shift | float | No | 3.0 | Scheduler shift/mu parameter |
+| scheduler | string | No | flow_euler | Scheduler type (flow_euler, flow_heun, dpm_solver, unipc) |
 
 **Response:** PNG image stream
 
@@ -252,6 +256,24 @@ List available templates.
 
 ---
 
+### GET /api/schedulers
+
+List available scheduler types.
+
+**Response:**
+```json
+{
+  "schedulers": [
+    {"id": "flow_euler", "name": "Flow Euler", "description": "Default 1st order Euler scheduler for flow matching"},
+    {"id": "flow_heun", "name": "Flow Heun", "description": "2nd order Heun scheduler, better quality but slower"},
+    {"id": "dpm_solver", "name": "DPM Solver", "description": "DPM++ 2M multistep solver, fast and configurable"},
+    {"id": "unipc", "name": "UniPC", "description": "Unified predictor-corrector, fast convergence"}
+  ]
+}
+```
+
+---
+
 ### POST /api/save-embeddings
 
 Save embeddings to a safetensors file.
@@ -313,6 +335,8 @@ Get generation history (stored in memory, cleared on server restart).
       "seed": null,
       "template": null,
       "guidance_scale": 0.0,
+      "shift": 3.0,
+      "scheduler": "flow_euler",
       "gen_time": 12.5,
       "image_b64": "iVBORw0KGgo..."
     }

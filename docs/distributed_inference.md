@@ -92,6 +92,7 @@ uv run scripts/generate.py \
   --model-path /path/to/z-image-turbo \
   --dit-device cuda \
   --vae-device cuda \
+  --scheduler flow_heun \
   --output image.png \
   "A sunset over mountains"
 ```
@@ -118,6 +119,10 @@ vae = "cuda"
 width = 1024
 height = 1024
 steps = 9
+
+[default.scheduler]
+type = "flow_euler"  # flow_euler, flow_heun, dpm_solver, unipc
+shift = 3.0
 ```
 
 Then run:

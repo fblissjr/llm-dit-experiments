@@ -12,6 +12,7 @@ Standalone diffusers-based platform for experimenting with LLM-DiT image generat
 - 100+ prompt templates with system prompt + thinking tokens
 - LoRA support with automatic weight fusion
 - Granular device placement (encoder/DiT/VAE independently)
+- Multiple scheduler support (flow_euler, flow_heun, dpm_solver, unipc)
 
 ## Quick Start
 
@@ -105,6 +106,7 @@ steps = 9
 guidance_scale = 0.0
 
 [default.scheduler]
+type = "flow_euler"  # flow_euler, flow_heun, dpm_solver, unipc
 shift = 3.0
 
 [default.lora]
@@ -175,8 +177,17 @@ Image Output
 | Embedding extraction | hidden_states[-2] | Penultimate layer |
 | CFG scale | 0.0 | Baked in via Decoupled-DMD |
 | Steps | 8-9 | Turbo distilled |
-| Scheduler | FlowMatchEuler | shift=3.0 |
+| Scheduler | FlowMatchEuler | shift=3.0 (default) |
 | VAE | 16-channel | Wan-family |
+
+### Available Schedulers
+
+| Scheduler | Description |
+|-----------|-------------|
+| `flow_euler` | Default 1st order Euler for flow matching |
+| `flow_heun` | 2nd order Heun, better quality but slower |
+| `dpm_solver` | DPM++ 2M multistep, fast and configurable |
+| `unipc` | Unified predictor-corrector, fast convergence |
 
 ## Documentation
 

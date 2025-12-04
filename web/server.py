@@ -43,6 +43,7 @@ pipeline = None
 encoder = None  # For encoder-only mode
 config = None
 encoder_only_mode = False
+loras_dir = None  # Directory for LoRA scanning
 
 # In-memory history (cleared on server restart)
 generation_history = []
@@ -62,6 +63,7 @@ class GenerateRequest(BaseModel):
     template: Optional[str] = None
     guidance_scale: float = 0.0
     shift: float = 3.0  # Scheduler shift parameter
+    scheduler: str = "flow_euler"  # Scheduler type (flow_euler, flow_heun, dpm_solver, unipc)
 
 
 class EncodeRequest(BaseModel):
@@ -71,6 +73,17 @@ class EncodeRequest(BaseModel):
     assistant_content: Optional[str] = None  # Content after </think> (optional)
     enable_thinking: bool = False  # Add <think></think> structure
     template: Optional[str] = None
+
+
+class LoRAEntryRequest(BaseModel):
+    path: str  # Path to LoRA file (can be relative to loras_dir)
+    scale: float = 1.0  # Scale factor (0.0-2.0)
+    trigger_words: str = ""  # Trigger words to prepend
+    enabled: bool = True  # Whether active
+
+
+class LoRAApplyRequest(BaseModel):
+    loras: list[LoRAEntryRequest]  # List of LoRAs to apply
 
 
 @app.get("/")
@@ -155,6 +168,7 @@ async def generate(request: GenerateRequest):
         logger.info(f"  Template: {request.template}")
         logger.info(f"  Thinking: {request.enable_thinking}")
         logger.info(f"  Guidance: {request.guidance_scale}")
+        logger.info(f"  Scheduler: {request.scheduler}")
         logger.info("-" * 60)
         logger.info("Pipeline state:")
         logger.info(f"  pipeline.device: {pipeline.device}")
@@ -166,6 +180,21 @@ async def generate(request: GenerateRequest):
             backend = getattr(pipeline.encoder, 'backend', None)
             logger.info(f"  encoder.backend: {type(backend).__name__ if backend else 'None'}")
         logger.info("-" * 60)
+
+        # Set scheduler if different from current
+        current_scheduler_type = pipeline.scheduler.__class__.__name__
+        requested_scheduler_type = request.scheduler
+        # Map scheduler class names to our type names
+        scheduler_class_map = {
+            "FlowMatchEulerDiscreteScheduler": "flow_euler",
+            "FlowMatchHeunDiscreteScheduler": "flow_heun",
+            "DPMSolverMultistepScheduler": "dpm_solver",
+            "UniPCMultistepScheduler": "unipc",
+        }
+        current_type = scheduler_class_map.get(current_scheduler_type, "flow_euler")
+        if current_type != requested_scheduler_type:
+            logger.info(f"Switching scheduler from {current_type} to {requested_scheduler_type}")
+            pipeline.set_scheduler(requested_scheduler_type)
 
         # Set up generator for reproducibility
         generator = None
@@ -239,6 +268,8 @@ async def generate(request: GenerateRequest):
             "seed": request.seed,
             "template": request.template,
             "guidance_scale": request.guidance_scale,
+            "shift": request.shift,
+            "scheduler": request.scheduler,
             "gen_time": gen_time,
             "image_b64": img_b64,
             "formatted_prompt": formatted_prompt,
@@ -319,6 +350,42 @@ async def list_templates():
     return {"templates": templates}
 
 
+@app.get("/api/schedulers")
+async def list_schedulers():
+    """List available scheduler types."""
+    from llm_dit.config import SCHEDULER_TYPES
+
+    scheduler_info = {
+        "flow_euler": {
+            "name": "Flow Euler",
+            "description": "Default 1st order Euler scheduler for flow matching",
+        },
+        "flow_heun": {
+            "name": "Flow Heun",
+            "description": "2nd order Heun scheduler, better quality but slower",
+        },
+        "dpm_solver": {
+            "name": "DPM Solver",
+            "description": "DPM++ 2M multistep solver, fast and configurable",
+        },
+        "unipc": {
+            "name": "UniPC",
+            "description": "Unified predictor-corrector, fast convergence",
+        },
+    }
+
+    schedulers = []
+    for sched_type in SCHEDULER_TYPES:
+        info = scheduler_info.get(sched_type, {"name": sched_type, "description": ""})
+        schedulers.append({
+            "id": sched_type,
+            "name": info["name"],
+            "description": info["description"],
+        })
+
+    return {"schedulers": schedulers}
+
+
 @app.get("/api/history")
 async def get_history():
     """Get generation history."""
@@ -396,6 +463,124 @@ async def save_embeddings_endpoint(request: EncodeRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# =========================================================================
+# LoRA Management Endpoints
+# =========================================================================
+
+
+@app.get("/api/loras")
+async def list_available_loras():
+    """List available LoRAs from the configured loras_dir."""
+    global loras_dir, pipeline
+
+    if pipeline is None or pipeline.lora_manager is None:
+        # No LoRA manager, return what we can scan
+        if loras_dir is None:
+            return {"loras": [], "loras_dir": None}
+
+        from llm_dit.utils.lora import LoRAEntry
+        from pathlib import Path
+
+        loras = []
+        loras_path = Path(loras_dir)
+        if loras_path.exists():
+            for ext in ["*.safetensors", "*.bin"]:
+                for lora_file in loras_path.glob(ext):
+                    loras.append({
+                        "path": str(lora_file.absolute()),
+                        "name": lora_file.stem,
+                        "scale": 1.0,
+                        "trigger_words": "",
+                        "enabled": False,
+                    })
+
+        return {"loras": sorted(loras, key=lambda x: x["name"]), "loras_dir": str(loras_dir)}
+
+    # Use LoRA manager
+    available = pipeline.lora_manager.get_available_loras()
+    return {
+        "loras": [l.to_dict() for l in available],
+        "loras_dir": str(pipeline.lora_manager.loras_dir) if pipeline.lora_manager.loras_dir else None,
+    }
+
+
+@app.get("/api/loras/active")
+async def get_active_loras():
+    """Get currently active LoRAs with their settings."""
+    if pipeline is None or pipeline.lora_manager is None:
+        return {"active_loras": [], "trigger_words": ""}
+
+    active = pipeline.lora_manager.get_active_entries()
+    trigger_words = pipeline.lora_manager.get_trigger_words()
+
+    return {
+        "active_loras": [l.to_dict() for l in active],
+        "trigger_words": trigger_words,
+    }
+
+
+@app.post("/api/loras/apply")
+async def apply_loras(request: LoRAApplyRequest):
+    """Apply LoRA configuration to the pipeline."""
+    if pipeline is None:
+        raise HTTPException(status_code=503, detail="Pipeline not loaded")
+
+    if pipeline.lora_manager is None:
+        # Initialize LoRA manager if not done
+        pipeline.init_lora_manager(loras_dir)
+
+    try:
+        from llm_dit.utils.lora import LoRAEntry
+
+        # Convert request to LoRAEntry objects
+        entries = []
+        for lora in request.loras:
+            entries.append(LoRAEntry(
+                path=lora.path,
+                scale=lora.scale,
+                trigger_words=lora.trigger_words,
+                enabled=lora.enabled,
+            ))
+
+        # Apply
+        layers_updated = pipeline.lora_manager.set_loras(entries)
+
+        return {
+            "success": True,
+            "layers_updated": layers_updated,
+            "active_count": len([e for e in entries if e.enabled]),
+            "trigger_words": pipeline.lora_manager.get_trigger_words(),
+        }
+
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to apply LoRAs: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/loras/clear")
+async def clear_loras():
+    """Clear all LoRAs and restore original weights."""
+    if pipeline is None:
+        raise HTTPException(status_code=503, detail="Pipeline not loaded")
+
+    if pipeline.lora_manager is None:
+        return {"success": True, "message": "No LoRAs to clear"}
+
+    try:
+        pipeline.lora_manager.clear_all()
+        return {"success": True, "message": "All LoRAs cleared, weights restored"}
+    except Exception as e:
+        logger.error(f"Failed to clear LoRAs: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =========================================================================
+# Pipeline Loading Functions
+# =========================================================================
+
+
 def load_pipeline(
     model_path: str,
     templates_dir: Optional[str] = None,
@@ -404,11 +589,17 @@ def load_pipeline(
     vae_device: str = "auto",
     lora_paths: Optional[list] = None,
     lora_scales: Optional[list] = None,
+    lora_trigger_words: Optional[list] = None,
+    loras_dir_path: Optional[str] = None,
 ):
     """Load the full generation pipeline."""
-    global pipeline
+    global pipeline, loras_dir
 
     from llm_dit.pipelines import ZImagePipeline
+
+    # Set global loras_dir for API access
+    if loras_dir_path:
+        loras_dir = loras_dir_path
 
     logger.info(f"Loading pipeline from {model_path}...")
     logger.info(f"  Encoder device: {encoder_device}")
@@ -429,15 +620,31 @@ def load_pipeline(
     logger.info(f"Pipeline loaded in {load_time:.1f}s")
     logger.info(f"Device: {pipeline.device}")
 
+    # Initialize LoRA manager with configured directory
+    if loras_dir_path or lora_paths:
+        pipeline.init_lora_manager(loras_dir_path)
+        logger.info(f"LoRA manager initialized (loras_dir: {loras_dir_path})")
+
     # Load LoRAs if configured
     if lora_paths:
-        logger.info(f"Loading {len(lora_paths)} LoRA(s)...")
+        from llm_dit.utils.lora import LoRAEntry
+
+        logger.info(f"Loading {len(lora_paths)} LoRA(s) via manager...")
         scales = lora_scales if lora_scales else [1.0] * len(lora_paths)
+        triggers = lora_trigger_words if lora_trigger_words else [""] * len(lora_paths)
+
+        for i, path in enumerate(lora_paths):
+            scale = scales[i] if i < len(scales) else 1.0
+            trigger = triggers[i] if i < len(triggers) else ""
+            pipeline.lora_manager.add_lora(path, scale=scale, trigger_words=trigger)
+
         try:
-            updated = pipeline.load_lora(lora_paths, scale=scales)
-            logger.info(f"  {updated} layers updated by LoRA")
+            updated = pipeline.lora_manager.apply()
+            logger.info(f"  {updated} layers updated by LoRA(s)")
+            if pipeline.lora_manager.get_trigger_words():
+                logger.info(f"  Trigger words: {pipeline.lora_manager.get_trigger_words()}")
         except Exception as e:
-            logger.error(f"  Failed to load LoRA: {e}")
+            logger.error(f"  Failed to apply LoRA(s): {e}")
 
 
 def load_encoder_only(
@@ -816,6 +1023,8 @@ def main():
             vae_device=runtime_config.vae_device,
             lora_paths=runtime_config.lora_paths,
             lora_scales=runtime_config.lora_scales,
+            lora_trigger_words=runtime_config.lora_trigger_words,
+            loras_dir_path=runtime_config.loras_dir,
         )
         mode = "full"
 

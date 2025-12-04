@@ -138,6 +138,11 @@ class TestGenerationConfig:
 class TestSchedulerConfig:
     """Test SchedulerConfig dataclass."""
 
+    def test_default_values(self):
+        config = SchedulerConfig()
+        assert config.type == "flow_euler"
+        assert config.shift == 3.0
+
     def test_default_shift(self):
         config = SchedulerConfig()
         assert config.shift == 3.0
@@ -145,6 +150,20 @@ class TestSchedulerConfig:
     def test_custom_shift(self):
         config = SchedulerConfig(shift=5.0)
         assert config.shift == 5.0
+
+    def test_scheduler_types(self):
+        """Test all valid scheduler types."""
+        from llm_dit.config import SCHEDULER_TYPES
+
+        for stype in SCHEDULER_TYPES:
+            config = SchedulerConfig(type=stype)
+            assert config.type == stype
+
+    def test_invalid_scheduler_type_raises(self):
+        """Test that invalid scheduler type raises ValueError."""
+        with pytest.raises(ValueError) as exc_info:
+            SchedulerConfig(type="invalid_scheduler")
+        assert "Unknown scheduler type" in str(exc_info.value)
 
 
 class TestLoRAConfig:
