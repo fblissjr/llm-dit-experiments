@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0]
+
+### Added
+- Runtime LoRA management with reversible loading/unloading (no model reload required)
+  - ComfyUI-style backup+patch system: original weights backed up to CPU RAM
+  - Per-LoRA strength control (0.0-2.0 range)
+  - Trigger words automatically prepended to prompts
+  - Load order control (order matters for stacking)
+  - Directory scanning for LoRA discovery
+- New CLI flags:
+  - `--loras-dir PATH` - Directory to scan for LoRA files
+  - `--lora-trigger WORDS` - Trigger words for preceding `--lora` flag
+- New REST API endpoints:
+  - `GET /api/loras` - List available LoRAs from configured directory
+  - `GET /api/loras/active` - Get currently active LoRAs with settings
+  - `POST /api/loras/apply` - Apply LoRA configuration
+  - `POST /api/loras/clear` - Remove all LoRAs and restore base weights
+- Web UI LoRA management panel:
+  - Collapsible LoRA Settings section
+  - Add LoRAs from dropdown of available files
+  - Per-LoRA controls: enable/disable, strength slider, trigger words input
+  - Apply/Clear buttons for batch operations
+- LoRAManager class with thread-safe operations
+- LoRAEntry dataclass for LoRA configuration
+- Unit tests for LoRAManager
+
+### Changed
+- LoRA loading is now reversible (was permanent fusion)
+- Config structure updated: `[default.lora]` now supports `loras_dir` and `[[entries]]`
+
 ## [0.3.0]
 
 ### Added

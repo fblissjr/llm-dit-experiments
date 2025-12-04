@@ -10,7 +10,7 @@ A standalone diffusers-based experimentation platform for LLM-DiT image generati
 - Distributed inference support (encode on Mac, generate on CUDA)
 - Web UI and REST API for generation
 - Granular device placement (encoder/DiT/VAE on CPU/GPU independently)
-- LoRA support with automatic weight fusion
+- Reversible LoRA management (load/unload at runtime, no model reload)
 - TOML config file support with CLI overrides
 
 ## Critical Rules
@@ -101,7 +101,7 @@ src/llm_dit/
     pipelines/          # Diffusion pipeline wrappers
         z_image.py      # ZImagePipeline
     utils/              # Utility modules
-        lora.py         # LoRA loading and fusion
+        lora.py         # LoRAManager with backup/patch system
     cli.py              # Shared CLI argument parser and config loading
     config.py           # Configuration dataclasses
 
