@@ -44,6 +44,10 @@ encoder = None  # For encoder-only mode
 config = None
 encoder_only_mode = False
 
+# In-memory history (cleared on server restart)
+generation_history = []
+MAX_HISTORY = 50
+
 
 class GenerateRequest(BaseModel):
     prompt: str  # User prompt
@@ -195,12 +199,42 @@ async def generate(request: GenerateRequest):
         image.save(img_bytes, format="PNG")
         img_bytes.seek(0)
 
+        # Convert to base64 for history storage
+        import base64
+        img_bytes_copy = io.BytesIO()
+        image.save(img_bytes_copy, format="PNG")
+        img_b64 = base64.b64encode(img_bytes_copy.getvalue()).decode("ascii")
+
+        # Store in history
+        history_entry = {
+            "id": len(generation_history),
+            "timestamp": time.time(),
+            "prompt": request.prompt,
+            "system_prompt": request.system_prompt,
+            "thinking_content": request.thinking_content,
+            "assistant_content": request.assistant_content,
+            "enable_thinking": request.enable_thinking,
+            "width": request.width,
+            "height": request.height,
+            "steps": request.steps,
+            "seed": request.seed,
+            "template": request.template,
+            "guidance_scale": request.guidance_scale,
+            "gen_time": gen_time,
+            "image_b64": img_b64,
+        }
+        generation_history.insert(0, history_entry)
+        # Trim history
+        if len(generation_history) > MAX_HISTORY:
+            generation_history.pop()
+
         return StreamingResponse(
             img_bytes,
             media_type="image/png",
             headers={
                 "X-Generation-Time": str(gen_time),
                 "X-Seed": str(request.seed) if request.seed else "random",
+                "X-History-Id": str(history_entry["id"]),
             },
         )
 
@@ -263,6 +297,30 @@ async def list_templates():
         })
 
     return {"templates": templates}
+
+
+@app.get("/api/history")
+async def get_history():
+    """Get generation history."""
+    return {"history": generation_history}
+
+
+@app.delete("/api/history/{index}")
+async def delete_history_item(index: int):
+    """Delete a history item."""
+    if 0 <= index < len(generation_history):
+        deleted = generation_history.pop(index)
+        return {"deleted": deleted, "remaining": len(generation_history)}
+    raise HTTPException(status_code=404, detail="History item not found")
+
+
+@app.delete("/api/history")
+async def clear_history():
+    """Clear all history."""
+    global generation_history
+    count = len(generation_history)
+    generation_history = []
+    return {"cleared": count}
 
 
 @app.post("/api/save-embeddings")

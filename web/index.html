@@ -2,257 +2,347 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Z-Image Generator</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
+        /* Custom scrollbar */
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: #1f2937; }
+        ::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #6b7280; }
+
+        /* Loading animation */
         .loading { animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
         @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .5; } }
+
+        /* Smooth transitions */
+        .panel-transition { transition: transform 0.3s ease, opacity 0.3s ease; }
+
+        /* History thumbnail hover */
+        .history-item:hover .history-overlay { opacity: 1; }
+        .history-overlay { transition: opacity 0.2s ease; }
+
+        /* Mobile bottom sheet */
+        @media (max-width: 768px) {
+            .history-panel {
+                position: fixed;
+                bottom: 0;
+                left: 0;
+                right: 0;
+                max-height: 60vh;
+                border-radius: 1rem 1rem 0 0;
+                z-index: 50;
+            }
+            .history-panel.collapsed {
+                max-height: 48px;
+            }
+        }
+
+        /* Prevent body scroll when panel open on mobile */
+        body.panel-open { overflow: hidden; }
+
+        /* Input focus states */
+        input:focus, textarea:focus, select:focus {
+            outline: none;
+            ring: 2px;
+        }
+
+        /* Touch-friendly buttons */
+        @media (max-width: 768px) {
+            button, select, input[type="number"] {
+                min-height: 44px;
+            }
+        }
     </style>
 </head>
 <body class="bg-gray-900 text-gray-100 min-h-screen">
-    <div class="container mx-auto px-4 py-8 max-w-4xl">
-        <!-- Header -->
-        <header class="mb-8">
-            <h1 class="text-3xl font-bold text-white mb-2">Z-Image Generator</h1>
-            <p class="text-gray-400">Text-to-image generation with Qwen3-4B encoder</p>
-        </header>
-
-        <!-- Main Form -->
-        <div class="bg-gray-800 rounded-lg p-6 mb-6">
-            <form id="generateForm" class="space-y-4">
-                <!-- System Prompt (collapsible) -->
-                <details class="group">
-                    <summary class="cursor-pointer text-sm font-medium text-gray-400 hover:text-gray-300 mb-2">
-                        Advanced: System/Thinking/Assistant
-                    </summary>
-                    <div class="space-y-3 mt-2 p-3 bg-gray-750 rounded-lg border border-gray-600">
-                        <!-- System Prompt -->
-                        <div>
-                            <label for="systemPrompt" class="block text-sm font-medium text-gray-300 mb-1">System Prompt</label>
-                            <textarea
-                                id="systemPrompt"
-                                rows="2"
-                                class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
-                                placeholder="You are a painter. (optional)"
-                            ></textarea>
-                        </div>
-                        <!-- Thinking Content -->
-                        <div>
-                            <label for="thinkingContent" class="block text-sm font-medium text-gray-300 mb-1">Thinking Content</label>
-                            <textarea
-                                id="thinkingContent"
-                                rows="2"
-                                class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
-                                placeholder="Orange fur, green eyes. (optional, requires Enable thinking)"
-                            ></textarea>
-                        </div>
-                        <!-- Assistant Content -->
-                        <div>
-                            <label for="assistantContent" class="block text-sm font-medium text-gray-300 mb-1">Assistant Content</label>
-                            <textarea
-                                id="assistantContent"
-                                rows="1"
-                                class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
-                                placeholder="Here is your image: (optional, after thinking)"
-                            ></textarea>
-                        </div>
+    <div class="flex flex-col md:flex-row min-h-screen">
+        <!-- Main Content -->
+        <div class="flex-1 p-4 md:p-6 pb-20 md:pb-6 overflow-y-auto">
+            <!-- Header -->
+            <header class="mb-6">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <h1 class="text-2xl md:text-3xl font-bold text-white">Z-Image</h1>
+                        <p class="text-sm text-gray-400">Text-to-image with Qwen3-4B</p>
                     </div>
-                </details>
+                    <button
+                        id="historyToggle"
+                        class="md:hidden p-2 rounded-lg bg-gray-800 text-gray-300 hover:bg-gray-700"
+                        aria-label="Toggle history"
+                    >
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                        </svg>
+                    </button>
+                </div>
+            </header>
 
-                <!-- User Prompt -->
+            <!-- Main Form -->
+            <form id="generateForm" class="space-y-4">
+                <!-- Prompt -->
                 <div>
-                    <label for="prompt" class="block text-sm font-medium text-gray-300 mb-2">User Prompt</label>
+                    <label for="prompt" class="block text-sm font-medium text-gray-300 mb-2">Prompt</label>
                     <textarea
                         id="prompt"
-                        name="prompt"
                         rows="3"
-                        class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        placeholder="A beautiful sunset over the ocean with golden light reflecting on gentle waves..."
+                        class="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
+                        placeholder="Describe what you want to generate..."
                     ></textarea>
                 </div>
 
-                <!-- Settings Row -->
-                <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    <!-- Width -->
+                <!-- Quick Settings Row -->
+                <div class="grid grid-cols-2 gap-3">
+                    <!-- Resolution Preset -->
                     <div>
-                        <label for="width" class="block text-sm font-medium text-gray-300 mb-1">Width</label>
-                        <select id="width" class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
-                            <option value="512">512</option>
-                            <option value="768">768</option>
-                            <option value="1024" selected>1024</option>
-                            <option value="1280">1280</option>
-                        </select>
-                    </div>
-
-                    <!-- Height -->
-                    <div>
-                        <label for="height" class="block text-sm font-medium text-gray-300 mb-1">Height</label>
-                        <select id="height" class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
-                            <option value="512">512</option>
-                            <option value="768">768</option>
-                            <option value="1024" selected>1024</option>
-                            <option value="1280">1280</option>
+                        <label class="block text-sm font-medium text-gray-300 mb-1">Size</label>
+                        <select id="resolution" class="w-full px-3 py-2.5 bg-gray-800 border border-gray-700 rounded-xl text-white focus:ring-2 focus:ring-blue-500">
+                            <option value="512x512">512 x 512</option>
+                            <option value="768x768">768 x 768</option>
+                            <option value="1024x1024" selected>1024 x 1024</option>
+                            <option value="1280x1280">1280 x 1280</option>
+                            <option value="1024x768">1024 x 768 (4:3)</option>
+                            <option value="768x1024">768 x 1024 (3:4)</option>
+                            <option value="1280x720">1280 x 720 (16:9)</option>
+                            <option value="720x1280">720 x 1280 (9:16)</option>
+                            <option value="1024x576">1024 x 576 (16:9)</option>
+                            <option value="576x1024">576 x 1024 (9:16)</option>
+                            <option value="1152x896">1152 x 896 (9:7)</option>
+                            <option value="896x1152">896 x 1152 (7:9)</option>
+                            <option value="1216x832">1216 x 832 (3:2)</option>
+                            <option value="832x1216">832 x 1216 (2:3)</option>
+                            <option value="custom">Custom...</option>
                         </select>
                     </div>
 
                     <!-- Steps -->
                     <div>
-                        <label for="steps" class="block text-sm font-medium text-gray-300 mb-1">Steps</label>
-                        <input
-                            type="number"
-                            id="steps"
-                            value="9"
-                            min="1"
-                            max="50"
-                            class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        >
+                        <label class="block text-sm font-medium text-gray-300 mb-1">Steps</label>
+                        <select id="steps" class="w-full px-3 py-2.5 bg-gray-800 border border-gray-700 rounded-xl text-white focus:ring-2 focus:ring-blue-500">
+                            <option value="4">4 (fast)</option>
+                            <option value="6">6</option>
+                            <option value="8">8</option>
+                            <option value="9" selected>9 (default)</option>
+                            <option value="12">12</option>
+                            <option value="16">16</option>
+                            <option value="20">20 (quality)</option>
+                        </select>
                     </div>
+                </div>
 
-                    <!-- Seed -->
+                <!-- Custom Resolution (hidden by default) -->
+                <div id="customResolution" class="hidden grid grid-cols-2 gap-3">
                     <div>
-                        <label for="seed" class="block text-sm font-medium text-gray-300 mb-1">Seed</label>
+                        <label class="block text-sm font-medium text-gray-300 mb-1">Width</label>
+                        <select id="width" class="w-full px-3 py-2.5 bg-gray-800 border border-gray-700 rounded-xl text-white focus:ring-2 focus:ring-blue-500">
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-1">Height</label>
+                        <select id="height" class="w-full px-3 py-2.5 bg-gray-800 border border-gray-700 rounded-xl text-white focus:ring-2 focus:ring-blue-500">
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Seed & Template Row -->
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-1">Seed</label>
                         <input
                             type="number"
                             id="seed"
                             placeholder="Random"
-                            class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            class="w-full px-3 py-2.5 bg-gray-800 border border-gray-700 rounded-xl text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500"
                         >
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-1">Template</label>
+                        <select id="template" class="w-full px-3 py-2.5 bg-gray-800 border border-gray-700 rounded-xl text-white focus:ring-2 focus:ring-blue-500">
+                            <option value="">None</option>
+                        </select>
                     </div>
                 </div>
 
-                <!-- Template -->
-                <div>
-                    <label for="template" class="block text-sm font-medium text-gray-300 mb-1">Template (optional)</label>
-                    <select id="template" class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
-                        <option value="">None (loading...)</option>
-                    </select>
-                </div>
+                <!-- Advanced Options (collapsible) -->
+                <details class="group">
+                    <summary class="cursor-pointer text-sm font-medium text-gray-400 hover:text-gray-300 flex items-center gap-2">
+                        <svg class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                        </svg>
+                        Advanced Options
+                    </summary>
+                    <div class="mt-3 space-y-3 p-4 bg-gray-800/50 rounded-xl border border-gray-700">
+                        <!-- System Prompt -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-1">System Prompt</label>
+                            <textarea
+                                id="systemPrompt"
+                                rows="2"
+                                class="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500 text-sm resize-none"
+                                placeholder="You are a painter. (optional)"
+                            ></textarea>
+                        </div>
 
-                <!-- Toggles Row -->
-                <div class="flex items-center space-x-6">
-                    <div class="flex items-center">
-                        <input
-                            type="checkbox"
-                            id="enableThinking"
-                            class="w-4 h-4 text-blue-600 bg-gray-700 border-gray-600 rounded focus:ring-blue-500"
-                        >
-                        <label for="enableThinking" class="ml-2 text-sm text-gray-300">Enable thinking block (experimental)</label>
+                        <!-- Thinking toggle + content -->
+                        <div class="flex items-start gap-3">
+                            <div class="flex items-center pt-1">
+                                <input
+                                    type="checkbox"
+                                    id="enableThinking"
+                                    class="w-4 h-4 text-blue-600 bg-gray-700 border-gray-600 rounded focus:ring-blue-500"
+                                >
+                                <label for="enableThinking" class="ml-2 text-sm text-gray-300">Think</label>
+                            </div>
+                            <div class="flex-1">
+                                <textarea
+                                    id="thinkingContent"
+                                    rows="2"
+                                    class="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500 text-sm resize-none"
+                                    placeholder="Thinking content (optional)"
+                                ></textarea>
+                            </div>
+                        </div>
+
+                        <!-- Assistant Content -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-1">Assistant Content</label>
+                            <input
+                                type="text"
+                                id="assistantContent"
+                                class="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500 text-sm"
+                                placeholder="Here is your image: (optional)"
+                            >
+                        </div>
+
+                        <!-- Encoder Only -->
+                        <div class="flex items-center">
+                            <input
+                                type="checkbox"
+                                id="encoderOnly"
+                                class="w-4 h-4 text-yellow-600 bg-gray-700 border-gray-600 rounded focus:ring-yellow-500"
+                            >
+                            <label for="encoderOnly" class="ml-2 text-sm text-gray-300">Encoder only (test mode)</label>
+                        </div>
                     </div>
-                    <div class="flex items-center">
-                        <input
-                            type="checkbox"
-                            id="encoderOnly"
-                            class="w-4 h-4 text-yellow-600 bg-gray-700 border-gray-600 rounded focus:ring-yellow-500"
-                        >
-                        <label for="encoderOnly" class="ml-2 text-sm text-gray-300">Encoder only (fast test)</label>
-                    </div>
-                </div>
+                </details>
 
                 <!-- Generate Button -->
                 <button
                     type="submit"
                     id="generateBtn"
-                    class="w-full py-3 px-4 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-medium rounded-lg transition-colors"
+                    class="w-full py-4 px-4 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 disabled:bg-gray-700 disabled:cursor-not-allowed text-white font-semibold rounded-xl transition-colors text-lg shadow-lg shadow-blue-500/20"
                 >
-                    Generate Image
+                    Generate
                 </button>
             </form>
-        </div>
 
-        <!-- Status -->
-        <div id="status" class="hidden mb-6">
-            <div class="bg-gray-800 rounded-lg p-4">
-                <div class="flex items-center space-x-3">
-                    <div class="loading w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
-                    <span id="statusText" class="text-gray-300">Generating...</span>
+            <!-- Status/Progress -->
+            <div id="status" class="hidden mt-4">
+                <div class="bg-gray-800 rounded-xl p-4">
+                    <div class="flex items-center gap-3">
+                        <div class="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+                        <span id="statusText" class="text-gray-300">Generating...</span>
+                    </div>
+                    <div class="mt-3 h-2 bg-gray-700 rounded-full overflow-hidden">
+                        <div id="progressFill" class="h-full bg-gradient-to-r from-blue-500 to-purple-500 transition-all duration-300" style="width: 0%"></div>
+                    </div>
                 </div>
-                <div id="progressBar" class="mt-3 h-2 bg-gray-700 rounded-full overflow-hidden">
-                    <div id="progressFill" class="h-full bg-blue-500 transition-all duration-300" style="width: 0%"></div>
+            </div>
+
+            <!-- Error -->
+            <div id="error" class="hidden mt-4">
+                <div class="bg-red-900/30 border border-red-700/50 rounded-xl p-4">
+                    <div class="flex items-start gap-3">
+                        <svg class="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                        </svg>
+                        <p class="text-red-300 text-sm" id="errorText"></p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Result -->
+            <div id="result" class="hidden mt-4">
+                <div class="bg-gray-800 rounded-xl overflow-hidden">
+                    <img id="resultImage" class="w-full" alt="Generated image">
+                    <div class="p-4">
+                        <div class="flex items-center justify-between gap-4">
+                            <div class="text-sm text-gray-400 truncate flex-1" id="resultInfo"></div>
+                            <div class="flex gap-2">
+                                <button
+                                    id="reuseBtn"
+                                    class="px-3 py-2 bg-gray-700 hover:bg-gray-600 text-white text-sm font-medium rounded-lg transition-colors"
+                                    title="Edit this prompt"
+                                >
+                                    Edit
+                                </button>
+                                <a
+                                    id="downloadBtn"
+                                    download="z-image.png"
+                                    class="px-3 py-2 bg-green-600 hover:bg-green-700 text-white text-sm font-medium rounded-lg transition-colors"
+                                >
+                                    Save
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Encoder Result -->
+            <div id="encoderResult" class="hidden mt-4">
+                <div class="bg-gray-800 rounded-xl p-4">
+                    <h3 class="text-lg font-medium text-white mb-3">Encoder Output</h3>
+                    <div class="grid grid-cols-2 gap-3 text-sm">
+                        <div class="bg-gray-700/50 rounded-lg p-3">
+                            <div class="text-gray-400 text-xs">Shape</div>
+                            <div class="text-white font-mono" id="encShape">-</div>
+                        </div>
+                        <div class="bg-gray-700/50 rounded-lg p-3">
+                            <div class="text-gray-400 text-xs">Time</div>
+                            <div class="text-white font-mono" id="encTime">-</div>
+                        </div>
+                    </div>
+                    <details class="mt-3">
+                        <summary class="text-sm text-gray-400 cursor-pointer hover:text-gray-300">Formatted Prompt</summary>
+                        <pre class="mt-2 p-3 bg-gray-900 rounded-lg text-xs text-gray-300 overflow-x-auto whitespace-pre-wrap" id="encFormattedPrompt">-</pre>
+                    </details>
                 </div>
             </div>
         </div>
 
-        <!-- Error -->
-        <div id="error" class="hidden mb-6">
-            <div class="bg-red-900/50 border border-red-700 rounded-lg p-4">
-                <p class="text-red-300" id="errorText"></p>
+        <!-- History Panel -->
+        <div id="historyPanel" class="history-panel md:w-80 lg:w-96 bg-gray-800 border-l border-gray-700 md:block hidden collapsed md:!block">
+            <!-- Mobile handle -->
+            <div class="md:hidden h-12 flex items-center justify-center cursor-pointer" id="historyHandle">
+                <div class="w-12 h-1 bg-gray-600 rounded-full"></div>
             </div>
-        </div>
 
-        <!-- Image Result -->
-        <div id="result" class="hidden">
-            <div class="bg-gray-800 rounded-lg p-4">
-                <img id="resultImage" class="w-full rounded-lg" alt="Generated image">
-                <div class="mt-4 flex justify-between items-center">
-                    <div class="text-sm text-gray-400">
-                        <span id="resultInfo"></span>
-                    </div>
-                    <a
-                        id="downloadBtn"
-                        download="generated.png"
-                        class="px-4 py-2 bg-green-600 hover:bg-green-700 text-white font-medium rounded-lg transition-colors"
-                    >
-                        Download
-                    </a>
-                </div>
+            <div class="p-4 border-b border-gray-700 flex items-center justify-between">
+                <h2 class="font-semibold text-white">History</h2>
+                <button
+                    id="clearHistoryBtn"
+                    class="text-xs text-gray-400 hover:text-red-400 transition-colors"
+                >
+                    Clear all
+                </button>
             </div>
-        </div>
 
-        <!-- Encoder Result -->
-        <div id="encoderResult" class="hidden">
-            <div class="bg-gray-800 rounded-lg p-4">
-                <h3 class="text-lg font-medium text-white mb-3">Encoder Output</h3>
-                <div class="grid grid-cols-2 gap-4 text-sm">
-                    <div class="bg-gray-700 rounded p-3">
-                        <div class="text-gray-400">Shape</div>
-                        <div class="text-white font-mono" id="encShape">-</div>
-                    </div>
-                    <div class="bg-gray-700 rounded p-3">
-                        <div class="text-gray-400">Encode Time</div>
-                        <div class="text-white font-mono" id="encTime">-</div>
-                    </div>
-                    <div class="bg-gray-700 rounded p-3">
-                        <div class="text-gray-400">Sequence Length</div>
-                        <div class="text-white font-mono" id="encSeqLen">-</div>
-                    </div>
-                    <div class="bg-gray-700 rounded p-3">
-                        <div class="text-gray-400">Hidden Dim</div>
-                        <div class="text-white font-mono" id="encHiddenDim">-</div>
-                    </div>
-                </div>
-                <div class="mt-4 bg-gray-700 rounded p-3">
-                    <div class="text-gray-400 mb-1">Embedding Stats</div>
-                    <div class="text-white font-mono text-sm" id="encStats">-</div>
-                </div>
-                <div id="encFormattedPromptContainer" class="mt-4 bg-gray-700 rounded p-3 hidden">
-                    <div class="text-gray-400 mb-1">Formatted Prompt</div>
-                    <pre class="text-white font-mono text-xs whitespace-pre-wrap break-all" id="encFormattedPrompt">-</pre>
-                </div>
-                <div class="mt-4">
-                    <button
-                        id="saveEmbeddingsBtn"
-                        class="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white font-medium rounded-lg transition-colors"
-                    >
-                        Save Embeddings
-                    </button>
+            <div id="historyList" class="overflow-y-auto p-2" style="max-height: calc(100vh - 120px);">
+                <div class="text-center text-gray-500 text-sm py-8">
+                    No generations yet
                 </div>
             </div>
         </div>
-
-        <!-- Debug Info -->
-        <details class="mt-6">
-            <summary class="text-gray-500 cursor-pointer hover:text-gray-400">Debug Info</summary>
-            <pre id="debugInfo" class="mt-2 p-4 bg-gray-800 rounded-lg text-xs text-gray-400 overflow-x-auto"></pre>
-        </details>
     </div>
 
     <script>
         const API_BASE = window.location.origin;
 
+        // DOM Elements
         const form = document.getElementById('generateForm');
         const generateBtn = document.getElementById('generateBtn');
-        const encoderOnlyCheckbox = document.getElementById('encoderOnly');
         const status = document.getElementById('status');
         const statusText = document.getElementById('statusText');
         const progressFill = document.getElementById('progressFill');
@@ -263,21 +353,244 @@
         const resultImage = document.getElementById('resultImage');
         const resultInfo = document.getElementById('resultInfo');
         const downloadBtn = document.getElementById('downloadBtn');
-        const debugInfo = document.getElementById('debugInfo');
+        const reuseBtn = document.getElementById('reuseBtn');
+        const historyPanel = document.getElementById('historyPanel');
+        const historyList = document.getElementById('historyList');
+        const historyToggle = document.getElementById('historyToggle');
+        const historyHandle = document.getElementById('historyHandle');
+        const clearHistoryBtn = document.getElementById('clearHistoryBtn');
+        const resolutionSelect = document.getElementById('resolution');
+        const customResolution = document.getElementById('customResolution');
+        const widthSelect = document.getElementById('width');
+        const heightSelect = document.getElementById('height');
+        const encoderOnlyCheckbox = document.getElementById('encoderOnly');
 
-        // Update button text based on mode
-        encoderOnlyCheckbox.addEventListener('change', () => {
-            generateBtn.textContent = encoderOnlyCheckbox.checked ? 'Encode Prompt' : 'Generate Image';
-            generateBtn.classList.toggle('bg-yellow-600', encoderOnlyCheckbox.checked);
-            generateBtn.classList.toggle('hover:bg-yellow-700', encoderOnlyCheckbox.checked);
-            generateBtn.classList.toggle('bg-blue-600', !encoderOnlyCheckbox.checked);
-            generateBtn.classList.toggle('hover:bg-blue-700', !encoderOnlyCheckbox.checked);
+        // Current generation params (for reuse)
+        let currentParams = null;
+
+        // Populate width/height dropdowns with multiples of 16
+        function populateResolutionDropdowns() {
+            const sizes = [];
+            for (let s = 256; s <= 2048; s += 16) {
+                sizes.push(s);
+            }
+            [widthSelect, heightSelect].forEach(select => {
+                select.innerHTML = sizes.map(s =>
+                    `<option value="${s}" ${s === 1024 ? 'selected' : ''}>${s}</option>`
+                ).join('');
+            });
+        }
+        populateResolutionDropdowns();
+
+        // Resolution preset handling
+        resolutionSelect.addEventListener('change', () => {
+            if (resolutionSelect.value === 'custom') {
+                customResolution.classList.remove('hidden');
+            } else {
+                customResolution.classList.add('hidden');
+                const [w, h] = resolutionSelect.value.split('x').map(Number);
+                widthSelect.value = w;
+                heightSelect.value = h;
+            }
         });
 
+        // Encoder-only mode button text
+        encoderOnlyCheckbox.addEventListener('change', () => {
+            generateBtn.textContent = encoderOnlyCheckbox.checked ? 'Encode' : 'Generate';
+            generateBtn.classList.toggle('bg-yellow-600', encoderOnlyCheckbox.checked);
+            generateBtn.classList.toggle('hover:bg-yellow-700', encoderOnlyCheckbox.checked);
+            generateBtn.classList.toggle('shadow-yellow-500/20', encoderOnlyCheckbox.checked);
+            generateBtn.classList.toggle('bg-blue-600', !encoderOnlyCheckbox.checked);
+            generateBtn.classList.toggle('hover:bg-blue-700', !encoderOnlyCheckbox.checked);
+            generateBtn.classList.toggle('shadow-blue-500/20', !encoderOnlyCheckbox.checked);
+        });
+
+        // History panel toggle (mobile)
+        function toggleHistoryPanel() {
+            historyPanel.classList.toggle('collapsed');
+            historyPanel.classList.toggle('hidden');
+            document.body.classList.toggle('panel-open', !historyPanel.classList.contains('collapsed'));
+        }
+        historyToggle?.addEventListener('click', toggleHistoryPanel);
+        historyHandle?.addEventListener('click', toggleHistoryPanel);
+
+        // Load templates
+        async function loadTemplates() {
+            try {
+                const response = await fetch(`${API_BASE}/api/templates`);
+                const data = await response.json();
+                const select = document.getElementById('template');
+                select.innerHTML = '<option value="">None</option>';
+                data.templates.forEach(t => {
+                    const opt = document.createElement('option');
+                    opt.value = t.name;
+                    opt.textContent = t.name + (t.has_thinking ? ' *' : '');
+                    select.appendChild(opt);
+                });
+            } catch (err) {
+                console.error('Failed to load templates:', err);
+            }
+        }
+
+        // Load history
+        async function loadHistory() {
+            try {
+                const response = await fetch(`${API_BASE}/api/history`);
+                const data = await response.json();
+                renderHistory(data.history);
+            } catch (err) {
+                console.error('Failed to load history:', err);
+            }
+        }
+
+        // Render history
+        function renderHistory(history) {
+            if (!history || history.length === 0) {
+                historyList.innerHTML = '<div class="text-center text-gray-500 text-sm py-8">No generations yet</div>';
+                return;
+            }
+
+            historyList.innerHTML = history.map((item, index) => `
+                <div class="history-item relative rounded-lg overflow-hidden mb-2 cursor-pointer group" data-index="${index}">
+                    <img src="data:image/png;base64,${item.image_b64}" class="w-full aspect-square object-cover" alt="Generated">
+                    <div class="history-overlay absolute inset-0 bg-black/60 opacity-0 flex flex-col justify-end p-2">
+                        <p class="text-white text-xs line-clamp-2 mb-1">${escapeHtml(item.prompt.substring(0, 80))}${item.prompt.length > 80 ? '...' : ''}</p>
+                        <div class="flex gap-1">
+                            <button class="history-reuse flex-1 px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded transition-colors">
+                                Use
+                            </button>
+                            <button class="history-delete px-2 py-1 bg-red-600 hover:bg-red-700 text-white text-xs rounded transition-colors">
+                                X
+                            </button>
+                        </div>
+                    </div>
+                    <div class="absolute top-1 right-1 text-xs text-white/70 bg-black/50 px-1 rounded">
+                        ${item.width}x${item.height}
+                    </div>
+                </div>
+            `).join('');
+
+            // Add event listeners
+            historyList.querySelectorAll('.history-reuse').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const index = parseInt(btn.closest('.history-item').dataset.index);
+                    reuseHistoryItem(history[index]);
+                });
+            });
+
+            historyList.querySelectorAll('.history-delete').forEach(btn => {
+                btn.addEventListener('click', async (e) => {
+                    e.stopPropagation();
+                    const index = parseInt(btn.closest('.history-item').dataset.index);
+                    await deleteHistoryItem(index);
+                });
+            });
+
+            historyList.querySelectorAll('.history-item').forEach(item => {
+                item.addEventListener('click', () => {
+                    const index = parseInt(item.dataset.index);
+                    showHistoryItemFull(history[index]);
+                });
+            });
+        }
+
+        // Reuse history item
+        function reuseHistoryItem(item) {
+            document.getElementById('prompt').value = item.prompt;
+            document.getElementById('systemPrompt').value = item.system_prompt || '';
+            document.getElementById('thinkingContent').value = item.thinking_content || '';
+            document.getElementById('assistantContent').value = item.assistant_content || '';
+            document.getElementById('enableThinking').checked = item.enable_thinking || false;
+            document.getElementById('seed').value = item.seed || '';
+            document.getElementById('template').value = item.template || '';
+            document.getElementById('steps').value = item.steps || 9;
+
+            // Set resolution
+            const resValue = `${item.width}x${item.height}`;
+            const resOption = [...resolutionSelect.options].find(o => o.value === resValue);
+            if (resOption) {
+                resolutionSelect.value = resValue;
+                customResolution.classList.add('hidden');
+            } else {
+                resolutionSelect.value = 'custom';
+                customResolution.classList.remove('hidden');
+                widthSelect.value = item.width;
+                heightSelect.value = item.height;
+            }
+
+            // Close history panel on mobile
+            if (window.innerWidth < 768) {
+                toggleHistoryPanel();
+            }
+
+            // Scroll to top and focus prompt
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+            document.getElementById('prompt').focus();
+        }
+
+        // Show full history item in result area
+        function showHistoryItemFull(item) {
+            resultImage.src = `data:image/png;base64,${item.image_b64}`;
+            downloadBtn.href = `data:image/png;base64,${item.image_b64}`;
+            resultInfo.textContent = `${item.width}x${item.height}, ${item.steps} steps, ${item.gen_time.toFixed(1)}s`;
+            currentParams = item;
+            result.classList.remove('hidden');
+            encoderResult.classList.add('hidden');
+
+            // Close history panel on mobile
+            if (window.innerWidth < 768) {
+                toggleHistoryPanel();
+            }
+        }
+
+        // Delete history item
+        async function deleteHistoryItem(index) {
+            try {
+                await fetch(`${API_BASE}/api/history/${index}`, { method: 'DELETE' });
+                loadHistory();
+            } catch (err) {
+                console.error('Failed to delete:', err);
+            }
+        }
+
+        // Clear all history
+        clearHistoryBtn.addEventListener('click', async () => {
+            if (confirm('Clear all history?')) {
+                try {
+                    await fetch(`${API_BASE}/api/history`, { method: 'DELETE' });
+                    loadHistory();
+                } catch (err) {
+                    console.error('Failed to clear:', err);
+                }
+            }
+        });
+
+        // Reuse button
+        reuseBtn.addEventListener('click', () => {
+            if (currentParams) {
+                reuseHistoryItem(currentParams);
+            }
+        });
+
+        // Get current resolution
+        function getResolution() {
+            if (resolutionSelect.value === 'custom') {
+                return {
+                    width: parseInt(widthSelect.value),
+                    height: parseInt(heightSelect.value)
+                };
+            }
+            const [w, h] = resolutionSelect.value.split('x').map(Number);
+            return { width: w, height: h };
+        }
+
+        // Form submit
         form.addEventListener('submit', async (e) => {
             e.preventDefault();
 
             const encoderOnly = encoderOnlyCheckbox.checked;
+            const { width, height } = getResolution();
 
             // Reset UI
             status.classList.remove('hidden');
@@ -285,38 +598,31 @@
             result.classList.add('hidden');
             encoderResult.classList.add('hidden');
             generateBtn.disabled = true;
-            progressFill.style.width = '0%';
-            statusText.textContent = encoderOnly ? 'Encoding prompt...' : 'Starting generation...';
+            progressFill.style.width = '10%';
+            statusText.textContent = encoderOnly ? 'Encoding...' : 'Starting...';
 
             const params = {
                 prompt: document.getElementById('prompt').value,
                 system_prompt: document.getElementById('systemPrompt').value || null,
                 thinking_content: document.getElementById('thinkingContent').value || null,
                 assistant_content: document.getElementById('assistantContent').value || null,
-                width: parseInt(document.getElementById('width').value),
-                height: parseInt(document.getElementById('height').value),
+                width,
+                height,
                 steps: parseInt(document.getElementById('steps').value),
                 template: document.getElementById('template').value || null,
                 enable_thinking: document.getElementById('enableThinking').checked,
                 seed: document.getElementById('seed').value ? parseInt(document.getElementById('seed').value) : null,
             };
 
-            debugInfo.textContent = JSON.stringify({ ...params, encoder_only: encoderOnly }, null, 2);
+            currentParams = params;
 
             try {
                 if (encoderOnly) {
-                    // Encoder-only mode
+                    progressFill.style.width = '50%';
                     const response = await fetch(`${API_BASE}/api/encode`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            prompt: params.prompt,
-                            system_prompt: params.system_prompt,
-                            thinking_content: params.thinking_content,
-                            assistant_content: params.assistant_content,
-                            template: params.template,
-                            enable_thinking: params.enable_thinking,
-                        }),
+                        body: JSON.stringify(params),
                     });
 
                     if (!response.ok) {
@@ -325,29 +631,18 @@
                     }
 
                     const data = await response.json();
-                    debugInfo.textContent += '\n\nResponse:\n' + JSON.stringify(data, null, 2);
-
-                    // Display encoder results
                     document.getElementById('encShape').textContent = `[${data.shape.join(', ')}]`;
                     document.getElementById('encTime').textContent = `${data.encode_time.toFixed(3)}s`;
-                    document.getElementById('encSeqLen').textContent = data.shape[0];
-                    document.getElementById('encHiddenDim').textContent = data.shape[1];
-                    document.getElementById('encStats').textContent = `dtype: ${data.dtype}`;
-
-                    // Display formatted prompt if available
-                    if (data.formatted_prompt) {
-                        document.getElementById('encFormattedPrompt').textContent = data.formatted_prompt;
-                        document.getElementById('encFormattedPromptContainer').classList.remove('hidden');
-                    } else {
-                        document.getElementById('encFormattedPromptContainer').classList.add('hidden');
-                    }
+                    document.getElementById('encFormattedPrompt').textContent = data.formatted_prompt || '-';
 
                     status.classList.add('hidden');
                     encoderResult.classList.remove('hidden');
                     progressFill.style.width = '100%';
 
                 } else {
-                    // Full generation mode
+                    progressFill.style.width = '30%';
+                    statusText.textContent = 'Generating...';
+
                     const response = await fetch(`${API_BASE}/api/generate`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
@@ -359,85 +654,46 @@
                         throw new Error(data.detail || 'Generation failed');
                     }
 
-                    // Handle streaming response
-                    const reader = response.body.getReader();
-                    const chunks = [];
+                    progressFill.style.width = '70%';
+                    statusText.textContent = 'Processing...';
 
-                    while (true) {
-                        const { done, value } = await reader.read();
-                        if (done) break;
-                        chunks.push(value);
-                        progressFill.style.width = '50%';
-                        statusText.textContent = 'Generating...';
-                    }
-
-                    // Combine chunks and create blob
-                    const blob = new Blob(chunks, { type: 'image/png' });
+                    const blob = await response.blob();
                     const imageUrl = URL.createObjectURL(blob);
 
-                    // Show result
+                    const genTime = response.headers.get('X-Generation-Time');
+                    const seed = response.headers.get('X-Seed');
+
                     resultImage.src = imageUrl;
                     downloadBtn.href = imageUrl;
-                    resultInfo.textContent = `${params.width}x${params.height}, ${params.steps} steps`;
+                    resultInfo.textContent = `${width}x${height}, ${params.steps} steps${genTime ? `, ${parseFloat(genTime).toFixed(1)}s` : ''}${seed && seed !== 'random' ? `, seed ${seed}` : ''}`;
 
                     status.classList.add('hidden');
                     result.classList.remove('hidden');
                     progressFill.style.width = '100%';
+
+                    // Reload history
+                    loadHistory();
                 }
 
             } catch (err) {
                 status.classList.add('hidden');
                 error.classList.remove('hidden');
                 errorText.textContent = err.message;
-                debugInfo.textContent += '\n\nError: ' + err.message;
             } finally {
                 generateBtn.disabled = false;
             }
         });
 
-        // Load templates on page load
-        async function loadTemplates() {
-            try {
-                const response = await fetch(`${API_BASE}/api/templates`);
-                const data = await response.json();
-                const select = document.getElementById('template');
-                select.innerHTML = '<option value="">None</option>';
-                data.templates.forEach(t => {
-                    const opt = document.createElement('option');
-                    opt.value = t.name;
-                    opt.textContent = t.name + (t.has_thinking ? ' (thinking)' : '');
-                    select.appendChild(opt);
-                });
-            } catch (err) {
-                console.error('Failed to load templates:', err);
-            }
+        // Utility function
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
         }
+
+        // Initialize
         loadTemplates();
-
-        // Save embeddings button
-        document.getElementById('saveEmbeddingsBtn').addEventListener('click', async () => {
-            const prompt = document.getElementById('prompt').value;
-            const template = document.getElementById('template').value || null;
-            const enableThinking = document.getElementById('enableThinking').checked;
-
-            try {
-                const response = await fetch(`${API_BASE}/api/save-embeddings`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ prompt, template, enable_thinking: enableThinking }),
-                });
-
-                if (!response.ok) {
-                    const data = await response.json();
-                    throw new Error(data.detail || 'Save failed');
-                }
-
-                const data = await response.json();
-                alert(`Embeddings saved to: ${data.path}`);
-            } catch (err) {
-                alert('Failed to save: ' + err.message);
-            }
-        });
+        loadHistory();
     </script>
 </body>
 </html>
