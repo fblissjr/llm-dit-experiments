@@ -28,25 +28,103 @@ uv run web/server.py \
   --api-model Qwen3-4B \
   --dit-device cuda \
   --vae-device cuda
+
+# Run with config file
+uv run web/server.py --config config.toml --profile default
+
+# Run with LoRA
+uv run web/server.py \
+  --model-path /path/to/z-image-turbo \
+  --lora /path/to/style.safetensors:0.8 \
+  --dit-device cuda
+```
+
+## Configuration
+
+The server supports both CLI flags and TOML config files. Config file is the source of truth; CLI flags override config values.
+
+```toml
+# config.toml
+[default]
+model_path = "/path/to/z-image-turbo"
+templates_dir = "templates/z_image"
+
+[default.devices]
+text_encoder = "cpu"
+dit = "cuda"
+vae = "cuda"
+
+[default.generation]
+width = 1024
+height = 1024
+steps = 9
+guidance_scale = 0.0
+
+[default.scheduler]
+shift = 3.0
+
+[default.optimization]
+flash_attn = false
+compile = false
+cpu_offload = false
+
+[default.lora]
+paths = ["/path/to/lora1.safetensors", "/path/to/lora2.safetensors"]
+scales = [0.8, 0.5]
 ```
 
 ## CLI Flags
 
+### Model & Device Flags
+
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `--model-path` | str | required | Path to Z-Image model |
-| `--host` | str | 127.0.0.1 | Server host |
-| `--port` | int | 7860 | Server port |
+| `--config` | str | None | Path to TOML config file |
+| `--profile` | str | default | Config profile to use |
 | `--text-encoder-device` | str | auto | Device for text encoder (cpu/cuda/mps/auto) |
 | `--dit-device` | str | auto | Device for DiT transformer (cpu/cuda/mps/auto) |
 | `--vae-device` | str | auto | Device for VAE (cpu/cuda/mps/auto) |
+
+### Server Flags
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--host` | str | 127.0.0.1 | Server host |
+| `--port` | int | 7860 | Server port |
+| `--encoder-only` | flag | False | Load only encoder (no DiT/VAE) |
+
+### API Backend Flags
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
 | `--api-url` | str | None | URL for heylookitsanllm API backend |
 | `--api-model` | str | None | Model ID for API backend |
 | `--local-encoder` | flag | False | Force local encoder when using API (for A/B testing) |
-| `--debug` | flag | False | Enable debug logging |
+
+### Optimization Flags
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
 | `--cpu-offload` | flag | False | Enable CPU offload for transformer |
 | `--flash-attn` | flag | False | Enable Flash Attention |
 | `--compile` | flag | False | Compile transformer with torch.compile |
+| `--debug` | flag | False | Enable debug logging |
+
+### Generation Flags
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--shift` | float | 3.0 | Scheduler shift/mu parameter |
+| `--guidance-scale` | float | 0.0 | CFG scale (0.0 for Z-Image Turbo) |
+
+### LoRA Flags
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--lora` | str | None | LoRA file path with optional scale (path:scale). Repeatable. |
+
+Example: `--lora style.safetensors:0.8 --lora detail.safetensors:0.5`
 
 ## API Endpoints
 
@@ -67,7 +145,8 @@ Generate an image from a text prompt.
   "height": 1024,
   "steps": 9,
   "seed": null,
-  "guidance_scale": 0.0
+  "guidance_scale": 0.0,
+  "shift": 3.0
 }
 ```
 
@@ -85,6 +164,7 @@ Generate an image from a text prompt.
 | steps | int | No | 9 | Denoising steps |
 | seed | int | No | null | Random seed for reproducibility |
 | guidance_scale | float | No | 0.0 | CFG scale (0.0 recommended for Z-Image) |
+| shift | float | No | 3.0 | Scheduler shift/mu parameter |
 
 **Response:** PNG image stream
 

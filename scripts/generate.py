@@ -26,9 +26,14 @@ Usage:
 
     # DISTRIBUTED: Encode via remote API (Mac), generate locally (CUDA)
     uv run scripts/generate.py --api-url http://mac-ip:8080 --model-path /path/to/z-image "A cat"
+
+    # With LoRA
+    uv run scripts/generate.py --model-path /path/to/z-image --lora /path/to/lora.safetensors:0.8 "A cat"
+
+    # With custom scheduler shift
+    uv run scripts/generate.py --model-path /path/to/z-image --shift 5.0 "A cat"
 """
 
-import argparse
 import logging
 import sys
 import time
@@ -36,115 +41,29 @@ from pathlib import Path
 
 import torch
 
-
-def setup_logging(verbose: bool = False):
-    """Configure logging."""
-    level = logging.DEBUG if verbose else logging.INFO
-    logging.basicConfig(
-        level=level,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        datefmt="%H:%M:%S",
-    )
+from llm_dit.cli import create_base_parser, load_runtime_config, setup_logging
 
 
 def main():
-    parser = argparse.ArgumentParser(
+    # Create parser with generation args
+    parser = create_base_parser(
         description="Generate images with Z-Image",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=__doc__,
+        include_generation_args=True,
+        include_server_args=False,
     )
 
-    # Required
+    # Add generate-specific arguments
     parser.add_argument(
         "prompt",
         type=str,
         help="Text prompt for image generation",
     )
-
-    # Config file
-    parser.add_argument(
-        "--config",
-        type=str,
-        default=None,
-        help="Path to TOML config file",
-    )
-    parser.add_argument(
-        "--profile",
-        type=str,
-        default="default",
-        help="Config profile to use (default: default)",
-    )
-
-    # Model path (can be overridden by config)
-    parser.add_argument(
-        "--model-path",
-        type=str,
-        default=None,
-        help="Path to Z-Image model or HuggingFace ID",
-    )
-
-    # Optional
     parser.add_argument(
         "--output",
         type=str,
         default="output.png",
         help="Output image path (default: output.png)",
     )
-    parser.add_argument(
-        "--height",
-        type=int,
-        default=1024,
-        help="Image height (default: 1024, must be divisible by 16)",
-    )
-    parser.add_argument(
-        "--width",
-        type=int,
-        default=1024,
-        help="Image width (default: 1024, must be divisible by 16)",
-    )
-    parser.add_argument(
-        "--steps",
-        type=int,
-        default=9,
-        help="Number of inference steps (default: 9 for turbo)",
-    )
-    parser.add_argument(
-        "--seed",
-        type=int,
-        default=None,
-        help="Random seed for reproducibility",
-    )
-    parser.add_argument(
-        "--template",
-        type=str,
-        default=None,
-        help="Template name to use for encoding",
-    )
-    parser.add_argument(
-        "--templates-dir",
-        type=str,
-        default=None,
-        help="Path to templates directory",
-    )
-    parser.add_argument(
-        "--no-thinking",
-        action="store_true",
-        help="Disable thinking tags in prompt",
-    )
-    parser.add_argument(
-        "--guidance-scale",
-        type=float,
-        default=0.0,
-        help="CFG scale (default: 0.0, not needed for Z-Image-Turbo)",
-    )
-    parser.add_argument(
-        "--negative-prompt",
-        type=str,
-        default=None,
-        help="Negative prompt for CFG",
-    )
-
-    # Mode flags
     parser.add_argument(
         "--encoder-only",
         action="store_true",
@@ -163,51 +82,21 @@ def main():
         help="Load embeddings from file (skip encoding)",
     )
 
-    # API backend (distributed inference)
-    parser.add_argument(
-        "--api-url",
-        type=str,
-        default=None,
-        help="Use remote API for encoding (e.g., http://mac-ip:8080)",
-    )
-    parser.add_argument(
-        "--api-model",
-        type=str,
-        default="Qwen3-4B-mxfp4-mlx",
-        help="Model ID for API backend (default: Qwen3-4B-mxfp4-mlx)",
-    )
-
-    parser.add_argument(
-        "--verbose",
-        "-v",
-        action="store_true",
-        help="Verbose output",
-    )
-
     args = parser.parse_args()
-    setup_logging(args.verbose)
+
+    # Load unified config
+    config = load_runtime_config(args)
+    setup_logging(config)
 
     logger = logging.getLogger(__name__)
 
-    # Load config if provided
-    config = None
-    if args.config:
-        from llm_dit.config import Config
-        config = Config.from_toml(args.config, args.profile)
-        logger.info(f"Loaded config profile: {args.profile}")
-
-    # Resolve model path (CLI > config)
-    model_path = args.model_path
-    if model_path is None and config:
-        model_path = config.model_path
-    if model_path is None:
+    # Validate model path
+    if config.model_path == "" and not args.load_embeddings:
         logger.error("No model path specified. Use --model-path or --config.")
         return 1
 
     # Find templates directory
-    templates_dir = args.templates_dir
-    if templates_dir is None and config and config.templates_dir:
-        templates_dir = config.templates_dir
+    templates_dir = config.templates_dir
     if templates_dir is None:
         # Try default location relative to this script
         default_templates = Path(__file__).parent.parent / "templates" / "z_image"
@@ -217,10 +106,11 @@ def main():
 
     # Set up generator
     generator = None
-    if args.seed is not None:
+    seed = getattr(args, 'seed', None)
+    if seed is not None:
         generator = torch.Generator()
-        generator.manual_seed(args.seed)
-        logger.info(f"Using seed: {args.seed}")
+        generator.manual_seed(seed)
+        logger.info(f"Using seed: {seed}")
 
     if args.encoder_only or args.save_embeddings:
         # Encoder-only mode for experiments or distributed inference
@@ -228,11 +118,13 @@ def main():
 
         from llm_dit.encoders import ZImageTextEncoder
 
-        logger.info(f"Loading encoder from {model_path}...")
+        logger.info(f"Loading encoder from {config.model_path}...")
         start = time.time()
         encoder = ZImageTextEncoder.from_pretrained(
-            model_path,
+            config.model_path,
             templates_dir=templates_dir,
+            device_map=config.encoder_device_resolved,
+            torch_dtype=config.get_torch_dtype(),
         )
         load_time = time.time() - start
         logger.info(f"Encoder loaded in {load_time:.1f}s")
@@ -242,8 +134,11 @@ def main():
         start = time.time()
         output = encoder.encode(
             args.prompt,
-            template=args.template,
-            enable_thinking=not args.no_thinking,
+            template=config.default_template,
+            system_prompt=config.system_prompt,
+            thinking_content=config.thinking_content,
+            assistant_content=config.assistant_content,
+            enable_thinking=config.enable_thinking,
         )
         encode_time = time.time() - start
 
@@ -267,38 +162,19 @@ def main():
                 embeddings=embeds,
                 path=args.save_embeddings,
                 prompt=args.prompt,
-                model_path=model_path,
-                template=args.template,
-                enable_thinking=not args.no_thinking,
+                model_path=config.model_path,
+                template=config.default_template,
+                enable_thinking=config.enable_thinking,
                 encoder_device=str(encoder.device),
             )
             logger.info(f"Embeddings saved to: {save_path}")
 
         return 0
 
-    # Get generation params from config or CLI
-    height = args.height
-    width = args.width
-    steps = args.steps
-    guidance_scale = args.guidance_scale
-    enable_thinking = not args.no_thinking
-
-    if config:
-        if height == 1024:  # default
-            height = config.generation.height
-        if width == 1024:  # default
-            width = config.generation.width
-        if steps == 9:  # default
-            steps = config.generation.num_inference_steps
-        if guidance_scale == 0.0:  # default
-            guidance_scale = config.generation.guidance_scale
-        if not args.no_thinking:
-            enable_thinking = config.generation.enable_thinking
-
     # Check if using API for encoding (distributed inference - encode remote, generate local)
-    if args.api_url:
+    if config.api_url:
         logger.info("Running in distributed mode (API encoding + local generation)")
-        logger.info(f"Using API backend: {args.api_url}")
+        logger.info(f"Using API backend: {config.api_url}")
 
         from llm_dit.backends.api import APIBackend, APIBackendConfig
         from llm_dit.encoders import ZImageTextEncoder
@@ -307,8 +183,8 @@ def main():
 
         # Create API backend for encoding
         api_config = APIBackendConfig(
-            base_url=args.api_url,
-            model_id=args.api_model,
+            base_url=config.api_url,
+            model_id=config.api_model,
             encoding_format="base64",
         )
         backend = APIBackend(api_config)
@@ -330,8 +206,11 @@ def main():
         start = time.time()
         output = encoder.encode(
             args.prompt,
-            template=args.template,
-            enable_thinking=enable_thinking,
+            template=config.default_template,
+            system_prompt=config.system_prompt,
+            thinking_content=config.thinking_content,
+            assistant_content=config.assistant_content,
+            enable_thinking=config.enable_thinking,
         )
         encode_time = time.time() - start
         embeds = output.embeddings[0]
@@ -339,13 +218,16 @@ def main():
         logger.info(f"  Shape: {embeds.shape}")
 
         # Load generator-only pipeline (no LLM)
-        logger.info(f"Loading generator from {model_path}...")
+        logger.info(f"Loading generator from {config.model_path}...")
         start = time.time()
 
         try:
             pipe = ZImagePipeline.from_pretrained_generator_only(
-                model_path,
-                torch_dtype=torch.bfloat16,
+                config.model_path,
+                torch_dtype=config.get_torch_dtype(),
+                dit_device=config.dit_device,
+                vae_device=config.vae_device,
+                enable_cpu_offload=config.cpu_offload,
             )
         except ImportError as e:
             logger.error(f"Missing diffusers components: {e}")
@@ -357,22 +239,37 @@ def main():
         load_time = time.time() - start
         logger.info(f"Generator loaded in {load_time:.1f}s")
 
+        # Apply optimizations
+        if config.flash_attn:
+            try:
+                pipe.transformer.set_attention_backend("flash")
+                logger.info("Flash Attention enabled")
+            except Exception as e:
+                logger.warning(f"Failed to enable Flash Attention: {e}")
+
+        if config.compile:
+            try:
+                pipe.transformer = torch.compile(pipe.transformer, mode="reduce-overhead")
+                logger.info("Transformer compiled (first run will be slow)")
+            except Exception as e:
+                logger.warning(f"Failed to compile: {e}")
+
         # Progress callback
         def progress_callback(step: int, total: int, latents: torch.Tensor):
             logger.info(f"Step {step + 1}/{total}")
 
         # Generate from embeddings
-        logger.info(f"Generating {width}x{height} image...")
+        logger.info(f"Generating {config.width}x{config.height} image...")
 
         start = time.time()
         image = pipe.generate_from_embeddings(
             embeds,
-            height=height,
-            width=width,
-            num_inference_steps=steps,
-            guidance_scale=guidance_scale,
+            height=config.height,
+            width=config.width,
+            num_inference_steps=config.steps,
+            guidance_scale=config.guidance_scale,
             generator=generator,
-            callback=progress_callback if args.verbose else None,
+            callback=progress_callback if config.verbose else None,
         )
         gen_time = time.time() - start
 
@@ -399,13 +296,16 @@ def main():
         logger.info(f"  Original device: {emb_file.metadata.encoder_device}")
 
         # Load generator-only pipeline (no LLM)
-        logger.info(f"Loading generator from {model_path}...")
+        logger.info(f"Loading generator from {config.model_path}...")
         start = time.time()
 
         try:
             pipe = ZImagePipeline.from_pretrained_generator_only(
-                model_path,
-                torch_dtype=torch.bfloat16,
+                config.model_path,
+                torch_dtype=config.get_torch_dtype(),
+                dit_device=config.dit_device,
+                vae_device=config.vae_device,
+                enable_cpu_offload=config.cpu_offload,
             )
         except ImportError as e:
             logger.error(f"Missing diffusers components: {e}")
@@ -417,22 +317,37 @@ def main():
         load_time = time.time() - start
         logger.info(f"Generator loaded in {load_time:.1f}s")
 
+        # Apply optimizations
+        if config.flash_attn:
+            try:
+                pipe.transformer.set_attention_backend("flash")
+                logger.info("Flash Attention enabled")
+            except Exception as e:
+                logger.warning(f"Failed to enable Flash Attention: {e}")
+
+        if config.compile:
+            try:
+                pipe.transformer = torch.compile(pipe.transformer, mode="reduce-overhead")
+                logger.info("Transformer compiled (first run will be slow)")
+            except Exception as e:
+                logger.warning(f"Failed to compile: {e}")
+
         # Progress callback
         def progress_callback(step: int, total: int, latents: torch.Tensor):
             logger.info(f"Step {step + 1}/{total}")
 
         # Generate from embeddings
-        logger.info(f"Generating {width}x{height} image...")
+        logger.info(f"Generating {config.width}x{config.height} image...")
 
         start = time.time()
         image = pipe.generate_from_embeddings(
             emb_file.embeddings,
-            height=height,
-            width=width,
-            num_inference_steps=steps,
-            guidance_scale=guidance_scale,
+            height=config.height,
+            width=config.width,
+            num_inference_steps=config.steps,
+            guidance_scale=config.guidance_scale,
             generator=generator,
-            callback=progress_callback if args.verbose else None,
+            callback=progress_callback if config.verbose else None,
         )
         gen_time = time.time() - start
 
@@ -450,14 +365,17 @@ def main():
 
     from llm_dit.pipelines import ZImagePipeline
 
-    logger.info(f"Loading pipeline from {model_path}...")
+    logger.info(f"Loading pipeline from {config.model_path}...")
     start = time.time()
 
     try:
         pipe = ZImagePipeline.from_pretrained(
-            model_path,
+            config.model_path,
             templates_dir=templates_dir,
-            torch_dtype=torch.bfloat16,
+            torch_dtype=config.get_torch_dtype(),
+            encoder_device=config.encoder_device,
+            dit_device=config.dit_device,
+            vae_device=config.vae_device,
         )
     except ImportError as e:
         logger.error(f"Missing diffusers components: {e}")
@@ -471,28 +389,59 @@ def main():
     load_time = time.time() - start
     logger.info(f"Pipeline loaded in {load_time:.1f}s")
 
+    # Apply optimizations
+    if config.flash_attn:
+        try:
+            pipe.transformer.set_attention_backend("flash")
+            logger.info("Flash Attention enabled")
+        except Exception as e:
+            logger.warning(f"Failed to enable Flash Attention: {e}")
+
+    if config.compile:
+        try:
+            pipe.transformer = torch.compile(pipe.transformer, mode="reduce-overhead")
+            logger.info("Transformer compiled (first run will be slow)")
+        except Exception as e:
+            logger.warning(f"Failed to compile: {e}")
+
+    # Load LoRAs if configured
+    if config.lora_paths:
+        logger.info(f"Loading {len(config.lora_paths)} LoRA(s)...")
+        try:
+            updated = pipe.load_lora(config.lora_paths, scale=config.lora_scales)
+            logger.info(f"Loaded LoRAs: {updated} layers updated")
+        except Exception as e:
+            logger.error(f"Failed to load LoRA: {e}")
+            return 1
+
     # Progress callback
     def progress_callback(step: int, total: int, latents: torch.Tensor):
         logger.info(f"Step {step + 1}/{total}")
 
     # Generate
-    logger.info(f"Generating {width}x{height} image...")
+    logger.info(f"Generating {config.width}x{config.height} image...")
     logger.info(f"Prompt: {args.prompt}")
-    if args.template:
-        logger.info(f"Template: {args.template}")
+    if config.default_template:
+        logger.info(f"Template: {config.default_template}")
+
+    # Get negative prompt from CLI
+    negative_prompt = getattr(args, 'negative_prompt', None)
 
     start = time.time()
     image = pipe(
         args.prompt,
-        height=height,
-        width=width,
-        num_inference_steps=steps,
-        guidance_scale=guidance_scale,
-        negative_prompt=args.negative_prompt,
+        height=config.height,
+        width=config.width,
+        num_inference_steps=config.steps,
+        guidance_scale=config.guidance_scale,
+        negative_prompt=negative_prompt,
         generator=generator,
-        template=args.template,
-        enable_thinking=enable_thinking,
-        callback=progress_callback if args.verbose else None,
+        template=config.default_template,
+        system_prompt=config.system_prompt,
+        thinking_content=config.thinking_content,
+        assistant_content=config.assistant_content,
+        enable_thinking=config.enable_thinking,
+        callback=progress_callback if config.verbose else None,
     )
     gen_time = time.time() - start
 

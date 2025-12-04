@@ -29,7 +29,7 @@ uv run pytest tests/test_web_server.py::TestHealthEndpoint::test_health_full_pip
 
 ### test_web_server.py
 
-Comprehensive tests for the Z-Image web server (`/Users/fredbliss/workspace/llm-dit-experiments/web/server.py`).
+Comprehensive tests for the Z-Image web server (`web/server.py`).
 
 **Test Coverage:**
 - Health endpoint (`/health`) - validates server mode detection

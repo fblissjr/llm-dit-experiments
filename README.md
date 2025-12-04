@@ -1,14 +1,17 @@
 # llm-dit-experiments
 
-A standalone diffusers-based experimentation platform for LLM-DiT image generation, starting with Z-Image (Alibaba/Tongyi).
+Standalone diffusers-based platform for experimenting with LLM-DiT image generation models. Currently supports Z-Image (Alibaba/Tongyi) with Qwen3-4B text encoder, either locally via `transformers` or distributed via [`heylookitsanllm`](https://github.com/fblissjr/heylookitsanllm), an API server that can run Apple MLX models or llama.cpp GGUF models.
 
 ## Features
 
-- **Pluggable LLM backends**: transformers (local) or API (heylookitsanllm)
-- **Rich template system**: 144 templates ported from ComfyUI
-- **Distributed inference**: Encode on Mac MPS, generate on CUDA
-- **Web UI**: HTML+Tailwind interface for testing
-- **Experiment infrastructure**: Reproducible experiments with config tracking
+- Pluggable LLM backends (transformers local, heylookitsanllm API)
+- Distributed inference (encode on Mac MPS, generate on CUDA)
+- Web UI for generation and prompt testing
+- CLI script for image generation
+- TOML configuration file support
+- 100+ prompt templates with system prompt + thinking tokens
+- LoRA support with automatic weight fusion
+- Granular device placement (encoder/DiT/VAE independently)
 
 ## Quick Start
 
@@ -16,152 +19,108 @@ A standalone diffusers-based experimentation platform for LLM-DiT image generati
 # Install dependencies
 uv sync
 
-# Run smoke test
-uv run scripts/smoke_test.py
+# Run web server with local model
+uv run web/server.py --model-path /path/to/z-image-turbo
 
-# Test with model (requires Z-Image model)
-uv run scripts/smoke_test.py --model-path /path/to/Tongyi-MAI_Z-Image-Turbo
+# Generate via CLI
+uv run scripts/generate.py \
+  --model-path /path/to/z-image-turbo \
+  --output image.png \
+  "A cat sleeping in sunlight"
 ```
 
-## Web Server
+## Usage
 
-The web server provides a UI for encoding prompts and generating images.
+### Web Server
 
-### Distributed Mode (Recommended for Mac + CUDA setup)
-
-Run heylookitsanllm on Mac for encoding, web server on CUDA for generation:
-
-**Mac:**
 ```bash
-cd ~/workspace/heylookitsanllm
-uv run heylook --host 0.0.0.0 --port 8080
-```
+# Local generation (requires CUDA/MPS)
+uv run web/server.py --model-path /path/to/z-image-turbo
 
-**CUDA Box:**
-```bash
+# Distributed: API encoder + local generation
 uv run web/server.py \
-    --api-url http://mac-ip:8080 \
-    --model-path /path/to/Tongyi-MAI_Z-Image-Turbo \
-    --host 0.0.0.0
+  --api-url http://mac-host:8080 \
+  --api-model Qwen3-4B \
+  --model-path /path/to/z-image-turbo
 
-# Open http://cuda-box-ip:7860 in your browser
-```
-
-This encodes via Mac's heylookitsanllm and generates on CUDA - best of both worlds.
-
-### Encoder-Only Mode (Mac - testing/encoding only)
-
-```bash
-# With heylookitsanllm backend (no local model needed)
-uv run web/server.py --api-url http://localhost:8080
-
-# Or with local model
-uv run web/server.py --encoder-only --model-path /path/to/Tongyi-MAI_Z-Image-Turbo
-```
-
-### Full Local Pipeline Mode (single machine with GPU)
-
-```bash
-uv run web/server.py --model-path /path/to/Tongyi-MAI_Z-Image-Turbo
-```
-
-### With Config File
-
-```bash
-# Copy and customize config
-cp config.example.toml config.toml
-
-# Run with config (reads [server] section for host/port)
+# With config file
 uv run web/server.py --config config.toml --profile default
+
+# With LoRA
+uv run web/server.py \
+  --model-path /path/to/z-image-turbo \
+  --lora style.safetensors:0.8
 ```
 
-## CLI Generation
+Access at http://localhost:7860
+
+### CLI Generation
 
 ```bash
 # Basic generation
-uv run scripts/generate.py --prompt "A cat sleeping in sunlight" \
-    --model-path /path/to/Tongyi-MAI_Z-Image-Turbo
+uv run scripts/generate.py \
+  --model-path /path/to/z-image-turbo \
+  --output image.png \
+  "A sunset over mountains"
 
 # With template
-uv run scripts/generate.py --prompt "A mountain landscape" \
-    --template photorealistic \
-    --model-path /path/to/Tongyi-MAI_Z-Image-Turbo
-
-# Using config file
-uv run scripts/generate.py --prompt "A sunset" --config config.toml
-```
-
-## Distributed Inference
-
-### Option 1: Direct API Mode (Recommended)
-
-Run heylookitsanllm on Mac, generate.py on CUDA box calls Mac for encoding:
-
-**Mac (Terminal 1):**
-```bash
-cd ~/workspace/heylookitsanllm
-uv run heylook --host 0.0.0.0 --port 8080
-```
-
-**CUDA Box:**
-```bash
-# Encode via Mac's heylookitsanllm, generate locally
 uv run scripts/generate.py \
-    --api-url http://mac-ip:8080 \
-    --model-path /path/to/Tongyi-MAI_Z-Image-Turbo \
-    "A beautiful sunset over the ocean"
-```
+  --model-path /path/to/z-image-turbo \
+  --template photorealistic \
+  "A portrait"
 
-### Option 2: Save/Load Embeddings
-
-For offline or batch workflows:
-
-```bash
-# Step 1: Encode on Mac and save embeddings
-uv run scripts/generate.py --prompt "A beautiful sunset" \
-    --model-path /path/to/model \
-    --save-embeddings embeddings/sunset.safetensors \
-    --encode-only
-
-# Step 2: Transfer embeddings to CUDA server, then generate
-scp embeddings/sunset.safetensors cuda-box:/path/to/embeddings/
-
-# Step 3: Generate from embeddings on CUDA
+# With config file
 uv run scripts/generate.py \
-    --load-embeddings embeddings/sunset.safetensors \
-    --model-path /path/to/model
+  --config config.toml \
+  --profile default \
+  "A landscape"
+
+# Granular device control
+uv run scripts/generate.py \
+  --model-path /path/to/z-image-turbo \
+  --text-encoder-device cpu \
+  --dit-device cuda \
+  --vae-device cuda \
+  "A scene"
 ```
 
-## Configuration
+### Configuration
 
-See `config.example.toml` for all options. Key sections:
+Create a config.toml file:
 
 ```toml
-[server]
-host = "127.0.0.1"
-port = 7860
-
 [default]
-model_path = "/path/to/z-image"
+model_path = "/path/to/z-image-turbo"
 templates_dir = "templates/z_image"
 
-[default.encoder]
-device = "auto"
-torch_dtype = "bfloat16"
+[default.devices]
+text_encoder = "cpu"
+dit = "cuda"
+vae = "cuda"
 
 [default.generation]
-height = 1024
 width = 1024
-num_inference_steps = 9
+height = 1024
+steps = 9
+guidance_scale = 0.0
+
+[default.scheduler]
+shift = 3.0
+
+[default.lora]
+paths = ["style.safetensors"]
+scales = [0.8]
 ```
+
+CLI flags override config values.
 
 ## Running Tests
 
 ```bash
-# Run all tests
+# All tests
 uv run pytest tests/ -v
 
-# Run web server tests only
+# Specific test file
 uv run pytest tests/test_web_server.py -v
 ```
 
@@ -169,54 +128,66 @@ uv run pytest tests/test_web_server.py -v
 
 ```
 src/llm_dit/
-    backends/           # LLM backend abstraction (transformers, API)
+    backends/           # LLM backend abstraction (Protocol-based)
     conversation/       # Chat template formatting (Qwen3)
-    templates/          # Template loading from markdown
+    templates/          # Template loading system
     encoders/           # Text encoding pipeline
-    pipelines/          # Diffusion pipeline wrapper
-    distributed/        # Save/load embeddings
-    config/             # TOML config loading
+    pipelines/          # Diffusion pipeline wrappers
+    utils/              # Utilities (LoRA, etc)
+    cli.py              # Shared CLI argument parser
+    config.py           # Configuration dataclasses
 
 web/
     server.py           # FastAPI web server
-    index.html          # Tailwind UI
+    index.html          # Web UI
 
 templates/z_image/      # 144 prompt templates
 scripts/                # CLI tools
-tests/                  # Pytest test suite
-docs/                   # Technical documentation
+tests/                  # Test suite
 ```
 
 ## Architecture
 
 ```
-Prompt -> Qwen3Formatter -> TextEncoderBackend -> embeddings -> diffusers -> Image
-                                   |
-                            (transformers or API)
+Text Prompt
+    |
+    v
+Qwen3Formatter (chat template with thinking blocks)
+    |
+    v
+TextEncoderBackend (transformers/API)
+    |
+    v
+hidden_states[-2] -> embeddings (2560 dim)
+    |
+    v
+diffusers (DiT + VAE)
+    |
+    v
+Image Output
 ```
 
-The LLM encoding layer supports full template control. LLM inference can be local (transformers) or remote (heylookitsanllm API). diffusers handles DiT + VAE.
+## Key Technical Details
 
-## Key Technical Details (Z-Image)
-
-| Parameter | Value |
-|-----------|-------|
-| Text encoder | Qwen3-4B (2560 dim) |
-| Embedding extraction | hidden_states[-2] |
-| CFG scale | 0.0 (baked in via DMD) |
-| Steps | 8-9 |
-| VAE | 16-channel, Flux-derived |
-| Resolution alignment | 16 pixels |
+| Parameter | Value | Notes |
+|-----------|-------|-------|
+| Text encoder | Qwen3-4B | 2560 hidden dim, 36 layers |
+| Embedding extraction | hidden_states[-2] | Penultimate layer |
+| CFG scale | 0.0 | Baked in via Decoupled-DMD |
+| Steps | 8-9 | Turbo distilled |
+| Scheduler | FlowMatchEuler | shift=3.0 |
+| VAE | 16-channel | Wan-family |
 
 ## Documentation
 
-- [SESSION_CONTINUITY.md](SESSION_CONTINUITY.md) - Where we left off
-- [GUIDING_PRINCIPLES.md](GUIDING_PRINCIPLES.md) - Architectural decisions
-- [CLAUDE.md](CLAUDE.md) - Project instructions
-- [docs/heylookitsanllm_hidden_states_spec.md](docs/heylookitsanllm_hidden_states_spec.md) - API spec
+- [docs/web_server_api.md](docs/web_server_api.md) - REST API reference
+- [CLAUDE.md](CLAUDE.md) - Project instructions for Claude Code
+- [CHANGELOG.md](CHANGELOG.md) - Version history
+- [internal/guides/](internal/guides/) - Development guides
+- [internal/research/](internal/research/) - Research notes and analysis
 
 ## Related Projects
 
-- [ComfyUI-QwenImageWanBridge](../ComfyUI-QwenImageWanBridge) - Source of templates
+- [ComfyUI-QwenImageWanBridge](https://github.com/StartHua/Comfyui_CXH_QwenImageWanBridge) - Template source
 - [DiffSynth-Studio](https://github.com/modelscope/DiffSynth-Studio) - Reference implementation
-- [heylookitsanllm](../heylookitsanllm) - MLX LLM server with hidden states API
+- [heylookitsanllm](https://github.com/fredbliss/heylookitsanllm) - MLX LLM server

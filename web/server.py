@@ -61,6 +61,7 @@ class GenerateRequest(BaseModel):
     seed: Optional[int] = None
     template: Optional[str] = None
     guidance_scale: float = 0.0
+    shift: float = 3.0  # Scheduler shift parameter
 
 
 class EncodeRequest(BaseModel):
@@ -401,6 +402,8 @@ def load_pipeline(
     encoder_device: str = "auto",
     dit_device: str = "auto",
     vae_device: str = "auto",
+    lora_paths: Optional[list] = None,
+    lora_scales: Optional[list] = None,
 ):
     """Load the full generation pipeline."""
     global pipeline
@@ -425,6 +428,16 @@ def load_pipeline(
     load_time = time.time() - start
     logger.info(f"Pipeline loaded in {load_time:.1f}s")
     logger.info(f"Device: {pipeline.device}")
+
+    # Load LoRAs if configured
+    if lora_paths:
+        logger.info(f"Loading {len(lora_paths)} LoRA(s)...")
+        scales = lora_scales if lora_scales else [1.0] * len(lora_paths)
+        try:
+            updated = pipeline.load_lora(lora_paths, scale=scales)
+            logger.info(f"  {updated} layers updated by LoRA")
+        except Exception as e:
+            logger.error(f"  Failed to load LoRA: {e}")
 
 
 def load_encoder_only(
@@ -501,6 +514,8 @@ def load_hybrid_pipeline(
     encoder_device: str = "cpu",
     dit_device: str = "cuda",
     vae_device: str = "cuda",
+    lora_paths: Optional[list] = None,
+    lora_scales: Optional[list] = None,
 ):
     """Load full pipeline with local encoder + DiT/VAE (for A/B testing vs API)."""
     global pipeline, encoder_only_mode
@@ -553,6 +568,16 @@ def load_hybrid_pipeline(
         except Exception as e:
             logger.warning(f"  Failed to compile: {e}")
 
+    # Load LoRAs if configured
+    if lora_paths:
+        logger.info(f"Loading {len(lora_paths)} LoRA(s)...")
+        scales = lora_scales if lora_scales else [1.0] * len(lora_paths)
+        try:
+            updated = pipeline.load_lora(lora_paths, scale=scales)
+            logger.info(f"  {updated} layers updated by LoRA")
+        except Exception as e:
+            logger.error(f"  Failed to load LoRA: {e}")
+
     encoder_only_mode = False
     logger.info("-" * 60)
     logger.info(f"Hybrid pipeline ready (local encoder on {encoder_device})")
@@ -572,6 +597,8 @@ def load_api_pipeline(
     enable_compile: bool = False,
     dit_device: str = "auto",
     vae_device: str = "auto",
+    lora_paths: Optional[list] = None,
+    lora_scales: Optional[list] = None,
 ):
     """Load full pipeline with API backend for encoding + local DiT/VAE for generation."""
     global pipeline, encoder_only_mode
@@ -661,6 +688,16 @@ def load_api_pipeline(
     logger.info("Attaching API encoder to pipeline...")
     pipeline.encoder = api_encoder
 
+    # Load LoRAs if configured
+    if lora_paths:
+        logger.info(f"Loading {len(lora_paths)} LoRA(s)...")
+        scales = lora_scales if lora_scales else [1.0] * len(lora_paths)
+        try:
+            updated = pipeline.load_lora(lora_paths, scale=scales)
+            logger.info(f"  {updated} layers updated by LoRA")
+        except Exception as e:
+            logger.error(f"  Failed to load LoRA: {e}")
+
     logger.info("-" * 60)
     encoder_only_mode = False
     opts = []
@@ -681,163 +718,90 @@ def load_api_pipeline(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Z-Image web server")
-    parser.add_argument("--host", type=str, help="Host to bind to")
-    parser.add_argument("--port", type=int, help="Port to bind to")
-    parser.add_argument("--config", type=str, help="Path to config.toml")
-    parser.add_argument("--profile", type=str, default="default", help="Config profile")
-    parser.add_argument("--model-path", type=str, help="Path to Z-Image model")
-    parser.add_argument("--templates-dir", type=str, help="Path to templates")
+    # Use shared CLI argument parser
+    from llm_dit.cli import create_base_parser, load_runtime_config, setup_logging
+
+    parser = create_base_parser(
+        description="Z-Image web server",
+        include_server_args=True,
+        include_generation_args=True,
+    )
+
+    # Add server-specific arguments
     parser.add_argument(
         "--encoder-only",
         action="store_true",
         help="Load only encoder (fast mode for Mac, no image generation)",
     )
-    parser.add_argument(
-        "--api-url",
-        type=str,
-        help="Use heylookitsanllm API backend (e.g., http://localhost:8080)",
-    )
-    parser.add_argument(
-        "--api-model",
-        type=str,
-        default="Qwen3-4B-mxfp4-mlx",
-        help="Model ID for API backend",
-    )
-    parser.add_argument(
-        "--cpu-offload",
-        action="store_true",
-        help="Enable CPU offload for transformer (slower but less VRAM)",
-    )
-    parser.add_argument(
-        "--flash-attn",
-        action="store_true",
-        help="Enable Flash Attention (requires flash-attn package)",
-    )
-    parser.add_argument(
-        "--compile",
-        action="store_true",
-        help="Compile transformer with torch.compile (slower first run)",
-    )
-    parser.add_argument(
-        "--local-encoder",
-        action="store_true",
-        help="Force local encoder loading (for A/B testing API vs local)",
-    )
-    parser.add_argument(
-        "--text-encoder-device",
-        type=str,
-        choices=["cpu", "cuda", "mps", "auto"],
-        default="auto",
-        help="Device for text encoder (default: auto)",
-    )
-    parser.add_argument(
-        "--dit-device",
-        type=str,
-        choices=["cpu", "cuda", "mps", "auto"],
-        default="auto",
-        help="Device for DiT/transformer (default: auto)",
-    )
-    parser.add_argument(
-        "--vae-device",
-        type=str,
-        choices=["cpu", "cuda", "mps", "auto"],
-        default="auto",
-        help="Device for VAE (default: auto)",
-    )
-    parser.add_argument(
-        "--debug",
-        action="store_true",
-        help="Enable debug logging (shows token IDs, embedding values for comparison)",
-    )
+
     args = parser.parse_args()
 
-    # Set up debug logging if requested
-    if args.debug:
-        logging.getLogger("llm_dit").setLevel(logging.DEBUG)
-        logging.getLogger("llm_dit.backends").setLevel(logging.DEBUG)
-        logging.getLogger("llm_dit.pipelines").setLevel(logging.DEBUG)
-        logger.info("Debug logging enabled for llm_dit module")
+    # Load unified config (handles TOML + CLI overrides)
+    runtime_config = load_runtime_config(args)
+    setup_logging(runtime_config)
 
-    # Defaults
-    host = args.host or "127.0.0.1"
-    port = args.port or 7860
-    model_path = args.model_path
-    templates_dir = args.templates_dir
+    # Extract values from runtime config
+    host = runtime_config.host
+    port = runtime_config.port
+    model_path = runtime_config.model_path
+    templates_dir = runtime_config.templates_dir
 
-    # Load config if provided
-    if args.config:
-        import tomllib
-        with open(args.config, "rb") as f:
-            toml_data = tomllib.load(f)
-
-        # Server settings from [server] section
-        server_cfg = toml_data.get("server", {})
-        if args.host is None:
-            host = server_cfg.get("host", host)
-        if args.port is None:
-            port = server_cfg.get("port", port)
-
-        # Profile settings
-        from llm_dit.config import Config
-        cfg = Config.from_toml(args.config, args.profile)
-        if model_path is None:
-            model_path = cfg.model_path
-        if templates_dir is None:
-            templates_dir = cfg.templates_dir
+    # Find default templates if not specified
+    if templates_dir is None:
+        default_templates = Path(__file__).parent.parent / "templates" / "z_image"
+        if default_templates.exists():
+            templates_dir = str(default_templates)
 
     # Determine which mode to use
-    if args.api_url and model_path and args.local_encoder:
+    if runtime_config.api_url and model_path and runtime_config.local_encoder:
         # Hybrid mode: Local encoder (for A/B testing) + local DiT/VAE
-        if templates_dir is None:
-            templates_dir = str(Path(__file__).parent.parent / "templates" / "z_image")
         load_hybrid_pipeline(
             model_path,
             templates_dir,
-            enable_cpu_offload=args.cpu_offload,
-            enable_flash_attn=args.flash_attn,
-            enable_compile=args.compile,
-            encoder_device=args.text_encoder_device,
-            dit_device=args.dit_device,
-            vae_device=args.vae_device,
+            enable_cpu_offload=runtime_config.cpu_offload,
+            enable_flash_attn=runtime_config.flash_attn,
+            enable_compile=runtime_config.compile,
+            encoder_device=runtime_config.encoder_device,
+            dit_device=runtime_config.dit_device,
+            vae_device=runtime_config.vae_device,
+            lora_paths=runtime_config.lora_paths,
+            lora_scales=runtime_config.lora_scales,
         )
-        mode = f"hybrid (local encoder on {args.text_encoder_device}, for A/B testing vs API)"
-    elif args.api_url and model_path:
+        mode = f"hybrid (local encoder on {runtime_config.encoder_device}, for A/B testing vs API)"
+    elif runtime_config.api_url and model_path:
         # Distributed mode: API encoding + local DiT/VAE generation
-        if templates_dir is None:
-            templates_dir = str(Path(__file__).parent.parent / "templates" / "z_image")
         load_api_pipeline(
-            args.api_url,
-            args.api_model,
+            runtime_config.api_url,
+            runtime_config.api_model,
             model_path,
             templates_dir,
-            enable_cpu_offload=args.cpu_offload,
-            enable_flash_attn=args.flash_attn,
-            enable_compile=args.compile,
-            dit_device=args.dit_device,
-            vae_device=args.vae_device,
+            enable_cpu_offload=runtime_config.cpu_offload,
+            enable_flash_attn=runtime_config.flash_attn,
+            enable_compile=runtime_config.compile,
+            dit_device=runtime_config.dit_device,
+            vae_device=runtime_config.vae_device,
+            lora_paths=runtime_config.lora_paths,
+            lora_scales=runtime_config.lora_scales,
         )
         opts = []
-        if args.cpu_offload:
+        if runtime_config.cpu_offload:
             opts.append("CPU offload")
-        if args.flash_attn:
+        if runtime_config.flash_attn:
             opts.append("Flash Attn")
-        if args.compile:
+        if runtime_config.compile:
             opts.append("compiled")
         opts_str = f" + {', '.join(opts)}" if opts else ""
         mode = f"distributed (API encoder + local DiT{opts_str})"
-    elif args.api_url:
+    elif runtime_config.api_url:
         # API backend mode - encoder only (no model path)
-        if templates_dir is None:
-            templates_dir = str(Path(__file__).parent.parent / "templates" / "z_image")
-        load_api_encoder(args.api_url, args.api_model, templates_dir)
-        mode = f"API encoder-only ({args.api_model})"
+        load_api_encoder(runtime_config.api_url, runtime_config.api_model, templates_dir)
+        mode = f"API encoder-only ({runtime_config.api_model})"
     elif args.encoder_only:
         # Local encoder only
         if model_path is None:
             logger.error("No model path specified. Use --model-path or --config.")
             return 1
-        load_encoder_only(model_path, templates_dir, encoder_device=args.text_encoder_device)
+        load_encoder_only(model_path, templates_dir, encoder_device=runtime_config.encoder_device)
         mode = "encoder-only"
     else:
         # Full pipeline
@@ -847,9 +811,11 @@ def main():
         load_pipeline(
             model_path,
             templates_dir,
-            encoder_device=args.text_encoder_device,
-            dit_device=args.dit_device,
-            vae_device=args.vae_device,
+            encoder_device=runtime_config.encoder_device,
+            dit_device=runtime_config.dit_device,
+            vae_device=runtime_config.vae_device,
+            lora_paths=runtime_config.lora_paths,
+            lora_scales=runtime_config.lora_scales,
         )
         mode = "full"
 

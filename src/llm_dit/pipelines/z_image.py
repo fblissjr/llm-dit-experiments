@@ -271,6 +271,67 @@ class ZImagePipeline:
         self.vae.to(device)
         return self
 
+    def load_lora(
+        self,
+        lora_path: Union[str, Path, List[str], List[Path]],
+        scale: Union[float, List[float]] = 1.0,
+    ) -> int:
+        """
+        Load and fuse LoRA weights into the transformer.
+
+        Args:
+            lora_path: Path to LoRA file(s). Can be a single path or list of paths.
+            scale: LoRA scale factor(s). Can be a single value or list matching lora_path.
+
+        Returns:
+            Total number of layers updated
+
+        Example:
+            # Single LoRA
+            pipe.load_lora("anime_style.safetensors", scale=0.7)
+
+            # Multiple LoRAs
+            pipe.load_lora(
+                ["style1.safetensors", "style2.safetensors"],
+                scale=[0.5, 0.3]
+            )
+
+        Note:
+            LoRAs are fused (permanently merged) into the transformer weights.
+            To remove a LoRA, you must reload the pipeline.
+        """
+        from llm_dit.utils.lora import load_lora as _load_lora
+
+        # Normalize to lists
+        if isinstance(lora_path, (str, Path)):
+            lora_paths = [lora_path]
+        else:
+            lora_paths = list(lora_path)
+
+        if isinstance(scale, (int, float)):
+            scales = [scale] * len(lora_paths)
+        else:
+            scales = list(scale)
+
+        if len(lora_paths) != len(scales):
+            raise ValueError(
+                f"Number of LoRA paths ({len(lora_paths)}) must match "
+                f"number of scales ({len(scales)})"
+            )
+
+        total_updated = 0
+        for path, s in zip(lora_paths, scales):
+            updated = _load_lora(
+                self.transformer,
+                path,
+                scale=s,
+                device=next(self.transformer.parameters()).device,
+                torch_dtype=next(self.transformer.parameters()).dtype,
+            )
+            total_updated += updated
+
+        return total_updated
+
     def __call__(
         self,
         prompt: Union[str, Conversation],
@@ -288,6 +349,7 @@ class ZImagePipeline:
         enable_thinking: bool = False,  # Default False to match diffusers/DiffSynth
         output_type: str = "pil",
         callback: Optional[Callable[[int, int, torch.Tensor], None]] = None,
+        shift: Optional[float] = None,
     ) -> Union[Image.Image, List[Image.Image], torch.Tensor]:
         """
         Generate an image from a text prompt.
@@ -308,6 +370,9 @@ class ZImagePipeline:
             enable_thinking: Whether to include <think></think> structure
             output_type: Output format ("pil", "latent", or "pt")
             callback: Optional callback for progress updates
+            shift: Override scheduler shift/mu (default: calculated based on resolution).
+                   Higher values generally produce more detailed but potentially less stable results.
+                   Typical range: 0.5-10.0. Default is dynamically calculated (~3.0 for 1024x1024).
 
         Returns:
             Generated image(s) in specified format
@@ -412,13 +477,20 @@ class ZImagePipeline:
 
         # 3. Prepare timesteps
         image_seq_len = (latent_height // 2) * (latent_width // 2)
-        mu = calculate_shift(
-            image_seq_len,
-            self.scheduler.config.get("base_image_seq_len", 256),
-            self.scheduler.config.get("max_image_seq_len", 4096),
-            self.scheduler.config.get("base_shift", 0.5),
-            self.scheduler.config.get("max_shift", 1.15),
-        )
+        if shift is not None:
+            # Use user-provided shift value
+            mu = shift
+            logger.info(f"[Pipeline] Using user-provided shift/mu: {mu}")
+        else:
+            # Calculate shift based on resolution (dynamic shift)
+            mu = calculate_shift(
+                image_seq_len,
+                self.scheduler.config.get("base_image_seq_len", 256),
+                self.scheduler.config.get("max_image_seq_len", 4096),
+                self.scheduler.config.get("base_shift", 0.5),
+                self.scheduler.config.get("max_shift", 1.15),
+            )
+            logger.info(f"[Pipeline] Calculated shift/mu for resolution: {mu:.4f}")
         self.scheduler.sigma_min = 0.0
         self.scheduler.set_timesteps(num_inference_steps, device=device, mu=mu)
         timesteps = self.scheduler.timesteps
@@ -605,6 +677,7 @@ class ZImagePipeline:
         latents: Optional[torch.Tensor] = None,
         output_type: str = "pil",
         callback: Optional[Callable[[int, int, torch.Tensor], None]] = None,
+        shift: Optional[float] = None,
     ) -> Union[Image.Image, List[Image.Image], torch.Tensor]:
         """
         Generate an image from pre-computed embeddings.

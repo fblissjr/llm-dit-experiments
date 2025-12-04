@@ -88,10 +88,17 @@ class Qwen3Formatter:
         Args:
             msg: The message to format
             enable_thinking: Whether to include thinking block for assistant
-            skip_end: If True, omit closing <|im_end|>
+            skip_end: If True, omit closing <|im_end|> (only if content is empty)
 
         Returns:
             Formatted message string
+
+        Note on <|im_end|> handling:
+        - When assistant_content is provided, always add <|im_end|> (complete message)
+        - When assistant_content is empty AND is_final=True, omit <|im_end|> (model generating)
+        - When assistant_content is empty AND is_final=False, add <|im_end|> (more turns)
+
+        This matches the exact patterns from ComfyUI-QwenImageWanBridge.
         """
         role = msg.role.value
         content = msg.content
@@ -101,16 +108,19 @@ class Qwen3Formatter:
             thinking = msg.thinking if msg.thinking else ""
             inner = f"{self.THINK_START}\n{thinking}\n{self.THINK_END}\n\n{content}"
 
-            if skip_end:
-                return f"{self.IM_START}{role}\n{inner}"
-            else:
+            # Add closing tag if content is provided OR not skip_end
+            # Only omit when: content is empty AND skip_end=True
+            if content or not skip_end:
                 return f"{self.IM_START}{role}\n{inner}{self.IM_END}"
+            else:
+                return f"{self.IM_START}{role}\n{inner}"
         else:
             # System, user, or assistant without thinking
-            if skip_end:
-                return f"{self.IM_START}{role}\n{content}"
-            else:
+            # Same logic: close if content or not final
+            if content or not skip_end:
                 return f"{self.IM_START}{role}\n{content}{self.IM_END}"
+            else:
+                return f"{self.IM_START}{role}\n{content}"
 
     def format_simple(
         self,

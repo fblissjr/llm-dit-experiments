@@ -10,6 +10,10 @@ Key implementation details:
 - Extracts hidden_states[-2] (penultimate layer)
 - Filters by attention mask to get variable-length outputs
 - Tokenizer padding_side="left" as per Qwen3 convention
+
+Transformers v5 Migration:
+- Uses quantization_config parameter instead of deprecated load_in_8bit/load_in_4bit
+- BitsAndBytesConfig is passed directly to from_pretrained()
 """
 
 import logging
@@ -60,6 +64,7 @@ class TransformersBackend:
         model_subfolder: str = "text_encoder",
         tokenizer_subfolder: str = "tokenizer",
         config: BackendConfig | None = None,
+        quantization_config: "BitsAndBytesConfig | None" = None,
         **kwargs,
     ) -> "TransformersBackend":
         """
@@ -72,6 +77,8 @@ class TransformersBackend:
                 For diffusers pipelines, tokenizer is typically in a separate folder.
                 Set to None to load from model_subfolder.
             config: Optional BackendConfig, created from defaults if not provided
+            quantization_config: Optional BitsAndBytesConfig for quantization (v5 API).
+                Use this instead of the deprecated load_in_8bit/load_in_4bit flags.
             **kwargs: Additional arguments passed to from_pretrained
 
         Returns:
@@ -83,6 +90,14 @@ class TransformersBackend:
 
             # Load from local path
             backend = TransformersBackend.from_pretrained("/path/to/model")
+
+            # With 8-bit quantization (v5 API)
+            from transformers import BitsAndBytesConfig
+            quantization_config = BitsAndBytesConfig(load_in_8bit=True)
+            backend = TransformersBackend.from_pretrained(
+                "/path/to/model",
+                quantization_config=quantization_config,
+            )
 
             # Custom subfolder layout
             backend = TransformersBackend.from_pretrained(
@@ -128,13 +143,21 @@ class TransformersBackend:
         # Qwen3 uses left padding
         tokenizer.padding_side = "left"
 
-        logger.info(f"Loading model from {model_load_path} (dtype={torch_dtype})")
+        # Build model kwargs
         model_kwargs = {
             "torch_dtype": torch_dtype,
             "device_map": device_map,
             "trust_remote_code": trust_remote_code,
             **kwargs,
         }
+
+        # Add quantization_config if provided (v5 API)
+        if quantization_config is not None:
+            model_kwargs["quantization_config"] = quantization_config
+            logger.info(f"Loading model with quantization: {quantization_config}")
+        else:
+            logger.info(f"Loading model from {model_load_path} (dtype={torch_dtype})")
+
         # Only add subfolder if it's not None (transformers bugs on subfolder=None)
         if hf_subfolder and not is_local:
             model_kwargs["subfolder"] = hf_subfolder

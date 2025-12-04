@@ -2,9 +2,14 @@
 TOML-based configuration for llm-dit-experiments.
 
 Supports profiles for different hardware configurations, including:
-- 8-bit quantization for LLM text encoder
+- Quantization via BitsAndBytesConfig (4-bit or 8-bit)
 - CPU offloading for memory-constrained systems
 - Device selection (cuda, mps, cpu)
+
+Transformers v5 Migration:
+- load_in_8bit/load_in_4bit are DEPRECATED in transformers v5
+- Use quantization="8bit" or quantization="4bit" instead
+- The config automatically builds BitsAndBytesConfig internally
 
 Example config (config.toml):
 
@@ -15,7 +20,7 @@ Example config (config.toml):
 
     [default.encoder]
     device = "cuda"
-    load_in_8bit = false
+    quantization = "none"
     cpu_offload = false
 
     [default.pipeline]
@@ -26,7 +31,7 @@ Example config (config.toml):
 
     [low_vram.encoder]
     device = "cpu"
-    load_in_8bit = true
+    quantization = "8bit"
     cpu_offload = true
 
     [low_vram.pipeline]
@@ -35,6 +40,7 @@ Example config (config.toml):
 
 import logging
 import os
+import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -55,15 +61,45 @@ except ImportError:
 
 @dataclass
 class EncoderConfig:
-    """Configuration for the text encoder (LLM)."""
+    """Configuration for the text encoder (LLM).
+
+    Transformers v5 Migration Notes:
+    - load_in_8bit/load_in_4bit are DEPRECATED
+    - Use quantization="8bit" or quantization="4bit" instead
+    - Config will auto-migrate legacy fields with a deprecation warning
+    """
 
     device: str = "auto"  # auto, cuda, mps, cpu
     torch_dtype: str = "bfloat16"  # bfloat16, float16, float32
-    load_in_8bit: bool = False  # Use bitsandbytes 8-bit quantization
-    load_in_4bit: bool = False  # Use bitsandbytes 4-bit quantization
+    quantization: str = "none"  # none, 4bit, 8bit (v5 API)
     cpu_offload: bool = False  # Offload to CPU after encoding
     trust_remote_code: bool = True
     max_length: int = 512
+
+    # DEPRECATED: These fields are kept for backwards compatibility only
+    # They will be removed in a future version
+    load_in_8bit: bool = False
+    load_in_4bit: bool = False
+
+    def __post_init__(self):
+        """Handle deprecation migration from load_in_8bit/load_in_4bit to quantization."""
+        # Migrate legacy fields if used
+        if self.load_in_8bit and self.quantization == "none":
+            warnings.warn(
+                "load_in_8bit is deprecated in transformers v5. "
+                "Use quantization='8bit' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            self.quantization = "8bit"
+        elif self.load_in_4bit and self.quantization == "none":
+            warnings.warn(
+                "load_in_4bit is deprecated in transformers v5. "
+                "Use quantization='4bit' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            self.quantization = "4bit"
 
     def get_torch_dtype(self) -> torch.dtype:
         """Convert string dtype to torch.dtype."""
@@ -84,6 +120,45 @@ class EncoderConfig:
             else:
                 return "cpu"
         return self.device
+
+    def get_quantization_config(self) -> "BitsAndBytesConfig | None":
+        """Get BitsAndBytesConfig for transformers v5.
+
+        Returns:
+            BitsAndBytesConfig if quantization is enabled, None otherwise.
+
+        Note:
+            This is the v5-compliant way to configure quantization.
+            The config should be passed to from_pretrained() as:
+
+                model = AutoModel.from_pretrained(
+                    model_path,
+                    quantization_config=config.encoder.get_quantization_config(),
+                )
+        """
+        if self.quantization == "none":
+            return None
+
+        try:
+            from transformers import BitsAndBytesConfig
+        except ImportError:
+            raise ImportError(
+                "BitsAndBytesConfig requires transformers>=4.30.0. "
+                "Install with: pip install transformers>=4.30.0"
+            )
+
+        if self.quantization == "8bit":
+            return BitsAndBytesConfig(load_in_8bit=True)
+        elif self.quantization == "4bit":
+            return BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_compute_dtype=self.get_torch_dtype(),
+            )
+        else:
+            raise ValueError(
+                f"Unknown quantization: {self.quantization}. "
+                f"Valid options: none, 4bit, 8bit"
+            )
 
 
 @dataclass
@@ -129,6 +204,30 @@ class GenerationConfig:
 
 
 @dataclass
+class OptimizationConfig:
+    """Optimization settings for pipeline execution."""
+
+    flash_attn: bool = False  # Enable Flash Attention
+    compile: bool = False  # Enable torch.compile
+    cpu_offload: bool = False  # Enable CPU offload for transformer
+
+
+@dataclass
+class SchedulerConfig:
+    """Scheduler settings."""
+
+    shift: float = 3.0  # Flow matching scheduler shift parameter
+
+
+@dataclass
+class LoRAConfig:
+    """LoRA configuration."""
+
+    paths: list[str] = field(default_factory=list)  # Paths to LoRA files
+    scales: list[float] = field(default_factory=list)  # Scale for each LoRA
+
+
+@dataclass
 class Config:
     """Complete configuration for Z-Image generation."""
 
@@ -138,6 +237,9 @@ class Config:
     encoder: EncoderConfig = field(default_factory=EncoderConfig)
     pipeline: PipelineConfig = field(default_factory=PipelineConfig)
     generation: GenerationConfig = field(default_factory=GenerationConfig)
+    optimization: OptimizationConfig = field(default_factory=OptimizationConfig)
+    scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
+    lora: LoRAConfig = field(default_factory=LoRAConfig)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Config":
@@ -145,6 +247,9 @@ class Config:
         encoder_data = data.pop("encoder", {})
         pipeline_data = data.pop("pipeline", {})
         generation_data = data.pop("generation", {})
+        optimization_data = data.pop("optimization", {})
+        scheduler_data = data.pop("scheduler", {})
+        lora_data = data.pop("lora", {})
 
         return cls(
             model_path=data.get("model_path", ""),
@@ -152,6 +257,9 @@ class Config:
             encoder=EncoderConfig(**encoder_data),
             pipeline=PipelineConfig(**pipeline_data),
             generation=GenerationConfig(**generation_data),
+            optimization=OptimizationConfig(**optimization_data),
+            scheduler=SchedulerConfig(**scheduler_data),
+            lora=LoRAConfig(**lora_data),
         )
 
     @classmethod
@@ -171,12 +279,13 @@ class Config:
             model_path = "/path/to/model"
 
             [default.encoder]
-            load_in_8bit = true
+            quantization = "8bit"
 
             [low_vram]
             model_path = "/path/to/model"
 
             [low_vram.encoder]
+            quantization = "8bit"
             cpu_offload = true
         """
         if tomllib is None:
@@ -211,8 +320,7 @@ class Config:
             "encoder": {
                 "device": self.encoder.device,
                 "torch_dtype": self.encoder.torch_dtype,
-                "load_in_8bit": self.encoder.load_in_8bit,
-                "load_in_4bit": self.encoder.load_in_4bit,
+                "quantization": self.encoder.quantization,
                 "cpu_offload": self.encoder.cpu_offload,
                 "trust_remote_code": self.encoder.trust_remote_code,
                 "max_length": self.encoder.max_length,
@@ -231,6 +339,18 @@ class Config:
                 "enable_thinking": self.generation.enable_thinking,
                 "default_template": self.generation.default_template,
             },
+            "optimization": {
+                "flash_attn": self.optimization.flash_attn,
+                "compile": self.optimization.compile,
+                "cpu_offload": self.optimization.cpu_offload,
+            },
+            "scheduler": {
+                "shift": self.scheduler.shift,
+            },
+            "lora": {
+                "paths": self.lora.paths,
+                "scales": self.lora.scales,
+            },
         }
 
 
@@ -244,7 +364,7 @@ PRESETS = {
         encoder=EncoderConfig(
             device="cuda",
             torch_dtype="bfloat16",
-            load_in_8bit=True,
+            quantization="8bit",  # v5 API
             cpu_offload=True,
         ),
         pipeline=PipelineConfig(
