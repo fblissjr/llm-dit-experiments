@@ -259,19 +259,31 @@ async def save_embeddings_endpoint(request: EncodeRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-def load_pipeline(model_path: str, templates_dir: Optional[str] = None):
+def load_pipeline(
+    model_path: str,
+    templates_dir: Optional[str] = None,
+    encoder_device: str = "auto",
+    dit_device: str = "auto",
+    vae_device: str = "auto",
+):
     """Load the full generation pipeline."""
     global pipeline
 
     from llm_dit.pipelines import ZImagePipeline
 
     logger.info(f"Loading pipeline from {model_path}...")
+    logger.info(f"  Encoder device: {encoder_device}")
+    logger.info(f"  DiT device: {dit_device}")
+    logger.info(f"  VAE device: {vae_device}")
     start = time.time()
 
     pipeline = ZImagePipeline.from_pretrained(
         model_path,
         templates_dir=templates_dir,
         torch_dtype=torch.bfloat16,
+        encoder_device=encoder_device,
+        dit_device=dit_device,
+        vae_device=vae_device,
     )
 
     load_time = time.time() - start
@@ -279,19 +291,25 @@ def load_pipeline(model_path: str, templates_dir: Optional[str] = None):
     logger.info(f"Device: {pipeline.device}")
 
 
-def load_encoder_only(model_path: str, templates_dir: Optional[str] = None):
+def load_encoder_only(
+    model_path: str,
+    templates_dir: Optional[str] = None,
+    encoder_device: str = "auto",
+):
     """Load only the encoder (fast mode for testing on Mac)."""
     global encoder, encoder_only_mode
 
     from llm_dit.encoders import ZImageTextEncoder
 
     logger.info(f"Loading encoder only from {model_path}...")
+    logger.info(f"  Encoder device: {encoder_device}")
     start = time.time()
 
     encoder = ZImageTextEncoder.from_pretrained(
         model_path,
         templates_dir=templates_dir,
         torch_dtype=torch.bfloat16,
+        device_map=encoder_device,
     )
 
     encoder_only_mode = True
@@ -338,6 +356,76 @@ def load_api_encoder(
     logger.info(f"API encoder ready (model: {model_id})")
 
 
+def load_hybrid_pipeline(
+    model_path: str,
+    templates_dir: Optional[str] = None,
+    enable_cpu_offload: bool = False,
+    enable_flash_attn: bool = False,
+    enable_compile: bool = False,
+    encoder_device: str = "cpu",
+    dit_device: str = "cuda",
+    vae_device: str = "cuda",
+):
+    """Load full pipeline with local encoder + DiT/VAE (for A/B testing vs API)."""
+    global pipeline, encoder_only_mode
+
+    from llm_dit.pipelines import ZImagePipeline
+
+    logger.info("=" * 60)
+    logger.info("HYBRID MODE SETUP (local encoder + local DiT/VAE)")
+    logger.info("=" * 60)
+    logger.info(f"  Model path: {model_path}")
+    logger.info(f"  Templates: {templates_dir}")
+    logger.info(f"  Encoder device: {encoder_device}")
+    logger.info(f"  DiT device: {dit_device}")
+    logger.info(f"  VAE device: {vae_device}")
+    logger.info(f"  CPU Offload: {enable_cpu_offload}")
+    logger.info(f"  Flash Attention: {enable_flash_attn}")
+    logger.info(f"  Torch Compile: {enable_compile}")
+    logger.info("-" * 60)
+
+    start = time.time()
+
+    # Load full pipeline with device placement
+    pipeline = ZImagePipeline.from_pretrained(
+        model_path,
+        templates_dir=templates_dir,
+        torch_dtype=torch.bfloat16,
+        encoder_device=encoder_device,
+        dit_device=dit_device,
+        vae_device=vae_device,
+    )
+
+    load_time = time.time() - start
+    logger.info(f"Pipeline loaded in {load_time:.1f}s")
+
+    # Apply optimizations
+    if enable_flash_attn:
+        logger.info("Enabling Flash Attention...")
+        try:
+            pipeline.transformer.set_attention_backend("flash")
+            logger.info("  Flash Attention enabled")
+        except Exception as e:
+            logger.warning(f"  Failed to enable Flash Attention: {e}")
+            logger.warning("  Install with: pip install flash-attn --no-build-isolation")
+
+    if enable_compile:
+        logger.info("Compiling transformer with torch.compile...")
+        try:
+            pipeline.transformer = torch.compile(pipeline.transformer, mode="reduce-overhead")
+            logger.info("  Transformer compiled (first run will be slow)")
+        except Exception as e:
+            logger.warning(f"  Failed to compile: {e}")
+
+    encoder_only_mode = False
+    logger.info("-" * 60)
+    logger.info(f"Hybrid pipeline ready (local encoder on {encoder_device})")
+    logger.info(f"  Encoder device: {pipeline.encoder.device}")
+    logger.info(f"  DiT device: {next(pipeline.transformer.parameters()).device}")
+    logger.info(f"  VAE device: {next(pipeline.vae.parameters()).device}")
+    logger.info("=" * 60)
+
+
 def load_api_pipeline(
     api_url: str,
     model_id: str,
@@ -346,6 +434,8 @@ def load_api_pipeline(
     enable_cpu_offload: bool = False,
     enable_flash_attn: bool = False,
     enable_compile: bool = False,
+    dit_device: str = "auto",
+    vae_device: str = "auto",
 ):
     """Load full pipeline with API backend for encoding + local DiT/VAE for generation."""
     global pipeline, encoder_only_mode
@@ -394,6 +484,8 @@ def load_api_pipeline(
 
     logger.info("-" * 60)
     logger.info(f"Loading DiT/VAE from {model_path}...")
+    logger.info(f"  DiT device: {dit_device}")
+    logger.info(f"  VAE device: {vae_device}")
     start = time.time()
 
     # Load generator-only pipeline, then attach our API encoder
@@ -401,6 +493,8 @@ def load_api_pipeline(
         model_path,
         torch_dtype=torch.bfloat16,
         enable_cpu_offload=enable_cpu_offload,
+        dit_device=dit_device,
+        vae_device=vae_device,
     )
 
     load_time = time.time() - start
@@ -489,6 +583,32 @@ def main():
         action="store_true",
         help="Compile transformer with torch.compile (slower first run)",
     )
+    parser.add_argument(
+        "--local-encoder",
+        action="store_true",
+        help="Force local encoder loading (for A/B testing API vs local)",
+    )
+    parser.add_argument(
+        "--text-encoder-device",
+        type=str,
+        choices=["cpu", "cuda", "mps", "auto"],
+        default="auto",
+        help="Device for text encoder (default: auto)",
+    )
+    parser.add_argument(
+        "--dit-device",
+        type=str,
+        choices=["cpu", "cuda", "mps", "auto"],
+        default="auto",
+        help="Device for DiT/transformer (default: auto)",
+    )
+    parser.add_argument(
+        "--vae-device",
+        type=str,
+        choices=["cpu", "cuda", "mps", "auto"],
+        default="auto",
+        help="Device for VAE (default: auto)",
+    )
     args = parser.parse_args()
 
     # Defaults
@@ -519,7 +639,22 @@ def main():
             templates_dir = cfg.templates_dir
 
     # Determine which mode to use
-    if args.api_url and model_path:
+    if args.api_url and model_path and args.local_encoder:
+        # Hybrid mode: Local encoder (for A/B testing) + local DiT/VAE
+        if templates_dir is None:
+            templates_dir = str(Path(__file__).parent.parent / "templates" / "z_image")
+        load_hybrid_pipeline(
+            model_path,
+            templates_dir,
+            enable_cpu_offload=args.cpu_offload,
+            enable_flash_attn=args.flash_attn,
+            enable_compile=args.compile,
+            encoder_device=args.text_encoder_device,
+            dit_device=args.dit_device,
+            vae_device=args.vae_device,
+        )
+        mode = f"hybrid (local encoder on {args.text_encoder_device}, for A/B testing vs API)"
+    elif args.api_url and model_path:
         # Distributed mode: API encoding + local DiT/VAE generation
         if templates_dir is None:
             templates_dir = str(Path(__file__).parent.parent / "templates" / "z_image")
@@ -531,6 +666,8 @@ def main():
             enable_cpu_offload=args.cpu_offload,
             enable_flash_attn=args.flash_attn,
             enable_compile=args.compile,
+            dit_device=args.dit_device,
+            vae_device=args.vae_device,
         )
         opts = []
         if args.cpu_offload:
@@ -552,14 +689,20 @@ def main():
         if model_path is None:
             logger.error("No model path specified. Use --model-path or --config.")
             return 1
-        load_encoder_only(model_path, templates_dir)
+        load_encoder_only(model_path, templates_dir, encoder_device=args.text_encoder_device)
         mode = "encoder-only"
     else:
         # Full pipeline
         if model_path is None:
             logger.error("No model path specified. Use --model-path or --config.")
             return 1
-        load_pipeline(model_path, templates_dir)
+        load_pipeline(
+            model_path,
+            templates_dir,
+            encoder_device=args.text_encoder_device,
+            dit_device=args.dit_device,
+            vae_device=args.vae_device,
+        )
         mode = "full"
 
     # Run server

@@ -94,6 +94,9 @@ class ZImagePipeline:
         default_template: str | None = None,
         torch_dtype: torch.dtype = torch.bfloat16,
         device_map: str | None = None,
+        encoder_device: str = "auto",
+        dit_device: str = "auto",
+        vae_device: str = "auto",
         **kwargs,
     ) -> "ZImagePipeline":
         """
@@ -104,7 +107,10 @@ class ZImagePipeline:
             templates_dir: Optional path to templates directory
             default_template: Optional default template name
             torch_dtype: Model dtype (default: bfloat16)
-            device_map: Device mapping (default: "auto")
+            device_map: Device mapping (default: "auto", legacy parameter)
+            encoder_device: Device for text encoder (cpu, cuda, mps, auto)
+            dit_device: Device for DiT/transformer (cpu, cuda, mps, auto)
+            vae_device: Device for VAE (cpu, cuda, mps, auto)
             **kwargs: Additional arguments
 
         Returns:
@@ -115,6 +121,9 @@ class ZImagePipeline:
                 "Tongyi-MAI/Z-Image-Turbo",
                 templates_dir="templates/z_image",
                 torch_dtype=torch.bfloat16,
+                encoder_device="cpu",
+                dit_device="cuda",
+                vae_device="cuda",
             )
 
         Note:
@@ -131,12 +140,33 @@ class ZImagePipeline:
                 "Install with: pip install diffusers[torch]"
             ) from e
 
+        # Resolve device strings
+        def resolve_device(device_str: str) -> str:
+            if device_str == "auto":
+                if torch.cuda.is_available():
+                    return "cuda"
+                elif torch.backends.mps.is_available():
+                    return "mps"
+                else:
+                    return "cpu"
+            return device_str
+
+        encoder_device_resolved = resolve_device(encoder_device)
+        dit_device_resolved = resolve_device(dit_device)
+        vae_device_resolved = resolve_device(vae_device)
+
+        logger.info("Loading pipeline components with device placement:")
+        logger.info(f"  Encoder: {encoder_device_resolved}")
+        logger.info(f"  DiT: {dit_device_resolved}")
+        logger.info(f"  VAE: {vae_device_resolved}")
+
         # Load encoder (our custom encoder with template support)
         encoder = ZImageTextEncoder.from_pretrained(
             model_path,
             templates_dir=templates_dir,
             default_template=default_template,
             torch_dtype=torch_dtype,
+            device_map=encoder_device_resolved,
         )
 
         # Load the diffusers pipeline (auto-detect pipeline class)
@@ -145,19 +175,21 @@ class ZImagePipeline:
             "torch_dtype": torch_dtype,
             **kwargs,
         }
+        # Use device_map for initial loading if provided (legacy)
         if device_map is not None:
             load_kwargs["device_map"] = device_map
         diffusers_pipe = DiffusionPipeline.from_pretrained(model_path, **load_kwargs)
-
-        # Move diffusers pipeline to same device as encoder
-        device = encoder.device
-        logger.info(f"Moving pipeline to {device}...")
-        diffusers_pipe = diffusers_pipe.to(device)
 
         # Extract components from diffusers pipeline
         transformer = diffusers_pipe.transformer
         vae = diffusers_pipe.vae
         scheduler = diffusers_pipe.scheduler
+
+        # Move components to their designated devices
+        logger.info(f"Moving transformer to {dit_device_resolved}...")
+        transformer = transformer.to(dit_device_resolved)
+        logger.info(f"Moving VAE to {vae_device_resolved}...")
+        vae = vae.to(vae_device_resolved)
 
         logger.info("Pipeline loaded successfully")
         return cls(encoder, transformer, vae, scheduler)
@@ -728,6 +760,8 @@ class ZImagePipeline:
         torch_dtype: torch.dtype = torch.bfloat16,
         device: str | torch.device = "cuda",
         enable_cpu_offload: bool = False,
+        dit_device: str = "auto",
+        vae_device: str = "auto",
         **kwargs,
     ) -> "ZImagePipeline":
         """
@@ -739,8 +773,10 @@ class ZImagePipeline:
         Args:
             model_path: Path to Z-Image model or HuggingFace ID
             torch_dtype: Model dtype (default: bfloat16)
-            device: Device to load to (default: cuda)
+            device: Device to load to (default: cuda, legacy parameter)
             enable_cpu_offload: Enable model CPU offload for low VRAM
+            dit_device: Device for DiT/transformer (cpu, cuda, mps, auto)
+            vae_device: Device for VAE (cpu, cuda, mps, auto)
             **kwargs: Additional arguments for diffusers
 
         Returns:
@@ -749,7 +785,8 @@ class ZImagePipeline:
         Example:
             pipe = ZImagePipeline.from_pretrained_generator_only(
                 "/path/to/z-image",
-                device="cuda",
+                dit_device="cuda",
+                vae_device="cuda",
             )
             image = pipe.generate_from_embeddings(embeddings)
         """
@@ -762,18 +799,38 @@ class ZImagePipeline:
                 "Install with: pip install diffusers[torch]"
             ) from e
 
+        # Resolve device strings
+        def resolve_device(device_str: str) -> str:
+            if device_str == "auto":
+                if torch.cuda.is_available():
+                    return "cuda"
+                elif torch.backends.mps.is_available():
+                    return "mps"
+                else:
+                    return "cpu"
+            return device_str
+
+        # Use new device params if provided, otherwise fall back to legacy 'device'
+        dit_device_resolved = resolve_device(dit_device) if dit_device != "auto" or device == "cuda" else str(device)
+        vae_device_resolved = resolve_device(vae_device) if vae_device != "auto" or device == "cuda" else str(device)
+
+        # Re-resolve in case we got legacy device
+        dit_device_resolved = resolve_device(dit_device_resolved)
+        vae_device_resolved = resolve_device(vae_device_resolved)
+
         model_path = Path(model_path)
         logger.info("=" * 60)
         logger.info("LOADING GENERATOR COMPONENTS (encoder-free mode)")
         logger.info("=" * 60)
         logger.info(f"  model_path: {model_path}")
         logger.info(f"  torch_dtype: {torch_dtype}")
-        logger.info(f"  device: {device}")
+        logger.info(f"  dit_device: {dit_device_resolved}")
+        logger.info(f"  vae_device: {vae_device_resolved}")
         logger.info(f"  enable_cpu_offload: {enable_cpu_offload}")
         logger.info("-" * 60)
 
         # Check available GPU memory before loading
-        if device == "cuda" and torch.cuda.is_available():
+        if torch.cuda.is_available():
             free_mem = torch.cuda.mem_get_info()[0] / 1024**3
             total_mem = torch.cuda.mem_get_info()[1] / 1024**3
             logger.info(f"  GPU memory: {free_mem:.1f}GB free / {total_mem:.1f}GB total")
@@ -791,7 +848,7 @@ class ZImagePipeline:
         logger.info(f"  Transformer dtype: {next(transformer.parameters()).dtype}")
         logger.info(f"  Transformer device (before move): {next(transformer.parameters()).device}")
 
-        if device == "cuda" and torch.cuda.is_available():
+        if torch.cuda.is_available():
             free_mem = torch.cuda.mem_get_info()[0] / 1024**3
             logger.info(f"  GPU memory after transformer load: {free_mem:.1f}GB free")
 
@@ -818,16 +875,16 @@ class ZImagePipeline:
             logger.info("  Transformer: moves to GPU for each denoising step")
             logger.info("  VAE: moves to GPU only for final decode")
         else:
-            logger.info(f"Moving transformer to {device}...")
-            transformer = transformer.to(device)
+            logger.info(f"Moving transformer to {dit_device_resolved}...")
+            transformer = transformer.to(dit_device_resolved)
             logger.info(f"  Transformer now on: {next(transformer.parameters()).device}")
 
-            if device == "cuda" and torch.cuda.is_available():
+            if torch.cuda.is_available():
                 free_mem = torch.cuda.mem_get_info()[0] / 1024**3
                 logger.info(f"  GPU memory after transformer move: {free_mem:.1f}GB free")
 
-            logger.info(f"Moving VAE to {device}...")
-            vae = vae.to(device)
+            logger.info(f"Moving VAE to {vae_device_resolved}...")
+            vae = vae.to(vae_device_resolved)
             logger.info(f"  VAE now on: {next(vae.parameters()).device}")
 
         # Create pipeline without encoder
