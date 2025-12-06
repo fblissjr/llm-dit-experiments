@@ -308,7 +308,7 @@ uv run scripts/generate.py \
 |------|-------------|
 | `--api-url` | URL for heylookitsanllm API |
 | `--api-model` | Model ID for API backend |
-| `--local-encoder` | Force local encoder with API (for A/B testing) |
+| `--use-api-encoder` | Use API for encoding (local is default) |
 
 ### Optimization
 | Flag | Description |
@@ -367,6 +367,7 @@ uv run scripts/generate.py \
   "thinking_content": "Orange fur, green eyes.",
   "assistant_content": "Here is your cat:",
   "force_think_block": false,
+  "strip_quotes": false,
   "template": "photorealistic",
   "width": 1024,
   "height": 1024,
@@ -381,6 +382,9 @@ uv run scripts/generate.py \
 - If `thinking_content` is provided, a think block is automatically added
 - If `force_think_block` is true, an empty think block is added even without content
 - Default: no think block (matches official HF Space)
+
+**Content processing:**
+- `strip_quotes`: Remove `"` characters from prompt (for JSON-type inputs, since Z-Image treats `"` as text to render)
 
 ## LoRA Support
 
