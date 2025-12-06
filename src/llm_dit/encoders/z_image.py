@@ -167,6 +167,7 @@ class ZImageTextEncoder:
         assistant_content: str | None = None,
         force_think_block: bool = False,
         return_padded: bool = False,
+        remove_quotes: bool = False,
     ) -> EncodingOutput:
         """
         Encode a prompt to embeddings.
@@ -188,6 +189,7 @@ class ZImageTextEncoder:
             assistant_content: Assistant content after thinking (ignored if Conversation)
             force_think_block: If True, add empty think block even without content
             return_padded: Also return padded batch tensors
+            remove_quotes: If True, strip " characters (for JSON-type prompts)
 
         Returns:
             EncodingOutput with variable-length embeddings
@@ -228,6 +230,7 @@ class ZImageTextEncoder:
                 thinking_content=thinking_content,
                 assistant_content=assistant_content,
                 force_think_block=force_think_block,
+                remove_quotes=remove_quotes,
             )
 
         # Format to chat template string
@@ -292,6 +295,7 @@ class ZImageTextEncoder:
         thinking_content: str | None = None,
         assistant_content: str | None = None,
         force_think_block: bool = False,
+        remove_quotes: bool = False,
     ) -> Conversation:
         """
         Build a Conversation from parameters.
@@ -326,6 +330,7 @@ class ZImageTextEncoder:
             thinking_content=final_thinking or "",
             assistant_content=final_assistant or "",
             force_think_block=final_force_think_block,
+            remove_quotes=remove_quotes,
         )
 
     def _resolve_template(

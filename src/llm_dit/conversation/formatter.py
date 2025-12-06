@@ -137,6 +137,8 @@ class Qwen3Formatter:
         assistant_content: str = "",
         force_think_block: bool = False,
         is_final: bool = True,
+        clean_whitespace: bool = True,
+        remove_quotes: bool = False,
     ) -> str:
         """
         Format a simple single-turn conversation.
@@ -151,6 +153,8 @@ class Qwen3Formatter:
             assistant_content: Content after </think>
             force_think_block: If True, add empty think block even without content
             is_final: Whether to omit final <|im_end|>
+            clean_whitespace: If True (default), clean extra whitespace/newlines
+            remove_quotes: If True, strip " characters (for JSON-type prompts)
 
         Returns:
             Formatted string
@@ -161,6 +165,8 @@ class Qwen3Formatter:
             thinking_content=thinking_content,
             assistant_content=assistant_content,
             force_think_block=force_think_block,
+            clean_whitespace=clean_whitespace,
+            remove_quotes=remove_quotes,
         )
         conv.is_final = is_final
         return self.format(conv)
@@ -177,12 +183,24 @@ def format_prompt(
     assistant_content: str = "",
     force_think_block: bool = False,
     is_final: bool = True,
+    clean_whitespace: bool = True,
+    remove_quotes: bool = False,
 ) -> str:
     """
     Convenience function to format a simple prompt.
 
     Uses content-driven logic: thinking block is added only if
     thinking_content is provided or force_think_block=True.
+
+    Args:
+        user_prompt: The user's request
+        system_prompt: Optional system prompt
+        thinking_content: Content inside <think></think> (triggers think block)
+        assistant_content: Content after </think>
+        force_think_block: If True, add empty think block even without content
+        is_final: Whether to omit final <|im_end|>
+        clean_whitespace: If True (default), clean extra whitespace/newlines
+        remove_quotes: If True, strip " characters (for JSON-type prompts)
 
     Example (matches official HF Space - no think block):
         formatted = format_prompt("A cat sleeping")
@@ -196,6 +214,9 @@ def format_prompt(
 
     Example (force empty think block):
         formatted = format_prompt("A cat", force_think_block=True)
+
+    Example (strip quotes from JSON prompt):
+        formatted = format_prompt('"A cat sleeping"', remove_quotes=True)
     """
     return default_formatter.format_simple(
         user_prompt=user_prompt,
@@ -204,4 +225,6 @@ def format_prompt(
         assistant_content=assistant_content,
         force_think_block=force_think_block,
         is_final=is_final,
+        clean_whitespace=clean_whitespace,
+        remove_quotes=remove_quotes,
     )

@@ -20,14 +20,14 @@ class TestBackendConfig:
     def test_default_config(self):
         config = BackendConfig()
         assert config.backend_type == "transformers"
-        assert config.max_length == 512
+        assert config.max_length == 2048  # Increased for longer prompts
         assert config.torch_dtype == "bfloat16"
 
     def test_for_z_image_factory(self):
         config = BackendConfig.for_z_image("/path/to/model")
         assert config.model_path == "/path/to/model"
         assert config.subfolder == "text_encoder"
-        assert config.max_length == 512
+        assert config.max_length == 2048  # Increased for longer prompts
 
     def test_get_torch_dtype(self):
         config = BackendConfig(torch_dtype="float16")

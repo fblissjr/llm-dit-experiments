@@ -15,9 +15,42 @@ The thinking block is content-driven:
 - Otherwise -> no think block (matches official HF Space default)
 """
 
+import re
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
+
+
+def clean_content(text: str) -> str:
+    """
+    Clean whitespace and newlines from user-provided content.
+
+    - Strips leading/trailing whitespace
+    - Normalizes multiple newlines to single newlines
+    - Normalizes multiple spaces to single spaces
+    """
+    if not text:
+        return text
+    # Strip leading/trailing whitespace
+    text = text.strip()
+    # Normalize multiple newlines to single
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    # Normalize multiple spaces (but not newlines) to single
+    text = re.sub(r"[^\S\n]+", " ", text)
+    return text
+
+
+def strip_quotes(text: str) -> str:
+    """
+    Strip double quotes from JSON-type prompts.
+
+    Z-Image training data treats " characters as text to render in images.
+    This helper removes them for prompts that may come from JSON sources.
+    """
+    if not text:
+        return text
+    # Remove all double quotes
+    return text.replace('"', "")
 
 
 class Role(Enum):
@@ -166,6 +199,8 @@ class Conversation:
         thinking_content: str = "",
         assistant_content: str = "",
         force_think_block: bool = False,
+        clean_whitespace: bool = True,
+        remove_quotes: bool = False,
     ) -> "Conversation":
         """
         Create a simple single-turn conversation.
@@ -182,6 +217,8 @@ class Conversation:
             thinking_content: Content inside <think></think> (triggers think block)
             assistant_content: Content after </think>
             force_think_block: If True, add empty think block even without content
+            clean_whitespace: If True (default), clean extra whitespace/newlines
+            remove_quotes: If True, strip " characters (for JSON-type prompts)
 
         Returns:
             Conversation ready for formatting
@@ -203,7 +240,24 @@ class Conversation:
                 thinking_content="Soft lighting.",
                 assistant_content="Here is your image:",
             )
+
+            # JSON prompt with quotes stripped:
+            conv = Conversation.simple('"A cat sleeping"', remove_quotes=True)
         """
+        # Apply content cleaning
+        if clean_whitespace:
+            user_prompt = clean_content(user_prompt)
+            system_prompt = clean_content(system_prompt)
+            thinking_content = clean_content(thinking_content)
+            assistant_content = clean_content(assistant_content)
+
+        # Strip quotes if requested (for JSON-type prompts)
+        if remove_quotes:
+            user_prompt = strip_quotes(user_prompt)
+            system_prompt = strip_quotes(system_prompt)
+            thinking_content = strip_quotes(thinking_content)
+            assistant_content = strip_quotes(assistant_content)
+
         # Content-driven: enable thinking if content provided OR forced
         has_thinking = bool(thinking_content) or force_think_block
         conv = cls(enable_thinking=has_thinking)

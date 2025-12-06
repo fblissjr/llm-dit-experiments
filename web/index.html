@@ -319,6 +319,17 @@
                             <label for="enableThinking" class="ml-2 text-sm text-gray-300">Enable thinking block</label>
                         </div>
 
+                        <!-- Strip Quotes -->
+                        <div class="flex items-center">
+                            <input
+                                type="checkbox"
+                                id="stripQuotes"
+                                class="w-4 h-4 text-blue-600 bg-gray-700 border-gray-600 rounded focus:ring-blue-500 focus:ring-2"
+                            >
+                            <label for="stripQuotes" class="ml-2 text-sm text-gray-300">Strip quotes from prompt</label>
+                            <span class="ml-2 text-xs text-gray-500">(for JSON-type prompts)</span>
+                        </div>
+
                         <!-- Thinking Content -->
                         <div>
                             <label class="block text-sm font-medium text-gray-300 mb-2">Thinking Content</label>
@@ -461,7 +472,7 @@
                                 <svg class="w-3 h-3 transition-transform group-open:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
                                 </svg>
-                                Show formatted prompt
+                                Show formatted prompt <span id="tokenCountBadge" class="ml-2 px-1.5 py-0.5 bg-blue-900/50 text-blue-300 rounded text-xs hidden"></span>
                             </summary>
                             <div class="mt-2 bg-gray-900 rounded-lg p-3">
                                 <pre class="text-xs text-gray-300 overflow-x-auto whitespace-pre-wrap font-mono" id="resultFormattedPrompt">-</pre>
@@ -781,7 +792,8 @@
             document.getElementById('systemPrompt').value = item.system_prompt || '';
             document.getElementById('thinkingContent').value = item.thinking_content || '';
             document.getElementById('assistantContent').value = item.assistant_content || '';
-            document.getElementById('enableThinking').checked = item.enable_thinking || false;
+            document.getElementById('enableThinking').checked = item.force_think_block || false;
+            document.getElementById('stripQuotes').checked = item.strip_quotes || false;
             document.getElementById('seed').value = item.seed || '';
             document.getElementById('template').value = item.template || '';
 
@@ -837,6 +849,16 @@
 
             resultInfo.textContent = infoText;
             document.getElementById('resultFormattedPrompt').textContent = item.formatted_prompt || '-';
+
+            // Hide token badge for history items (token count not stored)
+            const tokenBadge = document.getElementById('tokenCountBadge');
+            if (item.token_count) {
+                tokenBadge.textContent = `${item.token_count} tokens`;
+                tokenBadge.classList.remove('hidden');
+            } else {
+                tokenBadge.classList.add('hidden');
+            }
+
             currentParams = item;
             result.classList.remove('hidden');
 
@@ -906,7 +928,8 @@
                 system_prompt: document.getElementById('systemPrompt').value || null,
                 thinking_content: document.getElementById('thinkingContent').value || null,
                 assistant_content: document.getElementById('assistantContent').value || null,
-                enable_thinking: document.getElementById('enableThinking').checked,
+                force_think_block: document.getElementById('enableThinking').checked,
+                strip_quotes: document.getElementById('stripQuotes').checked,
                 template: document.getElementById('template').value || null,
                 width,
                 height,
@@ -929,9 +952,11 @@
                     body: JSON.stringify(params),
                 });
                 let formattedPrompt = '-';
+                let tokenCount = null;
                 if (formatResponse.ok) {
                     const formatData = await formatResponse.json();
                     formattedPrompt = formatData.formatted_prompt || '-';
+                    tokenCount = formatData.token_count;
                 }
 
                 progressFill.style.width = '30%';
@@ -970,6 +995,15 @@
 
                 resultInfo.textContent = infoText;
                 document.getElementById('resultFormattedPrompt').textContent = formattedPrompt;
+
+                // Show token count badge
+                const tokenBadge = document.getElementById('tokenCountBadge');
+                if (tokenCount !== null) {
+                    tokenBadge.textContent = `${tokenCount} tokens`;
+                    tokenBadge.classList.remove('hidden');
+                } else {
+                    tokenBadge.classList.add('hidden');
+                }
 
                 status.classList.add('hidden');
                 result.classList.remove('hidden');

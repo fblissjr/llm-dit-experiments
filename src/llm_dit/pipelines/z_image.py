@@ -347,6 +347,7 @@ class ZImagePipeline:
         thinking_content: Optional[str] = None,
         assistant_content: Optional[str] = None,
         force_think_block: bool = False,
+        remove_quotes: bool = False,
         output_type: str = "pil",
         callback: Optional[Callable[[int, int, torch.Tensor], None]] = None,
         shift: Optional[float] = None,
@@ -368,6 +369,7 @@ class ZImagePipeline:
             thinking_content: Content inside <think>...</think> (triggers think block)
             assistant_content: Content after </think> (optional)
             force_think_block: If True, add empty think block even without content
+            remove_quotes: If True, strip " characters (for JSON-type prompts)
             output_type: Output format ("pil", "latent", or "pt")
             callback: Optional callback for progress updates
             shift: Override scheduler shift/mu (default: calculated based on resolution).
@@ -426,6 +428,7 @@ class ZImagePipeline:
             thinking_content=thinking_content,
             assistant_content=assistant_content,
             force_think_block=force_think_block,
+            remove_quotes=remove_quotes,
         )
 
         # Log formatted prompt for debugging
