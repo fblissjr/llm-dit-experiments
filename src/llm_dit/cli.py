@@ -69,6 +69,7 @@ class RuntimeConfig:
 
     # Model paths
     model_path: str = ""
+    text_encoder_path: str | None = None  # If None, uses model_path/text_encoder/
     templates_dir: str | None = None
 
     # Device placement
@@ -192,7 +193,13 @@ def create_base_parser(
         "--model-path",
         type=str,
         default=None,
-        help="Path to Z-Image model or HuggingFace ID",
+        help="Path to Z-Image model (DiT + VAE) or HuggingFace ID",
+    )
+    model_group.add_argument(
+        "--text-encoder-path",
+        type=str,
+        default=None,
+        help="Path to text encoder (Qwen3-4B). If not specified, uses model-path/text_encoder/",
     )
     model_group.add_argument(
         "--templates-dir",
@@ -475,6 +482,8 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
     # Apply CLI overrides (only if explicitly provided)
     if args.model_path is not None:
         config.model_path = args.model_path
+    if getattr(args, 'text_encoder_path', None) is not None:
+        config.text_encoder_path = args.text_encoder_path
     if args.templates_dir is not None:
         config.templates_dir = args.templates_dir
 

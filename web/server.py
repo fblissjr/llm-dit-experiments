@@ -503,6 +503,7 @@ async def save_embeddings_endpoint(request: EncodeRequest):
 
 def load_pipeline(
     model_path: str,
+    text_encoder_path: Optional[str] = None,
     templates_dir: Optional[str] = None,
     encoder_device: str = "auto",
     dit_device: str = "auto",
@@ -516,6 +517,8 @@ def load_pipeline(
     from llm_dit.pipelines import ZImagePipeline
 
     logger.info(f"Loading pipeline from {model_path}...")
+    if text_encoder_path:
+        logger.info(f"  Text encoder: {text_encoder_path}")
     logger.info(f"  Encoder device: {encoder_device}")
     logger.info(f"  DiT device: {dit_device}")
     logger.info(f"  VAE device: {vae_device}")
@@ -523,6 +526,7 @@ def load_pipeline(
 
     pipeline = ZImagePipeline.from_pretrained(
         model_path,
+        text_encoder_path=text_encoder_path,
         templates_dir=templates_dir,
         torch_dtype=torch.bfloat16,
         encoder_device=encoder_device,
@@ -908,7 +912,8 @@ def main():
             return 1
         load_pipeline(
             model_path,
-            templates_dir,
+            text_encoder_path=runtime_config.text_encoder_path,
+            templates_dir=templates_dir,
             encoder_device=runtime_config.encoder_device,
             dit_device=runtime_config.dit_device,
             vae_device=runtime_config.vae_device,
