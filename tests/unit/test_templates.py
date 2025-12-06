@@ -165,7 +165,8 @@ Anime template content"""
         templates = load_templates_from_dir(tmp_path)
         assert len(templates) == 0
 
-    def test_subdirectories_ignored(self, tmp_path):
+    def test_subdirectories_loaded_by_default(self, tmp_path):
+        """Subdirectories are loaded by default (recursive=True)."""
         # Create template in root
         (tmp_path / "root.md").write_text("---\nname: root\n---\nRoot content")
 
@@ -176,7 +177,24 @@ Anime template content"""
 
         templates = load_templates_from_dir(tmp_path)
 
-        # Should only load root-level templates
+        # Should load both root and subdirectory templates (recursive=True by default)
+        assert len(templates) == 2
+        assert "root" in templates
+        assert "nested" in templates
+
+    def test_subdirectories_ignored_when_not_recursive(self, tmp_path):
+        """Subdirectories are ignored when recursive=False."""
+        # Create template in root
+        (tmp_path / "root.md").write_text("---\nname: root\n---\nRoot content")
+
+        # Create subdirectory with template
+        subdir = tmp_path / "subdir"
+        subdir.mkdir()
+        (subdir / "nested.md").write_text("---\nname: nested\n---\nNested content")
+
+        templates = load_templates_from_dir(tmp_path, recursive=False)
+
+        # Should only load root-level templates when recursive=False
         assert len(templates) == 1
         assert "root" in templates
 

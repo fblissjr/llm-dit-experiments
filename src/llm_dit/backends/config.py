@@ -47,7 +47,7 @@ class BackendConfig:
     backend_type: Literal["transformers", "vllm", "sglang", "mlx"] = "transformers"
     model_path: str = ""
     subfolder: str = "text_encoder"  # Z-Image stores encoder in subfolder
-    max_length: int = 512
+    max_length: int = 2048  # Increased from 512 - allows longer prompts
     torch_dtype: str = "bfloat16"
     device: str = field(default_factory=_detect_best_device)
     trust_remote_code: bool = True
@@ -83,7 +83,7 @@ class BackendConfig:
         defaults = {
             "model_path": model_path,
             "subfolder": "text_encoder",
-            "max_length": 512,
+            "max_length": 2048,  # Increased from 512 - allows longer prompts
             "torch_dtype": "bfloat16",
         }
         defaults.update(kwargs)

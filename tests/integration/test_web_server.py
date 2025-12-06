@@ -24,10 +24,10 @@ class TestFormatPromptEndpoint:
     """Test /api/format-prompt endpoint (no model required)."""
 
     def test_format_basic_prompt(self, client):
-        """Format a simple prompt."""
+        """Format a simple prompt without think block."""
         response = client.post(
             "/api/format-prompt",
-            json={"prompt": "A cat sleeping", "enable_thinking": False},
+            json={"prompt": "A cat sleeping", "force_think_block": False},
         )
         assert response.status_code == 200
         data = response.json()
@@ -35,6 +35,8 @@ class TestFormatPromptEndpoint:
         assert "formatted_prompt" in data
         assert "<|im_start|>user" in data["formatted_prompt"]
         assert "A cat sleeping" in data["formatted_prompt"]
+        # Token count should be returned
+        assert "token_count" in data
 
     def test_format_with_system_prompt(self, client):
         """Format prompt with system message."""
@@ -43,7 +45,7 @@ class TestFormatPromptEndpoint:
             json={
                 "prompt": "A cat",
                 "system_prompt": "You are a photographer.",
-                "enable_thinking": False,
+                "force_think_block": False,
             },
         )
         assert response.status_code == 200
@@ -53,13 +55,12 @@ class TestFormatPromptEndpoint:
         assert "You are a photographer" in data["formatted_prompt"]
 
     def test_format_with_thinking(self, client):
-        """Format prompt with thinking block."""
+        """Format prompt with thinking block (triggered by thinking_content)."""
         response = client.post(
             "/api/format-prompt",
             json={
                 "prompt": "A cat",
                 "thinking_content": "Orange fur, green eyes",
-                "enable_thinking": True,
             },
         )
         assert response.status_code == 200
@@ -76,7 +77,6 @@ class TestFormatPromptEndpoint:
                 "prompt": "A cat",
                 "thinking_content": "Thinking...",
                 "assistant_content": "Here is your cat:",
-                "enable_thinking": True,
             },
         )
         assert response.status_code == 200
@@ -190,15 +190,7 @@ class TestHistoryEndpoints:
 
 
 # Fixtures for web server testing
-@pytest.fixture
-def client():
-    """Create test client without model (encoder-only mode not loaded)."""
-    from fastapi.testclient import TestClient
-
-    # Import app but don't load any models
-    from web.server import app
-
-    return TestClient(app)
+# Note: The 'client' fixture is defined in conftest.py with a properly mocked encoder
 
 
 @pytest.fixture

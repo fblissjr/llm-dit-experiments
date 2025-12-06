@@ -34,6 +34,8 @@ class EncodingOutput:
         padded_mask: Optional padded attention mask [batch, max_seq_len].
         formatted_prompts: Optional list of formatted prompt strings (with chat template).
                           Useful for debugging template formatting.
+        token_counts: Optional list of token counts per input (valid tokens only).
+                     Useful for debugging and display in UI.
     """
 
     embeddings: List[torch.Tensor]
@@ -41,6 +43,7 @@ class EncodingOutput:
     padded_embeddings: torch.Tensor | None = None
     padded_mask: torch.Tensor | None = None
     formatted_prompts: List[str] | None = None
+    token_counts: List[int] | None = None
 
     @property
     def batch_size(self) -> int:

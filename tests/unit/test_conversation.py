@@ -77,11 +77,16 @@ class TestConversation:
         assert conv.messages[0].content == "You are a painter"
 
     def test_simple_with_thinking(self):
-        conv = Conversation.simple(
-            "A cat", thinking_content="Orange fur", enable_thinking=True
-        )
-        assert conv.enable_thinking is True
+        # Content-driven: thinking_content triggers enable_thinking automatically
+        conv = Conversation.simple("A cat", thinking_content="Orange fur")
+        assert conv.enable_thinking is True  # Automatically enabled
         assert conv.messages[-1].thinking == "Orange fur"
+
+    def test_simple_force_think_block(self):
+        # force_think_block=True triggers enable_thinking with empty content
+        conv = Conversation.simple("A cat", force_think_block=True)
+        assert conv.enable_thinking is True
+        assert conv.messages[-1].thinking == ""  # Empty but enabled
 
     def test_simple_with_assistant_content(self):
         conv = Conversation.simple("A cat", assistant_content="Here is your cat:")
@@ -115,8 +120,9 @@ class TestQwen3Formatter:
     # Test cases matching z_image_encoder.md "Formatted Prompt Examples"
 
     def test_minimal_no_think_block(self, formatter):
-        """Test 1: Minimal (matches diffusers default)"""
-        conv = Conversation.simple("A cat sleeping", enable_thinking=False)
+        """Test 1: Minimal (matches official HF Space - no think block)"""
+        # Default: no thinking_content, no force_think_block -> no think block
+        conv = Conversation.simple("A cat sleeping")
         formatted = formatter.format(conv)
 
         expected = (
@@ -127,11 +133,10 @@ class TestQwen3Formatter:
         assert formatted == expected
 
     def test_with_system_prompt(self, formatter):
-        """Test 2: With System Prompt"""
+        """Test 2: With System Prompt (still no think block)"""
         conv = Conversation.simple(
             "A cat sleeping",
             system_prompt="Generate a photorealistic image.",
-            enable_thinking=False,
         )
         formatted = formatter.format(conv)
 
@@ -145,8 +150,9 @@ class TestQwen3Formatter:
         assert formatted == expected
 
     def test_with_think_block_empty(self, formatter):
-        """Test 3: With Think Block (empty)"""
-        conv = Conversation.simple("A cat sleeping", enable_thinking=True)
+        """Test 3: With Think Block (empty) via force_think_block"""
+        # force_think_block=True adds empty think block
+        conv = Conversation.simple("A cat sleeping", force_think_block=True)
         formatted = formatter.format(conv)
 
         expected = (
@@ -161,11 +167,11 @@ class TestQwen3Formatter:
         assert formatted == expected
 
     def test_with_think_block_and_content(self, formatter):
-        """Test 4: With Think Block + Thinking Content"""
+        """Test 4: With Think Block + Thinking Content (content-driven)"""
+        # thinking_content provided -> automatically adds think block
         conv = Conversation.simple(
             "A cat sleeping",
             thinking_content="Soft lighting, peaceful mood, curled up position.",
-            enable_thinking=True,
         )
         formatted = formatter.format(conv)
 
@@ -186,7 +192,6 @@ class TestQwen3Formatter:
             "A cat sleeping",
             thinking_content="Soft lighting, peaceful mood.",
             assistant_content="Creating a cozy scene...",
-            enable_thinking=True,
         )
         formatted = formatter.format(conv)
 
@@ -209,7 +214,6 @@ class TestQwen3Formatter:
             system_prompt="You are an expert photographer.",
             thinking_content="Golden hour light, shallow depth of field.",
             assistant_content="Capturing the peaceful moment...",
-            enable_thinking=True,
         )
         formatted = formatter.format(conv)
 
@@ -229,7 +233,7 @@ class TestQwen3Formatter:
 
     def test_is_final_omits_end_token(self, formatter):
         """Test that is_final=True omits closing token when assistant is empty."""
-        conv = Conversation.simple("A cat", enable_thinking=True)
+        conv = Conversation.simple("A cat", force_think_block=True)
         conv.is_final = True
         formatted = formatter.format(conv)
 
@@ -239,7 +243,7 @@ class TestQwen3Formatter:
     def test_is_final_with_content_keeps_end_token(self, formatter):
         """Test that is_final=True keeps closing token when assistant has content."""
         conv = Conversation.simple(
-            "A cat", assistant_content="Here it is:", enable_thinking=True
+            "A cat", assistant_content="Here it is:", force_think_block=True
         )
         conv.is_final = True
         formatted = formatter.format(conv)
@@ -252,18 +256,20 @@ class TestFormatPromptHelper:
     """Test format_prompt convenience function."""
 
     def test_basic_usage(self):
+        """Default: no think block (matches official HF Space)."""
         formatted = format_prompt("A cat")
         assert "<|im_start|>user" in formatted
         assert "A cat" in formatted
+        # No think block by default
+        assert "<think>" not in formatted
 
-    def test_with_all_parameters(self):
+    def test_with_thinking_content(self):
+        """Thinking content automatically triggers think block."""
         formatted = format_prompt(
             user_prompt="A cat",
             system_prompt="You are helpful",
             thinking_content="Fluffy cat",
             assistant_content="Here it is",
-            enable_thinking=True,
-            is_final=True,
         )
 
         assert "<|im_start|>system" in formatted
@@ -272,16 +278,23 @@ class TestFormatPromptHelper:
         assert "Here it is" in formatted
         assert formatted.endswith("<|im_end|>")
 
+    def test_force_think_block(self):
+        """force_think_block adds empty think block."""
+        formatted = format_prompt("A cat", force_think_block=True)
+        assert "<think>" in formatted
+        assert "</think>" in formatted
+
     def test_matches_formatter_output(self):
         """format_prompt should produce same output as Qwen3Formatter."""
         formatter = Qwen3Formatter()
 
+        # Content-driven: thinking_content triggers think block
         formatted1 = format_prompt(
-            "A cat", system_prompt="Test", thinking_content="Think", enable_thinking=True
+            "A cat", system_prompt="Test", thinking_content="Think"
         )
 
         conv = Conversation.simple(
-            "A cat", system_prompt="Test", thinking_content="Think", enable_thinking=True
+            "A cat", system_prompt="Test", thinking_content="Think"
         )
         formatted2 = formatter.format(conv)
 

@@ -52,15 +52,58 @@ def mock_encoder():
     }
 
     # Mock encode method
-    def mock_encode(prompt, template=None, enable_thinking=True):
+    def mock_encode(
+        prompt,
+        template=None,
+        system_prompt=None,
+        thinking_content=None,
+        assistant_content=None,
+        force_think_block=False,
+        remove_quotes=False,
+        return_padded=False,
+    ):
         embeddings = torch.randn(77, 2560)
         attention_mask = torch.ones(77, dtype=torch.bool)
         return EncodingOutput(
             embeddings=[embeddings],
             attention_masks=[attention_mask],
+            token_counts=[77],
         )
 
     encoder.encode = Mock(side_effect=mock_encode)
+
+    # Mock _build_conversation for format-prompt endpoint
+    def mock_build_conversation(
+        prompt,
+        template=None,
+        system_prompt=None,
+        thinking_content=None,
+        assistant_content=None,
+        force_think_block=False,
+        remove_quotes=False,
+    ):
+        from llm_dit.conversation import Conversation
+        return Conversation.simple(
+            user_prompt=prompt,
+            system_prompt=system_prompt or "",
+            thinking_content=thinking_content or "",
+            assistant_content=assistant_content or "",
+            force_think_block=force_think_block,
+            remove_quotes=remove_quotes,
+        )
+
+    encoder._build_conversation = Mock(side_effect=mock_build_conversation)
+
+    # Mock formatter
+    from llm_dit.conversation import Qwen3Formatter
+    encoder.formatter = Qwen3Formatter()
+
+    # Mock backend with tokenizer for token counting
+    mock_backend = MagicMock()
+    mock_backend.tokenizer = Mock()
+    mock_backend.tokenizer.return_value = {"input_ids": torch.zeros(1, 42)}
+    encoder.backend = mock_backend
+
     return encoder
 
 
@@ -72,9 +115,21 @@ def mock_pipeline(mock_encoder):
     pipeline.device = torch.device("cpu")
 
     # Mock generation - configure as side_effect on the pipeline itself
-    def mock_generate(prompt, height=1024, width=1024, num_inference_steps=9,
-                     guidance_scale=0.0, generator=None, template=None,
-                     enable_thinking=True):
+    def mock_generate(
+        prompt,
+        height=1024,
+        width=1024,
+        num_inference_steps=9,
+        guidance_scale=0.0,
+        generator=None,
+        template=None,
+        system_prompt=None,
+        thinking_content=None,
+        assistant_content=None,
+        force_think_block=False,
+        remove_quotes=False,
+        shift=3.0,
+    ):
         from PIL import Image
         return Image.new("RGB", (width, height), color="blue")
 
@@ -203,20 +258,20 @@ class TestEncodeEndpoint:
         server_module.encoder.encode.assert_called()
 
     def test_encode_disable_thinking(self, client_encoder_only):
-        """Encoding with thinking disabled."""
+        """Encoding without thinking block."""
         response = client_encoder_only.post(
             "/api/encode",
             json={
                 "prompt": "A cat",
-                "enable_thinking": False,
+                "force_think_block": False,
             },
         )
         assert response.status_code == 200
 
-        # Verify encoder was called with enable_thinking=False
+        # Verify encoder was called with force_think_block=False
         import web.server as server_module
         last_call = server_module.encoder.encode.call_args
-        assert last_call.kwargs["enable_thinking"] is False
+        assert last_call.kwargs["force_think_block"] is False
 
     def test_encode_no_encoder(self, client_no_models):
         """Encoding fails when no encoder available."""

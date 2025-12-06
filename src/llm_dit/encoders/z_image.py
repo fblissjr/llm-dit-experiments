@@ -4,29 +4,36 @@ Z-Image text encoder with template and conversation support.
 This encoder provides a high-level interface that:
 1. Accepts simple prompts or full Conversation objects
 2. Applies templates (system prompts, thinking blocks)
-3. Formats using Qwen3 chat template
+3. Formats using Qwen3 chat template (matching official HF Space)
 4. Encodes via the configured backend
+
+Content-driven behavior (matches official HF Space):
+- Default: No thinking block
+- If thinking_content provided: Add think block with content
+- If force_think_block=True: Add empty think block
 
 Example:
     encoder = ZImageTextEncoder.from_pretrained("/path/to/z-image")
 
-    # Simple usage
+    # Simple usage (matches official HF Space - no think block)
     output = encoder.encode("A cat sleeping in sunlight")
 
-    # With template
+    # With thinking content (automatically adds think block)
     output = encoder.encode(
-        "A cat sleeping in sunlight",
-        template="photorealistic",
+        "A cat sleeping",
+        thinking_content="Soft lighting, orange fur...",
     )
 
-    # With full conversation control
-    conv = Conversation.simple(
-        user_prompt="A cat sleeping",
-        system_prompt="Generate natural images.",
+    # Force empty think block
+    output = encoder.encode("A cat", force_think_block=True)
+
+    # Full control with all components
+    output = encoder.encode(
+        "A cat sleeping",
+        system_prompt="You are a photographer.",
         thinking_content="Focus on soft lighting...",
-        enable_thinking=True,
+        assistant_content="Here is your image:",
     )
-    output = encoder.encode(conv)
 """
 
 import logging
@@ -158,8 +165,9 @@ class ZImageTextEncoder:
         system_prompt: str | None = None,
         thinking_content: str | None = None,
         assistant_content: str | None = None,
-        enable_thinking: bool = False,  # Default False to match diffusers/ComfyUI
+        force_think_block: bool = False,
         return_padded: bool = False,
+        remove_quotes: bool = False,
     ) -> EncodingOutput:
         """
         Encode a prompt to embeddings.
@@ -168,43 +176,47 @@ class ZImageTextEncoder:
         1. A simple string prompt (will be wrapped in a Conversation)
         2. A Conversation object (used directly)
 
-        When a string is provided, you can customize the encoding with:
-        - template: Apply a named template or Template object
-        - system_prompt: Override the system prompt
-        - thinking_content: Content for the thinking block
-        - assistant_content: Content after thinking
-        - enable_thinking: Whether to include <think></think>
+        Uses content-driven logic for thinking blocks:
+        - If thinking_content provided: Add think block with content
+        - If force_think_block=True: Add empty think block
+        - Otherwise: No think block (matches official HF Space)
 
         Args:
             prompt: The prompt string or Conversation object
             template: Optional template name or Template object
             system_prompt: Override system prompt (ignored if Conversation)
-            thinking_content: Thinking block content (ignored if Conversation)
+            thinking_content: Thinking block content - triggers think block (ignored if Conversation)
             assistant_content: Assistant content after thinking (ignored if Conversation)
-            enable_thinking: Whether to use thinking tags (ignored if Conversation)
+            force_think_block: If True, add empty think block even without content
             return_padded: Also return padded batch tensors
+            remove_quotes: If True, strip " characters (for JSON-type prompts)
 
         Returns:
             EncodingOutput with variable-length embeddings
 
         Example:
-            # Simple prompt
+            # Simple prompt (matches official HF Space - no think block)
             output = encoder.encode("A beautiful sunset")
 
             # With template
             output = encoder.encode("A cat", template="photorealistic")
 
+            # With thinking content (automatically adds think block)
+            output = encoder.encode(
+                "A cat sleeping",
+                thinking_content="Soft lighting, warm afternoon...",
+            )
+
+            # Force empty think block
+            output = encoder.encode("A cat", force_think_block=True)
+
             # Full control
             output = encoder.encode(
                 "A cat sleeping",
-                system_prompt="Generate natural images with soft lighting.",
-                thinking_content="I'll focus on warm afternoon light...",
-                enable_thinking=True,
+                system_prompt="Generate natural images.",
+                thinking_content="Warm afternoon light...",
+                assistant_content="Here is your image:",
             )
-
-            # Using Conversation directly
-            conv = Conversation.simple("A cat", system_prompt="Natural images.")
-            output = encoder.encode(conv)
         """
         # If already a Conversation, use it directly
         if isinstance(prompt, Conversation):
@@ -217,7 +229,8 @@ class ZImageTextEncoder:
                 system_prompt=system_prompt,
                 thinking_content=thinking_content,
                 assistant_content=assistant_content,
-                enable_thinking=enable_thinking,
+                force_think_block=force_think_block,
+                remove_quotes=remove_quotes,
             )
 
         # Format to chat template string
@@ -235,7 +248,7 @@ class ZImageTextEncoder:
         self,
         prompts: List[Union[str, Conversation]],
         template: str | Template | None = None,
-        enable_thinking: bool = False,  # Default False to match diffusers/ComfyUI
+        force_think_block: bool = False,
         return_padded: bool = False,
     ) -> EncodingOutput:
         """
@@ -248,7 +261,7 @@ class ZImageTextEncoder:
         Args:
             prompts: List of prompt strings or Conversation objects
             template: Optional template to apply to string prompts
-            enable_thinking: Whether to use thinking tags for string prompts
+            force_think_block: If True, add empty think block for string prompts
             return_padded: Also return padded batch tensors
 
         Returns:
@@ -263,7 +276,7 @@ class ZImageTextEncoder:
                 conv = self._build_conversation(
                     prompt=prompt,
                     template=template,
-                    enable_thinking=enable_thinking,
+                    force_think_block=force_think_block,
                 )
                 formatted = self.formatter.format(conv)
             formatted_list.append(formatted)
@@ -281,9 +294,15 @@ class ZImageTextEncoder:
         system_prompt: str | None = None,
         thinking_content: str | None = None,
         assistant_content: str | None = None,
-        enable_thinking: bool = True,
+        force_think_block: bool = False,
+        remove_quotes: bool = False,
     ) -> Conversation:
-        """Build a Conversation from parameters."""
+        """
+        Build a Conversation from parameters.
+
+        Uses content-driven logic: thinking block is added only if
+        thinking_content is provided or force_think_block=True.
+        """
         # Resolve template
         resolved_template = self._resolve_template(template)
 
@@ -291,7 +310,7 @@ class ZImageTextEncoder:
         final_system = system_prompt
         final_thinking = thinking_content
         final_assistant = assistant_content
-        final_enable_thinking = enable_thinking
+        final_force_think_block = force_think_block
 
         if resolved_template is not None:
             if final_system is None:
@@ -300,16 +319,18 @@ class ZImageTextEncoder:
                 final_thinking = resolved_template.thinking_content
             if final_assistant is None and resolved_template.assistant_content:
                 final_assistant = resolved_template.assistant_content
+            # Template can force think block even without content
             if resolved_template.add_think_block is not None:
-                final_enable_thinking = resolved_template.add_think_block
+                final_force_think_block = resolved_template.add_think_block
 
-        # Create conversation
+        # Create conversation with content-driven logic
         return Conversation.simple(
             user_prompt=prompt,
             system_prompt=final_system or "",
             thinking_content=final_thinking or "",
             assistant_content=final_assistant or "",
-            enable_thinking=final_enable_thinking,
+            force_think_block=final_force_think_block,
+            remove_quotes=remove_quotes,
         )
 
     def _resolve_template(

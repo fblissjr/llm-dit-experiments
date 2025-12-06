@@ -256,11 +256,13 @@ class TransformersBackend:
         # This matches diffusers behavior
         embeddings_list = []
         masks_list = []
+        token_counts = []
         for i in range(len(texts)):
             mask = attention_mask[i]
             valid_embeds = hidden_states[i][mask]
             embeddings_list.append(valid_embeds)
             masks_list.append(mask[mask])  # All True for valid positions
+            token_counts.append(valid_embeds.shape[0])
 
             # Debug: log embedding stats for comparison with other backends
             logger.debug(f"[TransformersBackend] Embedding [{i}]: shape={valid_embeds.shape}, dtype={valid_embeds.dtype}")
@@ -271,6 +273,7 @@ class TransformersBackend:
         result = EncodingOutput(
             embeddings=embeddings_list,
             attention_masks=masks_list,
+            token_counts=token_counts,
         )
 
         if return_padded:

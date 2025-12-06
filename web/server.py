@@ -52,9 +52,10 @@ MAX_HISTORY = 50
 class GenerateRequest(BaseModel):
     prompt: str  # User prompt
     system_prompt: Optional[str] = None  # System prompt (optional)
-    thinking_content: Optional[str] = None  # Content inside <think>...</think> (optional)
+    thinking_content: Optional[str] = None  # Content inside <think>...</think> (triggers think block)
     assistant_content: Optional[str] = None  # Content after </think> (optional)
-    enable_thinking: bool = False  # Add <think></think> structure
+    force_think_block: bool = False  # If True, add empty think block even without content
+    strip_quotes: bool = False  # If True, remove " characters (for JSON-type prompts)
     width: int = 1024
     height: int = 1024
     steps: int = 9
@@ -67,9 +68,10 @@ class GenerateRequest(BaseModel):
 class EncodeRequest(BaseModel):
     prompt: str  # User prompt
     system_prompt: Optional[str] = None  # System prompt (optional)
-    thinking_content: Optional[str] = None  # Content inside <think>...</think> (optional)
+    thinking_content: Optional[str] = None  # Content inside <think>...</think> (triggers think block)
     assistant_content: Optional[str] = None  # Content after </think> (optional)
-    enable_thinking: bool = False  # Add <think></think> structure
+    force_think_block: bool = False  # If True, add empty think block even without content
+    strip_quotes: bool = False  # If True, remove " characters (for JSON-type prompts)
     template: Optional[str] = None
 
 
@@ -113,17 +115,19 @@ async def encode(request: EncodeRequest):
             system_prompt=request.system_prompt,
             thinking_content=request.thinking_content,
             assistant_content=request.assistant_content,
-            enable_thinking=request.enable_thinking,
+            force_think_block=request.force_think_block,
+            remove_quotes=request.strip_quotes,
         )
         encode_time = time.time() - start
 
         embeddings = output.embeddings[0]
+        token_count = output.token_counts[0] if output.token_counts else embeddings.shape[0]
 
         # Get formatted prompt if available
         formatted_prompt = None
         if output.formatted_prompts:
             formatted_prompt = output.formatted_prompts[0]
-            logger.info(f"Formatted prompt ({len(formatted_prompt)} chars):")
+            logger.info(f"Formatted prompt ({len(formatted_prompt)} chars, {token_count} tokens):")
             logger.info(f"---BEGIN FORMATTED PROMPT---")
             logger.info(formatted_prompt)
             logger.info(f"---END FORMATTED PROMPT---")
@@ -132,6 +136,7 @@ async def encode(request: EncodeRequest):
             "shape": list(embeddings.shape),
             "dtype": str(embeddings.dtype),
             "encode_time": encode_time,
+            "token_count": token_count,
             "prompt": request.prompt,
             "formatted_prompt": formatted_prompt,
         }
@@ -160,7 +165,7 @@ async def generate(request: GenerateRequest):
         logger.info(f"  Steps: {request.steps}")
         logger.info(f"  Seed: {request.seed}")
         logger.info(f"  Template: {request.template}")
-        logger.info(f"  Thinking: {request.enable_thinking}")
+        logger.info(f"  Force think block: {request.force_think_block}")
         logger.info(f"  Guidance: {request.guidance_scale}")
         logger.info("-" * 60)
         logger.info("Pipeline state:")
@@ -195,7 +200,8 @@ async def generate(request: GenerateRequest):
             system_prompt=request.system_prompt,
             thinking_content=request.thinking_content,
             assistant_content=request.assistant_content,
-            enable_thinking=request.enable_thinking,
+            force_think_block=request.force_think_block,
+            remove_quotes=request.strip_quotes,
         )
 
         gen_time = time.time() - start
@@ -225,7 +231,8 @@ async def generate(request: GenerateRequest):
                     system_prompt=request.system_prompt,
                     thinking_content=request.thinking_content,
                     assistant_content=request.assistant_content,
-                    enable_thinking=request.enable_thinking,
+                    force_think_block=request.force_think_block,
+                    remove_quotes=request.strip_quotes,
                 )
                 formatted_prompt = enc.formatter.format(conv)
             except Exception as e:
@@ -239,7 +246,8 @@ async def generate(request: GenerateRequest):
             "system_prompt": request.system_prompt,
             "thinking_content": request.thinking_content,
             "assistant_content": request.assistant_content,
-            "enable_thinking": request.enable_thinking,
+            "force_think_block": request.force_think_block,
+            "strip_quotes": request.strip_quotes,
             "width": request.width,
             "height": request.height,
             "steps": request.steps,
@@ -288,19 +296,28 @@ async def format_prompt_endpoint(request: EncodeRequest):
             system_prompt=request.system_prompt,
             thinking_content=request.thinking_content,
             assistant_content=request.assistant_content,
-            enable_thinking=request.enable_thinking,
+            force_think_block=request.force_think_block,
+            remove_quotes=request.strip_quotes,
         )
         formatted = enc.formatter.format(conv)
+
+        # Get token count using the backend tokenizer
+        token_count = None
+        if hasattr(enc.backend, "tokenizer"):
+            tokens = enc.backend.tokenizer(formatted, return_tensors="pt")
+            token_count = tokens["input_ids"].shape[1]
 
         return {
             "formatted_prompt": formatted,
             "char_count": len(formatted),
+            "token_count": token_count,
             "prompt": request.prompt,
             "system_prompt": request.system_prompt,
             "thinking_content": request.thinking_content,
             "assistant_content": request.assistant_content,
             "template": request.template,
-            "enable_thinking": request.enable_thinking,
+            "force_think_block": request.force_think_block,
+            "strip_quotes": request.strip_quotes,
         }
     except Exception as e:
         logger.error(f"Format failed: {e}")
@@ -453,7 +470,7 @@ async def save_embeddings_endpoint(request: EncodeRequest):
         output = enc.encode(
             request.prompt,
             template=request.template,
-            enable_thinking=request.enable_thinking,
+            force_think_block=request.force_think_block,
         )
         encode_time = time.time() - start
 
@@ -476,7 +493,7 @@ async def save_embeddings_endpoint(request: EncodeRequest):
             prompt=request.prompt,
             model_path='unknown',  # Not stored in encoder
             template=request.template,
-            enable_thinking=request.enable_thinking,
+            force_think_block=request.force_think_block,
             encoder_device=device,
         )
 
@@ -828,6 +845,11 @@ def main():
         action="store_true",
         help="Load only encoder (fast mode for Mac, no image generation)",
     )
+    parser.add_argument(
+        "--use-api-encoder",
+        action="store_true",
+        help="Use API backend for encoding (default: local encoder)",
+    )
 
     args = parser.parse_args()
 
@@ -848,23 +870,11 @@ def main():
             templates_dir = str(default_templates)
 
     # Determine which mode to use
-    if runtime_config.api_url and model_path and runtime_config.local_encoder:
-        # Hybrid mode: Local encoder (for A/B testing) + local DiT/VAE
-        load_hybrid_pipeline(
-            model_path,
-            templates_dir,
-            enable_cpu_offload=runtime_config.cpu_offload,
-            enable_flash_attn=runtime_config.flash_attn,
-            enable_compile=runtime_config.compile,
-            encoder_device=runtime_config.encoder_device,
-            dit_device=runtime_config.dit_device,
-            vae_device=runtime_config.vae_device,
-            lora_paths=runtime_config.lora_paths,
-            lora_scales=runtime_config.lora_scales,
-        )
-        mode = f"hybrid (local encoder on {runtime_config.encoder_device}, for A/B testing vs API)"
-    elif runtime_config.api_url and model_path:
-        # Distributed mode: API encoding + local DiT/VAE generation
+    # Priority: use_api_encoder flag forces API, otherwise local encoder is default
+    use_api = getattr(args, "use_api_encoder", False)
+
+    if runtime_config.api_url and model_path and use_api:
+        # Distributed mode: API encoding + local DiT/VAE generation (explicit --use-api-encoder)
         load_api_pipeline(
             runtime_config.api_url,
             runtime_config.api_model,
@@ -887,7 +897,7 @@ def main():
             opts.append("compiled")
         opts_str = f" + {', '.join(opts)}" if opts else ""
         mode = f"distributed (API encoder + local DiT{opts_str})"
-    elif runtime_config.api_url:
+    elif runtime_config.api_url and not model_path:
         # API backend mode - encoder only (no model path)
         load_api_encoder(runtime_config.api_url, runtime_config.api_model, templates_dir)
         mode = f"API encoder-only ({runtime_config.api_model})"

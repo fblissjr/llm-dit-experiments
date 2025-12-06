@@ -13,7 +13,7 @@ uv pip install torch --index-url https://download.pytorch.org/whl/cu124
 # Sync dependencies
 uv sync
 
-# Run with local encoder (recommended for RTX 4090)
+# Run with local encoder (default, recommended for RTX 4090)
 uv run web/server.py \
   --model-path /path/to/z-image-turbo \
   --text-encoder-device cpu \
@@ -21,11 +21,12 @@ uv run web/server.py \
   --vae-device cuda \
   --port 7860
 
-# Run with API encoder (distributed inference)
+# Run with API encoder (distributed inference, requires --use-api-encoder)
 uv run web/server.py \
   --model-path /path/to/z-image-turbo \
   --api-url http://mac-host:8080 \
   --api-model Qwen3-4B \
+  --use-api-encoder \
   --dit-device cuda \
   --vae-device cuda
 
@@ -37,6 +38,21 @@ uv run web/server.py \
   --model-path /path/to/z-image-turbo \
   --lora /path/to/style.safetensors:0.8 \
   --dit-device cuda
+```
+
+### Running as a Background Service
+
+The server can run in the background to survive SSH disconnects:
+
+```bash
+# Start server in background
+./scripts/start-server.sh --model-path /path/to/z-image --dit-device cuda
+
+# View logs
+tail -f logs/server.log
+
+# Stop server
+./scripts/stop-server.sh
 ```
 
 ## Configuration
@@ -93,6 +109,7 @@ scales = [0.8, 0.5]
 | `--host` | str | 127.0.0.1 | Server host |
 | `--port` | int | 7860 | Server port |
 | `--encoder-only` | flag | False | Load only encoder (no DiT/VAE) |
+| `--use-api-encoder` | flag | False | Use API backend for encoding (local is default) |
 
 ### API Backend Flags
 
@@ -100,7 +117,6 @@ scales = [0.8, 0.5]
 |------|------|---------|-------------|
 | `--api-url` | str | None | URL for heylookitsanllm API backend |
 | `--api-model` | str | None | Model ID for API backend |
-| `--local-encoder` | flag | False | Force local encoder when using API (for A/B testing) |
 
 ### Optimization Flags
 
@@ -139,7 +155,8 @@ Generate an image from a text prompt.
   "system_prompt": "You are a painter.",
   "thinking_content": "Orange fur, green eyes.",
   "assistant_content": "",
-  "enable_thinking": false,
+  "force_think_block": false,
+  "strip_quotes": false,
   "template": null,
   "width": 1024,
   "height": 1024,
@@ -155,9 +172,10 @@ Generate an image from a text prompt.
 |-------|------|----------|---------|-------------|
 | prompt | string | Yes | - | User message / image description |
 | system_prompt | string | No | null | System message (e.g., "You are a painter.") |
-| thinking_content | string | No | null | Content inside `<think>...</think>` |
+| thinking_content | string | No | null | Content inside `<think>...</think>` (auto-enables think block) |
 | assistant_content | string | No | null | Content after `</think>` |
-| enable_thinking | bool | No | false | Add `<think></think>` structure |
+| force_think_block | bool | No | false | Force empty `<think></think>` even without content |
+| strip_quotes | bool | No | false | Remove `"` characters from prompt (for JSON inputs) |
 | template | string | No | null | Template name |
 | width | int | No | 1024 | Image width (divisible by 16) |
 | height | int | No | 1024 | Image height (divisible by 16) |
@@ -165,6 +183,11 @@ Generate an image from a text prompt.
 | seed | int | No | null | Random seed for reproducibility |
 | guidance_scale | float | No | 0.0 | CFG scale (0.0 recommended for Z-Image) |
 | shift | float | No | 3.0 | Scheduler shift/mu parameter |
+
+**Note:** Think block behavior is content-driven:
+- If `thinking_content` is provided, a think block is automatically added
+- If `force_think_block=true`, an empty think block is added
+- Otherwise, no think block (matches official HF Space)
 
 **Response:** PNG image stream
 
@@ -185,7 +208,8 @@ Encode a prompt to embeddings without generating an image.
   "system_prompt": null,
   "thinking_content": null,
   "assistant_content": null,
-  "enable_thinking": false,
+  "force_think_block": false,
+  "strip_quotes": false,
   "template": null
 }
 ```
@@ -196,6 +220,7 @@ Encode a prompt to embeddings without generating an image.
   "shape": [10, 2560],
   "dtype": "torch.bfloat16",
   "encode_time": 0.123,
+  "token_count": 10,
   "prompt": "A cat sleeping",
   "formatted_prompt": "<|im_start|>user\nA cat sleeping<|im_end|>\n<|im_start|>assistant\n"
 }
@@ -214,7 +239,8 @@ Preview the formatted prompt without encoding (fast, no GPU).
   "system_prompt": "You are a painter.",
   "thinking_content": "Orange fur.",
   "assistant_content": null,
-  "enable_thinking": true,
+  "force_think_block": false,
+  "strip_quotes": false,
   "template": null
 }
 ```
@@ -224,12 +250,14 @@ Preview the formatted prompt without encoding (fast, no GPU).
 {
   "formatted_prompt": "<|im_start|>system\nYou are a painter.<|im_end|>\n<|im_start|>user\nPaint a cat<|im_end|>\n<|im_start|>assistant\n<think>\nOrange fur.\n</think>\n",
   "char_count": 112,
+  "token_count": 42,
   "prompt": "Paint a cat",
   "system_prompt": "You are a painter.",
   "thinking_content": "Orange fur.",
   "assistant_content": null,
   "template": null,
-  "enable_thinking": true
+  "force_think_block": false,
+  "strip_quotes": false
 }
 ```
 
@@ -260,7 +288,7 @@ Save embeddings to a safetensors file.
 ```json
 {
   "prompt": "A cat sleeping",
-  "enable_thinking": false
+  "force_think_block": false
 }
 ```
 
@@ -306,7 +334,8 @@ Get generation history (stored in memory, cleared on server restart).
       "system_prompt": null,
       "thinking_content": null,
       "assistant_content": null,
-      "enable_thinking": false,
+      "force_think_block": false,
+      "strip_quotes": false,
       "width": 1024,
       "height": 1024,
       "steps": 9,
@@ -389,9 +418,9 @@ Paint a cat<|im_end|>
 <|im_start|>assistant
 ```
 
-**With empty thinking block:**
+**With empty thinking block (forced):**
 ```json
-{"prompt": "Draw a house", "enable_thinking": true}
+{"prompt": "Draw a house", "force_think_block": true}
 ```
 Result:
 ```
@@ -403,9 +432,9 @@ Draw a house<|im_end|>
 </think>
 ```
 
-**With thinking content:**
+**With thinking content (auto-enables think block):**
 ```json
-{"prompt": "Paint a cat", "enable_thinking": true, "thinking_content": "Orange fur, green eyes."}
+{"prompt": "Paint a cat", "thinking_content": "Orange fur, green eyes."}
 ```
 Result:
 ```
@@ -422,7 +451,6 @@ Orange fur, green eyes.
 {
   "prompt": "Paint a sunset",
   "system_prompt": "You are an impressionist painter.",
-  "enable_thinking": true,
   "thinking_content": "Warm orange and pink hues, soft clouds.",
   "assistant_content": "Here is my painting:"
 }
