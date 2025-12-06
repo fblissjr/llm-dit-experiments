@@ -1,18 +1,25 @@
 """
 Qwen3 chat template formatter.
 
-Formats conversations into the exact token format expected by Qwen3-4B.
-Based on: ComfyUI-QwenImageWanBridge/nodes/z_image_encoder.py _format_prompt()
+Formats conversations into the exact token format expected by Qwen3-4B,
+matching the official Z-Image HuggingFace Space implementation.
 
 Key format details:
 - System: <|im_start|>system\\n{content}<|im_end|>
 - User: <|im_start|>user\\n{content}<|im_end|>
+- Assistant (no thinking): <|im_start|>assistant\\n
 - Assistant (with thinking): <|im_start|>assistant\\n<think>\\n{thinking}\\n</think>\\n\\n{content}
 - Final message: Omits <|im_end|> if is_final=True (model is generating)
 
+Content-driven behavior:
+- Default: No thinking block (matches official HF Space)
+- If thinking_content provided: Add think block with content
+- If force_think_block=True: Add empty think block
+
 Reference:
-- DiffSynth uses tokenizer.apply_chat_template() with enable_thinking=True
-- We format manually for full control over thinking content
+- Official HF Space uses tokenizer.apply_chat_template(enable_thinking=True) -> NO think block
+- Qwen3 tokenizer enable_thinking=False adds empty <think>\\n\\n</think>\\n\\n
+- We format manually for full control over all four prompt components
 """
 
 from llm_dit.conversation.types import Conversation, Message, Role
@@ -128,20 +135,21 @@ class Qwen3Formatter:
         system_prompt: str = "",
         thinking_content: str = "",
         assistant_content: str = "",
-        enable_thinking: bool = True,
+        force_think_block: bool = False,
         is_final: bool = True,
     ) -> str:
         """
         Format a simple single-turn conversation.
 
         Convenience method for the most common use case.
+        Uses content-driven logic for thinking blocks.
 
         Args:
             user_prompt: The user's request
-            system_prompt: Optional system prompt
-            thinking_content: Content inside <think></think>
+            system_prompt: Optional system prompt (omitted if empty)
+            thinking_content: Content inside <think></think> (triggers think block)
             assistant_content: Content after </think>
-            enable_thinking: Whether to include thinking block
+            force_think_block: If True, add empty think block even without content
             is_final: Whether to omit final <|im_end|>
 
         Returns:
@@ -152,7 +160,7 @@ class Qwen3Formatter:
             system_prompt=system_prompt,
             thinking_content=thinking_content,
             assistant_content=assistant_content,
-            enable_thinking=enable_thinking,
+            force_think_block=force_think_block,
         )
         conv.is_final = is_final
         return self.format(conv)
@@ -167,24 +175,33 @@ def format_prompt(
     system_prompt: str = "",
     thinking_content: str = "",
     assistant_content: str = "",
-    enable_thinking: bool = True,
+    force_think_block: bool = False,
     is_final: bool = True,
 ) -> str:
     """
     Convenience function to format a simple prompt.
 
-    Example:
+    Uses content-driven logic: thinking block is added only if
+    thinking_content is provided or force_think_block=True.
+
+    Example (matches official HF Space - no think block):
+        formatted = format_prompt("A cat sleeping")
+
+    Example (with thinking content):
         formatted = format_prompt(
             user_prompt="A cat sleeping on a windowsill",
             system_prompt="Generate photorealistic images.",
             thinking_content="Natural lighting, soft shadows...",
         )
+
+    Example (force empty think block):
+        formatted = format_prompt("A cat", force_think_block=True)
     """
     return default_formatter.format_simple(
         user_prompt=user_prompt,
         system_prompt=system_prompt,
         thinking_content=thinking_content,
         assistant_content=assistant_content,
-        enable_thinking=enable_thinking,
+        force_think_block=force_think_block,
         is_final=is_final,
     )

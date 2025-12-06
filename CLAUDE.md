@@ -55,6 +55,20 @@ Image Output
 
 ## Chat Template Format (Qwen3-4B)
 
+### Official HuggingFace Space Format (Default)
+
+The official Z-Image HuggingFace Space uses this format by default:
+
+```
+<|im_start|>user
+{user_prompt}<|im_end|>
+<|im_start|>assistant
+```
+
+**No think block by default.** This matches calling `tokenizer.apply_chat_template(enable_thinking=True)`.
+
+### Full Format (All Components)
+
 ```
 <|im_start|>system
 {system_prompt}<|im_end|>
@@ -68,18 +82,38 @@ Image Output
 {assistant_content}
 ```
 
-**Important**: Our `enable_thinking` parameter uses semantic meaning (True = add think block).
+### Content-Driven Think Block Logic
 
-**Exact format when `enable_thinking=True`:**
+Our implementation uses **content-driven** logic to match the official HF Space while exposing full control:
+
+| Condition | Result |
+|-----------|--------|
+| Default (no thinking_content, no force_think_block) | No think block (matches official) |
+| `thinking_content` provided | Add think block with content |
+| `force_think_block=True` | Add empty think block |
+
+**Exact format when think block is enabled:**
 - Empty think: `<think>\n\n</think>\n\n`
 - With content: `<think>\n{content}\n</think>\n\n`
 - With assistant: `<think>\n{content}\n</think>\n\n{assistant}<|im_end|>`
 
+### Qwen3 Tokenizer Behavior (Reference)
+
+Note: Qwen3's `enable_thinking` parameter has counterintuitive naming:
+- `enable_thinking=True` -> NO think block (model CAN think on its own)
+- `enable_thinking=False` -> ADD empty `<think>\n\n</think>\n\n` (skip thinking)
+
+The official HF Space uses `enable_thinking=True` which produces NO think block.
+Our `force_think_block` parameter provides explicit control without this confusion.
+
+### API Components
+
 All 4 components exposed via API:
 - `prompt` (required) - User message
 - `system_prompt` (optional) - System message
-- `thinking_content` (optional) - Content inside `<think>...</think>`
+- `thinking_content` (optional) - Content inside `<think>...</think>` (triggers think block)
 - `assistant_content` (optional) - Content after `</think>`
+- `force_think_block` (optional) - If True, add empty think block even without content
 
 ## Directory Structure
 
@@ -237,7 +271,7 @@ uv run scripts/generate.py \
   --lora style.safetensors:0.8 \
   "An anime character"
 
-# Full control
+# Full control (with thinking content - automatically adds think block)
 uv run scripts/generate.py \
   --model-path /path/to/z-image \
   --text-encoder-device cpu \
@@ -248,7 +282,6 @@ uv run scripts/generate.py \
   --shift 3.0 \
   --system-prompt "You are a photographer." \
   --thinking-content "Natural lighting, sharp focus." \
-  --enable-thinking \
   --output photo.png \
   "A portrait of a woman"
 ```
@@ -299,9 +332,9 @@ uv run scripts/generate.py \
 | Flag | Description |
 |------|-------------|
 | `--system-prompt` | System message |
-| `--thinking-content` | Content inside `<think>...</think>` |
+| `--thinking-content` | Content inside `<think>...</think>` (triggers think block) |
 | `--assistant-content` | Content after `</think>` |
-| `--enable-thinking` | Add think block structure |
+| `--force-think-block` | Add empty think block even without content |
 | `--template` | Template name to use |
 
 ### LoRA
@@ -333,7 +366,7 @@ uv run scripts/generate.py \
   "system_prompt": "You are a painter.",
   "thinking_content": "Orange fur, green eyes.",
   "assistant_content": "Here is your cat:",
-  "enable_thinking": true,
+  "force_think_block": false,
   "template": "photorealistic",
   "width": 1024,
   "height": 1024,
@@ -343,6 +376,11 @@ uv run scripts/generate.py \
   "shift": 3.0
 }
 ```
+
+**Think block behavior:**
+- If `thinking_content` is provided, a think block is automatically added
+- If `force_think_block` is true, an empty think block is added even without content
+- Default: no think block (matches official HF Space)
 
 ## LoRA Support
 

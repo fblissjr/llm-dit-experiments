@@ -346,7 +346,7 @@ class ZImagePipeline:
         system_prompt: Optional[str] = None,
         thinking_content: Optional[str] = None,
         assistant_content: Optional[str] = None,
-        enable_thinking: bool = False,  # Default False to match diffusers/DiffSynth
+        force_think_block: bool = False,
         output_type: str = "pil",
         callback: Optional[Callable[[int, int, torch.Tensor], None]] = None,
         shift: Optional[float] = None,
@@ -365,9 +365,9 @@ class ZImagePipeline:
             latents: Pre-generated latents (optional)
             template: Template name for encoding
             system_prompt: System prompt (optional, e.g., "You are a painter.")
-            thinking_content: Content inside <think>...</think> (optional)
+            thinking_content: Content inside <think>...</think> (triggers think block)
             assistant_content: Content after </think> (optional)
-            enable_thinking: Whether to include <think></think> structure
+            force_think_block: If True, add empty think block even without content
             output_type: Output format ("pil", "latent", or "pt")
             callback: Optional callback for progress updates
             shift: Override scheduler shift/mu (default: calculated based on resolution).
@@ -384,12 +384,14 @@ class ZImagePipeline:
             # With system prompt
             image = pipe("Paint a cat", system_prompt="You are a painter.")
 
-            # With thinking
+            # With thinking content (automatically adds think block)
             image = pipe(
                 "A sunset",
-                enable_thinking=True,
                 thinking_content="Warm orange and pink hues.",
             )
+
+            # Force empty think block
+            image = pipe("A sunset", force_think_block=True)
 
             # With seed
             image = pipe(
@@ -423,7 +425,7 @@ class ZImagePipeline:
             system_prompt=system_prompt,
             thinking_content=thinking_content,
             assistant_content=assistant_content,
-            enable_thinking=enable_thinking,
+            force_think_block=force_think_block,
         )
 
         # Log formatted prompt for debugging
@@ -448,14 +450,14 @@ class ZImagePipeline:
         if guidance_scale > 0 and negative_prompt is not None:
             neg_output = self.encoder.encode(
                 negative_prompt,
-                enable_thinking=enable_thinking,
+                force_think_block=force_think_block,
             )
             negative_prompt_embeds = [neg_output.embeddings[0].to(device=device, dtype=dtype)]
         elif guidance_scale > 0:
             # Empty negative prompt
             neg_output = self.encoder.encode(
                 "",
-                enable_thinking=enable_thinking,
+                force_think_block=force_think_block,
             )
             negative_prompt_embeds = [neg_output.embeddings[0].to(device=device, dtype=dtype)]
 
@@ -640,7 +642,7 @@ class ZImagePipeline:
         self,
         prompt: Union[str, Conversation],
         template: Optional[str] = None,
-        enable_thinking: bool = False,  # Default False to match diffusers/DiffSynth
+        force_think_block: bool = False,
     ) -> torch.Tensor:
         """
         Encode a prompt without running generation.
@@ -653,7 +655,7 @@ class ZImagePipeline:
         Args:
             prompt: Text prompt or Conversation object
             template: Optional template name
-            enable_thinking: Whether to include thinking tags
+            force_think_block: If True, add empty think block
 
         Returns:
             Embedding tensor [seq_len, embed_dim]
@@ -661,7 +663,7 @@ class ZImagePipeline:
         output = self.encoder.encode(
             prompt,
             template=template,
-            enable_thinking=enable_thinking,
+            force_think_block=force_think_block,
         )
         return output.embeddings[0]
 

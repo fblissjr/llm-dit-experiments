@@ -52,9 +52,9 @@ MAX_HISTORY = 50
 class GenerateRequest(BaseModel):
     prompt: str  # User prompt
     system_prompt: Optional[str] = None  # System prompt (optional)
-    thinking_content: Optional[str] = None  # Content inside <think>...</think> (optional)
+    thinking_content: Optional[str] = None  # Content inside <think>...</think> (triggers think block)
     assistant_content: Optional[str] = None  # Content after </think> (optional)
-    enable_thinking: bool = False  # Add <think></think> structure
+    force_think_block: bool = False  # If True, add empty think block even without content
     width: int = 1024
     height: int = 1024
     steps: int = 9
@@ -67,9 +67,9 @@ class GenerateRequest(BaseModel):
 class EncodeRequest(BaseModel):
     prompt: str  # User prompt
     system_prompt: Optional[str] = None  # System prompt (optional)
-    thinking_content: Optional[str] = None  # Content inside <think>...</think> (optional)
+    thinking_content: Optional[str] = None  # Content inside <think>...</think> (triggers think block)
     assistant_content: Optional[str] = None  # Content after </think> (optional)
-    enable_thinking: bool = False  # Add <think></think> structure
+    force_think_block: bool = False  # If True, add empty think block even without content
     template: Optional[str] = None
 
 
@@ -113,7 +113,7 @@ async def encode(request: EncodeRequest):
             system_prompt=request.system_prompt,
             thinking_content=request.thinking_content,
             assistant_content=request.assistant_content,
-            enable_thinking=request.enable_thinking,
+            force_think_block=request.force_think_block,
         )
         encode_time = time.time() - start
 
@@ -160,7 +160,7 @@ async def generate(request: GenerateRequest):
         logger.info(f"  Steps: {request.steps}")
         logger.info(f"  Seed: {request.seed}")
         logger.info(f"  Template: {request.template}")
-        logger.info(f"  Thinking: {request.enable_thinking}")
+        logger.info(f"  Force think block: {request.force_think_block}")
         logger.info(f"  Guidance: {request.guidance_scale}")
         logger.info("-" * 60)
         logger.info("Pipeline state:")
@@ -195,7 +195,7 @@ async def generate(request: GenerateRequest):
             system_prompt=request.system_prompt,
             thinking_content=request.thinking_content,
             assistant_content=request.assistant_content,
-            enable_thinking=request.enable_thinking,
+            force_think_block=request.force_think_block,
         )
 
         gen_time = time.time() - start
@@ -225,7 +225,7 @@ async def generate(request: GenerateRequest):
                     system_prompt=request.system_prompt,
                     thinking_content=request.thinking_content,
                     assistant_content=request.assistant_content,
-                    enable_thinking=request.enable_thinking,
+                    force_think_block=request.force_think_block,
                 )
                 formatted_prompt = enc.formatter.format(conv)
             except Exception as e:
@@ -239,7 +239,7 @@ async def generate(request: GenerateRequest):
             "system_prompt": request.system_prompt,
             "thinking_content": request.thinking_content,
             "assistant_content": request.assistant_content,
-            "enable_thinking": request.enable_thinking,
+            "force_think_block": request.force_think_block,
             "width": request.width,
             "height": request.height,
             "steps": request.steps,
@@ -288,7 +288,7 @@ async def format_prompt_endpoint(request: EncodeRequest):
             system_prompt=request.system_prompt,
             thinking_content=request.thinking_content,
             assistant_content=request.assistant_content,
-            enable_thinking=request.enable_thinking,
+            force_think_block=request.force_think_block,
         )
         formatted = enc.formatter.format(conv)
 
@@ -300,7 +300,7 @@ async def format_prompt_endpoint(request: EncodeRequest):
             "thinking_content": request.thinking_content,
             "assistant_content": request.assistant_content,
             "template": request.template,
-            "enable_thinking": request.enable_thinking,
+            "force_think_block": request.force_think_block,
         }
     except Exception as e:
         logger.error(f"Format failed: {e}")
@@ -453,7 +453,7 @@ async def save_embeddings_endpoint(request: EncodeRequest):
         output = enc.encode(
             request.prompt,
             template=request.template,
-            enable_thinking=request.enable_thinking,
+            force_think_block=request.force_think_block,
         )
         encode_time = time.time() - start
 
@@ -476,7 +476,7 @@ async def save_embeddings_endpoint(request: EncodeRequest):
             prompt=request.prompt,
             model_path='unknown',  # Not stored in encoder
             template=request.template,
-            enable_thinking=request.enable_thinking,
+            force_think_block=request.force_think_block,
             encoder_device=device,
         )
 
