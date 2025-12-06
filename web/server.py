@@ -301,16 +301,9 @@ async def format_prompt_endpoint(request: EncodeRequest):
         )
         formatted = enc.formatter.format(conv)
 
-        # Get token count using the backend tokenizer
-        token_count = None
-        if hasattr(enc.backend, "tokenizer"):
-            tokens = enc.backend.tokenizer(formatted, return_tensors="pt")
-            token_count = tokens["input_ids"].shape[1]
-
         return {
             "formatted_prompt": formatted,
             "char_count": len(formatted),
-            "token_count": token_count,
             "prompt": request.prompt,
             "system_prompt": request.system_prompt,
             "thinking_content": request.thinking_content,
