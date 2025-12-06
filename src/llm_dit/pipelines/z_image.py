@@ -90,6 +90,7 @@ class ZImagePipeline:
     def from_pretrained(
         cls,
         model_path: str,
+        text_encoder_path: str | None = None,
         templates_dir: str | Path | None = None,
         default_template: str | None = None,
         torch_dtype: torch.dtype = torch.bfloat16,
@@ -103,7 +104,8 @@ class ZImagePipeline:
         Load pipeline from pretrained model.
 
         Args:
-            model_path: Path to Z-Image model or HuggingFace ID
+            model_path: Path to Z-Image model (DiT + VAE) or HuggingFace ID
+            text_encoder_path: Path to text encoder (Qwen3-4B). If None, uses model_path/text_encoder/
             templates_dir: Optional path to templates directory
             default_template: Optional default template name
             torch_dtype: Model dtype (default: bfloat16)
@@ -124,6 +126,14 @@ class ZImagePipeline:
                 encoder_device="cpu",
                 dit_device="cuda",
                 vae_device="cuda",
+            )
+
+            # With separate encoder path:
+            pipe = ZImagePipeline.from_pretrained(
+                "/path/to/z-image-dit-vae",
+                text_encoder_path="/path/to/qwen3-4b",
+                encoder_device="cpu",
+                dit_device="cuda",
             )
 
         Note:
@@ -155,14 +165,17 @@ class ZImagePipeline:
         dit_device_resolved = resolve_device(dit_device)
         vae_device_resolved = resolve_device(vae_device)
 
+        # Use separate text encoder path if provided, otherwise use model_path
+        encoder_path = text_encoder_path if text_encoder_path else model_path
+
         logger.info("Loading pipeline components with device placement:")
-        logger.info(f"  Encoder: {encoder_device_resolved}")
+        logger.info(f"  Encoder: {encoder_device_resolved} (from {encoder_path})")
         logger.info(f"  DiT: {dit_device_resolved}")
         logger.info(f"  VAE: {vae_device_resolved}")
 
         # Load encoder (our custom encoder with template support)
         encoder = ZImageTextEncoder.from_pretrained(
-            model_path,
+            encoder_path,
             templates_dir=templates_dir,
             default_template=default_template,
             torch_dtype=torch_dtype,

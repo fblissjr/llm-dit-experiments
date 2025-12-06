@@ -301,16 +301,9 @@ async def format_prompt_endpoint(request: EncodeRequest):
         )
         formatted = enc.formatter.format(conv)
 
-        # Get token count using the backend tokenizer
-        token_count = None
-        if hasattr(enc.backend, "tokenizer"):
-            tokens = enc.backend.tokenizer(formatted, return_tensors="pt")
-            token_count = tokens["input_ids"].shape[1]
-
         return {
             "formatted_prompt": formatted,
             "char_count": len(formatted),
-            "token_count": token_count,
             "prompt": request.prompt,
             "system_prompt": request.system_prompt,
             "thinking_content": request.thinking_content,
@@ -510,6 +503,7 @@ async def save_embeddings_endpoint(request: EncodeRequest):
 
 def load_pipeline(
     model_path: str,
+    text_encoder_path: Optional[str] = None,
     templates_dir: Optional[str] = None,
     encoder_device: str = "auto",
     dit_device: str = "auto",
@@ -523,6 +517,8 @@ def load_pipeline(
     from llm_dit.pipelines import ZImagePipeline
 
     logger.info(f"Loading pipeline from {model_path}...")
+    if text_encoder_path:
+        logger.info(f"  Text encoder: {text_encoder_path}")
     logger.info(f"  Encoder device: {encoder_device}")
     logger.info(f"  DiT device: {dit_device}")
     logger.info(f"  VAE device: {vae_device}")
@@ -530,6 +526,7 @@ def load_pipeline(
 
     pipeline = ZImagePipeline.from_pretrained(
         model_path,
+        text_encoder_path=text_encoder_path,
         templates_dir=templates_dir,
         torch_dtype=torch.bfloat16,
         encoder_device=encoder_device,
@@ -915,7 +912,8 @@ def main():
             return 1
         load_pipeline(
             model_path,
-            templates_dir,
+            text_encoder_path=runtime_config.text_encoder_path,
+            templates_dir=templates_dir,
             encoder_device=runtime_config.encoder_device,
             dit_device=runtime_config.dit_device,
             vae_device=runtime_config.vae_device,
