@@ -421,6 +421,388 @@ class ZImagePipeline:
 
         return total_updated
 
+    def enable_gradient_checkpointing(self, enable: bool = True) -> None:
+        """
+        Enable or disable gradient checkpointing on the transformer.
+
+        Gradient checkpointing trades compute for memory by not storing
+        intermediate activations during the forward pass, recomputing them
+        during the backward pass instead.
+
+        Args:
+            enable: Whether to enable (True) or disable (False) checkpointing.
+
+        Use cases:
+            - Training/fine-tuning with limited VRAM
+            - LoRA training on consumer GPUs
+            - Large batch sizes
+
+        Example:
+            pipe.enable_gradient_checkpointing(True)
+            # Now training uses less VRAM but is slower
+
+        Note:
+            This only affects training. Inference is unaffected.
+        """
+        if self.transformer is None:
+            logger.warning("No transformer loaded, cannot set gradient checkpointing")
+            return
+
+        if hasattr(self.transformer, "enable_gradient_checkpointing"):
+            if enable:
+                self.transformer.enable_gradient_checkpointing()
+                logger.info("Gradient checkpointing enabled on transformer")
+            else:
+                self.transformer.disable_gradient_checkpointing()
+                logger.info("Gradient checkpointing disabled on transformer")
+        elif hasattr(self.transformer, "gradient_checkpointing_enable"):
+            # diffusers style
+            if enable:
+                self.transformer.gradient_checkpointing_enable()
+                logger.info("Gradient checkpointing enabled on transformer")
+            else:
+                self.transformer.gradient_checkpointing_disable()
+                logger.info("Gradient checkpointing disabled on transformer")
+        else:
+            logger.warning(
+                "Transformer does not support gradient checkpointing. "
+                "This may be a model architecture limitation."
+            )
+
+    def encode_image(
+        self,
+        image: Union[Image.Image, torch.Tensor],
+    ) -> torch.Tensor:
+        """
+        Encode an image to latent space using the VAE.
+
+        Args:
+            image: PIL Image or tensor in [0, 1] range with shape (B, C, H, W)
+
+        Returns:
+            Latent tensor ready for denoising
+        """
+        import numpy as np
+
+        # Get the underlying VAE (unwrap TiledVAEDecoder if needed)
+        vae = self.vae.vae if hasattr(self.vae, 'vae') else self.vae
+
+        # Convert PIL to tensor
+        if isinstance(image, Image.Image):
+            image = np.array(image).astype(np.float32) / 255.0
+            image = torch.from_numpy(image).permute(2, 0, 1).unsqueeze(0)
+
+        # Ensure correct shape and range
+        if image.dim() == 3:
+            image = image.unsqueeze(0)
+
+        # Move to VAE device and dtype
+        vae_device = next(vae.parameters()).device
+        vae_dtype = next(vae.parameters()).dtype
+        image = image.to(device=vae_device, dtype=vae_dtype)
+
+        # Normalize from [0, 1] to [-1, 1]
+        image = 2.0 * image - 1.0
+
+        # Encode
+        with torch.no_grad():
+            latent_dist = vae.encode(image)
+            if hasattr(latent_dist, 'latent_dist'):
+                latents = latent_dist.latent_dist.sample()
+            else:
+                latents = latent_dist.sample() if hasattr(latent_dist, 'sample') else latent_dist
+
+        # Apply VAE scaling
+        latents = (latents - vae.config.shift_factor) * vae.config.scaling_factor
+
+        return latents
+
+    def img2img(
+        self,
+        prompt: Union[str, "Conversation"],
+        image: Union[Image.Image, torch.Tensor],
+        strength: float = 0.75,
+        height: Optional[int] = None,
+        width: Optional[int] = None,
+        num_inference_steps: int = 9,
+        guidance_scale: float = 0.0,
+        negative_prompt: Optional[str] = None,
+        generator: Optional[torch.Generator] = None,
+        template: Optional[str] = None,
+        system_prompt: Optional[str] = None,
+        thinking_content: Optional[str] = None,
+        assistant_content: Optional[str] = None,
+        force_think_block: bool = False,
+        remove_quotes: bool = False,
+        output_type: str = "pil",
+        callback: Optional[Callable[[int, int, torch.Tensor], None]] = None,
+        shift: Optional[float] = None,
+    ) -> Union[Image.Image, List[Image.Image], torch.Tensor]:
+        """
+        Generate an image from a text prompt and an input image.
+
+        The strength parameter controls how much the output differs from the input:
+        - strength=0.0: Output is identical to input (no denoising)
+        - strength=1.0: Output ignores input completely (like txt2img)
+        - strength=0.5-0.8: Good range for style transfer / modifications
+
+        Args:
+            prompt: Text prompt describing the desired output
+            image: Input image (PIL Image or tensor)
+            strength: How much to transform the input (0.0-1.0)
+            height: Output height (default: input image height)
+            width: Output width (default: input image width)
+            num_inference_steps: Total denoising steps (actual steps = steps * strength)
+            guidance_scale: CFG scale (default: 0.0 for Z-Image-Turbo)
+            negative_prompt: Negative prompt for CFG
+            generator: Random generator for reproducibility
+            template: Template name for encoding
+            system_prompt: System prompt (optional)
+            thinking_content: Content inside <think>...</think>
+            assistant_content: Content after </think>
+            force_think_block: Add empty think block
+            remove_quotes: Strip " characters
+            output_type: Output format ("pil", "latent", or "pt")
+            callback: Progress callback
+            shift: Override scheduler shift/mu
+
+        Returns:
+            Generated image in specified format
+
+        Example:
+            # Style transfer
+            input_img = Image.open("photo.jpg")
+            output = pipe.img2img(
+                "A watercolor painting",
+                image=input_img,
+                strength=0.6,
+            )
+
+            # Light modifications
+            output = pipe.img2img(
+                "Add a sunset sky",
+                image=input_img,
+                strength=0.3,
+            )
+        """
+        import numpy as np
+
+        # Get image dimensions
+        if isinstance(image, Image.Image):
+            img_width, img_height = image.size
+        else:
+            img_height, img_width = image.shape[-2:]
+
+        # Use image dimensions if not specified
+        if height is None:
+            height = img_height
+        if width is None:
+            width = img_width
+
+        # Validate dimensions
+        vae_scale = self.vae_scale_factor * 2  # 16 for Z-Image
+        if height % vae_scale != 0:
+            # Round to nearest valid size
+            height = (height // vae_scale) * vae_scale
+            logger.info(f"Adjusted height to {height} (must be divisible by {vae_scale})")
+        if width % vae_scale != 0:
+            width = (width // vae_scale) * vae_scale
+            logger.info(f"Adjusted width to {width} (must be divisible by {vae_scale})")
+
+        # Resize image if dimensions changed
+        if isinstance(image, Image.Image):
+            if image.size != (width, height):
+                image = image.resize((width, height), Image.Resampling.LANCZOS)
+        else:
+            if image.shape[-2:] != (height, width):
+                image = torch.nn.functional.interpolate(
+                    image, size=(height, width), mode="bilinear", align_corners=False
+                )
+
+        device = self.device
+        dtype = self.dtype
+
+        # Calculate actual number of steps based on strength
+        # strength=1.0 means all steps, strength=0.5 means half the steps
+        init_timestep = min(int(num_inference_steps * strength), num_inference_steps)
+        t_start = max(num_inference_steps - init_timestep, 0)
+
+        logger.info(f"[img2img] strength={strength}, steps={num_inference_steps}, actual_steps={init_timestep}")
+
+        # 1. Encode prompt
+        logger.info(f"[img2img] Encoding prompt...")
+        prompt_output = self.encoder.encode(
+            prompt,
+            template=template,
+            system_prompt=system_prompt,
+            thinking_content=thinking_content,
+            assistant_content=assistant_content,
+            force_think_block=force_think_block,
+            remove_quotes=remove_quotes,
+        )
+        prompt_embeds = [prompt_output.embeddings[0].to(device=device, dtype=dtype)]
+
+        # 2. Encode input image
+        logger.info(f"[img2img] Encoding input image...")
+        init_latents = self.encode_image(image)
+        init_latents = init_latents.to(device=device, dtype=dtype)
+        logger.info(f"[img2img] Init latents shape: {init_latents.shape}")
+
+        # 3. Prepare timesteps
+        latent_height = 2 * (height // vae_scale)
+        latent_width = 2 * (width // vae_scale)
+        image_seq_len = (latent_height // 2) * (latent_width // 2)
+
+        if shift is not None:
+            mu = shift
+        else:
+            mu = calculate_shift(
+                image_seq_len,
+                self.scheduler.config.get("base_image_seq_len", 256),
+                self.scheduler.config.get("max_image_seq_len", 4096),
+                self.scheduler.config.get("base_shift", 0.5),
+                self.scheduler.config.get("max_shift", 1.15),
+            )
+
+        self.scheduler.sigma_min = 0.0
+        self.scheduler.set_timesteps(num_inference_steps, device=device, mu=mu)
+        timesteps = self.scheduler.timesteps[t_start:]
+
+        # 4. Add noise to init latents
+        noise = torch.randn(
+            init_latents.shape,
+            generator=generator,
+            device=device,
+            dtype=dtype,
+        )
+
+        # Get the starting sigma (noise level)
+        if t_start < len(self.scheduler.sigmas):
+            sigma_start = self.scheduler.sigmas[t_start]
+        else:
+            sigma_start = self.scheduler.sigmas[-1]
+
+        # Add noise: latents = (1 - sigma) * init + sigma * noise
+        latents = self.scheduler.add_noise(init_latents, noise, timesteps[:1])
+        latents = latents.to(dtype=torch.float32)
+
+        logger.info(f"[img2img] Starting denoising from step {t_start}, {len(timesteps)} steps remaining")
+
+        # 5. Encode negative prompt if using CFG
+        negative_prompt_embeds = []
+        if guidance_scale > 0:
+            if negative_prompt is not None:
+                neg_output = self.encoder.encode(negative_prompt, force_think_block=force_think_block)
+                negative_prompt_embeds = [neg_output.embeddings[0].to(device=device, dtype=dtype)]
+            else:
+                neg_output = self.encoder.encode("", force_think_block=force_think_block)
+                negative_prompt_embeds = [neg_output.embeddings[0].to(device=device, dtype=dtype)]
+
+        # 6. Denoising loop (same as txt2img but starting from noised latents)
+        cpu_offload = getattr(self, '_enable_cpu_offload', False)
+
+        with torch.no_grad():
+            for i, t in enumerate(timesteps):
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+
+                if cpu_offload:
+                    self.transformer.to(device)
+                    if torch.cuda.is_available():
+                        torch.cuda.synchronize()
+
+                timestep = t.expand(latents.shape[0])
+                timestep = (1000 - timestep) / 1000
+
+                apply_cfg = guidance_scale > 0
+
+                if apply_cfg:
+                    latent_input = latents.to(dtype).repeat(2, 1, 1, 1)
+                    embeds_input = prompt_embeds + negative_prompt_embeds
+                    timestep_input = timestep.repeat(2)
+                else:
+                    latent_input = latents.to(dtype)
+                    embeds_input = prompt_embeds
+                    timestep_input = timestep
+
+                latent_input = latent_input.unsqueeze(2)
+                latent_list = list(latent_input.unbind(dim=0))
+
+                model_output = self.transformer(
+                    latent_list,
+                    timestep_input,
+                    embeds_input,
+                )[0]
+
+                if cpu_offload:
+                    self.transformer.to("cpu")
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+
+                if apply_cfg:
+                    pos_out = model_output[:1]
+                    neg_out = model_output[1:]
+                    noise_pred = []
+                    for pos, neg in zip(pos_out, neg_out):
+                        pred = pos.float() + guidance_scale * (pos.float() - neg.float())
+                        noise_pred.append(pred)
+                    noise_pred = torch.stack(noise_pred, dim=0)
+                else:
+                    noise_pred = torch.stack([o.float() for o in model_output], dim=0)
+
+                noise_pred = noise_pred.squeeze(2)
+                noise_pred = -noise_pred
+
+                latents = self.scheduler.step(
+                    noise_pred.to(torch.float32),
+                    t,
+                    latents,
+                    return_dict=False,
+                )[0]
+
+                if callback is not None:
+                    callback(i, len(timesteps), latents)
+
+        # 7. Decode latents
+        if output_type == "latent":
+            return latents
+
+        logger.info("[img2img] Decoding latents...")
+        if cpu_offload:
+            # Get underlying VAE
+            vae = self.vae.vae if hasattr(self.vae, 'vae') else self.vae
+            vae.to(device)
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+        # Get underlying VAE for config access
+        vae = self.vae.vae if hasattr(self.vae, 'vae') else self.vae
+        latents = latents.to(vae.dtype)
+        latents = (latents / vae.config.scaling_factor) + vae.config.shift_factor
+
+        with torch.no_grad():
+            image_out = self.vae.decode(latents, return_dict=False)
+            if isinstance(image_out, tuple):
+                image_out = image_out[0]
+
+        if cpu_offload:
+            vae = self.vae.vae if hasattr(self.vae, 'vae') else self.vae
+            vae.to("cpu")
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+        if output_type == "pt":
+            return image_out
+
+        # Convert to PIL
+        image_out = (image_out / 2 + 0.5).clamp(0, 1)
+        image_out = image_out.cpu().permute(0, 2, 3, 1).float().numpy()
+        image_out = (image_out * 255).round().astype("uint8")
+
+        if image_out.shape[0] == 1:
+            return Image.fromarray(image_out[0])
+        return [Image.fromarray(img) for img in image_out]
+
     def __call__(
         self,
         prompt: Union[str, Conversation],
