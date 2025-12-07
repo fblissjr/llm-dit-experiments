@@ -47,11 +47,85 @@ Image Output
 |-----------|-------|-------|
 | Text encoder | Qwen3-4B | 2560 hidden dim, 36 layers |
 | Embedding extraction | hidden_states[-2] | Penultimate layer |
+| **Max text tokens** | **1024** | DiT RoPE limit (axes_lens[0]) |
 | CFG scale | 0.0 | Baked in via Decoupled-DMD |
 | Steps | 8-9 | Turbo distilled |
 | Scheduler | FlowMatchEuler | shift=3.0 |
 | VAE | 16-channel | Wan-family |
 | Context refiner | 2 layers | No timestep modulation |
+
+## Text Sequence Length Limits
+
+The DiT transformer has a **maximum text sequence length of 1024 tokens**. This limit comes from the RoPE (Rotary Position Embeddings) configuration: `axes_lens=[1024, 512, 512]` where the first axis is for text embeddings.
+
+### What Happens with Long Prompts
+
+- Prompts exceeding 1024 tokens are **automatically truncated** with a warning
+- The pipeline logs: `Text sequence length (N tokens) exceeds maximum (1024). Truncating to 1024 tokens.`
+- Truncation happens after encoding, preserving the first 1024 tokens of embeddings
+
+### Token Count Guidelines
+
+| Content Type | Approximate Tokens |
+|--------------|-------------------|
+| Simple prompt ("A cat sleeping") | 10-20 tokens |
+| Detailed prompt with style | 50-100 tokens |
+| Template + system prompt | 100-200 tokens |
+| Full format (system + think + assistant) | 150-300 tokens |
+| Maximum safe prompt | ~800-900 tokens |
+
+**Note:** The 1024 limit includes ALL tokens: system prompt, user prompt, think block, and assistant content.
+
+### Strategies for Long Prompts
+
+1. **Omit system prompt**: Default templates add ~50-100 tokens
+   ```bash
+   # Skip system prompt to save tokens
+   uv run scripts/generate.py --model-path ... "Your long detailed prompt here"
+   ```
+
+2. **Skip think block**: Empty think block adds ~10 tokens
+   ```bash
+   # Default: no think block (recommended for long prompts)
+   uv run scripts/generate.py --model-path ... "Long prompt"
+
+   # vs. with think block (uses more tokens)
+   uv run scripts/generate.py --model-path ... --force-think-block "Long prompt"
+   ```
+
+3. **Use concise descriptions**: Focus on key visual elements
+   ```
+   # Instead of:
+   "A highly detailed photograph of a beautiful serene peaceful calm quiet mountain landscape with..."
+
+   # Use:
+   "Mountain landscape, serene, golden hour, detailed, 8k"
+   ```
+
+4. **Check token count before generation**:
+   ```python
+   from llm_dit import ZImageTextEncoder
+
+   encoder = ZImageTextEncoder.from_pretrained("/path/to/model")
+   output = encoder.encode("Your prompt here")
+   token_count = output.token_counts[0]
+   print(f"Token count: {token_count}/1024")
+   ```
+
+5. **Access the constant programmatically**:
+   ```python
+   from llm_dit import MAX_TEXT_SEQ_LEN
+   print(f"Max tokens: {MAX_TEXT_SEQ_LEN}")  # 1024
+   ```
+
+### Why This Limit Exists
+
+The Z-Image DiT uses multi-axis RoPE for position encoding:
+- Axis 0 (1024): Text/time sequence positions
+- Axis 1 (512): Image height positions
+- Axis 2 (512): Image width positions
+
+Exceeding axis 0 causes CUDA kernel errors (`vectorized_gather_kernel: index out of bounds`).
 
 ## Chat Template Format (Qwen3-4B)
 

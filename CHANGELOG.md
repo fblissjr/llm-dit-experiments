@@ -44,6 +44,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Config loader processes `[default.pytorch]` section from TOML files
 - Documentation updated with Phase 1 migration components and usage examples
 
+### Fixed
+- Long prompts no longer crash with `vectorized_gather_kernel: index out of bounds`
+  - DiT transformer has max text sequence length of 1024 tokens (RoPE axes_lens[0])
+  - Prompts exceeding limit are automatically truncated with warning
+  - `MAX_TEXT_SEQ_LEN` constant exported for programmatic access
+  - Truncation applied in txt2img, img2img, encode_prompt, generate_from_embeddings
+
 ## [0.3.0]
 
 ### Added
