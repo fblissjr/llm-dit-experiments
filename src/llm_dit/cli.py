@@ -96,6 +96,9 @@ class RuntimeConfig:
     embedding_cache: bool = False  # Enable embedding caching
     cache_size: int = 100  # Maximum number of cached embeddings
 
+    # Long prompt handling
+    long_prompt_mode: str = "truncate"  # truncate, interpolate, pool, attention_pool
+
     # Scheduler
     shift: float = 3.0
 
@@ -309,6 +312,19 @@ def create_base_parser(
         type=int,
         default=None,
         help="Maximum number of cached embeddings (default: 100)",
+    )
+    pytorch_group.add_argument(
+        "--long-prompt-mode",
+        type=str,
+        choices=["truncate", "interpolate", "pool", "attention_pool"],
+        default=None,
+        help=(
+            "How to handle prompts exceeding 1024 tokens: "
+            "truncate (default, cut off), "
+            "interpolate (resample embeddings), "
+            "pool (average pooling), "
+            "attention_pool (importance-weighted pooling)"
+        ),
     )
 
     # Scheduler
@@ -527,6 +543,7 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
                 config.tile_overlap = getattr(pytorch, 'tile_overlap', 64)
                 config.embedding_cache = getattr(pytorch, 'embedding_cache', False)
                 config.cache_size = getattr(pytorch, 'cache_size', 100)
+                config.long_prompt_mode = getattr(pytorch, 'long_prompt_mode', 'truncate')
 
         except Exception as e:
             logger.warning(f"Failed to load config: {e}")
@@ -589,6 +606,8 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
         config.embedding_cache = True
     if getattr(args, 'cache_size', None) is not None:
         config.cache_size = args.cache_size
+    if getattr(args, 'long_prompt_mode', None) is not None:
+        config.long_prompt_mode = args.long_prompt_mode
 
     # LoRA overrides
     if getattr(args, 'loras', None):

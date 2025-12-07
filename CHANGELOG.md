@@ -28,6 +28,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Config: `[default.pytorch] embedding_cache = true`
   - Cache statistics tracking (hit rate, evictions)
   - Avoids re-encoding identical prompts for batch generation
+- Long prompt handling with experimental compression modes
+  - CLI: `--long-prompt-mode truncate|interpolate|pool|attention_pool`
+  - Config: `[default.pytorch] long_prompt_mode = "truncate"`
+  - `truncate`: Default, cuts off at 1024 tokens (safest)
+  - `interpolate`: Resamples embeddings via linear interpolation
+  - `pool`: Compresses via adaptive average pooling
+  - `attention_pool`: Importance-weighted pooling (preserves key tokens)
 - Image-to-image generation pipeline (`pipe.img2img()`)
   - Strength parameter controls noise level (0.0 = no change, 1.0 = full regeneration)
 - Gradient checkpointing support for transformer

@@ -51,6 +51,7 @@ tile_size = 512               # Tile size in pixels (latent = tile_size / 8)
 tile_overlap = 64             # Overlap between tiles for smooth blending
 embedding_cache = false       # Cache text embeddings for repeated prompts
 cache_size = 100              # Max number of cached embeddings
+long_prompt_mode = "truncate" # truncate/interpolate/pool/attention_pool (EXPERIMENTAL)
 
 [default.lora]
 paths = []

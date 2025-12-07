@@ -52,6 +52,12 @@ from llm_dit.utils.embedding_cache import (
     clear_embedding_cache,
 )
 
+from llm_dit.utils.long_prompt import (
+    LongPromptMode,
+    compress_embeddings,
+    estimate_quality_loss,
+)
+
 __all__ = [
     # LoRA
     "LoRALoader",
@@ -93,4 +99,8 @@ __all__ = [
     "get_embedding_cache",
     "set_embedding_cache",
     "clear_embedding_cache",
+    # Long prompt handling
+    "LongPromptMode",
+    "compress_embeddings",
+    "estimate_quality_loss",
 ]

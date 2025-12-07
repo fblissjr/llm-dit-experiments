@@ -118,6 +118,37 @@ The DiT transformer has a **maximum text sequence length of 1024 tokens**. This 
    print(f"Max tokens: {MAX_TEXT_SEQ_LEN}")  # 1024
    ```
 
+6. **Experimental: Use embedding compression** (may reduce quality):
+   ```bash
+   # Interpolate embeddings (smooth resampling)
+   uv run scripts/generate.py --long-prompt-mode interpolate "Very long prompt..."
+
+   # Adaptive pooling (local averaging)
+   uv run scripts/generate.py --long-prompt-mode pool "Very long prompt..."
+
+   # Attention-weighted pooling (preserves important tokens)
+   uv run scripts/generate.py --long-prompt-mode attention_pool "Very long prompt..."
+   ```
+
+   **Compression modes (EXPERIMENTAL - quality may degrade):**
+   | Mode | Description | Best For |
+   |------|-------------|----------|
+   | `truncate` | Cut off at 1024 (default) | Safety, predictable results |
+   | `interpolate` | Resample via linear interpolation | Smooth transitions, minor overflows |
+   | `pool` | Adaptive average pooling | Structured content with regions |
+   | `attention_pool` | Importance-weighted pooling | Preserving key concepts |
+
+   ```python
+   from llm_dit.utils.long_prompt import compress_embeddings, estimate_quality_loss
+
+   # Estimate quality impact
+   quality = estimate_quality_loss(1500, 1024, "interpolate")
+   print(quality)  # "Medium - 1.5x compression, some detail loss expected"
+
+   # Compress manually
+   compressed = compress_embeddings(embeddings, max_len=1024, mode="interpolate")
+   ```
+
 ### Why This Limit Exists
 
 The Z-Image DiT uses multi-axis RoPE for position encoding:
@@ -297,6 +328,7 @@ tile_size = 512               # Tile size in pixels
 tile_overlap = 64             # Overlap for smooth blending
 embedding_cache = false       # Cache embeddings for repeated prompts
 cache_size = 100              # Max cached embeddings (LRU eviction)
+long_prompt_mode = "truncate" # truncate/interpolate/pool/attention_pool
 
 [default.lora]
 paths = []
@@ -418,6 +450,7 @@ uv run scripts/generate.py \
 | `--tile-overlap` | Overlap between tiles (default: 64) |
 | `--embedding-cache` | Enable embedding cache for repeated prompts |
 | `--cache-size` | Max cached embeddings (default: 100) |
+| `--long-prompt-mode` | How to handle prompts >1024 tokens: truncate/interpolate/pool/attention_pool |
 
 ### Generation
 | Flag | Description |
