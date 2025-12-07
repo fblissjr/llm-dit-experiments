@@ -32,6 +32,12 @@ from llm_dit.encoders import ZImageTextEncoder
 
 logger = logging.getLogger(__name__)
 
+# Maximum text sequence length supported by the DiT transformer.
+# The Z-Image DiT uses multi-axis RoPE with axes_lens=[1024, 512, 512].
+# The first axis (1024) is for text/time embeddings.
+# Exceeding this limit causes "vectorized_gather_kernel: index out of bounds" errors.
+MAX_TEXT_SEQ_LEN = 1024
+
 
 def setup_attention_backend(backend: Optional[str] = None) -> str:
     """
@@ -640,7 +646,12 @@ class ZImagePipeline:
             force_think_block=force_think_block,
             remove_quotes=remove_quotes,
         )
-        prompt_embeds = [prompt_output.embeddings[0].to(device=device, dtype=dtype)]
+        raw_embeds = prompt_output.embeddings[0]
+        # Truncate if needed
+        if raw_embeds.shape[0] > MAX_TEXT_SEQ_LEN:
+            logger.warning(f"[img2img] Prompt truncated from {raw_embeds.shape[0]} to {MAX_TEXT_SEQ_LEN} tokens")
+            raw_embeds = raw_embeds[:MAX_TEXT_SEQ_LEN]
+        prompt_embeds = [raw_embeds.to(device=device, dtype=dtype)]
 
         # 2. Encode input image
         logger.info(f"[img2img] Encoding input image...")
@@ -693,7 +704,12 @@ class ZImagePipeline:
         if guidance_scale > 0:
             if negative_prompt is not None:
                 neg_output = self.encoder.encode(negative_prompt, force_think_block=force_think_block)
-                negative_prompt_embeds = [neg_output.embeddings[0].to(device=device, dtype=dtype)]
+                neg_embeds = neg_output.embeddings[0]
+                # Truncate if needed
+                if neg_embeds.shape[0] > MAX_TEXT_SEQ_LEN:
+                    logger.warning(f"[img2img] Negative prompt truncated from {neg_embeds.shape[0]} to {MAX_TEXT_SEQ_LEN} tokens")
+                    neg_embeds = neg_embeds[:MAX_TEXT_SEQ_LEN]
+                negative_prompt_embeds = [neg_embeds.to(device=device, dtype=dtype)]
             else:
                 neg_output = self.encoder.encode("", force_think_block=force_think_block)
                 negative_prompt_embeds = [neg_output.embeddings[0].to(device=device, dtype=dtype)]
@@ -915,6 +931,16 @@ class ZImagePipeline:
         logger.info(f"[Pipeline] Raw embeddings: shape={raw_embeds.shape}, device={raw_embeds.device}, dtype={raw_embeds.dtype}")
         logger.info(f"[Pipeline] Embedding stats: min={raw_embeds.min().item():.4f}, max={raw_embeds.max().item():.4f}, mean={raw_embeds.mean().item():.4f}, std={raw_embeds.std().item():.4f}")
 
+        # Truncate embeddings if they exceed DiT's max text sequence length
+        seq_len = raw_embeds.shape[0]
+        if seq_len > MAX_TEXT_SEQ_LEN:
+            logger.warning(
+                f"[Pipeline] Text sequence length ({seq_len} tokens) exceeds maximum ({MAX_TEXT_SEQ_LEN}). "
+                f"Truncating to {MAX_TEXT_SEQ_LEN} tokens. Consider shortening your prompt."
+            )
+            raw_embeds = raw_embeds[:MAX_TEXT_SEQ_LEN]
+            logger.info(f"[Pipeline] Truncated embeddings shape: {raw_embeds.shape}")
+
         # Move embeddings to device (API backend returns CPU tensors)
         prompt_embeds = [raw_embeds.to(device=device, dtype=dtype)]
         logger.info(f"[Pipeline] Moved embeddings to: device={prompt_embeds[0].device}, dtype={prompt_embeds[0].dtype}")
@@ -926,7 +952,12 @@ class ZImagePipeline:
                 negative_prompt,
                 force_think_block=force_think_block,
             )
-            negative_prompt_embeds = [neg_output.embeddings[0].to(device=device, dtype=dtype)]
+            neg_embeds = neg_output.embeddings[0]
+            # Truncate if needed
+            if neg_embeds.shape[0] > MAX_TEXT_SEQ_LEN:
+                logger.warning(f"[Pipeline] Negative prompt truncated from {neg_embeds.shape[0]} to {MAX_TEXT_SEQ_LEN} tokens")
+                neg_embeds = neg_embeds[:MAX_TEXT_SEQ_LEN]
+            negative_prompt_embeds = [neg_embeds.to(device=device, dtype=dtype)]
         elif guidance_scale > 0:
             # Empty negative prompt
             neg_output = self.encoder.encode(
@@ -1117,6 +1148,7 @@ class ZImagePipeline:
         prompt: Union[str, Conversation],
         template: Optional[str] = None,
         force_think_block: bool = False,
+        truncate: bool = True,
     ) -> torch.Tensor:
         """
         Encode a prompt without running generation.
@@ -1130,6 +1162,7 @@ class ZImagePipeline:
             prompt: Text prompt or Conversation object
             template: Optional template name
             force_think_block: If True, add empty think block
+            truncate: If True, truncate to MAX_TEXT_SEQ_LEN (default: True)
 
         Returns:
             Embedding tensor [seq_len, embed_dim]
@@ -1139,7 +1172,11 @@ class ZImagePipeline:
             template=template,
             force_think_block=force_think_block,
         )
-        return output.embeddings[0]
+        embeddings = output.embeddings[0]
+        if truncate and embeddings.shape[0] > MAX_TEXT_SEQ_LEN:
+            logger.warning(f"[encode_prompt] Truncated from {embeddings.shape[0]} to {MAX_TEXT_SEQ_LEN} tokens")
+            embeddings = embeddings[:MAX_TEXT_SEQ_LEN]
+        return embeddings
 
     def generate_from_embeddings(
         self,
@@ -1203,6 +1240,13 @@ class ZImagePipeline:
         device = self.transformer.device
         dtype = next(self.transformer.parameters()).dtype
 
+        # Truncate embeddings if they exceed DiT's max text sequence length
+        if prompt_embeds.shape[0] > MAX_TEXT_SEQ_LEN:
+            logger.warning(
+                f"[generate_from_embeddings] Truncating prompt from {prompt_embeds.shape[0]} to {MAX_TEXT_SEQ_LEN} tokens"
+            )
+            prompt_embeds = prompt_embeds[:MAX_TEXT_SEQ_LEN]
+
         # Move embeddings to device
         prompt_embeds = prompt_embeds.to(device=device, dtype=dtype)
 
@@ -1213,6 +1257,12 @@ class ZImagePipeline:
         negative_embeds_list = []
         if guidance_scale > 0:
             if negative_prompt_embeds is not None:
+                # Truncate negative embeddings if needed
+                if negative_prompt_embeds.shape[0] > MAX_TEXT_SEQ_LEN:
+                    logger.warning(
+                        f"[generate_from_embeddings] Truncating negative from {negative_prompt_embeds.shape[0]} to {MAX_TEXT_SEQ_LEN} tokens"
+                    )
+                    negative_prompt_embeds = negative_prompt_embeds[:MAX_TEXT_SEQ_LEN]
                 negative_prompt_embeds = negative_prompt_embeds.to(device=device, dtype=dtype)
                 negative_embeds_list = [negative_prompt_embeds]
             else:

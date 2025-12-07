@@ -23,7 +23,7 @@ from llm_dit.backends.transformers import TransformersBackend
 from llm_dit.encoders import ZImageTextEncoder
 
 # Pipelines
-from llm_dit.pipelines import ZImagePipeline, setup_attention_backend
+from llm_dit.pipelines import ZImagePipeline, setup_attention_backend, MAX_TEXT_SEQ_LEN
 
 # Schedulers (pure PyTorch)
 from llm_dit.schedulers import FlowMatchScheduler
@@ -51,6 +51,7 @@ __all__ = [
     # Pipelines
     "ZImagePipeline",
     "setup_attention_backend",
+    "MAX_TEXT_SEQ_LEN",
     # Schedulers
     "FlowMatchScheduler",
     # Models
