@@ -11,6 +11,7 @@ Key implementation details:
 - Filters by attention mask to get variable-length outputs
 - Tokenizer padding_side="left" as per Qwen3 convention
 - Supports generate() for prompt rewriting using the same loaded model
+- Optional embedding cache for repeated prompts (DiffSynth optimization)
 
 Transformers v5 Migration:
 - Uses quantization_config parameter instead of deprecated load_in_8bit/load_in_4bit
@@ -19,13 +20,14 @@ Transformers v5 Migration:
 
 import logging
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from llm_dit.backends.config import BackendConfig
 from llm_dit.backends.protocol import EncodingOutput
+from llm_dit.utils.embedding_cache import CacheStats, EmbeddingCache
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +52,7 @@ class TransformersBackend:
         model: AutoModelForCausalLM,
         tokenizer: AutoTokenizer,
         config: BackendConfig,
+        cache: Optional[EmbeddingCache] = None,
     ):
         self.model = model
         self.tokenizer = tokenizer
@@ -58,6 +61,7 @@ class TransformersBackend:
         self._device = next(model.parameters()).device
         self._dtype = next(model.parameters()).dtype
         self._supports_generation = True
+        self._cache = cache
 
     @classmethod
     def from_pretrained(
@@ -67,6 +71,9 @@ class TransformersBackend:
         tokenizer_subfolder: str = "tokenizer",
         config: BackendConfig | None = None,
         quantization_config: "BitsAndBytesConfig | None" = None,
+        cache: Optional[EmbeddingCache] = None,
+        enable_cache: bool = False,
+        cache_size: int = 100,
         **kwargs,
     ) -> "TransformersBackend":
         """
@@ -81,6 +88,9 @@ class TransformersBackend:
             config: Optional BackendConfig, created from defaults if not provided
             quantization_config: Optional BitsAndBytesConfig for quantization (v5 API).
                 Use this instead of the deprecated load_in_8bit/load_in_4bit flags.
+            cache: Optional pre-configured EmbeddingCache instance
+            enable_cache: If True and cache is None, create a new cache (default: False)
+            cache_size: Maximum number of cached embeddings (default: 100)
             **kwargs: Additional arguments passed to from_pretrained
 
         Returns:
@@ -172,7 +182,12 @@ class TransformersBackend:
             f"num_layers={model.config.num_hidden_layers}"
         )
 
-        return cls(model, tokenizer, config)
+        # Set up embedding cache
+        if cache is None and enable_cache:
+            cache = EmbeddingCache(max_size=cache_size, enabled=True)
+            logger.info(f"Embedding cache enabled (max_size={cache_size})")
+
+        return cls(model, tokenizer, config, cache=cache)
 
     @property
     def embedding_dim(self) -> int:
@@ -199,6 +214,7 @@ class TransformersBackend:
         texts: List[str],
         return_padded: bool = False,
         layer_index: int = -2,
+        use_cache: bool = True,
     ) -> EncodingOutput:
         """
         Encode pre-formatted text to embeddings.
@@ -212,6 +228,7 @@ class TransformersBackend:
             layer_index: Which hidden layer to extract (default: -2, penultimate).
                         Useful values: -1 (last), -2 (penultimate), -3, -4.
                         Z-Image uses -2 by default.
+            use_cache: Whether to use embedding cache (default: True)
 
         Returns:
             EncodingOutput with variable-length embeddings per input
@@ -222,6 +239,13 @@ class TransformersBackend:
         3. Extract hidden_states[layer_index] (default: penultimate layer)
         4. Filter by attention_mask to get valid tokens only
         """
+        # Check cache for single-text input (most common case)
+        if use_cache and self._cache is not None and len(texts) == 1:
+            cache_key = EmbeddingCache.make_key(texts[0], layer_index, return_padded)
+            cached = self._cache.get(cache_key, device=self.device)
+            if cached is not None:
+                return cached
+
         # Tokenize
         inputs = self.tokenizer(
             texts,
@@ -279,6 +303,10 @@ class TransformersBackend:
         if return_padded:
             result.padded_embeddings = hidden_states
             result.padded_mask = attention_mask
+
+        # Store in cache for single-text input
+        if use_cache and self._cache is not None and len(texts) == 1:
+            self._cache.put(cache_key, result)
 
         return result
 
@@ -372,3 +400,60 @@ class TransformersBackend:
         logger.debug(f"[TransformersBackend.generate] Generated {len(generated_ids)} tokens")
 
         return generated_text.strip()
+
+    # Cache management methods
+
+    @property
+    def cache(self) -> Optional[EmbeddingCache]:
+        """Get the embedding cache, if configured."""
+        return self._cache
+
+    @property
+    def cache_enabled(self) -> bool:
+        """Check if caching is enabled."""
+        return self._cache is not None and self._cache.enabled
+
+    def set_cache(self, cache: Optional[EmbeddingCache]) -> None:
+        """
+        Set or replace the embedding cache.
+
+        Args:
+            cache: EmbeddingCache instance, or None to disable caching
+        """
+        self._cache = cache
+        if cache is not None:
+            logger.info(f"Embedding cache set (max_size={cache.max_size})")
+        else:
+            logger.info("Embedding cache disabled")
+
+    def enable_cache(self, max_size: int = 100) -> EmbeddingCache:
+        """
+        Enable embedding caching.
+
+        Args:
+            max_size: Maximum number of cached embeddings
+
+        Returns:
+            The newly created cache
+        """
+        self._cache = EmbeddingCache(max_size=max_size, enabled=True)
+        logger.info(f"Embedding cache enabled (max_size={max_size})")
+        return self._cache
+
+    def disable_cache(self) -> None:
+        """Disable embedding caching."""
+        if self._cache is not None:
+            self._cache.enabled = False
+            logger.info("Embedding cache disabled")
+
+    def clear_cache(self) -> None:
+        """Clear all cached embeddings."""
+        if self._cache is not None:
+            self._cache.clear()
+
+    @property
+    def cache_stats(self) -> Optional[CacheStats]:
+        """Get cache statistics, if cache is enabled."""
+        if self._cache is not None:
+            return self._cache.stats
+        return None

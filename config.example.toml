@@ -49,6 +49,8 @@ use_custom_scheduler = false  # Use pure PyTorch FlowMatchScheduler
 tiled_vae = false             # Enable tiled VAE for 2K+ images
 tile_size = 512               # Tile size in pixels (latent = tile_size / 8)
 tile_overlap = 64             # Overlap between tiles for smooth blending
+embedding_cache = false       # Cache text embeddings for repeated prompts
+cache_size = 100              # Max number of cached embeddings
 
 [default.lora]
 paths = []
@@ -89,6 +91,8 @@ cpu_offload = false          # Not needed with 24GB
 attention_backend = "auto"   # Will detect Flash Attention 2/3
 use_custom_scheduler = true  # Pure PyTorch scheduler
 tiled_vae = false            # Enable for 2K+ resolutions
+embedding_cache = true       # Cache for repeated prompts (web server)
+cache_size = 100
 
 [rtx4090.lora]
 paths = []

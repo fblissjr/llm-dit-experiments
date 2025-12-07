@@ -5,6 +5,45 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0]
+
+### Added
+- PyTorch-native components (Phase 1 migration from diffusers)
+  - Priority-based attention backend selector (Flash Attention 3 > FA2 > Sage > xFormers > SDPA)
+    - CLI: `--attention-backend auto|flash_attn_2|flash_attn_3|sage|xformers|sdpa`
+    - Environment override: `LLM_DIT_ATTENTION=sdpa`
+  - Pure PyTorch FlowMatchScheduler with Z-Image specific shift transformation
+    - CLI: `--use-custom-scheduler`
+    - Exact match to reference implementation (sigma' = shift * sigma / (1 + (shift-1) * sigma))
+  - Tiled VAE decoder for 2K+ image generation without OOM
+    - CLI: `--tiled-vae`, `--tile-size 512`, `--tile-overlap 64`
+    - Linear blending mask for smooth tile transitions
+  - Standalone Context Refiner module (2-layer transformer, no timestep modulation)
+    - RMSNorm, RoPE embeddings, Gated SiLU FFN
+    - Loadable from Z-Image checkpoint via `ContextRefiner.from_pretrained()`
+    - Gradient checkpointing support via `enable_gradient_checkpointing()`
+- Embedding cache for text encoder (DiffSynth optimization)
+  - Thread-safe LRU cache with configurable max size
+  - CLI: `--embedding-cache`, `--cache-size 100`
+  - Config: `[default.pytorch] embedding_cache = true`
+  - Cache statistics tracking (hit rate, evictions)
+  - Avoids re-encoding identical prompts for batch generation
+- Image-to-image generation pipeline (`pipe.img2img()`)
+  - Strength parameter controls noise level (0.0 = no change, 1.0 = full regeneration)
+- Gradient checkpointing support for transformer
+  - `pipe.enable_gradient_checkpointing(True)` for reduced VRAM during fine-tuning
+- Config profiles in `config.example.toml`
+  - `[default]` - Conservative settings for most hardware
+  - `[rtx4090]` - Optimized for 24GB VRAM (Flash Attention, caching)
+  - `[low_vram]` - 8-16GB GPUs (CPU offload, quantization)
+  - `[cpu_only]` - CPU inference only
+  - `[distributed]` - Encoder on Mac, DiT on CUDA
+
+### Changed
+- RuntimeConfig now includes PyTorch-native fields (attention_backend, embedding_cache, etc.)
+- Config loader processes `[default.pytorch]` section from TOML files
+- Documentation updated with Phase 1 migration components and usage examples
+
 ## [0.3.0]
 
 ### Added

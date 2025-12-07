@@ -92,6 +92,10 @@ class RuntimeConfig:
     tile_size: int = 512  # Tile size for VAE (pixel space)
     tile_overlap: int = 64  # Overlap between tiles
 
+    # Embedding cache
+    embedding_cache: bool = False  # Enable embedding caching
+    cache_size: int = 100  # Maximum number of cached embeddings
+
     # Scheduler
     shift: float = 3.0
 
@@ -294,6 +298,17 @@ def create_base_parser(
         type=int,
         default=None,
         help="Overlap between VAE tiles in pixels (default: 64)",
+    )
+    pytorch_group.add_argument(
+        "--embedding-cache",
+        action="store_true",
+        help="Enable embedding cache for repeated prompts",
+    )
+    pytorch_group.add_argument(
+        "--cache-size",
+        type=int,
+        default=None,
+        help="Maximum number of cached embeddings (default: 100)",
     )
 
     # Scheduler
@@ -502,6 +517,17 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
                 config.lora_paths = getattr(lora, 'paths', [])
                 config.lora_scales = getattr(lora, 'scales', [])
 
+            # Check for PyTorch-native section
+            if hasattr(toml_config, 'pytorch'):
+                pytorch = toml_config.pytorch
+                config.attention_backend = getattr(pytorch, 'attention_backend', None)
+                config.use_custom_scheduler = getattr(pytorch, 'use_custom_scheduler', False)
+                config.tiled_vae = getattr(pytorch, 'tiled_vae', False)
+                config.tile_size = getattr(pytorch, 'tile_size', 512)
+                config.tile_overlap = getattr(pytorch, 'tile_overlap', 64)
+                config.embedding_cache = getattr(pytorch, 'embedding_cache', False)
+                config.cache_size = getattr(pytorch, 'cache_size', 100)
+
         except Exception as e:
             logger.warning(f"Failed to load config: {e}")
 
@@ -559,6 +585,10 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
         config.tile_size = args.tile_size
     if getattr(args, 'tile_overlap', None) is not None:
         config.tile_overlap = args.tile_overlap
+    if getattr(args, 'embedding_cache', False):
+        config.embedding_cache = True
+    if getattr(args, 'cache_size', None) is not None:
+        config.cache_size = args.cache_size
 
     # LoRA overrides
     if getattr(args, 'loras', None):

@@ -44,6 +44,14 @@ from llm_dit.utils.tiled_vae import (
     estimate_vae_memory,
 )
 
+from llm_dit.utils.embedding_cache import (
+    EmbeddingCache,
+    CacheStats,
+    get_embedding_cache,
+    set_embedding_cache,
+    clear_embedding_cache,
+)
+
 __all__ = [
     # LoRA
     "LoRALoader",
@@ -79,4 +87,10 @@ __all__ = [
     "TiledVAEDecoder",
     "decode_latents",
     "estimate_vae_memory",
+    # Embedding cache
+    "EmbeddingCache",
+    "CacheStats",
+    "get_embedding_cache",
+    "set_embedding_cache",
+    "clear_embedding_cache",
 ]

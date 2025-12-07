@@ -221,6 +221,8 @@ use_custom_scheduler = false  # Use pure PyTorch FlowMatchScheduler
 tiled_vae = false             # Enable for 2K+ images
 tile_size = 512               # Tile size in pixels
 tile_overlap = 64             # Overlap for smooth blending
+embedding_cache = false       # Cache embeddings for repeated prompts
+cache_size = 100              # Max cached embeddings (LRU eviction)
 
 [default.lora]
 paths = []
@@ -340,6 +342,8 @@ uv run scripts/generate.py \
 | `--tiled-vae` | Enable tiled VAE decode for 2K+ images |
 | `--tile-size` | Tile size in pixels (default: 512) |
 | `--tile-overlap` | Overlap between tiles (default: 64) |
+| `--embedding-cache` | Enable embedding cache for repeated prompts |
+| `--cache-size` | Max cached embeddings (default: 100) |
 
 ### Generation
 | Flag | Description |
@@ -486,6 +490,36 @@ tiled_decoder = TiledVAEDecoder(
 # Decode large latents
 image = tiled_decoder.decode(latents)  # Handles any size
 ```
+
+### Embedding Cache (Repeated Prompts)
+
+Thread-safe LRU cache for text embeddings. Avoids re-encoding identical prompts.
+
+```python
+from llm_dit.backends.transformers import TransformersBackend
+
+# Enable cache on creation
+backend = TransformersBackend.from_pretrained(
+    "/path/to/model",
+    enable_cache=True,
+    cache_size=100,
+)
+
+# Or enable later
+backend.enable_cache(max_size=100)
+
+# Check cache stats
+stats = backend.cache_stats
+print(f"Hit rate: {stats.hit_rate:.1f}%")
+
+# Clear cache
+backend.clear_cache()
+```
+
+Use cases:
+- Generating multiple images with same prompt (different seeds)
+- Web server handling repeated requests
+- Iterating on generation parameters without re-encoding
 
 ### Context Refiner (Standalone Module)
 
