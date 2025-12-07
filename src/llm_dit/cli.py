@@ -85,6 +85,13 @@ class RuntimeConfig:
     flash_attn: bool = False
     compile: bool = False
 
+    # PyTorch-native components (Phase 1 migration)
+    attention_backend: str | None = None  # auto, flash_attn_2, sdpa, xformers
+    use_custom_scheduler: bool = False  # Use our FlowMatchScheduler instead of diffusers
+    tiled_vae: bool = False  # Enable tiled VAE decode for large images
+    tile_size: int = 512  # Tile size for VAE (pixel space)
+    tile_overlap: int = 64  # Overlap between tiles
+
     # Scheduler
     shift: float = 3.0
 
@@ -255,6 +262,38 @@ def create_base_parser(
         choices=["bfloat16", "float16", "float32"],
         default=None,
         help="Model precision (default: bfloat16)",
+    )
+
+    # PyTorch-native components
+    pytorch_group = parser.add_argument_group("PyTorch Native (Phase 1)")
+    pytorch_group.add_argument(
+        "--attention-backend",
+        type=str,
+        choices=["auto", "flash_attn_2", "flash_attn_3", "sage", "xformers", "sdpa"],
+        default=None,
+        help="Attention backend (default: auto-detect best available)",
+    )
+    pytorch_group.add_argument(
+        "--use-custom-scheduler",
+        action="store_true",
+        help="Use our pure-PyTorch FlowMatchScheduler instead of diffusers",
+    )
+    pytorch_group.add_argument(
+        "--tiled-vae",
+        action="store_true",
+        help="Enable tiled VAE decode for large images (2K+)",
+    )
+    pytorch_group.add_argument(
+        "--tile-size",
+        type=int,
+        default=None,
+        help="Tile size for VAE decode in pixels (default: 512)",
+    )
+    pytorch_group.add_argument(
+        "--tile-overlap",
+        type=int,
+        default=None,
+        help="Overlap between VAE tiles in pixels (default: 64)",
     )
 
     # Scheduler
@@ -508,6 +547,18 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
     # Scheduler overrides
     if getattr(args, 'shift', None) is not None:
         config.shift = args.shift
+
+    # PyTorch-native component overrides
+    if getattr(args, 'attention_backend', None) is not None:
+        config.attention_backend = args.attention_backend
+    if getattr(args, 'use_custom_scheduler', False):
+        config.use_custom_scheduler = True
+    if getattr(args, 'tiled_vae', False):
+        config.tiled_vae = True
+    if getattr(args, 'tile_size', None) is not None:
+        config.tile_size = args.tile_size
+    if getattr(args, 'tile_overlap', None) is not None:
+        config.tile_overlap = args.tile_overlap
 
     # LoRA overrides
     if getattr(args, 'loras', None):

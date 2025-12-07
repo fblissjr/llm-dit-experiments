@@ -2,9 +2,9 @@
 Z-Image pipeline for end-to-end text-to-image generation.
 
 This pipeline combines our ZImageTextEncoder with diffusers components:
-- Scheduler: FlowMatchEulerDiscreteScheduler (shift=3)
+- Scheduler: FlowMatchEulerDiscreteScheduler (shift=3) or our FlowMatchScheduler
 - Transformer: ZImageTransformer2DModel (S3-DiT, 6B params)
-- VAE: AutoencoderKL (16-channel, Flux-derived)
+- VAE: AutoencoderKL (16-channel, Flux-derived) with optional tiled decode
 
 Example:
     pipe = ZImagePipeline.from_pretrained("/path/to/z-image")
@@ -15,6 +15,9 @@ Key differences from diffusers ZImagePipeline:
 2. Supports template-based prompt customization
 3. Exposes thinking block control
 4. More explicit control over encoding
+5. Optional pure-PyTorch scheduler (use_custom_scheduler=True)
+6. Optional tiled VAE decode for large images (tiled_vae=True)
+7. Selectable attention backend (flash_attn_2, sdpa, etc.)
 """
 
 import logging
@@ -28,6 +31,35 @@ from llm_dit.conversation import Conversation
 from llm_dit.encoders import ZImageTextEncoder
 
 logger = logging.getLogger(__name__)
+
+
+def setup_attention_backend(backend: Optional[str] = None) -> str:
+    """
+    Configure attention backend on startup.
+
+    Args:
+        backend: Backend name or "auto" for auto-detection.
+                Options: flash_attn_3, flash_attn_2, sage, xformers, sdpa, auto
+
+    Returns:
+        Name of the selected backend.
+    """
+    from llm_dit.utils.attention import (
+        get_available_backends,
+        get_attention_backend,
+        set_attention_backend,
+        log_attention_info,
+    )
+
+    if backend is not None and backend != "auto":
+        try:
+            set_attention_backend(backend)
+        except ValueError as e:
+            logger.warning(f"Failed to set attention backend: {e}")
+            logger.info("Falling back to auto-detect")
+
+    log_attention_info()
+    return get_attention_backend()
 
 
 def calculate_shift(
@@ -67,7 +99,10 @@ class ZImagePipeline:
         encoder: ZImageTextEncoder,
         transformer: Any,  # ZImageTransformer2DModel
         vae: Any,  # AutoencoderKL
-        scheduler: Any,  # FlowMatchEulerDiscreteScheduler
+        scheduler: Any,  # FlowMatchEulerDiscreteScheduler or FlowMatchScheduler
+        tiled_vae: bool = False,
+        tile_size: int = 512,
+        tile_overlap: int = 64,
     ):
         """
         Initialize the pipeline.
@@ -76,15 +111,26 @@ class ZImagePipeline:
             encoder: ZImageTextEncoder instance
             transformer: diffusers ZImageTransformer2DModel
             vae: diffusers AutoencoderKL
-            scheduler: diffusers FlowMatchEulerDiscreteScheduler
+            scheduler: diffusers FlowMatchEulerDiscreteScheduler or our FlowMatchScheduler
+            tiled_vae: Enable tiled VAE decode for large images
+            tile_size: Tile size in pixels (default: 512)
+            tile_overlap: Overlap between tiles in pixels (default: 64)
         """
         self.encoder = encoder
         self.transformer = transformer
-        self.vae = vae
         self.scheduler = scheduler
 
         # VAE scale factor (8 for Z-Image)
         self.vae_scale_factor = 2 ** (len(vae.config.block_out_channels) - 1)
+
+        # Wrap VAE with tiled decoder if requested
+        self._tiled_vae_enabled = tiled_vae
+        if tiled_vae:
+            from llm_dit.utils.tiled_vae import TiledVAEDecoder
+            self.vae = TiledVAEDecoder(vae, tile_size=tile_size, tile_overlap=tile_overlap)
+            logger.info(f"Tiled VAE enabled: tile_size={tile_size}, overlap={tile_overlap}")
+        else:
+            self.vae = vae
 
     @classmethod
     def from_pretrained(
@@ -98,6 +144,12 @@ class ZImagePipeline:
         encoder_device: str = "auto",
         dit_device: str = "auto",
         vae_device: str = "auto",
+        # PyTorch-native component options
+        use_custom_scheduler: bool = False,
+        tiled_vae: bool = False,
+        tile_size: int = 512,
+        tile_overlap: int = 64,
+        attention_backend: str | None = None,
         **kwargs,
     ) -> "ZImagePipeline":
         """
@@ -113,6 +165,11 @@ class ZImagePipeline:
             encoder_device: Device for text encoder (cpu, cuda, mps, auto)
             dit_device: Device for DiT/transformer (cpu, cuda, mps, auto)
             vae_device: Device for VAE (cpu, cuda, mps, auto)
+            use_custom_scheduler: Use our pure-PyTorch FlowMatchScheduler
+            tiled_vae: Enable tiled VAE decode for large images (2K+)
+            tile_size: Tile size in pixels for VAE decode (default: 512)
+            tile_overlap: Overlap between tiles in pixels (default: 64)
+            attention_backend: Attention backend (auto, flash_attn_2, sdpa, etc.)
             **kwargs: Additional arguments
 
         Returns:
@@ -128,12 +185,12 @@ class ZImagePipeline:
                 vae_device="cuda",
             )
 
-            # With separate encoder path:
+            # With PyTorch-native components:
             pipe = ZImagePipeline.from_pretrained(
-                "/path/to/z-image-dit-vae",
-                text_encoder_path="/path/to/qwen3-4b",
-                encoder_device="cpu",
-                dit_device="cuda",
+                "/path/to/z-image",
+                use_custom_scheduler=True,
+                tiled_vae=True,
+                attention_backend="flash_attn_2",
             )
 
         Note:
@@ -149,6 +206,10 @@ class ZImagePipeline:
                 "diffusers is required for ZImagePipeline. "
                 "Install with: pip install diffusers[torch]"
             ) from e
+
+        # Set up attention backend
+        if attention_backend:
+            setup_attention_backend(attention_backend)
 
         # Resolve device strings
         def resolve_device(device_str: str) -> str:
@@ -196,7 +257,14 @@ class ZImagePipeline:
         # Extract components from diffusers pipeline
         transformer = diffusers_pipe.transformer
         vae = diffusers_pipe.vae
-        scheduler = diffusers_pipe.scheduler
+
+        # Use our scheduler or diffusers scheduler
+        if use_custom_scheduler:
+            from llm_dit.schedulers import FlowMatchScheduler
+            scheduler = FlowMatchScheduler(shift=3.0)
+            logger.info("Using custom FlowMatchScheduler (pure PyTorch)")
+        else:
+            scheduler = diffusers_pipe.scheduler
 
         # Move components to their designated devices
         logger.info(f"Moving transformer to {dit_device_resolved}...")
@@ -205,7 +273,15 @@ class ZImagePipeline:
         vae = vae.to(vae_device_resolved)
 
         logger.info("Pipeline loaded successfully")
-        return cls(encoder, transformer, vae, scheduler)
+        return cls(
+            encoder,
+            transformer,
+            vae,
+            scheduler,
+            tiled_vae=tiled_vae,
+            tile_size=tile_size,
+            tile_overlap=tile_overlap,
+        )
 
     @classmethod
     def from_diffusers_pipeline(
@@ -871,6 +947,12 @@ class ZImagePipeline:
         enable_cpu_offload: bool = False,
         dit_device: str = "auto",
         vae_device: str = "auto",
+        # PyTorch-native component options
+        use_custom_scheduler: bool = False,
+        tiled_vae: bool = False,
+        tile_size: int = 512,
+        tile_overlap: int = 64,
+        attention_backend: str | None = None,
         **kwargs,
     ) -> "ZImagePipeline":
         """
@@ -886,6 +968,11 @@ class ZImagePipeline:
             enable_cpu_offload: Enable model CPU offload for low VRAM
             dit_device: Device for DiT/transformer (cpu, cuda, mps, auto)
             vae_device: Device for VAE (cpu, cuda, mps, auto)
+            use_custom_scheduler: Use our pure-PyTorch FlowMatchScheduler
+            tiled_vae: Enable tiled VAE decode for large images (2K+)
+            tile_size: Tile size in pixels for VAE decode (default: 512)
+            tile_overlap: Overlap between tiles in pixels (default: 64)
+            attention_backend: Attention backend (auto, flash_attn_2, sdpa, etc.)
             **kwargs: Additional arguments for diffusers
 
         Returns:
@@ -896,6 +983,7 @@ class ZImagePipeline:
                 "/path/to/z-image",
                 dit_device="cuda",
                 vae_device="cuda",
+                tiled_vae=True,  # For 2K+ images
             )
             image = pipe.generate_from_embeddings(embeddings)
         """
@@ -907,6 +995,10 @@ class ZImagePipeline:
                 "diffusers is required for ZImagePipeline. "
                 "Install with: pip install diffusers[torch]"
             ) from e
+
+        # Set up attention backend
+        if attention_backend:
+            setup_attention_backend(attention_backend)
 
         # Resolve device strings
         def resolve_device(device_str: str) -> str:
@@ -971,11 +1063,17 @@ class ZImagePipeline:
         logger.info(f"  VAE loaded: {vae.__class__.__name__}")
         logger.info(f"  VAE dtype: {next(vae.parameters()).dtype}")
 
-        logger.info("Loading scheduler...")
-        scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(
-            model_path / "scheduler",
-        )
-        logger.info(f"  Scheduler: {scheduler.__class__.__name__}")
+        # Load scheduler (custom or diffusers)
+        if use_custom_scheduler:
+            from llm_dit.schedulers import FlowMatchScheduler
+            scheduler = FlowMatchScheduler(shift=3.0)
+            logger.info("Using custom FlowMatchScheduler (pure PyTorch)")
+        else:
+            logger.info("Loading scheduler...")
+            scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(
+                model_path / "scheduler",
+            )
+            logger.info(f"  Scheduler: {scheduler.__class__.__name__}")
 
         # Move to device (unless using CPU offload)
         logger.info("-" * 60)
@@ -1000,10 +1098,18 @@ class ZImagePipeline:
         pipeline = cls.__new__(cls)
         pipeline.encoder = None
         pipeline.transformer = transformer
-        pipeline.vae = vae
         pipeline.scheduler = scheduler
         pipeline.vae_scale_factor = 2 ** (len(vae.config.block_out_channels) - 1)
         pipeline._enable_cpu_offload = enable_cpu_offload
+        pipeline._tiled_vae_enabled = tiled_vae
+
+        # Wrap VAE with tiled decoder if requested
+        if tiled_vae:
+            from llm_dit.utils.tiled_vae import TiledVAEDecoder
+            pipeline.vae = TiledVAEDecoder(vae, tile_size=tile_size, tile_overlap=tile_overlap)
+            logger.info(f"Tiled VAE enabled: tile_size={tile_size}, overlap={tile_overlap}")
+        else:
+            pipeline.vae = vae
 
         logger.info("-" * 60)
         logger.info("Generator loaded successfully (encoder-free mode)")
