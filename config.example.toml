@@ -94,6 +94,7 @@ use_custom_scheduler = true  # Pure PyTorch scheduler
 tiled_vae = false            # Enable for 2K+ resolutions
 embedding_cache = true       # Cache for repeated prompts (web server)
 cache_size = 100
+long_prompt_mode = "truncate" # truncate/interpolate/pool/attention_pool
 
 [rtx4090.lora]
 paths = []
@@ -137,6 +138,7 @@ use_custom_scheduler = true
 tiled_vae = true             # Required for larger images
 tile_size = 256              # Smaller tiles use less VRAM
 tile_overlap = 32
+long_prompt_mode = "truncate"
 
 [low_vram.lora]
 paths = []
@@ -179,6 +181,7 @@ use_custom_scheduler = true
 tiled_vae = true
 tile_size = 256
 tile_overlap = 32
+long_prompt_mode = "truncate"
 
 [cpu_only.lora]
 paths = []
@@ -218,6 +221,7 @@ model = "Qwen3-4B-mxfp4-mlx"  # Model ID on Mac
 attention_backend = "auto"
 use_custom_scheduler = true
 tiled_vae = false
+long_prompt_mode = "truncate"
 
 [distributed.lora]
 paths = []
