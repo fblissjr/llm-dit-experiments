@@ -7,6 +7,7 @@ Main exports:
 - Conversation, format_prompt: Prompt building utilities
 - TransformersBackend: HuggingFace text encoder backend
 - FlowMatchScheduler: Pure PyTorch scheduler for Z-Image
+- ContextRefiner: Pure PyTorch context refiner module
 """
 
 __version__ = "0.1.0"
@@ -26,6 +27,9 @@ from llm_dit.pipelines import ZImagePipeline, setup_attention_backend
 
 # Schedulers (pure PyTorch)
 from llm_dit.schedulers import FlowMatchScheduler
+
+# Models (pure PyTorch components)
+from llm_dit.models import ContextRefiner
 
 # Templates
 from llm_dit.templates import Template, TemplateRegistry
@@ -49,6 +53,8 @@ __all__ = [
     "setup_attention_backend",
     # Schedulers
     "FlowMatchScheduler",
+    # Models
+    "ContextRefiner",
     # Templates
     "Template",
     "TemplateRegistry",
