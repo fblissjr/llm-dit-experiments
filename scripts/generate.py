@@ -441,6 +441,7 @@ def main():
         thinking_content=config.thinking_content,
         assistant_content=config.assistant_content,
         enable_thinking=config.enable_thinking,
+        long_prompt_mode=config.long_prompt_mode,
         callback=progress_callback if config.verbose else None,
     )
     gen_time = time.time() - start
