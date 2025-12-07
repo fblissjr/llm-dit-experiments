@@ -1,25 +1,23 @@
-# llm-dit-experiments configuration
-# Copy to config.toml and customize for your setup
+# Z-Image Configuration Example
+#
+# Copy this file and modify for your setup.
+# CLI flags override config values.
+#
+# Usage:
+#   uv run scripts/generate.py --config config.toml --profile default "A cat"
+#   uv run web/server.py --config config.toml --profile rtx4090
 
-# ============================================================================
-# WEB SERVER SETTINGS
-# ============================================================================
-[server]
-host = "127.0.0.1"  # Use "0.0.0.0" to listen on all interfaces
-port = 7860
-
-# ============================================================================
-# DEFAULT PROFILE - Mac with MPS or CUDA with plenty of VRAM
-# ============================================================================
+# =============================================================================
+# Default Profile - Conservative settings that work on most hardware
+# =============================================================================
 [default]
-model_path = "/path/to/z-image"  # <-- Change this to your model path
+model_path = "/path/to/z-image-turbo"
 templates_dir = "templates/z_image"
 
 [default.encoder]
-device = "auto"  # auto, cuda, mps, cpu
-torch_dtype = "bfloat16"
-load_in_8bit = false
-load_in_4bit = false
+device = "auto"              # cpu/cuda/mps/auto
+torch_dtype = "bfloat16"     # bfloat16/float16/float32
+quantization = "none"        # v5 API: none/4bit/8bit
 cpu_offload = false
 max_length = 512
 
@@ -33,101 +31,205 @@ enable_sequential_cpu_offload = false
 height = 1024
 width = 1024
 num_inference_steps = 9
-guidance_scale = 0.0  # Z-Image-Turbo has CFG baked in
-enable_thinking = true
+guidance_scale = 0.0         # Z-Image-Turbo uses 0.0 (CFG baked in)
+enable_thinking = false      # No think block by default (matches HF Space)
 
-# ============================================================================
-# LOW VRAM PROFILE - CUDA with limited memory (8-12GB)
-# Uses 8-bit quantization and CPU offloading
-# ============================================================================
-[low_vram]
-model_path = "/path/to/z-image"
+[default.scheduler]
+shift = 3.0                  # FlowMatch shift parameter
+
+[default.optimization]
+flash_attn = false           # Requires flash-attn package
+compile = false              # Use torch.compile (slower first run)
+cpu_offload = false          # CPU offload for transformer
+
+[default.pytorch]
+# PyTorch-native components (Phase 1 migration from diffusers)
+attention_backend = "auto"    # auto/flash_attn_2/flash_attn_3/sage/xformers/sdpa
+use_custom_scheduler = false  # Use pure PyTorch FlowMatchScheduler
+tiled_vae = false             # Enable tiled VAE for 2K+ images
+tile_size = 512               # Tile size in pixels (latent = tile_size / 8)
+tile_overlap = 64             # Overlap between tiles for smooth blending
+embedding_cache = false       # Cache text embeddings for repeated prompts
+cache_size = 100              # Max number of cached embeddings
+long_prompt_mode = "truncate" # truncate/interpolate/pool/attention_pool (EXPERIMENTAL)
+
+[default.lora]
+paths = []
+scales = []
+
+# =============================================================================
+# RTX 4090 Profile - Optimized for 24GB VRAM
+# =============================================================================
+[rtx4090]
+model_path = "/path/to/z-image-turbo"
 templates_dir = "templates/z_image"
 
-[low_vram.encoder]
-device = "cuda"
+[rtx4090.encoder]
+device = "cpu"               # Text encoder on CPU (saves ~8GB VRAM)
 torch_dtype = "bfloat16"
-load_in_8bit = true  # Requires bitsandbytes
-cpu_offload = true   # Offload LLM after encoding
-max_length = 512
-
-[low_vram.pipeline]
-device = "cuda"
-torch_dtype = "bfloat16"
-enable_model_cpu_offload = true  # Sequential offload during generation
-
-[low_vram.generation]
-height = 768   # Smaller output for memory
-width = 768
-num_inference_steps = 9
-
-# ============================================================================
-# DISTRIBUTED PROFILE - LLM on Mac, DiT on CUDA server
-# Step 1: Run encode_and_save() on Mac
-# Step 2: Transfer embeddings file to CUDA server
-# Step 3: Run load_and_generate() on CUDA server
-# ============================================================================
-[distributed_mac]
-# Run this on your Mac to generate embeddings
-model_path = "/path/to/z-image"  # <-- Change this to your model path
-templates_dir = "templates/z_image"
-
-[distributed_mac.encoder]
-device = "mps"  # Fast MPS encoding
-torch_dtype = "bfloat16"
-load_in_8bit = false
+quantization = "none"
 cpu_offload = false
 
-[distributed_cuda]
-# Run this on your CUDA server to generate images from embeddings
-model_path = "/path/to/z-image"
-
-[distributed_cuda.pipeline]
+[rtx4090.pipeline]
 device = "cuda"
 torch_dtype = "bfloat16"
 
-[distributed_cuda.generation]
+[rtx4090.generation]
 height = 1024
 width = 1024
 num_inference_steps = 9
+guidance_scale = 0.0
 
-# ============================================================================
-# API BACKEND PROFILE - Use heylookitsanllm server for encoding
-# Requires: heylookitsanllm running with hidden_states endpoint
-# ============================================================================
-[api_backend]
-model_path = "/path/to/z-image"  # Still needed for DiT/VAE
+[rtx4090.scheduler]
+shift = 3.0
+
+[rtx4090.optimization]
+flash_attn = true            # Use Flash Attention for speed
+compile = false              # Optional: enable for repeated generations
+cpu_offload = false          # Not needed with 24GB
+
+[rtx4090.pytorch]
+attention_backend = "auto"   # Will detect Flash Attention 2/3
+use_custom_scheduler = true  # Pure PyTorch scheduler
+tiled_vae = false            # Enable for 2K+ resolutions
+embedding_cache = true       # Cache for repeated prompts (web server)
+cache_size = 100
+long_prompt_mode = "truncate" # truncate/interpolate/pool/attention_pool
+
+[rtx4090.lora]
+paths = []
+scales = []
+
+# =============================================================================
+# Low VRAM Profile - For 8-16GB GPUs
+# =============================================================================
+[low_vram]
+model_path = "/path/to/z-image-turbo"
 templates_dir = "templates/z_image"
 
-[api_backend.encoder]
-# API backend settings (instead of local model)
-backend_type = "api"
-api_base_url = "http://localhost:8000"
-api_model_id = "qwen3-4b"
-api_key = ""  # Optional auth
-max_length = 512
+[low_vram.encoder]
+device = "cpu"               # Encoder always on CPU
+torch_dtype = "float32"      # Some CPUs don't support bfloat16
+quantization = "8bit"        # 8-bit quantization (unused if on CPU)
+cpu_offload = true
 
-[api_backend.pipeline]
+[low_vram.pipeline]
 device = "cuda"
-torch_dtype = "bfloat16"
+torch_dtype = "float16"      # float16 uses less VRAM than bfloat16
+enable_model_cpu_offload = true
 
-# ============================================================================
-# CPU ONLY PROFILE - No GPU available
-# Very slow but works anywhere
-# ============================================================================
+[low_vram.generation]
+height = 512
+width = 512                  # Start with smaller images
+num_inference_steps = 9
+guidance_scale = 0.0
+
+[low_vram.scheduler]
+shift = 3.0
+
+[low_vram.optimization]
+flash_attn = false           # May not work well with CPU offload
+compile = false
+cpu_offload = true
+
+[low_vram.pytorch]
+attention_backend = "sdpa"   # PyTorch native, always available
+use_custom_scheduler = true
+tiled_vae = true             # Required for larger images
+tile_size = 256              # Smaller tiles use less VRAM
+tile_overlap = 32
+long_prompt_mode = "truncate"
+
+[low_vram.lora]
+paths = []
+scales = []
+
+# =============================================================================
+# CPU Only Profile - No GPU required
+# =============================================================================
 [cpu_only]
-model_path = "/path/to/z-image"
+model_path = "/path/to/z-image-turbo"
 templates_dir = "templates/z_image"
 
 [cpu_only.encoder]
 device = "cpu"
-torch_dtype = "float32"  # CPU doesn't support bfloat16 well
+torch_dtype = "float32"
+quantization = "none"
+cpu_offload = false
 
 [cpu_only.pipeline]
 device = "cpu"
 torch_dtype = "float32"
 
 [cpu_only.generation]
-height = 512   # Smaller for speed
+height = 512
 width = 512
-num_inference_steps = 4  # Fewer steps
+num_inference_steps = 4      # Fewer steps for faster CPU inference
+guidance_scale = 0.0
+
+[cpu_only.scheduler]
+shift = 3.0
+
+[cpu_only.optimization]
+flash_attn = false
+compile = false
+cpu_offload = false
+
+[cpu_only.pytorch]
+attention_backend = "sdpa"
+use_custom_scheduler = true
+tiled_vae = true
+tile_size = 256
+tile_overlap = 32
+long_prompt_mode = "truncate"
+
+[cpu_only.lora]
+paths = []
+scales = []
+
+# =============================================================================
+# Distributed Profile - Encoder on Mac, DiT on CUDA
+# =============================================================================
+[distributed]
+model_path = "/path/to/z-image-turbo"
+templates_dir = "templates/z_image"
+
+# No local encoder - use API
+[distributed.pipeline]
+device = "cuda"
+torch_dtype = "bfloat16"
+
+[distributed.generation]
+height = 1024
+width = 1024
+num_inference_steps = 9
+guidance_scale = 0.0
+
+[distributed.scheduler]
+shift = 3.0
+
+[distributed.optimization]
+flash_attn = true
+compile = false
+cpu_offload = false
+
+[distributed.api]
+url = "http://mac-host:8080"  # heylookitsanllm API endpoint
+model = "Qwen3-4B-mxfp4-mlx"  # Model ID on Mac
+
+[distributed.pytorch]
+attention_backend = "auto"
+use_custom_scheduler = true
+tiled_vae = false
+long_prompt_mode = "truncate"
+
+[distributed.lora]
+paths = []
+scales = []
+
+# =============================================================================
+# Web Server Configuration
+# =============================================================================
+[server]
+host = "127.0.0.1"           # Use 0.0.0.0 for network access
+port = 7860

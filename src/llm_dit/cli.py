@@ -85,6 +85,20 @@ class RuntimeConfig:
     flash_attn: bool = False
     compile: bool = False
 
+    # PyTorch-native components (Phase 1 migration)
+    attention_backend: str | None = None  # auto, flash_attn_2, sdpa, xformers
+    use_custom_scheduler: bool = False  # Use our FlowMatchScheduler instead of diffusers
+    tiled_vae: bool = False  # Enable tiled VAE decode for large images
+    tile_size: int = 512  # Tile size for VAE (pixel space)
+    tile_overlap: int = 64  # Overlap between tiles
+
+    # Embedding cache
+    embedding_cache: bool = False  # Enable embedding caching
+    cache_size: int = 100  # Maximum number of cached embeddings
+
+    # Long prompt handling
+    long_prompt_mode: str = "truncate"  # truncate, interpolate, pool, attention_pool
+
     # Scheduler
     shift: float = 3.0
 
@@ -255,6 +269,62 @@ def create_base_parser(
         choices=["bfloat16", "float16", "float32"],
         default=None,
         help="Model precision (default: bfloat16)",
+    )
+
+    # PyTorch-native components
+    pytorch_group = parser.add_argument_group("PyTorch Native (Phase 1)")
+    pytorch_group.add_argument(
+        "--attention-backend",
+        type=str,
+        choices=["auto", "flash_attn_2", "flash_attn_3", "sage", "xformers", "sdpa"],
+        default=None,
+        help="Attention backend (default: auto-detect best available)",
+    )
+    pytorch_group.add_argument(
+        "--use-custom-scheduler",
+        action="store_true",
+        help="Use our pure-PyTorch FlowMatchScheduler instead of diffusers",
+    )
+    pytorch_group.add_argument(
+        "--tiled-vae",
+        action="store_true",
+        help="Enable tiled VAE decode for large images (2K+)",
+    )
+    pytorch_group.add_argument(
+        "--tile-size",
+        type=int,
+        default=None,
+        help="Tile size for VAE decode in pixels (default: 512)",
+    )
+    pytorch_group.add_argument(
+        "--tile-overlap",
+        type=int,
+        default=None,
+        help="Overlap between VAE tiles in pixels (default: 64)",
+    )
+    pytorch_group.add_argument(
+        "--embedding-cache",
+        action="store_true",
+        help="Enable embedding cache for repeated prompts",
+    )
+    pytorch_group.add_argument(
+        "--cache-size",
+        type=int,
+        default=None,
+        help="Maximum number of cached embeddings (default: 100)",
+    )
+    pytorch_group.add_argument(
+        "--long-prompt-mode",
+        type=str,
+        choices=["truncate", "interpolate", "pool", "attention_pool"],
+        default=None,
+        help=(
+            "How to handle prompts exceeding 1024 tokens: "
+            "truncate (default, cut off), "
+            "interpolate (resample embeddings), "
+            "pool (average pooling), "
+            "attention_pool (importance-weighted pooling)"
+        ),
     )
 
     # Scheduler
@@ -463,6 +533,18 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
                 config.lora_paths = getattr(lora, 'paths', [])
                 config.lora_scales = getattr(lora, 'scales', [])
 
+            # Check for PyTorch-native section
+            if hasattr(toml_config, 'pytorch'):
+                pytorch = toml_config.pytorch
+                config.attention_backend = getattr(pytorch, 'attention_backend', None)
+                config.use_custom_scheduler = getattr(pytorch, 'use_custom_scheduler', False)
+                config.tiled_vae = getattr(pytorch, 'tiled_vae', False)
+                config.tile_size = getattr(pytorch, 'tile_size', 512)
+                config.tile_overlap = getattr(pytorch, 'tile_overlap', 64)
+                config.embedding_cache = getattr(pytorch, 'embedding_cache', False)
+                config.cache_size = getattr(pytorch, 'cache_size', 100)
+                config.long_prompt_mode = getattr(pytorch, 'long_prompt_mode', 'truncate')
+
         except Exception as e:
             logger.warning(f"Failed to load config: {e}")
 
@@ -508,6 +590,24 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
     # Scheduler overrides
     if getattr(args, 'shift', None) is not None:
         config.shift = args.shift
+
+    # PyTorch-native component overrides
+    if getattr(args, 'attention_backend', None) is not None:
+        config.attention_backend = args.attention_backend
+    if getattr(args, 'use_custom_scheduler', False):
+        config.use_custom_scheduler = True
+    if getattr(args, 'tiled_vae', False):
+        config.tiled_vae = True
+    if getattr(args, 'tile_size', None) is not None:
+        config.tile_size = args.tile_size
+    if getattr(args, 'tile_overlap', None) is not None:
+        config.tile_overlap = args.tile_overlap
+    if getattr(args, 'embedding_cache', False):
+        config.embedding_cache = True
+    if getattr(args, 'cache_size', None) is not None:
+        config.cache_size = args.cache_size
+    if getattr(args, 'long_prompt_mode', None) is not None:
+        config.long_prompt_mode = args.long_prompt_mode
 
     # LoRA overrides
     if getattr(args, 'loras', None):

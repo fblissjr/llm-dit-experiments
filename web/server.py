@@ -41,7 +41,7 @@ app.add_middleware(
 # Global pipeline/encoder (loaded on startup)
 pipeline = None
 encoder = None  # For encoder-only mode
-config = None
+runtime_config = None  # RuntimeConfig from CLI/TOML
 encoder_only_mode = False
 
 # In-memory history (cleared on server restart)
@@ -167,6 +167,7 @@ async def generate(request: GenerateRequest):
         logger.info(f"  Template: {request.template}")
         logger.info(f"  Force think block: {request.force_think_block}")
         logger.info(f"  Guidance: {request.guidance_scale}")
+        logger.info(f"  Long prompt mode: {runtime_config.long_prompt_mode if runtime_config else 'truncate'}")
         logger.info("-" * 60)
         logger.info("Pipeline state:")
         logger.info(f"  pipeline.device: {pipeline.device}")
@@ -188,7 +189,8 @@ async def generate(request: GenerateRequest):
         start = time.time()
 
         # Generate image
-        logger.info("Calling pipeline()...")
+        long_prompt_mode = runtime_config.long_prompt_mode if runtime_config else "truncate"
+        logger.info(f"Calling pipeline() with long_prompt_mode={long_prompt_mode}...")
         image = pipeline(
             request.prompt,
             height=request.height,
@@ -202,6 +204,7 @@ async def generate(request: GenerateRequest):
             assistant_content=request.assistant_content,
             force_think_block=request.force_think_block,
             remove_quotes=request.strip_quotes,
+            long_prompt_mode=long_prompt_mode,
         )
 
         gen_time = time.time() - start
@@ -851,6 +854,7 @@ def main():
     args = parser.parse_args()
 
     # Load unified config (handles TOML + CLI overrides)
+    global runtime_config
     runtime_config = load_runtime_config(args)
     setup_logging(runtime_config)
 

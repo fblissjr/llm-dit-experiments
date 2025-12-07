@@ -6,6 +6,8 @@ Main exports:
 - ZImagePipeline: End-to-end text-to-image generation
 - Conversation, format_prompt: Prompt building utilities
 - TransformersBackend: HuggingFace text encoder backend
+- FlowMatchScheduler: Pure PyTorch scheduler for Z-Image
+- ContextRefiner: Pure PyTorch context refiner module
 """
 
 __version__ = "0.1.0"
@@ -21,7 +23,13 @@ from llm_dit.backends.transformers import TransformersBackend
 from llm_dit.encoders import ZImageTextEncoder
 
 # Pipelines
-from llm_dit.pipelines import ZImagePipeline
+from llm_dit.pipelines import ZImagePipeline, setup_attention_backend, MAX_TEXT_SEQ_LEN
+
+# Schedulers (pure PyTorch)
+from llm_dit.schedulers import FlowMatchScheduler
+
+# Models (pure PyTorch components)
+from llm_dit.models import ContextRefiner
 
 # Templates
 from llm_dit.templates import Template, TemplateRegistry
@@ -42,6 +50,12 @@ __all__ = [
     "ZImageTextEncoder",
     # Pipelines
     "ZImagePipeline",
+    "setup_attention_backend",
+    "MAX_TEXT_SEQ_LEN",
+    # Schedulers
+    "FlowMatchScheduler",
+    # Models
+    "ContextRefiner",
     # Templates
     "Template",
     "TemplateRegistry",

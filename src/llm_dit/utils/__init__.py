@@ -28,6 +28,36 @@ from llm_dit.utils.model_compat import (
     ZIMAGE_REFERENCE,
 )
 
+from llm_dit.utils.attention import (
+    AttentionBackend,
+    get_available_backends,
+    get_attention_backend,
+    set_attention_backend,
+    reset_attention_backend,
+    attention_forward,
+    log_attention_info,
+)
+
+from llm_dit.utils.tiled_vae import (
+    TiledVAEDecoder,
+    decode_latents,
+    estimate_vae_memory,
+)
+
+from llm_dit.utils.embedding_cache import (
+    EmbeddingCache,
+    CacheStats,
+    get_embedding_cache,
+    set_embedding_cache,
+    clear_embedding_cache,
+)
+
+from llm_dit.utils.long_prompt import (
+    LongPromptMode,
+    compress_embeddings,
+    estimate_quality_loss,
+)
+
 __all__ = [
     # LoRA
     "LoRALoader",
@@ -51,4 +81,26 @@ __all__ = [
     "validate_model_path",
     "check_compatibility",
     "ZIMAGE_REFERENCE",
+    # Attention
+    "AttentionBackend",
+    "get_available_backends",
+    "get_attention_backend",
+    "set_attention_backend",
+    "reset_attention_backend",
+    "attention_forward",
+    "log_attention_info",
+    # Tiled VAE
+    "TiledVAEDecoder",
+    "decode_latents",
+    "estimate_vae_memory",
+    # Embedding cache
+    "EmbeddingCache",
+    "CacheStats",
+    "get_embedding_cache",
+    "set_embedding_cache",
+    "clear_embedding_cache",
+    # Long prompt handling
+    "LongPromptMode",
+    "compress_embeddings",
+    "estimate_quality_loss",
 ]

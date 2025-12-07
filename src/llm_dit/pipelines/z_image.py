@@ -2,9 +2,9 @@
 Z-Image pipeline for end-to-end text-to-image generation.
 
 This pipeline combines our ZImageTextEncoder with diffusers components:
-- Scheduler: FlowMatchEulerDiscreteScheduler (shift=3)
+- Scheduler: FlowMatchEulerDiscreteScheduler (shift=3) or our FlowMatchScheduler
 - Transformer: ZImageTransformer2DModel (S3-DiT, 6B params)
-- VAE: AutoencoderKL (16-channel, Flux-derived)
+- VAE: AutoencoderKL (16-channel, Flux-derived) with optional tiled decode
 
 Example:
     pipe = ZImagePipeline.from_pretrained("/path/to/z-image")
@@ -15,6 +15,9 @@ Key differences from diffusers ZImagePipeline:
 2. Supports template-based prompt customization
 3. Exposes thinking block control
 4. More explicit control over encoding
+5. Optional pure-PyTorch scheduler (use_custom_scheduler=True)
+6. Optional tiled VAE decode for large images (tiled_vae=True)
+7. Selectable attention backend (flash_attn_2, sdpa, etc.)
 """
 
 import logging
@@ -26,8 +29,44 @@ from PIL import Image
 
 from llm_dit.conversation import Conversation
 from llm_dit.encoders import ZImageTextEncoder
+from llm_dit.utils.long_prompt import compress_embeddings, LongPromptMode
 
 logger = logging.getLogger(__name__)
+
+# Maximum text sequence length supported by the DiT transformer.
+# The Z-Image DiT uses multi-axis RoPE with axes_lens=[1024, 512, 512].
+# The first axis (1024) is for text/time embeddings.
+# Exceeding this limit causes "vectorized_gather_kernel: index out of bounds" errors.
+MAX_TEXT_SEQ_LEN = 1024
+
+
+def setup_attention_backend(backend: Optional[str] = None) -> str:
+    """
+    Configure attention backend on startup.
+
+    Args:
+        backend: Backend name or "auto" for auto-detection.
+                Options: flash_attn_3, flash_attn_2, sage, xformers, sdpa, auto
+
+    Returns:
+        Name of the selected backend.
+    """
+    from llm_dit.utils.attention import (
+        get_available_backends,
+        get_attention_backend,
+        set_attention_backend,
+        log_attention_info,
+    )
+
+    if backend is not None and backend != "auto":
+        try:
+            set_attention_backend(backend)
+        except ValueError as e:
+            logger.warning(f"Failed to set attention backend: {e}")
+            logger.info("Falling back to auto-detect")
+
+    log_attention_info()
+    return get_attention_backend()
 
 
 def calculate_shift(
@@ -67,7 +106,10 @@ class ZImagePipeline:
         encoder: ZImageTextEncoder,
         transformer: Any,  # ZImageTransformer2DModel
         vae: Any,  # AutoencoderKL
-        scheduler: Any,  # FlowMatchEulerDiscreteScheduler
+        scheduler: Any,  # FlowMatchEulerDiscreteScheduler or FlowMatchScheduler
+        tiled_vae: bool = False,
+        tile_size: int = 512,
+        tile_overlap: int = 64,
     ):
         """
         Initialize the pipeline.
@@ -76,15 +118,26 @@ class ZImagePipeline:
             encoder: ZImageTextEncoder instance
             transformer: diffusers ZImageTransformer2DModel
             vae: diffusers AutoencoderKL
-            scheduler: diffusers FlowMatchEulerDiscreteScheduler
+            scheduler: diffusers FlowMatchEulerDiscreteScheduler or our FlowMatchScheduler
+            tiled_vae: Enable tiled VAE decode for large images
+            tile_size: Tile size in pixels (default: 512)
+            tile_overlap: Overlap between tiles in pixels (default: 64)
         """
         self.encoder = encoder
         self.transformer = transformer
-        self.vae = vae
         self.scheduler = scheduler
 
         # VAE scale factor (8 for Z-Image)
         self.vae_scale_factor = 2 ** (len(vae.config.block_out_channels) - 1)
+
+        # Wrap VAE with tiled decoder if requested
+        self._tiled_vae_enabled = tiled_vae
+        if tiled_vae:
+            from llm_dit.utils.tiled_vae import TiledVAEDecoder
+            self.vae = TiledVAEDecoder(vae, tile_size=tile_size, tile_overlap=tile_overlap)
+            logger.info(f"Tiled VAE enabled: tile_size={tile_size}, overlap={tile_overlap}")
+        else:
+            self.vae = vae
 
     @classmethod
     def from_pretrained(
@@ -98,6 +151,12 @@ class ZImagePipeline:
         encoder_device: str = "auto",
         dit_device: str = "auto",
         vae_device: str = "auto",
+        # PyTorch-native component options
+        use_custom_scheduler: bool = False,
+        tiled_vae: bool = False,
+        tile_size: int = 512,
+        tile_overlap: int = 64,
+        attention_backend: str | None = None,
         **kwargs,
     ) -> "ZImagePipeline":
         """
@@ -113,6 +172,11 @@ class ZImagePipeline:
             encoder_device: Device for text encoder (cpu, cuda, mps, auto)
             dit_device: Device for DiT/transformer (cpu, cuda, mps, auto)
             vae_device: Device for VAE (cpu, cuda, mps, auto)
+            use_custom_scheduler: Use our pure-PyTorch FlowMatchScheduler
+            tiled_vae: Enable tiled VAE decode for large images (2K+)
+            tile_size: Tile size in pixels for VAE decode (default: 512)
+            tile_overlap: Overlap between tiles in pixels (default: 64)
+            attention_backend: Attention backend (auto, flash_attn_2, sdpa, etc.)
             **kwargs: Additional arguments
 
         Returns:
@@ -128,12 +192,12 @@ class ZImagePipeline:
                 vae_device="cuda",
             )
 
-            # With separate encoder path:
+            # With PyTorch-native components:
             pipe = ZImagePipeline.from_pretrained(
-                "/path/to/z-image-dit-vae",
-                text_encoder_path="/path/to/qwen3-4b",
-                encoder_device="cpu",
-                dit_device="cuda",
+                "/path/to/z-image",
+                use_custom_scheduler=True,
+                tiled_vae=True,
+                attention_backend="flash_attn_2",
             )
 
         Note:
@@ -149,6 +213,10 @@ class ZImagePipeline:
                 "diffusers is required for ZImagePipeline. "
                 "Install with: pip install diffusers[torch]"
             ) from e
+
+        # Set up attention backend
+        if attention_backend:
+            setup_attention_backend(attention_backend)
 
         # Resolve device strings
         def resolve_device(device_str: str) -> str:
@@ -196,7 +264,14 @@ class ZImagePipeline:
         # Extract components from diffusers pipeline
         transformer = diffusers_pipe.transformer
         vae = diffusers_pipe.vae
-        scheduler = diffusers_pipe.scheduler
+
+        # Use our scheduler or diffusers scheduler
+        if use_custom_scheduler:
+            from llm_dit.schedulers import FlowMatchScheduler
+            scheduler = FlowMatchScheduler(shift=3.0)
+            logger.info("Using custom FlowMatchScheduler (pure PyTorch)")
+        else:
+            scheduler = diffusers_pipe.scheduler
 
         # Move components to their designated devices
         logger.info(f"Moving transformer to {dit_device_resolved}...")
@@ -205,7 +280,15 @@ class ZImagePipeline:
         vae = vae.to(vae_device_resolved)
 
         logger.info("Pipeline loaded successfully")
-        return cls(encoder, transformer, vae, scheduler)
+        return cls(
+            encoder,
+            transformer,
+            vae,
+            scheduler,
+            tiled_vae=tiled_vae,
+            tile_size=tile_size,
+            tile_overlap=tile_overlap,
+        )
 
     @classmethod
     def from_diffusers_pipeline(
@@ -345,6 +428,398 @@ class ZImagePipeline:
 
         return total_updated
 
+    def enable_gradient_checkpointing(self, enable: bool = True) -> None:
+        """
+        Enable or disable gradient checkpointing on the transformer.
+
+        Gradient checkpointing trades compute for memory by not storing
+        intermediate activations during the forward pass, recomputing them
+        during the backward pass instead.
+
+        Args:
+            enable: Whether to enable (True) or disable (False) checkpointing.
+
+        Use cases:
+            - Training/fine-tuning with limited VRAM
+            - LoRA training on consumer GPUs
+            - Large batch sizes
+
+        Example:
+            pipe.enable_gradient_checkpointing(True)
+            # Now training uses less VRAM but is slower
+
+        Note:
+            This only affects training. Inference is unaffected.
+        """
+        if self.transformer is None:
+            logger.warning("No transformer loaded, cannot set gradient checkpointing")
+            return
+
+        if hasattr(self.transformer, "enable_gradient_checkpointing"):
+            if enable:
+                self.transformer.enable_gradient_checkpointing()
+                logger.info("Gradient checkpointing enabled on transformer")
+            else:
+                self.transformer.disable_gradient_checkpointing()
+                logger.info("Gradient checkpointing disabled on transformer")
+        elif hasattr(self.transformer, "gradient_checkpointing_enable"):
+            # diffusers style
+            if enable:
+                self.transformer.gradient_checkpointing_enable()
+                logger.info("Gradient checkpointing enabled on transformer")
+            else:
+                self.transformer.gradient_checkpointing_disable()
+                logger.info("Gradient checkpointing disabled on transformer")
+        else:
+            logger.warning(
+                "Transformer does not support gradient checkpointing. "
+                "This may be a model architecture limitation."
+            )
+
+    def encode_image(
+        self,
+        image: Union[Image.Image, torch.Tensor],
+    ) -> torch.Tensor:
+        """
+        Encode an image to latent space using the VAE.
+
+        Args:
+            image: PIL Image or tensor in [0, 1] range with shape (B, C, H, W)
+
+        Returns:
+            Latent tensor ready for denoising
+        """
+        import numpy as np
+
+        # Get the underlying VAE (unwrap TiledVAEDecoder if needed)
+        vae = self.vae.vae if hasattr(self.vae, 'vae') else self.vae
+
+        # Convert PIL to tensor
+        if isinstance(image, Image.Image):
+            image = np.array(image).astype(np.float32) / 255.0
+            image = torch.from_numpy(image).permute(2, 0, 1).unsqueeze(0)
+
+        # Ensure correct shape and range
+        if image.dim() == 3:
+            image = image.unsqueeze(0)
+
+        # Move to VAE device and dtype
+        vae_device = next(vae.parameters()).device
+        vae_dtype = next(vae.parameters()).dtype
+        image = image.to(device=vae_device, dtype=vae_dtype)
+
+        # Normalize from [0, 1] to [-1, 1]
+        image = 2.0 * image - 1.0
+
+        # Encode
+        with torch.no_grad():
+            latent_dist = vae.encode(image)
+            if hasattr(latent_dist, 'latent_dist'):
+                latents = latent_dist.latent_dist.sample()
+            else:
+                latents = latent_dist.sample() if hasattr(latent_dist, 'sample') else latent_dist
+
+        # Apply VAE scaling
+        latents = (latents - vae.config.shift_factor) * vae.config.scaling_factor
+
+        return latents
+
+    def img2img(
+        self,
+        prompt: Union[str, "Conversation"],
+        image: Union[Image.Image, torch.Tensor],
+        strength: float = 0.75,
+        height: Optional[int] = None,
+        width: Optional[int] = None,
+        num_inference_steps: int = 9,
+        guidance_scale: float = 0.0,
+        negative_prompt: Optional[str] = None,
+        generator: Optional[torch.Generator] = None,
+        template: Optional[str] = None,
+        system_prompt: Optional[str] = None,
+        thinking_content: Optional[str] = None,
+        assistant_content: Optional[str] = None,
+        force_think_block: bool = False,
+        remove_quotes: bool = False,
+        output_type: str = "pil",
+        callback: Optional[Callable[[int, int, torch.Tensor], None]] = None,
+        shift: Optional[float] = None,
+        long_prompt_mode: str = "truncate",
+    ) -> Union[Image.Image, List[Image.Image], torch.Tensor]:
+        """
+        Generate an image from a text prompt and an input image.
+
+        The strength parameter controls how much the output differs from the input:
+        - strength=0.0: Output is identical to input (no denoising)
+        - strength=1.0: Output ignores input completely (like txt2img)
+        - strength=0.5-0.8: Good range for style transfer / modifications
+
+        Args:
+            prompt: Text prompt describing the desired output
+            image: Input image (PIL Image or tensor)
+            strength: How much to transform the input (0.0-1.0)
+            height: Output height (default: input image height)
+            width: Output width (default: input image width)
+            num_inference_steps: Total denoising steps (actual steps = steps * strength)
+            guidance_scale: CFG scale (default: 0.0 for Z-Image-Turbo)
+            negative_prompt: Negative prompt for CFG
+            generator: Random generator for reproducibility
+            template: Template name for encoding
+            system_prompt: System prompt (optional)
+            thinking_content: Content inside <think>...</think>
+            assistant_content: Content after </think>
+            force_think_block: Add empty think block
+            remove_quotes: Strip " characters
+            output_type: Output format ("pil", "latent", or "pt")
+            callback: Progress callback
+            shift: Override scheduler shift/mu
+            long_prompt_mode: How to handle prompts > 1024 tokens (truncate/interpolate/pool/attention_pool)
+
+        Returns:
+            Generated image in specified format
+
+        Example:
+            # Style transfer
+            input_img = Image.open("photo.jpg")
+            output = pipe.img2img(
+                "A watercolor painting",
+                image=input_img,
+                strength=0.6,
+            )
+
+            # Light modifications
+            output = pipe.img2img(
+                "Add a sunset sky",
+                image=input_img,
+                strength=0.3,
+            )
+        """
+        import numpy as np
+
+        # Get image dimensions
+        if isinstance(image, Image.Image):
+            img_width, img_height = image.size
+        else:
+            img_height, img_width = image.shape[-2:]
+
+        # Use image dimensions if not specified
+        if height is None:
+            height = img_height
+        if width is None:
+            width = img_width
+
+        # Validate dimensions
+        vae_scale = self.vae_scale_factor * 2  # 16 for Z-Image
+        if height % vae_scale != 0:
+            # Round to nearest valid size
+            height = (height // vae_scale) * vae_scale
+            logger.info(f"Adjusted height to {height} (must be divisible by {vae_scale})")
+        if width % vae_scale != 0:
+            width = (width // vae_scale) * vae_scale
+            logger.info(f"Adjusted width to {width} (must be divisible by {vae_scale})")
+
+        # Resize image if dimensions changed
+        if isinstance(image, Image.Image):
+            if image.size != (width, height):
+                image = image.resize((width, height), Image.Resampling.LANCZOS)
+        else:
+            if image.shape[-2:] != (height, width):
+                image = torch.nn.functional.interpolate(
+                    image, size=(height, width), mode="bilinear", align_corners=False
+                )
+
+        device = self.device
+        dtype = self.dtype
+
+        # Calculate actual number of steps based on strength
+        # strength=1.0 means all steps, strength=0.5 means half the steps
+        init_timestep = min(int(num_inference_steps * strength), num_inference_steps)
+        t_start = max(num_inference_steps - init_timestep, 0)
+
+        logger.info(f"[img2img] strength={strength}, steps={num_inference_steps}, actual_steps={init_timestep}")
+
+        # 1. Encode prompt
+        logger.info(f"[img2img] Encoding prompt...")
+        prompt_output = self.encoder.encode(
+            prompt,
+            template=template,
+            system_prompt=system_prompt,
+            thinking_content=thinking_content,
+            assistant_content=assistant_content,
+            force_think_block=force_think_block,
+            remove_quotes=remove_quotes,
+        )
+        raw_embeds = prompt_output.embeddings[0]
+        # Compress if needed
+        if raw_embeds.shape[0] > MAX_TEXT_SEQ_LEN:
+            raw_embeds = compress_embeddings(raw_embeds, MAX_TEXT_SEQ_LEN, mode=long_prompt_mode)
+        prompt_embeds = [raw_embeds.to(device=device, dtype=dtype)]
+
+        # 2. Encode input image
+        logger.info(f"[img2img] Encoding input image...")
+        init_latents = self.encode_image(image)
+        init_latents = init_latents.to(device=device, dtype=dtype)
+        logger.info(f"[img2img] Init latents shape: {init_latents.shape}")
+
+        # 3. Prepare timesteps
+        latent_height = 2 * (height // vae_scale)
+        latent_width = 2 * (width // vae_scale)
+        image_seq_len = (latent_height // 2) * (latent_width // 2)
+
+        if shift is not None:
+            mu = shift
+        else:
+            mu = calculate_shift(
+                image_seq_len,
+                self.scheduler.config.get("base_image_seq_len", 256),
+                self.scheduler.config.get("max_image_seq_len", 4096),
+                self.scheduler.config.get("base_shift", 0.5),
+                self.scheduler.config.get("max_shift", 1.15),
+            )
+
+        self.scheduler.sigma_min = 0.0
+        self.scheduler.set_timesteps(num_inference_steps, device=device, mu=mu)
+        timesteps = self.scheduler.timesteps[t_start:]
+
+        # 4. Add noise to init latents
+        noise = torch.randn(
+            init_latents.shape,
+            generator=generator,
+            device=device,
+            dtype=dtype,
+        )
+
+        # Get the starting sigma (noise level)
+        if t_start < len(self.scheduler.sigmas):
+            sigma_start = self.scheduler.sigmas[t_start]
+        else:
+            sigma_start = self.scheduler.sigmas[-1]
+
+        # Add noise: latents = (1 - sigma) * init + sigma * noise
+        latents = self.scheduler.add_noise(init_latents, noise, timesteps[:1])
+        latents = latents.to(dtype=torch.float32)
+
+        logger.info(f"[img2img] Starting denoising from step {t_start}, {len(timesteps)} steps remaining")
+
+        # 5. Encode negative prompt if using CFG
+        negative_prompt_embeds = []
+        if guidance_scale > 0:
+            if negative_prompt is not None:
+                neg_output = self.encoder.encode(negative_prompt, force_think_block=force_think_block)
+                neg_embeds = neg_output.embeddings[0]
+                # Compress if needed
+                if neg_embeds.shape[0] > MAX_TEXT_SEQ_LEN:
+                    neg_embeds = compress_embeddings(neg_embeds, MAX_TEXT_SEQ_LEN, mode=long_prompt_mode)
+                negative_prompt_embeds = [neg_embeds.to(device=device, dtype=dtype)]
+            else:
+                neg_output = self.encoder.encode("", force_think_block=force_think_block)
+                negative_prompt_embeds = [neg_output.embeddings[0].to(device=device, dtype=dtype)]
+
+        # 6. Denoising loop (same as txt2img but starting from noised latents)
+        cpu_offload = getattr(self, '_enable_cpu_offload', False)
+
+        with torch.no_grad():
+            for i, t in enumerate(timesteps):
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+
+                if cpu_offload:
+                    self.transformer.to(device)
+                    if torch.cuda.is_available():
+                        torch.cuda.synchronize()
+
+                timestep = t.expand(latents.shape[0])
+                timestep = (1000 - timestep) / 1000
+
+                apply_cfg = guidance_scale > 0
+
+                if apply_cfg:
+                    latent_input = latents.to(dtype).repeat(2, 1, 1, 1)
+                    embeds_input = prompt_embeds + negative_prompt_embeds
+                    timestep_input = timestep.repeat(2)
+                else:
+                    latent_input = latents.to(dtype)
+                    embeds_input = prompt_embeds
+                    timestep_input = timestep
+
+                latent_input = latent_input.unsqueeze(2)
+                latent_list = list(latent_input.unbind(dim=0))
+
+                model_output = self.transformer(
+                    latent_list,
+                    timestep_input,
+                    embeds_input,
+                )[0]
+
+                if cpu_offload:
+                    self.transformer.to("cpu")
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+
+                if apply_cfg:
+                    pos_out = model_output[:1]
+                    neg_out = model_output[1:]
+                    noise_pred = []
+                    for pos, neg in zip(pos_out, neg_out):
+                        pred = pos.float() + guidance_scale * (pos.float() - neg.float())
+                        noise_pred.append(pred)
+                    noise_pred = torch.stack(noise_pred, dim=0)
+                else:
+                    noise_pred = torch.stack([o.float() for o in model_output], dim=0)
+
+                noise_pred = noise_pred.squeeze(2)
+                noise_pred = -noise_pred
+
+                latents = self.scheduler.step(
+                    noise_pred.to(torch.float32),
+                    t,
+                    latents,
+                    return_dict=False,
+                )[0]
+
+                if callback is not None:
+                    callback(i, len(timesteps), latents)
+
+        # 7. Decode latents
+        if output_type == "latent":
+            return latents
+
+        logger.info("[img2img] Decoding latents...")
+        if cpu_offload:
+            # Get underlying VAE
+            vae = self.vae.vae if hasattr(self.vae, 'vae') else self.vae
+            vae.to(device)
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+        # Get underlying VAE for config access
+        vae = self.vae.vae if hasattr(self.vae, 'vae') else self.vae
+        latents = latents.to(vae.dtype)
+        latents = (latents / vae.config.scaling_factor) + vae.config.shift_factor
+
+        with torch.no_grad():
+            image_out = self.vae.decode(latents, return_dict=False)
+            if isinstance(image_out, tuple):
+                image_out = image_out[0]
+
+        if cpu_offload:
+            vae = self.vae.vae if hasattr(self.vae, 'vae') else self.vae
+            vae.to("cpu")
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+        if output_type == "pt":
+            return image_out
+
+        # Convert to PIL
+        image_out = (image_out / 2 + 0.5).clamp(0, 1)
+        image_out = image_out.cpu().permute(0, 2, 3, 1).float().numpy()
+        image_out = (image_out * 255).round().astype("uint8")
+
+        if image_out.shape[0] == 1:
+            return Image.fromarray(image_out[0])
+        return [Image.fromarray(img) for img in image_out]
+
     def __call__(
         self,
         prompt: Union[str, Conversation],
@@ -364,6 +839,7 @@ class ZImagePipeline:
         output_type: str = "pil",
         callback: Optional[Callable[[int, int, torch.Tensor], None]] = None,
         shift: Optional[float] = None,
+        long_prompt_mode: str = "truncate",
     ) -> Union[Image.Image, List[Image.Image], torch.Tensor]:
         """
         Generate an image from a text prompt.
@@ -388,6 +864,11 @@ class ZImagePipeline:
             shift: Override scheduler shift/mu (default: calculated based on resolution).
                    Higher values generally produce more detailed but potentially less stable results.
                    Typical range: 0.5-10.0. Default is dynamically calculated (~3.0 for 1024x1024).
+            long_prompt_mode: How to handle prompts exceeding 1024 tokens:
+                   "truncate" (default) - cut off at 1024 tokens
+                   "interpolate" - resample embeddings using linear interpolation
+                   "pool" - use adaptive average pooling
+                   "attention_pool" - use importance-weighted pooling
 
         Returns:
             Generated image(s) in specified format
@@ -457,6 +938,11 @@ class ZImagePipeline:
         logger.info(f"[Pipeline] Raw embeddings: shape={raw_embeds.shape}, device={raw_embeds.device}, dtype={raw_embeds.dtype}")
         logger.info(f"[Pipeline] Embedding stats: min={raw_embeds.min().item():.4f}, max={raw_embeds.max().item():.4f}, mean={raw_embeds.mean().item():.4f}, std={raw_embeds.std().item():.4f}")
 
+        # Handle embeddings exceeding DiT's max text sequence length
+        if raw_embeds.shape[0] > MAX_TEXT_SEQ_LEN:
+            raw_embeds = compress_embeddings(raw_embeds, MAX_TEXT_SEQ_LEN, mode=long_prompt_mode)
+            logger.info(f"[Pipeline] Compressed embeddings shape: {raw_embeds.shape}")
+
         # Move embeddings to device (API backend returns CPU tensors)
         prompt_embeds = [raw_embeds.to(device=device, dtype=dtype)]
         logger.info(f"[Pipeline] Moved embeddings to: device={prompt_embeds[0].device}, dtype={prompt_embeds[0].dtype}")
@@ -468,7 +954,11 @@ class ZImagePipeline:
                 negative_prompt,
                 force_think_block=force_think_block,
             )
-            negative_prompt_embeds = [neg_output.embeddings[0].to(device=device, dtype=dtype)]
+            neg_embeds = neg_output.embeddings[0]
+            # Compress if needed
+            if neg_embeds.shape[0] > MAX_TEXT_SEQ_LEN:
+                neg_embeds = compress_embeddings(neg_embeds, MAX_TEXT_SEQ_LEN, mode=long_prompt_mode)
+            negative_prompt_embeds = [neg_embeds.to(device=device, dtype=dtype)]
         elif guidance_scale > 0:
             # Empty negative prompt
             neg_output = self.encoder.encode(
@@ -659,6 +1149,8 @@ class ZImagePipeline:
         prompt: Union[str, Conversation],
         template: Optional[str] = None,
         force_think_block: bool = False,
+        truncate: bool = True,
+        long_prompt_mode: str = "truncate",
     ) -> torch.Tensor:
         """
         Encode a prompt without running generation.
@@ -672,6 +1164,8 @@ class ZImagePipeline:
             prompt: Text prompt or Conversation object
             template: Optional template name
             force_think_block: If True, add empty think block
+            truncate: If True, compress to MAX_TEXT_SEQ_LEN (default: True)
+            long_prompt_mode: How to handle long prompts (truncate/interpolate/pool/attention_pool)
 
         Returns:
             Embedding tensor [seq_len, embed_dim]
@@ -681,7 +1175,10 @@ class ZImagePipeline:
             template=template,
             force_think_block=force_think_block,
         )
-        return output.embeddings[0]
+        embeddings = output.embeddings[0]
+        if truncate and embeddings.shape[0] > MAX_TEXT_SEQ_LEN:
+            embeddings = compress_embeddings(embeddings, MAX_TEXT_SEQ_LEN, mode=long_prompt_mode)
+        return embeddings
 
     def generate_from_embeddings(
         self,
@@ -696,6 +1193,7 @@ class ZImagePipeline:
         output_type: str = "pil",
         callback: Optional[Callable[[int, int, torch.Tensor], None]] = None,
         shift: Optional[float] = None,
+        long_prompt_mode: str = "truncate",
     ) -> Union[Image.Image, List[Image.Image], torch.Tensor]:
         """
         Generate an image from pre-computed embeddings.
@@ -745,6 +1243,10 @@ class ZImagePipeline:
         device = self.transformer.device
         dtype = next(self.transformer.parameters()).dtype
 
+        # Compress embeddings if they exceed DiT's max text sequence length
+        if prompt_embeds.shape[0] > MAX_TEXT_SEQ_LEN:
+            prompt_embeds = compress_embeddings(prompt_embeds, MAX_TEXT_SEQ_LEN, mode=long_prompt_mode)
+
         # Move embeddings to device
         prompt_embeds = prompt_embeds.to(device=device, dtype=dtype)
 
@@ -755,6 +1257,11 @@ class ZImagePipeline:
         negative_embeds_list = []
         if guidance_scale > 0:
             if negative_prompt_embeds is not None:
+                # Compress negative embeddings if needed
+                if negative_prompt_embeds.shape[0] > MAX_TEXT_SEQ_LEN:
+                    negative_prompt_embeds = compress_embeddings(
+                        negative_prompt_embeds, MAX_TEXT_SEQ_LEN, mode=long_prompt_mode
+                    )
                 negative_prompt_embeds = negative_prompt_embeds.to(device=device, dtype=dtype)
                 negative_embeds_list = [negative_prompt_embeds]
             else:
@@ -871,6 +1378,12 @@ class ZImagePipeline:
         enable_cpu_offload: bool = False,
         dit_device: str = "auto",
         vae_device: str = "auto",
+        # PyTorch-native component options
+        use_custom_scheduler: bool = False,
+        tiled_vae: bool = False,
+        tile_size: int = 512,
+        tile_overlap: int = 64,
+        attention_backend: str | None = None,
         **kwargs,
     ) -> "ZImagePipeline":
         """
@@ -886,6 +1399,11 @@ class ZImagePipeline:
             enable_cpu_offload: Enable model CPU offload for low VRAM
             dit_device: Device for DiT/transformer (cpu, cuda, mps, auto)
             vae_device: Device for VAE (cpu, cuda, mps, auto)
+            use_custom_scheduler: Use our pure-PyTorch FlowMatchScheduler
+            tiled_vae: Enable tiled VAE decode for large images (2K+)
+            tile_size: Tile size in pixels for VAE decode (default: 512)
+            tile_overlap: Overlap between tiles in pixels (default: 64)
+            attention_backend: Attention backend (auto, flash_attn_2, sdpa, etc.)
             **kwargs: Additional arguments for diffusers
 
         Returns:
@@ -896,6 +1414,7 @@ class ZImagePipeline:
                 "/path/to/z-image",
                 dit_device="cuda",
                 vae_device="cuda",
+                tiled_vae=True,  # For 2K+ images
             )
             image = pipe.generate_from_embeddings(embeddings)
         """
@@ -907,6 +1426,10 @@ class ZImagePipeline:
                 "diffusers is required for ZImagePipeline. "
                 "Install with: pip install diffusers[torch]"
             ) from e
+
+        # Set up attention backend
+        if attention_backend:
+            setup_attention_backend(attention_backend)
 
         # Resolve device strings
         def resolve_device(device_str: str) -> str:
@@ -971,11 +1494,17 @@ class ZImagePipeline:
         logger.info(f"  VAE loaded: {vae.__class__.__name__}")
         logger.info(f"  VAE dtype: {next(vae.parameters()).dtype}")
 
-        logger.info("Loading scheduler...")
-        scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(
-            model_path / "scheduler",
-        )
-        logger.info(f"  Scheduler: {scheduler.__class__.__name__}")
+        # Load scheduler (custom or diffusers)
+        if use_custom_scheduler:
+            from llm_dit.schedulers import FlowMatchScheduler
+            scheduler = FlowMatchScheduler(shift=3.0)
+            logger.info("Using custom FlowMatchScheduler (pure PyTorch)")
+        else:
+            logger.info("Loading scheduler...")
+            scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(
+                model_path / "scheduler",
+            )
+            logger.info(f"  Scheduler: {scheduler.__class__.__name__}")
 
         # Move to device (unless using CPU offload)
         logger.info("-" * 60)
@@ -1000,10 +1529,18 @@ class ZImagePipeline:
         pipeline = cls.__new__(cls)
         pipeline.encoder = None
         pipeline.transformer = transformer
-        pipeline.vae = vae
         pipeline.scheduler = scheduler
         pipeline.vae_scale_factor = 2 ** (len(vae.config.block_out_channels) - 1)
         pipeline._enable_cpu_offload = enable_cpu_offload
+        pipeline._tiled_vae_enabled = tiled_vae
+
+        # Wrap VAE with tiled decoder if requested
+        if tiled_vae:
+            from llm_dit.utils.tiled_vae import TiledVAEDecoder
+            pipeline.vae = TiledVAEDecoder(vae, tile_size=tile_size, tile_overlap=tile_overlap)
+            logger.info(f"Tiled VAE enabled: tile_size={tile_size}, overlap={tile_overlap}")
+        else:
+            pipeline.vae = vae
 
         logger.info("-" * 60)
         logger.info("Generator loaded successfully (encoder-free mode)")

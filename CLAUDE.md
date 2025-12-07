@@ -47,11 +47,116 @@ Image Output
 |-----------|-------|-------|
 | Text encoder | Qwen3-4B | 2560 hidden dim, 36 layers |
 | Embedding extraction | hidden_states[-2] | Penultimate layer |
+| **Max text tokens** | **1024** | DiT RoPE limit (axes_lens[0]) |
 | CFG scale | 0.0 | Baked in via Decoupled-DMD |
 | Steps | 8-9 | Turbo distilled |
 | Scheduler | FlowMatchEuler | shift=3.0 |
 | VAE | 16-channel | Wan-family |
 | Context refiner | 2 layers | No timestep modulation |
+
+## Text Sequence Length Limits
+
+The DiT transformer has a **maximum text sequence length of 1024 tokens**. This limit comes from the RoPE (Rotary Position Embeddings) configuration: `axes_lens=[1024, 512, 512]` where the first axis is for text embeddings.
+
+### What Happens with Long Prompts
+
+- Prompts exceeding 1024 tokens are **automatically truncated** with a warning
+- The pipeline logs: `Text sequence length (N tokens) exceeds maximum (1024). Truncating to 1024 tokens.`
+- Truncation happens after encoding, preserving the first 1024 tokens of embeddings
+
+### Token Count Guidelines
+
+| Content Type | Approximate Tokens |
+|--------------|-------------------|
+| Simple prompt ("A cat sleeping") | 10-20 tokens |
+| Detailed prompt with style | 50-100 tokens |
+| Template + system prompt | 100-200 tokens |
+| Full format (system + think + assistant) | 150-300 tokens |
+| Maximum safe prompt | ~800-900 tokens |
+
+**Note:** The 1024 limit includes ALL tokens: system prompt, user prompt, think block, and assistant content.
+
+### Strategies for Long Prompts
+
+1. **Omit system prompt**: Default templates add ~50-100 tokens
+   ```bash
+   # Skip system prompt to save tokens
+   uv run scripts/generate.py --model-path ... "Your long detailed prompt here"
+   ```
+
+2. **Skip think block**: Empty think block adds ~10 tokens
+   ```bash
+   # Default: no think block (recommended for long prompts)
+   uv run scripts/generate.py --model-path ... "Long prompt"
+
+   # vs. with think block (uses more tokens)
+   uv run scripts/generate.py --model-path ... --force-think-block "Long prompt"
+   ```
+
+3. **Use concise descriptions**: Focus on key visual elements
+   ```
+   # Instead of:
+   "A highly detailed photograph of a beautiful serene peaceful calm quiet mountain landscape with..."
+
+   # Use:
+   "Mountain landscape, serene, golden hour, detailed, 8k"
+   ```
+
+4. **Check token count before generation**:
+   ```python
+   from llm_dit import ZImageTextEncoder
+
+   encoder = ZImageTextEncoder.from_pretrained("/path/to/model")
+   output = encoder.encode("Your prompt here")
+   token_count = output.token_counts[0]
+   print(f"Token count: {token_count}/1024")
+   ```
+
+5. **Access the constant programmatically**:
+   ```python
+   from llm_dit import MAX_TEXT_SEQ_LEN
+   print(f"Max tokens: {MAX_TEXT_SEQ_LEN}")  # 1024
+   ```
+
+6. **Experimental: Use embedding compression** (may reduce quality):
+   ```bash
+   # Interpolate embeddings (smooth resampling)
+   uv run scripts/generate.py --long-prompt-mode interpolate "Very long prompt..."
+
+   # Adaptive pooling (local averaging)
+   uv run scripts/generate.py --long-prompt-mode pool "Very long prompt..."
+
+   # Attention-weighted pooling (preserves important tokens)
+   uv run scripts/generate.py --long-prompt-mode attention_pool "Very long prompt..."
+   ```
+
+   **Compression modes (EXPERIMENTAL - quality may degrade):**
+   | Mode | Description | Best For |
+   |------|-------------|----------|
+   | `truncate` | Cut off at 1024 (default) | Safety, predictable results |
+   | `interpolate` | Resample via linear interpolation | Smooth transitions, minor overflows |
+   | `pool` | Adaptive average pooling | Structured content with regions |
+   | `attention_pool` | Importance-weighted pooling | Preserving key concepts |
+
+   ```python
+   from llm_dit.utils.long_prompt import compress_embeddings, estimate_quality_loss
+
+   # Estimate quality impact
+   quality = estimate_quality_loss(1500, 1024, "interpolate")
+   print(quality)  # "Medium - 1.5x compression, some detail loss expected"
+
+   # Compress manually
+   compressed = compress_embeddings(embeddings, max_len=1024, mode="interpolate")
+   ```
+
+### Why This Limit Exists
+
+The Z-Image DiT uses multi-axis RoPE for position encoding:
+- Axis 0 (1024): Text/time sequence positions
+- Axis 1 (512): Image height positions
+- Axis 2 (512): Image width positions
+
+Exceeding axis 0 causes CUDA kernel errors (`vectorized_gather_kernel: index out of bounds`).
 
 ## Chat Template Format (Qwen3-4B)
 
@@ -133,9 +238,15 @@ src/llm_dit/
     encoders/           # Text encoding pipeline
         z_image.py      # ZImageTextEncoder
     pipelines/          # Diffusion pipeline wrappers
-        z_image.py      # ZImagePipeline
+        z_image.py      # ZImagePipeline (txt2img, img2img)
+    schedulers/         # Pure PyTorch schedulers
+        flow_match.py   # FlowMatchScheduler (shifted sigma schedule)
+    models/             # Pure PyTorch model components
+        context_refiner.py  # ContextRefiner (2-layer text processor)
     utils/              # Utility modules
         lora.py         # LoRA loading and fusion
+        attention.py    # Priority-based attention backend selector
+        tiled_vae.py    # TiledVAEDecoder for 2K+ images
     cli.py              # Shared CLI argument parser and config loading
     config.py           # Configuration dataclasses
 
@@ -207,6 +318,17 @@ shift = 3.0
 flash_attn = false
 compile = false
 cpu_offload = false
+
+[default.pytorch]
+# PyTorch-native components (Phase 1 migration)
+attention_backend = "auto"    # auto/flash_attn_2/flash_attn_3/sage/xformers/sdpa
+use_custom_scheduler = false  # Use pure PyTorch FlowMatchScheduler
+tiled_vae = false             # Enable for 2K+ images
+tile_size = 512               # Tile size in pixels
+tile_overlap = 64             # Overlap for smooth blending
+embedding_cache = false       # Cache embeddings for repeated prompts
+cache_size = 100              # Max cached embeddings (LRU eviction)
+long_prompt_mode = "truncate" # truncate/interpolate/pool/attention_pool
 
 [default.lora]
 paths = []
@@ -318,6 +440,18 @@ uv run scripts/generate.py \
 | `--compile` | Compile transformer with torch.compile |
 | `--debug` | Enable debug logging (embedding stats, token IDs) |
 
+### PyTorch Native (Phase 1)
+| Flag | Description |
+|------|-------------|
+| `--attention-backend` | auto/flash_attn_2/flash_attn_3/sage/xformers/sdpa |
+| `--use-custom-scheduler` | Use pure PyTorch FlowMatchScheduler |
+| `--tiled-vae` | Enable tiled VAE decode for 2K+ images |
+| `--tile-size` | Tile size in pixels (default: 512) |
+| `--tile-overlap` | Overlap between tiles (default: 64) |
+| `--embedding-cache` | Enable embedding cache for repeated prompts |
+| `--cache-size` | Max cached embeddings (default: 100) |
+| `--long-prompt-mode` | How to handle prompts >1024 tokens: truncate/interpolate/pool/attention_pool |
+
 ### Generation
 | Flag | Description |
 |------|-------------|
@@ -414,6 +548,164 @@ pipe.load_lora(["lora1.safetensors", "lora2.safetensors"], scale=[0.5, 0.3])
 ```
 
 Note: LoRAs are fused (permanently merged) into weights. To remove, reload the model.
+
+## PyTorch-Native Components (Phase 1 Migration)
+
+These components reduce diffusers dependency and optimize for RTX 4090.
+
+### Attention Backend Selector
+
+Priority-based detection: Flash Attention 3 > FA2 > Sage > xFormers > SDPA
+
+```python
+from llm_dit import setup_attention_backend
+
+# Auto-detect best available backend
+setup_attention_backend("auto")
+
+# Force specific backend
+setup_attention_backend("flash_attn_2")
+
+# Environment variable override
+# LLM_DIT_ATTENTION=sdpa python script.py
+```
+
+### FlowMatchScheduler (Pure PyTorch)
+
+```python
+from llm_dit import FlowMatchScheduler
+
+scheduler = FlowMatchScheduler(shift=3.0)
+scheduler.set_timesteps(num_inference_steps=9, device="cuda")
+
+# Access sigma schedule
+sigmas = scheduler.sigmas  # Shifted: sigma' = shift * sigma / (1 + (shift-1) * sigma)
+```
+
+### Tiled VAE Decoder (2K+ Images)
+
+```python
+from llm_dit.utils.tiled_vae import TiledVAEDecoder
+
+# Wrap existing VAE
+tiled_decoder = TiledVAEDecoder(
+    vae=pipe.vae,
+    tile_size=512,    # Pixels (latent = 512/8 = 64)
+    tile_overlap=64,  # Overlap for smooth blending
+)
+
+# Decode large latents
+image = tiled_decoder.decode(latents)  # Handles any size
+```
+
+### Embedding Cache (Repeated Prompts)
+
+Thread-safe LRU cache for text embeddings. Avoids re-encoding identical prompts.
+
+```python
+from llm_dit.backends.transformers import TransformersBackend
+
+# Enable cache on creation
+backend = TransformersBackend.from_pretrained(
+    "/path/to/model",
+    enable_cache=True,
+    cache_size=100,
+)
+
+# Or enable later
+backend.enable_cache(max_size=100)
+
+# Check cache stats
+stats = backend.cache_stats
+print(f"Hit rate: {stats.hit_rate:.1f}%")
+
+# Clear cache
+backend.clear_cache()
+```
+
+Use cases:
+- Generating multiple images with same prompt (different seeds)
+- Web server handling repeated requests
+- Iterating on generation parameters without re-encoding
+
+### Context Refiner (Standalone Module)
+
+```python
+from llm_dit import ContextRefiner
+
+# Create standalone (matches Z-Image architecture)
+refiner = ContextRefiner(
+    dim=3840,      # Hidden dimension
+    n_layers=2,    # 2 transformer layers
+    n_heads=30,    # 30 attention heads (128 dim/head)
+)
+
+# Load from Z-Image checkpoint
+refiner = ContextRefiner.from_pretrained("/path/to/z-image", device="cuda")
+
+# Process text embeddings (3840 dim, already projected from 2560)
+refined = refiner(text_embeddings)  # (batch, seq, 3840)
+
+# Enable gradient checkpointing for training
+refiner.enable_gradient_checkpointing()
+```
+
+### Image-to-Image Generation
+
+```python
+from llm_dit import ZImagePipeline
+from PIL import Image
+
+pipe = ZImagePipeline.from_pretrained("/path/to/z-image")
+
+# Load input image
+input_image = Image.open("photo.jpg")
+
+# Generate with strength control
+result = pipe.img2img(
+    prompt="A cat sleeping in sunlight, oil painting style",
+    image=input_image,
+    strength=0.75,  # 0.0 = no change, 1.0 = full regeneration
+    num_inference_steps=9,
+)
+result.images[0].save("output.png")
+```
+
+### Usage Examples
+
+**RTX 4090 Optimized (CLI):**
+```bash
+uv run scripts/generate.py \
+  --model-path /path/to/z-image-turbo \
+  --text-encoder-device cpu \
+  --dit-device cuda \
+  --vae-device cuda \
+  --attention-backend auto \
+  --use-custom-scheduler \
+  --flash-attn \
+  "A mountain landscape"
+```
+
+**RTX 4090 Optimized (Config):**
+```bash
+uv run scripts/generate.py --config config.toml --profile rtx4090 "A mountain landscape"
+```
+
+**Large Image Generation (2K+):**
+```bash
+uv run scripts/generate.py \
+  --model-path /path/to/z-image-turbo \
+  --width 2048 --height 2048 \
+  --tiled-vae \
+  --tile-size 512 \
+  --tile-overlap 64 \
+  "A detailed cityscape"
+```
+
+**Low VRAM (8-16GB):**
+```bash
+uv run scripts/generate.py --config config.toml --profile low_vram "A cat"
+```
 
 ## Prompt Rewriting
 
