@@ -133,9 +133,15 @@ src/llm_dit/
     encoders/           # Text encoding pipeline
         z_image.py      # ZImageTextEncoder
     pipelines/          # Diffusion pipeline wrappers
-        z_image.py      # ZImagePipeline
+        z_image.py      # ZImagePipeline (txt2img, img2img)
+    schedulers/         # Pure PyTorch schedulers
+        flow_match.py   # FlowMatchScheduler (shifted sigma schedule)
+    models/             # Pure PyTorch model components
+        context_refiner.py  # ContextRefiner (2-layer text processor)
     utils/              # Utility modules
         lora.py         # LoRA loading and fusion
+        attention.py    # Priority-based attention backend selector
+        tiled_vae.py    # TiledVAEDecoder for 2K+ images
     cli.py              # Shared CLI argument parser and config loading
     config.py           # Configuration dataclasses
 
@@ -207,6 +213,14 @@ shift = 3.0
 flash_attn = false
 compile = false
 cpu_offload = false
+
+[default.pytorch]
+# PyTorch-native components (Phase 1 migration)
+attention_backend = "auto"    # auto/flash_attn_2/flash_attn_3/sage/xformers/sdpa
+use_custom_scheduler = false  # Use pure PyTorch FlowMatchScheduler
+tiled_vae = false             # Enable for 2K+ images
+tile_size = 512               # Tile size in pixels
+tile_overlap = 64             # Overlap for smooth blending
 
 [default.lora]
 paths = []
@@ -318,6 +332,15 @@ uv run scripts/generate.py \
 | `--compile` | Compile transformer with torch.compile |
 | `--debug` | Enable debug logging (embedding stats, token IDs) |
 
+### PyTorch Native (Phase 1)
+| Flag | Description |
+|------|-------------|
+| `--attention-backend` | auto/flash_attn_2/flash_attn_3/sage/xformers/sdpa |
+| `--use-custom-scheduler` | Use pure PyTorch FlowMatchScheduler |
+| `--tiled-vae` | Enable tiled VAE decode for 2K+ images |
+| `--tile-size` | Tile size in pixels (default: 512) |
+| `--tile-overlap` | Overlap between tiles (default: 64) |
+
 ### Generation
 | Flag | Description |
 |------|-------------|
@@ -414,6 +437,134 @@ pipe.load_lora(["lora1.safetensors", "lora2.safetensors"], scale=[0.5, 0.3])
 ```
 
 Note: LoRAs are fused (permanently merged) into weights. To remove, reload the model.
+
+## PyTorch-Native Components (Phase 1 Migration)
+
+These components reduce diffusers dependency and optimize for RTX 4090.
+
+### Attention Backend Selector
+
+Priority-based detection: Flash Attention 3 > FA2 > Sage > xFormers > SDPA
+
+```python
+from llm_dit import setup_attention_backend
+
+# Auto-detect best available backend
+setup_attention_backend("auto")
+
+# Force specific backend
+setup_attention_backend("flash_attn_2")
+
+# Environment variable override
+# LLM_DIT_ATTENTION=sdpa python script.py
+```
+
+### FlowMatchScheduler (Pure PyTorch)
+
+```python
+from llm_dit import FlowMatchScheduler
+
+scheduler = FlowMatchScheduler(shift=3.0)
+scheduler.set_timesteps(num_inference_steps=9, device="cuda")
+
+# Access sigma schedule
+sigmas = scheduler.sigmas  # Shifted: sigma' = shift * sigma / (1 + (shift-1) * sigma)
+```
+
+### Tiled VAE Decoder (2K+ Images)
+
+```python
+from llm_dit.utils.tiled_vae import TiledVAEDecoder
+
+# Wrap existing VAE
+tiled_decoder = TiledVAEDecoder(
+    vae=pipe.vae,
+    tile_size=512,    # Pixels (latent = 512/8 = 64)
+    tile_overlap=64,  # Overlap for smooth blending
+)
+
+# Decode large latents
+image = tiled_decoder.decode(latents)  # Handles any size
+```
+
+### Context Refiner (Standalone Module)
+
+```python
+from llm_dit import ContextRefiner
+
+# Create standalone (matches Z-Image architecture)
+refiner = ContextRefiner(
+    dim=3840,      # Hidden dimension
+    n_layers=2,    # 2 transformer layers
+    n_heads=30,    # 30 attention heads (128 dim/head)
+)
+
+# Load from Z-Image checkpoint
+refiner = ContextRefiner.from_pretrained("/path/to/z-image", device="cuda")
+
+# Process text embeddings (3840 dim, already projected from 2560)
+refined = refiner(text_embeddings)  # (batch, seq, 3840)
+
+# Enable gradient checkpointing for training
+refiner.enable_gradient_checkpointing()
+```
+
+### Image-to-Image Generation
+
+```python
+from llm_dit import ZImagePipeline
+from PIL import Image
+
+pipe = ZImagePipeline.from_pretrained("/path/to/z-image")
+
+# Load input image
+input_image = Image.open("photo.jpg")
+
+# Generate with strength control
+result = pipe.img2img(
+    prompt="A cat sleeping in sunlight, oil painting style",
+    image=input_image,
+    strength=0.75,  # 0.0 = no change, 1.0 = full regeneration
+    num_inference_steps=9,
+)
+result.images[0].save("output.png")
+```
+
+### Usage Examples
+
+**RTX 4090 Optimized (CLI):**
+```bash
+uv run scripts/generate.py \
+  --model-path /path/to/z-image-turbo \
+  --text-encoder-device cpu \
+  --dit-device cuda \
+  --vae-device cuda \
+  --attention-backend auto \
+  --use-custom-scheduler \
+  --flash-attn \
+  "A mountain landscape"
+```
+
+**RTX 4090 Optimized (Config):**
+```bash
+uv run scripts/generate.py --config config.toml --profile rtx4090 "A mountain landscape"
+```
+
+**Large Image Generation (2K+):**
+```bash
+uv run scripts/generate.py \
+  --model-path /path/to/z-image-turbo \
+  --width 2048 --height 2048 \
+  --tiled-vae \
+  --tile-size 512 \
+  --tile-overlap 64 \
+  "A detailed cityscape"
+```
+
+**Low VRAM (8-16GB):**
+```bash
+uv run scripts/generate.py --config config.toml --profile low_vram "A cat"
+```
 
 ## Prompt Rewriting
 

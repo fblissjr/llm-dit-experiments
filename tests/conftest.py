@@ -224,6 +224,13 @@ flash_attn = false
 compile = false
 cpu_offload = false
 
+[default.pytorch]
+attention_backend = "auto"
+use_custom_scheduler = false
+tiled_vae = false
+tile_size = 512
+tile_overlap = 64
+
 [default.lora]
 paths = []
 scales = []
