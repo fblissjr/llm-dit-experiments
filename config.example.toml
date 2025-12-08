@@ -1,10 +1,11 @@
 # Z-Image Configuration Example
 #
-# Copy this file and modify for your setup.
+# Copy this file to config.toml and modify for your setup.
 # CLI flags override config values.
 #
 # Usage:
-#   uv run scripts/generate.py --config config.toml --profile default "A cat"
+#   uv run scripts/generate.py --config config.toml "A cat"
+#   uv run scripts/generate.py --config config.toml --profile rtx4090 "A cat"
 #   uv run web/server.py --config config.toml --profile rtx4090
 
 # =============================================================================
@@ -33,6 +34,7 @@ width = 1024
 num_inference_steps = 9
 guidance_scale = 0.0         # Z-Image-Turbo uses 0.0 (CFG baked in)
 enable_thinking = false      # No think block by default (matches HF Space)
+default_template = ""        # Optional default template name
 
 [default.scheduler]
 shift = 3.0                  # FlowMatch shift parameter
@@ -43,7 +45,7 @@ compile = false              # Use torch.compile (slower first run)
 cpu_offload = false          # CPU offload for transformer
 
 [default.pytorch]
-# PyTorch-native components (Phase 1 migration from diffusers)
+# PyTorch-native components
 attention_backend = "auto"    # auto/flash_attn_2/flash_attn_3/sage/xformers/sdpa
 use_custom_scheduler = false  # Use pure PyTorch FlowMatchScheduler
 tiled_vae = false             # Enable tiled VAE for 2K+ images
@@ -51,7 +53,12 @@ tile_size = 512               # Tile size in pixels (latent = tile_size / 8)
 tile_overlap = 64             # Overlap between tiles for smooth blending
 embedding_cache = false       # Cache text embeddings for repeated prompts
 cache_size = 100              # Max number of cached embeddings
-long_prompt_mode = "truncate" # truncate/interpolate/pool/attention_pool (EXPERIMENTAL)
+long_prompt_mode = "truncate" # truncate/interpolate/pool/attention_pool
+
+[default.api]
+# Remote API backend (for distributed inference)
+url = ""                     # e.g., http://mac-host:8080
+model = "Qwen3-4B-mxfp4-mlx" # Model ID on remote server
 
 [default.lora]
 paths = []
@@ -69,16 +76,21 @@ device = "cpu"               # Text encoder on CPU (saves ~8GB VRAM)
 torch_dtype = "bfloat16"
 quantization = "none"
 cpu_offload = false
+max_length = 512
 
 [rtx4090.pipeline]
 device = "cuda"
 torch_dtype = "bfloat16"
+enable_model_cpu_offload = false
+enable_sequential_cpu_offload = false
 
 [rtx4090.generation]
 height = 1024
 width = 1024
 num_inference_steps = 9
 guidance_scale = 0.0
+enable_thinking = false
+default_template = ""
 
 [rtx4090.scheduler]
 shift = 3.0
@@ -92,143 +104,22 @@ cpu_offload = false          # Not needed with 24GB
 attention_backend = "auto"   # Will detect Flash Attention 2/3
 use_custom_scheduler = true  # Pure PyTorch scheduler
 tiled_vae = false            # Enable for 2K+ resolutions
+tile_size = 512
+tile_overlap = 64
 embedding_cache = true       # Cache for repeated prompts (web server)
 cache_size = 100
-long_prompt_mode = "truncate" # truncate/interpolate/pool/attention_pool
+long_prompt_mode = "truncate"
+
+[rtx4090.api]
+url = ""
+model = "Qwen3-4B-mxfp4-mlx"
 
 [rtx4090.lora]
 paths = []
 scales = []
 
 # =============================================================================
-# Low VRAM Profile - For 8-16GB GPUs
-# =============================================================================
-[low_vram]
-model_path = "/path/to/z-image-turbo"
-templates_dir = "templates/z_image"
-
-[low_vram.encoder]
-device = "cpu"               # Encoder always on CPU
-torch_dtype = "float32"      # Some CPUs don't support bfloat16
-quantization = "8bit"        # 8-bit quantization (unused if on CPU)
-cpu_offload = true
-
-[low_vram.pipeline]
-device = "cuda"
-torch_dtype = "float16"      # float16 uses less VRAM than bfloat16
-enable_model_cpu_offload = true
-
-[low_vram.generation]
-height = 512
-width = 512                  # Start with smaller images
-num_inference_steps = 9
-guidance_scale = 0.0
-
-[low_vram.scheduler]
-shift = 3.0
-
-[low_vram.optimization]
-flash_attn = false           # May not work well with CPU offload
-compile = false
-cpu_offload = true
-
-[low_vram.pytorch]
-attention_backend = "sdpa"   # PyTorch native, always available
-use_custom_scheduler = true
-tiled_vae = true             # Required for larger images
-tile_size = 256              # Smaller tiles use less VRAM
-tile_overlap = 32
-long_prompt_mode = "truncate"
-
-[low_vram.lora]
-paths = []
-scales = []
-
-# =============================================================================
-# CPU Only Profile - No GPU required
-# =============================================================================
-[cpu_only]
-model_path = "/path/to/z-image-turbo"
-templates_dir = "templates/z_image"
-
-[cpu_only.encoder]
-device = "cpu"
-torch_dtype = "float32"
-quantization = "none"
-cpu_offload = false
-
-[cpu_only.pipeline]
-device = "cpu"
-torch_dtype = "float32"
-
-[cpu_only.generation]
-height = 512
-width = 512
-num_inference_steps = 4      # Fewer steps for faster CPU inference
-guidance_scale = 0.0
-
-[cpu_only.scheduler]
-shift = 3.0
-
-[cpu_only.optimization]
-flash_attn = false
-compile = false
-cpu_offload = false
-
-[cpu_only.pytorch]
-attention_backend = "sdpa"
-use_custom_scheduler = true
-tiled_vae = true
-tile_size = 256
-tile_overlap = 32
-long_prompt_mode = "truncate"
-
-[cpu_only.lora]
-paths = []
-scales = []
-
-# =============================================================================
-# Distributed Profile - Encoder on Mac, DiT on CUDA
-# =============================================================================
-[distributed]
-model_path = "/path/to/z-image-turbo"
-templates_dir = "templates/z_image"
-
-# No local encoder - use API
-[distributed.pipeline]
-device = "cuda"
-torch_dtype = "bfloat16"
-
-[distributed.generation]
-height = 1024
-width = 1024
-num_inference_steps = 9
-guidance_scale = 0.0
-
-[distributed.scheduler]
-shift = 3.0
-
-[distributed.optimization]
-flash_attn = true
-compile = false
-cpu_offload = false
-
-[distributed.api]
-url = "http://mac-host:8080"  # heylookitsanllm API endpoint
-model = "Qwen3-4B-mxfp4-mlx"  # Model ID on Mac
-
-[distributed.pytorch]
-attention_backend = "auto"
-use_custom_scheduler = true
-tiled_vae = false
-long_prompt_mode = "truncate"
-
-[distributed.lora]
-paths = []
-scales = []
-
-# =============================================================================
-# Web Server Configuration
+# Web Server Configuration (shared across profiles)
 # =============================================================================
 [server]
 host = "127.0.0.1"           # Use 0.0.0.0 for network access

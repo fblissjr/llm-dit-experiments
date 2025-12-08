@@ -116,18 +116,11 @@ def main():
         # Encoder-only mode for experiments or distributed inference
         logger.info("Running in encoder-only mode")
 
-        from llm_dit.encoders import ZImageTextEncoder
+        from llm_dit.startup import PipelineLoader
 
-        logger.info(f"Loading encoder from {config.model_path}...")
-        start = time.time()
-        encoder = ZImageTextEncoder.from_pretrained(
-            config.model_path,
-            templates_dir=templates_dir,
-            device_map=config.encoder_device_resolved,
-            torch_dtype=config.get_torch_dtype(),
-        )
-        load_time = time.time() - start
-        logger.info(f"Encoder loaded in {load_time:.1f}s")
+        loader = PipelineLoader(config)
+        result = loader.load_encoder()
+        encoder = result.encoder
 
         # Encode prompt
         logger.info(f"Encoding prompt: {args.prompt[:50]}...")
@@ -174,32 +167,21 @@ def main():
     # Check if using API for encoding (distributed inference - encode remote, generate local)
     if config.api_url:
         logger.info("Running in distributed mode (API encoding + local generation)")
-        logger.info(f"Using API backend: {config.api_url}")
 
-        from llm_dit.backends.api import APIBackend, APIBackendConfig
-        from llm_dit.encoders import ZImageTextEncoder
-        from llm_dit.pipelines import ZImagePipeline
-        from llm_dit.templates import TemplateRegistry
+        from llm_dit.startup import PipelineLoader
 
-        # Create API backend for encoding
-        api_config = APIBackendConfig(
-            base_url=config.api_url,
-            model_id=config.api_model,
-            encoding_format="base64",
-        )
-        backend = APIBackend(api_config)
+        loader = PipelineLoader(config)
 
-        # Load templates locally
-        templates = None
-        if templates_dir:
-            templates = TemplateRegistry.from_directory(templates_dir)
-            logger.info(f"Loaded {len(templates)} templates")
-
-        # Create encoder with API backend
-        encoder = ZImageTextEncoder(
-            backend=backend,
-            templates=templates,
-        )
+        try:
+            result = loader.load_api_pipeline()
+            pipe = result.pipeline
+            encoder = result.encoder
+        except ImportError as e:
+            logger.error(f"Missing diffusers components: {e}")
+            return 1
+        except Exception as e:
+            logger.error(f"Failed to load pipeline: {e}")
+            return 1
 
         # Encode via API
         logger.info(f"Encoding prompt via API: {args.prompt[:50]}...")
@@ -216,43 +198,6 @@ def main():
         embeds = output.embeddings[0]
         logger.info(f"Encoding complete in {encode_time:.3f}s")
         logger.info(f"  Shape: {embeds.shape}")
-
-        # Load generator-only pipeline (no LLM)
-        logger.info(f"Loading generator from {config.model_path}...")
-        start = time.time()
-
-        try:
-            pipe = ZImagePipeline.from_pretrained_generator_only(
-                config.model_path,
-                torch_dtype=config.get_torch_dtype(),
-                dit_device=config.dit_device,
-                vae_device=config.vae_device,
-                enable_cpu_offload=config.cpu_offload,
-            )
-        except ImportError as e:
-            logger.error(f"Missing diffusers components: {e}")
-            return 1
-        except Exception as e:
-            logger.error(f"Failed to load pipeline: {e}")
-            return 1
-
-        load_time = time.time() - start
-        logger.info(f"Generator loaded in {load_time:.1f}s")
-
-        # Apply optimizations
-        if config.flash_attn:
-            try:
-                pipe.transformer.set_attention_backend("flash")
-                logger.info("Flash Attention enabled")
-            except Exception as e:
-                logger.warning(f"Failed to enable Flash Attention: {e}")
-
-        if config.compile:
-            try:
-                pipe.transformer = torch.compile(pipe.transformer, mode="reduce-overhead")
-                logger.info("Transformer compiled (first run will be slow)")
-            except Exception as e:
-                logger.warning(f"Failed to compile: {e}")
 
         # Progress callback
         def progress_callback(step: int, total: int, latents: torch.Tensor):
@@ -363,20 +308,12 @@ def main():
     # Full generation mode (encode + generate)
     logger.info("Running full generation")
 
-    from llm_dit.pipelines import ZImagePipeline
-
-    logger.info(f"Loading pipeline from {config.model_path}...")
-    start = time.time()
+    from llm_dit.startup import PipelineLoader
 
     try:
-        pipe = ZImagePipeline.from_pretrained(
-            config.model_path,
-            templates_dir=templates_dir,
-            torch_dtype=config.get_torch_dtype(),
-            encoder_device=config.encoder_device,
-            dit_device=config.dit_device,
-            vae_device=config.vae_device,
-        )
+        loader = PipelineLoader(config)
+        result = loader.load_pipeline()
+        pipe = result.pipeline
     except ImportError as e:
         logger.error(f"Missing diffusers components: {e}")
         logger.error("Full generation requires diffusers with Z-Image support.")
@@ -385,34 +322,6 @@ def main():
     except Exception as e:
         logger.error(f"Failed to load pipeline: {e}")
         return 1
-
-    load_time = time.time() - start
-    logger.info(f"Pipeline loaded in {load_time:.1f}s")
-
-    # Apply optimizations
-    if config.flash_attn:
-        try:
-            pipe.transformer.set_attention_backend("flash")
-            logger.info("Flash Attention enabled")
-        except Exception as e:
-            logger.warning(f"Failed to enable Flash Attention: {e}")
-
-    if config.compile:
-        try:
-            pipe.transformer = torch.compile(pipe.transformer, mode="reduce-overhead")
-            logger.info("Transformer compiled (first run will be slow)")
-        except Exception as e:
-            logger.warning(f"Failed to compile: {e}")
-
-    # Load LoRAs if configured
-    if config.lora_paths:
-        logger.info(f"Loading {len(config.lora_paths)} LoRA(s)...")
-        try:
-            updated = pipe.load_lora(config.lora_paths, scale=config.lora_scales)
-            logger.info(f"Loaded LoRAs: {updated} layers updated")
-        except Exception as e:
-            logger.error(f"Failed to load LoRA: {e}")
-            return 1
 
     # Progress callback
     def progress_callback(step: int, total: int, latents: torch.Tensor):

@@ -12,8 +12,11 @@ Usage:
     # Run specific tests
     uv run scripts/profile.py --model-path /path/to/z-image-turbo --tests encode,generate
 
-    # Test different config combinations
+    # Test different config combinations (FA2, device placement, etc.)
     uv run scripts/profile.py --model-path /path/to/z-image-turbo --sweep
+
+    # Test specific device configurations
+    uv run scripts/profile.py --model-path /path/to/z-image-turbo --sweep-devices
 
     # Save results to JSON
     uv run scripts/profile.py --model-path /path/to/z-image-turbo --output results.json
@@ -26,6 +29,8 @@ import argparse
 import gc
 import json
 import logging
+import os
+import platform
 import sys
 import time
 import traceback
@@ -77,27 +82,107 @@ class ProfileResults:
 
 
 def get_system_info() -> dict:
-    """Collect system information for debugging."""
+    """Collect comprehensive system and library information for debugging."""
     info = {
-        "python_version": sys.version,
+        # System
+        "platform": platform.platform(),
+        "python_version": sys.version.split()[0],
+        "python_full": sys.version,
+
+        # PyTorch
         "torch_version": torch.__version__,
-        "cuda_available": torch.cuda.is_available(),
+        "torch_cuda_available": torch.cuda.is_available(),
+        "torch_mps_available": torch.backends.mps.is_available(),
     }
 
+    # CUDA details
     if torch.cuda.is_available():
+        props = torch.cuda.get_device_properties(0)
         info["cuda_version"] = torch.version.cuda
-        info["gpu_name"] = torch.cuda.get_device_name(0)
-        info["gpu_memory_total_gb"] = torch.cuda.get_device_properties(0).total_memory / 1e9
+        info["cudnn_version"] = str(torch.backends.cudnn.version()) if torch.backends.cudnn.is_available() else "N/A"
+        info["gpu_name"] = props.name
+        info["gpu_compute_capability"] = f"{props.major}.{props.minor}"
+        info["gpu_memory_total_gb"] = round(props.total_memory / 1e9, 2)
+        info["gpu_sm_count"] = props.multi_processor_count
+        info["cuda_device_count"] = torch.cuda.device_count()
 
+        # Check for CUDA driver version if available
+        try:
+            import subprocess
+            result = subprocess.run(
+                ["nvidia-smi", "--query-gpu=driver_version", "--format=csv,noheader"],
+                capture_output=True, text=True, timeout=5
+            )
+            if result.returncode == 0:
+                info["nvidia_driver_version"] = result.stdout.strip().split("\n")[0]
+        except Exception:
+            pass
+
+    # Attention backends availability
+    info["attention_backends"] = {}
+
+    # Flash Attention 2
+    try:
+        import flash_attn
+        info["attention_backends"]["flash_attn_2"] = flash_attn.__version__
+    except ImportError:
+        info["attention_backends"]["flash_attn_2"] = None
+
+    # Flash Attention 3
+    try:
+        import flash_attn_3
+        info["attention_backends"]["flash_attn_3"] = getattr(flash_attn_3, "__version__", "installed")
+    except ImportError:
+        info["attention_backends"]["flash_attn_3"] = None
+
+    # xFormers
+    try:
+        import xformers
+        info["attention_backends"]["xformers"] = xformers.__version__
+    except ImportError:
+        info["attention_backends"]["xformers"] = None
+
+    # SDPA (always available in recent PyTorch)
+    info["attention_backends"]["sdpa"] = "built-in" if hasattr(torch.nn.functional, "scaled_dot_product_attention") else None
+
+    # Sage Attention
+    try:
+        import sageattention
+        info["attention_backends"]["sage"] = getattr(sageattention, "__version__", "installed")
+    except ImportError:
+        info["attention_backends"]["sage"] = None
+
+    # ML libraries
     try:
         import transformers
         info["transformers_version"] = transformers.__version__
     except ImportError:
-        pass
+        info["transformers_version"] = None
 
     try:
         import diffusers
         info["diffusers_version"] = diffusers.__version__
+    except ImportError:
+        info["diffusers_version"] = None
+
+    try:
+        import safetensors
+        info["safetensors_version"] = safetensors.__version__
+    except ImportError:
+        info["safetensors_version"] = None
+
+    try:
+        import accelerate
+        info["accelerate_version"] = accelerate.__version__
+    except ImportError:
+        info["accelerate_version"] = None
+
+    # Memory info
+    try:
+        import psutil
+        mem = psutil.virtual_memory()
+        info["system_memory_total_gb"] = round(mem.total / 1e9, 2)
+        info["system_memory_available_gb"] = round(mem.available / 1e9, 2)
     except ImportError:
         pass
 
@@ -235,14 +320,20 @@ class Profiler:
         prompt = "A cat sleeping in sunlight"
         self.log(f"Encoding: {prompt}")
 
+        start = time.perf_counter()
         output = enc.encode(prompt)
+        elapsed = time.perf_counter() - start
+
         token_count = output.token_counts[0]
         embed_shape = output.embeddings[0].shape
+        tokens_per_sec = token_count / elapsed if elapsed > 0 else 0
 
         return {
             "prompt_length": len(prompt),
             "token_count": token_count,
             "embedding_shape": list(embed_shape),
+            "encode_time_sec": round(elapsed, 4),
+            "tokens_per_sec": round(tokens_per_sec, 1),
         }
 
     def test_encode_medium(self) -> dict:
@@ -259,12 +350,18 @@ class Profiler:
         )
         self.log(f"Encoding: {prompt[:50]}...")
 
+        start = time.perf_counter()
         output = enc.encode(prompt)
+        elapsed = time.perf_counter() - start
+
         token_count = output.token_counts[0]
+        tokens_per_sec = token_count / elapsed if elapsed > 0 else 0
 
         return {
             "prompt_length": len(prompt),
             "token_count": token_count,
+            "encode_time_sec": round(elapsed, 4),
+            "tokens_per_sec": round(tokens_per_sec, 1),
         }
 
     def test_encode_with_template(self) -> dict:
@@ -495,20 +592,36 @@ def run_profile(config: RuntimeConfig, tests: list[str] | None = None, verbose: 
 
 
 def run_config_sweep(base_config: RuntimeConfig, verbose: bool = False) -> list[ProfileResults]:
-    """Run tests with different config combinations."""
+    """Run tests with different optimization config combinations."""
     results = []
+
+    # Get system info to determine available features
+    sys_info = get_system_info()
+    has_fa2 = sys_info.get("attention_backends", {}).get("flash_attn_2") is not None
+    has_xformers = sys_info.get("attention_backends", {}).get("xformers") is not None
+    has_cuda = torch.cuda.is_available()
 
     # Define variations to test
     variations = [
         {"name": "baseline", "changes": {}},
-        {"name": "cpu_encoder", "changes": {"encoder_device": "cpu"}},
-        {"name": "flash_attn", "changes": {"flash_attn": True}},
-        {"name": "compile", "changes": {"compile": True}},
         {"name": "embedding_cache", "changes": {"embedding_cache": True}},
     ]
 
-    if torch.cuda.is_available():
-        variations.append({"name": "fp16", "changes": {"torch_dtype": "float16"}})
+    # Add CUDA-specific variations
+    if has_cuda:
+        variations.extend([
+            {"name": "cpu_encoder", "changes": {"encoder_device": "cpu"}},
+            {"name": "cuda_encoder", "changes": {"encoder_device": "cuda"}},
+            {"name": "fp16", "changes": {"torch_dtype": "float16"}},
+            {"name": "compile", "changes": {"compile": True}},
+        ])
+
+    # Add attention backend variations
+    if has_fa2:
+        variations.append({"name": "flash_attn_2", "changes": {"flash_attn": True, "attention_backend": "flash_attn_2"}})
+    if has_xformers:
+        variations.append({"name": "xformers", "changes": {"attention_backend": "xformers"}})
+    variations.append({"name": "sdpa", "changes": {"attention_backend": "sdpa"}})
 
     for var in variations:
         print(f"\n{'#' * 60}")
@@ -532,6 +645,58 @@ def run_config_sweep(base_config: RuntimeConfig, verbose: bool = False) -> list[
     return results
 
 
+def run_device_sweep(base_config: RuntimeConfig, verbose: bool = False) -> list[ProfileResults]:
+    """Run tests with different device placement configurations."""
+    results = []
+
+    has_cuda = torch.cuda.is_available()
+    has_mps = torch.backends.mps.is_available()
+
+    # Define device configurations to test
+    if has_cuda:
+        device_configs = [
+            {"name": "all_cuda", "encoder": "cuda", "dit": "cuda", "vae": "cuda"},
+            {"name": "encoder_cpu", "encoder": "cpu", "dit": "cuda", "vae": "cuda"},
+            {"name": "vae_cpu", "encoder": "cuda", "dit": "cuda", "vae": "cpu"},
+            {"name": "encoder_vae_cpu", "encoder": "cpu", "dit": "cuda", "vae": "cpu"},
+        ]
+    elif has_mps:
+        device_configs = [
+            {"name": "all_mps", "encoder": "mps", "dit": "mps", "vae": "mps"},
+            {"name": "encoder_cpu", "encoder": "cpu", "dit": "mps", "vae": "mps"},
+        ]
+    else:
+        device_configs = [
+            {"name": "all_cpu", "encoder": "cpu", "dit": "cpu", "vae": "cpu"},
+        ]
+
+    for dc in device_configs:
+        print(f"\n{'#' * 60}")
+        print(f"# DEVICE CONFIG: {dc['name']}")
+        print(f"#   Encoder: {dc['encoder']}, DiT: {dc['dit']}, VAE: {dc['vae']}")
+        print(f"{'#' * 60}")
+
+        # Create modified config
+        config = RuntimeConfig(**asdict(base_config))
+        config.encoder_device = dc["encoder"]
+        config.dit_device = dc["dit"]
+        config.vae_device = dc["vae"]
+
+        try:
+            result = run_profile(config, verbose=verbose)
+            result.config["device_config"] = dc["name"]
+            result.config["encoder_device"] = dc["encoder"]
+            result.config["dit_device"] = dc["dit"]
+            result.config["vae_device"] = dc["vae"]
+            results.append(result)
+        except Exception as e:
+            print(f"[ERROR] Device config {dc['name']} failed: {e}")
+            if verbose:
+                traceback.print_exc()
+
+    return results
+
+
 def main():
     parser = create_base_parser(
         description="Profile Z-Image pipeline for stability testing",
@@ -548,7 +713,12 @@ def main():
     parser.add_argument(
         "--sweep",
         action="store_true",
-        help="Run tests with different config combinations",
+        help="Run tests with different optimization configs (FA2, compile, dtype, etc.)",
+    )
+    parser.add_argument(
+        "--sweep-devices",
+        action="store_true",
+        help="Run tests with different device placements (encoder/DiT/VAE on CPU/GPU)",
     )
     parser.add_argument(
         "--output", "-o",
@@ -562,13 +732,71 @@ def main():
         default=1,
         help="Number of times to repeat the test suite",
     )
+    parser.add_argument(
+        "--show-info",
+        action="store_true",
+        help="Show system/library info and exit without running tests",
+    )
 
     args = parser.parse_args()
+
+    # Handle --show-info: display system info and exit
+    if args.show_info:
+        print("\n" + "=" * 60)
+        print("SYSTEM AND LIBRARY INFORMATION")
+        print("=" * 60)
+        info = get_system_info()
+
+        # Display in a nice format
+        print(f"\nPlatform: {info.get('platform', 'N/A')}")
+        print(f"Python: {info.get('python_version', 'N/A')}")
+
+        print(f"\nPyTorch: {info.get('torch_version', 'N/A')}")
+        print(f"  CUDA available: {info.get('torch_cuda_available', False)}")
+        print(f"  MPS available: {info.get('torch_mps_available', False)}")
+
+        if info.get("torch_cuda_available"):
+            print(f"\nGPU: {info.get('gpu_name', 'N/A')}")
+            print(f"  Compute capability: {info.get('gpu_compute_capability', 'N/A')}")
+            print(f"  VRAM: {info.get('gpu_memory_total_gb', 'N/A')} GB")
+            print(f"  CUDA: {info.get('cuda_version', 'N/A')}")
+            print(f"  cuDNN: {info.get('cudnn_version', 'N/A')}")
+            print(f"  Driver: {info.get('nvidia_driver_version', 'N/A')}")
+
+        print("\nAttention backends:")
+        backends = info.get("attention_backends", {})
+        for name, version in backends.items():
+            status = version if version else "not installed"
+            print(f"  {name}: {status}")
+
+        print("\nML libraries:")
+        print(f"  transformers: {info.get('transformers_version', 'N/A')}")
+        print(f"  diffusers: {info.get('diffusers_version', 'N/A')}")
+        print(f"  safetensors: {info.get('safetensors_version', 'N/A')}")
+        print(f"  accelerate: {info.get('accelerate_version', 'N/A')}")
+
+        if "system_memory_total_gb" in info:
+            print(f"\nSystem memory:")
+            print(f"  Total: {info.get('system_memory_total_gb', 'N/A')} GB")
+            print(f"  Available: {info.get('system_memory_available_gb', 'N/A')} GB")
+
+        print("=" * 60)
+
+        # Optionally save to JSON
+        if args.output:
+            output_path = Path(args.output)
+            with open(output_path, "w") as f:
+                json.dump(info, f, indent=2)
+            print(f"\nInfo saved to: {output_path}")
+
+        sys.exit(0)
+
     config = load_runtime_config(args)
 
     # Validate model path
     if not config.model_path:
         print("Error: --model-path is required")
+        print("Use --show-info to display system information without running tests")
         sys.exit(1)
 
     # Setup logging
@@ -580,6 +808,8 @@ def main():
     # Run profiling
     if args.sweep:
         all_results = run_config_sweep(config, verbose=config.verbose)
+    elif args.sweep_devices:
+        all_results = run_device_sweep(config, verbose=config.verbose)
     else:
         all_results = []
         for i in range(args.repeat):

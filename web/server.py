@@ -871,6 +871,7 @@ def load_api_pipeline(
 def main():
     # Use shared CLI argument parser
     from llm_dit.cli import create_base_parser, load_runtime_config, setup_logging
+    from llm_dit.startup import PipelineLoader
 
     parser = create_base_parser(
         description="Z-Image web server",
@@ -893,80 +894,35 @@ def main():
     args = parser.parse_args()
 
     # Load unified config (handles TOML + CLI overrides)
-    global runtime_config
+    global runtime_config, pipeline, encoder, encoder_only_mode
     runtime_config = load_runtime_config(args)
     setup_logging(runtime_config)
 
-    # Extract values from runtime config
-    host = runtime_config.host
-    port = runtime_config.port
-    model_path = runtime_config.model_path
-    templates_dir = runtime_config.templates_dir
+    # Validate model path (unless using API-only mode)
+    if not runtime_config.model_path and not runtime_config.api_url:
+        logger.error("No model path specified. Use --model-path or --config.")
+        return 1
 
-    # Find default templates if not specified
-    if templates_dir is None:
-        default_templates = Path(__file__).parent.parent / "templates" / "z_image"
-        if default_templates.exists():
-            templates_dir = str(default_templates)
-
-    # Determine which mode to use
-    # Priority: use_api_encoder flag forces API, otherwise local encoder is default
+    # Use PipelineLoader for unified loading
+    loader = PipelineLoader(runtime_config)
     use_api = getattr(args, "use_api_encoder", False)
 
-    if runtime_config.api_url and model_path and use_api:
-        # Distributed mode: API encoding + local DiT/VAE generation (explicit --use-api-encoder)
-        load_api_pipeline(
-            runtime_config.api_url,
-            runtime_config.api_model,
-            model_path,
-            templates_dir,
-            enable_cpu_offload=runtime_config.cpu_offload,
-            enable_flash_attn=runtime_config.flash_attn,
-            enable_compile=runtime_config.compile,
-            dit_device=runtime_config.dit_device,
-            vae_device=runtime_config.vae_device,
-            lora_paths=runtime_config.lora_paths,
-            lora_scales=runtime_config.lora_scales,
-        )
-        opts = []
-        if runtime_config.cpu_offload:
-            opts.append("CPU offload")
-        if runtime_config.flash_attn:
-            opts.append("Flash Attn")
-        if runtime_config.compile:
-            opts.append("compiled")
-        opts_str = f" + {', '.join(opts)}" if opts else ""
-        mode = f"distributed (API encoder + local DiT{opts_str})"
-    elif runtime_config.api_url and not model_path:
-        # API backend mode - encoder only (no model path)
-        load_api_encoder(runtime_config.api_url, runtime_config.api_model, templates_dir)
-        mode = f"API encoder-only ({runtime_config.api_model})"
-    elif args.encoder_only:
-        # Local encoder only
-        if model_path is None:
-            logger.error("No model path specified. Use --model-path or --config.")
-            return 1
-        load_encoder_only(model_path, templates_dir, encoder_device=runtime_config.encoder_device)
-        mode = "encoder-only"
-    else:
-        # Full pipeline
-        if model_path is None:
-            logger.error("No model path specified. Use --model-path or --config.")
-            return 1
-        load_pipeline(
-            model_path,
-            text_encoder_path=runtime_config.text_encoder_path,
-            templates_dir=templates_dir,
-            encoder_device=runtime_config.encoder_device,
-            dit_device=runtime_config.dit_device,
-            vae_device=runtime_config.vae_device,
-            lora_paths=runtime_config.lora_paths,
-            lora_scales=runtime_config.lora_scales,
-        )
-        mode = "full"
+    # Load using PipelineLoader.auto_load()
+    result = loader.auto_load(
+        encoder_only=args.encoder_only,
+        use_api=use_api,
+    )
+
+    # Set global state from load result
+    pipeline = result.pipeline
+    encoder = result.encoder
+    encoder_only_mode = result.mode in ("encoder_only", "api_encoder")
+    mode = result.mode
 
     # Run server
     import uvicorn
+    host = runtime_config.host
+    port = runtime_config.port
     logger.info(f"Starting server at http://{host}:{port} ({mode} mode)")
     uvicorn.run(app, host=host, port=port)
 
