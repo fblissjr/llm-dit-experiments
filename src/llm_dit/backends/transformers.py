@@ -246,12 +246,13 @@ class TransformersBackend:
             if cached is not None:
                 return cached
 
-        # Tokenize
+        # Tokenize - use padding=True to only pad to longest in batch (not max_length)
+        # This is MUCH faster for short prompts (21 tokens vs 2048 tokens)
         inputs = self.tokenizer(
             texts,
-            padding="max_length",
-            max_length=self.config.max_length,
+            padding=True,  # Pad to longest in batch, not max_length
             truncation=True,
+            max_length=self.config.max_length,  # Only used for truncation
             return_tensors="pt",
         )
 
@@ -259,8 +260,9 @@ class TransformersBackend:
         attention_mask = inputs.attention_mask.to(self.device).bool()
 
         # Debug: log tokenization details
+        seq_length = input_ids.shape[1]
         valid_tokens = attention_mask[0].sum().item()
-        logger.debug(f"[TransformersBackend] Tokenized: {valid_tokens} valid tokens (max_length={self.config.max_length})")
+        logger.debug(f"[TransformersBackend] Tokenized: {valid_tokens} valid tokens, seq_length={seq_length}")
         logger.debug(f"[TransformersBackend] Token IDs (first 20): {input_ids[0][:20].tolist()}")
 
         # Encode
