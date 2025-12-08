@@ -7,22 +7,22 @@ consistent behavior across all entry points.
 
 Usage:
     # Run all tests with default config
-    uv run scripts/profile.py --model-path /path/to/z-image-turbo
+    uv run scripts/profiler.py --model-path /path/to/z-image-turbo
 
     # Run specific tests
-    uv run scripts/profile.py --model-path /path/to/z-image-turbo --tests encode,generate
+    uv run scripts/profiler.py --model-path /path/to/z-image-turbo --tests encode,generate
 
     # Test different config combinations (FA2, device placement, etc.)
-    uv run scripts/profile.py --model-path /path/to/z-image-turbo --sweep
+    uv run scripts/profiler.py --model-path /path/to/z-image-turbo --sweep
 
     # Test specific device configurations
-    uv run scripts/profile.py --model-path /path/to/z-image-turbo --sweep-devices
+    uv run scripts/profiler.py --model-path /path/to/z-image-turbo --sweep-devices
 
     # Save results to JSON
-    uv run scripts/profile.py --model-path /path/to/z-image-turbo --output results.json
+    uv run scripts/profiler.py --model-path /path/to/z-image-turbo --output results.json
 
     # Verbose output with all timings
-    uv run scripts/profile.py --model-path /path/to/z-image-turbo -v
+    uv run scripts/profiler.py --model-path /path/to/z-image-turbo -v
 """
 
 import argparse
