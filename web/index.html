@@ -662,10 +662,27 @@
             }
 
             const t = templateData[name];
+
+            // Always populate system prompt (the main template content)
             systemPromptEl.value = t.system_prompt || '';
-            thinkingContentEl.value = t.thinking_content || '';
-            assistantContentEl.value = t.assistant_content || '';
-            enableThinkingEl.checked = t.add_think_block || false;
+
+            // Populate thinking content if template has it
+            if (t.thinking_content) {
+                thinkingContentEl.value = t.thinking_content;
+                enableThinkingEl.checked = true;  // Auto-check if template has thinking content
+            }
+            // Don't clear thinking content or uncheck if template doesn't have it
+            // This preserves user's manual input
+
+            // Populate assistant content if template has it
+            if (t.assistant_content) {
+                assistantContentEl.value = t.assistant_content;
+            }
+
+            // Only explicitly check/uncheck if template specifies add_think_block: true
+            if (t.add_think_block === true) {
+                enableThinkingEl.checked = true;
+            }
         }
 
         // Rewriter mode toggle
