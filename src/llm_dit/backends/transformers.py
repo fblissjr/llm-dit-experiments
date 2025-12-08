@@ -382,16 +382,28 @@ class TransformersBackend:
         logger.debug(f"[TransformersBackend.generate] Input tokens: {input_length}")
 
         # Get proper termination tokens for Qwen3
-        # Qwen3 uses <|im_end|> as the stop token (token id 151645)
-        eos_token_id = self.tokenizer.eos_token_id
-        if eos_token_id is None:
-            # Fallback: try to get <|im_end|> token
-            eos_token_id = self.tokenizer.convert_tokens_to_ids("<|im_end|>")
+        # Qwen3 uses multiple stop tokens: <|im_end|> (151645), <|endoftext|> (151643)
+        eos_token_ids = []
+        if self.tokenizer.eos_token_id is not None:
+            eos_token_ids.append(self.tokenizer.eos_token_id)
+
+        # Add Qwen3-specific stop tokens
+        for stop_token in ["<|im_end|>", "<|endoftext|>"]:
+            try:
+                token_id = self.tokenizer.convert_tokens_to_ids(stop_token)
+                if token_id is not None and token_id not in eos_token_ids:
+                    eos_token_ids.append(token_id)
+            except Exception:
+                pass
+
+        # Use single token or list
+        eos_token_id = eos_token_ids if len(eos_token_ids) > 1 else (eos_token_ids[0] if eos_token_ids else None)
+        pad_token_id = self.tokenizer.pad_token_id or (eos_token_ids[0] if eos_token_ids else 0)
 
         # Build generation kwargs
         gen_kwargs = {
             "max_new_tokens": max_new_tokens,
-            "pad_token_id": self.tokenizer.pad_token_id or eos_token_id,
+            "pad_token_id": pad_token_id,
             "eos_token_id": eos_token_id,
         }
 
@@ -403,7 +415,7 @@ class TransformersBackend:
             gen_kwargs["do_sample"] = False
 
         logger.debug(f"[TransformersBackend.generate] Generation kwargs: {gen_kwargs}")
-        logger.debug(f"[TransformersBackend.generate] eos_token_id: {eos_token_id}")
+        logger.debug(f"[TransformersBackend.generate] eos_token_ids: {eos_token_ids}")
         logger.info(f"[TransformersBackend.generate] Starting generation (max_new_tokens={max_new_tokens})...")
 
         # Generate - use use_cache=False to avoid KV cache issues after encoding
