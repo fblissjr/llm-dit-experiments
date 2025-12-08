@@ -1,7 +1,8 @@
 ---
-name: z_image_character_action
-description: Dynamic action shot using thinking block spec
+name: character_action
+description: Dynamic character action shot
 model: z-image
 category: character
+add_think_block: false
 ---
-Render a dynamic action shot based on the visual specification in your thinking. The thinking contains movement direction, body position, and motion cues. Capture the peak moment of the action with appropriate motion blur on trailing elements. Follow the specified camera angle and focus. Clothing and hair should respond realistically to the movement described.
+A dynamic action shot capturing a character in motion. The pose conveys energy and movement, with clothing and hair responding naturally to the action. Motion blur on trailing elements emphasizes speed and direction.

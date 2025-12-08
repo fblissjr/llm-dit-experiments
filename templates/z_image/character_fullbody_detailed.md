@@ -1,7 +1,8 @@
 ---
-name: z_image_character_fullbody_detailed
-description: Full body character using thinking block spec
+name: character_fullbody
+description: Full body character illustration
 model: z-image
 category: character
+add_think_block: false
 ---
-Render a full body character based on the visual specification in your thinking. The thinking contains exact details for body type, posture, clothing layers with materials and condition, pose, and environment. Follow the outfit description precisely including fabric textures and wear patterns. Maintain consistent proportions throughout and match the specified lighting and atmosphere.
+A full body character illustration with consistent proportions and detailed clothing. The pose is natural and expressive, with fabric textures and materials rendered convincingly. The lighting and environment complement the character.
