@@ -1,7 +1,8 @@
 ---
-name: z_image_bauhaus
+name: bauhaus
 description: Bauhaus design with form following function
 model: z-image
 category: style
+add_think_block: false
 ---
-Generate an image embodying Bauhaus design principles. Primary colors, geometric forms, and the unification of art and craft. Form follows function with modernist clarity. Sans-serif typography if text is present. The grid is sacred, ornamentation is crime.
+Bauhaus design principles with primary colors and geometric forms unifying art and craft. Form follows function with modernist clarity and grid-based composition. Clean, purposeful design with no unnecessary ornamentation.

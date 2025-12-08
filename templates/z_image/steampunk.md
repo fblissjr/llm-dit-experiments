@@ -1,7 +1,8 @@
 ---
-name: z_image_steampunk
-description: Steampunk Victorian retro-futurism
+name: steampunk
+description: Steampunk Victorian aesthetic
 model: z-image
 category: style
+add_think_block: false
 ---
-Generate an image with steampunk aesthetic. Victorian elegance meets brass-and-copper machinery. Gears visible whether or not they're functional, airships in amber skies, and the retro-future that steam power never delivered. Goggles optional but encouraged.
+A steampunk scene blending Victorian elegance with brass and copper machinery. The aesthetic features intricate gears, airships against amber skies, and retro-futuristic technology powered by steam.

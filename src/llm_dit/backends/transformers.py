@@ -246,12 +246,13 @@ class TransformersBackend:
             if cached is not None:
                 return cached
 
-        # Tokenize
+        # Tokenize - use padding=True to only pad to longest in batch (not max_length)
+        # This is MUCH faster for short prompts (21 tokens vs 2048 tokens)
         inputs = self.tokenizer(
             texts,
-            padding="max_length",
-            max_length=self.config.max_length,
+            padding=True,  # Pad to longest in batch, not max_length
             truncation=True,
+            max_length=self.config.max_length,  # Only used for truncation
             return_tensors="pt",
         )
 
@@ -259,8 +260,9 @@ class TransformersBackend:
         attention_mask = inputs.attention_mask.to(self.device).bool()
 
         # Debug: log tokenization details
+        seq_length = input_ids.shape[1]
         valid_tokens = attention_mask[0].sum().item()
-        logger.debug(f"[TransformersBackend] Tokenized: {valid_tokens} valid tokens (max_length={self.config.max_length})")
+        logger.debug(f"[TransformersBackend] Tokenized: {valid_tokens} valid tokens, seq_length={seq_length}")
         logger.debug(f"[TransformersBackend] Token IDs (first 20): {input_ids[0][:20].tolist()}")
 
         # Encode
@@ -381,17 +383,52 @@ class TransformersBackend:
         input_length = inputs.input_ids.shape[1]
         logger.debug(f"[TransformersBackend.generate] Input tokens: {input_length}")
 
-        # Generate
+        # Get proper termination tokens for Qwen3
+        # Qwen3 uses multiple stop tokens: <|im_end|> (151645), <|endoftext|> (151643)
+        eos_token_ids = []
+        if self.tokenizer.eos_token_id is not None:
+            eos_token_ids.append(self.tokenizer.eos_token_id)
+
+        # Add Qwen3-specific stop tokens
+        for stop_token in ["<|im_end|>", "<|endoftext|>"]:
+            try:
+                token_id = self.tokenizer.convert_tokens_to_ids(stop_token)
+                if token_id is not None and token_id not in eos_token_ids:
+                    eos_token_ids.append(token_id)
+            except Exception:
+                pass
+
+        # Use single token or list
+        eos_token_id = eos_token_ids if len(eos_token_ids) > 1 else (eos_token_ids[0] if eos_token_ids else None)
+        pad_token_id = self.tokenizer.pad_token_id or (eos_token_ids[0] if eos_token_ids else 0)
+
+        # Build generation kwargs
+        gen_kwargs = {
+            "max_new_tokens": max_new_tokens,
+            "pad_token_id": pad_token_id,
+            "eos_token_id": eos_token_id,
+        }
+
+        if do_sample and temperature > 0:
+            gen_kwargs["do_sample"] = True
+            gen_kwargs["temperature"] = temperature
+            gen_kwargs["top_p"] = top_p
+        else:
+            gen_kwargs["do_sample"] = False
+
+        logger.debug(f"[TransformersBackend.generate] Generation kwargs: {gen_kwargs}")
+        logger.debug(f"[TransformersBackend.generate] eos_token_ids: {eos_token_ids}")
+        logger.info(f"[TransformersBackend.generate] Starting generation (max_new_tokens={max_new_tokens})...")
+
+        # Generate - use use_cache=False to avoid KV cache issues after encoding
         with torch.no_grad():
             outputs = self.model.generate(
                 **inputs,
-                max_new_tokens=max_new_tokens,
-                temperature=temperature if do_sample else None,
-                top_p=top_p if do_sample else None,
-                do_sample=do_sample,
-                pad_token_id=self.tokenizer.pad_token_id or self.tokenizer.eos_token_id,
-                eos_token_id=self.tokenizer.eos_token_id,
+                **gen_kwargs,
+                use_cache=True,  # Keep generation fast
             )
+
+        logger.info(f"[TransformersBackend.generate] Generation completed")
 
         # Decode only the generated part (skip input tokens)
         generated_ids = outputs[0, input_length:]

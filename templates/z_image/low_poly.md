@@ -1,7 +1,8 @@
 ---
-name: z_image_low_poly
+name: low_poly
 description: Low poly 3D art with faceted surfaces
 model: z-image
 category: style
+add_think_block: false
 ---
-Generate an image with low poly aesthetic. Deliberately faceted surfaces, limited polygon counts as style rather than limitation, and the geometric beauty of simplified 3D forms. Each triangle intentional, creating abstract representations of complex subjects.
+Low poly aesthetic with deliberately faceted surfaces where limited polygon counts become style rather than limitation. The geometric beauty of simplified 3D forms where each triangle is intentional, creating abstract representations of complex subjects.

@@ -1,16 +1,8 @@
 ---
-name: z_image_anime_ghibli
-description: Studio Ghibli inspired warmth and wonder
+name: anime_ghibli
+description: Studio Ghibli inspired anime style
 model: z-image
-category: style
-add_think_block: true
-thinking_content: |
-  For Ghibli-inspired imagery:
-  - Backgrounds: Painterly, detailed, lived-in environments
-  - Nature: Lush, reverent, almost spiritual treatment
-  - Characters: Expressive, simple designs with emotional depth
-  - Color: Warm, nostalgic palette with soft edges
-  - Mood: Wonder, melancholy, quiet magic
-  - Details: Small moments that reward close looking
+category: art
+add_think_block: false
 ---
-Generate an image with the warmth and wonder of classic Japanese animation. Lovingly detailed backgrounds, expressive characters, and environments that feel lived-in and magical. Celebration of nature, flight, and quiet moments.
+An illustration in the style of Studio Ghibli with soft colors, detailed backgrounds, and a sense of wonder. The scene has hand-painted quality with warm, nostalgic lighting and attention to natural elements.

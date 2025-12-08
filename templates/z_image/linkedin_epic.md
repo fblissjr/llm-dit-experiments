@@ -1,7 +1,8 @@
 ---
-name: z_image_linkedin_epic
+name: linkedin_epic
 description: LinkedIn thought leader visual
 model: z-image
 category: wacky
+add_think_block: false
 ---
-Generate an image that would accompany a LinkedIn post about how waking up at 4 AM changed someone's life. Motivational imagery that conflates professional success with spiritual enlightenment. Mountain peaks representing synergy. Suit jackets on people who are definitely hiking. Hashtag blessed energy.
+LinkedIn post imagery conflating professional success with spiritual enlightenment. Mountain peaks representing synergy with suit jackets on people who are definitely hiking. Hashtag blessed energy.

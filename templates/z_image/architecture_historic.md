@@ -1,7 +1,8 @@
 ---
-name: z_image_architecture_historic
+name: architecture_historic
 description: Historic architecture with period authenticity
 model: z-image
 category: photography
+add_think_block: false
 ---
-Generate atmospheric photography of historic architecture that honors the original period and craftsmanship. Capture ornate details, weathered textures, and the weight of history. Use light to reveal age and character.
+Atmospheric photography of historic architecture honoring original period and craftsmanship. Ornate details and weathered textures reveal the weight of history. Light reveals age and character in the structure.

@@ -1,7 +1,8 @@
 ---
-name: z_image_character_stylized
-description: Stylized character art using thinking block spec
+name: character_stylized
+description: Stylized character art
 model: z-image
 category: character
+add_think_block: false
 ---
-Create stylized character art based on the visual specification in your thinking. Interpret the described features through appealing shapes and clear silhouette. Exaggerate key characteristics for personality while maintaining the core details specified. Strong graphic appeal with readable design elements. The thinking provides the character foundation - enhance it with artistic style.
+Stylized character art with appealing shapes and a clear silhouette. Key characteristics are emphasized for personality while maintaining a cohesive design. The style has strong graphic appeal with readable visual elements.

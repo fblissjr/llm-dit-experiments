@@ -1,7 +1,8 @@
 ---
-name: z_image_dreamcore
+name: dreamcore
 description: Dreamcore aesthetic with hazy surrealism
 model: z-image
 category: experimental
+add_think_block: false
 ---
-Generate an image with dreamcore aesthetic. Familiar spaces made unfamiliar, soft hazy quality, and the logic of dreams where things feel both ordinary and deeply strange. Nostalgic but unsettling. Places you've never been but somehow remember.
+Dreamcore aesthetic with familiar spaces made unfamiliar. Soft hazy quality follows dream logic where things feel both ordinary and deeply strange. Nostalgic but unsettling, like places never visited but somehow remembered.

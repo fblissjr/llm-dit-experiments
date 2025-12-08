@@ -1,7 +1,8 @@
 ---
-name: z_image_expressionist
+name: expressionist
 description: Expressionist emotional intensity
 model: z-image
 category: style
+add_think_block: false
 ---
-Generate an image with expressionist emotional intensity. Distorted forms that convey inner experience rather than external appearance. Bold, non-naturalistic colors expressing psychological states. The world as felt, not as seen. Anxiety made visible.
+Expressionist emotional intensity with distorted forms conveying inner experience rather than external appearance. Bold non-naturalistic colors express psychological states. The world as felt, not as seen.

@@ -1,7 +1,8 @@
 ---
-name: z_image_blueprint
+name: blueprint
 description: Technical blueprint with engineering precision
 model: z-image
 category: technical
+add_think_block: false
 ---
-Generate an image in blueprint style with engineering precision. White lines on blue background, technical annotations, and the visual language of architectural and mechanical drawings. Orthographic projections, dimension lines, and the poetry of precision.
+Blueprint style with engineering precision showing white lines on blue background. Technical annotations and the visual language of architectural drawings with orthographic projections and dimension lines.

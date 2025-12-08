@@ -1,7 +1,8 @@
 ---
-name: z_image_3d_render_stylized
-description: Stylized 3D render with artistic lighting
+name: 3d_render_stylized
+description: Stylized 3D render with artistic appeal
 model: z-image
 category: style
+add_think_block: false
 ---
-Generate a stylized 3D render that balances realism with artistic interpretation. Clean geometry, beautiful lighting, and materials that pop. The polish of CGI with deliberate artistic choices that elevate it beyond photorealism.
+A stylized 3D render with artistic appeal rather than photorealism. Clean geometry with appealing shapes, soft ambient occlusion, and vibrant material colors. The look has a polished, animated film quality.

@@ -1,7 +1,8 @@
 ---
-name: z_image_mall_memories
+name: mall_memories
 description: Nostalgic dead mall aesthetic
 model: z-image
 category: wacky
+add_think_block: false
 ---
-Generate an image capturing the haunted nostalgia of abandoned malls. Fountain that still runs for no one. Skylights illuminating empty food courts. The ghost of a Orange Julius. Somewhere, an animatronic still performs for absent children. Capitalism's fever dream cooling.
+Haunted nostalgia of abandoned malls with fountains still running for no one. Skylights illuminating empty food courts where ghosts of retail past linger. Capitalism's fever dream cooling.

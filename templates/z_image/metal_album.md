@@ -1,7 +1,8 @@
 ---
-name: z_image_metal_album
+name: metal_album
 description: Metal album cover with maximum intensity
 model: z-image
 category: experimental
+add_think_block: false
 ---
-Generate an image for a metal album cover with maximum intensity. Skulls, flames, twisted typography, and imagery that takes itself extremely seriously. Gothic architecture meeting apocalyptic imagery. The visual equivalent of a guitar solo that lasts 12 minutes.
+Metal album cover with maximum intensity. Skulls, flames, and twisted typography taking itself extremely seriously. Gothic architecture meets apocalyptic imagery. The visual equivalent of a 12-minute guitar solo.

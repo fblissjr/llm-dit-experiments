@@ -1,7 +1,8 @@
 ---
-name: z_image_character_minimal
-description: Character from minimal spec in thinking
+name: character_minimal
+description: Simple character illustration
 model: z-image
 category: character
+add_think_block: false
 ---
-Render a character based on the brief specification in your thinking. The thinking contains essential visual details only. Fill in unspecified details with appropriate choices that match the established tone and style. Maintain consistency with what is specified while making natural creative decisions for the rest.
+A clean character illustration focusing on essential visual elements. The design is simple but effective, with clear shapes and readable features. Unspecified details are filled in naturally to match the overall style.

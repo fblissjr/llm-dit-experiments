@@ -1,7 +1,8 @@
 ---
-name: z_image_icon_design
+name: icon_design
 description: Clean icon design with consistent style
 model: z-image
 category: technical
+add_think_block: false
 ---
-Generate clean icon design with consistent stroke weights and visual language. Readable at small sizes, balanced positive and negative space, and immediate recognition of represented concept. UI and branding ready.
+Clean icon design with consistent stroke weights and visual language. Readable at small sizes with balanced positive and negative space. Immediate recognition of represented concept for UI and branding.

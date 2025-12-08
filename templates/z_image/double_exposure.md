@@ -1,7 +1,8 @@
 ---
-name: z_image_double_exposure
+name: double_exposure
 description: Double exposure blending two images
 model: z-image
 category: photography
+add_think_block: false
 ---
-Generate an image with double exposure effect, blending two subjects into one frame. Silhouettes filled with landscapes, portraits merged with textures, and the poetic layering of meaning. The technique of analog film achieved through digital intention.
+Double exposure effect blending two subjects into one frame. Silhouettes filled with landscapes and portraits merged with textures create poetic layering of meaning. Analog film technique through digital intention.

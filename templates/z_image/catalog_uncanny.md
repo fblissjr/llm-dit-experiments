@@ -1,7 +1,8 @@
 ---
-name: z_image_catalog_uncanny
+name: catalog_uncanny
 description: Product catalog from an alternate dimension
 model: z-image
 category: wacky
+add_think_block: false
 ---
-Generate an image of a product that seems normal until you look closer. A catalog photo for household items that don't quite exist. Prices in currencies you don't recognize. Use cases that assume too much. Available in colors that haven't been invented yet.
+Catalog photo for household items that seem normal until you look closer. Products that don't quite exist with use cases that assume too much. Available in colors that haven't been invented yet.

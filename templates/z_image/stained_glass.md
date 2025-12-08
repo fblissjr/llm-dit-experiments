@@ -1,7 +1,8 @@
 ---
-name: z_image_stained_glass
+name: stained_glass
 description: Stained glass window with glowing colors
 model: z-image
 category: art
+add_think_block: false
 ---
-Generate an image in the style of stained glass windows. Bold lead lines separating pieces of jewel-toned glass, light seeming to pass through and glow. Medieval cathedral energy meets graphic design clarity. Sacred geometry in colored light.
+Stained glass window style with bold lead lines separating jewel-toned pieces. Light seems to pass through and glow with medieval cathedral energy meeting graphic design clarity. Sacred geometry in colored light.

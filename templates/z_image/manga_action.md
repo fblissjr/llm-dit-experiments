@@ -1,7 +1,8 @@
 ---
-name: z_image_manga_action
-description: Dynamic manga action with speed lines
+name: manga_action
+description: Dynamic manga action panel
 model: z-image
 category: style
+add_think_block: false
 ---
-Generate a dynamic manga-style image with bold linework and kinetic energy. Speed lines, impact effects, dramatic angles, and high contrast black and white. The still image should feel like it's moving.
+A dynamic manga action panel with intense motion lines and dramatic impact effects. Black and white with screentone shading, expressive speed lines, and the kinetic energy of a climactic fight scene.

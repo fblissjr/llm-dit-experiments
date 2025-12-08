@@ -1,7 +1,8 @@
 ---
-name: z_image_soft_diffused
+name: soft_diffused
 description: Soft diffused light with gentle shadows
 model: z-image
 category: style
+add_think_block: false
 ---
-Generate an image with soft, diffused lighting like an overcast day or large softbox. Gentle shadows, smooth gradations, and flattering illumination. Peaceful and approachable with minimal harsh contrasts.
+Soft diffused lighting like an overcast day or large softbox. Gentle shadows with smooth gradations create flattering illumination. Peaceful and approachable with minimal harsh contrasts.

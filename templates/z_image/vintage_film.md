@@ -1,7 +1,8 @@
 ---
-name: z_image_vintage_film
+name: vintage_film
 description: Vintage film photography aesthetic
 model: z-image
 category: style
+add_think_block: false
 ---
-Generate an image with the aesthetic of vintage film photography. Film grain, slightly muted colors, subtle light leaks, and the organic imperfections of analog photography. Nostalgic without feeling artificially aged.
+Vintage film photography aesthetic with film grain, slightly muted colors, and subtle light leaks. Organic imperfections of analog photography feel nostalgic without being artificially aged.

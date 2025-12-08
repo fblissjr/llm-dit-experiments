@@ -1,7 +1,8 @@
 ---
-name: z_image_fog_atmosphere
+name: fog_atmosphere
 description: Foggy atmosphere with reduced visibility
 model: z-image
 category: style
+add_think_block: false
 ---
-Generate an image with heavy atmospheric fog. Objects fade with distance, details soften, and depth is suggested through value alone. The world half-hidden, full of mystery and quiet. Visibility is limited; imagination fills the gaps.
+Heavy atmospheric fog where objects fade with distance and details soften. Depth is suggested through value alone in a world half-hidden and full of mystery. Limited visibility leaves imagination to fill the gaps.

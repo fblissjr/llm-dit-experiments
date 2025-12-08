@@ -1,7 +1,8 @@
 ---
-name: z_image_victorian_tech
-description: Victorian time traveler describes modern tech
+name: victorian_tech
+description: Victorian era imagines modern technology
 model: z-image
 category: wacky
+add_think_block: false
 ---
-Generate an image as if a Victorian-era illustrator were asked to depict modern technology based on a confusing description. Smartphones rendered as brass contraptions with tiny people inside. Laptops that require coal. WiFi signals visualized as ghostly tendrils. Steam-powered everything.
+Victorian-era illustration style depicting modern technology through a confused lens. Smartphones as brass contraptions, laptops requiring coal, and WiFi as ghostly tendrils. Steam-powered interpretations of the digital age.

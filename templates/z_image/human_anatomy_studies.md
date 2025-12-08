@@ -1,7 +1,8 @@
 ---
-name: z_image_human_anatomy_studies
-description: Anatomical figure studies for artists and medical illustration
+name: human_anatomy_studies
+description: Anatomical figure studies for artists
 model: z-image
 category: art
+add_think_block: false
 ---
-Generate an anatomical figure study with accurate human proportions, muscle definition, and skeletal landmarks. Emphasize correct bone structure, muscle insertion points, and surface anatomy. Suitable for figure drawing reference, medical illustration, or artistic anatomy education. Clean lighting to reveal form and structure. Neutral pose unless specified.
+Anatomical figure study with accurate human proportions and muscle definition. Correct bone structure and surface anatomy for figure drawing reference or artistic anatomy education. Clean lighting reveals form and structure.

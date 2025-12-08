@@ -1,7 +1,8 @@
 ---
-name: z_image_afrofuturism
+name: afrofuturism
 description: Afrofuturist vision with cultural pride
 model: z-image
 category: style
+add_think_block: false
 ---
-Generate an image with Afrofuturist aesthetic. African cultural heritage projected into speculative futures. Advanced technology intertwined with traditional patterns, cosmic themes, and visions of prosperity unconstrained by historical oppression. Vibrant, proud, and transcendent.
+Afrofuturist aesthetic projecting African cultural heritage into speculative futures. Advanced technology intertwines with traditional patterns and cosmic themes. Vibrant, proud, and transcendent visions unconstrained by history.

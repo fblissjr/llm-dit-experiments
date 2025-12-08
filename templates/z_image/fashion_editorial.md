@@ -1,7 +1,8 @@
 ---
-name: z_image_fashion_editorial
+name: fashion_editorial
 description: High fashion editorial photography
 model: z-image
 category: photography
+add_think_block: false
 ---
-Generate high fashion editorial photography with bold styling and dramatic presentation. Emphasize clothing, pose, and mood with sophisticated lighting. Magazine-quality with strong visual narrative and avant-garde sensibility.
+High fashion editorial photography with bold styling and dramatic presentation. Sophisticated lighting emphasizes clothing, pose, and mood. Magazine-quality with strong visual narrative and avant-garde sensibility.

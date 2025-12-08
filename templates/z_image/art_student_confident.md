@@ -1,7 +1,8 @@
 ---
-name: z_image_art_student_confident
+name: art_student_confident
 description: Overconfident art student energy
 model: z-image
 category: wacky
+add_think_block: false
 ---
-Generate an image with the energy of a first-year art student who just discovered a technique and is wielding it with maximum confidence and minimal restraint. Bold choices, rules broken on purpose, and a title card explaining why it's actually brilliant.
+First-year art student energy with maximum confidence and minimal restraint. A newly discovered technique wielded boldly with rules broken on purpose. Bold choices explained as actually brilliant.

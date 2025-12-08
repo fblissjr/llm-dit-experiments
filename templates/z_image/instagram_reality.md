@@ -1,7 +1,8 @@
 ---
-name: z_image_instagram_reality
+name: instagram_reality
 description: Instagram vs reality parody
 model: z-image
 category: wacky
+add_think_block: false
 ---
-Generate an image showing the performance of social media aesthetics. Perfect positioning that required 47 attempts. Background carefully curated to hide the mess. Lighting that exists only in this one corner of the room. A moment of joy manufactured for external validation and achieved through exhaustion.
+Social media aesthetics performance with perfect positioning requiring many attempts. Background carefully curated to hide the mess with lighting that exists only in one corner. Manufactured joy achieved through exhaustion.

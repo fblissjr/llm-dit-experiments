@@ -77,7 +77,8 @@ class EncodeRequest(BaseModel):
 
 class RewriteRequest(BaseModel):
     prompt: str  # User prompt to rewrite/expand
-    rewriter: str  # Name of rewriter template to use
+    rewriter: Optional[str] = None  # Name of rewriter template (optional if custom_system_prompt provided)
+    custom_system_prompt: Optional[str] = None  # Ad-hoc system prompt for rewriting
     max_tokens: int = 512  # Maximum tokens to generate
     temperature: float = 0.7  # Sampling temperature
 
@@ -322,7 +323,7 @@ async def format_prompt_endpoint(request: EncodeRequest):
 
 @app.get("/api/templates")
 async def list_templates():
-    """List available templates."""
+    """List available templates with full data for UI population."""
     # Use encoder from pipeline or standalone encoder
     enc = encoder if encoder is not None else (pipeline.encoder if pipeline else None)
     if enc is None or enc.templates is None:
@@ -331,11 +332,19 @@ async def list_templates():
     templates = []
     for name in enc.templates:
         tpl = enc.templates.get(name)
-        templates.append({
-            "name": name,
-            "has_thinking": bool(tpl.thinking_content) if tpl else False,
-        })
+        if tpl and tpl.category != "rewriter":  # Exclude rewriter templates
+            templates.append({
+                "name": name,
+                "description": tpl.description or "",
+                "category": tpl.category or "general",
+                "system_prompt": tpl.content or "",
+                "thinking_content": tpl.thinking_content or "",
+                "assistant_content": tpl.assistant_content or "",
+                "add_think_block": tpl.add_think_block,
+            })
 
+    # Sort by category then name
+    templates.sort(key=lambda x: (x["category"], x["name"]))
     return {"templates": templates}
 
 
@@ -361,10 +370,14 @@ async def list_rewriters():
 @app.post("/api/rewrite")
 async def rewrite_prompt(request: RewriteRequest):
     """
-    Rewrite/expand a prompt using a rewriter template.
+    Rewrite/expand a prompt using a rewriter template or custom system prompt.
 
     Uses the same Qwen3 model loaded for text encoding to generate expanded prompts.
     This enables prompt enhancement without loading additional models.
+
+    Supports two modes:
+    1. Template mode: Use `rewriter` to specify a rewriter template
+    2. Ad-hoc mode: Use `custom_system_prompt` for custom rewriting instructions
     """
     # Use encoder from pipeline or standalone encoder
     enc = encoder if encoder is not None else (pipeline.encoder if pipeline else None)
@@ -382,38 +395,61 @@ async def rewrite_prompt(request: RewriteRequest):
             detail="Backend does not support text generation"
         )
 
-    # Get the rewriter template
-    if enc.templates is None:
-        raise HTTPException(status_code=400, detail="No templates loaded")
+    # Determine system prompt: custom takes precedence, then template
+    system_prompt = None
+    rewriter_name = "custom"
 
-    rewriter_template = enc.templates.get(request.rewriter)
-    if rewriter_template is None:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Rewriter template not found: {request.rewriter}"
-        )
+    if request.custom_system_prompt:
+        # Ad-hoc mode: use custom system prompt directly
+        system_prompt = request.custom_system_prompt.strip()
+        rewriter_name = "custom"
+        logger.info(f"[Rewrite] Using custom system prompt ({len(system_prompt)} chars)")
+    elif request.rewriter:
+        # Template mode: get system prompt from template
+        if enc.templates is None:
+            raise HTTPException(status_code=400, detail="No templates loaded")
 
-    if rewriter_template.category != "rewriter":
+        rewriter_template = enc.templates.get(request.rewriter)
+        if rewriter_template is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Rewriter template not found: {request.rewriter}"
+            )
+
+        if rewriter_template.category != "rewriter":
+            raise HTTPException(
+                status_code=400,
+                detail=f"Template '{request.rewriter}' is not a rewriter template"
+            )
+
+        system_prompt = rewriter_template.content
+        rewriter_name = request.rewriter
+    else:
         raise HTTPException(
             status_code=400,
-            detail=f"Template '{request.rewriter}' is not a rewriter template"
+            detail="Either 'rewriter' or 'custom_system_prompt' must be provided"
         )
 
     try:
         start = time.time()
-        logger.info(f"[Rewrite] Using template: {request.rewriter}")
+        logger.info(f"[Rewrite] Using: {rewriter_name}")
         logger.info(f"[Rewrite] Input prompt: {request.prompt[:100]}...")
 
         # Generate using the backend
         generated = backend.generate(
             prompt=request.prompt,
-            system_prompt=rewriter_template.content,
+            system_prompt=system_prompt,
             max_new_tokens=request.max_tokens,
             temperature=request.temperature,
         )
 
         gen_time = time.time() - start
         logger.info(f"[Rewrite] Generated {len(generated)} chars in {gen_time:.2f}s")
+
+        # Clear CUDA cache to prevent memory issues when switching back to encoding
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            logger.debug("[Rewrite] Cleared CUDA cache after generation")
 
         return {
             "original_prompt": request.prompt,
@@ -424,6 +460,9 @@ async def rewrite_prompt(request: RewriteRequest):
 
     except Exception as e:
         logger.error(f"Rewrite failed: {e}")
+        # Clear CUDA cache even on error
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -832,6 +871,7 @@ def load_api_pipeline(
 def main():
     # Use shared CLI argument parser
     from llm_dit.cli import create_base_parser, load_runtime_config, setup_logging
+    from llm_dit.startup import PipelineLoader
 
     parser = create_base_parser(
         description="Z-Image web server",
@@ -854,80 +894,35 @@ def main():
     args = parser.parse_args()
 
     # Load unified config (handles TOML + CLI overrides)
-    global runtime_config
+    global runtime_config, pipeline, encoder, encoder_only_mode
     runtime_config = load_runtime_config(args)
     setup_logging(runtime_config)
 
-    # Extract values from runtime config
-    host = runtime_config.host
-    port = runtime_config.port
-    model_path = runtime_config.model_path
-    templates_dir = runtime_config.templates_dir
+    # Validate model path (unless using API-only mode)
+    if not runtime_config.model_path and not runtime_config.api_url:
+        logger.error("No model path specified. Use --model-path or --config.")
+        return 1
 
-    # Find default templates if not specified
-    if templates_dir is None:
-        default_templates = Path(__file__).parent.parent / "templates" / "z_image"
-        if default_templates.exists():
-            templates_dir = str(default_templates)
-
-    # Determine which mode to use
-    # Priority: use_api_encoder flag forces API, otherwise local encoder is default
+    # Use PipelineLoader for unified loading
+    loader = PipelineLoader(runtime_config)
     use_api = getattr(args, "use_api_encoder", False)
 
-    if runtime_config.api_url and model_path and use_api:
-        # Distributed mode: API encoding + local DiT/VAE generation (explicit --use-api-encoder)
-        load_api_pipeline(
-            runtime_config.api_url,
-            runtime_config.api_model,
-            model_path,
-            templates_dir,
-            enable_cpu_offload=runtime_config.cpu_offload,
-            enable_flash_attn=runtime_config.flash_attn,
-            enable_compile=runtime_config.compile,
-            dit_device=runtime_config.dit_device,
-            vae_device=runtime_config.vae_device,
-            lora_paths=runtime_config.lora_paths,
-            lora_scales=runtime_config.lora_scales,
-        )
-        opts = []
-        if runtime_config.cpu_offload:
-            opts.append("CPU offload")
-        if runtime_config.flash_attn:
-            opts.append("Flash Attn")
-        if runtime_config.compile:
-            opts.append("compiled")
-        opts_str = f" + {', '.join(opts)}" if opts else ""
-        mode = f"distributed (API encoder + local DiT{opts_str})"
-    elif runtime_config.api_url and not model_path:
-        # API backend mode - encoder only (no model path)
-        load_api_encoder(runtime_config.api_url, runtime_config.api_model, templates_dir)
-        mode = f"API encoder-only ({runtime_config.api_model})"
-    elif args.encoder_only:
-        # Local encoder only
-        if model_path is None:
-            logger.error("No model path specified. Use --model-path or --config.")
-            return 1
-        load_encoder_only(model_path, templates_dir, encoder_device=runtime_config.encoder_device)
-        mode = "encoder-only"
-    else:
-        # Full pipeline
-        if model_path is None:
-            logger.error("No model path specified. Use --model-path or --config.")
-            return 1
-        load_pipeline(
-            model_path,
-            text_encoder_path=runtime_config.text_encoder_path,
-            templates_dir=templates_dir,
-            encoder_device=runtime_config.encoder_device,
-            dit_device=runtime_config.dit_device,
-            vae_device=runtime_config.vae_device,
-            lora_paths=runtime_config.lora_paths,
-            lora_scales=runtime_config.lora_scales,
-        )
-        mode = "full"
+    # Load using PipelineLoader.auto_load()
+    result = loader.auto_load(
+        encoder_only=args.encoder_only,
+        use_api=use_api,
+    )
+
+    # Set global state from load result
+    pipeline = result.pipeline
+    encoder = result.encoder
+    encoder_only_mode = result.mode in ("encoder_only", "api_encoder")
+    mode = result.mode
 
     # Run server
     import uvicorn
+    host = runtime_config.host
+    port = runtime_config.port
     logger.info(f"Starting server at http://{host}:{port} ({mode} mode)")
     uvicorn.run(app, host=host, port=port)
 

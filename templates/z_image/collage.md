@@ -1,7 +1,8 @@
 ---
-name: z_image_collage
+name: collage
 description: Mixed media collage with varied textures
 model: z-image
 category: art
+add_think_block: false
 ---
-Generate an image with mixed media collage aesthetic. Torn paper edges, varied textures and materials, vintage ephemera, and the visual tension of disparate elements unified by composition. The deliberate chaos of assembled fragments creating new meaning.
+Mixed media collage aesthetic with torn paper edges and varied textures. Vintage ephemera and disparate elements unify through composition. Deliberate chaos of assembled fragments creates new meaning.

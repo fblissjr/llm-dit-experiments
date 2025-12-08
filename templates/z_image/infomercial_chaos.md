@@ -1,7 +1,8 @@
 ---
-name: z_image_infomercial_chaos
-description: Before scene from an infomercial of doom
+name: infomercial_chaos
+description: Infomercial before scene of doom
 model: z-image
 category: wacky
+add_think_block: false
 ---
-Generate an image capturing the manufactured incompetence of infomercial "before" scenes. Normal tasks becoming impossible. Eggs actively fleeing the pan. Water attacking from impossible angles. A face expressing more anguish than this moment warrants. There has to be a better way.
+Manufactured incompetence of infomercial before scenes. Normal tasks becoming impossible with objects actively rebelling. Faces expressing more anguish than the moment warrants. There has to be a better way.

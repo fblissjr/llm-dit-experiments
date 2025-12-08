@@ -1,7 +1,8 @@
 ---
-name: z_image_surrealist
+name: surrealist
 description: Surrealist imagery from the unconscious
 model: z-image
 category: style
+add_think_block: false
 ---
-Generate a surrealist image drawn from the unconscious mind. Impossible juxtapositions, dreamlike logic, and objects that refuse to behave normally. Melting clocks optional but that energy is required. Reality is merely a suggestion. The id is in charge now.
+Surrealist imagery drawn from the unconscious mind with impossible juxtapositions and dreamlike logic. Objects refuse to behave normally in a world where reality is merely a suggestion.

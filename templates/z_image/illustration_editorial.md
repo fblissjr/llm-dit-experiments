@@ -1,7 +1,8 @@
 ---
-name: z_image_illustration_editorial
+name: illustration_editorial
 description: Editorial illustration with conceptual depth
 model: z-image
 category: art
+add_think_block: false
 ---
-Generate sophisticated editorial illustration that communicates complex ideas visually. Use metaphor, symbolism, and strong graphic design. The image should make viewers think while remaining visually striking. Magazine and book cover quality.
+Sophisticated editorial illustration communicating complex ideas visually through metaphor and symbolism. Strong graphic design makes viewers think while remaining visually striking. Magazine and book cover quality.

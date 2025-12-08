@@ -1,7 +1,8 @@
 ---
-name: z_image_powerpoint_peak
+name: powerpoint_peak
 description: Peak 2003 PowerPoint aesthetic
 model: z-image
 category: wacky
+add_think_block: false
 ---
-Generate an image with maximum PowerPoint energy circa 2003. WordArt that bends reality. Clip art that asks questions about its own existence. Transition effects frozen mid-wipe. Background gradients that were chosen by committee. This slide has been loading for 20 years.
+Maximum PowerPoint energy circa 2003 with WordArt bending reality. Clip art questioning its own existence and transition effects frozen mid-wipe. Committee-chosen background gradients loading for 20 years.

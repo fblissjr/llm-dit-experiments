@@ -1,7 +1,8 @@
 ---
-name: z_image_3d_render_octane
+name: 3d_render_octane
 description: Photoreal 3D render with Octane quality
 model: z-image
 category: style
+add_think_block: false
 ---
-Generate a photorealistic 3D render with premium rendering quality. Perfect global illumination, accurate caustics, physically-based materials, and cinematic depth of field. Indistinguishable from a photograph with flawless technical execution.
+A photorealistic 3D render with premium Octane quality. Perfect global illumination with accurate caustics and physically-based materials. Cinematic depth of field creates a result indistinguishable from a photograph.

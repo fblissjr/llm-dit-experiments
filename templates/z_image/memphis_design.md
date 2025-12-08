@@ -1,7 +1,8 @@
 ---
-name: z_image_memphis_design
+name: memphis_design
 description: 1980s Memphis design movement
 model: z-image
 category: style
+add_think_block: false
 ---
-Generate an image in Memphis design style from the 1980s. Clashing colors, geometric patterns, and deliberate kitsch. Squiggles, terrazzo patterns, and primary colors fighting for attention. Postmodern playfulness that refuses to take itself seriously while being very intentional.
+Memphis design style from the 1980s with clashing colors, geometric patterns, and deliberate kitsch. Squiggles and terrazzo patterns with primary colors compete for attention. Postmodern playfulness that refuses to take itself seriously while being very intentional.

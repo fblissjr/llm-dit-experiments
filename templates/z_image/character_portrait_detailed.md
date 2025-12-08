@@ -1,7 +1,8 @@
 ---
-name: z_image_character_portrait_detailed
-description: Detailed character portrait using thinking block spec
+name: character_portrait
+description: Detailed character portrait
 model: z-image
 category: character
+add_think_block: false
 ---
-Render a photorealistic portrait based on the visual specification in your thinking. The thinking contains exact details for face shape, skin texture, eye color, hair, and distinguishing features. Follow these precisely. Pay attention to lighting direction and color temperature specified. Maintain anatomical accuracy and realistic skin texture with appropriate subsurface scattering.
+A detailed character portrait with realistic facial features and skin texture. The lighting reveals form and creates depth, with careful attention to eye detail and expression. The portrait captures personality and presence.

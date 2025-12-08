@@ -1,7 +1,8 @@
 ---
-name: z_image_watercolor_loose
+name: watercolor_loose
 description: Loose watercolor with flowing washes
 model: z-image
 category: art
+add_think_block: false
 ---
-Generate a loose watercolor painting with flowing washes and happy accidents. Let colors bleed and bloom naturally, preserve white paper for highlights, and embrace the spontaneous nature of the medium. Fresh and luminous.
+Loose watercolor painting with flowing washes and happy accidents. Colors bleed and bloom naturally with preserved white paper for highlights. The spontaneous nature of the medium creates fresh, luminous results.

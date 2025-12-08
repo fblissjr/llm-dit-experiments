@@ -1,7 +1,8 @@
 ---
-name: z_image_minimalist
-description: Minimalist design with essential elements only
+name: minimalist
+description: Minimalist design
 model: z-image
-category: technical
+category: style
+add_think_block: false
 ---
-Generate a minimalist image that strips away everything non-essential. Clean negative space, limited palette, and only the elements absolutely necessary to communicate. Less is more, executed with precision.
+A minimalist image with clean negative space and limited color palette. Only the essential elements are present, executed with precision. The composition emphasizes simplicity and clarity.

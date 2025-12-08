@@ -1,7 +1,8 @@
 ---
-name: z_image_solarpunk
+name: solarpunk
 description: Solarpunk optimistic sustainable future
 model: z-image
 category: experimental
+add_think_block: false
 ---
-Generate an image with solarpunk aesthetic. Optimistic visions of sustainable futures where technology and nature harmonize. Green architecture, renewable energy integrated beautifully, and communities thriving in balance with ecosystems. Hope made visible.
+Solarpunk aesthetic with optimistic visions of sustainable futures. Technology and nature harmonize in green architecture with integrated renewable energy. Communities thriving in balance with ecosystems.

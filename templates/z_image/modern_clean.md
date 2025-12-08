@@ -1,7 +1,8 @@
 ---
-name: z_image_modern_clean
+name: modern_clean
 description: Modern clean aesthetic with contemporary design
 model: z-image
 category: style
+add_think_block: false
 ---
-Generate an image with clean, contemporary design sensibility. Modern typography if text is present, thoughtful use of white space, and current design trends executed with restraint. Fresh, professional, and timeless.
+Clean contemporary design sensibility with thoughtful use of white space and current trends executed with restraint. Modern typography if text is present. Fresh, professional, and timeless.
