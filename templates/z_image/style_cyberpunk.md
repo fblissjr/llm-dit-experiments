@@ -5,4 +5,4 @@ model: z-image
 category: style
 add_think_block: false
 ---
-cyberpunk, neon lights, rain, reflections, dark atmosphere, futuristic city
+A cyberpunk scene with neon lights reflecting off wet streets in a dark, atmospheric city. The environment is filled with holographic advertisements and futuristic technology. Rain adds depth and mood to the composition.

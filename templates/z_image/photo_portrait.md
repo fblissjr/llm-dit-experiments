@@ -5,4 +5,4 @@ model: z-image
 category: photography
 add_think_block: false
 ---
-portrait photography, natural light, shallow depth of field, sharp focus on eyes
+A professional portrait photograph with soft natural lighting. The subject is in sharp focus with a beautifully blurred background. The image has a warm, inviting quality with accurate skin tones and catchlights in the eyes.

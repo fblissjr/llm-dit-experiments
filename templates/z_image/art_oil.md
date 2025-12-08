@@ -5,4 +5,4 @@ model: z-image
 category: art
 add_think_block: false
 ---
-oil painting, visible brushstrokes, rich colors, classical composition, gallery quality
+A classical oil painting with visible brushstrokes and rich, layered colors. The composition follows traditional artistic principles with careful attention to light and shadow. The work has the quality of a museum masterpiece.

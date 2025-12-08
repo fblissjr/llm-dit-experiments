@@ -1,16 +1,8 @@
 ---
-name: z_image_oil_painting_classical
-description: Classical oil painting with old master techniques
+name: oil_painting_classical
+description: Classical oil painting style
 model: z-image
 category: art
-add_think_block: true
-thinking_content: |
-  For classical oil painting technique:
-  - Chiaroscuro: Dramatic light/shadow modeling
-  - Color: Rich earth tones, glazed layers, luminosity
-  - Brushwork: Visible strokes that describe form
-  - Composition: Classical arrangements, golden ratio
-  - Surface: Texture of canvas and paint buildup
-  - Masters: Rembrandt's light, Vermeer's intimacy, Caravaggio's drama
+add_think_block: false
 ---
-Generate an image in the style of classical oil painting with rich, layered colors and visible brushwork. Employ chiaroscuro lighting, glazing techniques, and the color palettes of the old masters. Timeless and museum-worthy.
+A classical oil painting with rich, layered colors and visible brushwork. The image employs dramatic chiaroscuro lighting and the color palettes of the old masters. The composition has timeless, museum-worthy quality.

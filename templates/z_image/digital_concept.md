@@ -1,7 +1,8 @@
 ---
-name: z_image_digital_concept
-description: Professional concept art for entertainment
+name: digital_concept
+description: Digital concept art
 model: z-image
 category: art
+add_think_block: false
 ---
-Generate professional concept art suitable for film, game, or animation production. Balance creative vision with practical design considerations. Clear silhouettes, readable compositions, and designs that could exist in a realized production.
+Professional digital concept art with strong composition and dramatic lighting. The piece has the quality of production artwork for films or games, with detailed environments and atmospheric depth.

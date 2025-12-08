@@ -1,7 +1,8 @@
 ---
-name: z_image_horror_atmospheric
-description: Atmospheric horror with creeping dread
+name: horror_atmospheric
+description: Atmospheric horror scene
 model: z-image
-category: experimental
+category: art
+add_think_block: false
 ---
-Generate an image with atmospheric horror elements. The dread comes from what isn't shown. Deep shadows with things almost visible, unsettling compositions, and the visual language of quiet terror. Something is wrong here, and looking closer will only make it worse.
+An atmospheric horror scene with unsettling mood and subtle dread. The lighting is dim and foreboding, with shadows that suggest hidden threats. The composition creates tension through what is implied rather than shown.

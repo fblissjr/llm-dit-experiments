@@ -1,7 +1,8 @@
 ---
-name: z_image_neon_cyberpunk
+name: neon_cyberpunk
 description: Neon-lit cyberpunk atmosphere
 model: z-image
 category: style
+add_think_block: false
 ---
-Generate an image drenched in neon lighting with cyberpunk atmosphere. Electric blues, hot pinks, and acid greens reflecting off wet surfaces. Urban night scenes with holographic advertisements and rain-slicked streets.
+A cyberpunk scene drenched in neon lighting. Electric blues, hot pinks, and acid greens reflect off wet surfaces. The urban night scene features holographic advertisements and rain-slicked streets.

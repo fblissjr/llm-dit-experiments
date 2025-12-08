@@ -5,4 +5,4 @@ model: z-image
 category: 3d
 add_think_block: false
 ---
-3D render, octane render, highly detailed, volumetric lighting, 8k
+A photorealistic 3D render with accurate lighting and materials. The scene features volumetric lighting, realistic reflections, and fine surface details. Rendered at high resolution with ray-traced global illumination.

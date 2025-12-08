@@ -5,4 +5,4 @@ model: z-image
 category: photography
 add_think_block: false
 ---
-cinematic still, film grain, anamorphic lens, dramatic lighting, 35mm film
+A cinematic movie still with dramatic lighting and film-like color grading. The composition follows the rule of thirds with strong visual storytelling. Shot on 35mm film with subtle grain and anamorphic lens characteristics.
