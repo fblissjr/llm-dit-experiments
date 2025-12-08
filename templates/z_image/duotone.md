@@ -1,7 +1,8 @@
 ---
-name: z_image_duotone
+name: duotone
 description: Duotone with two-color palette
 model: z-image
 category: technical
+add_think_block: false
 ---
-Generate an image using duotone technique with only two colors. One for shadows, one for highlights, and the entire tonal range expressed through their interplay. Bold, graphic, and immediately striking. The constraint that creates impact.
+Duotone technique using only two colors with one for shadows and one for highlights. The entire tonal range expressed through their interplay creates bold, graphic, immediately striking imagery.

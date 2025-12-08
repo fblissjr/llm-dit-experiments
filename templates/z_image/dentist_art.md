@@ -1,7 +1,8 @@
 ---
-name: z_image_dentist_art
-description: Art you'd find in a dentist's waiting room
+name: dentist_art
+description: Art for a professional waiting room
 model: z-image
 category: wacky
+add_think_block: false
 ---
-Generate art optimized for the wall of a professional waiting room. Inoffensive to the point of aggression. Colors that neither calm nor excite. Subject matter so neutral it achieves a strange profundity. The visual equivalent of elevator music. Deeply acceptable.
+Art optimized for professional waiting room walls. Inoffensive to the point of aggression with colors that neither calm nor excite. Subject matter so neutral it achieves strange profundity. Deeply acceptable.

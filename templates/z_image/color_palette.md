@@ -1,7 +1,8 @@
 ---
-name: z_image_color_palette
+name: color_palette
 description: Image designed around specific color harmony
 model: z-image
 category: technical
+add_think_block: false
 ---
-Generate an image with masterful color palette design. Whether complementary, analogous, triadic, or split-complementary, the colors should work together harmoniously. Let color relationships drive the visual impact.
+Masterful color palette design with harmonious color relationships. Whether complementary, analogous, or triadic, the colors work together to create visual impact through thoughtful coordination.

@@ -1,7 +1,8 @@
 ---
-name: z_image_propaganda
+name: propaganda
 description: Vintage propaganda poster aesthetic
 model: z-image
 category: experimental
+add_think_block: false
 ---
-Generate an image with the visual language of vintage propaganda posters. Bold colors, heroic poses, dramatic perspective from below, and simplified shapes for maximum impact. The message is unclear but the conviction is absolute. Someone is definitely marching somewhere.
+Vintage propaganda poster visual language with bold colors and heroic poses. Dramatic perspective from below with simplified shapes for maximum impact. Strong visual conviction with striking graphic design.

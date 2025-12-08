@@ -1,7 +1,8 @@
 ---
-name: z_image_watercolor_botanical
+name: watercolor_botanical
 description: Precise botanical watercolor illustration
 model: z-image
 category: art
+add_think_block: false
 ---
-Generate a precise botanical watercolor illustration with scientific accuracy and artistic beauty. Render every vein, petal, and stem with careful observation. Combine the rigor of scientific illustration with the delicacy of fine watercolor technique.
+Precise botanical watercolor illustration combining scientific accuracy with artistic beauty. Every vein, petal, and stem rendered with careful observation. The rigor of scientific illustration with delicate watercolor technique.

@@ -1,7 +1,8 @@
 ---
-name: z_image_high_detail
+name: high_detail
 description: Maximum detail and clarity obsession
 model: z-image
 category: technical
+add_think_block: false
 ---
-Generate an image with obsessive attention to detail. Every surface textured, every edge considered, every element refined. Push the resolution of detail to its limits while maintaining overall coherence. Reward close inspection.
+Obsessive attention to detail where every surface is textured and every edge considered. Push the resolution of detail to its limits while maintaining overall coherence. Rewards close inspection.

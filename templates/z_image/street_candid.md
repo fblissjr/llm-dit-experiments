@@ -1,7 +1,8 @@
 ---
-name: z_image_street_candid
+name: street_candid
 description: Candid street photography capturing life unfolding
 model: z-image
 category: photography
+add_think_block: false
 ---
-Generate candid street photography that captures authentic moments of urban life. Look for decisive moments, interesting juxtapositions, and human stories unfolding naturally. Raw and unposed with strong composition.
+Candid street photography capturing authentic moments of urban life. Decisive moments and interesting juxtapositions show human stories unfolding naturally. Raw and unposed with strong composition.

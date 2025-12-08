@@ -1,7 +1,8 @@
 ---
-name: z_image_monochrome_high_contrast
+name: monochrome_high_contrast
 description: High contrast black and white
 model: z-image
 category: technical
+add_think_block: false
 ---
-Generate a high contrast black and white image. Push the histogram to both extremes, eliminate middle grays, and embrace the stark graphic power of pure light and shadow. The drama of removing color and embracing extremes.
+High contrast black and white image with histogram pushed to both extremes. Eliminate middle grays and embrace the stark graphic power of pure light and shadow. Drama from removing color and embracing extremes.

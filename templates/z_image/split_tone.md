@@ -1,7 +1,8 @@
 ---
-name: z_image_split_tone
+name: split_tone
 description: Split toning with warm highlights cool shadows
 model: z-image
 category: technical
+add_think_block: false
 ---
-Generate an image with split toning applied. Warm colors in highlights, cool colors in shadows, and the sophisticated color grading that defines professional photography. The subtle technique that separates polished work from snapshots.
+Split toning with warm colors in highlights and cool colors in shadows. The sophisticated color grading that defines professional photography separating polished work from snapshots.

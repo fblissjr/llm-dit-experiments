@@ -1,7 +1,8 @@
 ---
-name: z_image_real_estate
+name: real_estate
 description: Real estate photo with impossible staging
 model: z-image
 category: wacky
+add_think_block: false
 ---
-Generate a real estate listing photo where the staging has achieved uncanny valley. Fruit bowls placed by algorithm. Throw pillows arranged to ward off evil. A kitchen where no meal has ever been prepared. Sunlight that seems contractually obligated. This could be your dream home if your dreams are suspicious.
+Real estate listing photo where staging has achieved uncanny valley. Fruit bowls placed by algorithm, throw pillows arranged with suspicious precision, and sunlight that seems contractually obligated.

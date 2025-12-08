@@ -1,7 +1,8 @@
 ---
-name: z_image_illustration_storybook
+name: illustration_storybook
 description: Whimsical storybook illustration
 model: z-image
 category: art
+add_think_block: false
 ---
-Generate a charming storybook illustration with warmth and wonder. Create images that invite children and adults alike into magical worlds. Rich in detail to discover, with appealing characters and settings that spark imagination.
+Charming storybook illustration with warmth and wonder inviting viewers into magical worlds. Rich in detail to discover with appealing characters and settings that spark imagination.

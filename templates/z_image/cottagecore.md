@@ -1,7 +1,8 @@
 ---
-name: z_image_cottagecore
+name: cottagecore
 description: Cottagecore aesthetic with pastoral charm
 model: z-image
 category: style
+add_think_block: false
 ---
-Generate an image with cottagecore aesthetic. Rural simplicity, handmade textiles, wildflowers in mason jars, and the dream of self-sufficient pastoral life. Warm natural light through lace curtains. Bread rising, herbs drying, and the deliberate rejection of modernity.
+Cottagecore aesthetic with rural simplicity and handmade textiles. Wildflowers in mason jars with warm natural light through lace curtains. The dream of self-sufficient pastoral life rejecting modernity.

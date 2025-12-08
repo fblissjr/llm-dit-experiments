@@ -1,7 +1,8 @@
 ---
-name: z_image_macro_extreme
+name: macro_extreme
 description: Extreme macro photography revealing hidden worlds
 model: z-image
 category: photography
+add_think_block: false
 ---
-Generate extreme macro photography that reveals invisible worlds. Capture intricate details at magnification that transforms the mundane into the extraordinary. Sharp focus on subject with smooth bokeh, showing textures invisible to the naked eye.
+Extreme macro photography revealing invisible worlds at high magnification. Intricate details transform the mundane into the extraordinary with sharp focus on the subject and smooth bokeh background.

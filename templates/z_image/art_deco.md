@@ -1,7 +1,8 @@
 ---
-name: z_image_art_deco
+name: art_deco
 description: Art Deco elegance with geometric precision
 model: z-image
 category: style
+add_think_block: false
 ---
-Generate an image with Art Deco elegance. Geometric precision, metallic accents, and the glamour of the 1920s. Sunburst patterns, stylized figures, and ornamental excess balanced with clean lines. The future as imagined by the past, in gold and chrome.
+Art Deco elegance with geometric precision and metallic accents evoking 1920s glamour. Sunburst patterns and stylized figures balance ornamental richness with clean lines. Gold and chrome create a vision of the future as imagined by the past.

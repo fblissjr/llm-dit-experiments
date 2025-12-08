@@ -1,7 +1,8 @@
 ---
-name: z_image_yearbook_90s
+name: yearbook_90s
 description: 1990s school yearbook photo aesthetic
 model: z-image
 category: wacky
+add_think_block: false
 ---
-Generate an image with 1990s school yearbook photo energy. Laser backgrounds in impossible colors. Hair that defies physics. Poses suggested by photographers who stopped caring decades ago. A gradient that transitions through several bad decisions. Frosted tips optional but encouraged.
+1990s school yearbook photo energy with laser backgrounds in impossible colors. Hair that defies physics with poses suggested by photographers who stopped caring decades ago. Frosted tips optional but encouraged.

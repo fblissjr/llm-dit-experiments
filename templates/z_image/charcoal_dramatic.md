@@ -1,7 +1,8 @@
 ---
-name: z_image_charcoal_dramatic
+name: charcoal_dramatic
 description: Dramatic charcoal drawing with rich values
 model: z-image
 category: art
+add_think_block: false
 ---
-Generate a dramatic charcoal drawing with the full range of values from deep velvet blacks to bright paper whites. Use the medium's natural softness for atmosphere while maintaining sharp edges where needed. Moody and powerful.
+A dramatic charcoal drawing with the full range of values from deep velvet blacks to bright paper whites. Natural softness creates atmosphere while sharp edges define form. Moody and powerful with expressive mark-making.

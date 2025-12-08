@@ -1,7 +1,8 @@
 ---
-name: z_image_dark_academia
+name: dark_academia
 description: Dark academia aesthetic with scholarly mystery
 model: z-image
 category: style
+add_think_block: false
 ---
-Generate an image with dark academia aesthetic. Old libraries, leather-bound books, candlelight, and the romance of classical education. Autumn colors, gothic architecture, and the implicit suggestion that knowledge comes with secrets. Ivy-covered and atmospheric.
+Dark academia aesthetic with old libraries and leather-bound books. Candlelight and gothic architecture in autumn colors create the romance of classical education. Ivy-covered and atmospheric with implied secrets.

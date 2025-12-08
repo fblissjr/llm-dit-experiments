@@ -1,7 +1,8 @@
 ---
-name: z_image_desaturated_muted
+name: desaturated_muted
 description: Muted desaturated color palette
 model: z-image
 category: technical
+add_think_block: false
 ---
-Generate an image with a muted, desaturated color palette. Colors present but restrained, whispered rather than shouted. The sophisticated quiet of nearly-monochrome work with just enough color to anchor reality. Contemplative and refined.
+Muted desaturated color palette with colors present but restrained. The sophisticated quiet of nearly-monochrome work with just enough color to anchor reality. Contemplative and refined.

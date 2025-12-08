@@ -1,7 +1,8 @@
 ---
-name: z_image_cooking_blog
-description: Recipe blog photo with 40 paragraphs of story
+name: cooking_blog
+description: Recipe blog photo with excessive styling
 model: z-image
 category: wacky
+add_think_block: false
 ---
-Generate food photography that demands you read about someone's grandmother before seeing the recipe. Unnecessary props arranged around the dish. Mason jars containing things. Rustic wooden surfaces that have never been near an actual farm. Napkins folded with aggressive casualness. This toast changed my life.
+Food photography demanding backstory before the recipe. Unnecessary props around the dish with mason jars and rustic wooden surfaces. Napkins folded with aggressive casualness on surfaces that have never seen a real farm.

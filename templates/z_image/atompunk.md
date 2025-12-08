@@ -1,7 +1,8 @@
 ---
-name: z_image_atompunk
+name: atompunk
 description: Atompunk 1950s atomic age futurism
 model: z-image
 category: style
+add_think_block: false
 ---
-Generate an image with atompunk aesthetic. The 1950s vision of atomic-powered futures. Googie architecture, tail-finned everything, and the optimism before we knew better. Atomic symbols everywhere, chrome and pastels, and the space age as imagined by suburbia.
+Atompunk aesthetic with the 1950s vision of atomic-powered futures. Googie architecture with tail-finned designs, chrome and pastels, and atomic symbols everywhere. The space age as imagined by optimistic suburbia.

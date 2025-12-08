@@ -1,7 +1,8 @@
 ---
-name: z_image_golden_hour
+name: golden_hour
 description: Warm golden hour lighting
 model: z-image
 category: style
+add_think_block: false
 ---
-Generate an image bathed in warm golden hour light. Long shadows, honey-colored highlights, and that magical quality of light just before sunset. Everything glows with warmth and nostalgia.
+Warm golden hour light with long shadows and honey-colored highlights. The magical quality of light just before sunset makes everything glow with warmth and nostalgia.

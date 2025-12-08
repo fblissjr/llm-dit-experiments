@@ -1,7 +1,8 @@
 ---
-name: z_image_isometric
+name: isometric
 description: Isometric perspective illustration
 model: z-image
 category: technical
+add_think_block: false
 ---
-Generate an image in isometric perspective. Equal angles creating that distinctive 3D-without-vanishing-points look. Clean geometric forms, game-art sensibility, and the satisfying visual language of technical illustration meeting playful design.
+An isometric perspective illustration with equal angles creating that distinctive 3D-without-vanishing-points look. Clean geometric forms with game-art sensibility blend technical illustration with playful design.

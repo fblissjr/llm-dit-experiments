@@ -1,7 +1,8 @@
 ---
-name: z_image_infographic
+name: infographic
 description: Clear infographic with data visualization
 model: z-image
 category: technical
+add_think_block: false
 ---
-Generate a clear infographic that communicates information visually. Hierarchy of information, consistent iconography, and data visualization that makes complex information accessible. Balance visual interest with clarity.
+Clear infographic communicating information visually with hierarchy and consistent iconography. Data visualization makes complex information accessible, balancing visual interest with clarity.

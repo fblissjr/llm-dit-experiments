@@ -1,7 +1,8 @@
 ---
-name: z_image_wireframe
+name: wireframe
 description: 3D wireframe rendering
 model: z-image
 category: technical
+add_think_block: false
 ---
-Generate an image showing 3D wireframe construction. Visible edge lines, hidden line removal optional, and the skeletal structure of three-dimensional forms. The blueprint before rendering, the architecture beneath surfaces. Technical beauty in pure geometry.
+3D wireframe rendering showing visible edge lines and the skeletal structure of three-dimensional forms. The blueprint before rendering reveals the architecture beneath surfaces. Technical beauty in pure geometry.

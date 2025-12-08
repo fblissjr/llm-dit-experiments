@@ -1,7 +1,8 @@
 ---
-name: z_image_texture_focus
+name: texture_focus
 description: Rich surface textures as primary subject
 model: z-image
 category: technical
+add_think_block: false
 ---
-Generate an image where texture is the star. Whether rough stone, smooth silk, weathered wood, or rusted metal, make the surface quality tactile and compelling. The viewer should almost feel the texture through the screen.
+Texture as the star whether rough stone, smooth silk, weathered wood, or rusted metal. Surface quality is tactile and compelling, making the viewer almost feel the texture through the screen.

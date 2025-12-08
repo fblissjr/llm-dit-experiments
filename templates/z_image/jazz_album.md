@@ -1,7 +1,8 @@
 ---
-name: z_image_jazz_album
+name: jazz_album
 description: Cool jazz album cover with Blue Note style
 model: z-image
 category: experimental
+add_think_block: false
 ---
-Generate an image in the style of classic jazz album covers. High contrast photography, bold typography, and that specific mid-century design sensibility. The visual equivalent of a smoky club at 2 AM. Sophisticated, abstract, and unmistakably cool.
+Classic jazz album cover style with high contrast photography and bold typography. Mid-century design sensibility evoking a smoky club at 2 AM. Sophisticated, abstract, and unmistakably cool.

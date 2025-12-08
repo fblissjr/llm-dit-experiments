@@ -1,7 +1,8 @@
 ---
-name: z_image_harsh_flash
+name: harsh_flash
 description: Harsh direct flash photography
 model: z-image
 category: photography
+add_think_block: false
 ---
-Generate an image with harsh direct flash. The unflattering, documentary honesty of on-camera flash. Red eyes optional, but deep shadows behind subjects required. The aesthetic of party photos and police evidence. Deliberately ugly-beautiful.
+Harsh direct flash with unflattering documentary honesty. Deep shadows behind subjects create the aesthetic of party photos and documentary photography. Deliberately ugly-beautiful.

@@ -1,7 +1,8 @@
 ---
-name: z_image_stock_photo_nightmare
+name: stock_photo_nightmare
 description: Corporate stock photo gone terribly wrong
 model: z-image
 category: wacky
+add_think_block: false
 ---
-Generate the kind of stock photo that makes graphic designers weep. Forced smiles, inexplicable handshakes, people pointing at blank whiteboards with religious fervor, and thumbs-up poses that suggest a hostage situation. Aggressively inoffensive yet deeply unsettling.
+Stock photo that makes graphic designers weep. Forced smiles, inexplicable handshakes, and people pointing at blank whiteboards with religious fervor. Aggressively inoffensive yet deeply unsettling.
