@@ -381,17 +381,40 @@ class TransformersBackend:
         input_length = inputs.input_ids.shape[1]
         logger.debug(f"[TransformersBackend.generate] Input tokens: {input_length}")
 
-        # Generate
+        # Get proper termination tokens for Qwen3
+        # Qwen3 uses <|im_end|> as the stop token (token id 151645)
+        eos_token_id = self.tokenizer.eos_token_id
+        if eos_token_id is None:
+            # Fallback: try to get <|im_end|> token
+            eos_token_id = self.tokenizer.convert_tokens_to_ids("<|im_end|>")
+
+        # Build generation kwargs
+        gen_kwargs = {
+            "max_new_tokens": max_new_tokens,
+            "pad_token_id": self.tokenizer.pad_token_id or eos_token_id,
+            "eos_token_id": eos_token_id,
+        }
+
+        if do_sample and temperature > 0:
+            gen_kwargs["do_sample"] = True
+            gen_kwargs["temperature"] = temperature
+            gen_kwargs["top_p"] = top_p
+        else:
+            gen_kwargs["do_sample"] = False
+
+        logger.debug(f"[TransformersBackend.generate] Generation kwargs: {gen_kwargs}")
+        logger.debug(f"[TransformersBackend.generate] eos_token_id: {eos_token_id}")
+        logger.info(f"[TransformersBackend.generate] Starting generation (max_new_tokens={max_new_tokens})...")
+
+        # Generate - use use_cache=False to avoid KV cache issues after encoding
         with torch.no_grad():
             outputs = self.model.generate(
                 **inputs,
-                max_new_tokens=max_new_tokens,
-                temperature=temperature if do_sample else None,
-                top_p=top_p if do_sample else None,
-                do_sample=do_sample,
-                pad_token_id=self.tokenizer.pad_token_id or self.tokenizer.eos_token_id,
-                eos_token_id=self.tokenizer.eos_token_id,
+                **gen_kwargs,
+                use_cache=True,  # Keep generation fast
             )
+
+        logger.info(f"[TransformersBackend.generate] Generation completed")
 
         # Decode only the generated part (skip input tokens)
         generated_ids = outputs[0, input_length:]
