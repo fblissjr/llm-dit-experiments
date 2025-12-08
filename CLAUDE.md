@@ -252,6 +252,7 @@ src/llm_dit/
 
 scripts/
     generate.py         # CLI image generation script
+    profiler.py         # Profiling and stability testing script
 
 web/
     server.py           # FastAPI web server (history storage, all endpoints)
@@ -407,6 +408,59 @@ uv run scripts/generate.py \
   --output photo.png \
   "A portrait of a woman"
 ```
+
+## Profiler Script (scripts/profiler.py)
+
+Profiling and stability testing script for the Z-Image pipeline.
+
+```bash
+# Run all tests with default config
+uv run scripts/profiler.py --model-path /path/to/z-image-turbo
+
+# Run specific tests
+uv run scripts/profiler.py --model-path /path/to/z-image-turbo --tests encode,generate
+
+# Test different optimization configs (FA2, device placement, dtype, etc.)
+uv run scripts/profiler.py --model-path /path/to/z-image-turbo --sweep
+
+# Test different device placements (encoder/DiT/VAE on CPU/GPU)
+uv run scripts/profiler.py --model-path /path/to/z-image-turbo --sweep-devices
+
+# Save results to JSON
+uv run scripts/profiler.py --model-path /path/to/z-image-turbo --output results.json
+
+# Verbose output with all timings
+uv run scripts/profiler.py --model-path /path/to/z-image-turbo -v
+
+# Show system/library info only (no tests)
+uv run scripts/profiler.py --show-info
+```
+
+### Profiler-Specific Flags
+
+| Flag | Description |
+|------|-------------|
+| `--tests` | Comma-separated list of tests to run |
+| `--sweep` | Test multiple optimization configs |
+| `--sweep-devices` | Test multiple device placements |
+| `--output`, `-o` | Save results to JSON file |
+| `--repeat` | Number of times to repeat test suite |
+| `--show-info` | Show system info and exit |
+
+### Available Tests
+
+| Test | Description |
+|------|-------------|
+| `cuda_sync` | CUDA synchronization timing |
+| `load_encoder` | Load text encoder only |
+| `encode_short` | Encode short prompt |
+| `encode_medium` | Encode medium-length prompt |
+| `encode_with_template` | Encode with template |
+| `encode_with_thinking` | Encode with thinking block |
+| `generate_text` | Text generation (rewriting) |
+| `repeated_encode` | Memory leak detection |
+| `load_pipeline` | Load full pipeline |
+| `full_generation` | Full image generation |
 
 ## CLI Flags (Shared between web/server.py and scripts/generate.py)
 
