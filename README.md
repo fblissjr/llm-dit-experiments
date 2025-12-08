@@ -132,6 +132,21 @@ uv run pytest tests/ -v
 uv run pytest tests/test_web_server.py -v
 ```
 
+## Profiling
+
+```bash
+# Run stability tests
+uv run scripts/profiler.py --model-path /path/to/z-image-turbo
+
+# Show system info
+uv run scripts/profiler.py --show-info
+
+# Test different configurations
+uv run scripts/profiler.py --model-path /path/to/z-image-turbo --sweep
+```
+
+See [docs/profiler.md](docs/profiler.md) for detailed documentation.
+
 ## Project Structure
 
 ```
@@ -150,7 +165,7 @@ web/
     index.html          # Web UI
 
 templates/z_image/      # 144 prompt templates
-scripts/                # CLI tools
+scripts/                # CLI tools (generate.py, profiler.py)
 tests/                  # Test suite
 ```
 

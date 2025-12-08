@@ -302,7 +302,7 @@ class Profiler:
         self.encoder = ZImageTextEncoder.from_pretrained(
             self.config.model_path,
             templates_dir=self.config.templates_dir,
-            device=self.config.encoder_device_resolved,
+            device_map=self.config.encoder_device_resolved,
             torch_dtype=self.config.get_torch_dtype(),
         )
 
