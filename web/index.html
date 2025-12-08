@@ -153,12 +153,24 @@
                     <div class="mt-3 space-y-4 p-4 bg-gray-800/50 rounded-xl border border-gray-700">
                         <p class="text-xs text-gray-400">Use the loaded Qwen3 model to expand or rewrite your prompt</p>
 
-                        <!-- Rewriter Template -->
-                        <div>
+                        <!-- Mode Toggle -->
+                        <div class="flex gap-2">
+                            <button type="button" id="rewriterModeTemplate" class="flex-1 px-3 py-1.5 text-sm rounded-lg bg-blue-600 text-white">Template</button>
+                            <button type="button" id="rewriterModeCustom" class="flex-1 px-3 py-1.5 text-sm rounded-lg bg-gray-700 text-gray-300 hover:bg-gray-600">Custom</button>
+                        </div>
+
+                        <!-- Template Mode -->
+                        <div id="rewriterTemplateMode">
                             <label class="block text-sm font-medium text-gray-300 mb-2">Rewriter Style</label>
                             <select id="rewriterTemplate" class="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:ring-2 focus:ring-blue-500 text-sm">
                                 <option value="">Select a rewriter...</option>
                             </select>
+                        </div>
+
+                        <!-- Custom Mode -->
+                        <div id="rewriterCustomMode" class="hidden">
+                            <label class="block text-sm font-medium text-gray-300 mb-2">Custom Instructions</label>
+                            <textarea id="customRewriterPrompt" rows="4" class="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:ring-2 focus:ring-blue-500 text-sm resize-none" placeholder="Write your own rewriting instructions...&#10;&#10;Example: Expand this into a detailed image description with cinematic lighting and moody atmosphere."></textarea>
                         </div>
 
                         <!-- Rewriter Controls -->
@@ -591,22 +603,99 @@
         historyToggle?.addEventListener('click', toggleHistoryPanel);
         historyHandle?.addEventListener('click', toggleHistoryPanel);
 
+        // Store template data for auto-population
+        let templateData = {};
+
         // Load templates
         async function loadTemplates() {
             try {
                 const response = await fetch(`${API_BASE}/api/templates`);
                 const data = await response.json();
                 const select = document.getElementById('template');
-                select.innerHTML = '<option value="">None</option>';
+                select.innerHTML = '<option value="">None (raw prompt)</option>';
+
+                // Group templates by category
+                const categories = {};
                 data.templates.forEach(t => {
-                    const opt = document.createElement('option');
-                    opt.value = t.name;
-                    opt.textContent = t.name + (t.has_thinking ? ' *' : '');
-                    select.appendChild(opt);
+                    templateData[t.name] = t;
+                    const cat = t.category || 'general';
+                    if (!categories[cat]) categories[cat] = [];
+                    categories[cat].push(t);
                 });
+
+                // Add options grouped by category
+                Object.keys(categories).sort().forEach(cat => {
+                    const group = document.createElement('optgroup');
+                    group.label = cat.charAt(0).toUpperCase() + cat.slice(1);
+                    categories[cat].forEach(t => {
+                        const opt = document.createElement('option');
+                        opt.value = t.name;
+                        opt.textContent = t.name.replace(/^z_image_/, '').replace(/_/g, ' ');
+                        if (t.thinking_content) opt.textContent += ' *';
+                        group.appendChild(opt);
+                    });
+                    select.appendChild(group);
+                });
+
+                // Add template change listener
+                select.addEventListener('change', onTemplateChange);
             } catch (err) {
                 console.error('Failed to load templates:', err);
             }
+        }
+
+        // Handle template selection - auto-populate fields
+        function onTemplateChange(e) {
+            const name = e.target.value;
+            const systemPromptEl = document.getElementById('systemPrompt');
+            const thinkingContentEl = document.getElementById('thinkingContent');
+            const assistantContentEl = document.getElementById('assistantContent');
+            const enableThinkingEl = document.getElementById('enableThinking');
+
+            if (!name || !templateData[name]) {
+                // Clear fields if no template selected
+                systemPromptEl.value = '';
+                thinkingContentEl.value = '';
+                assistantContentEl.value = '';
+                enableThinkingEl.checked = false;
+                return;
+            }
+
+            const t = templateData[name];
+            systemPromptEl.value = t.system_prompt || '';
+            thinkingContentEl.value = t.thinking_content || '';
+            assistantContentEl.value = t.assistant_content || '';
+            enableThinkingEl.checked = t.add_think_block || false;
+        }
+
+        // Rewriter mode toggle
+        let rewriterMode = 'template'; // 'template' or 'custom'
+
+        function setupRewriterModeToggle() {
+            const templateBtn = document.getElementById('rewriterModeTemplate');
+            const customBtn = document.getElementById('rewriterModeCustom');
+            const templateMode = document.getElementById('rewriterTemplateMode');
+            const customMode = document.getElementById('rewriterCustomMode');
+
+            templateBtn.addEventListener('click', () => {
+                rewriterMode = 'template';
+                templateBtn.classList.remove('bg-gray-700', 'text-gray-300');
+                templateBtn.classList.add('bg-blue-600', 'text-white');
+                customBtn.classList.remove('bg-blue-600', 'text-white');
+                customBtn.classList.add('bg-gray-700', 'text-gray-300');
+                templateMode.classList.remove('hidden');
+                customMode.classList.add('hidden');
+            });
+
+            customBtn.addEventListener('click', () => {
+                rewriterMode = 'custom';
+                customBtn.classList.remove('bg-gray-700', 'text-gray-300');
+                customBtn.classList.add('bg-blue-600', 'text-white');
+                templateBtn.classList.remove('bg-blue-600', 'text-white');
+                templateBtn.classList.add('bg-gray-700', 'text-gray-300');
+                customMode.classList.remove('hidden');
+                templateMode.classList.add('hidden');
+            });
         }
 
         // Load rewriters
@@ -624,14 +713,13 @@
                         opt.textContent = r.description || r.name;
                         select.appendChild(opt);
                     });
-                } else {
-                    // Hide rewriter section if no rewriters available
-                    document.getElementById('rewriterSection').style.display = 'none';
                 }
+                // Always setup mode toggle (custom mode always available)
+                setupRewriterModeToggle();
             } catch (err) {
                 console.error('Failed to load rewriters:', err);
-                // Hide rewriter section on error
-                document.getElementById('rewriterSection').style.display = 'none';
+                // Still setup mode toggle for custom mode
+                setupRewriterModeToggle();
             }
         }
 
@@ -649,6 +737,7 @@
         rewriteBtn.addEventListener('click', async () => {
             const prompt = document.getElementById('prompt').value.trim();
             const rewriter = document.getElementById('rewriterTemplate').value;
+            const customPrompt = document.getElementById('customRewriterPrompt').value.trim();
             const maxTokens = parseInt(document.getElementById('rewriterMaxTokens').value) || 512;
             const temperature = parseFloat(document.getElementById('rewriterTemperature').value) || 0.7;
 
@@ -656,8 +745,14 @@
                 alert('Please enter a prompt first');
                 return;
             }
-            if (!rewriter) {
+
+            // Validate based on mode
+            if (rewriterMode === 'template' && !rewriter) {
                 alert('Please select a rewriter style');
+                return;
+            }
+            if (rewriterMode === 'custom' && !customPrompt) {
+                alert('Please enter custom rewriting instructions');
                 return;
             }
 
@@ -667,15 +762,23 @@
             rewrittenResult.classList.add('hidden');
 
             try {
+                // Build request based on mode
+                const requestBody = {
+                    prompt,
+                    max_tokens: maxTokens,
+                    temperature,
+                };
+
+                if (rewriterMode === 'template') {
+                    requestBody.rewriter = rewriter;
+                } else {
+                    requestBody.custom_system_prompt = customPrompt;
+                }
+
                 const response = await fetch(`${API_BASE}/api/rewrite`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        prompt,
-                        rewriter,
-                        max_tokens: maxTokens,
-                        temperature,
-                    }),
+                    body: JSON.stringify(requestBody),
                 });
 
                 if (!response.ok) {
@@ -686,7 +789,8 @@
                 const data = await response.json();
                 lastRewrittenPrompt = data.rewritten_prompt;
                 rewrittenText.textContent = data.rewritten_prompt;
-                rewriteInfo.textContent = `Generated in ${data.gen_time.toFixed(2)}s using ${data.rewriter}`;
+                const modeLabel = rewriterMode === 'custom' ? 'custom prompt' : data.rewriter;
+                rewriteInfo.textContent = `Generated in ${data.gen_time.toFixed(2)}s using ${modeLabel}`;
                 rewrittenResult.classList.remove('hidden');
 
             } catch (err) {

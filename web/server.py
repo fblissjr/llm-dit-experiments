@@ -77,7 +77,8 @@ class EncodeRequest(BaseModel):
 
 class RewriteRequest(BaseModel):
     prompt: str  # User prompt to rewrite/expand
-    rewriter: str  # Name of rewriter template to use
+    rewriter: Optional[str] = None  # Name of rewriter template (optional if custom_system_prompt provided)
+    custom_system_prompt: Optional[str] = None  # Ad-hoc system prompt for rewriting
     max_tokens: int = 512  # Maximum tokens to generate
     temperature: float = 0.7  # Sampling temperature
 
@@ -322,7 +323,7 @@ async def format_prompt_endpoint(request: EncodeRequest):
 
 @app.get("/api/templates")
 async def list_templates():
-    """List available templates."""
+    """List available templates with full data for UI population."""
     # Use encoder from pipeline or standalone encoder
     enc = encoder if encoder is not None else (pipeline.encoder if pipeline else None)
     if enc is None or enc.templates is None:
@@ -331,11 +332,19 @@ async def list_templates():
     templates = []
     for name in enc.templates:
         tpl = enc.templates.get(name)
-        templates.append({
-            "name": name,
-            "has_thinking": bool(tpl.thinking_content) if tpl else False,
-        })
+        if tpl and tpl.category != "rewriter":  # Exclude rewriter templates
+            templates.append({
+                "name": name,
+                "description": tpl.description or "",
+                "category": tpl.category or "general",
+                "system_prompt": tpl.content or "",
+                "thinking_content": tpl.thinking_content or "",
+                "assistant_content": tpl.assistant_content or "",
+                "add_think_block": tpl.add_think_block,
+            })
 
+    # Sort by category then name
+    templates.sort(key=lambda x: (x["category"], x["name"]))
     return {"templates": templates}
 
 
@@ -361,10 +370,14 @@ async def list_rewriters():
 @app.post("/api/rewrite")
 async def rewrite_prompt(request: RewriteRequest):
     """
-    Rewrite/expand a prompt using a rewriter template.
+    Rewrite/expand a prompt using a rewriter template or custom system prompt.
 
     Uses the same Qwen3 model loaded for text encoding to generate expanded prompts.
     This enables prompt enhancement without loading additional models.
+
+    Supports two modes:
+    1. Template mode: Use `rewriter` to specify a rewriter template
+    2. Ad-hoc mode: Use `custom_system_prompt` for custom rewriting instructions
     """
     # Use encoder from pipeline or standalone encoder
     enc = encoder if encoder is not None else (pipeline.encoder if pipeline else None)
@@ -382,38 +395,61 @@ async def rewrite_prompt(request: RewriteRequest):
             detail="Backend does not support text generation"
         )
 
-    # Get the rewriter template
-    if enc.templates is None:
-        raise HTTPException(status_code=400, detail="No templates loaded")
+    # Determine system prompt: custom takes precedence, then template
+    system_prompt = None
+    rewriter_name = "custom"
 
-    rewriter_template = enc.templates.get(request.rewriter)
-    if rewriter_template is None:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Rewriter template not found: {request.rewriter}"
-        )
+    if request.custom_system_prompt:
+        # Ad-hoc mode: use custom system prompt directly
+        system_prompt = request.custom_system_prompt.strip()
+        rewriter_name = "custom"
+        logger.info(f"[Rewrite] Using custom system prompt ({len(system_prompt)} chars)")
+    elif request.rewriter:
+        # Template mode: get system prompt from template
+        if enc.templates is None:
+            raise HTTPException(status_code=400, detail="No templates loaded")
 
-    if rewriter_template.category != "rewriter":
+        rewriter_template = enc.templates.get(request.rewriter)
+        if rewriter_template is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Rewriter template not found: {request.rewriter}"
+            )
+
+        if rewriter_template.category != "rewriter":
+            raise HTTPException(
+                status_code=400,
+                detail=f"Template '{request.rewriter}' is not a rewriter template"
+            )
+
+        system_prompt = rewriter_template.content
+        rewriter_name = request.rewriter
+    else:
         raise HTTPException(
             status_code=400,
-            detail=f"Template '{request.rewriter}' is not a rewriter template"
+            detail="Either 'rewriter' or 'custom_system_prompt' must be provided"
         )
 
     try:
         start = time.time()
-        logger.info(f"[Rewrite] Using template: {request.rewriter}")
+        logger.info(f"[Rewrite] Using: {rewriter_name}")
         logger.info(f"[Rewrite] Input prompt: {request.prompt[:100]}...")
 
         # Generate using the backend
         generated = backend.generate(
             prompt=request.prompt,
-            system_prompt=rewriter_template.content,
+            system_prompt=system_prompt,
             max_new_tokens=request.max_tokens,
             temperature=request.temperature,
         )
 
         gen_time = time.time() - start
         logger.info(f"[Rewrite] Generated {len(generated)} chars in {gen_time:.2f}s")
+
+        # Clear CUDA cache to prevent memory issues when switching back to encoding
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            logger.debug("[Rewrite] Cleared CUDA cache after generation")
 
         return {
             "original_prompt": request.prompt,
@@ -424,6 +460,9 @@ async def rewrite_prompt(request: RewriteRequest):
 
     except Exception as e:
         logger.error(f"Rewrite failed: {e}")
+        # Clear CUDA cache even on error
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
         raise HTTPException(status_code=500, detail=str(e))
 
 
