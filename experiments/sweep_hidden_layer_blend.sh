@@ -1,18 +1,20 @@
 #!/bin/bash
-# Shift + Steps Grid Search - Priority 2
+# Hidden Layer Blend Sweep - Experimental
 #
-# Find the quality ceiling by testing shift and step combinations.
-# Default is shift=3.0, steps=9 - this tests if we can do better.
+# Test blending embeddings from multiple hidden layers.
+# Hypothesis: Combining semantic (shallow) and structural (deep) layers
+# may produce better results than any single layer.
 #
-# Grid:
-#   shift: 2.0, 3.0, 4.0
-#   steps: 6, 9, 12, 15
-#   = 12 combinations per prompt
+# Conditions tested:
+#   - Single layers: -2 (default), -1 (last), -5 (deep)
+#   - Two-layer blends: various ratios of -2 and -5
+#   - Three-layer blends: equal weights across layers
 #
 # Usage:
-#   ./experiments/sweep_shift_steps.sh              # Full run
-#   ./experiments/sweep_shift_steps.sh --dry-run    # Preview only
-#   ./experiments/sweep_shift_steps.sh --quick      # Quick test (2 prompts, 1 seed)
+#   ./experiments/sweep_hidden_layer_blend.sh              # Full run
+#   ./experiments/sweep_hidden_layer_blend.sh --dry-run    # Preview only
+#   ./experiments/sweep_hidden_layer_blend.sh --quick      # Quick test (2 prompts, 1 seed)
+#   ./experiments/sweep_hidden_layer_blend.sh --metrics    # Enable scoring
 
 set -e
 
@@ -25,10 +27,10 @@ CONFIG="config.toml"
 PROFILE="rtx4090"
 SEEDS="42,123"
 MAX_PROMPTS=""
-PROMPT_CATEGORY="simple_objects"
+PROMPT_CATEGORY="animals"
 DRY_RUN=""
 COMPUTE_METRICS=""
-OUTPUT_DIR="experiments/results/shift_steps_$(date +%Y%m%d_%H%M%S)"
+OUTPUT_DIR="experiments/results/hidden_layer_blend_$(date +%Y%m%d_%H%M%S)"
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -70,22 +72,25 @@ while [[ $# -gt 0 ]]; do
 done
 
 echo "============================================================"
-echo "Shift + Steps Grid Search"
+echo "Hidden Layer Blend Sweep (Experimental)"
 echo "============================================================"
 echo "Config: $CONFIG (profile: $PROFILE)"
 echo "Category: $PROMPT_CATEGORY"
 echo "Seeds: $SEEDS"
-echo "Grid: shift=[2.0,3.0,4.0] x steps=[6,9,12,15]"
+echo "Conditions: single layers, two-layer blends, three-layer blends"
 echo "Metrics: ${COMPUTE_METRICS:-disabled}"
 echo "Output: $OUTPUT_DIR"
 echo "============================================================"
+echo ""
+echo "This experiment tests whether blending embeddings from multiple"
+echo "transformer layers produces better results than single layers."
 echo ""
 
 # Run the experiment
 uv run experiments/run_ablation.py \
     --config "$CONFIG" \
     --profile "$PROFILE" \
-    --experiment shift_steps_grid \
+    --experiment hidden_layer_blend \
     --prompt-category "$PROMPT_CATEGORY" \
     --seeds "$SEEDS" \
     --output-dir "$OUTPUT_DIR" \
@@ -101,8 +106,12 @@ if [[ -z "$DRY_RUN" ]]; then
     echo ""
     echo "Next steps:"
     echo "  1. Review images in $OUTPUT_DIR/"
-    echo "  2. Compare quality vs generation time"
-    echo "  3. Find the pareto frontier (best quality per time)"
-    echo "  4. Check if lower shift + more steps beats default"
+    echo "  2. Compare single-layer baselines (-2, -1, -5)"
+    echo "  3. Check if blends outperform single layers"
+    echo "  4. Look for: better detail, composition, or prompt adherence"
+    echo ""
+    echo "Expected findings (based on distilled model hypothesis):"
+    echo "  - Blends may show minimal difference due to distillation"
+    echo "  - If differences exist, 70/30 blend may work best"
     echo ""
 fi

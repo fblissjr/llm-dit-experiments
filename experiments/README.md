@@ -101,6 +101,7 @@ These match the official DiffSynth-Studio implementation. The `think_block` expe
 | `shift_sweep` | Sweep shift parameter | shift | 1.0, 2.0, 3.0, 4.0, 5.0, 6.0 |
 | `shift_steps_grid` | Grid search over shift and steps | shift, steps | shift: 2.0-4.0, steps: 6-15 |
 | `hidden_layer` | Compare hidden layer extraction | hidden_layer | -1, -2, -3, -4, -5, -6 |
+| `hidden_layer_blend` | Blend embeddings from multiple layers | layer_weights | single layers, 2-layer blends, 3-layer blends |
 | `think_block` | Test think block impact (DiffSynth uses empty) | thinking_content | empty (default), None, quality, mood, technical |
 | `system_prompt` | Test impact of system prompts | system_prompt | None, photographer, painter, illustrator, generic |
 | `steps_only` | Test different step counts | steps | 4, 6, 8, 9, 10, 12, 15, 20 |

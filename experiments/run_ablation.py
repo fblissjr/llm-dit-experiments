@@ -137,6 +137,24 @@ EXPERIMENTS = {
         "values": ["truncate", "interpolate", "pool", "attention_pool"],
         "defaults": {"shift": 3.0, "steps": 9},
     },
+    "hidden_layer_blend": {
+        "description": "Blend embeddings from multiple hidden layers",
+        "variable": "layer_weights",
+        "values": [
+            # Baseline: single layers
+            {-2: 1.0},  # Default (penultimate only)
+            {-1: 1.0},  # Last layer only
+            {-5: 1.0},  # Deeper layer only
+            # Two-layer blends: semantic + structural
+            {-2: 0.7, -5: 0.3},  # 70% semantic, 30% structural
+            {-2: 0.5, -5: 0.5},  # Equal blend
+            {-2: 0.3, -5: 0.7},  # 30% semantic, 70% structural
+            # Three-layer blends
+            {-1: 0.33, -2: 0.34, -3: 0.33},  # Equal top-3
+            {-2: 0.5, -4: 0.25, -6: 0.25},  # Weighted across depth
+        ],
+        "defaults": {"shift": 3.0, "steps": 9},
+    },
 }
 
 
@@ -154,6 +172,7 @@ class ExperimentConfig:
     shift: float = 3.0
     steps: int = 9
     hidden_layer: int = -2
+    layer_weights: dict[int, float] | None = None  # For layer blending experiments
     long_prompt_mode: str = "interpolate"
     width: int = 1024
     height: int = 1024
@@ -297,6 +316,10 @@ class ExperimentRunner:
             # Add hidden_layer and long_prompt_mode
             gen_kwargs["hidden_layer"] = config.hidden_layer
             gen_kwargs["long_prompt_mode"] = config.long_prompt_mode
+
+            # Add layer_weights for blending experiments
+            if config.layer_weights is not None:
+                gen_kwargs["layer_weights"] = config.layer_weights
 
             # Generate
             result = self.pipeline(**gen_kwargs)
@@ -486,6 +509,10 @@ class ExperimentRunner:
                             config.force_think_block = True
                     elif variable == "system_prompt":
                         config.system_prompt = value
+                    elif variable == "long_prompt_mode":
+                        config.long_prompt_mode = value
+                    elif variable == "layer_weights":
+                        config.layer_weights = value
 
                     configs.append(config)
 

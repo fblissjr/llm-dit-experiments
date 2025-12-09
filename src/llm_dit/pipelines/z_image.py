@@ -845,6 +845,7 @@ class ZImagePipeline:
         shift: Optional[float] = None,
         long_prompt_mode: str = "truncate",
         hidden_layer: int = -2,
+        layer_weights: dict[int, float] | None = None,
     ) -> Union[Image.Image, List[Image.Image], torch.Tensor]:
         """
         Generate an image from a text prompt.
@@ -877,6 +878,9 @@ class ZImagePipeline:
             hidden_layer: Which LLM hidden layer to extract embeddings from (default: -2).
                    -1 = last layer, -2 = penultimate (default), -3 to -6 for deeper layers.
                    Useful for experimenting with embedding quality.
+            layer_weights: Optional dict mapping layer indices to blend weights, e.g.:
+                   {-2: 0.7, -5: 0.3} blends 70% penultimate + 30% layer -5.
+                   If provided, overrides hidden_layer. Weights are normalized to sum to 1.0.
 
         Returns:
             Generated image(s) in specified format
@@ -923,16 +927,30 @@ class ZImagePipeline:
         backend = getattr(self.encoder, 'backend', None)
         logger.info(f"[Pipeline] Encoder backend: {type(backend).__name__ if backend else 'local'}")
 
-        prompt_output = self.encoder.encode(
-            prompt,
-            template=template,
-            system_prompt=system_prompt,
-            thinking_content=thinking_content,
-            assistant_content=assistant_content,
-            force_think_block=force_think_block,
-            remove_quotes=remove_quotes,
-            layer_index=hidden_layer,
-        )
+        # Use blended encoding if layer_weights provided, otherwise standard encoding
+        if layer_weights is not None:
+            logger.info(f"[Pipeline] Using blended encoding with layer_weights={layer_weights}")
+            prompt_output = self.encoder.encode_blended(
+                prompt,
+                layer_weights=layer_weights,
+                template=template,
+                system_prompt=system_prompt,
+                thinking_content=thinking_content,
+                assistant_content=assistant_content,
+                force_think_block=force_think_block,
+                remove_quotes=remove_quotes,
+            )
+        else:
+            prompt_output = self.encoder.encode(
+                prompt,
+                template=template,
+                system_prompt=system_prompt,
+                thinking_content=thinking_content,
+                assistant_content=assistant_content,
+                force_think_block=force_think_block,
+                remove_quotes=remove_quotes,
+                layer_index=hidden_layer,
+            )
 
         # Log formatted prompt for debugging
         if prompt_output.formatted_prompts:

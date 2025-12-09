@@ -21,6 +21,7 @@ cd "$PROJECT_DIR"
 QUICK=""
 DRY_RUN=""
 SKIP_LONG_PROMPT=""
+COMPUTE_METRICS=""
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -37,10 +38,14 @@ while [[ $# -gt 0 ]]; do
             SKIP_LONG_PROMPT="1"
             shift
             ;;
+        --metrics)
+            COMPUTE_METRICS="--metrics"
+            shift
+            ;;
         *)
             echo "Unknown option: $1"
             echo ""
-            echo "Usage: $0 [--quick] [--dry-run] [--skip-long-prompt]"
+            echo "Usage: $0 [--quick] [--dry-run] [--skip-long-prompt] [--metrics]"
             exit 1
             ;;
     esac
@@ -57,6 +62,9 @@ fi
 if [[ -n "$DRY_RUN" ]]; then
     echo "Dry run: YES (no images will be generated)"
 fi
+if [[ -n "$COMPUTE_METRICS" ]]; then
+    echo "Metrics: ENABLED (ImageReward + SigLIP)"
+fi
 echo "============================================================"
 echo ""
 
@@ -64,26 +72,26 @@ echo ""
 echo ""
 echo ">>> PRIORITY 1: Hidden Layer Sweep"
 echo ""
-bash "$SCRIPT_DIR/sweep_hidden_layer.sh" $QUICK $DRY_RUN
+bash "$SCRIPT_DIR/sweep_hidden_layer.sh" $QUICK $DRY_RUN $COMPUTE_METRICS
 
 # Priority 2: Shift + Steps Grid
 echo ""
 echo ">>> PRIORITY 2: Shift + Steps Grid Search"
 echo ""
-bash "$SCRIPT_DIR/sweep_shift_steps.sh" $QUICK $DRY_RUN
+bash "$SCRIPT_DIR/sweep_shift_steps.sh" $QUICK $DRY_RUN $COMPUTE_METRICS
 
 # Priority 3: Think Block
 echo ""
 echo ">>> PRIORITY 3: Think Block Impact Test"
 echo ""
-bash "$SCRIPT_DIR/sweep_think_block.sh" $QUICK $DRY_RUN
+bash "$SCRIPT_DIR/sweep_think_block.sh" $QUICK $DRY_RUN $COMPUTE_METRICS
 
 # Priority 4: Long Prompt Mode (optional)
 if [[ -z "$SKIP_LONG_PROMPT" ]]; then
     echo ""
     echo ">>> PRIORITY 4: Long Prompt Mode Test"
     echo ""
-    bash "$SCRIPT_DIR/sweep_long_prompt.sh" $QUICK $DRY_RUN
+    bash "$SCRIPT_DIR/sweep_long_prompt.sh" $QUICK $DRY_RUN $COMPUTE_METRICS
 else
     echo ""
     echo ">>> SKIPPING: Long Prompt Mode (--skip-long-prompt)"

@@ -9,6 +9,7 @@ __pycache__/
 
 # Configs
 config.toml
+experiments/results/*
 
 # Distribution / packaging
 .Python

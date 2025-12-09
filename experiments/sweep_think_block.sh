@@ -29,6 +29,7 @@ SEEDS="42,123,456"
 MAX_PROMPTS=""
 PROMPT_CATEGORY="humans"
 DRY_RUN=""
+COMPUTE_METRICS=""
 OUTPUT_DIR="experiments/results/think_block_$(date +%Y%m%d_%H%M%S)"
 
 # Parse arguments
@@ -59,6 +60,10 @@ while [[ $# -gt 0 ]]; do
             PROMPT_CATEGORY="$2"
             shift 2
             ;;
+        --metrics)
+            COMPUTE_METRICS="--compute-metrics"
+            shift
+            ;;
         *)
             echo "Unknown option: $1"
             exit 1
@@ -73,6 +78,7 @@ echo "Config: $CONFIG (profile: $PROFILE)"
 echo "Category: $PROMPT_CATEGORY"
 echo "Seeds: $SEEDS"
 echo "Conditions: empty (default), none, quality, mood, technical"
+echo "Metrics: ${COMPUTE_METRICS:-disabled}"
 echo "Output: $OUTPUT_DIR"
 echo "============================================================"
 echo ""
@@ -86,7 +92,8 @@ uv run experiments/run_ablation.py \
     --seeds "$SEEDS" \
     --output-dir "$OUTPUT_DIR" \
     $MAX_PROMPTS \
-    $DRY_RUN
+    $DRY_RUN \
+    $COMPUTE_METRICS
 
 if [[ -z "$DRY_RUN" ]]; then
     echo ""

@@ -312,6 +312,105 @@ class TransformersBackend:
 
         return result
 
+    def encode_blended(
+        self,
+        texts: List[str],
+        layer_weights: dict[int, float],
+        return_padded: bool = False,
+    ) -> EncodingOutput:
+        """
+        Encode text using a weighted blend of multiple hidden layers.
+
+        This allows combining semantic information from different depths of the
+        transformer. For example, deeper layers (-5, -6) may capture more
+        structural/syntactic information while shallower layers (-1, -2) capture
+        more semantic/conceptual information.
+
+        Args:
+            texts: List of pre-formatted text strings
+            layer_weights: Dict mapping layer indices to weights, e.g.:
+                {-2: 0.7, -5: 0.3} blends 70% penultimate + 30% layer -5
+                Weights are normalized to sum to 1.0
+            return_padded: If True, also return padded batch tensors
+
+        Returns:
+            EncodingOutput with blended embeddings
+
+        Example:
+            # Blend semantic (-2) and structural (-5) information
+            output = backend.encode_blended(
+                texts=["A cat sleeping"],
+                layer_weights={-2: 0.7, -5: 0.3}
+            )
+        """
+        if not layer_weights:
+            raise ValueError("layer_weights must not be empty")
+
+        # Normalize weights to sum to 1.0
+        total_weight = sum(layer_weights.values())
+        if total_weight <= 0:
+            raise ValueError("layer_weights must sum to a positive value")
+        normalized_weights = {k: v / total_weight for k, v in layer_weights.items()}
+
+        logger.debug(f"[TransformersBackend] Blending layers: {normalized_weights}")
+
+        # Tokenize
+        inputs = self.tokenizer(
+            texts,
+            padding=True,
+            truncation=True,
+            max_length=self.config.max_length,
+            return_tensors="pt",
+        )
+
+        input_ids = inputs.input_ids.to(self.device)
+        attention_mask = inputs.attention_mask.to(self.device).bool()
+
+        # Encode once, get all hidden states
+        with torch.no_grad():
+            outputs = self.model(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                output_hidden_states=True,
+            )
+
+        # Blend hidden states from specified layers
+        blended_hidden = None
+        for layer_idx, weight in normalized_weights.items():
+            layer_hidden = outputs.hidden_states[layer_idx]
+            if blended_hidden is None:
+                blended_hidden = weight * layer_hidden
+            else:
+                blended_hidden = blended_hidden + weight * layer_hidden
+
+        logger.debug(f"[TransformersBackend] Blended {len(normalized_weights)} layers")
+
+        # Filter by attention mask to get variable-length outputs
+        embeddings_list = []
+        masks_list = []
+        token_counts = []
+        for i in range(len(texts)):
+            mask = attention_mask[i]
+            valid_embeds = blended_hidden[i][mask]
+            embeddings_list.append(valid_embeds)
+            masks_list.append(mask[mask])
+            token_counts.append(valid_embeds.shape[0])
+
+            logger.debug(f"[TransformersBackend] Blended embedding [{i}]: shape={valid_embeds.shape}")
+            logger.debug(f"[TransformersBackend] Blended embedding [{i}] stats: min={valid_embeds.min().item():.4f}, max={valid_embeds.max().item():.4f}, mean={valid_embeds.mean().item():.4f}")
+
+        result = EncodingOutput(
+            embeddings=embeddings_list,
+            attention_masks=masks_list,
+            token_counts=token_counts,
+        )
+
+        if return_padded:
+            result.padded_embeddings = blended_hidden
+            result.padded_mask = attention_mask
+
+        return result
+
     def to(self, device: torch.device) -> "TransformersBackend":
         """Move model to device."""
         self.model = self.model.to(device)

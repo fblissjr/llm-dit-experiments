@@ -301,6 +301,78 @@ class ZImageTextEncoder:
         output.formatted_prompts = formatted_list
         return output
 
+    def encode_blended(
+        self,
+        prompt: Union[str, Conversation],
+        layer_weights: dict[int, float],
+        template: str | Template | None = None,
+        system_prompt: str | None = None,
+        thinking_content: str | None = None,
+        assistant_content: str | None = None,
+        force_think_block: bool = False,
+        return_padded: bool = False,
+        remove_quotes: bool = False,
+    ) -> EncodingOutput:
+        """
+        Encode a prompt using a weighted blend of multiple hidden layers.
+
+        This allows combining semantic information from different depths of the
+        transformer. For example, deeper layers (-5, -6) may capture more
+        structural information while shallower layers (-1, -2) capture
+        more semantic information.
+
+        Args:
+            prompt: The prompt string or Conversation object
+            layer_weights: Dict mapping layer indices to weights, e.g.:
+                {-2: 0.7, -5: 0.3} blends 70% penultimate + 30% layer -5
+                Weights are normalized to sum to 1.0
+            template: Optional template name or Template object
+            system_prompt: Override system prompt
+            thinking_content: Thinking block content
+            assistant_content: Assistant content after thinking
+            force_think_block: If True, add empty think block
+            return_padded: Also return padded batch tensors
+            remove_quotes: If True, strip " characters
+
+        Returns:
+            EncodingOutput with blended embeddings
+
+        Example:
+            # Blend semantic (-2) and structural (-5) layers
+            output = encoder.encode_blended(
+                "A cat sleeping in sunlight",
+                layer_weights={-2: 0.7, -5: 0.3}
+            )
+        """
+        # Build conversation
+        if isinstance(prompt, Conversation):
+            conversation = prompt
+        else:
+            conversation = self._build_conversation(
+                prompt=prompt,
+                template=template,
+                system_prompt=system_prompt,
+                thinking_content=thinking_content,
+                assistant_content=assistant_content,
+                force_think_block=force_think_block,
+                remove_quotes=remove_quotes,
+            )
+
+        # Format to chat template string
+        formatted = self.formatter.format(conversation)
+        logger.debug(f"Formatted prompt for blending ({len(formatted)} chars)")
+
+        # Encode with blending via backend
+        output = self.backend.encode_blended(
+            [formatted],
+            layer_weights=layer_weights,
+            return_padded=return_padded,
+        )
+
+        # Attach formatted prompt for debugging
+        output.formatted_prompts = [formatted]
+        return output
+
     def _build_conversation(
         self,
         prompt: str,
