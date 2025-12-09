@@ -219,8 +219,6 @@ class ExperimentRunner:
         self.dry_run = dry_run
         self.compute_metrics = compute_metrics
         self.pipeline = None
-        self._image_reward_scorer = None
-        self._siglip_scorer = None
 
         # Create output directories
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -346,21 +344,14 @@ class ExperimentRunner:
             if hasattr(result, "token_count"):
                 token_count = result.token_count
 
-            # Compute metrics if requested
-            image_reward_score = None
-            siglip_score = None
-            if self.compute_metrics:
-                image_reward_score, siglip_score = self._compute_metrics(
-                    config.prompt_text, output_path
-                )
+            # Note: metrics are computed in batch after all generation is done
+            # See _compute_batch_metrics() called from run_experiment()
 
             return ExperimentResult(
                 config=config,
                 output_path=str(output_path),
                 generation_time_seconds=generation_time,
                 token_count=token_count,
-                image_reward=image_reward_score,
-                siglip_score=siglip_score,
             )
 
         except Exception as e:
@@ -372,38 +363,82 @@ class ExperimentRunner:
                 error=str(e),
             )
 
-    def _compute_metrics(
-        self, prompt: str, image_path: Path
-    ) -> tuple[float | None, float | None]:
-        """Compute ImageReward and SigLIP2 scores for an image."""
-        image_reward_score = None
-        siglip_score = None
+    def _compute_batch_metrics(self, results: list[ExperimentResult]) -> None:
+        """Compute metrics for all results after generation is complete.
 
-        # ImageReward (human preference)
+        This is called after all images are generated, allowing us to:
+        1. Unload the generation pipeline
+        2. Free GPU memory
+        3. Load metrics models
+        4. Score all images efficiently
+        """
+        import gc
+
+        # Unload pipeline to free GPU memory
+        logger.info("Unloading pipeline to free GPU memory...")
+        if hasattr(self, 'pipeline') and self.pipeline is not None:
+            del self.pipeline
+            self.pipeline = None
+
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+            allocated = torch.cuda.memory_allocated() / 1e9
+            logger.info(f"GPU memory after unload: {allocated:.2f} GB")
+
+        # Filter to successful results only
+        valid_results = [r for r in results if r.error is None]
+        if not valid_results:
+            logger.warning("No successful results to compute metrics for")
+            return
+
+        prompts = [r.config.prompt_text for r in valid_results]
+        image_paths = [r.output_path for r in valid_results]
+
+        # ImageReward (human preference) - batch scoring
         try:
-            if self._image_reward_scorer is None:
-                from experiments.metrics import ImageRewardScorer
-                self._image_reward_scorer = ImageRewardScorer()
-            image_reward_score = self._image_reward_scorer.score(prompt, image_path)
-            logger.debug("ImageReward: %.4f", image_reward_score)
+            from experiments.metrics import ImageRewardScorer
+            logger.info("Computing ImageReward scores...")
+            scorer = ImageRewardScorer(device="cuda" if torch.cuda.is_available() else "cpu")
+            for i, result in enumerate(valid_results):
+                try:
+                    score = scorer.score(result.config.prompt_text, result.output_path)
+                    result.image_reward = score
+                    logger.debug("ImageReward [%d]: %.4f", i, score)
+                except Exception as e:
+                    logger.warning("ImageReward failed for %s: %s", result.output_path, e)
+            # Cleanup
+            del scorer
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
         except ImportError:
             logger.warning("ImageReward not installed, skipping. Install: uv add image-reward")
         except Exception as e:
             logger.warning("ImageReward computation failed: %s", e)
 
-        # SigLIP2 (image-text alignment)
+        # SigLIP2 (image-text alignment) - batch scoring
         try:
-            if self._siglip_scorer is None:
-                from experiments.metrics import SigLIPScorer
-                self._siglip_scorer = SigLIPScorer()
-            siglip_score = self._siglip_scorer.score(prompt, image_path)
-            logger.debug("SigLIP Score: %.4f", siglip_score)
+            from experiments.metrics import SigLIPScorer
+            logger.info("Computing SigLIP scores...")
+            scorer = SigLIPScorer(device="cuda" if torch.cuda.is_available() else "cpu")
+
+            # Use batch scoring for efficiency
+            scores = scorer.score_batch(prompts, image_paths)
+            for result, score in zip(valid_results, scores):
+                result.siglip_score = score
+            logger.info("SigLIP scoring complete")
+
+            # Cleanup
+            del scorer
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
         except ImportError:
             logger.warning("transformers not installed, skipping SigLIP. Install: uv add transformers")
         except Exception as e:
             logger.warning("SigLIP computation failed: %s", e)
-
-        return image_reward_score, siglip_score
 
     def run_experiment(
         self,
@@ -456,15 +491,25 @@ class ExperimentRunner:
             len(seeds),
         )
 
-        # Run all configurations
+        # Run all configurations (generation only, no metrics yet)
         results = []
         for i, config in enumerate(configs):
             logger.info("Progress: %d/%d", i + 1, len(configs))
             result = self.run_single(config)
             results.append(result)
 
-            # Save intermediate results
+            # Save intermediate results (without metrics)
             self._save_result(result)
+
+        # Compute metrics AFTER all generation is done
+        # This allows us to unload the pipeline and load metrics models
+        if self.compute_metrics:
+            logger.info("Computing metrics for %d images...", len(results))
+            self._compute_batch_metrics(results)
+
+            # Re-save results with metrics
+            for result in results:
+                self._save_result(result)
 
         # Save summary
         self._save_summary(experiment_name, results)
