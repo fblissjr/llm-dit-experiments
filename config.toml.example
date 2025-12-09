@@ -18,62 +18,65 @@ templates_dir = "templates/z_image"
 [default.encoder]
 device = "auto"              # cpu/cuda/mps/auto
 torch_dtype = "bfloat16"     # bfloat16/float16/float32
-quantization = "none"        # v5 API: none/4bit/8bit
-cpu_offload = false
-max_length = 512
-hidden_layer = -2            # Which layer to extract embeddings from (-1=last, -2=penultimate)
+quantization = "none"        # none/4bit/8bit (bitsandbytes)
+cpu_offload = false          # Move encoder to CPU after encoding to free VRAM
+max_length = 512             # Tokenizer max length (DiT limit is 1024, see long_prompt_mode)
+hidden_layer = -2            # Layer for embeddings: -2=penultimate (default), -1=last
 
 [default.pipeline]
 device = "auto"
 torch_dtype = "bfloat16"
-enable_model_cpu_offload = false
-enable_sequential_cpu_offload = false
+enable_model_cpu_offload = false     # Offload inactive components to CPU between steps
+enable_sequential_cpu_offload = false # More aggressive: offload each layer individually
 
 [default.generation]
 height = 1024
 width = 1024
-num_inference_steps = 9
-guidance_scale = 0.0         # Z-Image-Turbo uses 0.0 (CFG baked in)
-enable_thinking = false      # No think block by default (matches HF Space)
-default_template = ""        # Optional default template name
+num_inference_steps = 9      # 8-9 optimal for turbo model
+guidance_scale = 0.0         # Must be 0.0 for Z-Image-Turbo (CFG baked into weights)
+enable_thinking = false      # Add <think> block to prompt format (experimental)
+default_template = ""        # Auto-apply this template to all prompts
 
 [default.scheduler]
-shift = 3.0                  # FlowMatch shift parameter
+shift = 3.0                  # FlowMatch timestep shift (higher=more denoising early)
 
 [default.optimization]
-flash_attn = false           # Requires flash-attn package
-compile = false              # Use torch.compile (slower first run)
-cpu_offload = false          # CPU offload for transformer
+flash_attn = false           # Enable Flash Attention 2 (requires flash-attn package)
+compile = false              # torch.compile the transformer (slow first run, faster after)
+cpu_offload = false          # Offload transformer to CPU (very slow, last resort)
 
 [default.pytorch]
-# PyTorch-native components
 attention_backend = "auto"    # auto/flash_attn_2/flash_attn_3/sage/xformers/sdpa
-use_custom_scheduler = false  # Use pure PyTorch FlowMatchScheduler
-tiled_vae = false             # Enable tiled VAE for 2K+ images
-tile_size = 512               # Tile size in pixels (latent = tile_size / 8)
-tile_overlap = 64             # Overlap between tiles for smooth blending
-embedding_cache = false       # Cache text embeddings for repeated prompts
-cache_size = 100              # Max number of cached embeddings
-long_prompt_mode = "truncate" # truncate/interpolate/pool/attention_pool
+use_custom_scheduler = false  # Use pure PyTorch FlowMatchScheduler instead of diffusers
+tiled_vae = false             # Process VAE in tiles (required for 2K+ resolution)
+tile_size = 512               # VAE tile size in pixels (latent = tile_size / 8)
+tile_overlap = 64             # Overlap between tiles for seamless blending
+embedding_cache = false       # LRU cache for text embeddings (faster repeated prompts)
+cache_size = 100              # Max cached embeddings before LRU eviction
+long_prompt_mode = "truncate" # What to do if tokens > 1024: truncate/interpolate/pool/attention_pool
 
 [default.api]
-# Remote API backend (for distributed inference)
+# Remote API backend for distributed inference (encoder on remote, DiT local)
 url = ""                     # e.g., http://mac-host:8080
-model = "Qwen3-4B-mlx" # Model ID on remote server
+model = "Qwen3-4B"           # Model ID on remote server
 
 [default.lora]
-paths = []
-scales = []
+paths = []                   # List of LoRA safetensors paths
+scales = []                  # Scale for each LoRA (0.0-1.0 typical)
 
 [default.rewriter]
-# Prompt rewriter settings (for /api/rewrite endpoint)
-use_api = false              # Use API backend for rewriting (default: use local model)
-api_url = ""                 # API URL for rewriter (falls back to --api-url if empty)
-api_model = "Qwen3-4B"       # Model ID for rewriter API
-temperature = 1.0            # Sampling temperature
+# Prompt rewriter: expand short prompts into detailed descriptions
+# Uses Qwen3 for text generation (same model as encoder)
+# Qwen3 optimal settings: https://huggingface.co/Qwen/Qwen3-4B#best-practices
+use_api = false              # true=use remote API, false=use local encoder model
+api_url = ""                 # API URL (falls back to [api].url if empty)
+api_model = "Qwen3-4B"       # Model ID for API backend
+temperature = 0.6            # 0.6 for thinking mode (NEVER use 0.0, causes repetition)
 top_p = 0.95                 # Nucleus sampling threshold
-min_p = 0.0                  # Minimum probability threshold (0.0 = disabled)
-max_tokens = 512             # Maximum tokens to generate
+top_k = 20                   # Top-k sampling
+min_p = 0.0                  # Min probability cutoff (0.0=disabled)
+presence_penalty = 0.0       # 0.0-2.0, increase if seeing repetitive output
+max_tokens = 512             # Max tokens to generate
 
 # =============================================================================
 # RTX 4090 Profile - Optimized for 24GB VRAM
@@ -83,12 +86,12 @@ model_path = "/path/to/z-image-turbo"
 templates_dir = "templates/z_image"
 
 [rtx4090.encoder]
-device = "auto"              # cpu/cuda/mps/auto
-torch_dtype = "bfloat16"     # bfloat16/float16/float32
-quantization = "none"        # v5 API: none/4bit/8bit
+device = "auto"
+torch_dtype = "bfloat16"     # 4090 has native BF16 support
+quantization = "none"        # No need to quantize with 24GB VRAM
 cpu_offload = false
-max_length = 2048
-hidden_layer = -2            # Which layer to extract embeddings from (-1=last, -2=penultimate)
+max_length = 2048            # Allow long prompts, interpolate handles overflow
+hidden_layer = -2
 
 [rtx4090.pipeline]
 device = "auto"
@@ -100,50 +103,184 @@ enable_sequential_cpu_offload = false
 height = 1024
 width = 1024
 num_inference_steps = 9
-guidance_scale = 0.0         # Z-Image-Turbo uses 0.0 (CFG baked in)
-enable_thinking = false      # No think block by default (matches HF Space)
-default_template = ""        # Optional default template name
+guidance_scale = 0.0
+enable_thinking = false
+default_template = ""
 
 [rtx4090.scheduler]
-shift = 3.0                  # FlowMatch shift parameter
+shift = 3.0
 
 [rtx4090.optimization]
-flash_attn = false           # Requires flash-attn package
-compile = false              # Use torch.compile (slower first run)
-cpu_offload = false          # CPU offload for transformer
+flash_attn = true            # 4090 supports FA2, significant speedup
+compile = false              # Optional: enable for ~10% speedup after warmup
+cpu_offload = false
 
 [rtx4090.pytorch]
-# PyTorch-native components
-attention_backend = "auto"    # auto/flash_attn_2/flash_attn_3/sage/xformers/sdpa
-use_custom_scheduler = false  # Use pure PyTorch FlowMatchScheduler
-tiled_vae = false             # Enable tiled VAE for 2K+ images
-tile_size = 512               # Tile size in pixels (latent = tile_size / 8)
-tile_overlap = 64             # Overlap between tiles for smooth blending
-embedding_cache = false       # Cache text embeddings for repeated prompts
-cache_size = 100              # Max number of cached embeddings
-long_prompt_mode = "truncate" # truncate/interpolate/pool/attention_pool
+attention_backend = "auto"   # Will select flash_attn_2 automatically
+use_custom_scheduler = false
+tiled_vae = false            # Enable for resolutions > 1536
+tile_size = 512
+tile_overlap = 64
+embedding_cache = false      # Enable for web server with repeated prompts
+cache_size = 100
+long_prompt_mode = "interpolate"  # Smoothly resample long prompts to 1024 tokens
 
 [rtx4090.api]
 url = ""
-model = "Qwen3-4B-mlx"
+model = "Qwen3-4B"
 
 [rtx4090.lora]
 paths = []
 scales = []
 
 [rtx4090.rewriter]
-# Prompt rewriter settings (for /api/rewrite endpoint)
-use_api = false              # Use API backend for rewriting (default: use local model)
-api_url = ""                 # API URL for rewriter (falls back to --api-url if empty)
-api_model = "Qwen3-4B"       # Model ID for rewriter API
-temperature = 1.0            # Sampling temperature
-top_p = 0.95                 # Nucleus sampling threshold
-min_p = 0.0                  # Minimum probability threshold (0.0 = disabled)
-max_tokens = 512             # Maximum tokens to generate
+# Qwen3 thinking mode optimal settings
+use_api = false
+api_url = ""
+api_model = "Qwen3-4B"
+temperature = 0.6
+top_p = 0.95
+top_k = 20
+min_p = 0.0
+presence_penalty = 0.0
+max_tokens = 2048            # More headroom for detailed rewrites
+
+# =============================================================================
+# Low VRAM Profile - For 8-16GB GPUs
+# =============================================================================
+[low_vram]
+model_path = "/path/to/z-image-turbo"
+templates_dir = "templates/z_image"
+
+[low_vram.encoder]
+device = "cuda"
+torch_dtype = "float16"      # FP16 uses less memory than BF16 on older GPUs
+quantization = "8bit"        # 8-bit quantization saves ~50% encoder VRAM
+cpu_offload = true           # Move encoder to CPU after encoding
+max_length = 512
+hidden_layer = -2
+
+[low_vram.pipeline]
+device = "cuda"
+torch_dtype = "float16"
+enable_model_cpu_offload = true   # Offload DiT/VAE between steps
+enable_sequential_cpu_offload = false
+
+[low_vram.generation]
+height = 1024
+width = 1024
+num_inference_steps = 9
+guidance_scale = 0.0
+enable_thinking = false
+default_template = ""
+
+[low_vram.scheduler]
+shift = 3.0
+
+[low_vram.optimization]
+flash_attn = false           # May not be available on older GPUs
+compile = false
+cpu_offload = true           # Offload transformer layers
+
+[low_vram.pytorch]
+attention_backend = "sdpa"   # PyTorch native, works everywhere
+use_custom_scheduler = false
+tiled_vae = true             # Required at lower VRAM to avoid OOM
+tile_size = 256              # Smaller tiles for less memory
+tile_overlap = 32
+embedding_cache = false
+cache_size = 50
+long_prompt_mode = "truncate"
+
+[low_vram.api]
+url = ""
+model = "Qwen3-4B"
+
+[low_vram.lora]
+paths = []
+scales = []
+
+[low_vram.rewriter]
+use_api = false
+api_url = ""
+api_model = "Qwen3-4B"
+temperature = 0.6
+top_p = 0.95
+top_k = 20
+min_p = 0.0
+presence_penalty = 0.0
+max_tokens = 256             # Shorter output to save memory
+
+# =============================================================================
+# Distributed Profile - Encoder on Mac (MLX), DiT on CUDA
+# =============================================================================
+[distributed]
+model_path = "/path/to/z-image-turbo"  # Local path for DiT/VAE only
+templates_dir = "templates/z_image"
+
+[distributed.encoder]
+# Encoder runs on remote Mac via API, these settings are ignored
+device = "cpu"
+torch_dtype = "float32"
+quantization = "none"
+cpu_offload = false
+max_length = 2048
+hidden_layer = -2
+
+[distributed.pipeline]
+device = "cuda"              # DiT runs locally on CUDA
+torch_dtype = "bfloat16"
+enable_model_cpu_offload = false
+enable_sequential_cpu_offload = false
+
+[distributed.generation]
+height = 1024
+width = 1024
+num_inference_steps = 9
+guidance_scale = 0.0
+enable_thinking = false
+default_template = ""
+
+[distributed.scheduler]
+shift = 3.0
+
+[distributed.optimization]
+flash_attn = true
+compile = false
+cpu_offload = false
+
+[distributed.pytorch]
+attention_backend = "auto"
+use_custom_scheduler = false
+tiled_vae = false
+tile_size = 512
+tile_overlap = 64
+embedding_cache = true       # Cache helps when encoder is remote (slow)
+cache_size = 200
+long_prompt_mode = "interpolate"
+
+[distributed.api]
+url = "http://mac-host:8080" # Your Mac running heylookitsanllm
+model = "Qwen3-4B-mlx"       # MLX model ID
+
+[distributed.lora]
+paths = []
+scales = []
+
+[distributed.rewriter]
+use_api = true               # Use remote Mac for rewriting too
+api_url = ""                 # Falls back to [api].url
+api_model = "Qwen3-4B-mlx"
+temperature = 0.6
+top_p = 0.95
+top_k = 20
+min_p = 0.0
+presence_penalty = 0.0
+max_tokens = 2048
 
 # =============================================================================
 # Web Server Configuration (shared across profiles)
 # =============================================================================
 [server]
-host = "127.0.0.1"           # Use 0.0.0.0 for network access
+host = "127.0.0.1"           # 0.0.0.0 for network access, 127.0.0.1 for local only
 port = 7860
