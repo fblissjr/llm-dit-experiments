@@ -5,4 +5,4 @@ model: z-image
 category: wacky
 add_think_block: false
 ---
-Conspiracy theorist cork board aesthetic with red string connecting disparate elements. Newspaper clippings at odd angles and blurry photographs of things that could be anything. Every shadow conceals secrets.
+A chaotic map of connections that exist only in the fevered mind. Red string slashes across the visual field, tying together the mundane and the impossible. blurry photographs whisper secrets from the shadows, while newspaper clippings scream silent accusations. The lighting is harsh, paranoid, illuminating a reality where coincidence is a myth and every pixel hides a truth that 'they' don't want you to see.

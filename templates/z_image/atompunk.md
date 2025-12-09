@@ -5,4 +5,4 @@ model: z-image
 category: style
 add_think_block: false
 ---
-Atompunk aesthetic with the 1950s vision of atomic-powered futures. Googie architecture with tail-finned designs, chrome and pastels, and atomic symbols everywhere. The space age as imagined by optimistic suburbia.
+The future as imagined through the optimistic lens of post-war America—where atomic power doesn't threaten but liberates. Googie architecture soars with wing-like roofs and neon-lit aspirations, while tail-finned vehicles glide on roads that always lead to brighter tomorrows. Pastel houses with circular windows promise domestic bliss powered by miniature suns, while smiling families picnic beneath mushroom clouds that bloom like flowers in educational films. Chrome accents catch the California sun while atomic symbols decorate everything from toasters to wallpaper. This is not naive optimism but a beautiful, earnest belief that science would deliver not just convenience but utopia—with matching kitchen appliances.

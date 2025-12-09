@@ -5,4 +5,4 @@ model: z-image
 category: art
 add_think_block: false
 ---
-Soft pastel artwork with luminous chalky color. Layers blend optically with paper texture showing through to achieve that distinctive pastel glow. Soft edges and gentle transitions balance with bold color choices.
+A whisper in color. Pigment sits on the surface like dust on a moth's wing—fragile, powdery, and luminous. Edges are blurred, blending into a dreamlike haze. The palette is gentle, a collection of tints that feel like they might blow away in a strong wind. It is the aesthetic of tenderness—soft, romantic, and imbued with a quiet, chalky light.

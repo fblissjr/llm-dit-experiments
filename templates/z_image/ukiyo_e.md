@@ -5,4 +5,4 @@ model: z-image
 category: style
 add_think_block: false
 ---
-Traditional Japanese ukiyo-e woodblock print style with bold outlines, flat colors, and masterful use of negative space. The essence of the floating world with careful attention to wave patterns and delicate compositional balance.
+The floating world in woodblock. Lines are fluid, colors are flat and bold, and perspective is flattened. Waves claw at the sky, and mountains sit serene in the distance. It is the beauty of the ephemeral—capturing the fleeting pleasures of life with a stylized grace that feels both ancient and timeless. A visual haiku of nature and city life.

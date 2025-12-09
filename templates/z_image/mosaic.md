@@ -5,4 +5,4 @@ model: z-image
 category: art
 add_think_block: false
 ---
-Mosaic style with tessellated pieces building larger images from small tiles of color. Visible grout lines and the ancient craft of opus tessellatum create Byzantine grandeur. Patient assembly of fragments into meaning.
+The whole built from the broken. Thousands of tiny shards come together to form a face, a scene, a world. Grout lines trace the map of assembly, a testament to patience and craft. It is the art of the aggregate—where individual fragments of color, useless on their own, unite to create a grand, shimmering image that vibrates with the energy of its many parts.

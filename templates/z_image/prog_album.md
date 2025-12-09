@@ -5,4 +5,4 @@ model: z-image
 category: experimental
 add_think_block: false
 ---
-1970s progressive rock album cover with cosmic landscapes, impossible architecture, and mystical symbolism. Roger Dean energy with a visual representation of a 23-minute song about ancient civilizations and synthesizers.
+A landscape from a hallucination. Floating islands defy gravity, interconnected by bridges of crystal and sound. The scale is impossible, the colors are from a spectrum not yet discovered, and the imagery suggests a concept so deep it requires a gatefold sleeve to explain. It is the visual equivalent of a 20-minute synthesizer solo—complex, pretentious, and undeniably majestic.

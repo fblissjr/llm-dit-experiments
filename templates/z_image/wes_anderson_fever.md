@@ -5,4 +5,4 @@ model: z-image
 category: wacky
 add_think_block: false
 ---
-Obsessive symmetry with pastel color palettes and deadpan whimsy cranked to pathological levels. Every object perfectly centered, every color meticulously coordinated. Flat and frontal surfaces throughout.
+The tyranny of symmetry. The camera does not move; it stares. Colors are pastel, outfits are uniforms, and emotions are suppressed. Every object is centered, every line is straight. It is the world as a dollhouse—perfectly curated, obsessively organized, and charmingly, disturbingly artificial.

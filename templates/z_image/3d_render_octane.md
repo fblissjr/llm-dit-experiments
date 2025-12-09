@@ -5,4 +5,4 @@ model: z-image
 category: style
 add_think_block: false
 ---
-A photorealistic 3D render with premium Octane quality. Perfect global illumination with accurate caustics and physically-based materials. Cinematic depth of field creates a result indistinguishable from a photograph.
+A photorealistic 3D scene sculpted with Octane's luminous precision. Light doesn't merely fall here—it breathes and dances, wrapping around objects with physically perfect caustics that kiss surfaces like liquid glass. Materials whisper their true nature: metals gleam with subsurface secrets, fabrics hold light in their threads, and cinematic depth of field guides the eye like a director's loving gaze—crafting an illusion so perfect you'll reach to touch a world that doesn't exist.

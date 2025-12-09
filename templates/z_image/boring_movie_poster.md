@@ -5,4 +5,4 @@ model: z-image
 category: wacky
 add_think_block: false
 ---
-Dramatic movie poster for the most mundane activity imaginable. Lens flares, floating debris, and heroic poses with blockbuster color grading applied to everyday tasks. Coming this summer: domestic chores.
+The visual language of the blockbuster applied to the tragedy of the mundane. Lens flares erupt over a pile of unwashed laundry; dramatic lighting sculpts the contours of a tax return. Heroic poses are struck while waiting for the microwave, with color grading so intense it threatens to shatter reality. This is the epic saga of the everyday—coming this summer to a living room near you, proving that with enough contrast and bold typography, even existence itself can look like a thrill ride.

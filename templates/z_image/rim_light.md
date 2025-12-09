@@ -5,4 +5,4 @@ model: z-image
 category: style
 add_think_block: false
 ---
-Strong rim lighting creating glowing edges and silhouettes. Backlight separates subject from background with halos and ethereal outlines. Dramatic and visually striking separation.
+The halo of drama. The subject is a silhouette against the dark, defined only by a thin line of fire. Light catches the edge of a profile, the curve of a shoulder, the frizz of hair. It is the art of separation—pulling the figure from the void with a stroke of brilliance, creating mystery and depth by showing not the thing itself, but the boundary where it meets the world.

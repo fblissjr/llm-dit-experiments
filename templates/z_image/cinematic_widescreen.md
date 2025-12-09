@@ -5,4 +5,4 @@ model: z-image
 category: photography
 add_think_block: false
 ---
-A cinematic widescreen image that could be a movie still. The composition uses careful color grading and atmospheric lighting. The scene captures a moment with narrative weight, featuring shallow depth of field and film-like quality.
+A frozen frame from a film that never existed, stretched across the canvas in anamorphic glory. The lighting tells a story before a word is spoken, with motivated sources carving drama from the shadows. Color grading evokes a specific emotional temperature, while shallow depth of field guides the eye with the precision of a director's intent. This is not a photograph; it is a scene, heavy with narrative weight and the suspended tension of a plot about to unfold.

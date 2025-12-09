@@ -5,4 +5,4 @@ model: z-image
 category: wacky
 add_think_block: false
 ---
-Art optimized for professional waiting room walls. Inoffensive to the point of aggression with colors that neither calm nor excite. Subject matter so neutral it achieves strange profundity. Deeply acceptable.
+A masterpiece of aggressive neutrality. Colors float in a harmless haze, depicting subjects so abstract or universally pleasant that they defy interpretation. It is art designed to occupy space without occupying the mind, a visual sedative meant to calm the nerves without sparking a single thought. The composition is balanced to the point of inertia, a soothing visual hum that exists solely to say, 'Everything is fine, look at this beige shape.'

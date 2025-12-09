@@ -5,4 +5,4 @@ model: z-image
 category: wacky
 add_think_block: false
 ---
-Early 1990s computer graphics aesthetic with low polygon counts and visible texture pixels. That specific shade of purple from CD-ROM games with spinning chrome text energy and nostalgic digital artifacts.
+Digital time capsule from when polygons were precious and every pixel held meaning. Chunky geometric forms wobble with earnest ambition, wrapped in textures that proudly display their 256-color limitations. That specific radioactive purple that haunted CD-ROM loading screens pulses beneath chrome text that spins with unearned confidence. This is nostalgia for the future we were promised—a world built from hope, math, and the beautiful arrogance of rendering engines that knew no bounds except memory constraints.

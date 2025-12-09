@@ -5,4 +5,4 @@ model: z-image
 category: style
 add_think_block: false
 ---
-A steampunk scene blending Victorian elegance with brass and copper machinery. The aesthetic features intricate gears, airships against amber skies, and retro-futuristic technology powered by steam.
+The future that never happened, built from the past. Brass gears turn, steam hisses from copper pipes, and gentlemen in top hats pilot dirigibles. It is the romance of the machine age—where technology is heavy, intricate, and beautiful, and the solution to every problem is more clockwork. A world of leather, velvet, and invention, powered by coal and imagination.

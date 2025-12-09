@@ -5,4 +5,4 @@ model: z-image
 category: style
 add_think_block: false
 ---
-Cool blue hour lighting between sunset and night. Subtle gradients of blue and purple as city lights begin to glow create a quiet transitional mood. Serene and contemplative atmosphere.
+The suspended breath between day and night, when the world is dipped in liquid cobalt. City lights begin their tentative glow, not yet conquering the dark but conversing with it. The sky holds a deep, resonant indigo that feels like a memory of the ocean, casting a serene, melancholy veil over the landscape. It is the moment of transition captured in stillness—a quiet interlude where shadows are soft, and the air itself seems to hum with a cool, electric anticipation.

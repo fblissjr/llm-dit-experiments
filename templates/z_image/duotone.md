@@ -5,4 +5,4 @@ model: z-image
 category: technical
 add_think_block: false
 ---
-Duotone technique using only two colors with one for shadows and one for highlights. The entire tonal range expressed through their interplay creates bold, graphic, immediately striking imagery.
+The entire world reduced to a conversation between two colors. Shadows and highlights are mapped to a strict dichotomy, stripping away the distraction of the full spectrum to reveal form and graphic impact. The image becomes a bold statement, a posterized reality where nuance is replaced by the stark, beautiful contrast of ink and paper. It is visual economy at its most striking—proving that you only need two notes to play a powerful chord.

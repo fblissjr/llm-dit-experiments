@@ -5,4 +5,4 @@ model: z-image
 category: style
 add_think_block: false
 ---
-Pixel art with a limited color palette and deliberately chunky pixels placed with intention. Dithering creates gradients with the nostalgic charm of 8-bit and 16-bit era graphics. Readable silhouettes at low resolution.
+The beauty of the grid. Reality is quantized into squares, each one a deliberate choice of color. Dithering creates the illusion of gradients, and limitations breed creativity. It is the nostalgia of the cathode ray tube—a world where resolution is low but imagination is high, and a handful of colored blocks can build an entire universe.

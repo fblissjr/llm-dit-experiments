@@ -5,4 +5,4 @@ model: z-image
 category: wacky
 add_think_block: false
 ---
-Textbook diagram explaining something simple with maximum complexity. Arrows pointing to other arrows with illegible labels. A key that requires its own key. Educational content raising more questions than it answers.
+The confusion of the explanation. Arrows point everywhere, labels overlap, and the cross-section reveals nothing but more questions. Colors are primary, lines are thick, and the information is dense to the point of absurdity. It is the aesthetic of the classroom gone wrong—a visual panic attack that tries to explain the universe in a single, incomprehensible image.

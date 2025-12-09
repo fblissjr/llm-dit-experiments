@@ -5,4 +5,4 @@ model: z-image
 category: art
 add_think_block: false
 ---
-A classical oil painting with rich, layered colors and visible brushwork. The image employs dramatic chiaroscuro lighting and the color palettes of the old masters. The composition has timeless, museum-worthy quality.
+The weight of history in every stroke. Light glows from within the canvas, built up through layers of translucent glaze. Shadows are warm and deep, hiding details that emerge only with patience. The composition is balanced, the anatomy perfect, the drapery heavy. It is the grand tradition—art that feels permanent, serious, and touched by the hand of a master who painted by candlelight.

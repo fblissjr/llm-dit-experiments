@@ -5,4 +5,4 @@ model: z-image
 category: wacky
 add_think_block: false
 ---
-Happy little landscape with a dark metal twist. Gentle brushwork depicting serene apocalypse with titanium white highlights on skull mountains. Friendly cabins that might house a dark lord. Happy trees that have seen things.
+A landscape where "happy little accidents" scream into the void. Titanium white skulls form the peaks of jagged mountains, rising from a mist of eternal gloom. The brushstrokes are gentle, yet they depict a serene apocalypse—a friendly cabin that houses an eldritch horror, nestled amongst happy trees that have witnessed the end of days. It is the joy of painting corrupted by the abyss, a soothing tutorial on how to capture the beautiful darkness of a dying world.

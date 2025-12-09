@@ -5,4 +5,4 @@ model: z-image
 category: photography
 add_think_block: false
 ---
-An epic landscape photograph with dramatic scale and atmosphere. The scene features sweeping vistas, dynamic skies, and a sense of grandeur. Leading lines and layered depth draw the eye through the composition.
+A vista that demands awe. Mountains tear at the sky, rivers carve through ancient stone, and the horizon stretches into infinity. The scale is humbling, reducing the viewer to a speck in the face of geological time. Light plays across vast distances, highlighting the rugged textures of a world that is wild, untamed, and breathtakingly indifferent to the presence of man.

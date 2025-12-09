@@ -5,4 +5,4 @@ model: z-image
 category: art
 add_think_block: false
 ---
-Layered paper cut art with silhouettes creating depth through layering. Visible paper edges and the delicate craft of negative space carved from positive form dimensional shadow box sculptures. Fragile yet precise.
+A world built from layers of shadow and pulp. Edges are crisp, casting real shadows on the layer below. The depth is physical, a diorama of simplified forms and flat colors. It is the charm of the handmade—delicate, precise, and playful, creating a sense of dimension that feels tactile, as if you could reach in and peel back the sky.

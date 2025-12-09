@@ -5,4 +5,4 @@ model: z-image
 category: technical
 add_think_block: false
 ---
-High contrast black and white image with histogram pushed to both extremes. Eliminate middle grays and embrace the stark graphic power of pure light and shadow. Drama from removing color and embracing extremes.
+A world drawn in ink and light. Midtones are banished, leaving only the stark drama of absolute black and blinding white. Shadows are deep pools of mystery; highlights are razor-sharp. It is a graphic punch to the eye—a noir reality where nuance is replaced by the bold, uncompromising binary of presence and absence.

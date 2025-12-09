@@ -5,4 +5,4 @@ model: z-image
 category: wacky
 add_think_block: false
 ---
-Maximum PowerPoint energy circa 2003 with WordArt bending reality. Clip art questioning its own existence and transition effects frozen mid-wipe. Committee-chosen background gradients loading for 20 years.
+The aesthetic of corporate desperation. Word art screams for attention in rainbow gradients, while bullet points march toward infinity. Clip art beans hold hands in a show of forced synergy, and the background is a standard-issue template of blue swooshes. It is the visual language of the boardroom—a chaotic collage of pie charts and ambition, designed to convince you that this quarter will be different.

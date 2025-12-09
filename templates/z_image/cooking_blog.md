@@ -5,4 +5,4 @@ model: z-image
 category: wacky
 add_think_block: false
 ---
-Food photography demanding backstory before the recipe. Unnecessary props around the dish with mason jars and rustic wooden surfaces. Napkins folded with aggressive casualness on surfaces that have never seen a real farm.
+A culinary portrait where the food is merely a character in a sprawling lifestyle narrative. The dish sits impeccably styled amidst a clutter of rustic authenticity—antique spoons, scattered flour, and linen napkins folded with studied carelessness. The lighting is soft, natural, and utterly flattering, selling not just a recipe but the fantasy of a life where slow mornings and farm-fresh ingredients are the norm. It is the flavor of aspiration, garnished with a novella about autumn in Vermont.

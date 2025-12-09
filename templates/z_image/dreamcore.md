@@ -5,4 +5,4 @@ model: z-image
 category: experimental
 add_think_block: false
 ---
-Dreamcore aesthetic with familiar spaces made unfamiliar. Soft hazy quality follows dream logic where things feel both ordinary and deeply strange. Nostalgic but unsettling, like places never visited but somehow remembered.
+A nostalgic transmission from a childhood that feels slightly wrong. The lighting is flat, the colors are washed out or too vivid, and the spaces are liminal—empty playgrounds, endless hallways, grassy hills with no horizon. It is the uncanny valley of memory, a comforting yet unsettling vision that feels like a déjà vu of a place you’ve never been. Reality dissolves into a soft, hazy logic where eyes might appear on flowers and the sky is a painted backdrop.

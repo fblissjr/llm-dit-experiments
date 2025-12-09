@@ -5,4 +5,4 @@ model: z-image
 category: technical
 add_think_block: false
 ---
-Clear infographic communicating information visually with hierarchy and consistent iconography. Data visualization makes complex information accessible, balancing visual interest with clarity.
+Chaos tamed by the grid. Data flows like water through channels of hierarchy and color. Numbers become shapes, trends become lines, and the complex becomes instantly understood. It is the victory of order over noise—a visual argument that proves that with enough structure, even the most tangled web of information can be combed into a beautiful, coherent braid of truth.

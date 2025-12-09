@@ -5,4 +5,4 @@ model: z-image
 category: wacky
 add_think_block: false
 ---
-IKEA assembly instructions elevated to fine art. Faceless figures performing mysterious rituals with abstract shapes. Allen wrenches as sacred objects in the profound existential journey of furniture assembly.
+The sacred geometry of the flat-pack. Faceless, genderless beings perform the ritual of assembly in a void of pure white. Tools float with divine purpose, and screws align with holes in a dance of cosmic order. It is the instruction manual elevated to scripture—a silent, diagrammatic journey from chaos to furniture, where the struggle of the human condition is reduced to the search for the right Allen key.

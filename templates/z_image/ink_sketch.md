@@ -5,4 +5,4 @@ model: z-image
 category: art
 add_think_block: false
 ---
-An expressive ink sketch with confident gestural linework capturing the essence of the subject with economy of line. The white of the paper breathes between marks, with hatching creating value and showing the energy of the artist's hand.
+The confidence of the irrevocable mark. Black ink bites into the paper, tracing the energy of the moment without hesitation. There is no erase, only the honest record of the hand's movement. Hatching builds shadow, empty space builds light, and the image emerges from the dance between the two. It is the rawest form of visual thought—fast, fluid, and permanently alive.

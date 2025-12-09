@@ -5,4 +5,4 @@ model: z-image
 category: wacky
 add_think_block: false
 ---
-Stock photo that makes graphic designers weep. Forced smiles, inexplicable handshakes, and people pointing at blank whiteboards with religious fervor. Aggressively inoffensive yet deeply unsettling.
+The uncanny valley of the corporate soul. Smiles are too wide, handshakes are too firm, and diversity is perfectly calculated. People point at blank whiteboards with an intensity that borders on madness. It is the visual language of the generic—a world so sanitized and staged that it loops back around to being terrifying, a glossy prison of enforced happiness.

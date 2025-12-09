@@ -5,4 +5,4 @@ model: z-image
 category: style
 add_think_block: false
 ---
-Memphis design style from the 1980s with clashing colors, geometric patterns, and deliberate kitsch. Squiggles and terrazzo patterns with primary colors compete for attention. Postmodern playfulness that refuses to take itself seriously while being very intentional.
+A rebellious party of shapes and colors. Squiggles dance with triangles, and grids crash into circles. The palette is fearless—pastels clashing with primaries in a joyful riot of bad taste made good. It is the 80s distilled into a pattern—a rejection of minimalism in favor of a playful, chaotic geometry that refuses to take itself seriously while looking absolutely fabulous.
