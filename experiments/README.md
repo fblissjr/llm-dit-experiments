@@ -45,6 +45,7 @@ uv run experiments/run_ablation.py \
 | `think_block` | Test impact of think block content | thinking_content | None, empty, quality, mood, technical |
 | `system_prompt` | Test impact of system prompts | system_prompt | None, photographer, painter, illustrator, generic |
 | `steps_only` | Test different step counts | steps | 4, 6, 8, 9, 10, 12, 15, 20 |
+| `long_prompt_mode` | Compare compression modes for long prompts | long_prompt_mode | truncate, interpolate, pool, attention_pool |
 
 ## Output Structure
 

@@ -75,9 +75,11 @@ When steering doesn't work (e.g., model outputs "I'm the Eiffel Tower. No actual
 
 ## 2. RoPE Position Hacking
 
+### Status: NEW INSIGHTS (2025-12-09)
+
 ### Concept
 
-The 1024 token limit comes from RoPE position encoding. Can we extend it?
+The token limit comes from RoPE position encoding. Can we extend it beyond 1504?
 
 ### Background
 
@@ -86,14 +88,30 @@ RoPE interpolation techniques from LLM research:
 - **NTK-aware scaling**: Adjust the theta base frequency
 - **YaRN**: Combined approach with attention scaling
 
+### Recent Discoveries (2025-12-09)
+
+**Actual Limit**: Through binary search testing, discovered the limit is **1504 tokens** (not 1024 or 1536):
+- 1504 = 47 × 32, config specifies 1536 = 48 × 32
+- Likely an off-by-one bug in diffusers RoPE frequency table indexing
+- Gives 46.9% more capacity than conservative 1024 limit
+
+**RoPE Theta Insight**: The context refiner uses `theta=256` (vs `theta=1000000` in Qwen3):
+- Intentional choice for **local precision** rather than extrapolation
+- Lower theta = larger angular differences between adjacent positions
+- Optimized for short sequences with fine-grained positional discrimination
+- May limit extension potential (higher theta needed for NTK scaling)
+
 ### DiT-Specific Considerations
 
 The Z-Image DiT uses multi-axis RoPE:
-- Axis 0 (1024): Text sequence positions
+- Axis 0 (1504): Text sequence positions (LIMITING FACTOR)
 - Axis 1 (512): Image height positions
 - Axis 2 (512): Image width positions
 
-Only Axis 0 limits text length.
+Only Axis 0 limits text length. Multi-axis design means:
+- Text tokens use axis 0 sequentially (0, 1, 2, ..., 1503)
+- Image tokens share ONE axis 0 position, distributed across axes 1 & 2
+- No competition between text and image for position indices
 
 ### Approach
 
@@ -104,20 +122,24 @@ class ExtendedRoPE:
     def __init__(
         self,
         dim: int,
-        max_seq_len: int = 1024,
+        max_seq_len: int = 1504,  # Updated from 1024
         extended_len: int = 2048,
-        interpolation: str = "linear"  # linear, ntk, yarn
+        interpolation: str = "linear",  # linear, ntk, yarn
+        base_theta: int = 256  # DiT uses 256, not 1000000
     ):
         self.original_max = max_seq_len
         self.extended_max = extended_len
         self.scale = extended_len / max_seq_len
+        self.base_theta = base_theta
 
         if interpolation == "linear":
             # Scale positions: pos' = pos / scale
             self.position_scale = 1.0 / self.scale
         elif interpolation == "ntk":
             # Adjust theta: theta' = theta * scale^(dim/(dim-2))
+            # For DiT with theta=256, this may need tuning
             self.theta_scale = self.scale ** (dim / (dim - 2))
+            self.adjusted_theta = base_theta * self.theta_scale
         # ...
 
     def get_positions(self, seq_len: int) -> torch.Tensor:
@@ -134,12 +156,15 @@ class ExtendedRoPE:
 3. **Training-free**: Does interpolation work without fine-tuning?
 4. **Sliding window**: Alternative - encode chunks with overlap
 
-### Sub-Questions
+### Sub-Questions (Updated 2025-12-09)
 
-- Q1: What is the quality cliff? At what extension does it break?
-- Q2: Does the context refiner's RoPE also need modification?
-- Q3: Can we fine-tune just the position encodings?
-- Q4: Is chunked encoding (overlapping windows) viable?
+- Q1: Can we fix the off-by-one bug to unlock full 1536 tokens? (HIGH PRIORITY)
+- Q2: What is the quality cliff when extending beyond 1504? At 2x (3008)? 3x (4512)?
+- Q3: Does NTK scaling work with theta=256, or does it require theta adjustment?
+- Q4: Does the context refiner's RoPE also need modification when extending?
+- Q5: Can we fine-tune just the position encodings without full model retraining?
+- Q6: Is chunked encoding (overlapping windows) viable?
+- Q7: Would increasing theta from 256 help extension but hurt base quality?
 
 ---
 

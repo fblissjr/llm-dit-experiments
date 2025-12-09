@@ -283,11 +283,13 @@ plt.title('Shift-Step Pareto Frontier')
 
 ### Background
 
-Four compression modes are implemented for prompts exceeding 1024 tokens:
-- `truncate`: Cut off at 1024 (default)
-- `interpolate`: Linear resampling
+Four compression modes are implemented for prompts exceeding the 1504 token limit:
+- `truncate`: Cut off at 1504 (loses end of prompt)
+- `interpolate`: Linear resampling (default, preserves all content)
 - `pool`: Adaptive average pooling
-- `attention_pool`: Importance-weighted pooling
+- `attention_pool`: Importance-weighted pooling (cosine similarity based)
+
+**Note**: Compression only triggers when prompts exceed 1504 tokens. For shorter prompts, the mode has no effect.
 
 **Hypothesis**: Different compression modes preserve different aspects of long prompts.
 
@@ -300,11 +302,11 @@ experiment:
   values: [truncate, interpolate, pool, attention_pool]
 
 prompt_lengths:
-  - 1024: No compression (baseline)
-  - 1280: 1.25x compression
-  - 1536: 1.5x compression
-  - 2048: 2.0x compression
-  - 3072: 3.0x compression
+  - 1504: No compression (baseline, max without compression)
+  - 1880: 1.25x compression
+  - 2256: 1.5x compression
+  - 3008: 2.0x compression
+  - 4512: 3.0x compression
 
 prompt_construction: |
   Create prompts with important content at different positions:

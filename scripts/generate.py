@@ -351,6 +351,7 @@ def main():
         assistant_content=config.assistant_content,
         enable_thinking=config.enable_thinking,
         long_prompt_mode=config.long_prompt_mode,
+        hidden_layer=config.hidden_layer,
         callback=progress_callback if config.verbose else None,
     )
     gen_time = time.time() - start

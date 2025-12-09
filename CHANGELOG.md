@@ -31,7 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Long prompt handling with experimental compression modes
   - CLI: `--long-prompt-mode truncate|interpolate|pool|attention_pool`
   - Config: `[default.pytorch] long_prompt_mode = "truncate"`
-  - `truncate`: Default, cuts off at 1024 tokens (safest)
+  - `truncate`: Cuts off at 1504 tokens (loses end of prompt)
   - `interpolate`: Resamples embeddings via linear interpolation
   - `pool`: Compresses via adaptive average pooling
   - `attention_pool`: Importance-weighted pooling (preserves key tokens)
@@ -53,10 +53,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Long prompts no longer crash with `vectorized_gather_kernel: index out of bounds`
-  - DiT transformer has max text sequence length of 1024 tokens (RoPE axes_lens[0])
-  - Prompts exceeding limit are automatically truncated with warning
-  - `MAX_TEXT_SEQ_LEN` constant exported for programmatic access
-  - Truncation applied in txt2img, img2img, encode_prompt, generate_from_embeddings
+  - DiT transformer has max text sequence length of 1504 tokens (discovered via binary search)
+  - Config shows 1536 but fails at boundary - likely off-by-one in diffusers RoPE
+  - Prompts exceeding limit use `long_prompt_mode` (default: interpolate)
+  - `MAX_TEXT_SEQ_LEN` constant exported for programmatic access (1504)
+  - Compression applied in txt2img, img2img, encode_prompt, generate_from_embeddings
 
 ## [0.3.0]
 

@@ -20,7 +20,7 @@ device = "auto"              # cpu/cuda/mps/auto
 torch_dtype = "bfloat16"     # bfloat16/float16/float32
 quantization = "none"        # none/4bit/8bit (bitsandbytes)
 cpu_offload = false          # Move encoder to CPU after encoding to free VRAM
-max_length = 512             # Tokenizer max length (DiT limit is 1024, see long_prompt_mode)
+max_length = 512             # Tokenizer max length (DiT limit is 1504, see long_prompt_mode)
 hidden_layer = -2            # Layer for embeddings: -2=penultimate (default), -1=last
 
 [default.pipeline]
@@ -53,7 +53,7 @@ tile_size = 512               # VAE tile size in pixels (latent = tile_size / 8)
 tile_overlap = 64             # Overlap between tiles for seamless blending
 embedding_cache = false       # LRU cache for text embeddings (faster repeated prompts)
 cache_size = 100              # Max cached embeddings before LRU eviction
-long_prompt_mode = "truncate" # What to do if tokens > 1024: truncate/interpolate/pool/attention_pool
+long_prompt_mode = "interpolate" # What to do if tokens > 1504: truncate/interpolate/pool/attention_pool
 
 [default.api]
 # Remote API backend for distributed inference (encoder on remote, DiT local)
@@ -123,7 +123,7 @@ tile_size = 512
 tile_overlap = 64
 embedding_cache = false      # Enable for web server with repeated prompts
 cache_size = 100
-long_prompt_mode = "interpolate"  # Smoothly resample long prompts to 1024 tokens
+long_prompt_mode = "interpolate"  # interpolate preserves all content; truncate cuts off end
 
 [rtx4090.api]
 url = ""
@@ -257,7 +257,7 @@ tile_size = 512
 tile_overlap = 64
 embedding_cache = true       # Cache helps when encoder is remote (slow)
 cache_size = 200
-long_prompt_mode = "interpolate"
+long_prompt_mode = "interpolate"  # interpolate preserves all content; truncate cuts off end
 
 [distributed.api]
 url = "http://mac-host:8080" # Your Mac running heylookitsanllm

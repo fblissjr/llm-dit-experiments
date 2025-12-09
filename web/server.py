@@ -65,6 +65,8 @@ class GenerateRequest(BaseModel):
     template: Optional[str] = None
     guidance_scale: float = 0.0
     shift: float = 3.0  # Scheduler shift parameter
+    long_prompt_mode: str = "interpolate"  # truncate/interpolate/pool/attention_pool
+    hidden_layer: int = -2  # Which hidden layer to extract (-1 to -6)
 
 
 class EncodeRequest(BaseModel):
@@ -205,7 +207,8 @@ async def generate(request: GenerateRequest):
         logger.info(f"  Template: {request.template}")
         logger.info(f"  Force think block: {request.force_think_block}")
         logger.info(f"  Guidance: {request.guidance_scale}")
-        logger.info(f"  Long prompt mode: {runtime_config.long_prompt_mode if runtime_config else 'truncate'}")
+        logger.info(f"  Long prompt mode: {request.long_prompt_mode}")
+        logger.info(f"  Hidden layer: {request.hidden_layer}")
         logger.info("-" * 60)
         logger.info("Pipeline state:")
         logger.info(f"  pipeline.device: {pipeline.device}")
@@ -227,8 +230,7 @@ async def generate(request: GenerateRequest):
         start = time.time()
 
         # Generate image
-        long_prompt_mode = runtime_config.long_prompt_mode if runtime_config else "truncate"
-        logger.info(f"Calling pipeline() with long_prompt_mode={long_prompt_mode}...")
+        logger.info(f"Calling pipeline() with long_prompt_mode={request.long_prompt_mode}, hidden_layer={request.hidden_layer}...")
         image = pipeline(
             request.prompt,
             height=request.height,
@@ -243,7 +245,8 @@ async def generate(request: GenerateRequest):
             assistant_content=request.assistant_content,
             force_think_block=request.force_think_block,
             remove_quotes=request.strip_quotes,
-            long_prompt_mode=long_prompt_mode,
+            long_prompt_mode=request.long_prompt_mode,
+            hidden_layer=request.hidden_layer,
         )
 
         gen_time = time.time() - start
@@ -297,6 +300,8 @@ async def generate(request: GenerateRequest):
             "template": request.template,
             "guidance_scale": request.guidance_scale,
             "shift": request.shift,
+            "long_prompt_mode": request.long_prompt_mode,
+            "hidden_layer": request.hidden_layer,
             "gen_time": gen_time,
             "image_b64": img_b64,
             "formatted_prompt": formatted_prompt,
@@ -344,9 +349,17 @@ async def format_prompt_endpoint(request: EncodeRequest):
         )
         formatted = enc.formatter.format(conv)
 
+        # Get token count if tokenizer is available
+        token_count = None
+        if hasattr(enc, 'backend') and hasattr(enc.backend, 'tokenizer'):
+            tokens = enc.backend.tokenizer.encode(formatted, add_special_tokens=False)
+            token_count = len(tokens)
+
         return {
             "formatted_prompt": formatted,
             "char_count": len(formatted),
+            "token_count": token_count,
+            "max_tokens": 1504,
             "prompt": request.prompt,
             "system_prompt": request.system_prompt,
             "thinking_content": request.thinking_content,
@@ -581,6 +594,13 @@ async def rewrite_prompt(request: RewriteRequest):
                         thinking_content = parts[0].strip()
                         rewritten_prompt = parts[1].strip()
                         logger.info(f"[Rewrite] Extracted thinking via paragraph split ({len(thinking_content)} chars), prompt ({len(rewritten_prompt)} chars)")
+
+        # Defense in depth: strip any remaining <think>/<think> tags from both outputs
+        # This handles edge cases where tags might be nested or malformed
+        if thinking_content:
+            thinking_content = re.sub(r'</?think>', '', thinking_content).strip()
+        if rewritten_prompt:
+            rewritten_prompt = re.sub(r'</?think>', '', rewritten_prompt).strip()
 
         # Clear CUDA cache to prevent memory issues when switching back to encoding
         if torch.cuda.is_available():

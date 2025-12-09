@@ -263,26 +263,51 @@ image_right = generate_from_embeddings(embed_right)
 
 ## 7. 1024 Token Limit: Hard Constraint
 
+### Status: PARTIALLY RESOLVED (2025-12-09)
+
 ### The Assumption
 
 The DiT cannot handle more than 1024 text tokens due to RoPE.
 
 ### Source
 
-DiT config: `axes_lens=[1024, 512, 512]` for RoPE position encoding.
+DiT config: `axes_lens=[1536, 512, 512]` for RoPE position encoding. DiffSynth-Studio uses 1024 conservatively.
 
-### Why Challenge It?
+### What We Discovered
 
-1. **RoPE interpolation**: LLM research shows RoPE can be extended
-2. **Position encoding**: May be modifiable without retraining
-3. **Quality vs length**: Some degradation may be acceptable
+Through systematic binary search testing (2025-12-09), the actual limit is **1504 tokens**:
 
-### Experiment
+**Test Results:**
+- 1504 tokens: SUCCESS
+- 1505 tokens: FAIL (CUDA kernel error)
+- Config specifies 1536 = 48 × 32
+- Actual limit is 1504 = 47 × 32
+
+**Root Cause**: Likely an **off-by-one bug** in diffusers ZImageTransformer2DModel's RoPE frequency table indexing. The table is computed for indices 0-46 (47 values) instead of 0-47 (48 values).
+
+**Impact**: 46.9% more capacity than the conservative 1024 limit (1024 → 1504).
+
+### Remaining Challenges
+
+1. **Fixing the off-by-one bug**: Could unlock full 1536 tokens (requires diffusers patch)
+2. **RoPE interpolation**: LLM research shows RoPE can be extended beyond training range
+3. **Position encoding modification**: May be possible without retraining
+4. **Quality vs length trade-off**: Some degradation may be acceptable
+
+### Updated Experiments
 
 ```python
-# Test RoPE interpolation
+# Test current limit thoroughly
+for length in [1400, 1450, 1500, 1504, 1505, 1510]:
+    try:
+        image = generate_prompt_of_length(length)
+        print(f"Length {length}: SUCCESS")
+    except RuntimeError as e:
+        print(f"Length {length}: FAIL - {e}")
+
+# Test RoPE interpolation beyond 1504
 class InterpolatedRoPE:
-    def __init__(self, original_max=1024, extended_max=2048):
+    def __init__(self, original_max=1504, extended_max=2048):
         self.scale = original_max / extended_max
 
     def get_positions(self, seq_len):
@@ -290,19 +315,21 @@ class InterpolatedRoPE:
         positions = torch.arange(seq_len) * self.scale
         return positions
 
-# Generate with 1500+ token prompts
-for length in [1024, 1280, 1536, 2048]:
+# Test extension with NTK scaling
+for length in [1504, 1800, 2048, 3008]:
     prompt = generate_prompt_of_length(length)
-    image = generate_with_interpolation(prompt)
+    image = generate_with_ntk_scaling(prompt)
     quality = measure_quality(image)
     print(f"Length {length}: {quality}")
 ```
 
-### Sub-Questions
+### Updated Sub-Questions
 
-- Q: At what extension ratio does quality noticeably degrade?
-- Q: Does NTK scaling work better than linear interpolation?
+- Q: Can we patch diffusers to fix the off-by-one bug and unlock 1536? (PRIORITY)
+- Q: At what extension ratio beyond 1504 does quality noticeably degrade?
+- Q: Does NTK scaling work better than linear interpolation for extending beyond 1504?
 - Q: Can we chunk long prompts and combine embeddings?
+- Q: Is the theta=256 choice limiting extension potential?
 
 ---
 
@@ -426,21 +453,27 @@ print(f"VAE reconstruction: PSNR={psnr:.2f}, SSIM={ssim:.4f}")
 
 ## Summary: Assumption Risk Assessment
 
-| Assumption | Risk Level | Effort to Test | Potential Impact |
-|------------|------------|----------------|------------------|
-| Layer -2 extraction | Medium | Low | Medium |
-| CFG = 0.0 | Low | Low | Low-Medium |
-| Shift = 3.0 | Medium | Low | Medium |
-| Context refiner required | Medium | Medium | High |
-| Think block optional | Medium | Low | Medium |
-| Left padding | Low | Low | Low |
-| 1024 token limit | High | High | High |
-| 8-9 steps sufficient | Low | Low | Low |
-| No timestep in refiner | Medium | High | Medium |
-| Fixed VAE | Low | High | Low |
+| Assumption | Risk Level | Effort to Test | Potential Impact | Status (2025-12-09) |
+|------------|------------|----------------|------------------|---------------------|
+| Layer -2 extraction | Medium | Low | Medium | Ready to test |
+| CFG = 0.0 | Low | Low | Low-Medium | Open |
+| Shift = 3.0 | Medium | Low | Medium | Open |
+| Context refiner required | Medium | Medium | High | Open |
+| Think block optional | Medium | Low | Medium | Open |
+| Left padding | Low | Low | Low | Open |
+| ~~1024 token limit~~ | ~~High~~ | ~~High~~ | ~~High~~ | **SOLVED: Limit is 1504** |
+| 8-9 steps sufficient | Low | Low | Low | Open |
+| No timestep in refiner | Medium | High | Medium | Open |
+| Fixed VAE | Low | High | Low | Open |
+| RoPE theta=256 | Low | Medium | Medium | **EXPLAINED: Intentional design** |
+
+**Major Updates:**
+- **Token limit**: Discovered actual limit is 1504 (not 1024), due to off-by-one bug
+- **RoPE theta**: Explained as intentional choice for local precision vs extrapolation
 
 **Recommended first challenges:**
-1. Shift parameter (Low effort, medium impact)
-2. Think block testing (Low effort, medium impact)
-3. Hidden layer extraction (Low effort, medium impact)
-4. Context refiner bypass (Medium effort, high impact)
+1. Shift parameter (Low effort, medium impact) - UNCHANGED
+2. Think block testing (Low effort, medium impact) - UNCHANGED
+3. Hidden layer extraction (Low effort, medium impact) - UNCHANGED
+4. **Fixing off-by-one bug** (Medium effort, high impact) - NEW PRIORITY
+5. Context refiner bypass (Medium effort, high impact) - UNCHANGED

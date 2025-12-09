@@ -134,6 +134,7 @@ scales = [0.8, 0.5]
 |------|------|---------|-------------|
 | `--shift` | float | 3.0 | Scheduler shift/mu parameter |
 | `--guidance-scale` | float | 0.0 | CFG scale (0.0 for Z-Image Turbo) |
+| `--long-prompt-mode` | str | interpolate | How to handle prompts >1504 tokens: truncate, interpolate, pool, attention_pool |
 
 ### LoRA Flags
 
@@ -178,7 +179,9 @@ Generate an image from a text prompt.
   "steps": 9,
   "seed": null,
   "guidance_scale": 0.0,
-  "shift": 3.0
+  "shift": 3.0,
+  "long_prompt_mode": "interpolate",
+  "hidden_layer": -2
 }
 ```
 
@@ -198,6 +201,10 @@ Generate an image from a text prompt.
 | seed | int | No | null | Random seed for reproducibility |
 | guidance_scale | float | No | 0.0 | CFG scale (0.0 recommended for Z-Image) |
 | shift | float | No | 3.0 | Scheduler shift/mu parameter |
+| long_prompt_mode | string | No | interpolate | How to handle prompts >1504 tokens: truncate, interpolate, pool, attention_pool |
+| hidden_layer | int | No | -2 | Which hidden layer to extract embeddings from (-1=last, -2=penultimate) |
+
+**Note:** The 1504 token limit is the maximum text sequence length for the DiT. Compression modes only trigger when prompts exceed this limit.
 
 **Note:** Think block behavior is content-driven:
 - If `thinking_content` is provided, a think block is automatically added
@@ -425,6 +432,9 @@ Get generation history (stored in memory, cleared on server restart).
       "seed": null,
       "template": null,
       "guidance_scale": 0.0,
+      "shift": 3.0,
+      "long_prompt_mode": "interpolate",
+      "hidden_layer": -2,
       "gen_time": 12.5,
       "image_b64": "iVBORw0KGgo..."
     }

@@ -32,10 +32,42 @@ Image Output
 ```
 
 Key characteristics:
-- **Max text tokens**: 1024 (DiT RoPE limit)
+- **Max text tokens**: 1504 (DiT RoPE limit - empirically verified 2025-12-09)
 - **CFG scale**: 0.0 (baked in via Decoupled-DMD training)
 - **Inference steps**: 8-9 (turbo distilled)
 - **Scheduler shift**: 3.0 (default for turbo)
+
+## Recent Discoveries (2025-12-09)
+
+### Token Limit Discovery (CRITICAL)
+
+Through systematic binary search testing, we discovered the actual maximum sequence length is **1504 tokens**, not 1024 (conservative DiffSynth choice) or 1536 (config value).
+
+**Key findings:**
+- 1504 = 47 × 32, while config specifies 1536 = 48 × 32
+- This is likely an **off-by-one bug** in RoPE frequency table indexing in diffusers ZImageTransformer2DModel
+- NOT related to Flash Attention (tested with SDPA backend)
+- NOT related to image size (tested multiple resolutions)
+- Gives 46.9% more capacity than previously thought (1024 → 1504)
+
+**Impact:** Many prompts that previously required compression can now fit within the limit.
+
+### Compression Algorithm Upgrade
+
+Upgraded `attention_pool` mode from L2 norm to **cosine similarity** based importance weighting:
+- Measures semantic distinctiveness (how different a token is from neighbors)
+- Uses ±2 token window for context
+- Importance = 1 - avg_cosine_similarity_to_neighbors
+- Much better at preserving salient concepts vs filler content
+
+### RoPE Architecture Insights
+
+- `rope_theta=256` is intentionally low for precise spatial discrimination (not a mistake)
+- LLMs use theta=1,000,000 for extrapolation; DiT uses 256 for local precision
+- Multi-axis RoPE design means text and image don't compete for positions
+  - Text: uses axis 0 sequentially (0-1503)
+  - Image: shares ONE axis 0 position, uses axes 1 & 2 spatially
+- NTK scaling and YaRN are potential avenues for extending beyond 1504
 
 ## Research Documents
 
@@ -46,6 +78,7 @@ Key characteristics:
 | [Future Directions](./future_directions.md) | Ambitious research paths and novel ideas |
 | [Assumptions to Challenge](./assumptions_to_challenge.md) | Testing conventional wisdom |
 | [Open Questions](./open_questions.md) | Unanswered questions requiring investigation |
+| [Diffusers RoPE Bug](./diffusers_rope_bug.md) | Investigation of off-by-one bug limiting tokens to 1504 |
 
 ## Priority Ranking
 

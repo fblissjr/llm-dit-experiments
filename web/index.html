@@ -132,6 +132,10 @@
                         class="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
                         placeholder="Describe what you want to generate..."
                     ></textarea>
+                    <div class="flex justify-between items-center mt-1">
+                        <p class="text-xs text-gray-500">Token count updates when you stop typing</p>
+                        <p id="tokenCount" class="text-xs text-gray-400">-- / 1504 tokens</p>
+                    </div>
                 </div>
 
                 <!-- Template -->
@@ -174,22 +178,30 @@
                         </div>
 
                         <!-- Rewriter Controls -->
-                        <div class="grid grid-cols-2 gap-3">
+                        <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
                             <div>
                                 <label class="block text-xs font-medium text-gray-400 mb-1">Max Tokens</label>
                                 <input type="number" id="rewriterMaxTokens" value="512" min="64" max="2048" class="w-full px-2 py-1.5 bg-gray-800 border border-gray-700 rounded-lg text-white text-sm focus:ring-2 focus:ring-blue-500">
                             </div>
                             <div>
                                 <label class="block text-xs font-medium text-gray-400 mb-1">Temperature</label>
-                                <input type="number" id="rewriterTemperature" value="1.0" min="0" max="2" step="0.1" class="w-full px-2 py-1.5 bg-gray-800 border border-gray-700 rounded-lg text-white text-sm focus:ring-2 focus:ring-blue-500">
+                                <input type="number" id="rewriterTemperature" value="0.6" min="0" max="2" step="0.1" class="w-full px-2 py-1.5 bg-gray-800 border border-gray-700 rounded-lg text-white text-sm focus:ring-2 focus:ring-blue-500">
                             </div>
                             <div>
                                 <label class="block text-xs font-medium text-gray-400 mb-1">Top P</label>
                                 <input type="number" id="rewriterTopP" value="0.95" min="0" max="1" step="0.05" class="w-full px-2 py-1.5 bg-gray-800 border border-gray-700 rounded-lg text-white text-sm focus:ring-2 focus:ring-blue-500">
                             </div>
                             <div>
+                                <label class="block text-xs font-medium text-gray-400 mb-1">Top K</label>
+                                <input type="number" id="rewriterTopK" value="20" min="0" max="100" step="1" class="w-full px-2 py-1.5 bg-gray-800 border border-gray-700 rounded-lg text-white text-sm focus:ring-2 focus:ring-blue-500">
+                            </div>
+                            <div>
                                 <label class="block text-xs font-medium text-gray-400 mb-1">Min P</label>
                                 <input type="number" id="rewriterMinP" value="0.0" min="0" max="1" step="0.05" class="w-full px-2 py-1.5 bg-gray-800 border border-gray-700 rounded-lg text-white text-sm focus:ring-2 focus:ring-blue-500">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-medium text-gray-400 mb-1">Presence Pen.</label>
+                                <input type="number" id="rewriterPresencePenalty" value="0.0" min="0" max="2" step="0.1" class="w-full px-2 py-1.5 bg-gray-800 border border-gray-700 rounded-lg text-white text-sm focus:ring-2 focus:ring-blue-500">
                             </div>
                         </div>
 
@@ -335,17 +347,6 @@
                             ></textarea>
                         </div>
 
-                        <!-- Enable Thinking -->
-                        <div class="flex items-center">
-                            <input
-                                type="checkbox"
-                                id="enableThinking"
-                                checked
-                                class="w-4 h-4 text-blue-600 bg-gray-700 border-gray-600 rounded focus:ring-blue-500 focus:ring-2"
-                            >
-                            <label for="enableThinking" class="ml-2 text-sm text-gray-300">Enable thinking block</label>
-                        </div>
-
                         <!-- Strip Quotes -->
                         <div class="flex items-center">
                             <input
@@ -357,14 +358,25 @@
                             <span class="ml-2 text-xs text-gray-500">(for JSON-type prompts)</span>
                         </div>
 
-                        <!-- Thinking Content -->
-                        <div>
+                        <!-- Add Think Block -->
+                        <div class="flex items-center">
+                            <input
+                                type="checkbox"
+                                id="enableThinking"
+                                class="w-4 h-4 text-blue-600 bg-gray-700 border-gray-600 rounded focus:ring-blue-500 focus:ring-2"
+                            >
+                            <label for="enableThinking" class="ml-2 text-sm text-gray-300">Add think block</label>
+                            <span class="ml-2 text-xs text-gray-500">(default: off, matching HF Space)</span>
+                        </div>
+
+                        <!-- Thinking Content (shown when think block enabled) -->
+                        <div id="thinkingContentWrapper" class="hidden">
                             <label class="block text-sm font-medium text-gray-300 mb-2">Thinking Content</label>
                             <textarea
                                 id="thinkingContent"
                                 rows="2"
                                 class="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500 text-sm resize-none"
-                                placeholder="Leave empty for default (optional)"
+                                placeholder="Content inside <think>...</think> (optional)"
                             ></textarea>
                         </div>
 
@@ -382,7 +394,7 @@
                 </details>
 
                 <!-- Scheduler Options (collapsible) -->
-                <details class="group">
+                <details class="group" open>
                     <summary class="cursor-pointer text-sm font-medium text-gray-400 hover:text-gray-300 flex items-center gap-2 select-none">
                         <svg class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
@@ -430,6 +442,31 @@
                                 <span>10.0</span>
                             </div>
                             <p class="text-xs text-gray-500 mt-1">FlowMatchEuler scheduler shift parameter (default: 3.0)</p>
+                        </div>
+
+                        <!-- Long Prompt Mode -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-2">Long Prompt Mode</label>
+                            <select id="longPromptMode" class="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-white focus:ring-2 focus:ring-blue-500">
+                                <option value="truncate">Truncate (cuts off end)</option>
+                                <option value="interpolate" selected>Interpolate (default, smooth resampling)</option>
+                                <option value="pool">Pool (local averaging)</option>
+                                <option value="attention_pool">Attention Pool (preserve important)</option>
+                            </select>
+                            <p class="text-xs text-gray-500 mt-1">How to handle prompts exceeding 1504 tokens</p>
+                        </div>
+
+                        <!-- Hidden Layer -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-2">
+                                Hidden Layer: <span id="hiddenLayerValue" class="text-blue-400">-2</span>
+                            </label>
+                            <input type="range" id="hiddenLayer" min="-6" max="-1" value="-2" class="w-full">
+                            <div class="flex justify-between text-xs text-gray-500 mt-1">
+                                <span>-6 (Deeper)</span>
+                                <span>-1 (Last)</span>
+                            </div>
+                            <p class="text-xs text-gray-500 mt-1">Which transformer layer to extract embeddings from</p>
                         </div>
 
                     </div>
@@ -567,6 +604,9 @@
         const guidanceScaleValue = document.getElementById('guidanceScaleValue');
         const shiftSlider = document.getElementById('shift');
         const shiftValue = document.getElementById('shiftValue');
+        const longPromptModeSelect = document.getElementById('longPromptMode');
+        const hiddenLayerSlider = document.getElementById('hiddenLayer');
+        const hiddenLayerValue = document.getElementById('hiddenLayerValue');
 
         // Current generation params (for reuse)
         let currentParams = null;
@@ -583,6 +623,24 @@
         shiftSlider.addEventListener('input', () => {
             shiftValue.textContent = parseFloat(shiftSlider.value).toFixed(1);
         });
+
+        hiddenLayerSlider.addEventListener('input', () => {
+            hiddenLayerValue.textContent = hiddenLayerSlider.value;
+        });
+
+        // Toggle thinking content visibility based on checkbox
+        const enableThinkingCheckbox = document.getElementById('enableThinking');
+        const thinkingContentWrapper = document.getElementById('thinkingContentWrapper');
+
+        function updateThinkingContentVisibility() {
+            if (enableThinkingCheckbox.checked) {
+                thinkingContentWrapper.classList.remove('hidden');
+            } else {
+                thinkingContentWrapper.classList.add('hidden');
+            }
+        }
+
+        enableThinkingCheckbox.addEventListener('change', updateThinkingContentVisibility);
 
         // Populate width/height dropdowns with multiples of 16
         function populateResolutionDropdowns() {
@@ -674,6 +732,7 @@
                 thinkingContentEl.value = '';
                 assistantContentEl.value = '';
                 enableThinkingEl.checked = false;
+                updateThinkingContentVisibility();
                 return;
             }
 
@@ -699,6 +758,9 @@
             if (t.add_think_block === true) {
                 enableThinkingEl.checked = true;
             }
+
+            // Update thinking content visibility based on checkbox state
+            updateThinkingContentVisibility();
         }
 
         // Rewriter mode toggle
@@ -738,9 +800,11 @@
                 const config = await response.json();
                 // Update form fields with server config defaults
                 document.getElementById('rewriterMaxTokens').value = config.max_tokens || 512;
-                document.getElementById('rewriterTemperature').value = config.temperature || 1.0;
+                document.getElementById('rewriterTemperature').value = config.temperature || 0.6;
                 document.getElementById('rewriterTopP').value = config.top_p || 0.95;
+                document.getElementById('rewriterTopK').value = config.top_k || 20;
                 document.getElementById('rewriterMinP').value = config.min_p || 0.0;
+                document.getElementById('rewriterPresencePenalty').value = config.presence_penalty || 0.0;
             } catch (err) {
                 console.error('Failed to load rewriter config:', err);
             }
@@ -792,9 +856,11 @@
             const rewriter = document.getElementById('rewriterTemplate').value;
             const customPrompt = document.getElementById('customRewriterPrompt').value.trim();
             const maxTokens = parseInt(document.getElementById('rewriterMaxTokens').value) || 512;
-            const temperature = parseFloat(document.getElementById('rewriterTemperature').value) || 1.0;
+            const temperature = parseFloat(document.getElementById('rewriterTemperature').value) || 0.6;
             const topP = parseFloat(document.getElementById('rewriterTopP').value) || 0.95;
+            const topK = parseInt(document.getElementById('rewriterTopK').value) || 20;
             const minP = parseFloat(document.getElementById('rewriterMinP').value) || 0.0;
+            const presencePenalty = parseFloat(document.getElementById('rewriterPresencePenalty').value) || 0.0;
 
             if (!prompt) {
                 alert('Please enter a prompt first');
@@ -823,7 +889,9 @@
                     max_tokens: maxTokens,
                     temperature,
                     top_p: topP,
+                    top_k: topK,
                     min_p: minP,
+                    presence_penalty: presencePenalty,
                 };
 
                 if (rewriterMode === 'template') {
@@ -881,6 +949,8 @@
                 if (lastThinkingContent) {
                     document.getElementById('thinkingContent').value = lastThinkingContent;
                 }
+                // Collapse the rewriter section
+                document.getElementById('rewriterSection').removeAttribute('open');
                 // Scroll to prompt
                 document.getElementById('prompt').scrollIntoView({ behavior: 'smooth', block: 'center' });
                 document.getElementById('prompt').focus();
@@ -974,6 +1044,7 @@
             document.getElementById('assistantContent').value = item.assistant_content || '';
             document.getElementById('enableThinking').checked = item.force_think_block || false;
             document.getElementById('stripQuotes').checked = item.strip_quotes || false;
+            updateThinkingContentVisibility();
             document.getElementById('seed').value = item.seed || '';
             document.getElementById('template').value = item.template || '';
 
@@ -989,6 +1060,13 @@
             if (item.shift !== undefined) {
                 shiftSlider.value = item.shift;
                 shiftValue.textContent = parseFloat(item.shift).toFixed(1);
+            }
+            if (item.long_prompt_mode) {
+                longPromptModeSelect.value = item.long_prompt_mode;
+            }
+            if (item.hidden_layer !== undefined) {
+                hiddenLayerSlider.value = item.hidden_layer;
+                hiddenLayerValue.textContent = item.hidden_layer;
             }
 
             // Set resolution
@@ -1025,6 +1103,12 @@
             }
             if (item.shift !== undefined && item.shift !== 3.0) {
                 infoText += `, shift ${item.shift}`;
+            }
+            if (item.long_prompt_mode && item.long_prompt_mode !== 'truncate') {
+                infoText += `, ${item.long_prompt_mode}`;
+            }
+            if (item.hidden_layer !== undefined && item.hidden_layer !== -2) {
+                infoText += `, layer ${item.hidden_layer}`;
             }
 
             resultInfo.textContent = infoText;
@@ -1108,6 +1192,8 @@
                 seed: document.getElementById('seed').value ? parseInt(document.getElementById('seed').value) : null,
                 guidance_scale: parseFloat(guidanceScaleSlider.value),
                 shift: parseFloat(shiftSlider.value),
+                long_prompt_mode: longPromptModeSelect.value,
+                hidden_layer: parseInt(hiddenLayerSlider.value),
             };
 
             currentParams = params;
@@ -1161,6 +1247,12 @@
                 if (params.shift !== 3.0) {
                     infoText += `, shift ${params.shift}`;
                 }
+                if (params.long_prompt_mode && params.long_prompt_mode !== 'truncate') {
+                    infoText += `, ${params.long_prompt_mode}`;
+                }
+                if (params.hidden_layer !== undefined && params.hidden_layer !== -2) {
+                    infoText += `, layer ${params.hidden_layer}`;
+                }
 
                 resultInfo.textContent = infoText;
                 document.getElementById('resultFormattedPrompt').textContent = formattedPrompt;
@@ -1187,6 +1279,83 @@
             div.textContent = text;
             return div.innerHTML;
         }
+
+        // Token count display with debouncing
+        const tokenCountEl = document.getElementById('tokenCount');
+        let tokenCountTimeout = null;
+
+        async function updateTokenCount() {
+            const prompt = document.getElementById('prompt').value;
+            if (!prompt.trim()) {
+                tokenCountEl.textContent = '-- / 1504 tokens';
+                tokenCountEl.className = 'text-xs text-gray-400';
+                return;
+            }
+
+            try {
+                const params = {
+                    prompt: prompt,
+                    system_prompt: document.getElementById('systemPrompt').value || null,
+                    thinking_content: document.getElementById('thinkingContent').value || null,
+                    assistant_content: document.getElementById('assistantContent').value || null,
+                    force_think_block: document.getElementById('enableThinking').checked,
+                    template: document.getElementById('template').value || null,
+                };
+
+                const response = await fetch(`${API_BASE}/api/format-prompt`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(params),
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    const count = data.token_count;
+                    const max = data.max_tokens || 1504;
+                    const chars = data.char_count || 0;
+
+                    if (count !== null) {
+                        // Exact token count available (local encoder)
+                        tokenCountEl.textContent = `${count} / ${max} tokens`;
+                        if (count > max) {
+                            tokenCountEl.className = 'text-xs text-red-400 font-medium';
+                        } else if (count > max * 0.9) {
+                            tokenCountEl.className = 'text-xs text-yellow-400';
+                        } else {
+                            tokenCountEl.className = 'text-xs text-green-400';
+                        }
+                    } else {
+                        // No tokenizer (API backend) - show character estimate
+                        // Rough estimate: ~3.5 chars per token for English text
+                        const estTokens = Math.ceil(chars / 3.5);
+                        tokenCountEl.textContent = `~${estTokens} tokens (est. from ${chars} chars)`;
+                        if (estTokens > max) {
+                            tokenCountEl.className = 'text-xs text-red-400 font-medium';
+                        } else if (estTokens > max * 0.85) {
+                            tokenCountEl.className = 'text-xs text-yellow-400';
+                        } else {
+                            tokenCountEl.className = 'text-xs text-gray-400';
+                        }
+                    }
+                }
+            } catch (err) {
+                // Silently fail - token count is informational
+                console.debug('Token count update failed:', err);
+            }
+        }
+
+        function debouncedTokenCount() {
+            if (tokenCountTimeout) clearTimeout(tokenCountTimeout);
+            tokenCountTimeout = setTimeout(updateTokenCount, 500);
+        }
+
+        // Update token count on input changes
+        document.getElementById('prompt').addEventListener('input', debouncedTokenCount);
+        document.getElementById('systemPrompt').addEventListener('input', debouncedTokenCount);
+        document.getElementById('thinkingContent').addEventListener('input', debouncedTokenCount);
+        document.getElementById('assistantContent').addEventListener('input', debouncedTokenCount);
+        document.getElementById('enableThinking').addEventListener('change', debouncedTokenCount);
+        document.getElementById('template').addEventListener('change', debouncedTokenCount);
 
         // Initialize
         loadTemplates();

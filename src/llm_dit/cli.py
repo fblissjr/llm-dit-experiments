@@ -97,7 +97,7 @@ class RuntimeConfig:
     cache_size: int = 100  # Maximum number of cached embeddings
 
     # Long prompt handling
-    long_prompt_mode: str = "truncate"  # truncate, interpolate, pool, attention_pool
+    long_prompt_mode: str = "interpolate"  # truncate, interpolate, pool, attention_pool
 
     # Encoder settings
     hidden_layer: int = -2  # Which layer to extract embeddings from (-1=last, -2=penultimate)
@@ -336,9 +336,9 @@ def create_base_parser(
         choices=["truncate", "interpolate", "pool", "attention_pool"],
         default=None,
         help=(
-            "How to handle prompts exceeding 1024 tokens: "
-            "truncate (default, cut off), "
-            "interpolate (resample embeddings), "
+            "How to handle prompts exceeding 1504 tokens: "
+            "truncate (cut off end), "
+            "interpolate (default, smooth resampling), "
             "pool (average pooling), "
             "attention_pool (importance-weighted pooling)"
         ),
@@ -627,7 +627,7 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
                 config.tile_overlap = getattr(pytorch, 'tile_overlap', 64)
                 config.embedding_cache = getattr(pytorch, 'embedding_cache', False)
                 config.cache_size = getattr(pytorch, 'cache_size', 100)
-                config.long_prompt_mode = getattr(pytorch, 'long_prompt_mode', 'truncate')
+                config.long_prompt_mode = getattr(pytorch, 'long_prompt_mode', 'interpolate')
 
             # Check for rewriter section
             if hasattr(toml_config, 'rewriter'):

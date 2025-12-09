@@ -108,7 +108,7 @@ Image Output
 |-----------|-------|-------|
 | Text encoder | Qwen3-4B | 2560 hidden dim, 36 layers |
 | Embedding extraction | hidden_states[-2] | Penultimate layer (configurable via `--hidden-layer`) |
-| **Max text tokens** | **1024** | DiT RoPE limit (axes_lens[0]) |
+| **Max text tokens** | **1504** | DiT RoPE limit (see below) |
 | CFG scale | 0.0 | Baked in via Decoupled-DMD |
 | Steps | 8-9 | Turbo distilled |
 | Scheduler | FlowMatchEuler | shift=3.0 |
@@ -117,19 +117,19 @@ Image Output
 
 ## Text Sequence Length Limits
 
-The DiT transformer has a **maximum text sequence length of 1024 tokens** due to RoPE (Rotary Position Embeddings) configuration: `axes_lens=[1024, 512, 512]` where the first axis is for text embeddings.
+The DiT transformer has a **maximum text sequence length of 1504 tokens**. The config specifies `axes_lens=[1536, 512, 512]` but the actual working limit is 1504 (47 * 32, where 32 is `axes_dims[0]`). This appears to be an off-by-one in RoPE frequency table indexing. Exceeding 1504 causes CUDA kernel crashes.
 
 **This is a key research area for this repository.** We are actively experimenting with methods to work around or extend this limit. See `internal/research/long_prompt_research.md` for detailed research notes on approaches, quality tradeoffs, and future directions.
 
 ### Current Behavior (Default)
 
-- Prompts exceeding 1024 tokens are **automatically truncated** with a warning
-- The pipeline logs: `Text sequence length (N tokens) exceeds maximum (1024). Truncating to 1024 tokens.`
-- Truncation happens after encoding, preserving the first 1024 tokens of embeddings
+- Prompts exceeding 1504 tokens are **automatically truncated** with a warning
+- The pipeline logs: `Text sequence length (N tokens) exceeds maximum (1504). Truncating to 1504 tokens.`
+- Truncation happens after encoding, preserving the first 1504 tokens of embeddings
 
 ### Experimental Compression Modes
 
-We have implemented several experimental modes for handling prompts beyond 1024 tokens. **Quality impact varies - this is an active research area:**
+We have implemented several experimental modes for handling prompts beyond 1504 tokens. **Quality impact varies - this is an active research area:**
 
 | Mode | CLI Flag | Status | Quality Impact |
 |------|----------|--------|----------------|
@@ -154,9 +154,9 @@ See the detailed research doc: `internal/research/long_prompt_research.md`
 | Detailed prompt with style | 50-100 tokens |
 | Template + system prompt | 100-200 tokens |
 | Full format (system + think + assistant) | 150-300 tokens |
-| Maximum safe prompt | ~800-900 tokens |
+| Maximum safe prompt | ~1200-1300 tokens |
 
-**Note:** The 1024 limit includes ALL tokens: system prompt, user prompt, think block, and assistant content.
+**Note:** The 1504 limit includes ALL tokens: system prompt, user prompt, think block, and assistant content.
 
 ### Strategies for Long Prompts
 
@@ -191,13 +191,13 @@ See the detailed research doc: `internal/research/long_prompt_research.md`
    encoder = ZImageTextEncoder.from_pretrained("/path/to/model")
    output = encoder.encode("Your prompt here")
    token_count = output.token_counts[0]
-   print(f"Token count: {token_count}/1024")
+   print(f"Token count: {token_count}/1504")
    ```
 
 5. **Access the constant programmatically**:
    ```python
    from llm_dit import MAX_TEXT_SEQ_LEN
-   print(f"Max tokens: {MAX_TEXT_SEQ_LEN}")  # 1024
+   print(f"Max tokens: {MAX_TEXT_SEQ_LEN}")  # 1504
    ```
 
 6. **Use experimental compression modes** (active research area):
@@ -212,11 +212,11 @@ See the detailed research doc: `internal/research/long_prompt_research.md`
 ### Why This Limit Exists
 
 The Z-Image DiT uses multi-axis RoPE for position encoding:
-- Axis 0 (1024): Text/time sequence positions
+- Axis 0 (1504 actual, 1536 configured): Text/time sequence positions
 - Axis 1 (512): Image height positions
 - Axis 2 (512): Image width positions
 
-Exceeding axis 0 causes CUDA kernel errors (`vectorized_gather_kernel: index out of bounds`).
+The config specifies `axes_lens=[1536, 512, 512]` and `axes_dims=[32, 48, 48]`. The actual limit is 1504 = 47 * 32, suggesting an off-by-one in the RoPE frequency table indexing. Exceeding 1504 causes CUDA kernel errors (`vectorized_gather_kernel: index out of bounds`).
 
 **Note**: This limit is architectural, not a fundamental constraint. Future research directions include RoPE extrapolation, hierarchical encoding, and chunked attention. See the research doc for exploration plans.
 
@@ -603,7 +603,7 @@ uv run scripts/profiler.py --show-info
 | `--tile-overlap` | Overlap between tiles (default: 64) |
 | `--embedding-cache` | Enable embedding cache for repeated prompts |
 | `--cache-size` | Max cached embeddings (default: 100) |
-| `--long-prompt-mode` | How to handle prompts >1024 tokens: truncate/interpolate/pool/attention_pool |
+| `--long-prompt-mode` | How to handle prompts >1504 tokens: truncate/interpolate/pool/attention_pool |
 | `--hidden-layer` | Which hidden layer to extract embeddings from (default: -2, penultimate) |
 
 ### Generation

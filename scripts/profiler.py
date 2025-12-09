@@ -445,6 +445,8 @@ class Profiler:
             width=self.config.width,
             num_inference_steps=self.config.steps,
             guidance_scale=self.config.guidance_scale,
+            long_prompt_mode=self.config.long_prompt_mode,
+            hidden_layer=self.config.hidden_layer,
             generator=torch.Generator(device="cpu").manual_seed(42),
         )
 
@@ -556,6 +558,7 @@ def run_profile(config: RuntimeConfig, tests: list[str] | None = None, verbose: 
             "tiled_vae": config.tiled_vae,
             "embedding_cache": config.embedding_cache,
             "long_prompt_mode": config.long_prompt_mode,
+            "hidden_layer": config.hidden_layer,
         },
         system_info=get_system_info(),
         tests=profiler.results,

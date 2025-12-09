@@ -51,7 +51,7 @@ class TestCompressEmbeddings:
         embeddings = torch.randn(1500, 2560)
         result = compress_embeddings(embeddings, max_len=1024, mode="truncate")
         assert result.shape == (1024, 2560)
-        # Truncated result should match first 1024 tokens
+        # Truncated result should match first max_len tokens
         assert torch.equal(result, embeddings[:1024])
 
     def test_interpolate_mode(self):

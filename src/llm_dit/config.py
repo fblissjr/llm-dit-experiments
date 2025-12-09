@@ -229,6 +229,24 @@ class LoRAConfig:
 
 
 @dataclass
+class PyTorchConfig:
+    """PyTorch-native component configuration.
+
+    These settings control the Phase 1 migration components that reduce
+    diffusers dependency and optimize for RTX 4090.
+    """
+
+    attention_backend: str = "auto"  # auto, flash_attn_2, flash_attn_3, sage, xformers, sdpa
+    use_custom_scheduler: bool = False  # Use pure PyTorch FlowMatchScheduler
+    tiled_vae: bool = False  # Enable tiled VAE decode for 2K+ images
+    tile_size: int = 512  # Tile size in pixels (latent = tile_size / 8)
+    tile_overlap: int = 64  # Overlap between tiles for smooth blending
+    embedding_cache: bool = False  # Cache embeddings for repeated prompts
+    cache_size: int = 100  # Max cached embeddings (LRU eviction)
+    long_prompt_mode: str = "interpolate"  # truncate, interpolate, pool, attention_pool
+
+
+@dataclass
 class RewriterConfig:
     """Configuration for prompt rewriting using LLM generation.
 
@@ -270,6 +288,7 @@ class Config:
     optimization: OptimizationConfig = field(default_factory=OptimizationConfig)
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
     lora: LoRAConfig = field(default_factory=LoRAConfig)
+    pytorch: PyTorchConfig = field(default_factory=PyTorchConfig)
     rewriter: RewriterConfig = field(default_factory=RewriterConfig)
 
     @classmethod
@@ -281,6 +300,7 @@ class Config:
         optimization_data = data.pop("optimization", {})
         scheduler_data = data.pop("scheduler", {})
         lora_data = data.pop("lora", {})
+        pytorch_data = data.pop("pytorch", {})
         rewriter_data = data.pop("rewriter", {})
 
         return cls(
@@ -292,6 +312,7 @@ class Config:
             optimization=OptimizationConfig(**optimization_data),
             scheduler=SchedulerConfig(**scheduler_data),
             lora=LoRAConfig(**lora_data),
+            pytorch=PyTorchConfig(**pytorch_data),
             rewriter=RewriterConfig(**rewriter_data),
         )
 
@@ -384,6 +405,16 @@ class Config:
             "lora": {
                 "paths": self.lora.paths,
                 "scales": self.lora.scales,
+            },
+            "pytorch": {
+                "attention_backend": self.pytorch.attention_backend,
+                "use_custom_scheduler": self.pytorch.use_custom_scheduler,
+                "tiled_vae": self.pytorch.tiled_vae,
+                "tile_size": self.pytorch.tile_size,
+                "tile_overlap": self.pytorch.tile_overlap,
+                "embedding_cache": self.pytorch.embedding_cache,
+                "cache_size": self.pytorch.cache_size,
+                "long_prompt_mode": self.pytorch.long_prompt_mode,
             },
             "rewriter": {
                 "use_api": self.rewriter.use_api,

@@ -1,8 +1,9 @@
 """
 Long prompt handling utilities for Z-Image.
 
-The Z-Image DiT transformer has a maximum text sequence length of 1024 tokens
-due to RoPE position encoding limits (axes_lens=[1024, 512, 512]).
+The Z-Image DiT transformer has a maximum text sequence length of 1504 tokens
+due to RoPE position encoding limits. The config specifies axes_lens=[1536, 512, 512]
+but the actual working limit is 1504 (47 * 32, where 32 is axes_dims[0]).
 
 This module provides strategies to handle longer prompts without truncation:
 - interpolate: Resample embeddings to fit using linear interpolation
@@ -13,14 +14,14 @@ Usage:
     from llm_dit.utils.long_prompt import compress_embeddings, LongPromptMode
 
     # Interpolation (smooth resampling)
-    compressed = compress_embeddings(embeddings, max_len=1024, mode="interpolate")
+    compressed = compress_embeddings(embeddings, max_len=1504, mode="interpolate")
 
     # Pooling (local averaging)
-    compressed = compress_embeddings(embeddings, max_len=1024, mode="pool")
+    compressed = compress_embeddings(embeddings, max_len=1504, mode="pool")
 
 Note:
-    These are EXPERIMENTAL features. Quality may degrade compared to shorter prompts
-    because the model was trained with a maximum of 1024 text tokens.
+    These are EXPERIMENTAL features. Quality impact at different compression ratios
+    is still being evaluated.
 """
 
 import logging
@@ -36,7 +37,7 @@ logger = logging.getLogger(__name__)
 class LongPromptMode(str, Enum):
     """Strategies for handling prompts exceeding MAX_TEXT_SEQ_LEN."""
 
-    TRUNCATE = "truncate"  # Default: cut off at 1024 tokens
+    TRUNCATE = "truncate"  # Default: cut off at 1504 tokens
     INTERPOLATE = "interpolate"  # Resample embeddings using linear interpolation
     POOL = "pool"  # Adaptive average pooling
     ATTENTION_POOL = "attention_pool"  # Attention-weighted pooling
@@ -44,7 +45,7 @@ class LongPromptMode(str, Enum):
 
 def compress_embeddings(
     embeddings: torch.Tensor,
-    max_len: int = 1024,
+    max_len: int = 1504,
     mode: Literal["truncate", "interpolate", "pool", "attention_pool"] = "truncate",
 ) -> torch.Tensor:
     """
@@ -154,18 +155,51 @@ def _pool_embeddings(embeddings: torch.Tensor, target_len: int) -> torch.Tensor:
 
 def _attention_pool_embeddings(embeddings: torch.Tensor, target_len: int) -> torch.Tensor:
     """
-    Compress embeddings using attention-weighted pooling.
+    Compress embeddings using attention-weighted pooling with cosine similarity.
 
-    This learns to weight tokens by their importance (based on embedding norm)
-    and uses weighted averaging within each pool region.
+    This computes token importance based on how distinctive each token is
+    compared to its neighbors. Tokens that are semantically unique (low cosine
+    similarity to neighbors) get higher weights, preserving important concepts.
 
-    Tokens with higher L2 norms (often more semantically meaningful) get
-    higher weights in the pooling.
+    The importance score for each token is computed as:
+        importance = 1 - avg_cosine_similarity_to_neighbors
+
+    This is better than L2 norm because:
+    1. It captures semantic distinctiveness, not just magnitude
+    2. Transition tokens (like commas, conjunctions) often have high norms but low importance
+    3. Key concepts may have moderate norms but be very different from surrounding tokens
     """
     seq_len, hidden_dim = embeddings.shape
 
-    # Compute token importance scores (L2 norm as proxy for importance)
-    token_norms = embeddings.norm(dim=-1)  # [seq_len]
+    # Normalize embeddings for cosine similarity
+    embeddings_normalized = F.normalize(embeddings, p=2, dim=-1)  # [seq_len, hidden_dim]
+
+    # Compute pairwise cosine similarity with neighbors
+    # We use a window of +/- 2 tokens for context
+    importance_scores = torch.zeros(seq_len, device=embeddings.device, dtype=embeddings.dtype)
+
+    for i in range(seq_len):
+        # Get neighbor indices (within window, excluding self)
+        start = max(0, i - 2)
+        end = min(seq_len, i + 3)
+        neighbor_indices = [j for j in range(start, end) if j != i]
+
+        if not neighbor_indices:
+            # No neighbors (shouldn't happen in practice)
+            importance_scores[i] = 1.0
+            continue
+
+        # Compute cosine similarity to neighbors
+        token_vec = embeddings_normalized[i]  # [hidden_dim]
+        neighbor_vecs = embeddings_normalized[neighbor_indices]  # [num_neighbors, hidden_dim]
+        similarities = torch.mv(neighbor_vecs, token_vec)  # [num_neighbors]
+
+        # Importance = 1 - average similarity (more unique = more important)
+        avg_similarity = similarities.mean()
+        importance_scores[i] = 1.0 - avg_similarity
+
+    # Shift to ensure all scores are positive for softmax stability
+    importance_scores = importance_scores - importance_scores.min() + 0.1
 
     # Determine pool regions
     pool_size = seq_len / target_len
@@ -181,12 +215,12 @@ def _attention_pool_embeddings(embeddings: torch.Tensor, target_len: int) -> tor
             output.append(embeddings[-1])
             continue
 
-        # Get tokens in this region
+        # Get tokens and importance scores in this region
         region_embeddings = embeddings[start_idx:end_idx]  # [region_len, hidden_dim]
-        region_norms = token_norms[start_idx:end_idx]  # [region_len]
+        region_importance = importance_scores[start_idx:end_idx]  # [region_len]
 
-        # Softmax weights based on norms
-        weights = F.softmax(region_norms, dim=0)  # [region_len]
+        # Softmax weights based on importance
+        weights = F.softmax(region_importance, dim=0)  # [region_len]
 
         # Weighted average
         pooled = (region_embeddings * weights.unsqueeze(-1)).sum(dim=0)  # [hidden_dim]

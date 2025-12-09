@@ -500,10 +500,11 @@ The Z-Image DiT has a text sequence limit due to RoPE position encoding.
 
 | Limit | Source | Status |
 |-------|--------|--------|
-| 1024 | Current implementation | Active |
-| 1536 | Model config (axes_lens) | Needs testing |
+| 1504 | Binary search testing | **Confirmed** |
+| 1536 | Model config (axes_lens) | Fails at boundary |
+| 1024 | DiffSynth conservative | Outdated |
 
-**Critical Discovery**: The official model config shows `axes_lens=[1536, 512, 512]`, suggesting the model may support **1536 tokens, not 1024**. This needs testing.
+**Confirmed Limit**: Through binary search testing, the actual maximum is **1504 tokens**. The config shows `axes_lens=[1536, 512, 512]` but 1536 fails - likely due to padding or off-by-one in the RoPE implementation.
 
 ### Compression Modes
 
@@ -517,8 +518,8 @@ uv run scripts/generate.py \
 
 | Mode | Description | Best For |
 |------|-------------|----------|
-| `truncate` | Cut off at limit (default) | Safety, predictability |
-| `interpolate` | Linear resampling | Minor overflows (1.1-1.5x) |
+| `truncate` | Cut off at 1504 tokens | Predictability (loses end of prompt) |
+| `interpolate` | Linear resampling (default) | Most cases, preserves all content |
 | `pool` | Adaptive average pooling | Structured content with regions |
 | `attention_pool` | Importance-weighted pooling | Preserving key concepts |
 

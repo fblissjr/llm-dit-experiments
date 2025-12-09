@@ -34,10 +34,11 @@ from llm_dit.utils.long_prompt import compress_embeddings, LongPromptMode
 logger = logging.getLogger(__name__)
 
 # Maximum text sequence length supported by the DiT transformer.
-# The Z-Image DiT uses multi-axis RoPE with axes_lens=[1024, 512, 512].
-# The first axis (1024) is for text/time embeddings.
-# Exceeding this limit causes "vectorized_gather_kernel: index out of bounds" errors.
-MAX_TEXT_SEQ_LEN = 1024
+# The Z-Image DiT uses multi-axis RoPE with config axes_lens=[1536, 512, 512].
+# However, the actual working limit is 1504 tokens (47 * 32 = 1504, where 32 is axes_dims[0]).
+# This appears to be an off-by-one in RoPE frequency table indexing.
+# Exceeding 1504 causes "vectorized_gather_kernel: index out of bounds" errors.
+MAX_TEXT_SEQ_LEN = 1504
 
 
 def setup_attention_backend(backend: Optional[str] = None) -> str:
@@ -545,6 +546,7 @@ class ZImagePipeline:
         callback: Optional[Callable[[int, int, torch.Tensor], None]] = None,
         shift: Optional[float] = None,
         long_prompt_mode: str = "truncate",
+        hidden_layer: int = -2,
     ) -> Union[Image.Image, List[Image.Image], torch.Tensor]:
         """
         Generate an image from a text prompt and an input image.
@@ -573,7 +575,8 @@ class ZImagePipeline:
             output_type: Output format ("pil", "latent", or "pt")
             callback: Progress callback
             shift: Override scheduler shift/mu
-            long_prompt_mode: How to handle prompts > 1024 tokens (truncate/interpolate/pool/attention_pool)
+            long_prompt_mode: How to handle prompts > 1504 tokens (truncate/interpolate/pool/attention_pool)
+            hidden_layer: Which LLM hidden layer to extract embeddings from (default: -2)
 
         Returns:
             Generated image in specified format
@@ -648,6 +651,7 @@ class ZImagePipeline:
             assistant_content=assistant_content,
             force_think_block=force_think_block,
             remove_quotes=remove_quotes,
+            layer_index=hidden_layer,
         )
         raw_embeds = prompt_output.embeddings[0]
         # Compress if needed
@@ -705,14 +709,14 @@ class ZImagePipeline:
         negative_prompt_embeds = []
         if guidance_scale > 0:
             if negative_prompt is not None:
-                neg_output = self.encoder.encode(negative_prompt, force_think_block=force_think_block)
+                neg_output = self.encoder.encode(negative_prompt, force_think_block=force_think_block, layer_index=hidden_layer)
                 neg_embeds = neg_output.embeddings[0]
                 # Compress if needed
                 if neg_embeds.shape[0] > MAX_TEXT_SEQ_LEN:
                     neg_embeds = compress_embeddings(neg_embeds, MAX_TEXT_SEQ_LEN, mode=long_prompt_mode)
                 negative_prompt_embeds = [neg_embeds.to(device=device, dtype=dtype)]
             else:
-                neg_output = self.encoder.encode("", force_think_block=force_think_block)
+                neg_output = self.encoder.encode("", force_think_block=force_think_block, layer_index=hidden_layer)
                 negative_prompt_embeds = [neg_output.embeddings[0].to(device=device, dtype=dtype)]
 
         # 6. Denoising loop (same as txt2img but starting from noised latents)
@@ -840,6 +844,7 @@ class ZImagePipeline:
         callback: Optional[Callable[[int, int, torch.Tensor], None]] = None,
         shift: Optional[float] = None,
         long_prompt_mode: str = "truncate",
+        hidden_layer: int = -2,
     ) -> Union[Image.Image, List[Image.Image], torch.Tensor]:
         """
         Generate an image from a text prompt.
@@ -864,11 +869,14 @@ class ZImagePipeline:
             shift: Override scheduler shift/mu (default: calculated based on resolution).
                    Higher values generally produce more detailed but potentially less stable results.
                    Typical range: 0.5-10.0. Default is dynamically calculated (~3.0 for 1024x1024).
-            long_prompt_mode: How to handle prompts exceeding 1024 tokens:
-                   "truncate" (default) - cut off at 1024 tokens
+            long_prompt_mode: How to handle prompts exceeding 1504 tokens:
+                   "truncate" (default) - cut off at 1504 tokens
                    "interpolate" - resample embeddings using linear interpolation
                    "pool" - use adaptive average pooling
                    "attention_pool" - use importance-weighted pooling
+            hidden_layer: Which LLM hidden layer to extract embeddings from (default: -2).
+                   -1 = last layer, -2 = penultimate (default), -3 to -6 for deeper layers.
+                   Useful for experimenting with embedding quality.
 
         Returns:
             Generated image(s) in specified format
@@ -923,6 +931,7 @@ class ZImagePipeline:
             assistant_content=assistant_content,
             force_think_block=force_think_block,
             remove_quotes=remove_quotes,
+            layer_index=hidden_layer,
         )
 
         # Log formatted prompt for debugging
@@ -953,6 +962,7 @@ class ZImagePipeline:
             neg_output = self.encoder.encode(
                 negative_prompt,
                 force_think_block=force_think_block,
+                layer_index=hidden_layer,
             )
             neg_embeds = neg_output.embeddings[0]
             # Compress if needed
@@ -964,6 +974,7 @@ class ZImagePipeline:
             neg_output = self.encoder.encode(
                 "",
                 force_think_block=force_think_block,
+                layer_index=hidden_layer,
             )
             negative_prompt_embeds = [neg_output.embeddings[0].to(device=device, dtype=dtype)]
 

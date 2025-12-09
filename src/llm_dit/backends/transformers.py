@@ -455,7 +455,8 @@ class TransformersBackend:
         generated_ids = outputs[0, input_length:].tolist()
 
         # Parse thinking content at token level (most reliable)
-        # Qwen3 uses token 151668 for </think>
+        # Qwen3 uses token 151667 for <think> and 151668 for </think>
+        THINK_START_TOKEN = 151667
         THINK_END_TOKEN = 151668
         thinking_content = None
         content_ids = generated_ids
@@ -463,12 +464,21 @@ class TransformersBackend:
         try:
             # Find </think> token from the end (in case of multiple)
             think_end_idx = len(generated_ids) - generated_ids[::-1].index(THINK_END_TOKEN)
-            # Everything before </think> is thinking (including <think> token)
+            # Everything before </think> is thinking (may include <think> token at start)
             thinking_ids = generated_ids[:think_end_idx]
             content_ids = generated_ids[think_end_idx:]
 
+            # Remove <think> token from start if present
+            if thinking_ids and thinking_ids[0] == THINK_START_TOKEN:
+                thinking_ids = thinking_ids[1:]
+
             # Decode thinking (skip special tokens to clean it up)
             thinking_content = self.tokenizer.decode(thinking_ids, skip_special_tokens=True).strip()
+
+            # Extra safety: strip any remaining <think>/<think> tags that might have slipped through
+            # (in case these tokens aren't marked as special in the tokenizer)
+            thinking_content = thinking_content.removeprefix("<think>").removesuffix("</think>").strip()
+
             logger.info(f"[TransformersBackend.generate] Extracted thinking via token parsing ({len(thinking_content)} chars)")
         except ValueError:
             # No </think> token found - model didn't use thinking format

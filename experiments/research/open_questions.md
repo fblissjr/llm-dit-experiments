@@ -77,16 +77,30 @@ done
 
 ### Q-A4: Why RoPE Theta=256 in Context Refiner?
 
+**Status**: PARTIALLY SOLVED (2025-12-09)
+
 **Question**: Why does the context refiner use `theta=256` while Qwen3 uses `theta=1000000`?
 
 **Context**: RoPE theta controls the frequency of position encodings. Different theta values affect how the model perceives position.
 
-**Investigation approach**:
-1. Test different theta values in context refiner
-2. Measure if position information is preserved/lost
-3. Check if position matters at all in refined embeddings
+**Finding**: This is an intentional design choice, not a bug or oversight.
 
-**Hypothesis**: Lower theta may provide finer position discrimination for short sequences.
+**Explanation**:
+- LLMs use theta=1,000,000 for **extrapolation** - ability to generalize to unseen sequence lengths
+- DiT uses theta=256 for **local precision** - fine-grained spatial discrimination
+- At theta=256, adjacent positions have larger angular differences
+- This provides more precise positional information for the relatively short text sequences (max 1504 tokens)
+- The DiT needs to distinguish precise spatial relationships, not extrapolate to extreme lengths
+
+**Remaining Questions**:
+1. Could NTK-aware theta scaling help extend beyond 1504 tokens?
+2. Would dynamic theta (different for text vs image axes) improve quality?
+3. Is theta=256 optimal or just "good enough"?
+
+**Investigation approach** (if pursuing further):
+1. Test different theta values in context refiner (128, 256, 512, 1024)
+2. Measure quality impact on different prompt types
+3. Test theta scaling for long prompt extension (NTK/YaRN methods)
 
 ---
 

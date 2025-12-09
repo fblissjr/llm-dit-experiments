@@ -34,6 +34,7 @@ uv run scripts/profiler.py --model-path /path/to/z-image-turbo -v
 | `--config` | Path to TOML config file |
 | `--profile` | Config profile to use |
 | `--hidden-layer` | Which hidden layer to extract embeddings from (default: -2) |
+| `--long-prompt-mode` | How to handle prompts >1504 tokens (default: interpolate) |
 | `-v`, `--verbose` | Enable verbose output |
 
 ### Test Selection
@@ -191,7 +192,9 @@ Peak memory: 8192MB
       "model_path": "/path/to/model",
       "encoder_device": "cpu",
       "dit_device": "cuda",
-      "torch_dtype": "bfloat16"
+      "torch_dtype": "bfloat16",
+      "long_prompt_mode": "interpolate",
+      "hidden_layer": -2
     },
     "system_info": {
       "platform": "Linux-5.15.0-x86_64",

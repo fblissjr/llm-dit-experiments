@@ -130,6 +130,12 @@ EXPERIMENTS = {
         "values": [4, 6, 8, 9, 10, 12, 15, 20],
         "defaults": {"shift": 3.0},
     },
+    "long_prompt_mode": {
+        "description": "Compare long prompt compression modes (only affects prompts >1504 tokens)",
+        "variable": "long_prompt_mode",
+        "values": ["truncate", "interpolate", "pool", "attention_pool"],
+        "defaults": {"shift": 3.0, "steps": 9},
+    },
 }
 
 
@@ -147,6 +153,7 @@ class ExperimentConfig:
     shift: float = 3.0
     steps: int = 9
     hidden_layer: int = -2
+    long_prompt_mode: str = "interpolate"
     width: int = 1024
     height: int = 1024
     guidance_scale: float = 0.0
@@ -280,9 +287,9 @@ class ExperimentRunner:
                 else:
                     gen_kwargs["thinking_content"] = config.thinking_content
 
-            # Handle hidden layer if pipeline supports it
-            if hasattr(self.pipeline, "hidden_layer"):
-                gen_kwargs["hidden_layer"] = config.hidden_layer
+            # Add hidden_layer and long_prompt_mode
+            gen_kwargs["hidden_layer"] = config.hidden_layer
+            gen_kwargs["long_prompt_mode"] = config.long_prompt_mode
 
             # Generate
             result = self.pipeline(**gen_kwargs)
