@@ -5,4 +5,4 @@ model: z-image
 category: wacky
 add_think_block: false
 ---
-Motivational poster where inspirational message and dramatic nature photo have had a falling out. Majestic eagles carrying implications with sunsets over mountains that seem to be judging you.
+Inspiration that has lost its mind. A majestic eagle soars over a mountain, but the text screams a message of existential dread. The font is aggressive, the sunset is too orange, and the sentiment is a confused mix of corporate jargon and nihilism. It is the uncanny valley of encouragement—a poster that wants you to succeed, but in a way that makes you fear for your safety.

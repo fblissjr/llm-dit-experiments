@@ -5,4 +5,4 @@ model: z-image
 category: photography
 add_think_block: false
 ---
-A cinematic movie still with dramatic lighting and film-like color grading. The composition follows the rule of thirds with strong visual storytelling. Shot on 35mm film with subtle grain and anamorphic lens characteristics.
+A single frame that implies a masterpiece. The aspect ratio is wide, the color grading is specific, and the lighting is motivated by the story. Every element in the frame is placed with intention, guiding the eye and setting the mood. It is not just a picture; it is a paused moment in a narrative, heavy with atmosphere and the promise of what happens next.

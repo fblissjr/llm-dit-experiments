@@ -5,4 +5,4 @@ model: z-image
 category: art
 add_think_block: false
 ---
-Loose watercolor painting with flowing washes and happy accidents. Colors bleed and bloom naturally with preserved white paper for highlights. The spontaneous nature of the medium creates fresh, luminous results.
+The controlled accident. Water carries the pigment, blooming into unexpected shapes. Edges are soft, lost and found. The white of the paper is the light. It is the art of letting go—guiding the paint but allowing it to have a mind of its own, creating an image that feels fresh, spontaneous, and wet with the energy of creation.

@@ -5,4 +5,4 @@ model: z-image
 category: style
 add_think_block: false
 ---
-Clean contemporary design sensibility with thoughtful use of white space and current trends executed with restraint. Modern typography if text is present. Fresh, professional, and timeless.
+The pristine beauty of the unblemished. Surfaces are smooth, lines are straight, and clutter is a sin. White space is not empty; it is a luxury. The aesthetic is cool, collected, and relentlessly organized. It is the visual equivalent of a fresh start—a world where everything has a place, nothing is superfluous, and the future looks bright, efficient, and impeccably designed.

@@ -5,4 +5,4 @@ model: z-image
 category: style
 add_think_block: false
 ---
-Warm golden hour light with long shadows and honey-colored highlights. The magical quality of light just before sunset makes everything glow with warmth and nostalgia.
+The fleeting alchemy that turns the world to amber. Long shadows stretch like lazy cats across the ground, and the air seems to thicken with honey-colored light. Every edge is softened, every imperfection forgiven in the warm embrace of a sun reluctant to leave. It is the day's final, perfect breath—a moment of suspended magic where the ordinary becomes cinematic, and time feels like it might just stop for a while.

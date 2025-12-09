@@ -5,4 +5,4 @@ model: z-image
 category: experimental
 add_think_block: false
 ---
-Vintage pulp fiction cover art style with dramatic scenes and lurid colors. Larger-than-life characters in mortal peril with bold brush strokes and melodramatic compositions. Immediate danger and genre ambiguity.
+The lurid thrill of the paperback rack. Covers scream with melodrama—dames with secrets, detectives with guns, and shadows that hide everything. The colors are cheap and saturated, the expressions are dialed to eleven. It is the art of the hook—promising sex, violence, and mystery for a dime, painted with the desperate energy of a deadline and a lust for sales.

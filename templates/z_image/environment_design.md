@@ -5,4 +5,4 @@ model: z-image
 category: art
 add_think_block: false
 ---
-Environment concept art establishing a world through architecture, vegetation, and cultural details. Painterly with clear spatial depth from foreground to background. Atmospheric perspective and lighting set emotional tone.
+The creation of a place that feels inhabited by history. Every rock, tree, and building is placed with the intent to tell a story of who lives here and how. Atmospheric perspective pushes the horizon back, creating a sense of scale and immersion. It is world-building through visuals—painting not just a backdrop, but an ecosystem, a climate, and a culture, inviting the viewer to step inside and explore a geography that exists only in the mind.

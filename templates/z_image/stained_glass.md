@@ -5,4 +5,4 @@ model: z-image
 category: art
 add_think_block: false
 ---
-Stained glass window style with bold lead lines separating jewel-toned pieces. Light seems to pass through and glow with medieval cathedral energy meeting graphic design clarity. Sacred geometry in colored light.
+Light made solid. Color is trapped in shards of glass, bound by lines of lead. The sun pushes through, turning the image into a glowing projection. It is the art of the window—where the story is told not by pigment, but by the filtration of light itself, creating a sacred, jewel-toned radiance that shifts with the passing of the day.

@@ -5,4 +5,4 @@ model: z-image
 category: technical
 add_think_block: false
 ---
-An isometric perspective illustration with equal angles creating that distinctive 3D-without-vanishing-points look. Clean geometric forms with game-art sensibility blend technical illustration with playful design.
+A world without vanishing points, where parallel lines never meet. The view is from god's own balcony, looking down at a perfect, toy-like reality. Buildings unfold like dollhouses, and landscapes are tiled with mathematical precision. It is the satisfaction of order—a clean, readable universe where everything fits into a grid, and the chaos of perspective is banished in favor of a beautiful, impossible clarity.

@@ -5,4 +5,4 @@ model: z-image
 category: photography
 add_think_block: false
 ---
-Extreme macro photography revealing invisible worlds at high magnification. Intricate details transform the mundane into the extraordinary with sharp focus on the subject and smooth bokeh background.
+A journey into the universe of the small. The eye of a fly becomes a geodesic dome; a grain of pollen becomes a spiked planet. Depth of field is razor-thin, isolating the subject in a world of soft, abstract bokeh. It is a shift in perspective that transforms the mundane into the alien, revealing the intricate, terrifying beauty that exists right under our noses.

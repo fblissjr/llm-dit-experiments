@@ -5,4 +5,4 @@ model: z-image
 category: art
 add_think_block: false
 ---
-An illustration in the style of Studio Ghibli with soft colors, detailed backgrounds, and a sense of wonder. The scene has hand-painted quality with warm, nostalgic lighting and attention to natural elements.
+A world where wind has personality and clouds are characters. Soft watercolor skies cradle detailed landscapes that breathe with life—every leaf, stone, and blade of grass drawn with reverent attention. Characters move with weight and warmth, their expressions revealing inner worlds through subtle shifts of light across their faces. This is animation as poetry: sunlight filtering through forest canopies creates dappled patterns that dance across skin, while nostalgic golden hour lighting wraps scenes in the tender embrace of memory. Nature isn't a backdrop here—it's the silent protagonist.

@@ -5,4 +5,4 @@ model: z-image
 category: photography
 add_think_block: false
 ---
-Tilt-shift miniature effect with sharp selective focus and dramatic blur falloff. Real scenes appear as tiny models from a high vantage point with saturated colors. That uncanny sense of looking at a diorama of reality.
+The world shrunk to a toy. The focus is a narrow slice of clarity in a sea of blur. Cars become matchbox toys, people become figurines. It is the perspective of a giant—looking down on a reality that feels manageable, cute, and contained. A visual trick that transforms the chaos of the city into a charming, miniature diorama.

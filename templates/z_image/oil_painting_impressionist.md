@@ -5,4 +5,4 @@ model: z-image
 category: art
 add_think_block: false
 ---
-An impressionist painting capturing fleeting light and atmosphere. Visible brushstrokes with pure color placed side by side create optical mixing. The focus is on the impression of a moment rather than precise detail.
+Light caught in a net of color. Brushstrokes are visible, quick, and broken, dancing across the canvas to capture the vibration of the air. Shadows are not black but purple and blue. It is the moment frozen—not the details of the object, but the sensation of seeing it. The image shimmers, dissolving into abstraction up close but resolving into a radiant, living scene from a distance.

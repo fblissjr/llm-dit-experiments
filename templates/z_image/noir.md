@@ -5,4 +5,4 @@ model: z-image
 category: style
 add_think_block: false
 ---
-Classic film noir style with high contrast black and white and deep angular shadows. Venetian blind patterns cast stripes across the scene as smoke curls through shafts of harsh light. An atmosphere of mystery and tension with claustrophobic framing.
+A world of shadows and moral ambiguity. Light slices through venetian blinds, casting bars across a face that has seen too much. Smoke curls in the stagnant air, and the contrast is as sharp as a knife. It is the black-and-white fever dream—where every alley holds a secret, every dame is trouble, and the rain never stops washing the sins of the city into the gutter.

@@ -5,4 +5,4 @@ model: z-image
 category: 3d
 add_think_block: false
 ---
-A photorealistic 3D render with accurate lighting and materials. The scene features volumetric lighting, realistic reflections, and fine surface details. Rendered at high resolution with ray-traced global illumination.
+The perfection of the digital sculpt. Geometry is absolute, surfaces are flawless, and light is calculated by an algorithm. Shadows are ray-traced to infinity, and reflections are physically correct. It is the beauty of the virtual—a world built from math that looks more real than reality, where the only limit is the imagination of the architect and the power of the render farm.

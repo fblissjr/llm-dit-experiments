@@ -5,4 +5,4 @@ model: z-image
 category: art
 add_think_block: false
 ---
-An atmospheric horror scene with unsettling mood and subtle dread. The lighting is dim and foreboding, with shadows that suggest hidden threats. The composition creates tension through what is implied rather than shown.
+The visual sound of a held breath. Darkness is not empty; it is waiting. Shadows pool in corners, suggesting shapes that the mind is terrified to recognize. The light is weak, flickering, fighting a losing battle against the encroaching gloom. It is the art of suggestion—where the monster you don't see is infinitely worse than the one you do, and the true horror lies in the silence between the heartbeats.

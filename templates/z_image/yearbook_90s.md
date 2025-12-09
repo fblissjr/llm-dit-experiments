@@ -5,4 +5,4 @@ model: z-image
 category: wacky
 add_think_block: false
 ---
-1990s school yearbook photo energy with laser backgrounds in impossible colors. Hair that defies physics with poses suggested by photographers who stopped caring decades ago. Frosted tips optional but encouraged.
+The laser background of our youth. Smiles are braces-filled, hair is gelled to infinity. The background is a neon storm of purple and blue. It is the portrait of awkwardness—a time capsule of fashion mistakes and genuine optimism, frozen forever against a backdrop that looks like a cheap sci-fi special effect.
