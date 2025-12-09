@@ -239,11 +239,12 @@ class RewriterConfig:
     # Whether to use API backend for rewriting (default: use local model)
     use_api: bool = False
     # API backend settings (only used when use_api=True)
-    api_url: str = ""  # URL for heylookitsanllm API
+    api_url: str = ""  # URL for heylookitsanllm API (falls back to --api-url if empty)
     api_model: str = "Qwen3-4B"  # Model ID for API backend
     # Generation parameters
     temperature: float = 1.0  # Sampling temperature (default 1.0)
     top_p: float = 0.95  # Nucleus sampling threshold
+    min_p: float = 0.0  # Minimum probability threshold (0.0 = disabled)
     max_tokens: int = 512  # Maximum tokens to generate
 
 
@@ -380,6 +381,7 @@ class Config:
                 "api_model": self.rewriter.api_model,
                 "temperature": self.rewriter.temperature,
                 "top_p": self.rewriter.top_p,
+                "min_p": self.rewriter.min_p,
                 "max_tokens": self.rewriter.max_tokens,
             },
         }

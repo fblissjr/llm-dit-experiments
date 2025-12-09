@@ -67,10 +67,11 @@ scales = []
 [default.rewriter]
 # Prompt rewriter settings (for /api/rewrite endpoint)
 use_api = false              # Use API backend for rewriting (default: use local model)
-api_url = ""                 # API URL for rewriter (defaults to api.url if not set)
+api_url = ""                 # API URL for rewriter (falls back to --api-url if empty)
 api_model = "Qwen3-4B"       # Model ID for rewriter API
 temperature = 1.0            # Sampling temperature
 top_p = 0.95                 # Nucleus sampling threshold
+min_p = 0.0                  # Minimum probability threshold (0.0 = disabled)
 max_tokens = 512             # Maximum tokens to generate
 
 # =============================================================================
@@ -130,10 +131,11 @@ scales = []
 [rtx4090.rewriter]
 # Prompt rewriter settings (for /api/rewrite endpoint)
 use_api = false              # Use API backend for rewriting (default: use local model)
-api_url = ""                 # API URL for rewriter (defaults to api.url if not set)
+api_url = ""                 # API URL for rewriter (falls back to --api-url if empty)
 api_model = "Qwen3-4B"       # Model ID for rewriter API
 temperature = 1.0            # Sampling temperature
 top_p = 0.95                 # Nucleus sampling threshold
+min_p = 0.0                  # Minimum probability threshold (0.0 = disabled)
 max_tokens = 512             # Maximum tokens to generate
 
 # =============================================================================

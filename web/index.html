@@ -181,7 +181,15 @@
                             </div>
                             <div>
                                 <label class="block text-xs font-medium text-gray-400 mb-1">Temperature</label>
-                                <input type="number" id="rewriterTemperature" value="0.7" min="0" max="2" step="0.1" class="w-full px-2 py-1.5 bg-gray-800 border border-gray-700 rounded-lg text-white text-sm focus:ring-2 focus:ring-blue-500">
+                                <input type="number" id="rewriterTemperature" value="1.0" min="0" max="2" step="0.1" class="w-full px-2 py-1.5 bg-gray-800 border border-gray-700 rounded-lg text-white text-sm focus:ring-2 focus:ring-blue-500">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-medium text-gray-400 mb-1">Top P</label>
+                                <input type="number" id="rewriterTopP" value="0.95" min="0" max="1" step="0.05" class="w-full px-2 py-1.5 bg-gray-800 border border-gray-700 rounded-lg text-white text-sm focus:ring-2 focus:ring-blue-500">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-medium text-gray-400 mb-1">Min P</label>
+                                <input type="number" id="rewriterMinP" value="0.0" min="0" max="1" step="0.05" class="w-full px-2 py-1.5 bg-gray-800 border border-gray-700 rounded-lg text-white text-sm focus:ring-2 focus:ring-blue-500">
                             </div>
                         </div>
 
@@ -715,6 +723,21 @@
             });
         }
 
+        // Load rewriter config from server
+        async function loadRewriterConfig() {
+            try {
+                const response = await fetch(`${API_BASE}/api/rewriter-config`);
+                const config = await response.json();
+                // Update form fields with server config defaults
+                document.getElementById('rewriterMaxTokens').value = config.max_tokens || 512;
+                document.getElementById('rewriterTemperature').value = config.temperature || 1.0;
+                document.getElementById('rewriterTopP').value = config.top_p || 0.95;
+                document.getElementById('rewriterMinP').value = config.min_p || 0.0;
+            } catch (err) {
+                console.error('Failed to load rewriter config:', err);
+            }
+        }
+
         // Load rewriters
         async function loadRewriters() {
             try {
@@ -733,10 +756,14 @@
                 }
                 // Always setup mode toggle (custom mode always available)
                 setupRewriterModeToggle();
+                // Load config defaults after rewriters
+                loadRewriterConfig();
             } catch (err) {
                 console.error('Failed to load rewriters:', err);
                 // Still setup mode toggle for custom mode
                 setupRewriterModeToggle();
+                // Still try to load config
+                loadRewriterConfig();
             }
         }
 
@@ -750,13 +777,16 @@
         const copyRewrittenBtn = document.getElementById('copyRewrittenBtn');
 
         let lastRewrittenPrompt = '';
+        let lastThinkingContent = null;
 
         rewriteBtn.addEventListener('click', async () => {
             const prompt = document.getElementById('prompt').value.trim();
             const rewriter = document.getElementById('rewriterTemplate').value;
             const customPrompt = document.getElementById('customRewriterPrompt').value.trim();
             const maxTokens = parseInt(document.getElementById('rewriterMaxTokens').value) || 512;
-            const temperature = parseFloat(document.getElementById('rewriterTemperature').value) || 0.7;
+            const temperature = parseFloat(document.getElementById('rewriterTemperature').value) || 1.0;
+            const topP = parseFloat(document.getElementById('rewriterTopP').value) || 0.95;
+            const minP = parseFloat(document.getElementById('rewriterMinP').value) || 0.0;
 
             if (!prompt) {
                 alert('Please enter a prompt first');
@@ -784,6 +814,8 @@
                     prompt,
                     max_tokens: maxTokens,
                     temperature,
+                    top_p: topP,
+                    min_p: minP,
                 };
 
                 if (rewriterMode === 'template') {
@@ -805,9 +837,14 @@
 
                 const data = await response.json();
                 lastRewrittenPrompt = data.rewritten_prompt;
+                lastThinkingContent = data.thinking_content || null;
                 rewrittenText.textContent = data.rewritten_prompt;
                 const modeLabel = rewriterMode === 'custom' ? 'custom prompt' : data.rewriter;
-                rewriteInfo.textContent = `Generated in ${data.gen_time.toFixed(2)}s using ${modeLabel}`;
+                let infoText = `Generated in ${data.gen_time.toFixed(2)}s using ${modeLabel}`;
+                if (lastThinkingContent) {
+                    infoText += ` (thinking: ${lastThinkingContent.length} chars)`;
+                }
+                rewriteInfo.textContent = infoText;
                 rewrittenResult.classList.remove('hidden');
 
             } catch (err) {
@@ -822,6 +859,10 @@
         useRewrittenBtn.addEventListener('click', () => {
             if (lastRewrittenPrompt) {
                 document.getElementById('prompt').value = lastRewrittenPrompt;
+                // If thinking content was extracted, set it in the thinking field
+                if (lastThinkingContent) {
+                    document.getElementById('thinkingContent').value = lastThinkingContent;
+                }
                 // Scroll to prompt
                 document.getElementById('prompt').scrollIntoView({ behavior: 'smooth', block: 'center' });
                 document.getElementById('prompt').focus();

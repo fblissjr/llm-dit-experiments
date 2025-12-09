@@ -13,6 +13,7 @@ import argparse
 import asyncio
 import io
 import logging
+import re
 import time
 from pathlib import Path
 from typing import Optional
@@ -83,6 +84,7 @@ class RewriteRequest(BaseModel):
     max_tokens: Optional[int] = None  # Maximum tokens to generate (default from config: 512)
     temperature: Optional[float] = None  # Sampling temperature (default from config: 1.0)
     top_p: Optional[float] = None  # Nucleus sampling (default from config: 0.95)
+    min_p: Optional[float] = None  # Minimum probability (default from config: 0.0)
 
 
 @app.get("/")
@@ -99,6 +101,27 @@ async def health():
         "pipeline_loaded": pipeline is not None,
         "encoder_loaded": encoder is not None,
         "encoder_only_mode": encoder_only_mode,
+    }
+
+
+@app.get("/api/rewriter-config")
+async def get_rewriter_config():
+    """Get rewriter configuration defaults from server config."""
+    if runtime_config is None:
+        # Return hardcoded defaults if no config loaded
+        return {
+            "temperature": 1.0,
+            "top_p": 0.95,
+            "min_p": 0.0,
+            "max_tokens": 512,
+            "use_api": False,
+        }
+    return {
+        "temperature": runtime_config.rewriter_temperature,
+        "top_p": runtime_config.rewriter_top_p,
+        "min_p": runtime_config.rewriter_min_p,
+        "max_tokens": runtime_config.rewriter_max_tokens,
+        "use_api": runtime_config.rewriter_use_api,
     }
 
 
@@ -452,6 +475,7 @@ async def rewrite_prompt(request: RewriteRequest):
     max_tokens = request.max_tokens
     temperature = request.temperature
     top_p = request.top_p
+    min_p = request.min_p
 
     if runtime_config is not None:
         if max_tokens is None:
@@ -460,6 +484,8 @@ async def rewrite_prompt(request: RewriteRequest):
             temperature = runtime_config.rewriter_temperature
         if top_p is None:
             top_p = runtime_config.rewriter_top_p
+        if min_p is None:
+            min_p = runtime_config.rewriter_min_p
     else:
         # Fallback defaults
         if max_tokens is None:
@@ -468,12 +494,14 @@ async def rewrite_prompt(request: RewriteRequest):
             temperature = 1.0
         if top_p is None:
             top_p = 0.95
+        if min_p is None:
+            min_p = 0.0
 
     try:
         start = time.time()
         logger.info(f"[Rewrite] Using: {rewriter_name} (backend: {backend_name})")
         logger.info(f"[Rewrite] Input prompt: {request.prompt[:100]}...")
-        logger.info(f"[Rewrite] Params: max_tokens={max_tokens}, temperature={temperature}, top_p={top_p}")
+        logger.info(f"[Rewrite] Params: max_tokens={max_tokens}, temperature={temperature}, top_p={top_p}, min_p={min_p}")
 
         # Generate using the backend
         generated = backend.generate(
@@ -482,10 +510,23 @@ async def rewrite_prompt(request: RewriteRequest):
             max_new_tokens=max_tokens,
             temperature=temperature,
             top_p=top_p,
+            min_p=min_p,
         )
 
         gen_time = time.time() - start
         logger.info(f"[Rewrite] Generated {len(generated)} chars in {gen_time:.2f}s")
+
+        # Parse <think>...</think> tags from the generated output
+        # Extract thinking content and clean prompt separately
+        thinking_content = None
+        rewritten_prompt = generated
+
+        think_match = re.search(r'<think>\s*(.*?)\s*</think>', generated, re.DOTALL)
+        if think_match:
+            thinking_content = think_match.group(1).strip()
+            # Remove the think block from the rewritten prompt
+            rewritten_prompt = re.sub(r'<think>.*?</think>\s*', '', generated, flags=re.DOTALL).strip()
+            logger.info(f"[Rewrite] Extracted thinking ({len(thinking_content)} chars), prompt ({len(rewritten_prompt)} chars)")
 
         # Clear CUDA cache to prevent memory issues when switching back to encoding
         if torch.cuda.is_available():
@@ -494,7 +535,8 @@ async def rewrite_prompt(request: RewriteRequest):
 
         return {
             "original_prompt": request.prompt,
-            "rewritten_prompt": generated,
+            "rewritten_prompt": rewritten_prompt,
+            "thinking_content": thinking_content,
             "rewriter": request.rewriter,
             "backend": backend_name,
             "gen_time": gen_time,

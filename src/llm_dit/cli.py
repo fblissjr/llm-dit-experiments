@@ -134,6 +134,7 @@ class RuntimeConfig:
     rewriter_api_model: str = "Qwen3-4B"  # Model ID for rewriter API
     rewriter_temperature: float = 1.0  # Sampling temperature
     rewriter_top_p: float = 0.95  # Nucleus sampling threshold
+    rewriter_min_p: float = 0.0  # Minimum probability threshold (0.0 = disabled)
     rewriter_max_tokens: int = 512  # Maximum tokens to generate
 
     # Debug
@@ -440,6 +441,12 @@ def create_base_parser(
         help="Nucleus sampling threshold for rewriter (default: 0.95)",
     )
     rewriter_group.add_argument(
+        "--rewriter-min-p",
+        type=float,
+        default=None,
+        help="Minimum probability threshold for rewriter (default: 0.0, disabled)",
+    )
+    rewriter_group.add_argument(
         "--rewriter-max-tokens",
         type=int,
         default=None,
@@ -599,6 +606,7 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
                 config.rewriter_api_model = getattr(rewriter, 'api_model', 'Qwen3-4B')
                 config.rewriter_temperature = getattr(rewriter, 'temperature', 1.0)
                 config.rewriter_top_p = getattr(rewriter, 'top_p', 0.95)
+                config.rewriter_min_p = getattr(rewriter, 'min_p', 0.0)
                 config.rewriter_max_tokens = getattr(rewriter, 'max_tokens', 512)
 
         except Exception as e:
@@ -705,6 +713,8 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
         config.rewriter_temperature = args.rewriter_temperature
     if getattr(args, 'rewriter_top_p', None) is not None:
         config.rewriter_top_p = args.rewriter_top_p
+    if getattr(args, 'rewriter_min_p', None) is not None:
+        config.rewriter_min_p = args.rewriter_min_p
     if getattr(args, 'rewriter_max_tokens', None) is not None:
         config.rewriter_max_tokens = args.rewriter_max_tokens
 

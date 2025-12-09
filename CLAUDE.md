@@ -338,10 +338,11 @@ scales = []
 [default.rewriter]
 # Prompt rewriter settings (for /api/rewrite endpoint)
 use_api = false               # Use API backend for rewriting
-api_url = ""                  # API URL (defaults to api.url if not set)
+api_url = ""                  # API URL (falls back to --api-url if empty)
 api_model = "Qwen3-4B"        # Model ID for rewriter API
 temperature = 1.0             # Sampling temperature
 top_p = 0.95                  # Nucleus sampling threshold
+min_p = 0.0                   # Minimum probability threshold (0.0 = disabled)
 max_tokens = 512              # Maximum tokens to generate
 ```
 
@@ -547,6 +548,7 @@ uv run scripts/profiler.py --show-info
 | `--rewriter-api-model` | Model ID for rewriter API (default: Qwen3-4B) |
 | `--rewriter-temperature` | Sampling temperature (default: 1.0) |
 | `--rewriter-top-p` | Nucleus sampling threshold (default: 0.95) |
+| `--rewriter-min-p` | Minimum probability threshold (default: 0.0, disabled) |
 | `--rewriter-max-tokens` | Maximum tokens to generate (default: 512) |
 
 ## REST API Endpoints
@@ -558,6 +560,7 @@ uv run scripts/profiler.py --show-info
 | `/api/format-prompt` | POST | Preview formatted prompt (no encoding) |
 | `/api/templates` | GET | List available templates |
 | `/api/rewriters` | GET | List available rewriter templates |
+| `/api/rewriter-config` | GET | Get rewriter default parameters |
 | `/api/rewrite` | POST | Rewrite prompt using Qwen3 model |
 | `/api/save-embeddings` | POST | Save embeddings to file |
 | `/api/history` | GET | Get generation history |
