@@ -10,6 +10,7 @@ Standalone diffusers-based platform for experimenting with LLM-DiT image generat
 - CLI script for image generation
 - TOML configuration file support
 - 100+ prompt templates with system prompt + thinking tokens
+- Prompt rewriting/expansion via Qwen3 model (local or API)
 - LoRA support with automatic weight fusion
 - Granular device placement (encoder/DiT/VAE independently)
 
@@ -118,9 +119,17 @@ shift = 3.0
 [default.lora]
 paths = ["style.safetensors"]
 scales = [0.8]
+
+[default.rewriter]
+use_api = false              # Use API backend for prompt rewriting
+api_url = ""                 # API URL (defaults to main api.url)
+api_model = "Qwen3-4B"       # Model ID for rewriter API
+temperature = 1.0            # Sampling temperature
+top_p = 0.95                 # Nucleus sampling
+max_tokens = 512             # Max tokens to generate
 ```
 
-CLI flags override config values.
+CLI flags override config values. See [config.example.toml](config.example.toml) for full options.
 
 ## Running Tests
 
@@ -204,8 +213,11 @@ Image Output
 ## Documentation
 
 - [docs/distributed_inference.md](docs/distributed_inference.md) - Running text encoder on Mac, DiT on CUDA
-- [docs/web_server_api.md](docs/web_server_api.md) - REST API reference
+- [docs/web_server_api.md](docs/web_server_api.md) - REST API reference (includes prompt rewriting)
+- [docs/profiler.md](docs/profiler.md) - Profiling and stability testing
+- [config.example.toml](config.example.toml) - Full configuration example
 - [CHANGELOG.md](CHANGELOG.md) - Version history
+- [CLAUDE.md](CLAUDE.md) - Comprehensive technical reference
 
 ## Related Projects
 
