@@ -425,7 +425,87 @@ metrics:
 
 ## Running Ablations
 
-### Quick Start
+### Experiment Runner (Recommended)
+
+The `experiments/run_ablation.py` script provides a structured way to run ablation studies with automatic metadata tracking and results export.
+
+**Available experiments:**
+- `shift_sweep` - Sweep shift parameter (1.0-6.0)
+- `shift_steps_grid` - Grid search over shift and steps
+- `hidden_layer` - Compare hidden layer extraction points (-1 to -6)
+- `think_block` - Test impact of think block content
+- `system_prompt` - Test impact of system prompts
+- `steps_only` - Test different step counts (4-20)
+
+**Basic usage:**
+
+```bash
+# Run with config file (recommended)
+uv run experiments/run_ablation.py \
+  --config config.toml \
+  --profile rtx4090 \
+  --experiment shift_sweep
+
+# Run with explicit model path
+uv run experiments/run_ablation.py \
+  --experiment shift_sweep \
+  --model-path /path/to/z-image-turbo \
+  --prompt-category animals
+
+# Run on specific prompts with multiple seeds
+uv run experiments/run_ablation.py \
+  --config config.toml \
+  --experiment hidden_layer \
+  --prompt-ids animal_001,simple_002 \
+  --seeds 42,123,456
+
+# Dry run to preview what would be generated
+uv run experiments/run_ablation.py \
+  --config config.toml \
+  --experiment shift_sweep \
+  --dry-run
+
+# With automated metrics (ImageReward + SigLIP2)
+uv run experiments/run_ablation.py \
+  --config config.toml \
+  --experiment shift_sweep \
+  --compute-metrics
+```
+
+**Device placement via config:**
+
+```toml
+# config.toml
+[rtx4090.encoder]
+device = "cpu"  # Keep encoder on CPU to save VRAM
+
+[rtx4090.pipeline]
+device = "cuda"  # DiT on GPU
+```
+
+Or override via CLI:
+
+```bash
+uv run experiments/run_ablation.py \
+  --config config.toml \
+  --experiment shift_sweep \
+  --text-encoder-device cpu \
+  --dit-device cuda
+```
+
+**Output structure:**
+
+```
+experiments/results/<experiment_name>/
+  images/              # Generated images
+  metadata/            # Per-image JSON metadata
+  <experiment>_summary.csv   # Results table
+  <experiment>_summary.json  # Aggregate statistics
+```
+
+### Quick Single-Image Tests
+
+For quick tests, use the generate script:
 
 ```bash
 # Use the profiler for quick tests
@@ -434,7 +514,7 @@ uv run scripts/profiler.py \
   --tests encode_short,encode_medium,full_generation \
   --output results/baseline.json
 
-# Custom generation script
+# Single image with specific parameters
 uv run scripts/generate.py \
   --model-path /path/to/z-image-turbo \
   --shift 2.0 \
@@ -443,30 +523,14 @@ uv run scripts/generate.py \
   "Test prompt"
 ```
 
-### Batch Experiment Script
+### Listing Available Options
 
-```python
-# experiments/run_ablation.py
-import itertools
-from pathlib import Path
+```bash
+# List all available experiments
+uv run experiments/run_ablation.py --experiment shift_sweep --list-experiments
 
-def run_shift_sweep():
-    shifts = [1.0, 2.0, 3.0, 4.0, 5.0]
-    steps = [6, 9, 12, 16]
-    prompts = load_prompts("experiments/prompts/standard_50.txt")
-    seeds = [42, 123, 456]
-
-    results = []
-    for shift, step, prompt, seed in itertools.product(shifts, steps, prompts, seeds):
-        output_path = f"results/shift{shift}_steps{step}_seed{seed}.png"
-        image = generate(prompt, shift=shift, steps=step, seed=seed)
-        metrics = compute_metrics(image, prompt)
-        results.append({
-            'shift': shift, 'steps': step, 'seed': seed,
-            'prompt': prompt[:50], **metrics
-        })
-
-    pd.DataFrame(results).to_csv("results/shift_sweep.csv")
+# List available prompts by category
+uv run experiments/run_ablation.py --experiment shift_sweep --list-prompts
 ```
 
 ---

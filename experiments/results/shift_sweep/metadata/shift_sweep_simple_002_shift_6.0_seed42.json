@@ -1,0 +1,26 @@
+{
+  "config": {
+    "experiment_name": "shift_sweep",
+    "prompt_id": "simple_002",
+    "prompt_text": "A cobalt blue ceramic vase holds a spray of white lilies, their petals luminous against the deep glaze. Morning light spills through a nearby window, casting the arrangement in a gentle radiance.",
+    "seed": 42,
+    "variable_name": "shift",
+    "variable_value": 6.0,
+    "shift": 6.0,
+    "steps": 9,
+    "hidden_layer": -2,
+    "width": 1024,
+    "height": 1024,
+    "guidance_scale": 0.0,
+    "system_prompt": null,
+    "thinking_content": null,
+    "force_think_block": false,
+    "timestamp": "2025-12-09T14:15:22.745181"
+  },
+  "output_path": "experiments/results/shift_sweep/images/shift_sweep_simple_002_shift_6.0_seed42.png",
+  "generation_time_seconds": 0.0,
+  "token_count": null,
+  "image_reward": null,
+  "siglip_score": null,
+  "error": null
+}

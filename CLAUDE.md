@@ -42,7 +42,7 @@ config.toml (TOML)     CLI flags (argparse)
 
 **When adding a new parameter:**
 
-1. **Add to TOML config** (`config.example.toml`) in appropriate section
+1. **Add to TOML config** (`config.toml.example`) in appropriate section
 2. **Add to Config dataclass** (`src/llm_dit/config.py`) - e.g., `EncoderConfig`, `RewriterConfig`
 3. **Add CLI argument** (`src/llm_dit/cli.py`) in `create_argument_parser()`
 4. **Add to RuntimeConfig** (`src/llm_dit/cli.py`) with same name
@@ -55,7 +55,7 @@ config.toml (TOML)     CLI flags (argparse)
 
 | Layer | File | What to update |
 |-------|------|----------------|
-| TOML schema | `config.example.toml` | Add parameter with comment |
+| TOML schema | `config.toml.example` | Add parameter with comment |
 | Config classes | `src/llm_dit/config.py` | Add to dataclass, `to_dict()` |
 | CLI parser | `src/llm_dit/cli.py` | `create_argument_parser()` |
 | Runtime config | `src/llm_dit/cli.py` | `RuntimeConfig`, `load_runtime_config()` |
@@ -282,6 +282,86 @@ All 4 components exposed via API:
 - `assistant_content` (optional) - Content after `</think>`
 - `force_think_block` (optional) - If True, add empty think block even without content
 
+## Qwen3 Sampler Settings
+
+Qwen3 models have specific optimal sampling parameters documented in the [official model card](https://huggingface.co/Qwen/Qwen3-4B#best-practices).
+
+### Two Use Cases
+
+| Use Case | Description | Sampler Settings |
+|----------|-------------|------------------|
+| **Text Encoding** | Extract hidden states for image generation | N/A (forward pass only, no sampling) |
+| **Text Generation** | Prompt rewriting via chat completions | Use settings below |
+
+For text encoding (embedding extraction), sampler settings are **irrelevant** since we only run a forward pass through the model to extract hidden states - no token generation occurs.
+
+### Thinking Mode (Default for Rewriting)
+
+When the model can use `<think>...</think>` blocks for reasoning:
+
+| Parameter | Value | Notes |
+|-----------|-------|-------|
+| temperature | 0.6 | DO NOT use 0 (greedy) - causes endless repetition |
+| top_p | 0.95 | Nucleus sampling threshold |
+| top_k | 20 | Top-k filtering |
+| min_p | 0.0 | Disabled |
+| presence_penalty | 0.0-2.0 | Optional, helps reduce repetition |
+
+### Non-Thinking Mode
+
+For Qwen3 Instruct models without thinking capability (e.g., Qwen3-4B-Instruct-2507):
+
+| Parameter | Value | Notes |
+|-----------|-------|-------|
+| temperature | 0.7 | Slightly higher than thinking mode |
+| top_p | 0.8 | Tighter than thinking mode |
+| top_k | 20 | Same as thinking mode |
+| min_p | 0.0 | Disabled |
+
+### Token IDs (Qwen3-4B)
+
+| Token | ID | Usage |
+|-------|-----|-------|
+| `<think>` | 151667 | Start thinking block |
+| `</think>` | 151668 | End thinking block |
+| `<|im_start|>` | 151644 | Chat template start |
+| `<|im_end|>` | 151645 | Chat template end |
+
+### Compatible Qwen3 Models
+
+For Z-Image text encoding, the model must have **2560 hidden dimensions** (matching the DiT's expected input):
+
+| Model | Hidden Dim | Compatible |
+|-------|-----------|------------|
+| Qwen3-4B | 2560 | Yes |
+| Qwen3-4B-Instruct-2507 | 2560 | Yes (non-thinking only) |
+| Qwen3-8B | 4096 | No |
+| Qwen3-14B | 5120 | No |
+| Qwen3-32B | 5120 | No |
+| Qwen3-72B | 8192 | No |
+
+### Configuration Examples
+
+**TOML config (recommended):**
+```toml
+[default.rewriter]
+temperature = 0.6       # Qwen3 thinking mode
+top_p = 0.95
+top_k = 20
+min_p = 0.0
+presence_penalty = 0.0  # Increase to 1.0-2.0 if seeing repetition
+max_tokens = 512
+```
+
+**CLI flags:**
+```bash
+uv run web/server.py \
+  --rewriter-temperature 0.6 \
+  --rewriter-top-p 0.95 \
+  --rewriter-top-k 20 \
+  --rewriter-presence-penalty 0.0
+```
+
 ## Directory Structure
 
 ```
@@ -353,7 +433,7 @@ Config file (TOML) is the source of truth. CLI flags override config values.
 
 **Transformers v5 Note:** `load_in_8bit`/`load_in_4bit` are deprecated. Use `quantization` instead.
 
-See [config.example.toml](config.example.toml)
+See [config.toml.example](config.toml.example)
 
 ## Web Server
 

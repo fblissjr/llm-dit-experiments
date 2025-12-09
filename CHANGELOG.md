@@ -39,7 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Strength parameter controls noise level (0.0 = no change, 1.0 = full regeneration)
 - Gradient checkpointing support for transformer
   - `pipe.enable_gradient_checkpointing(True)` for reduced VRAM during fine-tuning
-- Config profiles in `config.example.toml`
+- Config profiles in `config.toml.example`
   - `[default]` - Conservative settings for most hardware
   - `[rtx4090]` - Optimized for 24GB VRAM (Flash Attention, caching)
   - `[low_vram]` - 8-16GB GPUs (CPU offload, quantization)

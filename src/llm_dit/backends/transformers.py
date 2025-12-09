@@ -328,9 +328,11 @@ class TransformersBackend:
         prompt: str,
         system_prompt: str | None = None,
         max_new_tokens: int = 512,
-        temperature: float = 0.7,
-        top_p: float = 0.9,
+        temperature: float = 0.6,
+        top_p: float = 0.95,
+        top_k: int = 20,
         min_p: float = 0.0,
+        presence_penalty: float = 0.0,
         do_sample: bool = True,
     ) -> str:
         """
@@ -339,14 +341,21 @@ class TransformersBackend:
         This method enables using the same Qwen3 model for prompt rewriting
         in addition to embedding extraction.
 
+        Qwen3 Best Practices (thinking mode):
+        - temperature=0.6, top_p=0.95, top_k=20, min_p=0 (default)
+        - DO NOT use greedy decoding (causes repetition)
+        - presence_penalty=0-2 helps reduce endless repetitions
+
         Args:
             prompt: User prompt/message
             system_prompt: Optional system prompt (rewriter template content)
             max_new_tokens: Maximum tokens to generate
-            temperature: Sampling temperature (higher = more creative)
-            top_p: Nucleus sampling threshold
-            min_p: Minimum probability threshold (0.0 = disabled)
-            do_sample: Whether to use sampling (False = greedy)
+            temperature: Sampling temperature (Qwen3 thinking: 0.6)
+            top_p: Nucleus sampling threshold (Qwen3 thinking: 0.95)
+            top_k: Top-k sampling (Qwen3: 20)
+            min_p: Minimum probability threshold (Qwen3: 0.0)
+            presence_penalty: Penalty for token presence (0-2, helps reduce repetition)
+            do_sample: Whether to use sampling (False = greedy, NOT recommended for Qwen3)
 
         Returns:
             Generated text (assistant response only, no special tokens)
@@ -356,6 +365,8 @@ class TransformersBackend:
             rewritten = backend.generate(
                 prompt="A cat sleeping",
                 system_prompt="You are an expert at writing image prompts...",
+                temperature=0.6,  # Qwen3 thinking mode
+                top_k=20,
             )
         """
         # Build messages for chat template
@@ -415,8 +426,14 @@ class TransformersBackend:
             gen_kwargs["do_sample"] = True
             gen_kwargs["temperature"] = temperature
             gen_kwargs["top_p"] = top_p
+            gen_kwargs["top_k"] = top_k
             if min_p > 0.0:
                 gen_kwargs["min_p"] = min_p
+            if presence_penalty > 0.0:
+                # transformers uses repetition_penalty (multiplicative, >1.0 = more penalty)
+                # presence_penalty is additive (0-2 range), convert approximately
+                # presence_penalty of 1.5 roughly maps to repetition_penalty of ~1.2
+                gen_kwargs["repetition_penalty"] = 1.0 + (presence_penalty * 0.15)
         else:
             gen_kwargs["do_sample"] = False
 
@@ -435,12 +452,47 @@ class TransformersBackend:
         logger.info(f"[TransformersBackend.generate] Generation completed")
 
         # Decode only the generated part (skip input tokens)
-        generated_ids = outputs[0, input_length:]
-        generated_text = self.tokenizer.decode(generated_ids, skip_special_tokens=True)
+        generated_ids = outputs[0, input_length:].tolist()
+
+        # Parse thinking content at token level (most reliable)
+        # Qwen3 uses token 151668 for </think>
+        THINK_END_TOKEN = 151668
+        thinking_content = None
+        content_ids = generated_ids
+
+        try:
+            # Find </think> token from the end (in case of multiple)
+            think_end_idx = len(generated_ids) - generated_ids[::-1].index(THINK_END_TOKEN)
+            # Everything before </think> is thinking (including <think> token)
+            thinking_ids = generated_ids[:think_end_idx]
+            content_ids = generated_ids[think_end_idx:]
+
+            # Decode thinking (skip special tokens to clean it up)
+            thinking_content = self.tokenizer.decode(thinking_ids, skip_special_tokens=True).strip()
+            logger.info(f"[TransformersBackend.generate] Extracted thinking via token parsing ({len(thinking_content)} chars)")
+        except ValueError:
+            # No </think> token found - model didn't use thinking format
+            logger.debug("[TransformersBackend.generate] No </think> token found, using full output")
+
+        # Decode the content (after </think> or full output if no thinking)
+        # Don't skip special tokens initially so we can clean up properly
+        generated_text = self.tokenizer.decode(content_ids, skip_special_tokens=False)
+
+        # Clean up end tokens
+        for end_token in ["<|im_end|>", "<|endoftext|>"]:
+            if generated_text.endswith(end_token):
+                generated_text = generated_text[:-len(end_token)]
+
+        generated_text = generated_text.strip()
+
+        # If we extracted thinking, prepend it with <think> tags for downstream parsing
+        # This maintains compatibility with text-level parsing in the server
+        if thinking_content:
+            generated_text = f"<think>\n{thinking_content}\n</think>\n\n{generated_text}"
 
         logger.debug(f"[TransformersBackend.generate] Generated {len(generated_ids)} tokens")
 
-        return generated_text.strip()
+        return generated_text
 
     # Cache management methods
 

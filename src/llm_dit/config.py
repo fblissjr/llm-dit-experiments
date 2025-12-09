@@ -235,6 +235,12 @@ class RewriterConfig:
     The rewriter can use either the local model or a remote API backend
     for text generation. When use_api is True and api_url is set,
     the rewriter will use the API backend instead of the local model.
+
+    Qwen3 Best Practices (thinking mode):
+    - temperature=0.6, top_p=0.95, top_k=20, min_p=0 (default)
+    - DO NOT use greedy decoding (causes repetition)
+    - presence_penalty=0-2 helps reduce endless repetitions
+    See: https://huggingface.co/Qwen/Qwen3-4B#best-practices
     """
 
     # Whether to use API backend for rewriting (default: use local model)
@@ -242,10 +248,12 @@ class RewriterConfig:
     # API backend settings (only used when use_api=True)
     api_url: str = ""  # URL for heylookitsanllm API (falls back to --api-url if empty)
     api_model: str = "Qwen3-4B"  # Model ID for API backend
-    # Generation parameters
-    temperature: float = 1.0  # Sampling temperature (default 1.0)
-    top_p: float = 0.95  # Nucleus sampling threshold
-    min_p: float = 0.0  # Minimum probability threshold (0.0 = disabled)
+    # Generation parameters (Qwen3 thinking mode defaults)
+    temperature: float = 0.6  # Qwen3 thinking mode: 0.6 (NOT greedy!)
+    top_p: float = 0.95  # Qwen3 thinking mode: 0.95
+    top_k: int = 20  # Qwen3 thinking mode: 20
+    min_p: float = 0.0  # Qwen3: 0.0 (disabled)
+    presence_penalty: float = 0.0  # 0-2, helps reduce endless repetitions
     max_tokens: int = 512  # Maximum tokens to generate
 
 
@@ -383,7 +391,9 @@ class Config:
                 "api_model": self.rewriter.api_model,
                 "temperature": self.rewriter.temperature,
                 "top_p": self.rewriter.top_p,
+                "top_k": self.rewriter.top_k,
                 "min_p": self.rewriter.min_p,
+                "presence_penalty": self.rewriter.presence_penalty,
                 "max_tokens": self.rewriter.max_tokens,
             },
         }

@@ -12,23 +12,66 @@ The experiment system consists of:
 
 ---
 
+## Configuration
+
+All settings are managed via `config.toml`. Copy the example and customize:
+
+```bash
+cp config.toml.example config.toml
+```
+
+### Key Settings
+
+```toml
+[default]
+model_path = "/path/to/z-image-turbo"
+
+[default.encoder]
+device = "cpu"               # cpu/cuda/mps/auto
+hidden_layer = -2            # -1 to -6 (or deeper)
+
+[default.scheduler]
+shift = 3.0                  # FlowMatch shift (try 2.0-5.0)
+
+[default.generation]
+num_inference_steps = 9      # 4-20 typical range
+
+[default.pytorch]
+long_prompt_mode = "truncate" # truncate/interpolate/pool/attention_pool
+```
+
+### Using Config
+
+```bash
+# Use default profile
+uv run scripts/generate.py --config config.toml "A cat"
+
+# Use specific profile
+uv run scripts/generate.py --config config.toml --profile rtx4090 "A cat"
+
+# Override specific values
+uv run scripts/generate.py --config config.toml --shift 4.0 "A cat"
+```
+
+---
+
 ## Quick Start
 
 ```bash
 # Dry run to see what would be generated
 uv run experiments/run_ablation.py --experiment shift_sweep --dry-run
 
-# Run shift sweep on 3 animal prompts
+# Run shift sweep on 3 animal prompts (uses config.toml)
 uv run experiments/run_ablation.py \
+  --config config.toml \
   --experiment shift_sweep \
-  --model-path /path/to/z-image-turbo \
   --prompt-category animals \
   --max-prompts 3
 
 # Run with metrics collection
 uv run experiments/run_ablation.py \
+  --config config.toml \
   --experiment hidden_layer \
-  --model-path /path/to/z-image-turbo \
   --prompt-category simple_objects \
   --compute-metrics
 ```
@@ -97,8 +140,8 @@ Tests the scheduler shift parameter across values [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
 
 ```bash
 uv run experiments/run_ablation.py \
+  --config config.toml \
   --experiment shift_sweep \
-  --model-path /path/to/model \
   --prompt-category landscapes
 ```
 
@@ -112,8 +155,8 @@ Grid search over shift [2.0, 3.0, 4.0] x steps [6, 9, 12, 15].
 
 ```bash
 uv run experiments/run_ablation.py \
+  --config config.toml \
   --experiment shift_steps_grid \
-  --model-path /path/to/model \
   --max-prompts 5
 ```
 
@@ -125,8 +168,8 @@ Tests embedding extraction from layers [-1, -2, -3, -4, -5, -6].
 
 ```bash
 uv run experiments/run_ablation.py \
+  --config config.toml \
   --experiment hidden_layer \
-  --model-path /path/to/model \
   --prompt-category humans
 ```
 
@@ -147,8 +190,8 @@ Tests different thinking content variations:
 
 ```bash
 uv run experiments/run_ablation.py \
+  --config config.toml \
   --experiment think_block \
-  --model-path /path/to/model \
   --prompt-category scenes
 ```
 
@@ -165,8 +208,8 @@ Tests different system prompts:
 
 ```bash
 uv run experiments/run_ablation.py \
+  --config config.toml \
   --experiment system_prompt \
-  --model-path /path/to/model \
   --prompt-category artistic_styles
 ```
 
@@ -178,8 +221,8 @@ Tests step counts [4, 6, 8, 9, 10, 12, 15, 20].
 
 ```bash
 uv run experiments/run_ablation.py \
+  --config config.toml \
   --experiment steps_only \
-  --model-path /path/to/model \
   --seeds 42,123,456
 ```
 
@@ -194,7 +237,7 @@ uv run experiments/run_ablation.py \
 | Argument | Description |
 |----------|-------------|
 | `--experiment` | Experiment type (see above) |
-| `--model-path` | Path to Z-Image model (not needed for `--dry-run`) |
+| `--config` | Path to config.toml (recommended) |
 
 ### Prompt Selection
 
@@ -213,13 +256,17 @@ uv run experiments/run_ablation.py \
 | `--output-dir` | Output directory (default: `experiments/results`) |
 | `--compute-metrics` | Calculate ImageReward and SigLIP2 scores |
 
-### Device Placement
+### Device Placement (via config.toml)
 
-| Argument | Default | Description |
-|----------|---------|-------------|
-| `--text-encoder-device` | `cpu` | Device for Qwen3 encoder |
-| `--dit-device` | `cuda` | Device for DiT transformer |
-| `--vae-device` | `cuda` | Device for VAE decoder |
+```toml
+[default.encoder]
+device = "cpu"      # Qwen3 encoder
+
+[default.pipeline]
+device = "cuda"     # DiT + VAE
+```
+
+Or override via CLI: `--text-encoder-device cpu --dit-device cuda --vae-device cuda`
 
 ### Listing Options
 
@@ -333,14 +380,14 @@ animal_001,42,shift,3.0,2.34,156,0.42,0.31,,experiments/results/shift_sweep/imag
 Start the web server:
 
 ```bash
-uv run web/server.py \
-  --model-path /path/to/z-image-turbo \
-  --text-encoder-device cpu \
-  --dit-device cuda \
-  --vae-device cuda
+# Using config.toml (recommended)
+uv run web/server.py --config config.toml
+
+# Or with a specific profile
+uv run web/server.py --config config.toml --profile rtx4090
 ```
 
-Open http://localhost:8000 in your browser.
+Open http://localhost:8000 (or the port specified in `[server]`).
 
 ### Available Controls
 
@@ -382,8 +429,8 @@ All generations are saved in history (max 50). Click any thumbnail to:
 ```bash
 # 1. Quick sweep with few prompts
 uv run experiments/run_ablation.py \
+  --config config.toml \
   --experiment shift_sweep \
-  --model-path /path/to/model \
   --prompt-category simple_objects \
   --max-prompts 3 \
   --compute-metrics
@@ -399,8 +446,8 @@ cat experiments/results/shift_sweep/shift_sweep_summary.json
 ```bash
 # Run hidden layer ablation
 uv run experiments/run_ablation.py \
+  --config config.toml \
   --experiment hidden_layer \
-  --model-path /path/to/model \
   --prompt-category humans \
   --seeds 42,123 \
   --compute-metrics
@@ -411,7 +458,7 @@ uv run experiments/run_ablation.py \
 
 ### Workflow 3: Exploratory Testing in Web UI
 
-1. Start server with desired device placement
+1. Start server: `uv run web/server.py --config config.toml`
 2. Try different shift values (2.0, 3.0, 4.0) on same prompt + seed
 3. Compare results in history panel
 4. Use "Edit" to iterate on best settings
@@ -422,8 +469,8 @@ uv run experiments/run_ablation.py \
 # Full test across all categories
 for category in simple_objects animals humans scenes landscapes; do
   uv run experiments/run_ablation.py \
+    --config config.toml \
     --experiment shift_sweep \
-    --model-path /path/to/model \
     --prompt-category $category \
     --compute-metrics
 done

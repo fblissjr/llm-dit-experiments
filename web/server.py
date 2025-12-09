@@ -65,7 +65,6 @@ class GenerateRequest(BaseModel):
     template: Optional[str] = None
     guidance_scale: float = 0.0
     shift: float = 3.0  # Scheduler shift parameter
-    hidden_layer: int = -2  # Which hidden layer to extract embeddings from (-1 to -36)
 
 
 class EncodeRequest(BaseModel):
@@ -83,9 +82,11 @@ class RewriteRequest(BaseModel):
     rewriter: Optional[str] = None  # Name of rewriter template (optional if custom_system_prompt provided)
     custom_system_prompt: Optional[str] = None  # Ad-hoc system prompt for rewriting
     max_tokens: Optional[int] = None  # Maximum tokens to generate (default from config: 512)
-    temperature: Optional[float] = None  # Sampling temperature (default from config: 1.0)
-    top_p: Optional[float] = None  # Nucleus sampling (default from config: 0.95)
-    min_p: Optional[float] = None  # Minimum probability (default from config: 0.0)
+    temperature: Optional[float] = None  # Sampling temperature (default: 0.6 for Qwen3 thinking)
+    top_p: Optional[float] = None  # Nucleus sampling (default: 0.95)
+    top_k: Optional[int] = None  # Top-k sampling (default: 20 for Qwen3)
+    min_p: Optional[float] = None  # Minimum probability (default: 0.0)
+    presence_penalty: Optional[float] = None  # Presence penalty (0-2, default: 0.0)
 
 
 @app.get("/")
@@ -107,20 +108,30 @@ async def health():
 
 @app.get("/api/rewriter-config")
 async def get_rewriter_config():
-    """Get rewriter configuration defaults from server config."""
+    """Get rewriter configuration defaults from server config.
+
+    Qwen3 Best Practices (thinking mode):
+    - temperature=0.6, top_p=0.95, top_k=20, min_p=0
+    - DO NOT use greedy decoding (causes repetition)
+    - presence_penalty=0-2 helps reduce endless repetitions
+    """
     if runtime_config is None:
-        # Return hardcoded defaults if no config loaded
+        # Return hardcoded defaults matching Qwen3 thinking mode
         return {
-            "temperature": 1.0,
+            "temperature": 0.6,
             "top_p": 0.95,
+            "top_k": 20,
             "min_p": 0.0,
+            "presence_penalty": 0.0,
             "max_tokens": 512,
             "use_api": False,
         }
     return {
         "temperature": runtime_config.rewriter_temperature,
         "top_p": runtime_config.rewriter_top_p,
+        "top_k": runtime_config.rewriter_top_k,
         "min_p": runtime_config.rewriter_min_p,
+        "presence_penalty": runtime_config.rewriter_presence_penalty,
         "max_tokens": runtime_config.rewriter_max_tokens,
         "use_api": runtime_config.rewriter_use_api,
     }
@@ -225,7 +236,6 @@ async def generate(request: GenerateRequest):
             num_inference_steps=request.steps,
             guidance_scale=request.guidance_scale,
             shift=request.shift,
-            hidden_layer=request.hidden_layer,
             generator=generator,
             template=request.template,
             system_prompt=request.system_prompt,
@@ -287,7 +297,6 @@ async def generate(request: GenerateRequest):
             "template": request.template,
             "guidance_scale": request.guidance_scale,
             "shift": request.shift,
-            "hidden_layer": request.hidden_layer,
             "gen_time": gen_time,
             "image_b64": img_b64,
             "formatted_prompt": formatted_prompt,
@@ -477,10 +486,13 @@ async def rewrite_prompt(request: RewriteRequest):
         )
 
     # Get generation parameters from request or config defaults
+    # Qwen3 Best Practices (thinking mode): temperature=0.6, top_p=0.95, top_k=20
     max_tokens = request.max_tokens
     temperature = request.temperature
     top_p = request.top_p
+    top_k = request.top_k
     min_p = request.min_p
+    presence_penalty = request.presence_penalty
 
     if runtime_config is not None:
         if max_tokens is None:
@@ -489,24 +501,32 @@ async def rewrite_prompt(request: RewriteRequest):
             temperature = runtime_config.rewriter_temperature
         if top_p is None:
             top_p = runtime_config.rewriter_top_p
+        if top_k is None:
+            top_k = runtime_config.rewriter_top_k
         if min_p is None:
             min_p = runtime_config.rewriter_min_p
+        if presence_penalty is None:
+            presence_penalty = runtime_config.rewriter_presence_penalty
     else:
-        # Fallback defaults
+        # Fallback defaults (Qwen3 thinking mode)
         if max_tokens is None:
             max_tokens = 512
         if temperature is None:
-            temperature = 1.0
+            temperature = 0.6
         if top_p is None:
             top_p = 0.95
+        if top_k is None:
+            top_k = 20
         if min_p is None:
             min_p = 0.0
+        if presence_penalty is None:
+            presence_penalty = 0.0
 
     try:
         start = time.time()
         logger.info(f"[Rewrite] Using: {rewriter_name} (backend: {backend_name})")
         logger.info(f"[Rewrite] Input prompt: {request.prompt[:100]}...")
-        logger.info(f"[Rewrite] Params: max_tokens={max_tokens}, temperature={temperature}, top_p={top_p}, min_p={min_p}")
+        logger.info(f"[Rewrite] Params: max_tokens={max_tokens}, temperature={temperature}, top_p={top_p}, top_k={top_k}, min_p={min_p}, presence_penalty={presence_penalty}")
 
         # Generate using the backend
         generated = backend.generate(
@@ -515,23 +535,52 @@ async def rewrite_prompt(request: RewriteRequest):
             max_new_tokens=max_tokens,
             temperature=temperature,
             top_p=top_p,
+            top_k=top_k,
             min_p=min_p,
+            presence_penalty=presence_penalty,
         )
 
         gen_time = time.time() - start
         logger.info(f"[Rewrite] Generated {len(generated)} chars in {gen_time:.2f}s")
 
-        # Parse <think>...</think> tags from the generated output
-        # Extract thinking content and clean prompt separately
+        # Parse the generated output to separate thinking from the prompt
+        # The model may output in several formats:
+        # 1. <think>...</think> followed by the prompt
+        # 2. Plain reasoning text followed by JSON/structured output
+        # 3. Just the rewritten prompt
         thinking_content = None
         rewritten_prompt = generated
 
+        # Try to find <think>...</think> tags first
         think_match = re.search(r'<think>\s*(.*?)\s*</think>', generated, re.DOTALL)
         if think_match:
             thinking_content = think_match.group(1).strip()
             # Remove the think block from the rewritten prompt
             rewritten_prompt = re.sub(r'<think>.*?</think>\s*', '', generated, flags=re.DOTALL).strip()
-            logger.info(f"[Rewrite] Extracted thinking ({len(thinking_content)} chars), prompt ({len(rewritten_prompt)} chars)")
+            logger.info(f"[Rewrite] Extracted thinking via <think> tags ({len(thinking_content)} chars), prompt ({len(rewritten_prompt)} chars)")
+        else:
+            # No think tags - try to find JSON at the end and treat preceding text as thinking
+            # Look for a JSON object (starts with { and ends with })
+            json_match = re.search(r'(\{[\s\S]*\})\s*$', generated)
+            if json_match:
+                json_text = json_match.group(1)
+                # Everything before the JSON is reasoning/thinking
+                pre_json = generated[:json_match.start()].strip()
+                if pre_json:
+                    thinking_content = pre_json
+                    rewritten_prompt = json_text
+                    logger.info(f"[Rewrite] Extracted thinking via JSON detection ({len(thinking_content)} chars), JSON prompt ({len(rewritten_prompt)} chars)")
+            # If output starts with reasoning patterns like "Okay," "Let me", etc. and has a clear break
+            elif re.match(r'^(Okay|Let me|I need|First|The user|Looking)', generated):
+                # Look for double newline as separator between thinking and output
+                parts = re.split(r'\n\n+', generated, maxsplit=1)
+                if len(parts) == 2 and len(parts[1]) > 50:
+                    # If second part is substantial, treat first as thinking
+                    # But only if second part looks like a prompt (not more reasoning)
+                    if not re.match(r'^(Okay|Let me|I need|First|The user|Looking|Now)', parts[1]):
+                        thinking_content = parts[0].strip()
+                        rewritten_prompt = parts[1].strip()
+                        logger.info(f"[Rewrite] Extracted thinking via paragraph split ({len(thinking_content)} chars), prompt ({len(rewritten_prompt)} chars)")
 
         # Clear CUDA cache to prevent memory issues when switching back to encoding
         if torch.cuda.is_available():

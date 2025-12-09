@@ -129,7 +129,7 @@ top_p = 0.95                 # Nucleus sampling
 max_tokens = 512             # Max tokens to generate
 ```
 
-CLI flags override config values. See [config.example.toml](config.example.toml) for full options.
+CLI flags override config values. See [config.toml.example](config.toml.example) for full options.
 
 ## Running Tests
 
@@ -215,7 +215,7 @@ Image Output
 - [docs/distributed_inference.md](docs/distributed_inference.md) - Running text encoder on Mac, DiT on CUDA
 - [docs/web_server_api.md](docs/web_server_api.md) - REST API reference (includes prompt rewriting)
 - [docs/profiler.md](docs/profiler.md) - Profiling and stability testing
-- [config.example.toml](config.example.toml) - Full configuration example
+- [config.toml.example](config.toml.example) - Full configuration example
 - [CHANGELOG.md](CHANGELOG.md) - Version history
 - [CLAUDE.md](CLAUDE.md) - Comprehensive technical reference
 

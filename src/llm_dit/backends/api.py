@@ -316,21 +316,30 @@ class APIBackend:
         prompt: str,
         system_prompt: str | None = None,
         max_new_tokens: int = 512,
-        temperature: float = 0.7,
-        top_p: float = 0.9,
+        temperature: float = 0.6,
+        top_p: float = 0.95,
+        top_k: int = 20,
         min_p: float = 0.0,
+        presence_penalty: float = 0.0,
         do_sample: bool = True,
     ) -> str:
         """
         Generate text via API chat completions endpoint.
 
+        Qwen3 Best Practices (thinking mode):
+        - temperature=0.6, top_p=0.95, top_k=20, min_p=0 (default)
+        - DO NOT use greedy decoding (causes repetition)
+        - presence_penalty=0-2 helps reduce endless repetitions
+
         Args:
             prompt: User prompt/message
             system_prompt: Optional system prompt (rewriter template content)
             max_new_tokens: Maximum tokens to generate
-            temperature: Sampling temperature
-            top_p: Nucleus sampling threshold
-            min_p: Minimum probability threshold (0.0 = disabled)
+            temperature: Sampling temperature (Qwen3 thinking: 0.6)
+            top_p: Nucleus sampling threshold (Qwen3 thinking: 0.95)
+            top_k: Top-k sampling (Qwen3: 20)
+            min_p: Minimum probability threshold (Qwen3: 0.0)
+            presence_penalty: Penalty for token presence (0-2, helps reduce repetition)
             do_sample: Whether to use sampling (ignored for API, always samples)
 
         Returns:
@@ -341,6 +350,8 @@ class APIBackend:
             rewritten = backend.generate(
                 prompt="A cat sleeping",
                 system_prompt="You are an expert at writing image prompts...",
+                temperature=0.6,  # Qwen3 thinking mode
+                top_k=20,
             )
         """
         # Build messages
@@ -360,10 +371,14 @@ class APIBackend:
                 "max_tokens": max_new_tokens,
                 "temperature": temperature if do_sample else 0.0,
                 "top_p": top_p,
+                "top_k": top_k,
             }
             # Only include min_p if non-zero (not all APIs support it)
             if min_p > 0.0:
                 payload["min_p"] = min_p
+            # Only include presence_penalty if non-zero
+            if presence_penalty > 0.0:
+                payload["presence_penalty"] = presence_penalty
 
             response = self.client.post(
                 "/v1/chat/completions",

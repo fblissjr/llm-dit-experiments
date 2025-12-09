@@ -3,9 +3,21 @@
 Experiment runner for Z-Image ablation studies.
 
 Runs systematic experiments varying parameters and saving results with metadata.
+Supports TOML config files for device placement, model paths, and other settings.
 
 Usage:
-    # Run a shift sweep experiment
+    # Run with config file (recommended)
+    uv run experiments/run_ablation.py \\
+        --config config.toml \\
+        --experiment shift_sweep
+
+    # Run with config and profile
+    uv run experiments/run_ablation.py \\
+        --config config.toml \\
+        --profile rtx4090 \\
+        --experiment hidden_layer
+
+    # Run a shift sweep experiment (no config)
     uv run experiments/run_ablation.py \\
         --experiment shift_sweep \\
         --model-path /path/to/z-image \\
@@ -27,6 +39,8 @@ Usage:
     uv run experiments/run_ablation.py \\
         --experiment shift_sweep \\
         --dry-run
+
+Config file values are used as defaults; CLI args override them.
 """
 
 import argparse
@@ -52,6 +66,7 @@ from experiments.prompts import (
     get_prompts_by_category,
     load_standard_prompts,
 )
+from llm_dit.cli import load_runtime_config, RuntimeConfig
 
 logging.basicConfig(
     level=logging.INFO,
@@ -593,6 +608,9 @@ Available experiments:
   steps_only        Test different step counts
 
 Examples:
+  # Run with config file
+  uv run experiments/run_ablation.py --config config.toml --experiment shift_sweep
+
   # Run shift sweep on animal prompts
   uv run experiments/run_ablation.py --experiment shift_sweep --prompt-category animals
 
@@ -604,6 +622,21 @@ Examples:
         """,
     )
 
+    # Config file support
+    config_group = parser.add_argument_group("Configuration")
+    config_group.add_argument(
+        "--config",
+        type=str,
+        default=None,
+        help="Path to TOML config file (CLI args override config values)",
+    )
+    config_group.add_argument(
+        "--profile",
+        type=str,
+        default="default",
+        help="Config profile to use (default: default)",
+    )
+
     parser.add_argument(
         "--experiment",
         required=True,
@@ -612,7 +645,7 @@ Examples:
     )
     parser.add_argument(
         "--model-path",
-        help="Path to Z-Image model (required unless --dry-run)",
+        help="Path to Z-Image model (required unless --dry-run or in config)",
     )
     parser.add_argument(
         "--output-dir",
@@ -651,18 +684,18 @@ Examples:
     )
     parser.add_argument(
         "--text-encoder-device",
-        default="cpu",
-        help="Device for text encoder (default: cpu)",
+        default=None,
+        help="Device for text encoder (default: from config or cpu)",
     )
     parser.add_argument(
         "--dit-device",
-        default="cuda",
-        help="Device for DiT (default: cuda)",
+        default=None,
+        help="Device for DiT (default: from config or cuda)",
     )
     parser.add_argument(
         "--vae-device",
-        default="cuda",
-        help="Device for VAE (default: cuda)",
+        default=None,
+        help="Device for VAE (default: from config or cuda)",
     )
     parser.add_argument(
         "--dry-run",
@@ -684,8 +717,17 @@ Examples:
         action="store_true",
         help="Compute ImageReward and SigLIP2 scores for generated images",
     )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable debug logging",
+    )
 
     args = parser.parse_args()
+
+    # Debug logging
+    if args.debug:
+        logging.getLogger().setLevel(logging.DEBUG)
 
     # List experiments
     if args.list_experiments:
@@ -712,9 +754,45 @@ Examples:
             print()
         return
 
-    # Validate args
-    if not args.dry_run and not args.model_path:
-        parser.error("--model-path is required unless using --dry-run")
+    # Load config if provided
+    config: RuntimeConfig | None = None
+    if args.config:
+        config = load_runtime_config(args)
+        logger.info(f"Loaded config from {args.config} (profile: {args.profile})")
+
+    # Resolve model path (CLI > config > error)
+    model_path = args.model_path
+    if not model_path and config:
+        model_path = config.model_path
+    if not args.dry_run and not model_path:
+        parser.error("--model-path is required unless using --dry-run or --config")
+
+    # Resolve device settings (CLI > config > defaults)
+    text_encoder_device = args.text_encoder_device
+    if text_encoder_device is None:
+        text_encoder_device = config.encoder_device if config else "cpu"
+
+    dit_device = args.dit_device
+    if dit_device is None:
+        dit_device = config.dit_device if config else "cuda"
+
+    vae_device = args.vae_device
+    if vae_device is None:
+        vae_device = config.vae_device if config else "cuda"
+
+    # Resolve "auto" device settings
+    def resolve_device(device: str) -> str:
+        if device == "auto":
+            if torch.cuda.is_available():
+                return "cuda"
+            elif torch.backends.mps.is_available():
+                return "mps"
+            return "cpu"
+        return device
+
+    text_encoder_device = resolve_device(text_encoder_device)
+    dit_device = resolve_device(dit_device)
+    vae_device = resolve_device(vae_device)
 
     # Parse prompt IDs
     prompt_ids = None
@@ -727,13 +805,16 @@ Examples:
     # Create output dir with experiment name
     output_dir = Path(args.output_dir) / args.experiment
 
+    logger.info(f"Model: {model_path}")
+    logger.info(f"Devices: encoder={text_encoder_device}, dit={dit_device}, vae={vae_device}")
+
     # Run experiment
     runner = ExperimentRunner(
-        model_path=args.model_path or "",
+        model_path=model_path or "",
         output_dir=output_dir,
-        text_encoder_device=args.text_encoder_device,
-        dit_device=args.dit_device,
-        vae_device=args.vae_device,
+        text_encoder_device=text_encoder_device,
+        dit_device=dit_device,
+        vae_device=vae_device,
         dry_run=args.dry_run,
         compute_metrics=args.compute_metrics,
     )

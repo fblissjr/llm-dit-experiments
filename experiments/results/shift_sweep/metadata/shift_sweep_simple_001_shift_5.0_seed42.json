@@ -1,0 +1,26 @@
+{
+  "config": {
+    "experiment_name": "shift_sweep",
+    "prompt_id": "simple_001",
+    "prompt_text": "A crisp red apple rests on a weathered wooden table, its skin catching the afternoon light in a soft glow. The wood grain beneath tells stories of countless meals shared, its surface worn smooth by years of use.",
+    "seed": 42,
+    "variable_name": "shift",
+    "variable_value": 5.0,
+    "shift": 5.0,
+    "steps": 9,
+    "hidden_layer": -2,
+    "width": 1024,
+    "height": 1024,
+    "guidance_scale": 0.0,
+    "system_prompt": null,
+    "thinking_content": null,
+    "force_think_block": false,
+    "timestamp": "2025-12-09T14:15:29.731736"
+  },
+  "output_path": "experiments/results/shift_sweep/images/shift_sweep_simple_001_shift_5.0_seed42.png",
+  "generation_time_seconds": 0.0,
+  "token_count": null,
+  "image_reward": null,
+  "siglip_score": null,
+  "error": null
+}

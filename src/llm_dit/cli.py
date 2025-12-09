@@ -133,14 +133,17 @@ class RuntimeConfig:
     host: str = "127.0.0.1"
     port: int = 7860
 
-    # Rewriter settings
+    # Rewriter settings (Qwen3 thinking mode recommended defaults)
+    # See: https://huggingface.co/Qwen/Qwen3-4B#best-practices
     rewriter_use_api: bool = False  # Use API backend for rewriting
     rewriter_api_url: str = ""  # API URL for rewriter (if different from encoder)
     rewriter_api_model: str = "Qwen3-4B"  # Model ID for rewriter API
-    rewriter_temperature: float = 1.0  # Sampling temperature
-    rewriter_top_p: float = 0.95  # Nucleus sampling threshold
-    rewriter_min_p: float = 0.0  # Minimum probability threshold (0.0 = disabled)
+    rewriter_temperature: float = 0.6  # Qwen3 thinking mode: 0.6 (NOT greedy!)
+    rewriter_top_p: float = 0.95  # Qwen3 thinking mode: 0.95
+    rewriter_top_k: int = 20  # Qwen3 thinking mode: 20
+    rewriter_min_p: float = 0.0  # Qwen3: 0.0 (disabled)
     rewriter_max_tokens: int = 512  # Maximum tokens to generate
+    rewriter_presence_penalty: float = 0.0  # 0-2, helps reduce endless repetitions
 
     # Debug
     debug: bool = False
@@ -447,7 +450,7 @@ def create_base_parser(
         "--rewriter-temperature",
         type=float,
         default=None,
-        help="Sampling temperature for rewriter (default: 1.0)",
+        help="Sampling temperature for rewriter (default: 0.6 for Qwen3 thinking mode)",
     )
     rewriter_group.add_argument(
         "--rewriter-top-p",
@@ -456,10 +459,22 @@ def create_base_parser(
         help="Nucleus sampling threshold for rewriter (default: 0.95)",
     )
     rewriter_group.add_argument(
+        "--rewriter-top-k",
+        type=int,
+        default=None,
+        help="Top-k sampling for rewriter (default: 20 for Qwen3)",
+    )
+    rewriter_group.add_argument(
         "--rewriter-min-p",
         type=float,
         default=None,
         help="Minimum probability threshold for rewriter (default: 0.0, disabled)",
+    )
+    rewriter_group.add_argument(
+        "--rewriter-presence-penalty",
+        type=float,
+        default=None,
+        help="Presence penalty for rewriter (0-2, helps reduce repetition, default: 0.0)",
     )
     rewriter_group.add_argument(
         "--rewriter-max-tokens",
@@ -620,9 +635,11 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
                 config.rewriter_use_api = getattr(rewriter, 'use_api', False)
                 config.rewriter_api_url = getattr(rewriter, 'api_url', '')
                 config.rewriter_api_model = getattr(rewriter, 'api_model', 'Qwen3-4B')
-                config.rewriter_temperature = getattr(rewriter, 'temperature', 1.0)
+                config.rewriter_temperature = getattr(rewriter, 'temperature', 0.6)
                 config.rewriter_top_p = getattr(rewriter, 'top_p', 0.95)
+                config.rewriter_top_k = getattr(rewriter, 'top_k', 20)
                 config.rewriter_min_p = getattr(rewriter, 'min_p', 0.0)
+                config.rewriter_presence_penalty = getattr(rewriter, 'presence_penalty', 0.0)
                 config.rewriter_max_tokens = getattr(rewriter, 'max_tokens', 512)
 
         except Exception as e:
@@ -642,11 +659,12 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
         config.port = server_cfg.get("port", config.port)
 
     # Apply CLI overrides (only if explicitly provided)
-    if args.model_path is not None:
+    # Use getattr throughout to support scripts that only define subset of args
+    if getattr(args, 'model_path', None) is not None:
         config.model_path = args.model_path
     if getattr(args, 'text_encoder_path', None) is not None:
         config.text_encoder_path = args.text_encoder_path
-    if args.templates_dir is not None:
+    if getattr(args, 'templates_dir', None) is not None:
         config.templates_dir = args.templates_dir
 
     # Device overrides
@@ -658,11 +676,11 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
         config.vae_device = args.vae_device
 
     # Optimization overrides
-    if args.cpu_offload:
+    if getattr(args, 'cpu_offload', False):
         config.cpu_offload = True
-    if args.flash_attn:
+    if getattr(args, 'flash_attn', False):
         config.flash_attn = True
-    if args.compile:
+    if getattr(args, 'compile', False):
         config.compile = True
     if getattr(args, 'torch_dtype', None) is not None:
         config.torch_dtype = args.torch_dtype
@@ -731,8 +749,12 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
         config.rewriter_temperature = args.rewriter_temperature
     if getattr(args, 'rewriter_top_p', None) is not None:
         config.rewriter_top_p = args.rewriter_top_p
+    if getattr(args, 'rewriter_top_k', None) is not None:
+        config.rewriter_top_k = args.rewriter_top_k
     if getattr(args, 'rewriter_min_p', None) is not None:
         config.rewriter_min_p = args.rewriter_min_p
+    if getattr(args, 'rewriter_presence_penalty', None) is not None:
+        config.rewriter_presence_penalty = args.rewriter_presence_penalty
     if getattr(args, 'rewriter_max_tokens', None) is not None:
         config.rewriter_max_tokens = args.rewriter_max_tokens
 
@@ -757,7 +779,7 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
         config.port = args.port
 
     # Debug overrides
-    if args.debug:
+    if getattr(args, 'debug', False):
         config.debug = True
     if getattr(args, 'verbose', False):
         config.verbose = True

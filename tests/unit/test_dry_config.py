@@ -21,7 +21,7 @@ pytestmark = pytest.mark.unit
 
 # Paths to key files
 PROJECT_ROOT = Path(__file__).parent.parent.parent
-CONFIG_EXAMPLE = PROJECT_ROOT / "config.example.toml"
+CONFIG_EXAMPLE = PROJECT_ROOT / "config.toml.example"
 CONFIG_PY = PROJECT_ROOT / "src" / "llm_dit" / "config.py"
 CLI_PY = PROJECT_ROOT / "src" / "llm_dit" / "cli.py"
 STARTUP_PY = PROJECT_ROOT / "src" / "llm_dit" / "startup.py"
@@ -115,7 +115,7 @@ def check_string_in_file(filepath: Path, string: str) -> bool:
 
 
 class TestTOMLToConfigDataclass:
-    """Ensure config.example.toml parameters exist in Config dataclasses."""
+    """Ensure config.toml.example parameters exist in Config dataclasses."""
 
     def test_encoder_params_exist_in_encoder_config(self):
         """All TOML [encoder] params should exist in EncoderConfig."""
