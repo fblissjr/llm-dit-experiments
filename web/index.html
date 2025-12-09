@@ -216,6 +216,13 @@
                             <div class="bg-gray-900 rounded-lg p-3 max-h-48 overflow-y-auto">
                                 <pre class="text-xs text-gray-300 whitespace-pre-wrap font-mono" id="rewrittenText"></pre>
                             </div>
+                            <!-- Extracted Thinking Content -->
+                            <div id="extractedThinkingResult" class="hidden mt-3">
+                                <label class="block text-sm font-medium text-purple-400 mb-2">Extracted Thinking Content</label>
+                                <div class="bg-purple-900/30 border border-purple-700 rounded-lg p-3 max-h-32 overflow-y-auto">
+                                    <pre class="text-xs text-purple-300 whitespace-pre-wrap font-mono" id="extractedThinkingText"></pre>
+                                </div>
+                            </div>
                             <div class="flex gap-2 mt-2">
                                 <button
                                     type="button"
@@ -846,6 +853,16 @@
                 }
                 rewriteInfo.textContent = infoText;
                 rewrittenResult.classList.remove('hidden');
+
+                // Show/hide extracted thinking content
+                const extractedThinkingResult = document.getElementById('extractedThinkingResult');
+                const extractedThinkingText = document.getElementById('extractedThinkingText');
+                if (lastThinkingContent) {
+                    extractedThinkingText.textContent = lastThinkingContent;
+                    extractedThinkingResult.classList.remove('hidden');
+                } else {
+                    extractedThinkingResult.classList.add('hidden');
+                }
 
             } catch (err) {
                 alert('Rewrite failed: ' + err.message);
