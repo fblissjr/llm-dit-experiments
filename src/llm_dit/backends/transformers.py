@@ -330,6 +330,7 @@ class TransformersBackend:
         max_new_tokens: int = 512,
         temperature: float = 0.7,
         top_p: float = 0.9,
+        min_p: float = 0.0,
         do_sample: bool = True,
     ) -> str:
         """
@@ -344,6 +345,7 @@ class TransformersBackend:
             max_new_tokens: Maximum tokens to generate
             temperature: Sampling temperature (higher = more creative)
             top_p: Nucleus sampling threshold
+            min_p: Minimum probability threshold (0.0 = disabled)
             do_sample: Whether to use sampling (False = greedy)
 
         Returns:
@@ -413,6 +415,8 @@ class TransformersBackend:
             gen_kwargs["do_sample"] = True
             gen_kwargs["temperature"] = temperature
             gen_kwargs["top_p"] = top_p
+            if min_p > 0.0:
+                gen_kwargs["min_p"] = min_p
         else:
             gen_kwargs["do_sample"] = False
 

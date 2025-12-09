@@ -151,6 +151,7 @@ Example: `--lora style.safetensors:0.8 --lora detail.safetensors:0.5`
 | `--rewriter-api-model` | str | Qwen3-4B | Model ID for rewriter API |
 | `--rewriter-temperature` | float | 1.0 | Sampling temperature |
 | `--rewriter-top-p` | float | 0.95 | Nucleus sampling threshold |
+| `--rewriter-min-p` | float | 0.0 | Minimum probability threshold (0.0 = disabled) |
 | `--rewriter-max-tokens` | int | 512 | Maximum tokens to generate |
 
 Example: `--rewriter-use-api --rewriter-api-url http://mac:8080 --rewriter-temperature 0.8`
@@ -323,7 +324,8 @@ Uses either the local Qwen3 model or an API backend (if configured with `--rewri
   "custom_system_prompt": null,
   "max_tokens": 512,
   "temperature": 1.0,
-  "top_p": 0.95
+  "top_p": 0.95,
+  "min_p": 0.0
 }
 ```
 
@@ -336,6 +338,7 @@ Uses either the local Qwen3 model or an API backend (if configured with `--rewri
 | max_tokens | int | No | from config (512) | Maximum tokens to generate |
 | temperature | float | No | from config (1.0) | Sampling temperature |
 | top_p | float | No | from config (0.95) | Nucleus sampling threshold |
+| min_p | float | No | from config (0.0) | Minimum probability threshold (0.0 = disabled) |
 
 *Either `rewriter` or `custom_system_prompt` must be provided.
 
@@ -344,11 +347,14 @@ Uses either the local Qwen3 model or an API backend (if configured with `--rewri
 {
   "original_prompt": "A cat sleeping",
   "rewritten_prompt": "A fluffy orange tabby cat curled up in a warm sunbeam...",
+  "thinking_content": "I should describe a cozy scene with warm lighting...",
   "rewriter": "rewriter_character_generator",
   "backend": "local",
   "gen_time": 2.5
 }
 ```
+
+**Note:** If the LLM generates `<think>...</think>` tags in its output, the content is extracted into `thinking_content` and removed from `rewritten_prompt`. This allows the thinking to be used directly in subsequent image generation.
 
 **Backend Types:**
 - `"local"`: Using local Qwen3 model (default)

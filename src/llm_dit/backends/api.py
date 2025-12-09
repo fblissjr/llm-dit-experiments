@@ -318,6 +318,7 @@ class APIBackend:
         max_new_tokens: int = 512,
         temperature: float = 0.7,
         top_p: float = 0.9,
+        min_p: float = 0.0,
         do_sample: bool = True,
     ) -> str:
         """
@@ -329,6 +330,7 @@ class APIBackend:
             max_new_tokens: Maximum tokens to generate
             temperature: Sampling temperature
             top_p: Nucleus sampling threshold
+            min_p: Minimum probability threshold (0.0 = disabled)
             do_sample: Whether to use sampling (ignored for API, always samples)
 
         Returns:
@@ -351,15 +353,21 @@ class APIBackend:
             logger.info(f"[APIBackend.generate] Requesting chat completion from API")
             logger.debug(f"[APIBackend.generate] Messages: {len(messages)}, max_tokens: {max_new_tokens}")
 
+            # Build request payload
+            payload = {
+                "model": self.config.model_id,
+                "messages": messages,
+                "max_tokens": max_new_tokens,
+                "temperature": temperature if do_sample else 0.0,
+                "top_p": top_p,
+            }
+            # Only include min_p if non-zero (not all APIs support it)
+            if min_p > 0.0:
+                payload["min_p"] = min_p
+
             response = self.client.post(
                 "/v1/chat/completions",
-                json={
-                    "model": self.config.model_id,
-                    "messages": messages,
-                    "max_tokens": max_new_tokens,
-                    "temperature": temperature if do_sample else 0.0,
-                    "top_p": top_p,
-                },
+                json=payload,
             )
             response.raise_for_status()
             data = response.json()
