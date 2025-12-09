@@ -5,4 +5,4 @@ model: z-image
 category: experimental
 add_think_block: false
 ---
-Hyper-saturated colors pushed to their limits with every hue at maximum intensity. Vibrancy beyond natural creates the visual equivalent of turning all the knobs to eleven.
+A world screaming in Technicolor. Colors do not just exist; they vibrate, pushed to the very edge of perception. The spectrum is weaponized, assaulting the eye with a joy that borders on hysteria. It is reality on a sugar rush—a visual overdose where subtlety is a dirty word and the only rule is that if it can be brighter, it must be brighter.

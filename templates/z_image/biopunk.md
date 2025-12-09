@@ -5,4 +5,4 @@ model: z-image
 category: experimental
 add_think_block: false
 ---
-Biopunk aesthetic with organic technology grown rather than manufactured. Bioluminescence and genetic modification blur the line between creature and creation. Wet, alive, and disturbingly beautiful.
+A world where the machine is born, not built. Technology pulses with a heartbeat, growing in wet, glistening structures that blur the terrifying line between creature and creation. Bioluminescent veins replace copper wires, pumping nutrient-rich fluids through circuits of living tissue. This is the aesthetic of evolution weaponized—disturbingly visceral, undeniably alive, and glowing with the strange, feverish beauty of a future that bleeds.

@@ -5,4 +5,4 @@ model: z-image
 category: photography
 add_think_block: false
 ---
-A photorealistic image with accurate lighting, natural textures, and realistic details. The scene has proper shadows, reflections, and material properties that make it indistinguishable from a real photograph.
+The mirror of reality. Light behaves exactly as physics dictates—bouncing, scattering, and reflecting with absolute fidelity. Textures are tangible; materials are indistinguishable from the real world. It is the triumph of simulation—an image so perfect that it bypasses the brain's skepticism, forcing you to believe that what you are seeing exists, even if it is only a collection of pixels.

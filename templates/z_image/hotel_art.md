@@ -5,4 +5,4 @@ model: z-image
 category: wacky
 add_think_block: false
 ---
-Mid-tier hotel room art with subtle wrongness. Abstract shapes that seem familiar and perspectives that slowly bother you. Colors specifically chosen to match any decor and no particular emotion.
+A masterpiece of calculated inoffensiveness. Abstract shapes float in a beige void, suggesting everything and nothing simultaneously. It is the visual equivalent of elevator music—designed to fill a space without ever challenging a thought. Colors match the carpet, forms match the drapes, and the soul of the piece has been surgically removed to ensure that no guest, anywhere, ever, feels anything stronger than mild recognition.

@@ -5,4 +5,4 @@ model: z-image
 category: style
 add_think_block: false
 ---
-Modern anime style with clean linework and vibrant colors. Expressive character design with large eyes, dynamic poses, and that distinctive mix of simplification and detail that defines contemporary anime aesthetics.
+Contemporary anime aesthetics where every line has purpose and every color carries emotional weight. Characters spring to life with impossible physics—hair defying gravity while eyes capture entire universes in their luminous depths. The visual language speaks in contrasts: precise linework against painterly backgrounds, simplified features against hyper-detailed environments. This is the art of visual storytelling distilled to its essence—where a single frame can convey volumes through the curve of an eyebrow or the angle of a silhouette against a neon-drenched cityscape. Dynamic energy captured in stillness.

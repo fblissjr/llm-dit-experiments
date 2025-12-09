@@ -5,4 +5,4 @@ model: z-image
 category: style
 add_think_block: false
 ---
-A cyberpunk scene with neon lights reflecting off wet streets in a dark, atmospheric city. The environment is filled with holographic advertisements and futuristic technology. Rain adds depth and mood to the composition.
+The high-tech low-life. Rain slicks the pavement, reflecting the neon kanji of a towering city. Wires hang like vines, and steam rises from the vents. It is a world of contrast—between the grime of the street and the glow of the hologram, between the flesh and the machine. A beautiful, dangerous dystopia where the night is permanent and the future is now.

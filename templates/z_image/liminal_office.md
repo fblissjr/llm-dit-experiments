@@ -5,4 +5,4 @@ model: z-image
 category: wacky
 add_think_block: false
 ---
-Empty corporate spaces existing outside of time. Fluorescent lights humming over no one in cubicles unoccupied for years. The water cooler makes sounds. It's 3 AM everywhere simultaneously.
+The hum of fluorescent lights in an empty room. Rows of beige cubicles stretch into a vanishing point that feels infinite. The carpet is patterned with a chaotic neutrality, and the air is stale with the memory of productivity. It is a space out of time—a purgatory of water coolers and ergonomic chairs where it is always 2:30 PM on a Tuesday, and everyone has just stepped out for a meeting that will never end.

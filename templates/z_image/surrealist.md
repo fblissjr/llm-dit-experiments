@@ -5,4 +5,4 @@ model: z-image
 category: style
 add_think_block: false
 ---
-Surrealist imagery drawn from the unconscious mind with impossible juxtapositions and dreamlike logic. Objects refuse to behave normally in a world where reality is merely a suggestion.
+The logic of the dream. Clocks melt, bowler hats float, and the sky is made of stone. Objects are divorced from their function and married to the impossible. It is the rebellion of the subconscious—a visual riddle that bypasses reason to speak directly to the psyche, creating a world where the only rule is that there are no rules.

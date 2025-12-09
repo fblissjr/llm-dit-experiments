@@ -5,4 +5,4 @@ model: z-image
 category: style
 add_think_block: false
 ---
-1960s psychedelic art aesthetics with melting forms and impossible colors. Patterns seem to breathe with paisley and fractal-like repetition. The visual representation of expanded consciousness in vibrant, flowing imagery.
+The melting of the mind's eye. Patterns fractalize and breathe, colors bleed into one another in a liquid dance. Shapes lose their meaning, transforming from faces to flowers to galaxies. It is the visual language of the trip—a kaleidoscopic journey into the subconscious where the rules of physics are replaced by the logic of a dream, and the only constant is change.

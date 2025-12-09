@@ -5,4 +5,4 @@ model: z-image
 category: style
 add_think_block: false
 ---
-Authentic 1970s aesthetic with warm earth tones including avocado greens, harvest golds, and burnt oranges. Wood paneling textures and shag carpet energy with the optimistic futurism of that era.
+The world dipped in fondue. Colors are warm and earthy—avocado, harvest gold, and burnt orange. Wood paneling covers the walls, and the air is thick with the promise of shag carpet. It is the aesthetic of the den—cozy, groovy, and unapologetically brown, capturing a decade that looked to the future while sitting comfortably on a beanbag chair.

@@ -5,4 +5,4 @@ model: z-image
 category: photography
 add_think_block: false
 ---
-Candid street photography capturing authentic moments of urban life. Decisive moments and interesting juxtapositions show human stories unfolding naturally. Raw and unposed with strong composition.
+The poetry of the decisive moment. Chaos aligns for a fraction of a second into perfect composition. A glance, a shadow, a step—caught before it dissolves back into the noise of the city. It is the art of observation—finding the miraculous in the mundane, the story in the crowd, and freezing the heartbeat of the street in a frame of black and white truth.

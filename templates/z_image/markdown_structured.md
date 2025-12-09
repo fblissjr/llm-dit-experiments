@@ -5,4 +5,4 @@ model: z-image
 category: structured
 add_think_block: false
 ---
-Interpret Markdown as a structured image description, extracting visual concepts only. Do not render any text, headings, bullets, or markdown formatting in the image. The structure is purely organizational for generating a purely visual image.
+The blueprint of a document made visual. Headers stand tall like architectural columns, lists march in disciplined formation, and code blocks sit in monospaced fortresses. It is the beauty of hierarchy—content organized with the logic of a machine but the readability of a book. The structure itself is the art, a clean, indented celebration of order in a chaotic world.

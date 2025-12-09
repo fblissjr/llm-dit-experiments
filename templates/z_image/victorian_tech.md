@@ -5,4 +5,4 @@ model: z-image
 category: wacky
 add_think_block: false
 ---
-Victorian-era illustration style depicting modern technology through a confused lens. Smartphones as brass contraptions, laptops requiring coal, and WiFi as ghostly tendrils. Steam-powered interpretations of the digital age.
+The internet powered by coal. Smartphones are made of brass and mahogany; WiFi is a series of tubes. Gentlemen in waistcoats check their telegram feeds on clockwork devices. It is the collision of eras—where the etiquette of the 19th century meets the addiction of the 21st, creating a charming, absurd world of steam-driven social media.
