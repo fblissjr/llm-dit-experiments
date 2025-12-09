@@ -334,6 +334,15 @@ long_prompt_mode = "truncate" # truncate/interpolate/pool/attention_pool
 [default.lora]
 paths = []
 scales = []
+
+[default.rewriter]
+# Prompt rewriter settings (for /api/rewrite endpoint)
+use_api = false               # Use API backend for rewriting
+api_url = ""                  # API URL (defaults to api.url if not set)
+api_model = "Qwen3-4B"        # Model ID for rewriter API
+temperature = 1.0             # Sampling temperature
+top_p = 0.95                  # Nucleus sampling threshold
+max_tokens = 512              # Maximum tokens to generate
 ```
 
 ## Web Server
@@ -529,6 +538,16 @@ uv run scripts/profiler.py --show-info
 | Flag | Description |
 |------|-------------|
 | `--lora` | LoRA path with optional scale (path:scale). Repeatable. |
+
+### Rewriter
+| Flag | Description |
+|------|-------------|
+| `--rewriter-use-api` | Use API backend for prompt rewriting |
+| `--rewriter-api-url` | API URL for rewriter (defaults to --api-url) |
+| `--rewriter-api-model` | Model ID for rewriter API (default: Qwen3-4B) |
+| `--rewriter-temperature` | Sampling temperature (default: 1.0) |
+| `--rewriter-top-p` | Nucleus sampling threshold (default: 0.95) |
+| `--rewriter-max-tokens` | Maximum tokens to generate (default: 512) |
 
 ## REST API Endpoints
 
@@ -765,6 +784,37 @@ uv run scripts/generate.py --config config.toml --profile low_vram "A cat"
 
 The loaded Qwen3 model can be used for prompt rewriting/expansion in addition to embedding extraction. This enables creative prompt enhancement without loading additional models.
 
+The rewriter can use either the local model or a remote API backend (heylookitsanllm).
+
+**Backend Selection:**
+- By default, uses the local encoder's Qwen3 model
+- With `--rewriter-use-api`, uses a remote API backend for generation
+- The API URL defaults to `--api-url` but can be overridden with `--rewriter-api-url`
+
+**Configuration via TOML:**
+```toml
+[default.rewriter]
+use_api = true                # Use API backend
+api_url = "http://mac:8080"   # API endpoint (or leave empty to use [api].url)
+api_model = "Qwen3-4B"        # Model ID
+temperature = 1.0             # Sampling temperature
+top_p = 0.95                  # Nucleus sampling
+max_tokens = 512              # Max tokens to generate
+```
+
+**Configuration via CLI:**
+```bash
+# Use API backend for rewriting with custom parameters
+uv run web/server.py \
+  --model-path /path/to/z-image \
+  --rewriter-use-api \
+  --rewriter-api-url http://mac:8080 \
+  --rewriter-api-model Qwen3-4B \
+  --rewriter-temperature 1.0 \
+  --rewriter-top-p 0.95 \
+  --rewriter-max-tokens 512
+```
+
 **Rewriter Templates:**
 Place templates in `templates/z_image/rewriter/` with `category: rewriter` in frontmatter.
 
@@ -790,10 +840,15 @@ You are an expert character designer...
 # List available rewriters
 curl http://localhost:8000/api/rewriters
 
-# Rewrite a prompt
+# Rewrite a prompt (uses server's configured backend)
 curl -X POST http://localhost:8000/api/rewrite \
   -H "Content-Type: application/json" \
   -d '{"prompt": "An Israeli woman", "rewriter": "rewriter_z_image_character_generator"}'
+
+# Override generation parameters
+curl -X POST http://localhost:8000/api/rewrite \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "A cat", "rewriter": "rewriter_z_image_character_generator", "temperature": 0.8, "top_p": 0.9, "max_tokens": 256}'
 ```
 
 **Via Python:**
@@ -804,7 +859,8 @@ rewritten = backend.generate(
     prompt="A cat sleeping",
     system_prompt="You are an expert at writing image prompts...",
     max_new_tokens=512,
-    temperature=0.7,
+    temperature=1.0,
+    top_p=0.95,
 )
 
 # Using API backend

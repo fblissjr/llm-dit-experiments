@@ -228,6 +228,26 @@ class LoRAConfig:
 
 
 @dataclass
+class RewriterConfig:
+    """Configuration for prompt rewriting using LLM generation.
+
+    The rewriter can use either the local model or a remote API backend
+    for text generation. When use_api is True and api_url is set,
+    the rewriter will use the API backend instead of the local model.
+    """
+
+    # Whether to use API backend for rewriting (default: use local model)
+    use_api: bool = False
+    # API backend settings (only used when use_api=True)
+    api_url: str = ""  # URL for heylookitsanllm API
+    api_model: str = "Qwen3-4B"  # Model ID for API backend
+    # Generation parameters
+    temperature: float = 1.0  # Sampling temperature (default 1.0)
+    top_p: float = 0.95  # Nucleus sampling threshold
+    max_tokens: int = 512  # Maximum tokens to generate
+
+
+@dataclass
 class Config:
     """Complete configuration for Z-Image generation."""
 
@@ -240,6 +260,7 @@ class Config:
     optimization: OptimizationConfig = field(default_factory=OptimizationConfig)
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
     lora: LoRAConfig = field(default_factory=LoRAConfig)
+    rewriter: RewriterConfig = field(default_factory=RewriterConfig)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Config":
@@ -250,6 +271,7 @@ class Config:
         optimization_data = data.pop("optimization", {})
         scheduler_data = data.pop("scheduler", {})
         lora_data = data.pop("lora", {})
+        rewriter_data = data.pop("rewriter", {})
 
         return cls(
             model_path=data.get("model_path", ""),
@@ -260,6 +282,7 @@ class Config:
             optimization=OptimizationConfig(**optimization_data),
             scheduler=SchedulerConfig(**scheduler_data),
             lora=LoRAConfig(**lora_data),
+            rewriter=RewriterConfig(**rewriter_data),
         )
 
     @classmethod
@@ -350,6 +373,14 @@ class Config:
             "lora": {
                 "paths": self.lora.paths,
                 "scales": self.lora.scales,
+            },
+            "rewriter": {
+                "use_api": self.rewriter.use_api,
+                "api_url": self.rewriter.api_url,
+                "api_model": self.rewriter.api_model,
+                "temperature": self.rewriter.temperature,
+                "top_p": self.rewriter.top_p,
+                "max_tokens": self.rewriter.max_tokens,
             },
         }
 

@@ -206,6 +206,42 @@ Expected hidden_dim 2560, got X
 
 First request loads the model into memory (~5-10 seconds for 4B model). Subsequent requests are fast (~50-100ms for encoding).
 
+## Distributed Prompt Rewriting
+
+In addition to distributed encoding, you can also run prompt rewriting via the API. This uses the same heylookitsanllm server for text generation.
+
+### Configuration
+
+```toml
+[default.rewriter]
+use_api = true                    # Use API for rewriting
+api_url = "http://<mac-ip>:8080"  # Can be same as encoding API
+api_model = "Qwen3-4B-mlx"        # Model ID
+temperature = 1.0
+top_p = 0.95
+max_tokens = 512
+```
+
+Or via CLI:
+
+```bash
+uv run web/server.py \
+  --api-url http://<mac-ip>:8080 \
+  --api-model Qwen3-4B-mlx \
+  --model-path /path/to/z-image-turbo \
+  --rewriter-use-api \
+  --dit-device cuda
+```
+
+### How It Works
+
+1. User submits a prompt to `/api/rewrite` on the CUDA server
+2. The server calls heylookitsanllm's `/v1/chat/completions` endpoint
+3. The Mac generates expanded prompt text
+4. The expanded prompt is returned for use in image generation
+
+This keeps the Mac's LLM busy with both encoding and rewriting, while the CUDA server handles DiT/VAE processing.
+
 ## API Reference
 
 The hidden states endpoint used by this integration:
