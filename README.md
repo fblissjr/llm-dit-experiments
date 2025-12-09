@@ -207,8 +207,10 @@ Image Output
 | Embedding extraction | hidden_states[-2] | Penultimate layer (configurable via --hidden-layer) |
 | CFG scale | 0.0 | Baked in via Decoupled-DMD |
 | Steps | 8-9 | Turbo distilled |
-| Scheduler | FlowMatchEuler | shift=3.0 |
+| Scheduler | FlowMatchEuler | shift=3.0 (requires custom scheduler) |
 | VAE | 16-channel | Wan-family |
+
+**Important:** The `shift` parameter requires `use_custom_scheduler = true` in config (or `--use-custom-scheduler` on CLI). Diffusers' `FlowMatchEulerDiscreteScheduler` ignores the `mu`/`shift` parameter entirely - all shift values produce identical results without the custom scheduler.
 
 ## Documentation
 

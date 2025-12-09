@@ -47,7 +47,7 @@ cpu_offload = false          # Offload transformer to CPU (very slow, last resor
 
 [default.pytorch]
 attention_backend = "auto"    # auto/flash_attn_2/flash_attn_3/sage/xformers/sdpa
-use_custom_scheduler = false  # Use pure PyTorch FlowMatchScheduler instead of diffusers
+use_custom_scheduler = true   # Required for shift parameter to work (diffusers ignores mu)
 tiled_vae = false             # Process VAE in tiles (required for 2K+ resolution)
 tile_size = 512               # VAE tile size in pixels (latent = tile_size / 8)
 tile_overlap = 64             # Overlap between tiles for seamless blending
@@ -117,7 +117,7 @@ cpu_offload = false
 
 [rtx4090.pytorch]
 attention_backend = "auto"   # Will select flash_attn_2 automatically
-use_custom_scheduler = false
+use_custom_scheduler = true  # Required for shift parameter to work (diffusers ignores mu)
 tiled_vae = false            # Enable for resolutions > 1536
 tile_size = 512
 tile_overlap = 64
@@ -184,7 +184,7 @@ cpu_offload = true           # Offload transformer layers
 
 [low_vram.pytorch]
 attention_backend = "sdpa"   # PyTorch native, works everywhere
-use_custom_scheduler = false
+use_custom_scheduler = true  # Required for shift parameter to work
 tiled_vae = true             # Required at lower VRAM to avoid OOM
 tile_size = 256              # Smaller tiles for less memory
 tile_overlap = 32
@@ -251,7 +251,7 @@ cpu_offload = false
 
 [distributed.pytorch]
 attention_backend = "auto"
-use_custom_scheduler = false
+use_custom_scheduler = true   # Required for shift parameter to work
 tiled_vae = false
 tile_size = 512
 tile_overlap = 64

@@ -738,6 +738,8 @@ setup_attention_backend("flash_attn_2")
 
 ### FlowMatchScheduler (Pure PyTorch)
 
+**IMPORTANT:** The custom scheduler is required for the `shift` parameter to work. Diffusers' `FlowMatchEulerDiscreteScheduler` ignores the `mu`/`shift` parameter entirely. Always use `use_custom_scheduler = true` in config or `--use-custom-scheduler` on CLI.
+
 ```python
 from llm_dit import FlowMatchScheduler
 
