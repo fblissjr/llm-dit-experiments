@@ -112,7 +112,7 @@ class RuntimeConfig:
     guidance_scale: float = 0.0
     seed: int | None = None  # Random seed for reproducibility
     negative_prompt: str | None = None  # Negative prompt for CFG
-    enable_thinking: bool = False
+    enable_thinking: bool = True  # DiffSynth always uses empty think block
     default_template: str | None = None
 
     # Prompt components

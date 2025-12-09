@@ -37,7 +37,7 @@ shift = 3.0                  # FlowMatch shift (try 2.0-5.0)
 num_inference_steps = 9      # 4-20 typical range
 
 [default.pytorch]
-long_prompt_mode = "truncate" # truncate/interpolate/pool/attention_pool
+long_prompt_mode = "interpolate" # truncate/interpolate/pool/attention_pool (default: interpolate)
 ```
 
 ### Using Config

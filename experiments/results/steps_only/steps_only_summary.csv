@@ -1,9 +1,0 @@
-prompt_id,seed,variable_name,variable_value,generation_time_seconds,token_count,image_reward,siglip_score,error,output_path
-simple_001,42,steps,4,0.0,,,,,experiments/results/steps_only/images/steps_only_simple_001_steps_4_seed42.png
-simple_001,42,steps,6,0.0,,,,,experiments/results/steps_only/images/steps_only_simple_001_steps_6_seed42.png
-simple_001,42,steps,8,0.0,,,,,experiments/results/steps_only/images/steps_only_simple_001_steps_8_seed42.png
-simple_001,42,steps,9,0.0,,,,,experiments/results/steps_only/images/steps_only_simple_001_steps_9_seed42.png
-simple_001,42,steps,10,0.0,,,,,experiments/results/steps_only/images/steps_only_simple_001_steps_10_seed42.png
-simple_001,42,steps,12,0.0,,,,,experiments/results/steps_only/images/steps_only_simple_001_steps_12_seed42.png
-simple_001,42,steps,15,0.0,,,,,experiments/results/steps_only/images/steps_only_simple_001_steps_15_seed42.png
-simple_001,42,steps,20,0.0,,,,,experiments/results/steps_only/images/steps_only_simple_001_steps_20_seed42.png

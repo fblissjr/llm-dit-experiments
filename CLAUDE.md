@@ -133,10 +133,10 @@ We have implemented several experimental modes for handling prompts beyond 1504 
 
 | Mode | CLI Flag | Status | Quality Impact |
 |------|----------|--------|----------------|
-| `truncate` | `--long-prompt-mode truncate` | Default | Predictable, loses tail content |
-| `interpolate` | `--long-prompt-mode interpolate` | Experimental | Under evaluation |
+| `truncate` | `--long-prompt-mode truncate` | Stable | Predictable, loses tail content |
+| `interpolate` | `--long-prompt-mode interpolate` | **Default** | Preserves all content, smooth resampling |
 | `pool` | `--long-prompt-mode pool` | Experimental | Under evaluation |
-| `attention_pool` | `--long-prompt-mode attention_pool` | Experimental | Under evaluation |
+| `attention_pool` | `--long-prompt-mode attention_pool` | Experimental | Cosine similarity weighting |
 
 **Research questions we're investigating:**
 - At what compression ratio does quality noticeably degrade?

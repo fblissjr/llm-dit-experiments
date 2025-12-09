@@ -101,11 +101,12 @@ EXPERIMENTS = {
         "defaults": {"shift": 3.0, "steps": 9},
     },
     "think_block": {
-        "description": "Test impact of think block content",
+        "description": "Test think block impact (DiffSynth default: empty think block)",
         "variable": "thinking_content",
         "values": [
-            None,  # No think block
-            "",  # Empty think block (force_think_block)
+            # DiffSynth always uses empty think block - test if content helps or hurts
+            "",  # Empty think block (DiffSynth default, model trained with this)
+            None,  # No think block (deviates from DiffSynth training)
             "High quality, detailed, photorealistic",  # Quality keywords
             "Soft lighting, warm colors, peaceful atmosphere",  # Mood keywords
             "Sharp focus, crisp details, professional composition",  # Technical keywords
@@ -160,7 +161,7 @@ class ExperimentConfig:
     # Optional params
     system_prompt: str | None = None
     thinking_content: str | None = None
-    force_think_block: bool = False
+    force_think_block: bool = True  # DiffSynth always uses empty think block
     # Metadata
     timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
 
@@ -281,11 +282,17 @@ class ExperimentRunner:
             if config.system_prompt:
                 gen_kwargs["system_prompt"] = config.system_prompt
 
+            # Handle thinking content and force_think_block
             if config.thinking_content is not None:
                 if config.thinking_content == "":
+                    # Empty string means force empty think block
                     gen_kwargs["force_think_block"] = True
                 else:
+                    # Non-empty thinking content
                     gen_kwargs["thinking_content"] = config.thinking_content
+            else:
+                # No thinking_content provided, use config default (True for DiffSynth compat)
+                gen_kwargs["force_think_block"] = config.force_think_block
 
             # Add hidden_layer and long_prompt_mode
             gen_kwargs["hidden_layer"] = config.hidden_layer
@@ -294,8 +301,20 @@ class ExperimentRunner:
             # Generate
             result = self.pipeline(**gen_kwargs)
 
-            # Save image
-            result.images[0].save(output_path)
+            # Save image - pipeline returns PIL Image directly, not diffusers-style result
+            if hasattr(result, "images"):
+                # Diffusers-style result object
+                image = result.images[0]
+            elif hasattr(result, "save"):
+                # Direct PIL Image
+                image = result
+            elif isinstance(result, list):
+                # List of images
+                image = result[0]
+            else:
+                raise ValueError(f"Unexpected result type: {type(result)}")
+
+            image.save(output_path)
 
             generation_time = time.time() - start_time
 
@@ -646,9 +665,8 @@ Examples:
 
     parser.add_argument(
         "--experiment",
-        required=True,
         choices=list(EXPERIMENTS.keys()),
-        help="Experiment to run",
+        help="Experiment to run (required unless --list-experiments or --list-prompts)",
     )
     parser.add_argument(
         "--model-path",
@@ -760,6 +778,10 @@ Examples:
                 print(f"    - {p['id']}: {p['prompt'][:50]}...")
             print()
         return
+
+    # Require --experiment for actual runs
+    if not args.experiment:
+        parser.error("--experiment is required (use --list-experiments to see options)")
 
     # Load config if provided
     config: RuntimeConfig | None = None

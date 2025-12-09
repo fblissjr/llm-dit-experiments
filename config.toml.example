@@ -34,7 +34,7 @@ height = 1024
 width = 1024
 num_inference_steps = 9      # 8-9 optimal for turbo model
 guidance_scale = 0.0         # Must be 0.0 for Z-Image-Turbo (CFG baked into weights)
-enable_thinking = false      # Add <think> block to prompt format (experimental)
+enable_thinking = true       # Add empty <think> block (DiffSynth default, model trained with this)
 default_template = ""        # Auto-apply this template to all prompts
 
 [default.scheduler]
@@ -104,7 +104,7 @@ height = 1024
 width = 1024
 num_inference_steps = 9
 guidance_scale = 0.0
-enable_thinking = false
+enable_thinking = true       # Add empty <think> block (DiffSynth default)
 default_template = ""
 
 [rtx4090.scheduler]
@@ -171,7 +171,7 @@ height = 1024
 width = 1024
 num_inference_steps = 9
 guidance_scale = 0.0
-enable_thinking = false
+enable_thinking = true       # Add empty <think> block (DiffSynth default)
 default_template = ""
 
 [low_vram.scheduler]
@@ -238,7 +238,7 @@ height = 1024
 width = 1024
 num_inference_steps = 9
 guidance_scale = 0.0
-enable_thinking = false
+enable_thinking = true       # Add empty <think> block (DiffSynth default)
 default_template = ""
 
 [distributed.scheduler]

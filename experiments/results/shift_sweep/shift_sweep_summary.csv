@@ -1,7 +1,0 @@
-prompt_id,seed,variable_name,variable_value,generation_time_seconds,token_count,image_reward,siglip_score,error,output_path
-simple_001,42,shift,1.0,0.0,,,,,experiments/results/shift_sweep/images/shift_sweep_simple_001_shift_1.0_seed42.png
-simple_001,42,shift,2.0,0.0,,,,,experiments/results/shift_sweep/images/shift_sweep_simple_001_shift_2.0_seed42.png
-simple_001,42,shift,3.0,0.0,,,,,experiments/results/shift_sweep/images/shift_sweep_simple_001_shift_3.0_seed42.png
-simple_001,42,shift,4.0,0.0,,,,,experiments/results/shift_sweep/images/shift_sweep_simple_001_shift_4.0_seed42.png
-simple_001,42,shift,5.0,0.0,,,,,experiments/results/shift_sweep/images/shift_sweep_simple_001_shift_5.0_seed42.png
-simple_001,42,shift,6.0,0.0,,,,,experiments/results/shift_sweep/images/shift_sweep_simple_001_shift_6.0_seed42.png

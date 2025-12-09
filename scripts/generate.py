@@ -349,7 +349,7 @@ def main():
         system_prompt=config.system_prompt,
         thinking_content=config.thinking_content,
         assistant_content=config.assistant_content,
-        enable_thinking=config.enable_thinking,
+        force_think_block=config.enable_thinking,  # enable_thinking maps to force_think_block
         long_prompt_mode=config.long_prompt_mode,
         hidden_layer=config.hidden_layer,
         callback=progress_callback if config.verbose else None,
