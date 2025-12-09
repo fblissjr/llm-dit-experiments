@@ -101,6 +101,7 @@ scales = [0.8, 0.5]
 | `--text-encoder-device` | str | auto | Device for text encoder (cpu/cuda/mps/auto) |
 | `--dit-device` | str | auto | Device for DiT transformer (cpu/cuda/mps/auto) |
 | `--vae-device` | str | auto | Device for VAE (cpu/cuda/mps/auto) |
+| `--hidden-layer` | int | -2 | Which hidden layer to extract embeddings from (-1=last, -2=penultimate) |
 
 ### Server Flags
 

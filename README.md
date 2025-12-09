@@ -204,7 +204,7 @@ Image Output
 | Parameter | Value | Notes |
 |-----------|-------|-------|
 | Text encoder | Qwen3-4B | 2560 hidden dim, 36 layers |
-| Embedding extraction | hidden_states[-2] | Penultimate layer |
+| Embedding extraction | hidden_states[-2] | Penultimate layer (configurable via --hidden-layer) |
 | CFG scale | 0.0 | Baked in via Decoupled-DMD |
 | Steps | 8-9 | Turbo distilled |
 | Scheduler | FlowMatchEuler | shift=3.0 |

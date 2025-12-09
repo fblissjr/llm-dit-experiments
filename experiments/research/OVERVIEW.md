@@ -13,7 +13,7 @@ Text Prompt
 Qwen3-4B (2560 hidden dim, 36 layers)
     |
     v
-hidden_states[-2] extraction
+hidden_states[-2] extraction (configurable via --hidden-layer)
     |
     v
 Linear projection (2560 -> 3840)

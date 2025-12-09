@@ -269,4 +269,11 @@ Response:
 }
 ```
 
+The `layer` parameter specifies which hidden layer to extract embeddings from:
+- `-1`: Final layer (default for most models)
+- `-2`: Penultimate layer (default for Z-Image, often better quality)
+- Any positive int: Specific layer index (0-based)
+
+This can be configured via `--hidden-layer` CLI flag or in config.toml.
+
 See [heylookitsanllm documentation](https://github.com/fblissjr/heylookitsanllm) for full API details.

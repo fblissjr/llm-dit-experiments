@@ -187,7 +187,7 @@ class TestAPIBackendReal:
 
         config = APIBackendConfig(
             base_url=api_server_url,
-            model_id="Qwen3-4B-mxfp4-mlx",
+            model_id="Qwen3-4B-mlx",
             encoding_format="base64",
         )
         backend = APIBackend(config)
@@ -205,7 +205,7 @@ class TestAPIBackendReal:
 
         config = APIBackendConfig(
             base_url=api_server_url,
-            model_id="Qwen3-4B-mxfp4-mlx",
+            model_id="Qwen3-4B-mlx",
         )
         backend = APIBackend(config)
 
@@ -236,7 +236,7 @@ class TestBackendEquivalence:
         # API backend
         api_config = APIBackendConfig(
             base_url=api_server_url,
-            model_id="Qwen3-4B-mxfp4-mlx",
+            model_id="Qwen3-4B-mlx",
         )
         api_backend = APIBackend(api_config)
 
@@ -261,7 +261,7 @@ class TestBackendEquivalence:
 
         api_config = APIBackendConfig(
             base_url=api_server_url,
-            model_id="Qwen3-4B-mxfp4-mlx",
+            model_id="Qwen3-4B-mlx",
         )
         api_backend = APIBackend(api_config)
 

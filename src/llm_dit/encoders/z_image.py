@@ -168,6 +168,7 @@ class ZImageTextEncoder:
         force_think_block: bool = False,
         return_padded: bool = False,
         remove_quotes: bool = False,
+        layer_index: int = -2,
     ) -> EncodingOutput:
         """
         Encode a prompt to embeddings.
@@ -190,6 +191,9 @@ class ZImageTextEncoder:
             force_think_block: If True, add empty think block even without content
             return_padded: Also return padded batch tensors
             remove_quotes: If True, strip " characters (for JSON-type prompts)
+            layer_index: Which hidden layer to extract (default: -2, penultimate).
+                        Useful values: -1 (last), -2 (penultimate), -3, -4.
+                        Z-Image uses -2 by default.
 
         Returns:
             EncodingOutput with variable-length embeddings
@@ -238,7 +242,11 @@ class ZImageTextEncoder:
         logger.debug(f"Formatted prompt ({len(formatted)} chars)")
 
         # Encode via backend
-        output = self.backend.encode([formatted], return_padded=return_padded)
+        output = self.backend.encode(
+            [formatted],
+            return_padded=return_padded,
+            layer_index=layer_index,
+        )
 
         # Attach formatted prompt for debugging
         output.formatted_prompts = [formatted]
@@ -250,6 +258,7 @@ class ZImageTextEncoder:
         template: str | Template | None = None,
         force_think_block: bool = False,
         return_padded: bool = False,
+        layer_index: int = -2,
     ) -> EncodingOutput:
         """
         Encode a batch of prompts.
@@ -263,6 +272,7 @@ class ZImageTextEncoder:
             template: Optional template to apply to string prompts
             force_think_block: If True, add empty think block for string prompts
             return_padded: Also return padded batch tensors
+            layer_index: Which hidden layer to extract (default: -2, penultimate)
 
         Returns:
             EncodingOutput with embeddings for each prompt
@@ -281,7 +291,11 @@ class ZImageTextEncoder:
                 formatted = self.formatter.format(conv)
             formatted_list.append(formatted)
 
-        output = self.backend.encode(formatted_list, return_padded=return_padded)
+        output = self.backend.encode(
+            formatted_list,
+            return_padded=return_padded,
+            layer_index=layer_index,
+        )
 
         # Attach formatted prompts for debugging
         output.formatted_prompts = formatted_list

@@ -8,6 +8,8 @@ Unanswered questions requiring investigation, organized by category.
 
 ### Q-A1: Why Penultimate Layer?
 
+**Status**: READY TO INVESTIGATE - `--hidden-layer` parameter is now implemented (default: -2)
+
 **Question**: Why does Z-Image extract `hidden_states[-2]` instead of other layers?
 
 **Context**: This is a common pattern but rarely validated empirically. Different layers encode different information:
@@ -16,12 +18,25 @@ Unanswered questions requiring investigation, organized by category.
 - Later layers: Task-specific (next-token prediction)
 
 **Investigation approach**:
-1. Extract embeddings from layers -1 through -6
-2. Generate images with each
+1. Extract embeddings from layers -1 through -6 using `--hidden-layer`
+2. Generate images with each layer
 3. Compare quality metrics
 4. Analyze embedding statistics (norm, variance, PCA)
 
 **Hypothesis**: Layer -2 may not be optimal for all prompt types.
+
+**How to test**:
+```bash
+# Test different layers
+for layer in -1 -2 -3 -4 -5 -6; do
+  uv run scripts/generate.py \
+    --model-path /path/to/z-image \
+    --hidden-layer $layer \
+    --seed 42 \
+    --output "output_layer${layer}.png" \
+    "A detailed portrait of a woman"
+done
+```
 
 ---
 

@@ -6,6 +6,10 @@ Conventional wisdom from Z-Image, DiffSynth-Studio, and diffusers that may not b
 
 ## 1. Hidden State Extraction: Layer -2
 
+### Status: READY TO TEST
+
+The `--hidden-layer` parameter is now implemented (default: -2), making this experiment immediately runnable.
+
 ### The Assumption
 
 Z-Image extracts embeddings from `hidden_states[-2]` (penultimate layer of Qwen3-4B).
@@ -25,13 +29,16 @@ This is a common pattern in text-to-image models, based on intuition that:
 
 ### Experiment
 
-```python
+```bash
 # Test layers -1 through -6
-for layer in [-1, -2, -3, -4, -5, -6]:
-    embeddings = model.hidden_states[layer]
-    image = generate_with_embeddings(embeddings)
-    quality = measure_quality(image)
-    print(f"Layer {layer}: {quality}")
+for layer in -1 -2 -3 -4 -5 -6; do
+  uv run scripts/generate.py \
+    --model-path /path/to/z-image \
+    --hidden-layer $layer \
+    --seed 42 \
+    --output "layer${layer}.png" \
+    "A beautiful sunset over mountains"
+done
 ```
 
 ### Sub-Questions

@@ -190,7 +190,7 @@ class TestDistributedInference:
         # Create API-backed encoder
         api_config = APIBackendConfig(
             base_url=api_server_url,
-            model_id="Qwen3-4B-mxfp4-mlx",
+            model_id="Qwen3-4B-mlx",
         )
         api_backend = APIBackend(api_config)
         encoder = ZImageTextEncoder(backend=api_backend)

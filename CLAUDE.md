@@ -20,6 +20,67 @@ A standalone diffusers-based experimentation platform for LLM-DiT image generati
 - **Never commit** without explicit user approval
 - **Semantic versioning** in CHANGELOG.md (no dates)
 
+## DRY Configuration Principles
+
+All configurable parameters must flow through a single chain to prevent disconnected settings:
+
+```
+config.toml (TOML)     CLI flags (argparse)
+        \                    /
+         v                  v
+     Config dataclass  →  RuntimeConfig
+              \              /
+               v            v
+            PipelineLoader / startup.py
+                    |
+                    v
+            Backend configs (APIBackendConfig, etc.)
+                    |
+                    v
+            Actual usage (API requests, model loading)
+```
+
+**When adding a new parameter:**
+
+1. **Add to TOML config** (`config.example.toml`) in appropriate section
+2. **Add to Config dataclass** (`src/llm_dit/config.py`) - e.g., `EncoderConfig`, `RewriterConfig`
+3. **Add CLI argument** (`src/llm_dit/cli.py`) in `create_argument_parser()`
+4. **Add to RuntimeConfig** (`src/llm_dit/cli.py`) with same name
+5. **Wire in load_runtime_config()** - load from TOML config, allow CLI override
+6. **Wire in startup.py** - pass to backend configs (`APIBackendConfig`, etc.)
+7. **Expose in web UI** if user-facing (web/index.html, server endpoints)
+8. **Document in CLAUDE.md** - CLI flags table, config sections
+
+**Files to check when adding parameters:**
+
+| Layer | File | What to update |
+|-------|------|----------------|
+| TOML schema | `config.example.toml` | Add parameter with comment |
+| Config classes | `src/llm_dit/config.py` | Add to dataclass, `to_dict()` |
+| CLI parser | `src/llm_dit/cli.py` | `create_argument_parser()` |
+| Runtime config | `src/llm_dit/cli.py` | `RuntimeConfig`, `load_runtime_config()` |
+| Pipeline loading | `src/llm_dit/startup.py` | Pass to backend configs |
+| API backend | `src/llm_dit/backends/api.py` | `APIBackendConfig` if API-relevant |
+| Web server | `web/server.py` | Endpoint parameters |
+| Web UI | `web/index.html` | Form fields if user-facing |
+| Documentation | `CLAUDE.md` | CLI flags, config examples |
+
+**Anti-pattern to avoid:** Adding a parameter to CLI but not wiring it through `startup.py` to the actual backend that uses it (e.g., `hidden_layer` must reach `APIBackendConfig`).
+
+**Automated verification:** Run the DRY configuration consistency test after adding any new parameter:
+
+```bash
+uv run pytest tests/unit/test_dry_config.py -v
+```
+
+This test verifies:
+- TOML parameters exist in Config dataclasses
+- CLI arguments map to RuntimeConfig fields
+- Critical parameters are wired through to backend configs
+- Key parameters are documented
+
+**Claude Code instruction:** Always run this test after adding or modifying configuration parameters to catch wiring gaps early.
+
 ## Architecture
 
 ```
@@ -32,7 +93,7 @@ Qwen3Formatter (chat template with thinking blocks)
 TextEncoderBackend (transformers/vllm/sglang)
     |
     v
-hidden_states[-2] -> embeddings (2560 dim)
+hidden_states[layer] -> embeddings (2560 dim)  [layer=-2 default, configurable]
     |
     v
 [diffusers handles: DiT context_refiner -> main layers -> VAE decode]
@@ -46,7 +107,7 @@ Image Output
 | Parameter | Value | Notes |
 |-----------|-------|-------|
 | Text encoder | Qwen3-4B | 2560 hidden dim, 36 layers |
-| Embedding extraction | hidden_states[-2] | Penultimate layer |
+| Embedding extraction | hidden_states[-2] | Penultimate layer (configurable via `--hidden-layer`) |
 | **Max text tokens** | **1024** | DiT RoPE limit (axes_lens[0]) |
 | CFG scale | 0.0 | Baked in via Decoupled-DMD |
 | Steps | 8-9 | Turbo distilled |
@@ -56,13 +117,34 @@ Image Output
 
 ## Text Sequence Length Limits
 
-The DiT transformer has a **maximum text sequence length of 1024 tokens**. This limit comes from the RoPE (Rotary Position Embeddings) configuration: `axes_lens=[1024, 512, 512]` where the first axis is for text embeddings.
+The DiT transformer has a **maximum text sequence length of 1024 tokens** due to RoPE (Rotary Position Embeddings) configuration: `axes_lens=[1024, 512, 512]` where the first axis is for text embeddings.
 
-### What Happens with Long Prompts
+**This is a key research area for this repository.** We are actively experimenting with methods to work around or extend this limit. See `internal/research/long_prompt_research.md` for detailed research notes on approaches, quality tradeoffs, and future directions.
+
+### Current Behavior (Default)
 
 - Prompts exceeding 1024 tokens are **automatically truncated** with a warning
 - The pipeline logs: `Text sequence length (N tokens) exceeds maximum (1024). Truncating to 1024 tokens.`
 - Truncation happens after encoding, preserving the first 1024 tokens of embeddings
+
+### Experimental Compression Modes
+
+We have implemented several experimental modes for handling prompts beyond 1024 tokens. **Quality impact varies - this is an active research area:**
+
+| Mode | CLI Flag | Status | Quality Impact |
+|------|----------|--------|----------------|
+| `truncate` | `--long-prompt-mode truncate` | Default | Predictable, loses tail content |
+| `interpolate` | `--long-prompt-mode interpolate` | Experimental | Under evaluation |
+| `pool` | `--long-prompt-mode pool` | Experimental | Under evaluation |
+| `attention_pool` | `--long-prompt-mode attention_pool` | Experimental | Under evaluation |
+
+**Research questions we're investigating:**
+- At what compression ratio does quality noticeably degrade?
+- Does `attention_pool` preserve "important" tokens better than uniform methods?
+- Can we achieve good results at 2x or 3x compression?
+- Are there prompt structures that compress better than others?
+
+See the detailed research doc: `internal/research/long_prompt_research.md`
 
 ### Token Count Guidelines
 
@@ -118,36 +200,14 @@ The DiT transformer has a **maximum text sequence length of 1024 tokens**. This 
    print(f"Max tokens: {MAX_TEXT_SEQ_LEN}")  # 1024
    ```
 
-6. **Experimental: Use embedding compression** (may reduce quality):
+6. **Use experimental compression modes** (active research area):
    ```bash
-   # Interpolate embeddings (smooth resampling)
    uv run scripts/generate.py --long-prompt-mode interpolate "Very long prompt..."
-
-   # Adaptive pooling (local averaging)
    uv run scripts/generate.py --long-prompt-mode pool "Very long prompt..."
-
-   # Attention-weighted pooling (preserves important tokens)
    uv run scripts/generate.py --long-prompt-mode attention_pool "Very long prompt..."
    ```
 
-   **Compression modes (EXPERIMENTAL - quality may degrade):**
-   | Mode | Description | Best For |
-   |------|-------------|----------|
-   | `truncate` | Cut off at 1024 (default) | Safety, predictable results |
-   | `interpolate` | Resample via linear interpolation | Smooth transitions, minor overflows |
-   | `pool` | Adaptive average pooling | Structured content with regions |
-   | `attention_pool` | Importance-weighted pooling | Preserving key concepts |
-
-   ```python
-   from llm_dit.utils.long_prompt import compress_embeddings, estimate_quality_loss
-
-   # Estimate quality impact
-   quality = estimate_quality_loss(1500, 1024, "interpolate")
-   print(quality)  # "Medium - 1.5x compression, some detail loss expected"
-
-   # Compress manually
-   compressed = compress_embeddings(embeddings, max_len=1024, mode="interpolate")
-   ```
+   See `internal/research/long_prompt_research.md` for detailed analysis of each mode.
 
 ### Why This Limit Exists
 
@@ -157,6 +217,8 @@ The Z-Image DiT uses multi-axis RoPE for position encoding:
 - Axis 2 (512): Image width positions
 
 Exceeding axis 0 causes CUDA kernel errors (`vectorized_gather_kernel: index out of bounds`).
+
+**Note**: This limit is architectural, not a fundamental constraint. Future research directions include RoPE extrapolation, hierarchical encoding, and chunked attention. See the research doc for exploration plans.
 
 ## Chat Template Format (Qwen3-4B)
 
@@ -291,60 +353,7 @@ Config file (TOML) is the source of truth. CLI flags override config values.
 
 **Transformers v5 Note:** `load_in_8bit`/`load_in_4bit` are deprecated. Use `quantization` instead.
 
-```toml
-# config.toml
-[default]
-model_path = "/path/to/z-image-turbo"
-templates_dir = "templates/z_image"
-
-[default.encoder]
-device = "auto"
-torch_dtype = "bfloat16"
-quantization = "none"  # v5 API: "none", "4bit", "8bit"
-cpu_offload = false
-
-[default.pipeline]
-device = "cuda"
-
-[default.generation]
-width = 1024
-height = 1024
-steps = 9
-guidance_scale = 0.0
-
-[default.scheduler]
-shift = 3.0
-
-[default.optimization]
-flash_attn = false
-compile = false
-cpu_offload = false
-
-[default.pytorch]
-# PyTorch-native components (Phase 1 migration)
-attention_backend = "auto"    # auto/flash_attn_2/flash_attn_3/sage/xformers/sdpa
-use_custom_scheduler = false  # Use pure PyTorch FlowMatchScheduler
-tiled_vae = false             # Enable for 2K+ images
-tile_size = 512               # Tile size in pixels
-tile_overlap = 64             # Overlap for smooth blending
-embedding_cache = false       # Cache embeddings for repeated prompts
-cache_size = 100              # Max cached embeddings (LRU eviction)
-long_prompt_mode = "truncate" # truncate/interpolate/pool/attention_pool
-
-[default.lora]
-paths = []
-scales = []
-
-[default.rewriter]
-# Prompt rewriter settings (for /api/rewrite endpoint)
-use_api = false               # Use API backend for rewriting
-api_url = ""                  # API URL (falls back to --api-url if empty)
-api_model = "Qwen3-4B"        # Model ID for rewriter API
-temperature = 1.0             # Sampling temperature
-top_p = 0.95                  # Nucleus sampling threshold
-min_p = 0.0                   # Minimum probability threshold (0.0 = disabled)
-max_tokens = 512              # Maximum tokens to generate
-```
+See [config.example.toml](config.example.toml)
 
 ## Web Server
 
@@ -515,6 +524,7 @@ uv run scripts/profiler.py --show-info
 | `--embedding-cache` | Enable embedding cache for repeated prompts |
 | `--cache-size` | Max cached embeddings (default: 100) |
 | `--long-prompt-mode` | How to handle prompts >1024 tokens: truncate/interpolate/pool/attention_pool |
+| `--hidden-layer` | Which hidden layer to extract embeddings from (default: -2, penultimate) |
 
 ### Generation
 | Flag | Description |

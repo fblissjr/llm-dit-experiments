@@ -431,6 +431,26 @@
                             </div>
                             <p class="text-xs text-gray-500 mt-1">FlowMatchEuler scheduler shift parameter (default: 3.0)</p>
                         </div>
+
+                        <!-- Hidden Layer -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-2">
+                                Hidden Layer: <span id="hiddenLayerValue" class="text-blue-400">-2</span>
+                            </label>
+                            <input
+                                type="range"
+                                id="hiddenLayer"
+                                min="-6"
+                                max="-1"
+                                value="-2"
+                                class="w-full"
+                            >
+                            <div class="flex justify-between text-xs text-gray-500 mt-1">
+                                <span>-6 (Deeper)</span>
+                                <span>-1 (Last)</span>
+                            </div>
+                            <p class="text-xs text-gray-500 mt-1">Which transformer layer to extract embeddings from (default: -2)</p>
+                        </div>
                     </div>
                 </details>
 
@@ -566,6 +586,8 @@
         const guidanceScaleValue = document.getElementById('guidanceScaleValue');
         const shiftSlider = document.getElementById('shift');
         const shiftValue = document.getElementById('shiftValue');
+        const hiddenLayerSlider = document.getElementById('hiddenLayer');
+        const hiddenLayerValue = document.getElementById('hiddenLayerValue');
 
         // Current generation params (for reuse)
         let currentParams = null;
@@ -581,6 +603,10 @@
 
         shiftSlider.addEventListener('input', () => {
             shiftValue.textContent = parseFloat(shiftSlider.value).toFixed(1);
+        });
+
+        hiddenLayerSlider.addEventListener('input', () => {
+            hiddenLayerValue.textContent = hiddenLayerSlider.value;
         });
 
         // Populate width/height dropdowns with multiples of 16
@@ -989,6 +1015,10 @@
                 shiftSlider.value = item.shift;
                 shiftValue.textContent = parseFloat(item.shift).toFixed(1);
             }
+            if (item.hidden_layer !== undefined) {
+                hiddenLayerSlider.value = item.hidden_layer;
+                hiddenLayerValue.textContent = item.hidden_layer;
+            }
 
             // Set resolution
             const resValue = `${item.width}x${item.height}`;
@@ -1024,6 +1054,9 @@
             }
             if (item.shift !== undefined && item.shift !== 3.0) {
                 infoText += `, shift ${item.shift}`;
+            }
+            if (item.hidden_layer !== undefined && item.hidden_layer !== -2) {
+                infoText += `, layer ${item.hidden_layer}`;
             }
 
             resultInfo.textContent = infoText;
@@ -1107,6 +1140,7 @@
                 seed: document.getElementById('seed').value ? parseInt(document.getElementById('seed').value) : null,
                 guidance_scale: parseFloat(guidanceScaleSlider.value),
                 shift: parseFloat(shiftSlider.value),
+                hidden_layer: parseInt(hiddenLayerSlider.value),
             };
 
             currentParams = params;
@@ -1159,6 +1193,9 @@
                 }
                 if (params.shift !== 3.0) {
                     infoText += `, shift ${params.shift}`;
+                }
+                if (params.hidden_layer !== -2) {
+                    infoText += `, layer ${params.hidden_layer}`;
                 }
 
                 resultInfo.textContent = infoText;

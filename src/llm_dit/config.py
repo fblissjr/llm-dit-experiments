@@ -75,6 +75,7 @@ class EncoderConfig:
     cpu_offload: bool = False  # Offload to CPU after encoding
     trust_remote_code: bool = True
     max_length: int = 512
+    hidden_layer: int = -2  # Which layer to extract embeddings from (-1=last, -2=penultimate)
 
     # DEPRECATED: These fields are kept for backwards compatibility only
     # They will be removed in a future version
@@ -348,6 +349,7 @@ class Config:
                 "cpu_offload": self.encoder.cpu_offload,
                 "trust_remote_code": self.encoder.trust_remote_code,
                 "max_length": self.encoder.max_length,
+                "hidden_layer": self.encoder.hidden_layer,
             },
             "pipeline": {
                 "device": self.pipeline.device,

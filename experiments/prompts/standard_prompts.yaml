@@ -1,0 +1,670 @@
+# Standard Prompt Set for Z-Image Ablation Studies
+#
+# 60 diverse prompts in Qwen3's natural language style - evocative prose
+# with sensory details, not terse keyword lists.
+#
+# Usage:
+#   from experiments.prompts import load_standard_prompts
+#   prompts = load_standard_prompts()
+#
+# Prompt Style:
+#   Natural language sentences with vivid sensory descriptions.
+#   Written as if Qwen3 composed them - tactile, atmospheric, evocative.
+
+version: "1.0"
+created: "2025-12-09"
+style: "natural_language"
+
+prompts:
+  # ============================================================
+  # SIMPLE OBJECTS (5 prompts)
+  # Single subject, clear composition, baseline difficulty
+  # ============================================================
+
+  - id: simple_001
+    category: simple_objects
+    prompt: "A crisp red apple rests on a weathered wooden table, its skin catching the afternoon light in a soft glow. The wood grain beneath tells stories of countless meals shared, its surface worn smooth by years of use."
+    test_elements:
+      - color_accuracy: "red apple"
+      - material: "wooden table"
+    difficulty: easy
+
+  - id: simple_002
+    category: simple_objects
+    prompt: "A cobalt blue ceramic vase holds a spray of white lilies, their petals luminous against the deep glaze. Morning light spills through a nearby window, casting the arrangement in a gentle radiance."
+    test_elements:
+      - color_accuracy: "blue ceramic"
+      - subject_count: 2
+    difficulty: easy
+
+  - id: simple_003
+    category: simple_objects
+    prompt: "An antique pocket watch lies open on velvet cloth, its face frozen at 3:45. The brass case bears the patina of decades, each scratch a mark of time passing, the Roman numerals elegant beneath crystal glass."
+    test_elements:
+      - fine_detail: "clock hands"
+      - specific_time: "3:45"
+    difficulty: medium
+
+  - id: simple_004
+    category: simple_objects
+    prompt: "A leather-bound journal with gold-embossed lettering sits beside a fountain pen. The cover shows the gentle wear of many hands, the binding cracked at the spine from countless openings, pages thick with secrets."
+    test_elements:
+      - material: "leather"
+      - fine_detail: "gold embossing"
+    difficulty: medium
+
+  - id: simple_005
+    category: simple_objects
+    prompt: "A crystal wine glass filled with deep burgundy liquid stands on a marble counter. Light refracts through the glass, casting ruby shadows across the white stone surface, the wine's surface trembling slightly."
+    test_elements:
+      - transparency: "glass"
+      - liquid: "red wine"
+      - material: "marble"
+    difficulty: medium
+
+  # ============================================================
+  # ANIMALS (8 prompts)
+  # Animal subjects with varying poses and contexts
+  # ============================================================
+
+  - id: animal_001
+    category: animals
+    prompt: "A tabby cat lies curled in a pool of sunlight, its orange fur glowing amber where the rays touch. One ear twitches in dreams, paws tucked beneath its chin, the gentle rise and fall of breath visible in the warm afternoon."
+    test_elements:
+      - animal_pose: "sleeping"
+      - lighting: "sunbeam"
+    difficulty: easy
+
+  - id: animal_002
+    category: animals
+    prompt: "A golden retriever bounds through a carpet of fallen autumn leaves, tongue lolling with pure joy. Maple leaves in shades of crimson and gold scatter in its wake, the dog's coat gleaming like burnished copper in the October light."
+    test_elements:
+      - motion: "running"
+      - environment: "autumn leaves"
+      - breed_accuracy: "golden retriever"
+    difficulty: medium
+
+  - id: animal_003
+    category: animals
+    prompt: "A great horned owl perches on a gnarled oak branch as twilight settles over the forest. Its amber eyes pierce the gathering darkness, feathers ruffled by a cold breeze, the last purple light of dusk painting the sky behind it."
+    test_elements:
+      - animal_pose: "perched"
+      - time_of_day: "twilight"
+    difficulty: medium
+
+  - id: animal_004
+    category: animals
+    prompt: "A ruby-throated hummingbird hovers in suspended animation before a trumpet vine, its wings a blur of impossible speed. The tiny bird's gorget flashes iridescent in the sun as it dips its needle beak toward nectar."
+    test_elements:
+      - motion: "hovering"
+      - small_subject: "hummingbird"
+      - interaction: "near flower"
+    difficulty: hard
+
+  - id: animal_005
+    category: animals
+    prompt: "Three tabby kittens tumble over one another in pursuit of a ball of crimson yarn, their tiny claws snagging threads. One has yarn wrapped around its ear, another pounces with exaggerated intensity, the third watches from the sidelines plotting ambush."
+    test_elements:
+      - subject_count: 3
+      - interaction: "playing"
+      - object: "yarn"
+    difficulty: hard
+
+  - id: animal_006
+    category: animals
+    prompt: "A male lion surveys the savanna from a rocky outcrop, his mane rippling in the hot wind like a crown of fire. The golden afternoon light catches each strand, his amber eyes half-closed against the glare, regal and utterly still."
+    test_elements:
+      - fine_detail: "flowing mane"
+      - animal_expression: "majestic"
+    difficulty: medium
+
+  - id: animal_007
+    category: animals
+    prompt: "A scarlet macaw spreads its wings on a moss-covered branch in the rainforest canopy, feathers blazing red and blue and gold. Dappled sunlight filters through the leaves above, catching the bird in a shower of emerald light."
+    test_elements:
+      - color_variety: "colorful"
+      - environment: "tropical"
+    difficulty: medium
+
+  - id: animal_008
+    category: animals
+    prompt: "A lone wolf throws back its head and howls at a luminous full moon, silhouetted against the silver light. Breath mists in the winter air, pine trees stand dark sentinels around the clearing, stars scattered across the velvet sky."
+    test_elements:
+      - animal_pose: "howling"
+      - background_element: "full moon"
+    difficulty: medium
+
+  # ============================================================
+  # HUMANS (8 prompts)
+  # Human subjects - portraits, poses, expressions
+  # ============================================================
+
+  - id: human_001
+    category: humans
+    prompt: "A young woman with wild curly auburn hair and sea-green eyes offers a half-smile, a spray of freckles across her nose like scattered cinnamon. Soft natural light catches the copper highlights in her hair, her expression holding secrets."
+    test_elements:
+      - hair: "curly red"
+      - eyes: "green"
+      - expression: "soft smile"
+    difficulty: medium
+
+  - id: human_002
+    category: humans
+    prompt: "An elderly fisherman with deeply weathered skin and eyes the color of a storm-tossed sea gazes toward the horizon. Decades of sun and salt have carved his face into a map of experience, yet warmth pools in the creases when he smiles."
+    test_elements:
+      - age_accuracy: "elderly"
+      - skin_texture: "weathered"
+      - expression: "kind eyes"
+    difficulty: medium
+
+  - id: human_003
+    category: humans
+    prompt: "A small child with tousled brown hair blows soap bubbles in a sun-drenched garden, round cheeks puffed with effort. Iridescent spheres drift upward past roses and lavender, the child's eyes wide with wonder at each floating miracle."
+    test_elements:
+      - age_accuracy: "child"
+      - action: "blowing bubbles"
+      - environment: "sunny garden"
+    difficulty: medium
+
+  - id: human_004
+    category: humans
+    prompt: "A ballet dancer hangs suspended mid-leap, white tulle dress blooming around her like a flower opening. Her arms reach toward something unseen, back arched in perfect form, toes pointed toward the earth she has momentarily escaped."
+    test_elements:
+      - motion: "mid-leap"
+      - clothing: "flowing white dress"
+      - anatomy: "dynamic pose"
+    difficulty: hard
+
+  - id: human_005
+    category: humans
+    prompt: "A sushi chef works with surgical precision, hands moving in practiced rhythm over gleaming fish. His brow furrows in absolute concentration, knife blade catching the light, each slice revealing the craft of thirty years."
+    test_elements:
+      - action: "preparing sushi"
+      - expression: "focused"
+      - hands: "detailed work"
+    difficulty: hard
+
+  - id: human_006
+    category: humans
+    prompt: "Two old friends share a moment of helpless laughter at a sidewalk cafe, tears forming at the corners of their eyes. One clutches the other's arm for support, coffee cups forgotten, the joy between them electric and uncontainable."
+    test_elements:
+      - subject_count: 2
+      - expression: "laughing"
+      - interaction: "together"
+    difficulty: hard
+
+  - id: human_007
+    category: humans
+    prompt: "A violinist loses herself in the music, eyes closed, face tilted toward some inner vision. Her bow arm moves with fluid grace, fingers dancing on the strings, the wood of the instrument glowing warm beneath stage lights."
+    test_elements:
+      - instrument: "violin"
+      - expression: "eyes closed"
+      - hands: "playing position"
+    difficulty: hard
+
+  - id: human_008
+    category: humans
+    prompt: "A portrait of a woman in her thirties, constellations of freckles scattered across her cheekbones, eyes the vivid blue of winter ice. Natural light from a window illuminates one side of her face, leaving the other in gentle shadow."
+    test_elements:
+      - skin_detail: "freckles"
+      - eyes: "blue"
+      - portrait_quality: true
+    difficulty: medium
+
+  # ============================================================
+  # SCENES (8 prompts)
+  # Multi-element compositions with spatial relationships
+  # ============================================================
+
+  - id: scene_001
+    category: scenes
+    prompt: "A cozy reading nook on a winter evening, where a fire crackles in a stone hearth and two worn leather armchairs face each other like old conspirators. Books overflow from shelves, a wool blanket drapes over one chair, steam rises from an abandoned teacup."
+    test_elements:
+      - room_type: "living room"
+      - object_count: 3
+      - atmosphere: "cozy"
+    difficulty: medium
+
+  - id: scene_002
+    category: scenes
+    prompt: "A farmers market bursts with life on a Saturday morning, stalls overflowing with jewel-toned produce. Pyramids of heirloom tomatoes glow ruby and amber, bunches of lavender perfume the air, vendors call out to passing customers beneath striped canvas awnings."
+    test_elements:
+      - scene_type: "market"
+      - color_variety: "colorful produce"
+      - atmosphere: "bustling"
+    difficulty: hard
+
+  - id: scene_003
+    category: scenes
+    prompt: "A Japanese zen garden in the rain, where raked white sand spirals around moss-covered stones. A weathered stone lantern stands sentinel, raindrops dimple the patterns in the gravel, the scent of wet cedar drifting from the temple beyond."
+    test_elements:
+      - cultural_accuracy: "Japanese zen"
+      - elements: ["raked sand", "stone lantern"]
+    difficulty: medium
+
+  - id: scene_004
+    category: scenes
+    prompt: "A 1950s American diner frozen in amber light, chrome and red vinyl gleaming under buzzing neon signs. A jukebox glows in the corner, checkered floor reflects the hanging lights, pie rotates slowly in a glass case by the counter."
+    test_elements:
+      - era_accuracy: "1950s"
+      - scene_type: "diner"
+      - lighting: "neon"
+    difficulty: hard
+
+  - id: scene_005
+    category: scenes
+    prompt: "The interior of an alchemist's workshop, where a copper cauldron bubbles over a blue flame and dusty grimoires tower in precarious stacks. Glass vials of mysterious liquids catch the candlelight, dried herbs hang from rafters, a raven watches from a skull."
+    test_elements:
+      - fantasy_elements: ["cauldron", "spell books"]
+      - atmosphere: "magical"
+    difficulty: medium
+
+  - id: scene_006
+    category: scenes
+    prompt: "A space station observation deck where Earth hangs like a blue marble beyond the curved window. Banks of screens flicker with data, two astronauts float near the glass pointing at approaching clouds, the curvature of home impossibly beautiful."
+    test_elements:
+      - scifi_accuracy: "space station"
+      - technology: "screens"
+      - humans: "astronauts"
+    difficulty: hard
+
+  - id: scene_007
+    category: scenes
+    prompt: "A coral reef teeming with life, where a sea turtle glides past brain coral and waving anemones. Schools of tropical fish flash neon yellow and electric blue, sunlight filters down in shifting columns, the water alive with movement and color."
+    test_elements:
+      - environment: "underwater"
+      - elements: ["coral", "fish", "turtle"]
+    difficulty: hard
+
+  - id: scene_008
+    category: scenes
+    prompt: "A treehouse built into an ancient oak, rope ladder swaying in the breeze, fairy lights strung along the railing. A child's drawings paper the wooden walls inside, wind chimes sing from a branch, leaves rustle with secrets and possibility."
+    test_elements:
+      - structure: "treehouse"
+      - elements: ["oak tree", "rope ladder", "fairy lights"]
+    difficulty: medium
+
+  # ============================================================
+  # LANDSCAPES (8 prompts)
+  # Nature and environment focused
+  # ============================================================
+
+  - id: landscape_001
+    category: landscapes
+    prompt: "A mountain lake at the moment of sunrise, when the water becomes a perfect mirror of snow-capped peaks. The sky blushes rose and gold, mist rises in ghostly tendrils from the still surface, not a ripple disturbs the reflection of heaven."
+    test_elements:
+      - time_of_day: "sunrise"
+      - reflection: "mirror"
+      - environment: "mountain lake"
+    difficulty: medium
+
+  - id: landscape_002
+    category: landscapes
+    prompt: "The Sahara under a canopy of stars, where towering dunes curve like the bodies of sleeping giants. The Milky Way blazes overhead in a river of light, the sand still holds the day's warmth, silence so complete it hums."
+    test_elements:
+      - environment: "desert"
+      - time_of_day: "night"
+      - sky: "starry"
+    difficulty: medium
+
+  - id: landscape_003
+    category: landscapes
+    prompt: "Ancient redwoods in morning mist, where shafts of golden light pierce the canopy like spotlights from heaven. Ferns carpet the forest floor in emerald waves, moss softens every surface, the air thick with the scent of earth and eternity."
+    test_elements:
+      - atmosphere: "misty"
+      - lighting: "filtered sunlight"
+      - environment: "forest"
+    difficulty: medium
+
+  - id: landscape_004
+    category: landscapes
+    prompt: "A frozen waterfall suspended in winter's grip, icicles hanging like crystal chandeliers from rocky ledges. Fresh snow blankets the surrounding boulders in pristine white, the stream below still flows beneath a skin of ice, breath of cold water visible."
+    test_elements:
+      - season: "winter"
+      - water_state: "frozen"
+      - ice_detail: "icicles"
+    difficulty: medium
+
+  - id: landscape_005
+    category: landscapes
+    prompt: "Endless lavender fields roll toward distant hills in the golden hour light of Provence. Purple waves ripple in the warm breeze, bees drone between the fragrant rows, the setting sun turns everything to honey and dreams."
+    test_elements:
+      - plant: "lavender"
+      - lighting: "golden hour"
+      - terrain: "rolling hills"
+    difficulty: medium
+
+  - id: landscape_006
+    category: landscapes
+    prompt: "A volcanic landscape where rivers of molten lava snake between black rock, smoke and steam rising into a red-tinged sky. The air shimmers with heat, cracks in the cooled crust glow orange like veins of fire, creation and destruction dancing together."
+    test_elements:
+      - geological: "volcanic"
+      - elements: ["lava", "smoke"]
+    difficulty: hard
+
+  - id: landscape_007
+    category: landscapes
+    prompt: "A tropical beach at sunset, where palm trees cast long shadows across white sand and the ocean lies still as glass. The sky blazes orange and purple, a few clouds catch fire at their edges, the first stars emerge in the deepening blue."
+    test_elements:
+      - environment: "tropical beach"
+      - time_of_day: "sunset"
+      - elements: ["palm trees", "calm water"]
+    difficulty: easy
+
+  - id: landscape_008
+    category: landscapes
+    prompt: "The aurora borealis dances over a frozen mountain range in Norway, curtains of green and violet light rippling across the star-filled sky. Snow-covered peaks reflect the celestial display, the silence broken only by the distant crack of glacier ice."
+    test_elements:
+      - phenomenon: "aurora"
+      - environment: "snowy mountains"
+      - sky: "northern lights"
+    difficulty: hard
+
+  # ============================================================
+  # ARTISTIC STYLES (8 prompts)
+  # Style-specific prompts for style transfer evaluation
+  # ============================================================
+
+  - id: style_001
+    category: artistic_styles
+    prompt: "A harbor scene painted in the manner of Monet, where boats blur into water and sky becomes a tapestry of broken color. Impressionist brushstrokes dance across the canvas, light fragmenting into a thousand shades of blue and gold and rose."
+    test_elements:
+      - style: "impressionist"
+      - artist_reference: "Monet"
+      - technique: "brushstrokes"
+    difficulty: medium
+
+  - id: style_002
+    category: artistic_styles
+    prompt: "A portrait shattered into geometric planes in cubist fashion, features fractured and reassembled from multiple angles at once. Bold blocks of cobalt and ochre and crimson define the face, the subject simultaneously profile and frontal, familiar yet alien."
+    test_elements:
+      - style: "cubist"
+      - technique: "geometric"
+      - colors: "bold"
+    difficulty: hard
+
+  - id: style_003
+    category: artistic_styles
+    prompt: "A rain-slicked city street in film noir style, all sharp shadows and high contrast black and white. A lone figure in a trench coat walks beneath a single streetlamp, cigarette smoke curling into darkness, the gleam of wet pavement reflecting neon."
+    test_elements:
+      - style: "film noir"
+      - color_mode: "black and white"
+      - contrast: "high"
+    difficulty: medium
+
+  - id: style_004
+    category: artistic_styles
+    prompt: "A great wave rendered in the ukiyo-e tradition, white foam curling like claws against an indigo sea. Mount Fuji rises small in the distance, the stylized water moves with terrible grace, woodblock printing textures visible in every line."
+    test_elements:
+      - style: "ukiyo-e"
+      - cultural: "Japanese"
+      - subject: "wave"
+    difficulty: medium
+
+  - id: style_005
+    category: artistic_styles
+    prompt: "A cyberpunk cityscape at night, where neon signs blaze in kanji and holographic advertisements flicker above rain-soaked streets. Towering megastructures vanish into smog and light pollution, the glow of a thousand screens painting everything in electric color."
+    test_elements:
+      - style: "cyberpunk"
+      - lighting: "neon"
+      - elements: ["rain", "holographic"]
+    difficulty: hard
+
+  - id: style_006
+    category: artistic_styles
+    prompt: "An illuminated manuscript page from a medieval scriptorium, where gold leaf gleams beside intricate borders of intertwined beasts and vines. Uncial text in deep blue and vermillion fills the parchment, a decorated initial letter contains an entire cosmos."
+    test_elements:
+      - style: "illuminated manuscript"
+      - technique: "gold leaf"
+      - era: "medieval"
+    difficulty: hard
+
+  - id: style_007
+    category: artistic_styles
+    prompt: "A pop art portrait in the style of Warhol and Lichtenstein, featuring bold black outlines and Ben-Day dots creating artificial skin tones. Primary colors clash joyfully, the subject's expression both banal and iconic, commerce and art colliding."
+    test_elements:
+      - style: "pop art"
+      - technique: ["bold outlines", "halftone"]
+      - colors: "bright"
+    difficulty: medium
+
+  - id: style_008
+    category: artistic_styles
+    prompt: "An art nouveau poster where flowing organic lines frame a figure wreathed in stylized flowers. Every element curves and winds like living tendrils, muted golds and greens and purples harmonize, typography becomes ornament becomes nature."
+    test_elements:
+      - style: "art nouveau"
+      - technique: "flowing lines"
+      - motifs: "floral"
+    difficulty: medium
+
+  # ============================================================
+  # LIGHTING (5 prompts)
+  # Specific lighting condition challenges
+  # ============================================================
+
+  - id: lighting_001
+    category: lighting
+    prompt: "A face illuminated solely by candlelight, warm amber glow caressing one cheek while shadows pool in the hollows. The flame flickers, sending subtle shifts across the skin, the background lost in velvet darkness, intimacy made visible."
+    test_elements:
+      - light_source: "candle"
+      - quality: "soft glow"
+      - shadows: "warm"
+    difficulty: medium
+
+  - id: lighting_002
+    category: lighting
+    prompt: "A crystal sphere rests on polished mahogany, refracting the room into a thousand curved distortions. Caustic light patterns dance across the wood surface, the sphere containing an entire inverted world, physics made beautiful."
+    test_elements:
+      - material: "glass"
+      - light_effect: "caustics"
+      - complexity: "refraction"
+    difficulty: hard
+
+  - id: lighting_003
+    category: lighting
+    prompt: "A silhouette stands before a floor-to-ceiling window, backlit by brilliant afternoon sun. A thin line of light traces the figure's outline, features lost in shadow, the contrast between interior darkness and exterior brilliance absolute."
+    test_elements:
+      - technique: "silhouette"
+      - light_effect: "rim lighting"
+      - contrast: "high"
+    difficulty: medium
+
+  - id: lighting_004
+    category: lighting
+    prompt: "A studio portrait with classic Rembrandt lighting, where a triangle of light illuminates one cheek while the other falls into shadow. The subject emerges from darkness like a figure in a Dutch master painting, every contour sculpted by light."
+    test_elements:
+      - technique: "Rembrandt lighting"
+      - quality: "dramatic"
+      - setting: "studio"
+    difficulty: medium
+
+  - id: lighting_005
+    category: lighting
+    prompt: "A crystal chandelier in a grand ballroom catches and scatters light into a thousand rainbow prisms. Each pendant sparkles with captured fire, reflections dance across gilded walls, the entire room shimmering with fractured brilliance."
+    test_elements:
+      - object: "chandelier"
+      - light_effects: ["prisms", "sparkles"]
+      - material: "crystal"
+    difficulty: hard
+
+  # ============================================================
+  # ABSTRACT (5 prompts)
+  # Abstract and conceptual subjects
+  # ============================================================
+
+  - id: abstract_001
+    category: abstract
+    prompt: "Ribbons of pure color twist through an infinite void, crimson and gold and sapphire intertwining like dancers in zero gravity. The forms flow and spiral with impossible grace, neither beginning nor ending, pure motion frozen in a moment."
+    test_elements:
+      - type: "abstract"
+      - motion: "flowing"
+      - elements: "ribbons"
+    difficulty: medium
+
+  - id: abstract_002
+    category: abstract
+    prompt: "A fractal landscape spirals inward forever, each level revealing smaller copies of itself in an endless regression. Mathematical precision becomes organic beauty, forms that exist only in equations made visible, infinity contained in finite space."
+    test_elements:
+      - type: "fractal"
+      - quality: "recursive"
+      - detail: "infinite"
+    difficulty: hard
+
+  - id: abstract_003
+    category: abstract
+    prompt: "Geometric solids float in a dimensionless void, their surfaces reflecting and refracting light in ways that defy physics. Impossible angles connect, shadows fall in wrong directions, architecture that could never be built hovers in eternal suspension."
+    test_elements:
+      - type: "surreal"
+      - elements: "geometric shapes"
+      - quality: "impossible"
+    difficulty: hard
+
+  - id: abstract_004
+    category: abstract
+    prompt: "Music made visible, where sound waves solidify into luminous forms that pulse with rhythm. Colors shift with pitch, shapes morph with tempo, a symphony translated into light and motion, synesthesia given physical form."
+    test_elements:
+      - concept: "synesthesia"
+      - type: "visualization"
+      - subject: "music"
+    difficulty: hard
+
+  - id: abstract_005
+    category: abstract
+    prompt: "Liquid mercury transforms in slow motion, its surface rippling from mirror-smooth to organic and back. The metallic substance flows upward against gravity, defying physics as it morphs between geometric and biological forms."
+    test_elements:
+      - material: "liquid metal"
+      - motion: "morphing"
+      - contrast: "metal vs organic"
+    difficulty: hard
+
+  # ============================================================
+  # TECHNICAL CHALLENGES (5 prompts)
+  # Known difficult cases for image generation
+  # ============================================================
+
+  - id: technical_001
+    category: technical
+    prompt: "A person holds up their right hand showing all five fingers spread wide, palm facing the viewer. Each finger is distinct and correctly proportioned, the thumb clearly separate, natural light illuminating the hand against a simple background."
+    test_elements:
+      - anatomy: "five fingers"
+      - hand_accuracy: "critical"
+      - side: "right hand"
+    difficulty: hard
+    notes: "Hand anatomy is notoriously difficult"
+
+  - id: technical_002
+    category: technical
+    prompt: "A cyclist pedals down a country lane, full body visible in profile as the bicycle moves. The chain connects properly to the gears, wheels are circular, the rider's posture natural and balanced, motion conveyed through subtle blur."
+    test_elements:
+      - anatomy: "full body"
+      - interaction: "riding bicycle"
+      - mechanical: "bicycle structure"
+    difficulty: hard
+    notes: "Human-object interaction with complex mechanics"
+
+  - id: technical_003
+    category: technical
+    prompt: "A ornate mirror on a wall reflects not the room it hangs in but a different scene entirely, a sunlit garden visible in the glass while a shadowy parlor surrounds the frame. The reflection obeys its own reality."
+    test_elements:
+      - physics: "reflection"
+      - consistency: "scene mismatch"
+    difficulty: hard
+    notes: "Tests understanding of reflections"
+
+  - id: technical_004
+    category: technical
+    prompt: "A chess match in progress, viewed from above, with pieces arranged in a legal mid-game position. White and black squares alternate correctly, pieces cast shadows on the board, the arrangement suggests strategy and thought."
+    test_elements:
+      - object_count: "multiple pieces"
+      - pattern: "chess board"
+      - accuracy: "valid positions"
+    difficulty: hard
+    notes: "Tests spatial reasoning and object consistency"
+
+  - id: technical_005
+    category: technical
+    prompt: "A tall glass of sparkling water holds three ice cubes and two lemon slices, the bubbles rising through the clear liquid. Light refracts through glass and ice and water, revealing each element while showing all through the transparent surfaces."
+    test_elements:
+      - transparency: "glass"
+      - material_interaction: "ice in liquid"
+      - object_visibility: "through glass"
+    difficulty: hard
+    notes: "Multiple transparency and material challenges"
+
+  # ============================================================
+  # TEXT RENDERING (5 prompts - known hard)
+  # Text in images - typically challenging for diffusion models
+  # ============================================================
+
+  - id: text_001
+    category: text_rendering
+    prompt: "A vintage neon sign glows against the night, the word OPEN buzzing in electric red letters. The tubes cast colored light onto the wet pavement below, each letter perfectly formed in classic diner typography."
+    test_elements:
+      - text: "OPEN"
+      - text_length: 4
+      - style: "neon"
+    difficulty: medium
+    notes: "Short word, common sign"
+
+  - id: text_002
+    category: text_rendering
+    prompt: "A white ceramic coffee cup bears the word CAFE printed in simple black letters around its curve. Steam rises from the dark liquid within, the text slightly distorted as it wraps the cylindrical surface."
+    test_elements:
+      - text: "CAFE"
+      - text_length: 4
+      - surface: "curved"
+    difficulty: medium
+    notes: "Short word on curved surface"
+
+  - id: text_003
+    category: text_rendering
+    prompt: "A classic red octagonal stop sign stands at an intersection, the word STOP displayed in bold white letters against the crimson background. The sign is weathered but legible, afternoon light catching its reflective surface."
+    test_elements:
+      - text: "STOP"
+      - text_length: 4
+      - context: "road sign"
+    difficulty: easy
+    notes: "Very common, well-represented in training"
+
+  - id: text_004
+    category: text_rendering
+    prompt: "A hardcover book lies on a reading table, its spine facing up to display the title THE ART OF SEEING in embossed gold letters. The cloth binding is deep navy, the typography elegant and legible."
+    test_elements:
+      - text: "THE ART OF SEEING"
+      - text_length: 17
+      - surface: "flat"
+    difficulty: hard
+    notes: "Longer text phrase"
+
+  - id: text_005
+    category: text_rendering
+    prompt: "A birthday cake decorated with white frosting bears the message HAPPY BIRTHDAY piped in flowing blue icing. Colorful candles surround the text, the letters slightly imperfect in the charming way of hand-piped decoration."
+    test_elements:
+      - text: "HAPPY BIRTHDAY"
+      - text_length: 14
+      - style: "frosting"
+    difficulty: hard
+    notes: "Text in decorative medium"
+
+# ============================================================
+# METADATA
+# ============================================================
+
+metadata:
+  total_prompts: 60
+  prompt_style: "natural_language"
+  categories:
+    simple_objects: 5
+    animals: 8
+    humans: 8
+    scenes: 8
+    landscapes: 8
+    artistic_styles: 8
+    lighting: 5
+    abstract: 5
+    technical: 5
+    text_rendering: 5
+  difficulty_distribution:
+    easy: 5
+    medium: 32
+    hard: 23

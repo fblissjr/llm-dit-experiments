@@ -21,6 +21,7 @@ torch_dtype = "bfloat16"     # bfloat16/float16/float32
 quantization = "none"        # v5 API: none/4bit/8bit
 cpu_offload = false
 max_length = 512
+hidden_layer = -2            # Which layer to extract embeddings from (-1=last, -2=penultimate)
 
 [default.pipeline]
 device = "auto"
@@ -58,7 +59,7 @@ long_prompt_mode = "truncate" # truncate/interpolate/pool/attention_pool
 [default.api]
 # Remote API backend (for distributed inference)
 url = ""                     # e.g., http://mac-host:8080
-model = "Qwen3-4B-mxfp4-mlx" # Model ID on remote server
+model = "Qwen3-4B-mlx" # Model ID on remote server
 
 [default.lora]
 paths = []
@@ -82,14 +83,15 @@ model_path = "/path/to/z-image-turbo"
 templates_dir = "templates/z_image"
 
 [rtx4090.encoder]
-device = "cpu"               # Text encoder on CPU (saves ~8GB VRAM)
-torch_dtype = "bfloat16"
-quantization = "none"
+device = "auto"              # cpu/cuda/mps/auto
+torch_dtype = "bfloat16"     # bfloat16/float16/float32
+quantization = "none"        # v5 API: none/4bit/8bit
 cpu_offload = false
-max_length = 512
+max_length = 2048
+hidden_layer = -2            # Which layer to extract embeddings from (-1=last, -2=penultimate)
 
 [rtx4090.pipeline]
-device = "cuda"
+device = "auto"
 torch_dtype = "bfloat16"
 enable_model_cpu_offload = false
 enable_sequential_cpu_offload = false
@@ -98,31 +100,32 @@ enable_sequential_cpu_offload = false
 height = 1024
 width = 1024
 num_inference_steps = 9
-guidance_scale = 0.0
-enable_thinking = false
-default_template = ""
+guidance_scale = 0.0         # Z-Image-Turbo uses 0.0 (CFG baked in)
+enable_thinking = false      # No think block by default (matches HF Space)
+default_template = ""        # Optional default template name
 
 [rtx4090.scheduler]
-shift = 3.0
+shift = 3.0                  # FlowMatch shift parameter
 
 [rtx4090.optimization]
-flash_attn = true            # Use Flash Attention for speed
-compile = false              # Optional: enable for repeated generations
-cpu_offload = false          # Not needed with 24GB
+flash_attn = false           # Requires flash-attn package
+compile = false              # Use torch.compile (slower first run)
+cpu_offload = false          # CPU offload for transformer
 
 [rtx4090.pytorch]
-attention_backend = "auto"   # Will detect Flash Attention 2/3
-use_custom_scheduler = true  # Pure PyTorch scheduler
-tiled_vae = false            # Enable for 2K+ resolutions
-tile_size = 512
-tile_overlap = 64
-embedding_cache = true       # Cache for repeated prompts (web server)
-cache_size = 100
-long_prompt_mode = "truncate"
+# PyTorch-native components
+attention_backend = "auto"    # auto/flash_attn_2/flash_attn_3/sage/xformers/sdpa
+use_custom_scheduler = false  # Use pure PyTorch FlowMatchScheduler
+tiled_vae = false             # Enable tiled VAE for 2K+ images
+tile_size = 512               # Tile size in pixels (latent = tile_size / 8)
+tile_overlap = 64             # Overlap between tiles for smooth blending
+embedding_cache = false       # Cache text embeddings for repeated prompts
+cache_size = 100              # Max number of cached embeddings
+long_prompt_mode = "truncate" # truncate/interpolate/pool/attention_pool
 
 [rtx4090.api]
 url = ""
-model = "Qwen3-4B-mxfp4-mlx"
+model = "Qwen3-4B-mlx"
 
 [rtx4090.lora]
 paths = []

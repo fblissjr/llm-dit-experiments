@@ -33,6 +33,7 @@ uv run scripts/profiler.py --model-path /path/to/z-image-turbo -v
 | `--model-path` | Path to Z-Image model (required for tests) |
 | `--config` | Path to TOML config file |
 | `--profile` | Config profile to use |
+| `--hidden-layer` | Which hidden layer to extract embeddings from (default: -2) |
 | `-v`, `--verbose` | Enable verbose output |
 
 ### Test Selection

@@ -99,6 +99,9 @@ class RuntimeConfig:
     # Long prompt handling
     long_prompt_mode: str = "truncate"  # truncate, interpolate, pool, attention_pool
 
+    # Encoder settings
+    hidden_layer: int = -2  # Which layer to extract embeddings from (-1=last, -2=penultimate)
+
     # Scheduler
     shift: float = 3.0
 
@@ -107,6 +110,8 @@ class RuntimeConfig:
     width: int = 1024
     steps: int = 9
     guidance_scale: float = 0.0
+    seed: int | None = None  # Random seed for reproducibility
+    negative_prompt: str | None = None  # Negative prompt for CFG
     enable_thinking: bool = False
     default_template: str | None = None
 
@@ -117,7 +122,7 @@ class RuntimeConfig:
 
     # API backend
     api_url: str | None = None
-    api_model: str = "Qwen3-4B-mxfp4-mlx"
+    api_model: str = "Qwen3-4B-mlx"
     local_encoder: bool = False
 
     # LoRA
@@ -335,6 +340,16 @@ def create_base_parser(
             "attention_pool (importance-weighted pooling)"
         ),
     )
+    pytorch_group.add_argument(
+        "--hidden-layer",
+        type=int,
+        default=None,
+        help=(
+            "Which hidden layer to extract embeddings from (default: -2). "
+            "-1=last layer, -2=penultimate (default for Z-Image), -3, etc. "
+            "Useful for ablation studies comparing different layer outputs."
+        ),
+    )
 
     # Scheduler
     sched_group = parser.add_argument_group("Scheduler")
@@ -401,7 +416,7 @@ def create_base_parser(
         "--api-model",
         type=str,
         default=None,
-        help="Model ID for API backend (default: Qwen3-4B-mxfp4-mlx)",
+        help="Model ID for API backend (default: Qwen3-4B-mlx)",
     )
     api_group.add_argument(
         "--local-encoder",
@@ -556,6 +571,7 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
             config.templates_dir = toml_config.templates_dir or config.templates_dir
             config.encoder_device = toml_config.encoder.device
             config.torch_dtype = toml_config.encoder.torch_dtype
+            config.hidden_layer = toml_config.encoder.hidden_layer
 
             # Generation defaults from config
             config.height = toml_config.generation.height
@@ -672,6 +688,8 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
         config.cache_size = args.cache_size
     if getattr(args, 'long_prompt_mode', None) is not None:
         config.long_prompt_mode = args.long_prompt_mode
+    if getattr(args, 'hidden_layer', None) is not None:
+        config.hidden_layer = args.hidden_layer
 
     # LoRA overrides
     if getattr(args, 'loras', None):
@@ -727,6 +745,10 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
         config.steps = args.steps
     if getattr(args, 'guidance_scale', None) is not None:
         config.guidance_scale = args.guidance_scale
+    if getattr(args, 'seed', None) is not None:
+        config.seed = args.seed
+    if getattr(args, 'negative_prompt', None) is not None:
+        config.negative_prompt = args.negative_prompt
 
     # Server overrides
     if getattr(args, 'host', None) is not None:

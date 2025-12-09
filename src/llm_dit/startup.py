@@ -171,6 +171,7 @@ class PipelineLoader:
         logger.info(f"  Device: {self.config.encoder_device_resolved}")
         logger.info(f"  Dtype: {self.config.torch_dtype}")
         logger.info(f"  Templates: {templates_dir}")
+        logger.info(f"  Hidden layer: {self.config.hidden_layer}")
         if self.config.embedding_cache:
             logger.info(f"  Embedding cache: enabled (size={self.config.cache_size})")
         logger.info("-" * 60)
@@ -316,8 +317,10 @@ class PipelineLoader:
             base_url=self.config.api_url,
             model_id=self.config.api_model,
             encoding_format="base64",
+            hidden_layer=self.config.hidden_layer,
         )
         backend = APIBackend(api_config)
+        logger.info(f"  Hidden layer: {self.config.hidden_layer}")
 
         # Load templates
         templates = None
@@ -374,8 +377,10 @@ class PipelineLoader:
             base_url=self.config.api_url,
             model_id=self.config.api_model,
             encoding_format="base64",
+            hidden_layer=self.config.hidden_layer,
         )
         backend = APIBackend(api_config)
+        logger.info(f"  Hidden layer: {self.config.hidden_layer}")
 
         # Load templates
         templates = None

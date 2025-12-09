@@ -6,6 +6,10 @@ Controlled experiments varying single parameters while holding others constant.
 
 ## 1. Hidden State Layer Extraction
 
+### Status: IMPLEMENTED
+
+The `--hidden-layer` parameter is now available (default: -2). This ablation study can be run immediately.
+
 ### Background
 
 The current implementation extracts `hidden_states[-2]` (penultimate layer) from Qwen3-4B. This is a common choice in text-to-image models, but the optimal layer may vary.
@@ -51,16 +55,30 @@ seeds: [42, 123, 456, 789, 1000]
 
 ### Implementation Notes
 
-Modify `src/llm_dit/backends/transformers.py`:
+The parameter is now implemented and accessible via:
 
+**CLI:**
+```bash
+uv run scripts/generate.py \
+  --model-path /path/to/z-image \
+  --hidden-layer -1 \
+  "Test prompt"
+```
+
+**Config file:**
+```toml
+[default.encoder]
+hidden_layer = -1  # or -2, -3, etc.
+```
+
+**Python API:**
 ```python
-# Current: hidden_states[-2]
-# Add parameter: hidden_layer_index: int = -2
+from llm_dit import ZImageTextEncoder
 
-def encode(self, text: str, hidden_layer_index: int = -2) -> EncodingOutput:
-    outputs = self.model(input_ids, output_hidden_states=True)
-    embeddings = outputs.hidden_states[hidden_layer_index]
-    # ...
+encoder = ZImageTextEncoder.from_pretrained(
+    "/path/to/model",
+    hidden_layer=-1
+)
 ```
 
 ### Expected Outcome

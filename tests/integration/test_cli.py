@@ -242,7 +242,7 @@ class TestCLIWithAPIBackend:
                 "--api-url",
                 api_server_url,
                 "--api-model",
-                "Qwen3-4B-mxfp4-mlx",
+                "Qwen3-4B-mlx",
                 "--encoder-only",
                 "A cat sleeping",
             ],

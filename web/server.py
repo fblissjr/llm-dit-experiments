@@ -65,6 +65,7 @@ class GenerateRequest(BaseModel):
     template: Optional[str] = None
     guidance_scale: float = 0.0
     shift: float = 3.0  # Scheduler shift parameter
+    hidden_layer: int = -2  # Which hidden layer to extract embeddings from (-1 to -36)
 
 
 class EncodeRequest(BaseModel):
@@ -223,6 +224,8 @@ async def generate(request: GenerateRequest):
             width=request.width,
             num_inference_steps=request.steps,
             guidance_scale=request.guidance_scale,
+            shift=request.shift,
+            hidden_layer=request.hidden_layer,
             generator=generator,
             template=request.template,
             system_prompt=request.system_prompt,
@@ -283,6 +286,8 @@ async def generate(request: GenerateRequest):
             "seed": request.seed,
             "template": request.template,
             "guidance_scale": request.guidance_scale,
+            "shift": request.shift,
+            "hidden_layer": request.hidden_layer,
             "gen_time": gen_time,
             "image_b64": img_b64,
             "formatted_prompt": formatted_prompt,
