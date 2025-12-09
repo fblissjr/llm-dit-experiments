@@ -647,11 +647,90 @@ prompts:
     notes: "Text in decorative medium"
 
 # ============================================================
+  # LONG PROMPTS (3 prompts - for testing compression modes)
+  # These prompts are intentionally verbose (1500+ tokens) to
+  # trigger the long_prompt_mode compression logic.
+  # ============================================================
+
+  - id: long_001
+    category: long_prompts
+    prompt: |
+      A breathtakingly detailed Renaissance-style oil painting depicting a grand royal banquet scene set in an opulent Italian palazzo from the late 15th century. The magnificent hall features soaring vaulted ceilings adorned with intricate frescoes showing mythological scenes of gods and goddesses frolicking among clouds painted in the style of Michelangelo, with rich ultramarine blues, warm ochres, and luminous flesh tones. Massive marble columns with ornate Corinthian capitals line both sides of the hall, their surfaces catching the warm golden light from hundreds of beeswax candles mounted in elaborate bronze candelabras and crystal chandeliers that hang from gilded chains.
+
+      The long banquet table stretches the entire length of the hall, covered in pristine white Flemish linen embroidered with gold thread in patterns of intertwining vines and heraldic symbols. Upon this magnificent table rests an extraordinary feast: whole roasted peacocks with their iridescent tail feathers reattached and spread in proud display, golden-crusted meat pies decorated with pastry leaves and flowers, towers of exotic fruits including pomegranates split to reveal their ruby seeds, figs both purple and green, clusters of muscatel grapes in shades of amber and deep violet, oranges from Seville with their leaves still attached, and quinces poached in honey and rosewater arranged on silver platters.
+
+      Venetian glass goblets in shades of cobalt blue, emerald green, and crystal clear catch and refract the candlelight, filled with wines both red as garnets and pale as straw. Silver ewers with elaborate chasing depict scenes of Bacchus and his revelers, while gold salt cellars shaped like miniature ships sit at honored positions along the table. Ceramic majolica plates from Faenza display the coats of arms of noble families, their lustrous glazes gleaming.
+
+      Around this magnificent table sit thirty-seven guests in their finest attire. The men wear doublets of silk brocade in rich jewel tones - deep burgundy, forest green, sapphire blue - with slashed sleeves revealing contrasting linings of cloth-of-gold, their hose perfectly fitted, their soft leather shoes with elongated toes. Several wear heavy gold chains of office across their shoulders.
+
+      The women are even more resplendent in gowns of velvet and damask, their bodices stiffened and squared at the neckline to display ropes of pearls and pendants of rubies and diamonds. Their hair is elaborately styled - some with braids interwoven with strings of pearls, others with curls framing their faces beneath transparent veils of silk gauze held in place by jeweled pins. Their sleeves are works of art themselves, voluminous and slashed, caught at intervals with jeweled clasps to create puffs of the silk chemise beneath.
+
+      The lighting creates a masterful chiaroscuro effect throughout the composition, with faces and hands emerging from shadow into the warm glow of candlelight, fabrics shifting between deep shadow and brilliant highlight to emphasize their luxurious textures. Each expression is individualized - some guests lean toward each other in animated conversation, others listen with rapt attention, a few gaze directly out of the painting with knowing expressions that seem to acknowledge the viewer's presence across the centuries.
+
+      In the background, musicians play lutes, viols, and recorders from a gallery above, while servants in livery carry additional dishes and pour wine. Through tall arched windows, a twilight sky of deep purple and rose suggests the festivities will continue long into the night. Dogs of noble breeds - slender greyhounds and small spaniels - wait hopefully beneath the table for scraps. Every surface, every texture, every fold of fabric and glint of metal is rendered with the meticulous attention to detail that characterized the finest works of the Venetian and Florentine masters.
+    test_elements:
+      - token_count: ">1500"
+      - complexity: "extreme"
+      - detail_density: "maximum"
+    difficulty: extreme
+    notes: "Tests long prompt compression - ~1800 tokens"
+
+  - id: long_002
+    category: long_prompts
+    prompt: |
+      An extraordinarily detailed Victorian-era steampunk cityscape at the precise moment of sunset, when the industrial sky blazes with colors filtered through layers of coal smoke and steam to create an apocalyptically beautiful gradient from deep crimson through burnt orange to a sickly yet somehow gorgeous yellow-green near the horizon. The city sprawls across multiple levels connected by an impossible network of brass pipes, wrought iron walkways, and glass-enclosed pneumatic tubes through which pods carrying passengers and cargo hurtle at tremendous speeds.
+
+      The architecture combines High Victorian Gothic with fantastical mechanical elements - spired towers of soot-blackened stone sprout forests of copper antenna and rotating radar dishes, their surfaces green with verdigris. Flying buttresses of iron and riveted steel support elevated railways upon which steam locomotives thunder past, their wheels sparking against the rails, their smokestacks adding to the permanent haze that gives the light its strange quality. Gargoyles on ancient church facades have been retrofitted with speaking tubes and electric eyes that glow amber in the gathering dusk.
+
+      At street level, the cobblestones gleam wet from a recent rain, reflecting the warm light of gas lamps enclosed in ornate wrought-iron cages designed with Art Nouveau flourishes - sinuous lines suggesting plant tendrils and insect wings. Horse-drawn carriages share the roads with steam-powered automobiles whose brass fittings catch the dying light, their drivers wearing goggles and leather dusters against the ever-present soot. Mechanical horses with articulated legs of polished steel pull delivery wagons, their clockwork innards visible through glass panels in their sides, gears meshing and springs tensioning with each step.
+
+      The citizens of this extraordinary metropolis go about their evening business in attire that merges period accuracy with fantastical innovation. Gentlemen in top hats wear monocles that extend into complex viewing apparatuses with multiple lenses on articulated arms, pocket watches connected by chains to computational devices that whir and click as they process data. Ladies in bustled gowns of silk and taffeta carry parasols that double as communication devices, their handles concealing speaking tubes and small brass keyboards. Children operate mechanical pets - clockwork dogs with wagging tails of jointed brass, iron cats whose eyes are actual functioning cameras.
+
+      Above the main thoroughfare, a massive dirigible passes slowly, its elongated envelope decorated with advertisements for Phineas Cogsworth's Patented Universal Tonic and The Empire Mechanical Works, painted in elaborate Victorian typography. Smaller personal airships bob at mooring masts atop the buildings, their passengers disembarking via steam-powered elevators enclosed in ornate ironwork cages. A police airship with rotating searchlights patrols the airways, its crew visible through portholes, operating banks of controls and monitoring speaking tubes.
+
+      The foreground features a street market where vendors sell everything from fresh vegetables (displayed on mechanical turntables that rotate to show the produce) to replacement gears, springs, and cogs for personal mechanical devices. One stall offers small automata - dancing figures, fortune-telling machines, music boxes with visible mechanisms. Steam rises from food carts serving meat pies and roasted chestnuts, the vendors calling out their wares through voice-amplifying brass cones. A newspaper boy hawks the evening edition with headlines about the latest innovations from the Royal Society of Mechanical Advancement.
+
+      Every surface in this image shows the patina of a functioning industrial world - brass gone from bright gold to warm amber, iron developing that particular bloom of rust that reads as brown and orange, glass panels in machinery clouded with residue yet somehow still beautiful. Coal dust settles on every horizontal surface, soot traces patterns around chimney stacks, yet flower boxes on windowsills defy the grime with brave displays of color. The level of detail extends to visible rivets on every metal panel, individually rendered bricks in every wall, legible text on every sign and advertisement.
+    test_elements:
+      - token_count: ">1500"
+      - complexity: "extreme"
+      - style: "steampunk"
+    difficulty: extreme
+    notes: "Tests long prompt compression - ~1700 tokens"
+
+  - id: long_003
+    category: long_prompts
+    prompt: |
+      A monumentally detailed underwater scene depicting an ancient sunken city being explored by a team of deep-sea divers in the year 2087, where advanced diving suits merge seamlessly with the human form through biotechnological integration. The city itself is a magnificent fusion of multiple ancient civilizations - Greek temples with Doric columns now encrusted with coral in shades of brain-pink and fire-orange stand beside Egyptian obelisks covered in hieroglyphics that glow faintly with bioluminescent algae that has colonized the carved channels over millennia.
+
+      The water itself is rendered with extraordinary attention to the way light behaves at depth - shafts of pale blue-green sunlight filter down from the surface far above, creating columns of illumination that catch suspended particles and give the scene a dreamlike quality. Where the natural light fades, the divers' suits emit soft white illumination from integrated panels, and bioluminescent creatures provide additional spots of color - blue-purple jellyfish drift past like living lanterns, schools of fish with luminous lateral lines swirl in coordinated patterns, and deep-sea anglerfish lurk at the edges of visibility with their dangling lures glowing yellow-green.
+
+      The diving suits worn by the exploration team represent the pinnacle of biotechnological achievement - their surfaces are not metal but a living polymer that bonds with the diver's skin, allowing for full range of motion while providing protection from the crushing pressure. Gill-like structures along the neck pulse rhythmically, extracting oxygen directly from the water. The helmets are transparent domes of self-healing crystal that display augmented reality overlays visible as faint holographic symbols and text floating before each diver's face - depth readings, communication channels, mapping data of the ruins being actively generated.
+
+      One diver photographs a mosaic floor using equipment that emerges organically from their suit's surface - a camera that grows from their forearm like a biological extension, its lens a modified eye-like organ. Another uses a device that emits sound waves to map a collapsed temple interior, the invisible pulses rendered visible as expanding rings of disturbed particles in the water. A third diver carefully brushes sediment from a statue of a goddess - the figure emerges from its burial shroud of sand as Athena, her stone eyes somehow seeming aware, her stone robes flowing with a suggestion of movement despite their mineral stillness.
+
+      Marine life has thoroughly colonized the ancient structures over the centuries since this city sank beneath the waves. Massive groupers shelter in what were once throne rooms, their spotted bodies lurking in the shadows of fallen ceiling beams. Moray eels have made homes in amphorae still stacked in a merchant's warehouse, their serpentine heads emerging to watch the divers pass. An octopus has claimed a philosopher's study, its tentacles draped over scrolls that have somehow survived encased in protective mineral deposits, the creature's intelligent eye tracking movement with unmistakable awareness.
+
+      The architecture tells a story of catastrophic and sudden inundation - doors still hang open on bronze hinges green with verdigris, tables remain set with pottery dishes now home to anemones, a child's toy chariot lies overturned in a courtyard where sea grass now waves in the gentle current. In the forum, statues of forgotten rulers stand in rows, their features softened by millennia of water but their poses still projecting authority - until one notices that many have been colonized by coral that creates fantastic new headdresses and clothing of living stone.
+
+      The color palette shifts from the warm surface light to the cooler depths - aquamarine and turquoise in the upper reaches graduating to deep indigo and purple in the shadows of collapsed buildings. Bioluminescence adds unexpected accents of electric blue, neon green, and soft pink. The ancient stone ranges from warm cream marble to cool grey granite, now mottled with the greens and browns of algae and the rainbow colors of coral growth.
+
+      In the far background, barely visible through the blue haze of distance, the ruins extend to the limits of visibility - more temples, more columns, more streets suggesting a metropolis that rivaled any in the ancient world before the sea claimed it. A great pyramid, its apex still catching the faint surface light, suggests Egyptian influence, while nearby a stepped structure hints at Mesopotamian builders. This was a city of the world, a nexus of civilizations, now a kingdom of fish and memory.
+
+      Every surface texture is rendered with photorealistic precision - the roughness of coral, the smoothness of water-worn marble, the organic irregularity of encrusting shellfish, the metallic sheen of the divers' living suits, the translucent delicacy of jellyfish bells, the armored scaling of fish. Bubbles rise from each diver's suit, each one a perfect sphere catching light and reflecting the scene in miniature before continuing its journey to the distant surface.
+    test_elements:
+      - token_count: ">1500"
+      - complexity: "extreme"
+      - style: "sci-fi underwater"
+    difficulty: extreme
+    notes: "Tests long prompt compression - ~1900 tokens"
+
+# ============================================================
 # METADATA
 # ============================================================
 
 metadata:
-  total_prompts: 60
+  total_prompts: 63
   prompt_style: "natural_language"
   categories:
     simple_objects: 5
@@ -664,7 +743,9 @@ metadata:
     abstract: 5
     technical: 5
     text_rendering: 5
+    long_prompts: 3
   difficulty_distribution:
     easy: 5
     medium: 32
     hard: 23
+    extreme: 3

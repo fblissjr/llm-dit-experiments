@@ -32,6 +32,10 @@ The sweep scripts run experiments in priority order with sensible defaults:
 # Priority 4: Long Prompt Modes (only for >1504 token prompts)
 ./experiments/sweep_long_prompt.sh --quick     # ~5 min test run
 
+# Priority 5: Hidden Layer Blend
+./experiments/sweep_hidden_layer_blend.sh --quick    # ~20 min test run
+./experiments/sweep_hidden_layer_blend.sh            # Full run
+
 # Run all sweeps
 ./experiments/run_all_sweeps.sh --quick        # Quick test of all (~30 min)
 ./experiments/run_all_sweeps.sh                # Full run (several hours)
