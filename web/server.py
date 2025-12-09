@@ -41,6 +41,7 @@ app.add_middleware(
 # Global pipeline/encoder (loaded on startup)
 pipeline = None
 encoder = None  # For encoder-only mode
+rewriter_backend = None  # API backend for rewriting (if configured)
 runtime_config = None  # RuntimeConfig from CLI/TOML
 encoder_only_mode = False
 
@@ -79,8 +80,9 @@ class RewriteRequest(BaseModel):
     prompt: str  # User prompt to rewrite/expand
     rewriter: Optional[str] = None  # Name of rewriter template (optional if custom_system_prompt provided)
     custom_system_prompt: Optional[str] = None  # Ad-hoc system prompt for rewriting
-    max_tokens: int = 512  # Maximum tokens to generate
-    temperature: float = 0.7  # Sampling temperature
+    max_tokens: Optional[int] = None  # Maximum tokens to generate (default from config: 512)
+    temperature: Optional[float] = None  # Sampling temperature (default from config: 1.0)
+    top_p: Optional[float] = None  # Nucleus sampling (default from config: 0.95)
 
 
 @app.get("/")
@@ -372,20 +374,33 @@ async def rewrite_prompt(request: RewriteRequest):
     """
     Rewrite/expand a prompt using a rewriter template or custom system prompt.
 
-    Uses the same Qwen3 model loaded for text encoding to generate expanded prompts.
-    This enables prompt enhancement without loading additional models.
+    Uses the same Qwen3 model loaded for text encoding to generate expanded prompts,
+    or a separate API backend if configured.
 
     Supports two modes:
     1. Template mode: Use `rewriter` to specify a rewriter template
     2. Ad-hoc mode: Use `custom_system_prompt` for custom rewriting instructions
-    """
-    # Use encoder from pipeline or standalone encoder
-    enc = encoder if encoder is not None else (pipeline.encoder if pipeline else None)
-    if enc is None:
-        raise HTTPException(status_code=503, detail="Encoder not loaded")
 
-    # Check if backend supports generation
-    backend = getattr(enc, 'backend', None)
+    Backend selection:
+    - If rewriter_use_api is True and rewriter_backend is configured, uses API backend
+    - Otherwise, uses the local encoder's backend
+    """
+    # Determine which backend to use for generation
+    # Priority: rewriter_backend (if API mode), encoder's backend, pipeline's encoder backend
+    backend = None
+    backend_name = "local"
+
+    if rewriter_backend is not None:
+        backend = rewriter_backend
+        backend_name = "api"
+        logger.info("[Rewrite] Using API backend for rewriting")
+    else:
+        # Use encoder from pipeline or standalone encoder
+        enc = encoder if encoder is not None else (pipeline.encoder if pipeline else None)
+        if enc is not None:
+            backend = getattr(enc, 'backend', None)
+            backend_name = "local"
+
     if backend is None:
         raise HTTPException(status_code=503, detail="No backend available for generation")
 
@@ -394,6 +409,9 @@ async def rewrite_prompt(request: RewriteRequest):
             status_code=400,
             detail="Backend does not support text generation"
         )
+
+    # Get template loader from encoder (for template lookup)
+    enc = encoder if encoder is not None else (pipeline.encoder if pipeline else None)
 
     # Determine system prompt: custom takes precedence, then template
     system_prompt = None
@@ -406,7 +424,7 @@ async def rewrite_prompt(request: RewriteRequest):
         logger.info(f"[Rewrite] Using custom system prompt ({len(system_prompt)} chars)")
     elif request.rewriter:
         # Template mode: get system prompt from template
-        if enc.templates is None:
+        if enc is None or enc.templates is None:
             raise HTTPException(status_code=400, detail="No templates loaded")
 
         rewriter_template = enc.templates.get(request.rewriter)
@@ -430,17 +448,40 @@ async def rewrite_prompt(request: RewriteRequest):
             detail="Either 'rewriter' or 'custom_system_prompt' must be provided"
         )
 
+    # Get generation parameters from request or config defaults
+    max_tokens = request.max_tokens
+    temperature = request.temperature
+    top_p = request.top_p
+
+    if runtime_config is not None:
+        if max_tokens is None:
+            max_tokens = runtime_config.rewriter_max_tokens
+        if temperature is None:
+            temperature = runtime_config.rewriter_temperature
+        if top_p is None:
+            top_p = runtime_config.rewriter_top_p
+    else:
+        # Fallback defaults
+        if max_tokens is None:
+            max_tokens = 512
+        if temperature is None:
+            temperature = 1.0
+        if top_p is None:
+            top_p = 0.95
+
     try:
         start = time.time()
-        logger.info(f"[Rewrite] Using: {rewriter_name}")
+        logger.info(f"[Rewrite] Using: {rewriter_name} (backend: {backend_name})")
         logger.info(f"[Rewrite] Input prompt: {request.prompt[:100]}...")
+        logger.info(f"[Rewrite] Params: max_tokens={max_tokens}, temperature={temperature}, top_p={top_p}")
 
         # Generate using the backend
         generated = backend.generate(
             prompt=request.prompt,
             system_prompt=system_prompt,
-            max_new_tokens=request.max_tokens,
-            temperature=request.temperature,
+            max_new_tokens=max_tokens,
+            temperature=temperature,
+            top_p=top_p,
         )
 
         gen_time = time.time() - start
@@ -455,6 +496,7 @@ async def rewrite_prompt(request: RewriteRequest):
             "original_prompt": request.prompt,
             "rewritten_prompt": generated,
             "rewriter": request.rewriter,
+            "backend": backend_name,
             "gen_time": gen_time,
         }
 
@@ -894,7 +936,7 @@ def main():
     args = parser.parse_args()
 
     # Load unified config (handles TOML + CLI overrides)
-    global runtime_config, pipeline, encoder, encoder_only_mode
+    global runtime_config, pipeline, encoder, rewriter_backend, encoder_only_mode
     runtime_config = load_runtime_config(args)
     setup_logging(runtime_config)
 
@@ -918,6 +960,23 @@ def main():
     encoder = result.encoder
     encoder_only_mode = result.mode in ("encoder_only", "api_encoder")
     mode = result.mode
+
+    # Initialize rewriter API backend if configured
+    if runtime_config.rewriter_use_api:
+        # Determine API URL: rewriter-specific or fall back to main API URL
+        rewriter_url = runtime_config.rewriter_api_url or runtime_config.api_url
+        if rewriter_url:
+            from llm_dit.backends.api import APIBackend, APIBackendConfig
+
+            rewriter_api_config = APIBackendConfig(
+                base_url=rewriter_url,
+                model_id=runtime_config.rewriter_api_model,
+            )
+            rewriter_backend = APIBackend(rewriter_api_config)
+            logger.info(f"[Rewriter] API backend configured: {rewriter_url} (model: {runtime_config.rewriter_api_model})")
+            logger.info(f"[Rewriter] Defaults: temperature={runtime_config.rewriter_temperature}, top_p={runtime_config.rewriter_top_p}, max_tokens={runtime_config.rewriter_max_tokens}")
+        else:
+            logger.warning("[Rewriter] use_api=True but no API URL configured. Using local model.")
 
     # Run server
     import uvicorn

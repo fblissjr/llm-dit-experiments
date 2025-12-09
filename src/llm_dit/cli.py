@@ -128,6 +128,14 @@ class RuntimeConfig:
     host: str = "127.0.0.1"
     port: int = 7860
 
+    # Rewriter settings
+    rewriter_use_api: bool = False  # Use API backend for rewriting
+    rewriter_api_url: str = ""  # API URL for rewriter (if different from encoder)
+    rewriter_api_model: str = "Qwen3-4B"  # Model ID for rewriter API
+    rewriter_temperature: float = 1.0  # Sampling temperature
+    rewriter_top_p: float = 0.95  # Nucleus sampling threshold
+    rewriter_max_tokens: int = 512  # Maximum tokens to generate
+
     # Debug
     debug: bool = False
     verbose: bool = False
@@ -400,6 +408,44 @@ def create_base_parser(
         help="Force local encoder (for A/B testing API vs local)",
     )
 
+    # Rewriter settings
+    rewriter_group = parser.add_argument_group("Rewriter")
+    rewriter_group.add_argument(
+        "--rewriter-use-api",
+        action="store_true",
+        help="Use API backend for prompt rewriting instead of local model",
+    )
+    rewriter_group.add_argument(
+        "--rewriter-api-url",
+        type=str,
+        default=None,
+        help="API URL for rewriter (defaults to --api-url if not set)",
+    )
+    rewriter_group.add_argument(
+        "--rewriter-api-model",
+        type=str,
+        default=None,
+        help="Model ID for rewriter API (default: Qwen3-4B)",
+    )
+    rewriter_group.add_argument(
+        "--rewriter-temperature",
+        type=float,
+        default=None,
+        help="Sampling temperature for rewriter (default: 1.0)",
+    )
+    rewriter_group.add_argument(
+        "--rewriter-top-p",
+        type=float,
+        default=None,
+        help="Nucleus sampling threshold for rewriter (default: 0.95)",
+    )
+    rewriter_group.add_argument(
+        "--rewriter-max-tokens",
+        type=int,
+        default=None,
+        help="Maximum tokens to generate for rewriter (default: 512)",
+    )
+
     # Generation parameters (optional)
     if include_generation_args:
         gen_group = parser.add_argument_group("Generation")
@@ -545,6 +591,16 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
                 config.cache_size = getattr(pytorch, 'cache_size', 100)
                 config.long_prompt_mode = getattr(pytorch, 'long_prompt_mode', 'truncate')
 
+            # Check for rewriter section
+            if hasattr(toml_config, 'rewriter'):
+                rewriter = toml_config.rewriter
+                config.rewriter_use_api = getattr(rewriter, 'use_api', False)
+                config.rewriter_api_url = getattr(rewriter, 'api_url', '')
+                config.rewriter_api_model = getattr(rewriter, 'api_model', 'Qwen3-4B')
+                config.rewriter_temperature = getattr(rewriter, 'temperature', 1.0)
+                config.rewriter_top_p = getattr(rewriter, 'top_p', 0.95)
+                config.rewriter_max_tokens = getattr(rewriter, 'max_tokens', 512)
+
         except Exception as e:
             logger.warning(f"Failed to load config: {e}")
 
@@ -637,6 +693,20 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
         config.api_model = args.api_model
     if getattr(args, 'local_encoder', False):
         config.local_encoder = True
+
+    # Rewriter overrides
+    if getattr(args, 'rewriter_use_api', False):
+        config.rewriter_use_api = True
+    if getattr(args, 'rewriter_api_url', None) is not None:
+        config.rewriter_api_url = args.rewriter_api_url
+    if getattr(args, 'rewriter_api_model', None) is not None:
+        config.rewriter_api_model = args.rewriter_api_model
+    if getattr(args, 'rewriter_temperature', None) is not None:
+        config.rewriter_temperature = args.rewriter_temperature
+    if getattr(args, 'rewriter_top_p', None) is not None:
+        config.rewriter_top_p = args.rewriter_top_p
+    if getattr(args, 'rewriter_max_tokens', None) is not None:
+        config.rewriter_max_tokens = args.rewriter_max_tokens
 
     # Generation overrides
     if getattr(args, 'height', None) is not None:

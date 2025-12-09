@@ -142,6 +142,19 @@ scales = [0.8, 0.5]
 
 Example: `--lora style.safetensors:0.8 --lora detail.safetensors:0.5`
 
+### Rewriter Flags
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--rewriter-use-api` | flag | False | Use API backend for prompt rewriting |
+| `--rewriter-api-url` | str | None | API URL for rewriter (defaults to --api-url) |
+| `--rewriter-api-model` | str | Qwen3-4B | Model ID for rewriter API |
+| `--rewriter-temperature` | float | 1.0 | Sampling temperature |
+| `--rewriter-top-p` | float | 0.95 | Nucleus sampling threshold |
+| `--rewriter-max-tokens` | int | 512 | Maximum tokens to generate |
+
+Example: `--rewriter-use-api --rewriter-api-url http://mac:8080 --rewriter-temperature 0.8`
+
 ## API Endpoints
 
 ### POST /api/generate
@@ -277,6 +290,69 @@ List available templates.
   ]
 }
 ```
+
+---
+
+### GET /api/rewriters
+
+List available rewriter templates (templates with `category: rewriter`).
+
+**Response:**
+```json
+{
+  "rewriters": [
+    {"name": "rewriter_character_generator", "description": "Character Generator (prompt rewriter)"},
+    {"name": "rewriter_scene_enhancer", "description": "Scene Enhancer (prompt rewriter)"}
+  ]
+}
+```
+
+---
+
+### POST /api/rewrite
+
+Rewrite/expand a prompt using a rewriter template or custom system prompt.
+
+Uses either the local Qwen3 model or an API backend (if configured with `--rewriter-use-api`).
+
+**Request:**
+```json
+{
+  "prompt": "A cat sleeping",
+  "rewriter": "rewriter_character_generator",
+  "custom_system_prompt": null,
+  "max_tokens": 512,
+  "temperature": 1.0,
+  "top_p": 0.95
+}
+```
+
+**Fields:**
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| prompt | string | Yes | - | User prompt to rewrite/expand |
+| rewriter | string | No* | null | Name of rewriter template |
+| custom_system_prompt | string | No* | null | Ad-hoc system prompt for rewriting |
+| max_tokens | int | No | from config (512) | Maximum tokens to generate |
+| temperature | float | No | from config (1.0) | Sampling temperature |
+| top_p | float | No | from config (0.95) | Nucleus sampling threshold |
+
+*Either `rewriter` or `custom_system_prompt` must be provided.
+
+**Response:**
+```json
+{
+  "original_prompt": "A cat sleeping",
+  "rewritten_prompt": "A fluffy orange tabby cat curled up in a warm sunbeam...",
+  "rewriter": "rewriter_character_generator",
+  "backend": "local",
+  "gen_time": 2.5
+}
+```
+
+**Backend Types:**
+- `"local"`: Using local Qwen3 model (default)
+- `"api"`: Using remote API backend (when `--rewriter-use-api` is set)
 
 ---
 

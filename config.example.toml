@@ -64,6 +64,15 @@ model = "Qwen3-4B-mxfp4-mlx" # Model ID on remote server
 paths = []
 scales = []
 
+[default.rewriter]
+# Prompt rewriter settings (for /api/rewrite endpoint)
+use_api = false              # Use API backend for rewriting (default: use local model)
+api_url = ""                 # API URL for rewriter (defaults to api.url if not set)
+api_model = "Qwen3-4B"       # Model ID for rewriter API
+temperature = 1.0            # Sampling temperature
+top_p = 0.95                 # Nucleus sampling threshold
+max_tokens = 512             # Maximum tokens to generate
+
 # =============================================================================
 # RTX 4090 Profile - Optimized for 24GB VRAM
 # =============================================================================
@@ -117,6 +126,15 @@ model = "Qwen3-4B-mxfp4-mlx"
 [rtx4090.lora]
 paths = []
 scales = []
+
+[rtx4090.rewriter]
+# Prompt rewriter settings (for /api/rewrite endpoint)
+use_api = false              # Use API backend for rewriting (default: use local model)
+api_url = ""                 # API URL for rewriter (defaults to api.url if not set)
+api_model = "Qwen3-4B"       # Model ID for rewriter API
+temperature = 1.0            # Sampling temperature
+top_p = 0.95                 # Nucleus sampling threshold
+max_tokens = 512             # Maximum tokens to generate
 
 # =============================================================================
 # Web Server Configuration (shared across profiles)
