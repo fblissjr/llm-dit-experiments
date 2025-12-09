@@ -66,7 +66,7 @@ from experiments.prompts import (
     get_prompts_by_category,
     load_standard_prompts,
 )
-from llm_dit.cli import load_runtime_config, RuntimeConfig
+from llm_dit.cli import RuntimeConfig, load_runtime_config
 
 logging.basicConfig(
     level=logging.INFO,
@@ -376,7 +376,7 @@ class ExperimentRunner:
 
         # Unload pipeline to free GPU memory
         logger.info("Unloading pipeline to free GPU memory...")
-        if hasattr(self, 'pipeline') and self.pipeline is not None:
+        if hasattr(self, "pipeline") and self.pipeline is not None:
             del self.pipeline
             self.pipeline = None
 
@@ -399,6 +399,7 @@ class ExperimentRunner:
         # ImageReward (human preference) - batch scoring
         try:
             from experiments.metrics import ImageRewardScorer
+
             logger.info("Computing ImageReward scores...")
             scorer = ImageRewardScorer(device="cuda" if torch.cuda.is_available() else "cpu")
             for i, result in enumerate(valid_results):
@@ -421,6 +422,7 @@ class ExperimentRunner:
         # SigLIP2 (image-text alignment) - batch scoring
         try:
             from experiments.metrics import SigLIPScorer
+
             logger.info("Computing SigLIP scores...")
             scorer = SigLIPScorer(device="cuda" if torch.cuda.is_available() else "cpu")
 
@@ -436,7 +438,9 @@ class ExperimentRunner:
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
         except ImportError:
-            logger.warning("transformers not installed, skipping SigLIP. Install: uv add transformers")
+            logger.warning(
+                "transformers not installed, skipping SigLIP. Install: uv add transformers"
+            )
         except Exception as e:
             logger.warning("SigLIP computation failed: %s", e)
 
@@ -474,20 +478,17 @@ class ExperimentRunner:
         # Get parameter values
         if "grid" in exp_def:
             # Grid search over multiple variables
-            configs = self._build_grid_configs(
-                experiment_name, exp_def, prompts, seeds
-            )
+            configs = self._build_grid_configs(experiment_name, exp_def, prompts, seeds)
         else:
             # Single variable sweep
-            configs = self._build_sweep_configs(
-                experiment_name, exp_def, prompts, seeds
-            )
+            configs = self._build_sweep_configs(experiment_name, exp_def, prompts, seeds)
 
         logger.info(
             "Running %d configurations (%d prompts x %d values x %d seeds)",
             len(configs),
             len(prompts),
-            len(exp_def.get("values", [])) or len(list(self._grid_combinations(exp_def.get("grid", {})))),
+            len(exp_def.get("values", []))
+            or len(list(self._grid_combinations(exp_def.get("grid", {})))),
             len(seeds),
         )
 
@@ -605,11 +606,7 @@ class ExperimentRunner:
 
     def _save_result(self, result: ExperimentResult):
         """Save individual result metadata."""
-        metadata_path = (
-            self.output_dir
-            / "metadata"
-            / f"{Path(result.output_path).stem}.json"
-        )
+        metadata_path = self.output_dir / "metadata" / f"{Path(result.output_path).stem}.json"
         with open(metadata_path, "w") as f:
             json.dump(
                 {
@@ -631,31 +628,35 @@ class ExperimentRunner:
         csv_path = self.output_dir / f"{experiment_name}_summary.csv"
         with open(csv_path, "w", newline="") as f:
             writer = csv.writer(f)
-            writer.writerow([
-                "prompt_id",
-                "seed",
-                "variable_name",
-                "variable_value",
-                "generation_time_seconds",
-                "token_count",
-                "image_reward",
-                "siglip_score",
-                "error",
-                "output_path",
-            ])
+            writer.writerow(
+                [
+                    "prompt_id",
+                    "seed",
+                    "variable_name",
+                    "variable_value",
+                    "generation_time_seconds",
+                    "token_count",
+                    "image_reward",
+                    "siglip_score",
+                    "error",
+                    "output_path",
+                ]
+            )
             for r in results:
-                writer.writerow([
-                    r.config.prompt_id,
-                    r.config.seed,
-                    r.config.variable_name,
-                    r.config.variable_value,
-                    r.generation_time_seconds,
-                    r.token_count,
-                    r.image_reward,
-                    r.siglip_score,
-                    r.error,
-                    r.output_path,
-                ])
+                writer.writerow(
+                    [
+                        r.config.prompt_id,
+                        r.config.seed,
+                        r.config.variable_name,
+                        r.config.variable_value,
+                        r.generation_time_seconds,
+                        r.token_count,
+                        r.image_reward,
+                        r.siglip_score,
+                        r.error,
+                        r.output_path,
+                    ]
+                )
 
         # Compute metric statistics
         ir_scores = [r.image_reward for r in results if r.image_reward is not None]
@@ -766,6 +767,7 @@ Examples:
             "abstract",
             "technical",
             "text_rendering",
+            "long_prompts",
         ],
         help="Use prompts from specific category",
     )
