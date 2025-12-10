@@ -66,7 +66,7 @@ class GenerateRequest(BaseModel):
     guidance_scale: float = 0.0
     shift: float = 3.0  # Scheduler shift parameter
     long_prompt_mode: str = "interpolate"  # truncate/interpolate/pool/attention_pool
-    hidden_layer: int = -2  # Which hidden layer to extract (-1 to -6)
+    hidden_layer: int = -2  # Which hidden layer to extract (-1 to -35, Qwen3-4B has 36 layers)
 
 
 class EncodeRequest(BaseModel):

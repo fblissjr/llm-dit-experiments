@@ -460,13 +460,51 @@
                         <div>
                             <label class="block text-sm font-medium text-gray-300 mb-2">
                                 Hidden Layer: <span id="hiddenLayerValue" class="text-blue-400">-2</span>
+                                <span id="hiddenLayerLabel" class="text-gray-500 text-xs ml-1">(Layer 35 of 36)</span>
                             </label>
-                            <input type="range" id="hiddenLayer" min="-6" max="-1" value="-2" class="w-full">
-                            <div class="flex justify-between text-xs text-gray-500 mt-1">
-                                <span>-6 (Deeper)</span>
-                                <span>-1 (Last)</span>
+
+                            <!-- Layer Presets - Touch-friendly buttons -->
+                            <div class="grid grid-cols-4 gap-1.5 mb-3">
+                                <button type="button" data-layer="-2" class="layer-preset px-2 py-2 text-xs font-medium rounded-lg bg-blue-600 text-white transition-colors">
+                                    -2
+                                </button>
+                                <button type="button" data-layer="-5" class="layer-preset px-2 py-2 text-xs font-medium rounded-lg bg-gray-700 text-gray-300 hover:bg-gray-600 transition-colors">
+                                    -5
+                                </button>
+                                <button type="button" data-layer="-18" class="layer-preset px-2 py-2 text-xs font-medium rounded-lg bg-gray-700 text-gray-300 hover:bg-gray-600 transition-colors">
+                                    -18
+                                </button>
+                                <button type="button" data-layer="-30" class="layer-preset px-2 py-2 text-xs font-medium rounded-lg bg-gray-700 text-gray-300 hover:bg-gray-600 transition-colors">
+                                    -30
+                                </button>
                             </div>
-                            <p class="text-xs text-gray-500 mt-1">Which transformer layer to extract embeddings from</p>
+
+                            <!-- Visual Layer Position Indicator -->
+                            <div class="relative mb-2">
+                                <!-- Layer track - simple gradient from early to late -->
+                                <div class="h-5 rounded-lg bg-gradient-to-r from-gray-700 via-gray-600 to-gray-500 relative">
+                                    <!-- Layer markers -->
+                                    <div class="absolute inset-0 flex justify-between items-center px-1 text-xs text-gray-400">
+                                        <span>1</span>
+                                        <span>9</span>
+                                        <span>18</span>
+                                        <span>27</span>
+                                        <span>36</span>
+                                    </div>
+                                </div>
+                                <!-- Position indicator -->
+                                <div id="layerPositionIndicator" class="absolute top-0 w-1.5 h-5 bg-blue-400 rounded shadow-lg transition-all duration-150" style="left: 94.3%;"></div>
+                            </div>
+
+                            <!-- Full Range Slider -->
+                            <input type="range" id="hiddenLayer" min="-35" max="-1" value="-2" class="w-full">
+                            <div class="flex justify-between text-xs text-gray-500 mt-1">
+                                <span>-35 (Layer 1)</span>
+                                <span>-1 (Layer 36)</span>
+                            </div>
+                            <p class="text-xs text-gray-500 mt-2">
+                                Default is -2. Qwen3-4B has 36 layers total.
+                            </p>
                         </div>
 
                     </div>
@@ -607,6 +645,9 @@
         const longPromptModeSelect = document.getElementById('longPromptMode');
         const hiddenLayerSlider = document.getElementById('hiddenLayer');
         const hiddenLayerValue = document.getElementById('hiddenLayerValue');
+        const hiddenLayerLabel = document.getElementById('hiddenLayerLabel');
+        const layerPositionIndicator = document.getElementById('layerPositionIndicator');
+        const layerPresetButtons = document.querySelectorAll('.layer-preset');
 
         // Current generation params (for reuse)
         let currentParams = null;
@@ -624,9 +665,48 @@
             shiftValue.textContent = parseFloat(shiftSlider.value).toFixed(1);
         });
 
+        // Hidden layer helper functions
+        function updateHiddenLayerUI(layer) {
+            const l = parseInt(layer);
+            // Convert negative index to actual layer number (1-36)
+            // -1 = layer 36, -2 = layer 35, ..., -35 = layer 2, -36 = layer 1
+            const actualLayer = 37 + l;  // -1 -> 36, -35 -> 2
+
+            hiddenLayerValue.textContent = l;
+            hiddenLayerLabel.textContent = `(Layer ${actualLayer} of 36)`;
+
+            // Update position indicator (layer -35 = 0%, layer -1 = 100%)
+            const percent = ((l + 35) / 34) * 100;
+            layerPositionIndicator.style.left = `${percent}%`;
+
+            // Update preset button styling
+            layerPresetButtons.forEach(btn => {
+                const btnLayer = parseInt(btn.dataset.layer);
+                if (btnLayer === l) {
+                    btn.classList.remove('bg-gray-700', 'text-gray-300', 'hover:bg-gray-600');
+                    btn.classList.add('bg-blue-600', 'text-white');
+                } else {
+                    btn.classList.remove('bg-blue-600', 'text-white');
+                    btn.classList.add('bg-gray-700', 'text-gray-300', 'hover:bg-gray-600');
+                }
+            });
+        }
+
         hiddenLayerSlider.addEventListener('input', () => {
-            hiddenLayerValue.textContent = hiddenLayerSlider.value;
+            updateHiddenLayerUI(hiddenLayerSlider.value);
         });
+
+        // Layer preset buttons
+        layerPresetButtons.forEach(btn => {
+            btn.addEventListener('click', () => {
+                const layer = btn.dataset.layer;
+                hiddenLayerSlider.value = layer;
+                updateHiddenLayerUI(layer);
+            });
+        });
+
+        // Initialize hidden layer UI
+        updateHiddenLayerUI(hiddenLayerSlider.value);
 
         // Toggle thinking content visibility based on checkbox
         const enableThinkingCheckbox = document.getElementById('enableThinking');
@@ -1066,7 +1146,7 @@
             }
             if (item.hidden_layer !== undefined) {
                 hiddenLayerSlider.value = item.hidden_layer;
-                hiddenLayerValue.textContent = item.hidden_layer;
+                updateHiddenLayerUI(item.hidden_layer);
             }
 
             // Set resolution

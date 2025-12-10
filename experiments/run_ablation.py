@@ -138,20 +138,169 @@ EXPERIMENTS = {
         "defaults": {"shift": 3.0, "steps": 9},
     },
     "hidden_layer_blend": {
-        "description": "Blend embeddings from multiple hidden layers",
+        "description": "Blend embeddings from multiple hidden layers (late layer focus)",
         "variable": "layer_weights",
         "values": [
             # Baseline: single layers
-            {-2: 1.0},  # Default (penultimate only)
-            {-1: 1.0},  # Last layer only
-            {-5: 1.0},  # Deeper layer only
-            # Two-layer blends: semantic + structural
-            {-2: 0.7, -5: 0.3},  # 70% semantic, 30% structural
-            {-2: 0.5, -5: 0.5},  # Equal blend
-            {-2: 0.3, -5: 0.7},  # 30% semantic, 70% structural
+            {-2: 1.0},   # Layer 35 - Default (penultimate, what DiT was trained on)
+            {-1: 1.0},   # Layer 36 - Last layer (most abstracted)
+            {-5: 1.0},   # Layer 32 - Slightly deeper
+            # Two-layer blends within late region
+            {-2: 0.7, -5: 0.3},  # Layers 35+32: mostly default
+            {-2: 0.5, -5: 0.5},  # Layers 35+32: equal blend
+            {-2: 0.3, -5: 0.7},  # Layers 35+32: favor deeper
             # Three-layer blends
-            {-1: 0.33, -2: 0.34, -3: 0.33},  # Equal top-3
-            {-2: 0.5, -4: 0.25, -6: 0.25},  # Weighted across depth
+            {-1: 0.33, -2: 0.34, -3: 0.33},  # Layers 36+35+34: top-3 equal
+            {-2: 0.5, -5: 0.25, -8: 0.25},   # Layers 35+32+29: weighted spread
+        ],
+        "defaults": {"shift": 3.0, "steps": 9},
+    },
+    # =========================================================================
+    # DEEP LAYER EXPERIMENTS
+    # Qwen3-4B has 36 transformer layers. Layer indexing:
+    #   -1 = Layer 36 (last, just before LM head - most abstracted for generation)
+    #   -2 = Layer 35 (Z-Image default, penultimate)
+    #   -19 = Layer 18 (exact middle of 36 layers)
+    #   -36 = Layer 1 (first transformer layer - raw, heavy pre-training bias)
+    #
+    # Observed behavior:
+    #   Early (1-10): Heavy pre-training bias (cultural associations dominate)
+    #   Middle (12-24): Semantic sweet spot (past bias, before SFT abstraction)
+    #   Late (25-35): SFT-modified for "helpful assistant" patterns
+    #   Final (36): Ready for token prediction, loses visual specifics
+    # =========================================================================
+    "hidden_layer_deep": {
+        "description": "Deep sweep across all 36 layers to find prompt-adherence sweet spot",
+        "variable": "hidden_layer",
+        "values": [
+            -1,   # Layer 36 (last) - most abstracted, ready for generation
+            -2,   # Layer 35 (Z-Image default)
+            -5,   # Layer 32
+            -9,   # Layer 28
+            -12,  # Layer 25 - entering late region
+            -15,  # Layer 22
+            -19,  # Layer 18 (exact middle)
+            -22,  # Layer 15
+            -25,  # Layer 12 - entering middle region
+            -28,  # Layer 9
+            -31,  # Layer 6 - early region
+            -34,  # Layer 3
+            -36,  # Layer 1 (earliest) - raw, biased
+        ],
+        "defaults": {"shift": 3.0, "steps": 9},
+    },
+    "hidden_layer_middle_focus": {
+        "description": "Fine-grained sweep of middle layers (12-24) where prompt adherence peaks",
+        "variable": "hidden_layer",
+        "values": [
+            -13,  # Layer 24
+            -15,  # Layer 22
+            -17,  # Layer 20
+            -19,  # Layer 18 (exact middle)
+            -21,  # Layer 16
+            -23,  # Layer 14
+            -25,  # Layer 12
+        ],
+        "defaults": {"shift": 3.0, "steps": 9},
+    },
+    "middle_layer_blend": {
+        "description": "Blend middle layers together (where prompt adherence is highest)",
+        "variable": "layer_weights",
+        "values": [
+            # Single middle layers for baseline
+            {-19: 1.0},  # Layer 18 (exact middle)
+            {-16: 1.0},  # Layer 21
+            {-22: 1.0},  # Layer 15
+            # Middle layer blends
+            {-16: 0.5, -22: 0.5},  # Blend around middle
+            {-13: 0.33, -19: 0.34, -25: 0.33},  # Wide middle blend (layers 24, 18, 12)
+            {-17: 0.5, -21: 0.5},  # Tight middle blend (layers 20, 16)
+            # Middle + late blend (best of both worlds?)
+            {-19: 0.7, -2: 0.3},  # 70% middle semantic, 30% late (DiT-trained)
+            {-19: 0.5, -2: 0.5},  # Equal middle/late
+            {-16: 0.4, -19: 0.3, -2: 0.3},  # Three-way blend
+        ],
+        "defaults": {"shift": 3.0, "steps": 9},
+    },
+    # =========================================================================
+    # NEW EXPERIMENTS: Exploring layer characteristics
+    # =========================================================================
+    "early_layer_bias": {
+        "description": "Test early layers with culturally-charged prompts to study pre-training bias",
+        "variable": "hidden_layer",
+        "values": [
+            -36,  # Layer 1 (earliest)
+            -34,  # Layer 3
+            -31,  # Layer 6
+            -28,  # Layer 9
+            -25,  # Layer 12 (entering middle)
+            -19,  # Layer 18 (middle baseline)
+            -2,   # Layer 35 (default baseline)
+        ],
+        "defaults": {"shift": 3.0, "steps": 9},
+    },
+    "layer_progression": {
+        "description": "Full layer progression to visualize embedding evolution (every 3rd layer)",
+        "variable": "hidden_layer",
+        "values": [
+            -36,  # Layer 1
+            -33,  # Layer 4
+            -30,  # Layer 7
+            -27,  # Layer 10
+            -24,  # Layer 13
+            -21,  # Layer 16
+            -18,  # Layer 19
+            -15,  # Layer 22
+            -12,  # Layer 25
+            -9,   # Layer 28
+            -6,   # Layer 31
+            -3,   # Layer 34
+            -1,   # Layer 36
+        ],
+        "defaults": {"shift": 3.0, "steps": 9},
+    },
+    "skip_late_blend": {
+        "description": "Blend early semantic + middle, skipping SFT-heavy late layers entirely",
+        "variable": "layer_weights",
+        "values": [
+            # Baselines
+            {-19: 1.0},  # Middle only (layer 18)
+            {-2: 1.0},   # Late only (default, for comparison)
+            # Skip late layers - blend early-middle only
+            {-25: 0.5, -19: 0.5},  # Early-middle blend (layers 12, 18)
+            {-28: 0.3, -22: 0.4, -16: 0.3},  # Wider early-middle (layers 9, 15, 21)
+            {-31: 0.2, -25: 0.3, -19: 0.3, -13: 0.2},  # Very wide (layers 6, 12, 18, 24)
+            # Compare to including late
+            {-25: 0.4, -19: 0.4, -2: 0.2},  # Early-middle with small late contribution
+        ],
+        "defaults": {"shift": 3.0, "steps": 9},
+    },
+    "prompt_complexity_layers": {
+        "description": "Test if optimal layer depends on prompt complexity (simple vs detailed)",
+        "variable": "hidden_layer",
+        "values": [
+            -2,   # Default (late)
+            -10,  # Late-ish
+            -19,  # Middle
+            -28,  # Early-ish
+        ],
+        "defaults": {"shift": 3.0, "steps": 9},
+        # Note: Run this with both simple_objects AND artistic_styles categories
+        # to compare optimal layers across prompt complexity
+    },
+    "dit_training_comparison": {
+        "description": "Compare DiT-trained layer (-2) vs empirically-best middle layers",
+        "variable": "layer_weights",
+        "values": [
+            # DiT was trained on -2 embeddings - does it expect that distribution?
+            {-2: 1.0},   # What DiT was trained on
+            {-19: 1.0},  # Empirically better for prompt adherence?
+            # Blend to get both: DiT familiarity + better semantics
+            {-19: 0.8, -2: 0.2},  # Mostly middle, hint of trained distribution
+            {-19: 0.6, -2: 0.4},  # More balanced
+            {-19: 0.5, -2: 0.5},  # Equal
+            {-19: 0.4, -2: 0.6},  # Lean toward trained distribution
+            {-19: 0.2, -2: 0.8},  # Mostly trained, hint of middle semantics
         ],
         "defaults": {"shift": 3.0, "steps": 9},
     },
@@ -768,6 +917,7 @@ Examples:
             "technical",
             "text_rendering",
             "long_prompts",
+            "bias_probing",
         ],
         help="Use prompts from specific category",
     )

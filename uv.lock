@@ -1781,7 +1781,7 @@ wheels = [
 
 [[package]]
 name = "llm-dit-experiments"
-version = "0.2.0"
+version = "0.5.0"
 source = { editable = "." }
 dependencies = [
     { name = "accelerate" },
@@ -1790,6 +1790,8 @@ dependencies = [
     { name = "fastapi" },
     { name = "httpx" },
     { name = "image-reward" },
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "pillow" },
     { name = "python-multipart" },
     { name = "pyyaml" },
@@ -1831,6 +1833,7 @@ requires-dist = [
     { name = "ipython", marker = "extra == 'dev'" },
     { name = "jupyter", marker = "extra == 'dev'" },
     { name = "matplotlib", marker = "extra == 'analysis'", specifier = ">=3.7" },
+    { name = "numpy" },
     { name = "pillow" },
     { name = "pytest", marker = "extra == 'dev'" },
     { name = "python-multipart", specifier = ">=0.0.20" },

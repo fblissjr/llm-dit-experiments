@@ -150,6 +150,22 @@ Image Output
 | VAE | 16-channel | Wan-family |
 | Context refiner | 2 layers | No timestep modulation |
 
+## Hidden Layer Selection
+
+The default embedding extraction layer is **-2** (penultimate, layer 35 of 36). This is configurable via `--hidden-layer` (-35 to -1).
+
+**SFT Impact Hypothesis:** Qwen3-4B is instruction-tuned, which modifies later layers to be good at "helpful assistant" responses. This may make late layers (-1 to -10) overly abstract for image generation, losing concrete visual details. Middle layers (~-15 to -21) may provide better prompt adherence because they:
+- Have completed semantic processing
+- Haven't been heavily overwritten by SFT objectives
+- Retain more pre-training knowledge about visual concepts
+
+**Recommendations:**
+- **Default (-2)**: Safe choice, works reasonably well
+- **Middle layers (-15 to -21)**: Try if prompt details aren't being captured
+- **Web UI**: Use the layer selector to experiment
+
+See `internal/research/hidden_layer_selection.md` for detailed analysis and experimental plans.
+
 ## Text Sequence Length Limits
 
 The DiT transformer has a **maximum text sequence length of 1504 tokens**. The config specifies `axes_lens=[1536, 512, 512]` but the actual working limit is 1504 (47 * 32, where 32 is `axes_dims[0]`). This appears to be an off-by-one in RoPE frequency table indexing. Exceeding 1504 causes CUDA kernel crashes.
