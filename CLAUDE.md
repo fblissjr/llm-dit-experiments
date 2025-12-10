@@ -30,6 +30,8 @@ A standalone diffusers-based experimentation platform for LLM-DiT image generati
 | `CHANGELOG.md` | Every feature, fix, or breaking change (semantic versioning) |
 | `README.md` | New user-facing features, quick start examples |
 | `CLAUDE.md` | New directories, CLI flags, architecture changes, technical details |
+| `pyproject.toml` | New dependencies, version bumps (keep version in sync with CHANGELOG) |
+| `config.toml.example` | New configurable parameters (with comments) |
 | `experiments/README.md` | Experiment-related features or tools |
 | `internal/log/LOG_YYYY-MM-DD.md` | Every session (create dated file) |
 | `docs/*.md` | Feature-specific documentation |
@@ -41,7 +43,17 @@ A standalone diffusers-based experimentation platform for LLM-DiT image generati
 4. Update relevant `docs/*.md` or `experiments/README.md`
 5. Create/update `internal/log/LOG_YYYY-MM-DD.md` with session details
 
-**Claude Code instruction:** After completing a feature implementation, always ask "Should I update the documentation?" or proactively update the files listed above.
+**For new configurable parameters (CRITICAL - follow DRY Principles below):**
+1. Add to `config.toml.example` with descriptive comment
+2. Add to Config dataclass in `src/llm_dit/config.py`
+3. Add CLI argument in `src/llm_dit/cli.py` (`create_argument_parser()`)
+4. Add to `RuntimeConfig` in `src/llm_dit/cli.py`
+5. Wire in `load_runtime_config()` (TOML -> RuntimeConfig)
+6. Wire in `src/llm_dit/startup.py` (RuntimeConfig -> Backend configs)
+7. Expose in `web/server.py` and `web/index.html` if user-facing
+8. Run DRY config test: `uv run pytest tests/unit/test_dry_config.py -v`
+
+**Claude Code instruction:** After completing a feature implementation, always ask "Should I update the documentation?" or proactively update the files listed above. For any new parameters, follow the DRY Configuration Principles section and run the automated test.
 
 ## DRY Configuration Principles
 

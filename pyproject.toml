@@ -1,6 +1,6 @@
 [project]
 name = "llm-dit-experiments"
-version = "0.2.0"
+version = "0.5.0"
 description = "LLM-DiT experimentation platform with pluggable backends"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -15,6 +15,7 @@ dependencies = [
     "accelerate",
     "safetensors",
     "pillow",
+    "numpy",  # Used by experiments/compare/diff.py for image difference calculations
     "pyyaml",
     "tomli; python_version < '3.11'",  # TOML config support
     "bitsandbytes; sys_platform != 'darwin'",  # 8-bit quantization (Linux/CUDA only)
