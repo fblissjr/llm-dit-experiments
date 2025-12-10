@@ -156,6 +156,27 @@ uv run scripts/profiler.py --model-path /path/to/z-image-turbo --sweep
 
 See [docs/profiler.md](docs/profiler.md) for detailed documentation.
 
+## Experiments
+
+Run ablation studies and compare results:
+
+```bash
+# Run experiment sweeps
+./experiments/sweep_hidden_layer.sh --quick
+./experiments/sweep_shift_steps.sh --quick
+
+# List experiment results
+uv run experiments/compare.py --list
+
+# Generate comparison grid
+uv run experiments/compare.py -e shift_sweep --mode grid -o grid.png
+
+# Start interactive viewer (port 7861)
+uv run experiments/viewer/server.py
+```
+
+See [experiments/README.md](experiments/README.md) for detailed documentation.
+
 ## Project Structure
 
 ```
@@ -175,6 +196,7 @@ web/
 
 templates/z_image/      # 144 prompt templates
 scripts/                # CLI tools (generate.py, profiler.py)
+experiments/            # Ablation studies, comparison tools, viewer
 tests/                  # Test suite
 ```
 

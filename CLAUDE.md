@@ -19,6 +19,29 @@ A standalone diffusers-based experimentation platform for LLM-DiT image generati
 - **Use `uv`** for all Python operations (`uv add`, `uv run`, `uv sync`)
 - **Never commit** without explicit user approval
 - **Semantic versioning** in CHANGELOG.md (no dates)
+- **Update documentation** after any feature or change (see checklist below)
+
+## Documentation Requirements
+
+**After implementing any feature or significant change, update these files:**
+
+| File | When to Update |
+|------|----------------|
+| `CHANGELOG.md` | Every feature, fix, or breaking change (semantic versioning) |
+| `README.md` | New user-facing features, quick start examples |
+| `CLAUDE.md` | New directories, CLI flags, architecture changes, technical details |
+| `experiments/README.md` | Experiment-related features or tools |
+| `internal/log/LOG_YYYY-MM-DD.md` | Every session (create dated file) |
+| `docs/*.md` | Feature-specific documentation |
+
+**Checklist for new features:**
+1. Add entry to `CHANGELOG.md` under appropriate version
+2. Update `README.md` if user-facing
+3. Update `CLAUDE.md` Directory Structure if new files/directories
+4. Update relevant `docs/*.md` or `experiments/README.md`
+5. Create/update `internal/log/LOG_YYYY-MM-DD.md` with session details
+
+**Claude Code instruction:** After completing a feature implementation, always ask "Should I update the documentation?" or proactively update the files listed above.
 
 ## DRY Configuration Principles
 
@@ -403,6 +426,21 @@ web/
 templates/z_image/      # 140+ prompt templates (markdown + YAML frontmatter)
 config.toml             # Example configuration file
 
+experiments/            # Ablation studies and evaluation tools
+    run_ablation.py     # Automated experiment runner
+    sweep_*.sh          # Priority sweep scripts
+    compare.py          # CLI comparison tool (grids, diffs)
+    compare/            # Comparison module
+        discovery.py    # Auto-discover experiments from results/
+        grid.py         # PIL-based grid generation
+        diff.py         # Image difference calculations
+    viewer/             # Web-based comparison viewer (port 7861)
+        server.py       # FastAPI standalone viewer
+        index.html      # Interactive comparison UI
+    prompts/            # Standard evaluation prompts
+    metrics/            # ImageReward, SigLIP scoring
+    results/            # Generated images and logs
+
 docs/                   # User-facing documentation
     distributed_inference.md  # Running encoder on Mac, DiT on CUDA
     web_server_api.md   # REST API reference
@@ -417,14 +455,14 @@ internal/               # Development and maintainer documentation
         decoupled_dmd_training_report.md
         z_image_*.md    # Model analysis and design docs
     reports/            # End-of-day reports
-    LOG.md              # Detailed session log with all changes
+    log/                # Session logs (dated files)
     SESSION_CONTINUITY.md  # Session state tracking
     GUIDING_PRINCIPLES.md  # Architectural decisions
 ```
 
 ## Living Documentation
 
-- **internal/LOG.md**: Detailed session log with all changes and investigations
+- **internal/log/**: Dated session logs with all changes and investigations
 - **CHANGELOG.md**: Version history (semantic versioning)
 
 ## Configuration
@@ -962,17 +1000,3 @@ rewritten = backend.generate(
 backend = APIBackend.from_url("http://localhost:8000", "qwen3-4b")
 rewritten = backend.generate(...)
 ```
-
-## Related Projects
-
-- **ComfyUI-QwenImageWanBridge**: Source of templates and ComfyUI implementation patterns
-- **DiffSynth-Studio**: Reference implementation for Z-Image pipeline
-- **diffusers**: Base library we build on
-
-## Key Research References
-
-Located in the ComfyUI-QwenImageWanBridge sibling repo under `internal/`:
-- `z_image_paper_analysis/decoupled_dmd_training_report.md` - CFG baking mechanism
-- `z_image_paper_alignment/paper_code_alignment.md` - Implementation alignment
-- `z_image_context_refiner_deep_dive.md` - Context refiner architecture
-- `z_image_paper_alignment/diffusers_port_considerations.md` - Backend considerations

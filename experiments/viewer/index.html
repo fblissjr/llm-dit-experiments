@@ -1,0 +1,659 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Experiment Viewer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Dark theme base */
+        body { background: #1a1a1a; color: #e5e5e5; }
+
+        /* Slider comparison */
+        .slider-container {
+            position: relative;
+            overflow: hidden;
+            cursor: ew-resize;
+        }
+        .slider-container img {
+            display: block;
+            max-width: 100%;
+            user-select: none;
+            pointer-events: none;
+        }
+        .slider-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            height: 100%;
+            overflow: hidden;
+        }
+        .slider-line {
+            position: absolute;
+            top: 0;
+            width: 3px;
+            height: 100%;
+            background: #fff;
+            box-shadow: 0 0 8px rgba(0,0,0,0.5);
+        }
+        .slider-handle {
+            position: absolute;
+            top: 50%;
+            transform: translate(-50%, -50%);
+            width: 40px;
+            height: 40px;
+            background: #fff;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            color: #333;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+        }
+
+        /* Image grid */
+        .image-cell {
+            background: #2a2a2a;
+            border-radius: 8px;
+            overflow: hidden;
+            transition: transform 0.2s;
+        }
+        .image-cell:hover {
+            transform: scale(1.02);
+        }
+        .image-cell img {
+            width: 100%;
+            height: auto;
+            display: block;
+        }
+
+        /* Tabs */
+        .tab-btn {
+            padding: 0.75rem 1.5rem;
+            border-radius: 0.5rem 0.5rem 0 0;
+            transition: all 0.2s;
+        }
+        .tab-btn.active {
+            background: #2a2a2a;
+            color: #60a5fa;
+        }
+        .tab-btn:not(.active):hover {
+            background: #333;
+        }
+
+        /* Select styling */
+        select {
+            background: #2a2a2a;
+            border: 1px solid #444;
+            color: #e5e5e5;
+            padding: 0.5rem;
+            border-radius: 0.375rem;
+        }
+        select:focus {
+            outline: none;
+            border-color: #60a5fa;
+        }
+
+        /* Loading spinner */
+        .spinner {
+            border: 3px solid #333;
+            border-top-color: #60a5fa;
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="min-h-screen p-4">
+    <div class="max-w-7xl mx-auto">
+        <!-- Header -->
+        <header class="mb-6">
+            <h1 class="text-2xl font-bold text-blue-400 mb-2">Experiment Viewer</h1>
+            <p class="text-gray-400 text-sm">Compare Z-Image ablation experiment results</p>
+        </header>
+
+        <!-- Experiment Selector -->
+        <div class="bg-[#2a2a2a] rounded-lg p-4 mb-6">
+            <div class="flex flex-wrap gap-4 items-end">
+                <div class="flex-1 min-w-[200px]">
+                    <label class="block text-sm text-gray-400 mb-1">Experiment</label>
+                    <select id="experiment-select" class="w-full">
+                        <option value="">Loading experiments...</option>
+                    </select>
+                </div>
+                <div class="min-w-[150px]">
+                    <label class="block text-sm text-gray-400 mb-1">Seed</label>
+                    <select id="seed-select" class="w-full">
+                        <option value="">All seeds</option>
+                    </select>
+                </div>
+                <button onclick="refreshExperiments()" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded text-white text-sm">
+                    Refresh
+                </button>
+            </div>
+            <div id="experiment-info" class="mt-3 text-sm text-gray-400 hidden">
+                <!-- Experiment info displayed here -->
+            </div>
+        </div>
+
+        <!-- Tabs -->
+        <div class="flex gap-1 mb-0">
+            <button class="tab-btn active" data-tab="grid">Grid View</button>
+            <button class="tab-btn" data-tab="slider">Slider</button>
+            <button class="tab-btn" data-tab="toggle">A/B Toggle</button>
+            <button class="tab-btn" data-tab="diff">Diff Overlay</button>
+        </div>
+
+        <!-- Tab Content -->
+        <div class="bg-[#2a2a2a] rounded-lg rounded-tl-none p-4">
+            <!-- Grid View -->
+            <div id="tab-grid" class="tab-content">
+                <div class="flex gap-4 mb-4 flex-wrap">
+                    <div>
+                        <label class="block text-sm text-gray-400 mb-1">Thumbnail Size</label>
+                        <select id="grid-thumb-size" class="w-32">
+                            <option value="128">128px</option>
+                            <option value="192">192px</option>
+                            <option value="256" selected>256px</option>
+                            <option value="384">384px</option>
+                            <option value="512">512px</option>
+                        </select>
+                    </div>
+                    <div class="flex items-end">
+                        <button onclick="generateGrid()" class="px-4 py-2 bg-green-600 hover:bg-green-700 rounded text-white text-sm">
+                            Generate Grid
+                        </button>
+                    </div>
+                </div>
+                <div id="grid-container" class="flex justify-center">
+                    <p class="text-gray-500">Select an experiment and click "Generate Grid"</p>
+                </div>
+            </div>
+
+            <!-- Slider View -->
+            <div id="tab-slider" class="tab-content hidden">
+                <div class="flex gap-4 mb-4 flex-wrap">
+                    <div class="flex-1 min-w-[150px]">
+                        <label class="block text-sm text-gray-400 mb-1">Prompt</label>
+                        <select id="slider-prompt" class="w-full"></select>
+                    </div>
+                    <div class="flex-1 min-w-[150px]">
+                        <label class="block text-sm text-gray-400 mb-1">Value A (Left)</label>
+                        <select id="slider-value-a" class="w-full"></select>
+                    </div>
+                    <div class="flex-1 min-w-[150px]">
+                        <label class="block text-sm text-gray-400 mb-1">Value B (Right)</label>
+                        <select id="slider-value-b" class="w-full"></select>
+                    </div>
+                    <div class="flex items-end">
+                        <button onclick="loadSlider()" class="px-4 py-2 bg-green-600 hover:bg-green-700 rounded text-white text-sm">
+                            Compare
+                        </button>
+                    </div>
+                </div>
+                <div id="slider-container" class="flex justify-center">
+                    <p class="text-gray-500">Select prompt and values to compare</p>
+                </div>
+            </div>
+
+            <!-- Toggle View -->
+            <div id="tab-toggle" class="tab-content hidden">
+                <div class="flex gap-4 mb-4 flex-wrap">
+                    <div class="flex-1 min-w-[150px]">
+                        <label class="block text-sm text-gray-400 mb-1">Prompt</label>
+                        <select id="toggle-prompt" class="w-full"></select>
+                    </div>
+                    <div class="flex-1 min-w-[150px]">
+                        <label class="block text-sm text-gray-400 mb-1">Value A</label>
+                        <select id="toggle-value-a" class="w-full"></select>
+                    </div>
+                    <div class="flex-1 min-w-[150px]">
+                        <label class="block text-sm text-gray-400 mb-1">Value B</label>
+                        <select id="toggle-value-b" class="w-full"></select>
+                    </div>
+                    <div class="flex items-end">
+                        <button onclick="loadToggle()" class="px-4 py-2 bg-green-600 hover:bg-green-700 rounded text-white text-sm">
+                            Load
+                        </button>
+                    </div>
+                </div>
+                <div id="toggle-container" class="flex flex-col items-center">
+                    <p class="text-gray-500 mb-4">Select prompt and values, then click to toggle</p>
+                    <div id="toggle-image-container" class="hidden cursor-pointer" onclick="toggleImage()">
+                        <img id="toggle-image" class="max-w-full rounded-lg" />
+                        <p id="toggle-label" class="text-center mt-2 text-blue-400 font-medium"></p>
+                    </div>
+                    <p id="toggle-hint" class="text-gray-500 text-sm mt-2 hidden">Click image to toggle between A and B</p>
+                </div>
+            </div>
+
+            <!-- Diff View -->
+            <div id="tab-diff" class="tab-content hidden">
+                <div class="flex gap-4 mb-4 flex-wrap">
+                    <div class="flex-1 min-w-[150px]">
+                        <label class="block text-sm text-gray-400 mb-1">Prompt</label>
+                        <select id="diff-prompt" class="w-full"></select>
+                    </div>
+                    <div class="flex-1 min-w-[150px]">
+                        <label class="block text-sm text-gray-400 mb-1">Value A</label>
+                        <select id="diff-value-a" class="w-full"></select>
+                    </div>
+                    <div class="flex-1 min-w-[150px]">
+                        <label class="block text-sm text-gray-400 mb-1">Value B</label>
+                        <select id="diff-value-b" class="w-full"></select>
+                    </div>
+                    <div class="min-w-[120px]">
+                        <label class="block text-sm text-gray-400 mb-1">Diff Mode</label>
+                        <select id="diff-mode" class="w-full">
+                            <option value="highlight">Highlight</option>
+                            <option value="absolute">Absolute</option>
+                            <option value="heatmap">Heatmap</option>
+                        </select>
+                    </div>
+                    <div class="flex items-end">
+                        <button onclick="loadDiff()" class="px-4 py-2 bg-green-600 hover:bg-green-700 rounded text-white text-sm">
+                            Show Diff
+                        </button>
+                    </div>
+                </div>
+                <div id="diff-container" class="flex justify-center">
+                    <p class="text-gray-500">Select prompt and values to show differences</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Loading overlay -->
+        <div id="loading" class="fixed inset-0 bg-black/50 flex items-center justify-center hidden z-50">
+            <div class="bg-[#2a2a2a] rounded-lg p-6 flex items-center gap-3">
+                <div class="spinner"></div>
+                <span>Loading...</span>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // State
+        let currentExperiment = null;
+        let experiments = [];
+        let toggleState = 'a';
+        let toggleImages = { a: null, b: null };
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            loadExperiments();
+            setupTabs();
+        });
+
+        // Tab switching
+        function setupTabs() {
+            document.querySelectorAll('.tab-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+                    btn.classList.add('active');
+
+                    document.querySelectorAll('.tab-content').forEach(c => c.classList.add('hidden'));
+                    document.getElementById('tab-' + btn.dataset.tab).classList.remove('hidden');
+                });
+            });
+        }
+
+        // Load experiments
+        async function loadExperiments() {
+            try {
+                const res = await fetch('/api/experiments');
+                const data = await res.json();
+                experiments = data.experiments;
+
+                const select = document.getElementById('experiment-select');
+                select.innerHTML = '<option value="">Select an experiment...</option>';
+                experiments.forEach(exp => {
+                    const opt = document.createElement('option');
+                    opt.value = exp.name;
+                    opt.textContent = `${exp.name} (${exp.image_count} images)`;
+                    select.appendChild(opt);
+                });
+
+                select.addEventListener('change', onExperimentChange);
+            } catch (err) {
+                console.error('Failed to load experiments:', err);
+                document.getElementById('experiment-select').innerHTML =
+                    '<option value="">Error loading experiments</option>';
+            }
+        }
+
+        async function refreshExperiments() {
+            const res = await fetch('/api/experiments?refresh=true');
+            const data = await res.json();
+            experiments = data.experiments;
+
+            const select = document.getElementById('experiment-select');
+            const currentValue = select.value;
+            select.innerHTML = '<option value="">Select an experiment...</option>';
+            experiments.forEach(exp => {
+                const opt = document.createElement('option');
+                opt.value = exp.name;
+                opt.textContent = `${exp.name} (${exp.image_count} images)`;
+                select.appendChild(opt);
+            });
+
+            if (currentValue) {
+                select.value = currentValue;
+            }
+        }
+
+        async function onExperimentChange() {
+            const name = document.getElementById('experiment-select').value;
+            if (!name) {
+                currentExperiment = null;
+                return;
+            }
+
+            showLoading();
+            try {
+                const res = await fetch(`/api/experiments/${name}`);
+                currentExperiment = await res.json();
+                updateSelectors();
+                showExperimentInfo();
+            } catch (err) {
+                console.error('Failed to load experiment:', err);
+            }
+            hideLoading();
+        }
+
+        function showExperimentInfo() {
+            if (!currentExperiment) return;
+            const info = document.getElementById('experiment-info');
+            info.classList.remove('hidden');
+            info.innerHTML = `
+                <span class="mr-4"><strong>Variable:</strong> ${currentExperiment.variable_name}</span>
+                <span class="mr-4"><strong>Prompts:</strong> ${currentExperiment.prompts.length}</span>
+                <span class="mr-4"><strong>Values:</strong> ${currentExperiment.variables.length}</span>
+                <span><strong>Seeds:</strong> ${currentExperiment.seeds.join(', ')}</span>
+            `;
+        }
+
+        function updateSelectors() {
+            if (!currentExperiment) return;
+
+            // Update seed selector
+            const seedSelect = document.getElementById('seed-select');
+            seedSelect.innerHTML = '';
+            currentExperiment.seeds.forEach(seed => {
+                const opt = document.createElement('option');
+                opt.value = seed;
+                opt.textContent = `Seed ${seed}`;
+                seedSelect.appendChild(opt);
+            });
+
+            // Update prompt selectors
+            ['slider', 'toggle', 'diff'].forEach(prefix => {
+                const select = document.getElementById(`${prefix}-prompt`);
+                select.innerHTML = '';
+                currentExperiment.prompts.forEach(p => {
+                    const opt = document.createElement('option');
+                    opt.value = p;
+                    opt.textContent = p;
+                    select.appendChild(opt);
+                });
+            });
+
+            // Update value selectors
+            ['slider', 'toggle', 'diff'].forEach(prefix => {
+                ['a', 'b'].forEach(suffix => {
+                    const select = document.getElementById(`${prefix}-value-${suffix}`);
+                    select.innerHTML = '';
+                    currentExperiment.variables.forEach((v, i) => {
+                        const opt = document.createElement('option');
+                        opt.value = v;
+                        opt.textContent = v === '' ? '""' : v;
+                        if (suffix === 'a' && i === 0) opt.selected = true;
+                        if (suffix === 'b' && i === 1) opt.selected = true;
+                        select.appendChild(opt);
+                    });
+                });
+            });
+        }
+
+        // Grid generation
+        async function generateGrid() {
+            if (!currentExperiment) {
+                alert('Please select an experiment first');
+                return;
+            }
+
+            const thumbSize = parseInt(document.getElementById('grid-thumb-size').value);
+            const seed = parseInt(document.getElementById('seed-select').value) || null;
+
+            showLoading();
+            try {
+                const res = await fetch('/api/grid', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        experiment: currentExperiment.name,
+                        seed: seed,
+                        thumbnail_size: thumbSize,
+                        show_metrics: true,
+                    }),
+                });
+
+                if (!res.ok) throw new Error('Failed to generate grid');
+
+                const blob = await res.blob();
+                const url = URL.createObjectURL(blob);
+
+                document.getElementById('grid-container').innerHTML = `
+                    <img src="${url}" class="max-w-full rounded-lg" />
+                `;
+            } catch (err) {
+                console.error('Failed to generate grid:', err);
+                document.getElementById('grid-container').innerHTML =
+                    '<p class="text-red-500">Failed to generate grid</p>';
+            }
+            hideLoading();
+        }
+
+        // Slider comparison
+        async function loadSlider() {
+            if (!currentExperiment) {
+                alert('Please select an experiment first');
+                return;
+            }
+
+            const prompt = document.getElementById('slider-prompt').value;
+            const valueA = document.getElementById('slider-value-a').value;
+            const valueB = document.getElementById('slider-value-b').value;
+            const seed = parseInt(document.getElementById('seed-select').value);
+
+            if (valueA === valueB) {
+                alert('Please select different values for A and B');
+                return;
+            }
+
+            // Find images
+            const imgA = currentExperiment.images.find(
+                i => i.prompt_id === prompt && i.variable_value === valueA && i.seed === seed
+            );
+            const imgB = currentExperiment.images.find(
+                i => i.prompt_id === prompt && i.variable_value === valueB && i.seed === seed
+            );
+
+            if (!imgA || !imgB) {
+                alert('Could not find images for selected combination');
+                return;
+            }
+
+            const urlA = `/api/image/${currentExperiment.name}/${imgA.filename}`;
+            const urlB = `/api/image/${currentExperiment.name}/${imgB.filename}`;
+
+            // Create slider
+            const container = document.getElementById('slider-container');
+            container.innerHTML = `
+                <div class="slider-container" id="slider-wrapper" style="width: fit-content; max-width: 100%;">
+                    <img src="${urlB}" id="slider-img-b" />
+                    <div class="slider-overlay" id="slider-overlay">
+                        <img src="${urlA}" id="slider-img-a" />
+                    </div>
+                    <div class="slider-line" id="slider-line">
+                        <div class="slider-handle">&lt;&gt;</div>
+                    </div>
+                </div>
+                <div class="flex justify-between mt-2 text-sm text-gray-400 w-full max-w-2xl">
+                    <span>${valueA === '' ? '""' : valueA}</span>
+                    <span>${valueB === '' ? '""' : valueB}</span>
+                </div>
+            `;
+
+            // Setup slider interaction
+            const wrapper = document.getElementById('slider-wrapper');
+            const overlay = document.getElementById('slider-overlay');
+            const line = document.getElementById('slider-line');
+
+            function updateSlider(x) {
+                const rect = wrapper.getBoundingClientRect();
+                const percent = Math.max(0, Math.min(100, (x - rect.left) / rect.width * 100));
+                overlay.style.width = percent + '%';
+                line.style.left = percent + '%';
+            }
+
+            let isDragging = false;
+            wrapper.addEventListener('mousedown', (e) => {
+                isDragging = true;
+                updateSlider(e.clientX);
+            });
+            document.addEventListener('mousemove', (e) => {
+                if (isDragging) updateSlider(e.clientX);
+            });
+            document.addEventListener('mouseup', () => isDragging = false);
+
+            wrapper.addEventListener('touchstart', (e) => {
+                isDragging = true;
+                updateSlider(e.touches[0].clientX);
+            });
+            document.addEventListener('touchmove', (e) => {
+                if (isDragging) updateSlider(e.touches[0].clientX);
+            });
+            document.addEventListener('touchend', () => isDragging = false);
+
+            // Set initial position to 50%
+            setTimeout(() => {
+                const rect = wrapper.getBoundingClientRect();
+                updateSlider(rect.left + rect.width / 2);
+            }, 100);
+        }
+
+        // Toggle comparison
+        async function loadToggle() {
+            if (!currentExperiment) {
+                alert('Please select an experiment first');
+                return;
+            }
+
+            const prompt = document.getElementById('toggle-prompt').value;
+            const valueA = document.getElementById('toggle-value-a').value;
+            const valueB = document.getElementById('toggle-value-b').value;
+            const seed = parseInt(document.getElementById('seed-select').value);
+
+            const imgA = currentExperiment.images.find(
+                i => i.prompt_id === prompt && i.variable_value === valueA && i.seed === seed
+            );
+            const imgB = currentExperiment.images.find(
+                i => i.prompt_id === prompt && i.variable_value === valueB && i.seed === seed
+            );
+
+            if (!imgA || !imgB) {
+                alert('Could not find images for selected combination');
+                return;
+            }
+
+            toggleImages.a = {
+                url: `/api/image/${currentExperiment.name}/${imgA.filename}`,
+                label: valueA === '' ? '""' : valueA
+            };
+            toggleImages.b = {
+                url: `/api/image/${currentExperiment.name}/${imgB.filename}`,
+                label: valueB === '' ? '""' : valueB
+            };
+
+            toggleState = 'a';
+            document.getElementById('toggle-image').src = toggleImages.a.url;
+            document.getElementById('toggle-label').textContent = `Showing: ${toggleImages.a.label}`;
+            document.getElementById('toggle-image-container').classList.remove('hidden');
+            document.getElementById('toggle-hint').classList.remove('hidden');
+            document.querySelector('#toggle-container > p').classList.add('hidden');
+        }
+
+        function toggleImage() {
+            toggleState = toggleState === 'a' ? 'b' : 'a';
+            const img = toggleImages[toggleState];
+            document.getElementById('toggle-image').src = img.url;
+            document.getElementById('toggle-label').textContent = `Showing: ${img.label}`;
+        }
+
+        // Diff comparison
+        async function loadDiff() {
+            if (!currentExperiment) {
+                alert('Please select an experiment first');
+                return;
+            }
+
+            const prompt = document.getElementById('diff-prompt').value;
+            const valueA = document.getElementById('diff-value-a').value;
+            const valueB = document.getElementById('diff-value-b').value;
+            const mode = document.getElementById('diff-mode').value;
+            const seed = parseInt(document.getElementById('seed-select').value);
+
+            showLoading();
+            try {
+                const res = await fetch('/api/diff', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        experiment: currentExperiment.name,
+                        prompt_id: prompt,
+                        value_a: valueA,
+                        value_b: valueB,
+                        seed: seed,
+                        mode: mode,
+                    }),
+                });
+
+                if (!res.ok) {
+                    const err = await res.json();
+                    throw new Error(err.detail || 'Failed to generate diff');
+                }
+
+                const blob = await res.blob();
+                const url = URL.createObjectURL(blob);
+
+                document.getElementById('diff-container').innerHTML = `
+                    <div class="text-center">
+                        <img src="${url}" class="max-w-full rounded-lg mb-2" />
+                        <p class="text-sm text-gray-400">
+                            ${mode} diff: "${valueA === '' ? '""' : valueA}" vs "${valueB === '' ? '""' : valueB}"
+                        </p>
+                    </div>
+                `;
+            } catch (err) {
+                console.error('Failed to generate diff:', err);
+                document.getElementById('diff-container').innerHTML =
+                    `<p class="text-red-500">${err.message}</p>`;
+            }
+            hideLoading();
+        }
+
+        // Utilities
+        function showLoading() {
+            document.getElementById('loading').classList.remove('hidden');
+        }
+        function hideLoading() {
+            document.getElementById('loading').classList.add('hidden');
+        }
+    </script>
+</body>
+</html>

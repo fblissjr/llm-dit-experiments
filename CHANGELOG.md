@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0]
+
+### Added
+- Experiment comparison tools for visual analysis of ablation studies
+  - CLI tool (`experiments/compare.py`) for generating comparison images
+    - `--list` to discover experiments from `results/`
+    - `--mode grid` generates NxM grid (prompts x variable values)
+    - `--mode side-by-side` for horizontal pair comparison
+    - `--mode diff` for pixel difference visualization (highlight/absolute/heatmap)
+  - Comparison module (`experiments/compare/`) with reusable components
+    - `discovery.py` - Auto-discover experiments from timestamped directories
+    - `grid.py` - PIL-based grid generation with metric overlays
+    - `diff.py` - Image difference calculations (3 visualization modes)
+    - `models.py` - `ExperimentImage`, `ExperimentRun`, `ComparisonSpec` dataclasses
+  - Web viewer (`experiments/viewer/`) on port 7861
+    - Standalone FastAPI server (no model loading)
+    - Grid View - NxM thumbnail grid
+    - Slider - Draggable divider between two images
+    - A/B Toggle - Click to swap between images
+    - Diff Overlay - Interactive pixel difference visualization
+
+### Changed
+- Documentation structure updated
+  - `experiments/README.md` now includes comparison tools section
+  - `CLAUDE.md` Directory Structure includes `experiments/` tree
+  - `README.md` includes Experiments quick start section
+  - `internal/log/` replaces `internal/LOG.md` (dated log files)
+
 ## [0.4.0]
 
 ### Added

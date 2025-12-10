@@ -138,6 +138,87 @@ results/shift_sweep/
 - Optional metrics (ImageReward, SigLIP)
 - Output file paths
 
+## Comparison Tools
+
+After running experiments, use the comparison tools to analyze results visually.
+
+### CLI Comparison (compare.py)
+
+```bash
+# List all experiments
+uv run experiments/compare.py --list
+
+# Show experiment details
+uv run experiments/compare.py -e shift_sweep --info
+
+# Generate grid (prompts x variable values)
+uv run experiments/compare.py -e shift_sweep --mode grid -o grid.png
+
+# Side-by-side comparison
+uv run experiments/compare.py -e hidden_layer --mode side-by-side \
+    --values '-1,-2' --prompt animal_001
+
+# Diff overlay (highlight/absolute/heatmap)
+uv run experiments/compare.py -e think_block --mode diff \
+    --values ',None' --prompt animal_001 --diff-mode highlight
+```
+
+### Comparison Modes
+
+| Mode | Description | Output |
+|------|-------------|--------|
+| `grid` | NxM grid of prompts x variable values | Single composite image |
+| `side-by-side` | Two images placed horizontally | Single composite image |
+| `diff` | Pixel difference overlay | Highlight/absolute/heatmap visualization |
+
+### CLI Options
+
+```bash
+# Required
+-e, --experiment EXPERIMENT   # Experiment name
+
+# Modes
+--mode MODE                   # grid, side-by-side, diff
+--list                        # List available experiments
+--info                        # Show experiment details
+
+# Filtering
+--prompt PROMPT               # Filter to specific prompt ID
+--values VALUES               # Comma-separated variable values
+--seed SEED                   # Filter to specific seed
+
+# Output
+-o, --output FILE             # Output image path
+
+# Diff options
+--diff-mode MODE              # highlight (default), absolute, heatmap
+```
+
+### Web Viewer (Interactive)
+
+The web viewer provides interactive comparison with 4 visualization modes:
+
+```bash
+# Start viewer on port 7861
+uv run experiments/viewer/server.py
+
+# Open http://localhost:7861
+```
+
+**Features:**
+- Auto-discovers experiments from `experiments/results/`
+- Grid View - NxM grid of prompts x variable values
+- Slider - Draggable divider between two images
+- A/B Toggle - Click to swap between images
+- Diff Overlay - Highlight/absolute/heatmap pixel differences
+
+**Typical workflow:**
+1. Run experiments using sweep scripts
+2. Start web viewer to browse results
+3. Use grid view to get overview of all variations
+4. Use slider/A/B toggle for detailed pairwise comparison
+5. Use diff overlay to identify pixel-level changes
+
 ## Standard Prompts
 
 Standard evaluation prompts are located in `experiments/prompts/`:
