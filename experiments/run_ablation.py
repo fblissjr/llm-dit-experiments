@@ -304,6 +304,50 @@ EXPERIMENTS = {
         ],
         "defaults": {"shift": 3.0, "steps": 9},
     },
+    # =========================================================================
+    # VISION CONDITIONING EXPERIMENTS (Qwen3-VL)
+    # =========================================================================
+    "vl_token_selection": {
+        "description": "Compare VL token selection modes (which tokens to use from VL sequence)",
+        "variable": "vl_token_selection",
+        "values": [
+            "all",  # Full sequence (image + text markers + text)
+            "image_only",  # Image tokens including markers
+            "image_only_no_markers",  # Image tokens without special markers
+            "text_only",  # Text tokens only (no image)
+        ],
+        "defaults": {"shift": 3.0, "steps": 9, "vl_alpha": 1.0},  # Pure VL for comparison
+    },
+    "vl_pure": {
+        "description": "Pure VL conditioning (alpha=1.0) with different token selections",
+        "variable": "vl_token_selection",
+        "values": ["all", "image_only_no_markers"],  # Most promising modes
+        "defaults": {"shift": 3.0, "steps": 9, "vl_alpha": 1.0},
+    },
+    "vl_alpha_sweep": {
+        "description": "Sweep alpha blend ratio (VL vs text influence)",
+        "variable": "vl_alpha",
+        "values": [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
+        "defaults": {"shift": 3.0, "steps": 9, "vl_token_selection": "all"},
+    },
+    "vl_alpha_coarse": {
+        "description": "Coarse alpha sweep for quick exploration",
+        "variable": "vl_alpha",
+        "values": [0.0, 0.25, 0.5, 0.75, 1.0],
+        "defaults": {"shift": 3.0, "steps": 9, "vl_token_selection": "all"},
+    },
+    "vl_hidden_layer": {
+        "description": "Test different hidden layers for VL extraction",
+        "variable": "vl_hidden_layer",
+        "values": [-1, -2, -5, -10, -15, -19],  # Sample across VL model depth
+        "defaults": {"shift": 3.0, "steps": 9, "vl_alpha": 1.0, "vl_token_selection": "all"},
+    },
+    "vl_blend_with_text_layers": {
+        "description": "VL conditioning (alpha=0.5) with text layer sweep",
+        "variable": "hidden_layer",
+        "values": [-1, -2, -5, -10, -15, -19],
+        "defaults": {"shift": 3.0, "steps": 9, "vl_alpha": 0.5, "vl_token_selection": "all"},
+    },
 }
 
 
@@ -330,6 +374,11 @@ class ExperimentConfig:
     system_prompt: str | None = None
     thinking_content: str | None = None
     force_think_block: bool = True  # DiffSynth always uses empty think block
+    # VL conditioning params
+    vl_image_path: str | None = None  # Reference image for VL conditioning
+    vl_alpha: float = 0.0  # Blend ratio (0.0 = pure text, 1.0 = pure VL)
+    vl_token_selection: str = "all"  # "all", "image_only", "image_only_no_markers", "text_only"
+    vl_hidden_layer: int = -2  # Hidden layer to extract from VL model
     # Metadata
     timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
 
@@ -359,6 +408,8 @@ class ExperimentRunner:
         vae_device: str = "cuda",
         dry_run: bool = False,
         compute_metrics: bool = False,
+        vl_model_path: str | None = None,
+        vl_image_path: str | None = None,
     ):
         self.model_path = model_path
         self.output_dir = Path(output_dir)
@@ -368,6 +419,12 @@ class ExperimentRunner:
         self.dry_run = dry_run
         self.compute_metrics = compute_metrics
         self.pipeline = None
+
+        # VL conditioning support
+        self.vl_model_path = vl_model_path
+        self.vl_image_path = vl_image_path
+        self.vl_extractor = None
+        self.vl_image = None
 
         # Create output directories
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -396,6 +453,118 @@ class ExperimentRunner:
         )
         logger.info("Pipeline loaded successfully")
 
+    def load_vl_extractor(self):
+        """Load Qwen3-VL model for vision conditioning."""
+        if self.dry_run:
+            logger.info("[DRY RUN] Would load VL extractor from %s", self.vl_model_path)
+            return
+
+        if self.vl_extractor is not None:
+            return
+
+        if not self.vl_model_path:
+            # Try to auto-detect
+            from llm_dit.vl.qwen3_vl import VLEmbeddingExtractor
+
+            vl_path = VLEmbeddingExtractor.find_model_path()
+            if not vl_path:
+                raise ValueError(
+                    "VL model path not provided and auto-detection failed. "
+                    "Use --vl-model-path to specify Qwen3-VL model location."
+                )
+            self.vl_model_path = vl_path
+
+        logger.info("Loading VL extractor from %s", self.vl_model_path)
+
+        from llm_dit.vl.qwen3_vl import VLEmbeddingExtractor
+
+        # Use same device as text encoder for consistency
+        device = self.text_encoder_device if self.text_encoder_device != "auto" else "cuda"
+        self.vl_extractor = VLEmbeddingExtractor.from_pretrained(
+            self.vl_model_path,
+            device=device,
+            torch_dtype=torch.bfloat16,
+        )
+        logger.info("VL extractor loaded successfully")
+
+    def load_vl_image(self):
+        """Load reference image for VL conditioning."""
+        if self.dry_run:
+            logger.info("[DRY RUN] Would load VL image from %s", self.vl_image_path)
+            return
+
+        if self.vl_image is not None:
+            return
+
+        if not self.vl_image_path:
+            raise ValueError("VL image path not provided. Use --vl-image to specify reference image.")
+
+        from PIL import Image
+
+        logger.info("Loading VL reference image from %s", self.vl_image_path)
+        self.vl_image = Image.open(self.vl_image_path).convert("RGB")
+        logger.info("VL image loaded: %s", self.vl_image.size)
+
+    def unload_vl_extractor(self):
+        """Unload VL extractor to free VRAM before loading pipeline."""
+        if self.vl_extractor is not None:
+            logger.info("Unloading VL extractor to free VRAM...")
+            self.vl_extractor.unload()
+            self.vl_extractor = None
+
+            import gc
+
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+                allocated = torch.cuda.memory_allocated() / 1e9
+                logger.info(f"GPU memory after VL unload: {allocated:.2f} GB")
+
+    def _extract_vl_embeddings(self, config: ExperimentConfig) -> torch.Tensor:
+        """Extract VL embeddings for conditioning."""
+        # Load VL components if needed
+        self.load_vl_extractor()
+        self.load_vl_image()
+
+        # Use config's vl_image_path if provided, otherwise use runner's default
+        image_path = config.vl_image_path or self.vl_image_path
+        if image_path and image_path != self.vl_image_path:
+            # Config specifies a different image - load it
+            from PIL import Image
+
+            image = Image.open(image_path).convert("RGB")
+        else:
+            image = self.vl_image
+
+        # Extract embeddings based on token selection mode
+        kwargs = {
+            "image": image,
+            "text": config.prompt_text,  # Include text in VL input
+            "hidden_layer": config.vl_hidden_layer,
+            "scale_to_text": True,  # Scale to match text statistics
+        }
+
+        # Map token selection mode to extractor parameters
+        if config.vl_token_selection == "image_only":
+            kwargs["image_tokens_only"] = True
+        elif config.vl_token_selection == "image_only_no_markers":
+            kwargs["image_tokens_no_markers"] = True
+        elif config.vl_token_selection == "text_only":
+            kwargs["text_tokens_only"] = True
+        # else: "all" - use all tokens (default)
+
+        result = self.vl_extractor.extract(**kwargs)
+
+        logger.debug(
+            f"VL extraction: {result.num_tokens} tokens, "
+            f"layer={result.hidden_layer}, "
+            f"selection={result.token_selection}, "
+            f"std={result.scaled_std:.2f}"
+        )
+
+        return result.embeddings
+
     def run_single(self, config: ExperimentConfig) -> ExperimentResult:
         """Run a single experiment configuration."""
         # Build output filename
@@ -421,21 +590,26 @@ class ExperimentRunner:
                 token_count=None,
             )
 
+        # Handle VL conditioning if needed
+        vl_embeddings = None
+        if config.vl_alpha > 0.0 or config.vl_image_path:
+            vl_embeddings = self._extract_vl_embeddings(config)
+
         self.load_pipeline()
 
         logger.info(
-            "Generating: %s=%s, seed=%d, prompt=%s",
+            "Generating: %s=%s, seed=%d, prompt=%s%s",
             config.variable_name,
             config.variable_value,
             config.seed,
             config.prompt_text[:50] + "...",
+            f" (VL alpha={config.vl_alpha})" if config.vl_alpha > 0.0 else "",
         )
 
         start_time = time.time()
         try:
             # Prepare generation kwargs
             gen_kwargs = {
-                "prompt": config.prompt_text,
                 "width": config.width,
                 "height": config.height,
                 "num_inference_steps": config.steps,
@@ -444,29 +618,95 @@ class ExperimentRunner:
                 "generator": torch.Generator().manual_seed(config.seed),
             }
 
-            # Add optional params
-            if config.system_prompt:
-                gen_kwargs["system_prompt"] = config.system_prompt
-
-            # Handle thinking content and force_think_block
-            if config.thinking_content is not None:
-                if config.thinking_content == "":
-                    # Empty string means force empty think block
-                    gen_kwargs["force_think_block"] = True
+            # If we have VL embeddings, blend with text or use pure VL
+            if vl_embeddings is not None:
+                if config.vl_alpha == 1.0:
+                    # Pure VL conditioning - skip text encoding
+                    gen_kwargs["prompt_embeds"] = vl_embeddings
+                    logger.debug("Using pure VL embeddings (alpha=1.0)")
                 else:
-                    # Non-empty thinking content
-                    gen_kwargs["thinking_content"] = config.thinking_content
+                    # Blend VL with text embeddings
+                    # Determine force_think_block setting
+                    if config.thinking_content is not None:
+                        if config.thinking_content == "":
+                            force_think = True
+                            thinking = None
+                        else:
+                            force_think = False
+                            thinking = config.thinking_content
+                    else:
+                        force_think = config.force_think_block
+                        thinking = None
+
+                    # Get text embeddings from encoder
+                    if config.layer_weights is not None:
+                        # Use blended encoding
+                        text_result = self.pipeline.encoder.encode_blended(
+                            prompt=config.prompt_text,
+                            layer_weights=config.layer_weights,
+                            system_prompt=config.system_prompt,
+                            thinking_content=thinking,
+                            force_think_block=force_think,
+                        )
+                    else:
+                        # Use standard encoding with hidden_layer
+                        text_result = self.pipeline.encoder.encode(
+                            prompt=config.prompt_text,
+                            system_prompt=config.system_prompt,
+                            thinking_content=thinking,
+                            force_think_block=force_think,
+                            layer_index=config.hidden_layer,
+                        )
+
+                    text_embeddings = text_result.embeddings[0]  # Get first batch item
+
+                    # Handle long prompt compression
+                    from llm_dit import MAX_TEXT_SEQ_LEN
+                    from llm_dit.utils.long_prompt import compress_embeddings
+
+                    if text_embeddings.shape[0] > MAX_TEXT_SEQ_LEN:
+                        text_embeddings = compress_embeddings(
+                            text_embeddings, MAX_TEXT_SEQ_LEN, mode=config.long_prompt_mode
+                        )
+
+                    # Blend embeddings
+                    from llm_dit.vl.blending import blend_embeddings
+
+                    blended = blend_embeddings(
+                        vl_emb=vl_embeddings,
+                        text_emb=text_embeddings,
+                        alpha=config.vl_alpha,
+                        match_lengths=True,
+                    )
+
+                    # Use blended embeddings
+                    gen_kwargs["prompt_embeds"] = blended
+
+                    logger.debug(
+                        f"Blended VL (alpha={config.vl_alpha}): "
+                        f"VL {vl_embeddings.shape} + text {text_embeddings.shape} -> {blended.shape}"
+                    )
             else:
-                # No thinking_content provided, use config default (True for DiffSynth compat)
-                gen_kwargs["force_think_block"] = config.force_think_block
+                # Pure text conditioning (no VL)
+                gen_kwargs["prompt"] = config.prompt_text
 
-            # Add hidden_layer and long_prompt_mode
-            gen_kwargs["hidden_layer"] = config.hidden_layer
-            gen_kwargs["long_prompt_mode"] = config.long_prompt_mode
+                if config.system_prompt:
+                    gen_kwargs["system_prompt"] = config.system_prompt
 
-            # Add layer_weights for blending experiments
-            if config.layer_weights is not None:
-                gen_kwargs["layer_weights"] = config.layer_weights
+                # Handle thinking content and force_think_block
+                if config.thinking_content is not None:
+                    if config.thinking_content == "":
+                        gen_kwargs["force_think_block"] = True
+                    else:
+                        gen_kwargs["thinking_content"] = config.thinking_content
+                else:
+                    gen_kwargs["force_think_block"] = config.force_think_block
+
+                gen_kwargs["hidden_layer"] = config.hidden_layer
+                gen_kwargs["long_prompt_mode"] = config.long_prompt_mode
+
+                if config.layer_weights is not None:
+                    gen_kwargs["layer_weights"] = config.layer_weights
 
             # Generate
             result = self.pipeline(**gen_kwargs)
@@ -708,6 +948,12 @@ class ExperimentRunner:
                         config.long_prompt_mode = value
                     elif variable == "layer_weights":
                         config.layer_weights = value
+                    elif variable == "vl_alpha":
+                        config.vl_alpha = value
+                    elif variable == "vl_token_selection":
+                        config.vl_token_selection = value
+                    elif variable == "vl_hidden_layer":
+                        config.vl_hidden_layer = value
 
                     configs.append(config)
 
@@ -848,12 +1094,21 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Available experiments:
-  shift_sweep       Sweep shift parameter (1.0-6.0)
-  shift_steps_grid  Grid search over shift and steps
-  hidden_layer      Compare hidden layer extraction points (-1 to -6)
-  think_block       Test impact of think block content
-  system_prompt     Test impact of system prompts
-  steps_only        Test different step counts
+  Text-only experiments:
+    shift_sweep       Sweep shift parameter (1.0-6.0)
+    shift_steps_grid  Grid search over shift and steps
+    hidden_layer      Compare hidden layer extraction points (-1 to -6)
+    think_block       Test impact of think block content
+    system_prompt     Test impact of system prompts
+    steps_only        Test different step counts
+
+  VL conditioning experiments:
+    vl_token_selection      Compare VL token selection modes
+    vl_pure                 Pure VL conditioning (alpha=1.0)
+    vl_alpha_sweep          Sweep alpha blend ratio (0.0-1.0)
+    vl_alpha_coarse         Coarse alpha sweep (0.0, 0.25, 0.5, 0.75, 1.0)
+    vl_hidden_layer         Test VL extraction layers
+    vl_blend_with_text_layers  VL + text layer combinations
 
 Examples:
   # Run with config file
@@ -862,8 +1117,12 @@ Examples:
   # Run shift sweep on animal prompts
   uv run experiments/run_ablation.py --experiment shift_sweep --prompt-category animals
 
-  # Run hidden layer ablation with specific prompts
-  uv run experiments/run_ablation.py --experiment hidden_layer --prompt-ids animal_001,simple_002
+  # Run VL alpha sweep with reference image
+  uv run experiments/run_ablation.py \\
+    --experiment vl_alpha_sweep \\
+    --model-path /path/to/z-image \\
+    --vl-image /path/to/reference.jpg \\
+    --prompt-category simple_objects
 
   # Dry run to see what would be generated
   uv run experiments/run_ablation.py --experiment shift_sweep --dry-run
@@ -972,6 +1231,17 @@ Examples:
         help="Enable debug logging",
     )
 
+    # VL conditioning arguments
+    vl_group = parser.add_argument_group("Vision Conditioning (Qwen3-VL)")
+    vl_group.add_argument(
+        "--vl-model-path",
+        help="Path to Qwen3-VL model (auto-detected if not provided)",
+    )
+    vl_group.add_argument(
+        "--vl-image",
+        help="Reference image for VL conditioning (required for VL experiments)",
+    )
+
     args = parser.parse_args()
 
     # Debug logging
@@ -1070,6 +1340,8 @@ Examples:
         vae_device=vae_device,
         dry_run=args.dry_run,
         compute_metrics=args.compute_metrics,
+        vl_model_path=args.vl_model_path,
+        vl_image_path=args.vl_image,
     )
 
     results = runner.run_experiment(

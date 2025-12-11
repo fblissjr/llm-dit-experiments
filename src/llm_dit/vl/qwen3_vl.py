@@ -8,6 +8,22 @@ Architecture Insight:
     Qwen3-VL-4B's text model shares architecture with Qwen3-4B (hidden_size=2560).
     The vision encoder projects image features into this 2560-dim space via
     PatchMerger.linear_fc2, enabling zero-shot vision conditioning without training.
+
+Chat Template Format:
+    Z-Image was trained with Qwen3-4B using the format that includes empty think blocks:
+        <|im_start|>user
+        {prompt}<|im_end|>
+        <|im_start|>assistant
+        <think>
+
+        </think>
+
+        {content}
+
+    To match this, we use apply_chat_template(enable_thinking=False) which
+    ADDS the empty think block. Qwen3's naming is counterintuitive:
+        enable_thinking=True  -> NO think block (model CAN think)
+        enable_thinking=False -> ADD empty think block (skip thinking)
 """
 
 import logging
@@ -40,7 +56,7 @@ class VLExtractionResult:
     original_std: float
     scaled_std: float
     scale_factor: float
-    token_selection: str  # "all", "image_only", "text_only"
+    token_selection: str  # "all", "image_only", "image_only_no_markers", "text_only"
     text_description: str | None
 
 
@@ -147,6 +163,7 @@ class VLEmbeddingExtractor:
         text: str | None = None,
         hidden_layer: int = -2,
         image_tokens_only: bool = False,
+        image_tokens_no_markers: bool = False,
         text_tokens_only: bool = False,
         scale_to_text: bool = True,
         target_std: float = DEFAULT_TARGET_STD,
@@ -158,7 +175,8 @@ class VLEmbeddingExtractor:
             image: Input image (PIL Image)
             text: Optional text description to include with image
             hidden_layer: Which hidden layer to extract (-2 = penultimate)
-            image_tokens_only: If True, only extract image token hidden states
+            image_tokens_only: If True, only extract image token hidden states (includes marker tokens)
+            image_tokens_no_markers: If True, only extract image tokens WITHOUT the special markers
             text_tokens_only: If True, only extract text token hidden states (excludes image tokens)
             scale_to_text: If True, scale embeddings to match text statistics
             target_std: Target standard deviation for scaling
@@ -167,7 +185,7 @@ class VLEmbeddingExtractor:
             VLExtractionResult with embeddings and metadata
 
         Note:
-            image_tokens_only and text_tokens_only are mutually exclusive.
+            Token selection options are mutually exclusive.
             After transformer self-attention, ALL positions carry mixed information
             from the entire sequence. This filtering tests whether token position
             affects quality, not whether information is "pure" image or text.
@@ -175,23 +193,32 @@ class VLEmbeddingExtractor:
         if not self._loaded:
             raise RuntimeError("Model has been unloaded. Create new extractor.")
 
-        if image_tokens_only and text_tokens_only:
-            raise ValueError("Cannot set both image_tokens_only and text_tokens_only")
+        # Check mutual exclusivity
+        selections = [image_tokens_only, image_tokens_no_markers, text_tokens_only]
+        if sum(selections) > 1:
+            raise ValueError("Token selection options are mutually exclusive")
 
         # Build message content
+        # Image is always in the user message
         content = [{"type": "image", "image": image}]
         if text:
             content.append({"type": "text", "text": text})
 
         messages = [{"role": "user", "content": content}]
 
-        # Process inputs
+        # Process inputs using Qwen3-VL's chat template
+        # CRITICAL: Use enable_thinking=False to get the empty <think>\n\n</think>\n\n block
+        # This matches Z-Image's training format where Qwen3-4B was used with think blocks.
+        # Qwen3's counterintuitive naming:
+        #   enable_thinking=True  -> NO think block (model CAN think on its own)
+        #   enable_thinking=False -> ADD empty think block (skip thinking)
         inputs = self.processor.apply_chat_template(
             messages,
             tokenize=True,
             add_generation_prompt=True,
             return_dict=True,
             return_tensors="pt",
+            enable_thinking=False,  # This ADDS the empty think block to match training format
         )
 
         # Move to device
@@ -222,9 +249,14 @@ class VLEmbeddingExtractor:
         token_selection = "all"
         if image_tokens_only:
             hidden_states = self._filter_image_tokens(
-                hidden_states, inputs["input_ids"][0]
+                hidden_states, inputs["input_ids"][0], include_markers=True
             )
             token_selection = "image_only"
+        elif image_tokens_no_markers:
+            hidden_states = self._filter_image_tokens(
+                hidden_states, inputs["input_ids"][0], include_markers=False
+            )
+            token_selection = "image_only_no_markers"
         elif text_tokens_only:
             hidden_states = self._filter_text_tokens(
                 hidden_states, inputs["input_ids"][0]
@@ -254,14 +286,27 @@ class VLEmbeddingExtractor:
         self,
         hidden_states: torch.Tensor,
         input_ids: torch.Tensor,
+        include_markers: bool = True,
     ) -> torch.Tensor:
-        """Filter hidden states to only include image token positions."""
+        """Filter hidden states to only include image token positions.
+
+        Args:
+            hidden_states: Full sequence hidden states
+            input_ids: Token IDs to find marker positions
+            include_markers: If True, include the special marker tokens (151652, 151653).
+                           If False, exclude them (only actual image content).
+        """
         start_idx, end_idx = self._find_vision_token_range(input_ids)
 
         if start_idx is not None and end_idx is not None:
-            filtered = hidden_states[start_idx : end_idx + 1]
+            if include_markers:
+                filtered = hidden_states[start_idx : end_idx + 1]
+            else:
+                # Exclude the marker tokens themselves
+                filtered = hidden_states[start_idx + 1 : end_idx]
             logger.debug(
-                f"Filtered to image tokens: {hidden_states.shape[0]} -> {filtered.shape[0]}"
+                f"Filtered to image tokens (markers={'incl' if include_markers else 'excl'}): "
+                f"{hidden_states.shape[0]} -> {filtered.shape[0]}"
             )
             return filtered
         else:

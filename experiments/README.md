@@ -7,10 +7,47 @@ This directory contains tools for running systematic ablation studies and evalua
 - **run_ablation.py** - Automated experiment runner with configurable parameters
 - **sweep_*.sh** - Priority sweep scripts (recommended starting point)
 - **run_all_sweeps.sh** - Run all priority sweeps in sequence
+- **qwen3_vl/** - Vision conditioning experiments using Qwen3-VL (NEW)
 - **prompts/** - Standard evaluation prompts organized by category
 - **research/** - Research documentation and study designs
 - **metrics/** - Metric computation utilities (ImageReward, SigLIP)
 - **results/** - Generated images and experiment logs
+
+## Qwen3-VL Vision Conditioning (NEW)
+
+Zero-shot vision-conditioned generation using Qwen3-VL embeddings. See [qwen3_vl/README.md](qwen3_vl/README.md) for full documentation.
+
+**Key Discovery**: Qwen3-VL's text model hidden states (after processing an image) can condition Z-Image because both use Qwen3-4B architecture (hidden_size=2560).
+
+```bash
+# Extract embeddings from reference image
+uv run experiments/qwen3_vl/extract_embeddings.py \
+    --image reference.png \
+    --output vl_embeddings.pt
+
+# Generate with vision conditioning (30% VL + 70% text)
+uv run experiments/qwen3_vl/blend_and_generate.py \
+    --vl-embeddings vl_embeddings.pt \
+    --prompt "Your text prompt" \
+    --alpha 0.3 \
+    --output result.png
+
+# Run comprehensive comparison
+uv run experiments/qwen3_vl/run_comparison.py \
+    --image reference.png \
+    --prompt "Your text prompt" \
+    --experiment alpha_sweep \
+    --output-dir results/vl_experiment/
+```
+
+**Use Cases**:
+- Style transfer (low alpha ~0.2)
+- Image variations (medium alpha ~0.5)
+- Composition guidance (alpha ~0.3, image tokens only)
+
+See also:
+- [qwen3_vl/CONDITIONING_GUIDE.md](qwen3_vl/CONDITIONING_GUIDE.md) - All control parameters
+- [qwen3_vl/RESEARCH_FINDINGS.md](qwen3_vl/RESEARCH_FINDINGS.md) - Detailed findings and comparison with IP-Adapter
 
 ## Quick Start - Sweep Scripts (Recommended)
 
