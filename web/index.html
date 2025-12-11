@@ -257,6 +257,144 @@
                     </div>
                 </details>
 
+                <!-- Vision Conditioning (Qwen3-VL) - collapsible -->
+                <details class="group" id="vlSection">
+                    <summary class="cursor-pointer text-sm font-medium text-gray-400 hover:text-gray-300 flex items-center gap-2 select-none">
+                        <svg class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                        </svg>
+                        Vision Conditioning (Qwen3-VL)
+                        <span id="vlStatusBadge" class="ml-auto text-xs px-2 py-0.5 rounded-full bg-gray-700 text-gray-400">Checking...</span>
+                    </summary>
+                    <div class="mt-3 space-y-4 p-4 bg-gray-800/50 rounded-xl border border-gray-700">
+                        <p class="text-xs text-gray-400">Use a reference image to influence the generated style/content</p>
+
+                        <!-- VL Not Available Warning -->
+                        <div id="vlNotAvailable" class="hidden bg-yellow-900/30 border border-yellow-700 rounded-lg p-3">
+                            <p class="text-xs text-yellow-300">Qwen3-VL not configured. Set vl.model_path in config.toml to enable vision conditioning.</p>
+                        </div>
+
+                        <!-- VL Controls (shown when available) -->
+                        <div id="vlControls">
+                            <!-- Image Upload -->
+                            <div class="mb-4">
+                                <label class="block text-sm font-medium text-gray-300 mb-2">Reference Image</label>
+                                <div id="vlDropzone" class="relative border-2 border-dashed border-gray-600 rounded-lg p-4 text-center cursor-pointer hover:border-blue-500 hover:bg-gray-800/50 transition-colors">
+                                    <input type="file" id="vlImageInput" accept="image/*" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer">
+                                    <div id="vlDropzoneContent">
+                                        <svg class="w-8 h-8 mx-auto text-gray-500 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+                                        </svg>
+                                        <p class="text-sm text-gray-400">Drop image here or click to upload</p>
+                                        <p class="text-xs text-gray-500 mt-1">PNG, JPG up to 2048x2048</p>
+                                    </div>
+                                    <!-- Image Preview (hidden by default) -->
+                                    <div id="vlImagePreview" class="hidden">
+                                        <img id="vlPreviewImg" class="max-h-32 mx-auto rounded-lg" alt="Reference image">
+                                        <p id="vlImageInfo" class="text-xs text-gray-400 mt-2"></p>
+                                    </div>
+                                </div>
+                                <button type="button" id="vlClearImage" class="hidden mt-2 text-xs text-red-400 hover:text-red-300">Clear image</button>
+                            </div>
+
+                            <!-- Alpha Slider -->
+                            <div class="mb-4">
+                                <label class="block text-sm font-medium text-gray-300 mb-2">
+                                    VL Influence: <span id="vlAlphaValue" class="text-blue-400">0.3</span>
+                                </label>
+                                <input type="range" id="vlAlpha" min="0" max="1" step="0.05" value="0.3" class="w-full">
+                                <div class="flex justify-between text-xs text-gray-500 mt-1">
+                                    <span>0.0 (Text only)</span>
+                                    <span>1.0 (VL only)</span>
+                                </div>
+                            </div>
+
+                            <!-- Presets -->
+                            <div class="mb-4">
+                                <label class="block text-sm font-medium text-gray-300 mb-2">Presets</label>
+                                <div class="grid grid-cols-3 gap-2">
+                                    <button type="button" data-alpha="0.2" class="vl-preset px-3 py-2 text-xs font-medium rounded-lg bg-gray-700 text-gray-300 hover:bg-gray-600 transition-colors">
+                                        Style (0.2)
+                                    </button>
+                                    <button type="button" data-alpha="0.3" class="vl-preset px-3 py-2 text-xs font-medium rounded-lg bg-blue-600 text-white transition-colors">
+                                        Balanced (0.3)
+                                    </button>
+                                    <button type="button" data-alpha="0.5" class="vl-preset px-3 py-2 text-xs font-medium rounded-lg bg-gray-700 text-gray-300 hover:bg-gray-600 transition-colors">
+                                        Strong (0.5)
+                                    </button>
+                                </div>
+                            </div>
+
+                            <!-- Blend Mode -->
+                            <div class="mb-4">
+                                <label class="block text-sm font-medium text-gray-300 mb-2">Blend Mode</label>
+                                <select id="vlBlendMode" class="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:ring-2 focus:ring-blue-500 text-sm">
+                                    <option value="linear">Linear (default)</option>
+                                    <option value="style_only">Style Only (preserves text content)</option>
+                                    <option value="graduated">Graduated (more VL for later tokens)</option>
+                                    <option value="attention_weighted">Attention Weighted (experimental)</option>
+                                </select>
+                                <p class="text-xs text-gray-500 mt-1">Linear blends uniformly. Style Only preserves subject/content from text.</p>
+                            </div>
+
+                            <!-- Advanced Options -->
+                            <details class="group/vl-adv">
+                                <summary class="cursor-pointer text-xs font-medium text-gray-500 hover:text-gray-400 flex items-center gap-1 select-none">
+                                    <svg class="w-3 h-3 transition-transform group-open/vl-adv:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                                    </svg>
+                                    Advanced Options
+                                </summary>
+                                <div class="mt-3 space-y-3 pl-4 border-l border-gray-700">
+                                    <!-- Hidden Layer -->
+                                    <div>
+                                        <label class="block text-xs font-medium text-gray-400 mb-1">
+                                            VL Hidden Layer: <span id="vlHiddenLayerValue" class="text-blue-400">-2</span>
+                                        </label>
+                                        <input type="range" id="vlHiddenLayer" min="-6" max="-1" value="-2" class="w-full">
+                                        <div class="flex justify-between text-xs text-gray-500 mt-1">
+                                            <span>-6 (Early)</span>
+                                            <span>-1 (Last)</span>
+                                        </div>
+                                    </div>
+
+                                    <!-- Image Tokens Only -->
+                                    <div class="flex items-center">
+                                        <input type="checkbox" id="vlImageTokensOnly" class="w-4 h-4 text-blue-600 bg-gray-700 border-gray-600 rounded focus:ring-blue-500 focus:ring-2">
+                                        <label for="vlImageTokensOnly" class="ml-2 text-xs text-gray-400">Image tokens only</label>
+                                    </div>
+
+                                    <!-- VL Text Description -->
+                                    <div>
+                                        <label class="block text-xs font-medium text-gray-400 mb-1">VL Text (optional)</label>
+                                        <input type="text" id="vlText" class="w-full px-2 py-1.5 bg-gray-800 border border-gray-700 rounded-lg text-white text-xs focus:ring-2 focus:ring-blue-500" placeholder="Description with reference image">
+                                        <p class="text-xs text-gray-500 mt-1">Text to process along with the image</p>
+                                    </div>
+                                </div>
+                            </details>
+
+                            <!-- Extract Status -->
+                            <div id="vlExtractStatus" class="hidden mt-3">
+                                <div class="flex items-center gap-2 text-sm text-gray-400">
+                                    <div class="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+                                    <span>Extracting VL embeddings...</span>
+                                </div>
+                            </div>
+
+                            <!-- Extracted Embeddings Info -->
+                            <div id="vlExtractedInfo" class="hidden mt-3 bg-green-900/20 border border-green-700 rounded-lg p-3">
+                                <div class="flex items-center justify-between">
+                                    <div>
+                                        <p class="text-xs text-green-400 font-medium">Embeddings Ready</p>
+                                        <p id="vlExtractedDetails" class="text-xs text-gray-400 mt-1"></p>
+                                    </div>
+                                    <button type="button" id="vlClearEmbeddings" class="text-xs text-red-400 hover:text-red-300">Clear</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </details>
+
                 <!-- Resolution & Steps Row -->
                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <!-- Resolution Preset -->
@@ -1278,6 +1416,10 @@
 
             currentParams = params;
 
+            // Check if VL conditioning is active
+            const vlParams = typeof getVLParams === 'function' ? getVLParams() : {};
+            const useVL = vlParams.vl_image || vlParams.vl_embeddings_id;
+
             try {
                 progressFill.style.width = '20%';
                 statusText.textContent = 'Formatting prompt...';
@@ -1295,12 +1437,16 @@
                 }
 
                 progressFill.style.width = '30%';
-                statusText.textContent = 'Generating...';
+                statusText.textContent = useVL ? 'Generating with VL conditioning...' : 'Generating...';
 
-                const response = await fetch(`${API_BASE}/api/generate`, {
+                // Use VL endpoint if VL conditioning is active
+                const endpoint = useVL ? `${API_BASE}/api/vl/generate` : `${API_BASE}/api/generate`;
+                const requestBody = useVL ? { ...params, ...vlParams } : params;
+
+                const response = await fetch(endpoint, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(params),
+                    body: JSON.stringify(requestBody),
                 });
 
                 if (!response.ok) {
@@ -1332,6 +1478,10 @@
                 }
                 if (params.hidden_layer !== undefined && params.hidden_layer !== -2) {
                     infoText += `, layer ${params.hidden_layer}`;
+                }
+                // Add VL info if used
+                if (useVL && vlParams.vl_alpha) {
+                    infoText += `, VL ${vlParams.vl_alpha} (${vlParams.vl_blend_mode})`;
                 }
 
                 resultInfo.textContent = infoText;
@@ -1437,10 +1587,274 @@
         document.getElementById('enableThinking').addEventListener('change', debouncedTokenCount);
         document.getElementById('template').addEventListener('change', debouncedTokenCount);
 
+        // =====================================================================
+        // Vision Conditioning (Qwen3-VL) Logic
+        // =====================================================================
+
+        // VL state
+        let vlImageBase64 = null;
+        let vlEmbeddingsId = null;
+        let vlAvailable = false;
+
+        // VL DOM elements
+        const vlSection = document.getElementById('vlSection');
+        const vlStatusBadge = document.getElementById('vlStatusBadge');
+        const vlNotAvailable = document.getElementById('vlNotAvailable');
+        const vlControls = document.getElementById('vlControls');
+        const vlImageInput = document.getElementById('vlImageInput');
+        const vlDropzone = document.getElementById('vlDropzone');
+        const vlDropzoneContent = document.getElementById('vlDropzoneContent');
+        const vlImagePreview = document.getElementById('vlImagePreview');
+        const vlPreviewImg = document.getElementById('vlPreviewImg');
+        const vlImageInfo = document.getElementById('vlImageInfo');
+        const vlClearImageBtn = document.getElementById('vlClearImage');
+        const vlAlphaSlider = document.getElementById('vlAlpha');
+        const vlAlphaValue = document.getElementById('vlAlphaValue');
+        const vlBlendMode = document.getElementById('vlBlendMode');
+        const vlHiddenLayerSlider = document.getElementById('vlHiddenLayer');
+        const vlHiddenLayerValue = document.getElementById('vlHiddenLayerValue');
+        const vlImageTokensOnly = document.getElementById('vlImageTokensOnly');
+        const vlText = document.getElementById('vlText');
+        const vlExtractStatus = document.getElementById('vlExtractStatus');
+        const vlExtractedInfo = document.getElementById('vlExtractedInfo');
+        const vlExtractedDetails = document.getElementById('vlExtractedDetails');
+        const vlClearEmbeddingsBtn = document.getElementById('vlClearEmbeddings');
+        const vlPresetButtons = document.querySelectorAll('.vl-preset');
+
+        // Check VL availability
+        async function checkVLStatus() {
+            try {
+                const response = await fetch(`${API_BASE}/api/vl/status`);
+                const data = await response.json();
+
+                vlAvailable = data.available;
+
+                if (vlAvailable) {
+                    vlStatusBadge.textContent = 'Available';
+                    vlStatusBadge.classList.remove('bg-gray-700', 'text-gray-400', 'bg-yellow-700', 'text-yellow-300');
+                    vlStatusBadge.classList.add('bg-green-700', 'text-green-300');
+                    vlNotAvailable.classList.add('hidden');
+                    vlControls.classList.remove('hidden');
+
+                    // Load VL config defaults
+                    const configResponse = await fetch(`${API_BASE}/api/vl/config`);
+                    const config = await configResponse.json();
+                    vlAlphaSlider.value = config.alpha;
+                    vlAlphaValue.textContent = config.alpha;
+                    vlHiddenLayerSlider.value = config.hidden_layer;
+                    vlHiddenLayerValue.textContent = config.hidden_layer;
+                    vlBlendMode.value = config.blend_mode || 'linear';
+
+                    // Update preset buttons
+                    updateVLPresetButtons(config.alpha);
+                } else if (data.configured) {
+                    vlStatusBadge.textContent = 'Not Loaded';
+                    vlStatusBadge.classList.remove('bg-gray-700', 'text-gray-400', 'bg-green-700', 'text-green-300');
+                    vlStatusBadge.classList.add('bg-yellow-700', 'text-yellow-300');
+                    vlNotAvailable.classList.remove('hidden');
+                    vlControls.classList.add('hidden');
+                } else {
+                    vlStatusBadge.textContent = 'Not Configured';
+                    vlStatusBadge.classList.remove('bg-green-700', 'text-green-300', 'bg-yellow-700', 'text-yellow-300');
+                    vlStatusBadge.classList.add('bg-gray-700', 'text-gray-400');
+                    vlNotAvailable.classList.remove('hidden');
+                    vlControls.classList.add('hidden');
+                }
+            } catch (err) {
+                console.error('Failed to check VL status:', err);
+                vlStatusBadge.textContent = 'Error';
+                vlStatusBadge.classList.remove('bg-green-700', 'text-green-300', 'bg-gray-700', 'text-gray-400');
+                vlStatusBadge.classList.add('bg-red-700', 'text-red-300');
+            }
+        }
+
+        // Update VL preset buttons
+        function updateVLPresetButtons(selectedAlpha) {
+            vlPresetButtons.forEach(btn => {
+                const alpha = parseFloat(btn.dataset.alpha);
+                if (Math.abs(alpha - selectedAlpha) < 0.01) {
+                    btn.classList.remove('bg-gray-700', 'text-gray-300');
+                    btn.classList.add('bg-blue-600', 'text-white');
+                } else {
+                    btn.classList.remove('bg-blue-600', 'text-white');
+                    btn.classList.add('bg-gray-700', 'text-gray-300');
+                }
+            });
+        }
+
+        // VL alpha slider
+        vlAlphaSlider?.addEventListener('input', () => {
+            vlAlphaValue.textContent = vlAlphaSlider.value;
+            updateVLPresetButtons(parseFloat(vlAlphaSlider.value));
+        });
+
+        // VL preset buttons
+        vlPresetButtons.forEach(btn => {
+            btn.addEventListener('click', () => {
+                const alpha = parseFloat(btn.dataset.alpha);
+                vlAlphaSlider.value = alpha;
+                vlAlphaValue.textContent = alpha;
+                updateVLPresetButtons(alpha);
+            });
+        });
+
+        // VL hidden layer slider
+        vlHiddenLayerSlider?.addEventListener('input', () => {
+            vlHiddenLayerValue.textContent = vlHiddenLayerSlider.value;
+        });
+
+        // Image upload handling
+        vlImageInput?.addEventListener('change', handleVLImageUpload);
+        vlDropzone?.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            vlDropzone.classList.add('border-blue-500', 'bg-gray-800/50');
+        });
+        vlDropzone?.addEventListener('dragleave', () => {
+            vlDropzone.classList.remove('border-blue-500', 'bg-gray-800/50');
+        });
+        vlDropzone?.addEventListener('drop', (e) => {
+            e.preventDefault();
+            vlDropzone.classList.remove('border-blue-500', 'bg-gray-800/50');
+            if (e.dataTransfer.files.length > 0) {
+                vlImageInput.files = e.dataTransfer.files;
+                handleVLImageUpload({ target: vlImageInput });
+            }
+        });
+
+        async function handleVLImageUpload(e) {
+            const file = e.target.files?.[0];
+            if (!file) return;
+
+            // Validate file type
+            if (!file.type.startsWith('image/')) {
+                alert('Please select an image file');
+                return;
+            }
+
+            // Convert to base64
+            const reader = new FileReader();
+            reader.onload = async (ev) => {
+                const base64 = ev.target.result.split(',')[1];
+                vlImageBase64 = base64;
+
+                // Show preview
+                vlPreviewImg.src = ev.target.result;
+                vlDropzoneContent.classList.add('hidden');
+                vlImagePreview.classList.remove('hidden');
+                vlClearImageBtn.classList.remove('hidden');
+
+                // Get image dimensions
+                const img = new Image();
+                img.onload = () => {
+                    vlImageInfo.textContent = `${img.width}x${img.height} - ${(file.size / 1024).toFixed(1)} KB`;
+
+                    // Warn if image is too large (will produce >1504 tokens)
+                    const estimatedTokens = Math.ceil(img.width / 28) * Math.ceil(img.height / 28);
+                    if (estimatedTokens > 1504) {
+                        vlImageInfo.textContent += ` (Warning: ~${estimatedTokens} tokens, may exceed limit)`;
+                        vlImageInfo.classList.add('text-yellow-400');
+                    } else {
+                        vlImageInfo.classList.remove('text-yellow-400');
+                    }
+                };
+                img.src = ev.target.result;
+
+                // Clear any existing embeddings
+                vlEmbeddingsId = null;
+                vlExtractedInfo.classList.add('hidden');
+            };
+            reader.readAsDataURL(file);
+        }
+
+        // Clear image
+        vlClearImageBtn?.addEventListener('click', () => {
+            vlImageBase64 = null;
+            vlEmbeddingsId = null;
+            vlImageInput.value = '';
+            vlDropzoneContent.classList.remove('hidden');
+            vlImagePreview.classList.add('hidden');
+            vlClearImageBtn.classList.add('hidden');
+            vlExtractedInfo.classList.add('hidden');
+        });
+
+        // Clear embeddings
+        vlClearEmbeddingsBtn?.addEventListener('click', async () => {
+            if (vlEmbeddingsId) {
+                try {
+                    await fetch(`${API_BASE}/api/vl/cache/${vlEmbeddingsId}`, { method: 'DELETE' });
+                } catch (err) {
+                    console.error('Failed to clear embeddings:', err);
+                }
+            }
+            vlEmbeddingsId = null;
+            vlExtractedInfo.classList.add('hidden');
+        });
+
+        // Extract VL embeddings (for pre-extraction workflow)
+        async function extractVLEmbeddings() {
+            if (!vlImageBase64) return null;
+
+            vlExtractStatus.classList.remove('hidden');
+
+            try {
+                const response = await fetch(`${API_BASE}/api/vl/extract`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        image: vlImageBase64,
+                        text: vlText.value || null,
+                        hidden_layer: parseInt(vlHiddenLayerSlider.value),
+                        image_tokens_only: vlImageTokensOnly.checked,
+                        scale_to_text: true,
+                    }),
+                });
+
+                if (!response.ok) {
+                    const data = await response.json();
+                    throw new Error(data.detail || 'Extraction failed');
+                }
+
+                const result = await response.json();
+                vlEmbeddingsId = result.embeddings_id;
+
+                vlExtractedDetails.textContent = `${result.num_tokens} tokens, layer ${result.hidden_layer}, ${result.extract_time.toFixed(2)}s`;
+                vlExtractedInfo.classList.remove('hidden');
+
+                return vlEmbeddingsId;
+            } catch (err) {
+                console.error('VL extraction failed:', err);
+                throw err;
+            } finally {
+                vlExtractStatus.classList.add('hidden');
+            }
+        }
+
+        // Get VL parameters for generation request
+        function getVLParams() {
+            if (!vlAvailable || (!vlImageBase64 && !vlEmbeddingsId)) {
+                return {};
+            }
+
+            return {
+                vl_image: vlEmbeddingsId ? null : vlImageBase64,
+                vl_embeddings_id: vlEmbeddingsId || null,
+                vl_alpha: parseFloat(vlAlphaSlider.value),
+                vl_hidden_layer: parseInt(vlHiddenLayerSlider.value),
+                vl_image_tokens_only: vlImageTokensOnly.checked,
+                vl_text: vlText.value || null,
+                vl_blend_mode: vlBlendMode.value,
+            };
+        }
+
+        // =====================================================================
+        // End Vision Conditioning Logic
+        // =====================================================================
+
         // Initialize
         loadTemplates();
         loadRewriters();
         loadHistory();
+        checkVLStatus();
     </script>
 </body>
 </html>

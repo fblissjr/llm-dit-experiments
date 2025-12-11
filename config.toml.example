@@ -78,6 +78,16 @@ min_p = 0.0                  # Min probability cutoff (0.0=disabled)
 presence_penalty = 0.0       # 0.0-2.0, increase if seeing repetitive output
 max_tokens = 512             # Max tokens to generate
 
+[default.vl]
+# Vision conditioning using Qwen3-VL (zero-shot, no training required)
+# See experiments/qwen3_vl/README.md for detailed documentation
+model_path = ""              # Path to Qwen3-VL-4B-Instruct (empty=disabled)
+device = "cpu"               # cpu recommended to save VRAM (loads VL, extracts, unloads)
+default_alpha = 0.3          # VL influence: 0.0=pure text, 1.0=pure VL (0.3 recommended)
+default_hidden_layer = -2    # -2=penultimate layer (matches Z-Image default)
+auto_unload = true           # Unload Qwen3-VL after extraction to free memory
+target_std = 58.75           # Scale VL embeddings to match text embedding statistics
+
 # =============================================================================
 # RTX 4090 Profile - Optimized for 24GB VRAM
 # =============================================================================
@@ -145,6 +155,15 @@ min_p = 0.0
 presence_penalty = 0.0
 max_tokens = 2048            # More headroom for detailed rewrites
 
+[rtx4090.vl]
+# Vision conditioning - can load on CPU then unload before DiT runs
+model_path = ""              # /path/to/Qwen3-VL-4B-Instruct
+device = "cpu"               # Load on CPU, keeps VRAM free for DiT
+default_alpha = 0.3          # 0.2-0.3 for style transfer, 0.5 for variations
+default_hidden_layer = -2
+auto_unload = true           # Unload after extraction
+target_std = 58.75
+
 # =============================================================================
 # Low VRAM Profile - For 8-16GB GPUs
 # =============================================================================
@@ -210,6 +229,15 @@ top_k = 20
 min_p = 0.0
 presence_penalty = 0.0
 max_tokens = 256             # Shorter output to save memory
+
+[low_vram.vl]
+# Vision conditioning may be tight on low VRAM - use CPU and auto-unload
+model_path = ""
+device = "cpu"               # Must be CPU for low VRAM
+default_alpha = 0.3
+default_hidden_layer = -2
+auto_unload = true           # Critical: unload before loading DiT
+target_std = 58.75
 
 # =============================================================================
 # Distributed Profile - Encoder on Mac (MLX), DiT on CUDA
@@ -277,6 +305,16 @@ top_k = 20
 min_p = 0.0
 presence_penalty = 0.0
 max_tokens = 2048
+
+[distributed.vl]
+# For distributed setup, VL extraction can run on Mac or locally
+# TODO: Consider remote VL extraction via API in future
+model_path = ""
+device = "cpu"
+default_alpha = 0.3
+default_hidden_layer = -2
+auto_unload = true
+target_std = 58.75
 
 # =============================================================================
 # Web Server Configuration (shared across profiles)

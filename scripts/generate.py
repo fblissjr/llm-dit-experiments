@@ -56,7 +56,9 @@ def main():
     parser.add_argument(
         "prompt",
         type=str,
-        help="Text prompt for image generation",
+        nargs="?",  # Optional when using --load-embeddings
+        default=None,
+        help="Text prompt for image generation (optional if using --load-embeddings)",
     )
     parser.add_argument(
         "--output",
@@ -228,30 +230,36 @@ def main():
 
     # Check if loading embeddings (distributed inference - CUDA side)
     if args.load_embeddings:
-        logger.info("Running in distributed mode (generator only)")
+        logger.info("Running in embeddings mode (skip text encoding)")
         logger.info(f"Loading embeddings from {args.load_embeddings}")
 
-        from llm_dit.distributed import load_embeddings
-        from llm_dit.pipelines import ZImagePipeline
+        # Determine file format and load embeddings
+        emb_path = Path(args.load_embeddings)
+        if emb_path.suffix == ".pt":
+            # Simple PyTorch format (from Qwen3-VL or other sources)
+            saved = torch.load(args.load_embeddings, weights_only=True)
+            embeddings = saved["embeddings"]
+            source_info = saved.get("source_image", "unknown")
+            logger.info(f"Loaded embeddings: shape={embeddings.shape}")
+            logger.info(f"  Source: {source_info}")
+        else:
+            # Safetensors format (from distributed module)
+            from llm_dit.distributed import load_embeddings
+            emb_file = load_embeddings(args.load_embeddings)
+            embeddings = emb_file.embeddings
+            source_info = emb_file.metadata.prompt[:50] if emb_file.metadata.prompt else "unknown"
+            logger.info(f"Loaded embeddings: shape={embeddings.shape}")
+            logger.info(f"  Source: {source_info}...")
+            logger.info(f"  Original device: {emb_file.metadata.encoder_device}")
 
-        # Load pre-computed embeddings
-        emb_file = load_embeddings(args.load_embeddings)
-        logger.info(f"Loaded embeddings: {emb_file.metadata.prompt[:50]}...")
-        logger.info(f"  Shape: {emb_file.embeddings.shape}")
-        logger.info(f"  Original device: {emb_file.metadata.encoder_device}")
-
-        # Load generator-only pipeline (no LLM)
-        logger.info(f"Loading generator from {config.model_path}...")
-        start = time.time()
+        # Load pipeline using optimized PipelineLoader (same as full generation)
+        # This uses the correct device placement from config, avoids the OOM from generator_only
+        from llm_dit.startup import PipelineLoader
 
         try:
-            pipe = ZImagePipeline.from_pretrained_generator_only(
-                config.model_path,
-                torch_dtype=config.get_torch_dtype(),
-                dit_device=config.dit_device,
-                vae_device=config.vae_device,
-                enable_cpu_offload=config.cpu_offload,
-            )
+            loader = PipelineLoader(config)
+            result = loader.load_pipeline()
+            pipe = result.pipeline
         except ImportError as e:
             logger.error(f"Missing diffusers components: {e}")
             return 1
@@ -259,39 +267,22 @@ def main():
             logger.error(f"Failed to load pipeline: {e}")
             return 1
 
-        load_time = time.time() - start
-        logger.info(f"Generator loaded in {load_time:.1f}s")
-
-        # Apply optimizations
-        if config.flash_attn:
-            try:
-                pipe.transformer.set_attention_backend("flash")
-                logger.info("Flash Attention enabled")
-            except Exception as e:
-                logger.warning(f"Failed to enable Flash Attention: {e}")
-
-        if config.compile:
-            try:
-                pipe.transformer = torch.compile(pipe.transformer, mode="reduce-overhead")
-                logger.info("Transformer compiled (first run will be slow)")
-            except Exception as e:
-                logger.warning(f"Failed to compile: {e}")
-
         # Progress callback
         def progress_callback(step: int, total: int, latents: torch.Tensor):
             logger.info(f"Step {step + 1}/{total}")
 
-        # Generate from embeddings
-        logger.info(f"Generating {config.width}x{config.height} image...")
+        # Generate using prompt_embeds (skips text encoding)
+        logger.info(f"Generating {config.width}x{config.height} image from embeddings...")
 
         start = time.time()
-        image = pipe.generate_from_embeddings(
-            emb_file.embeddings,
+        image = pipe(
+            prompt_embeds=embeddings,  # Use pre-computed embeddings
             height=config.height,
             width=config.width,
             num_inference_steps=config.steps,
             guidance_scale=config.guidance_scale,
             generator=generator,
+            long_prompt_mode=config.long_prompt_mode,
             callback=progress_callback if config.verbose else None,
         )
         gen_time = time.time() - start
@@ -301,7 +292,7 @@ def main():
         image.save(output_path)
         logger.info(f"Image saved to {output_path}")
         logger.info(f"Generation time: {gen_time:.1f}s")
-        logger.info(f"Original prompt: {emb_file.metadata.prompt}")
+        logger.info(f"Embeddings source: {source_info}")
 
         return 0
 

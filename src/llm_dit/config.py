@@ -247,6 +247,25 @@ class PyTorchConfig:
 
 
 @dataclass
+class VLConfig:
+    """Configuration for Qwen3-VL vision conditioning.
+
+    This enables zero-shot vision conditioning by extracting embeddings from
+    Qwen3-VL and blending them with text embeddings.
+
+    Key insight: Qwen3-VL-4B's text model shares architecture with Qwen3-4B
+    (hidden_size=2560), enabling direct embedding transfer without training.
+    """
+
+    model_path: str = ""  # Path to Qwen3-VL model (empty = disabled)
+    device: str = "cpu"  # Device for Qwen3-VL (cpu recommended to save VRAM)
+    default_alpha: float = 0.3  # Default interpolation ratio (0.0=text, 1.0=VL)
+    default_hidden_layer: int = -2  # Default hidden layer to extract
+    auto_unload: bool = True  # Unload after extraction to save VRAM
+    target_std: float = 58.75  # Target std for scaling (from text embeddings)
+
+
+@dataclass
 class RewriterConfig:
     """Configuration for prompt rewriting using LLM generation.
 
@@ -290,6 +309,7 @@ class Config:
     lora: LoRAConfig = field(default_factory=LoRAConfig)
     pytorch: PyTorchConfig = field(default_factory=PyTorchConfig)
     rewriter: RewriterConfig = field(default_factory=RewriterConfig)
+    vl: VLConfig = field(default_factory=VLConfig)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Config":
@@ -302,6 +322,7 @@ class Config:
         lora_data = data.pop("lora", {})
         pytorch_data = data.pop("pytorch", {})
         rewriter_data = data.pop("rewriter", {})
+        vl_data = data.pop("vl", {})
 
         return cls(
             model_path=data.get("model_path", ""),
@@ -314,6 +335,7 @@ class Config:
             lora=LoRAConfig(**lora_data),
             pytorch=PyTorchConfig(**pytorch_data),
             rewriter=RewriterConfig(**rewriter_data),
+            vl=VLConfig(**vl_data),
         )
 
     @classmethod
@@ -426,6 +448,14 @@ class Config:
                 "min_p": self.rewriter.min_p,
                 "presence_penalty": self.rewriter.presence_penalty,
                 "max_tokens": self.rewriter.max_tokens,
+            },
+            "vl": {
+                "model_path": self.vl.model_path,
+                "device": self.vl.device,
+                "default_alpha": self.vl.default_alpha,
+                "default_hidden_layer": self.vl.default_hidden_layer,
+                "auto_unload": self.vl.auto_unload,
+                "target_std": self.vl.target_std,
             },
         }
 

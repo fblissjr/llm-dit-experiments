@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0]
+
+### Added
+- Vision conditioning using Qwen3-VL (zero-shot, no training required)
+  - New `src/llm_dit/vl/` module with `VLEmbeddingExtractor` class
+  - Embedding blending utilities: `blend_embeddings`, `scale_embeddings`, `blend_style_only`, `blend_per_token`, `blend_attention_weighted`
+  - Web UI section with image upload, alpha slider, blend mode selector
+  - REST API endpoints: `/api/vl/status`, `/api/vl/config`, `/api/vl/extract`, `/api/vl/generate`, `/api/vl/cache`
+  - CLI flags: `--vl-model-path`, `--vl-device`, `--vl-alpha`, `--vl-hidden-layer`, `--vl-blend-mode`
+  - Config section: `[default.vl]` with model_path, device, default_alpha, etc.
+  - Embeddings caching for efficient multi-generation workflows
+  - Blend modes: linear, style_only (preserves text content), graduated, attention_weighted
+  - Research documentation in `experiments/qwen3_vl/` and `internal/research/vl_conditioning_hypotheses.md`
+
+### Changed
+- Config dataclasses include `VLConfig` for vision conditioning settings
+- RuntimeConfig includes VL fields (vl_model_path, vl_device, vl_alpha, etc.)
+- Web server loads Qwen3-VL on startup if configured
+- `config.toml.example` includes VL sections for all profiles
+- CLAUDE.md updated with VL documentation, CLI flags, and API endpoints
+
 ## [0.5.0]
 
 ### Added

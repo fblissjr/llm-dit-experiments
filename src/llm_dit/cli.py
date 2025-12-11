@@ -145,6 +145,14 @@ class RuntimeConfig:
     rewriter_max_tokens: int = 512  # Maximum tokens to generate
     rewriter_presence_penalty: float = 0.0  # 0-2, helps reduce endless repetitions
 
+    # Vision conditioning (Qwen3-VL)
+    vl_model_path: str = ""  # Path to Qwen3-VL model (empty = disabled)
+    vl_device: str = "cpu"  # Device for Qwen3-VL
+    vl_alpha: float = 0.3  # Default interpolation ratio (0.0=text, 1.0=VL)
+    vl_hidden_layer: int = -2  # Hidden layer to extract
+    vl_auto_unload: bool = True  # Unload after extraction to save VRAM
+    vl_blend_mode: str = "linear"  # linear, style_only, graduated, attention_weighted
+
     # Debug
     debug: bool = False
     verbose: bool = False
@@ -427,6 +435,52 @@ def create_base_parser(
         help="Force local encoder (for A/B testing API vs local)",
     )
 
+    # Vision conditioning (Qwen3-VL)
+    vl_group = parser.add_argument_group("Vision Conditioning (Qwen3-VL)")
+    vl_group.add_argument(
+        "--vl-model-path",
+        type=str,
+        default=None,
+        help="Path to Qwen3-VL model (enables vision conditioning)",
+    )
+    vl_group.add_argument(
+        "--vl-device",
+        type=str,
+        choices=["cpu", "cuda", "auto"],
+        default=None,
+        help="Device for Qwen3-VL (default: cpu to save VRAM)",
+    )
+    vl_group.add_argument(
+        "--vl-alpha",
+        type=float,
+        default=None,
+        help="VL influence ratio (0.0=pure text, 1.0=pure VL, default: 0.3)",
+    )
+    vl_group.add_argument(
+        "--vl-hidden-layer",
+        type=int,
+        default=None,
+        help="Hidden layer to extract from Qwen3-VL (default: -2, penultimate)",
+    )
+    vl_group.add_argument(
+        "--vl-no-auto-unload",
+        action="store_true",
+        help="Keep Qwen3-VL loaded after extraction (uses more VRAM)",
+    )
+    vl_group.add_argument(
+        "--vl-blend-mode",
+        type=str,
+        choices=["linear", "style_only", "graduated", "attention_weighted"],
+        default=None,
+        help=(
+            "Blending strategy: "
+            "linear (default, uniform blend), "
+            "style_only (blend only style dimensions), "
+            "graduated (more VL influence for later tokens), "
+            "attention_weighted (preserve important text tokens)"
+        ),
+    )
+
     # Rewriter settings
     rewriter_group = parser.add_argument_group("Rewriter")
     rewriter_group.add_argument(
@@ -521,6 +575,12 @@ def create_base_parser(
             type=int,
             default=None,
             help="Random seed for reproducibility",
+        )
+        gen_group.add_argument(
+            "--embeddings-file",
+            type=str,
+            default=None,
+            help="Path to pre-computed embeddings file (.pt). Skips text encoding.",
         )
 
     # Server args (optional)
@@ -642,6 +702,15 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
                 config.rewriter_presence_penalty = getattr(rewriter, 'presence_penalty', 0.0)
                 config.rewriter_max_tokens = getattr(rewriter, 'max_tokens', 512)
 
+            # Check for VL section
+            if hasattr(toml_config, 'vl'):
+                vl = toml_config.vl
+                config.vl_model_path = getattr(vl, 'model_path', '')
+                config.vl_device = getattr(vl, 'device', 'cpu')
+                config.vl_alpha = getattr(vl, 'default_alpha', 0.3)
+                config.vl_hidden_layer = getattr(vl, 'default_hidden_layer', -2)
+                config.vl_auto_unload = getattr(vl, 'auto_unload', True)
+
         except Exception as e:
             logger.warning(f"Failed to load config: {e}")
 
@@ -757,6 +826,20 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
         config.rewriter_presence_penalty = args.rewriter_presence_penalty
     if getattr(args, 'rewriter_max_tokens', None) is not None:
         config.rewriter_max_tokens = args.rewriter_max_tokens
+
+    # Vision conditioning (VL) overrides
+    if getattr(args, 'vl_model_path', None) is not None:
+        config.vl_model_path = args.vl_model_path
+    if getattr(args, 'vl_device', None) is not None:
+        config.vl_device = args.vl_device
+    if getattr(args, 'vl_alpha', None) is not None:
+        config.vl_alpha = args.vl_alpha
+    if getattr(args, 'vl_hidden_layer', None) is not None:
+        config.vl_hidden_layer = args.vl_hidden_layer
+    if getattr(args, 'vl_no_auto_unload', False):
+        config.vl_auto_unload = False
+    if getattr(args, 'vl_blend_mode', None) is not None:
+        config.vl_blend_mode = args.vl_blend_mode
 
     # Generation overrides
     if getattr(args, 'height', None) is not None:

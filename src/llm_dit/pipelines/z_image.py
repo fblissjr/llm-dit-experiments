@@ -826,7 +826,7 @@ class ZImagePipeline:
 
     def __call__(
         self,
-        prompt: Union[str, Conversation],
+        prompt: Union[str, Conversation, None] = None,
         height: int = 1024,
         width: int = 1024,
         num_inference_steps: int = 9,
@@ -846,6 +846,7 @@ class ZImagePipeline:
         long_prompt_mode: str = "truncate",
         hidden_layer: int = -2,
         layer_weights: dict[int, float] | None = None,
+        prompt_embeds: Optional[torch.Tensor] = None,
     ) -> Union[Image.Image, List[Image.Image], torch.Tensor]:
         """
         Generate an image from a text prompt.
@@ -881,6 +882,11 @@ class ZImagePipeline:
             layer_weights: Optional dict mapping layer indices to blend weights, e.g.:
                    {-2: 0.7, -5: 0.3} blends 70% penultimate + 30% layer -5.
                    If provided, overrides hidden_layer. Weights are normalized to sum to 1.0.
+            prompt_embeds: Pre-computed embeddings tensor of shape (seq_len, hidden_dim).
+                   If provided, skips text encoding entirely. Useful for:
+                   - Vision-conditioned generation with Qwen3-VL embeddings
+                   - Distributed inference with pre-computed embeddings
+                   - Caching embeddings across multiple generations
 
         Returns:
             Generated image(s) in specified format
@@ -906,6 +912,12 @@ class ZImagePipeline:
                 "A cat sleeping",
                 generator=torch.Generator().manual_seed(42),
             )
+
+            # With pre-computed embeddings (e.g., from Qwen3-VL vision encoder)
+            image = pipe(
+                prompt_embeds=vision_embeddings,  # shape: (seq_len, 2560)
+                generator=torch.Generator().manual_seed(42),
+            )
         """
         # Validate dimensions (must be divisible by 16 for Z-Image)
         vae_scale = self.vae_scale_factor * 2  # 16 for Z-Image
@@ -921,47 +933,56 @@ class ZImagePipeline:
         device = self.device
         dtype = self.dtype
 
-        # 1. Encode prompt
-        logger.info(f"[Pipeline] Encoding prompt on device={device}, dtype={dtype}")
-        logger.info(f"[Pipeline] Encoder type: {type(self.encoder).__name__}")
-        backend = getattr(self.encoder, 'backend', None)
-        logger.info(f"[Pipeline] Encoder backend: {type(backend).__name__ if backend else 'local'}")
-
-        # Use blended encoding if layer_weights provided, otherwise standard encoding
-        if layer_weights is not None:
-            logger.info(f"[Pipeline] Using blended encoding with layer_weights={layer_weights}")
-            prompt_output = self.encoder.encode_blended(
-                prompt,
-                layer_weights=layer_weights,
-                template=template,
-                system_prompt=system_prompt,
-                thinking_content=thinking_content,
-                assistant_content=assistant_content,
-                force_think_block=force_think_block,
-                remove_quotes=remove_quotes,
-            )
+        # 1. Encode prompt OR use pre-computed embeddings
+        if prompt_embeds is not None:
+            # Use pre-computed embeddings (e.g., from Qwen3-VL vision encoder)
+            logger.info(f"[Pipeline] Using pre-computed embeddings: shape={prompt_embeds.shape}")
+            raw_embeds = prompt_embeds
         else:
-            prompt_output = self.encoder.encode(
-                prompt,
-                template=template,
-                system_prompt=system_prompt,
-                thinking_content=thinking_content,
-                assistant_content=assistant_content,
-                force_think_block=force_think_block,
-                remove_quotes=remove_quotes,
-                layer_index=hidden_layer,
-            )
+            # Standard text encoding path
+            if prompt is None:
+                raise ValueError("Either 'prompt' or 'prompt_embeds' must be provided")
 
-        # Log formatted prompt for debugging
-        if prompt_output.formatted_prompts:
-            formatted = prompt_output.formatted_prompts[0]
-            logger.info(f"[Pipeline] Formatted prompt ({len(formatted)} chars):")
-            # Show the full prompt with special tokens visible
-            logger.info(f"[Pipeline] ---BEGIN FORMATTED PROMPT---")
-            logger.info(formatted)
-            logger.info(f"[Pipeline] ---END FORMATTED PROMPT---")
+            logger.info(f"[Pipeline] Encoding prompt on device={device}, dtype={dtype}")
+            logger.info(f"[Pipeline] Encoder type: {type(self.encoder).__name__}")
+            backend = getattr(self.encoder, 'backend', None)
+            logger.info(f"[Pipeline] Encoder backend: {type(backend).__name__ if backend else 'local'}")
 
-        raw_embeds = prompt_output.embeddings[0]
+            # Use blended encoding if layer_weights provided, otherwise standard encoding
+            if layer_weights is not None:
+                logger.info(f"[Pipeline] Using blended encoding with layer_weights={layer_weights}")
+                prompt_output = self.encoder.encode_blended(
+                    prompt,
+                    layer_weights=layer_weights,
+                    template=template,
+                    system_prompt=system_prompt,
+                    thinking_content=thinking_content,
+                    assistant_content=assistant_content,
+                    force_think_block=force_think_block,
+                    remove_quotes=remove_quotes,
+                )
+            else:
+                prompt_output = self.encoder.encode(
+                    prompt,
+                    template=template,
+                    system_prompt=system_prompt,
+                    thinking_content=thinking_content,
+                    assistant_content=assistant_content,
+                    force_think_block=force_think_block,
+                    remove_quotes=remove_quotes,
+                    layer_index=hidden_layer,
+                )
+
+            # Log formatted prompt for debugging
+            if prompt_output.formatted_prompts:
+                formatted = prompt_output.formatted_prompts[0]
+                logger.info(f"[Pipeline] Formatted prompt ({len(formatted)} chars):")
+                # Show the full prompt with special tokens visible
+                logger.info(f"[Pipeline] ---BEGIN FORMATTED PROMPT---")
+                logger.info(formatted)
+                logger.info(f"[Pipeline] ---END FORMATTED PROMPT---")
+
+            raw_embeds = prompt_output.embeddings[0]
         logger.info(f"[Pipeline] Raw embeddings: shape={raw_embeds.shape}, device={raw_embeds.device}, dtype={raw_embeds.dtype}")
         logger.info(f"[Pipeline] Embedding stats: min={raw_embeds.min().item():.4f}, max={raw_embeds.max().item():.4f}, mean={raw_embeds.mean().item():.4f}, std={raw_embeds.std().item():.4f}")
 

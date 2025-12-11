@@ -43,6 +43,8 @@ app.add_middleware(
 pipeline = None
 encoder = None  # For encoder-only mode
 rewriter_backend = None  # API backend for rewriting (if configured)
+vl_extractor = None  # Qwen3-VL embedding extractor (if configured)
+vl_embeddings_cache = {}  # Cache for extracted VL embeddings (keyed by hash)
 runtime_config = None  # RuntimeConfig from CLI/TOML
 encoder_only_mode = False
 
@@ -91,6 +93,42 @@ class RewriteRequest(BaseModel):
     presence_penalty: Optional[float] = None  # Presence penalty (0-2, default: 0.0)
 
 
+class VLExtractRequest(BaseModel):
+    """Request to extract VL embeddings from an image."""
+    image: str  # Base64-encoded image
+    text: Optional[str] = None  # Optional text description with image
+    hidden_layer: int = -2  # Which hidden layer to extract (-2 = penultimate)
+    image_tokens_only: bool = False  # Only extract image token embeddings
+    scale_to_text: bool = True  # Scale embeddings to match text statistics
+
+
+class VLGenerateRequest(BaseModel):
+    """Request for VL-conditioned generation."""
+    prompt: str  # Text prompt
+    vl_image: Optional[str] = None  # Base64-encoded reference image (optional)
+    vl_embeddings_id: Optional[str] = None  # ID of pre-extracted embeddings (optional)
+    vl_alpha: float = 0.3  # VL influence (0.0=text, 1.0=VL)
+    vl_hidden_layer: int = -2  # Hidden layer for VL extraction
+    vl_image_tokens_only: bool = False  # Only use image tokens
+    vl_text: Optional[str] = None  # Text description with reference image
+    vl_blend_mode: str = "linear"  # linear, style_only, graduated, attention_weighted
+    # Standard generation params
+    system_prompt: Optional[str] = None
+    thinking_content: Optional[str] = None
+    assistant_content: Optional[str] = None
+    force_think_block: bool = False
+    strip_quotes: bool = False
+    width: int = 1024
+    height: int = 1024
+    steps: int = 9
+    seed: Optional[int] = None
+    template: Optional[str] = None
+    guidance_scale: float = 0.0
+    shift: float = 3.0
+    long_prompt_mode: str = "interpolate"
+    hidden_layer: int = -2  # For text encoder
+
+
 @app.get("/")
 async def index():
     """Serve the main page."""
@@ -105,7 +143,323 @@ async def health():
         "pipeline_loaded": pipeline is not None,
         "encoder_loaded": encoder is not None,
         "encoder_only_mode": encoder_only_mode,
+        "vl_available": vl_extractor is not None,
     }
+
+
+# =============================================================================
+# Vision Conditioning (Qwen3-VL) Endpoints
+# =============================================================================
+
+
+@app.get("/api/vl/status")
+async def vl_status():
+    """Check VL conditioning status and configuration."""
+    if runtime_config is None:
+        return {
+            "available": False,
+            "reason": "Runtime config not loaded",
+        }
+
+    vl_configured = bool(runtime_config.vl_model_path)
+    vl_loaded = vl_extractor is not None
+
+    return {
+        "available": vl_loaded,
+        "configured": vl_configured,
+        "model_path": runtime_config.vl_model_path if vl_configured else None,
+        "device": runtime_config.vl_device if vl_configured else None,
+        "default_alpha": runtime_config.vl_alpha if vl_configured else 0.3,
+        "default_hidden_layer": runtime_config.vl_hidden_layer if vl_configured else -2,
+        "blend_modes": ["linear", "style_only", "graduated", "attention_weighted"],
+        "cached_embeddings": list(vl_embeddings_cache.keys()),
+    }
+
+
+@app.get("/api/vl/config")
+async def vl_config():
+    """Get VL conditioning default parameters from server config."""
+    if runtime_config is None:
+        return {
+            "alpha": 0.3,
+            "hidden_layer": -2,
+            "auto_unload": True,
+            "blend_mode": "linear",
+        }
+    return {
+        "alpha": runtime_config.vl_alpha,
+        "hidden_layer": runtime_config.vl_hidden_layer,
+        "auto_unload": runtime_config.vl_auto_unload,
+        "blend_mode": runtime_config.vl_blend_mode,
+    }
+
+
+@app.post("/api/vl/extract")
+async def vl_extract(request: VLExtractRequest):
+    """Extract VL embeddings from an uploaded image.
+
+    Returns an embeddings ID that can be used with /api/vl/generate.
+    This allows pre-extracting embeddings and reusing them across generations.
+    """
+    if vl_extractor is None:
+        raise HTTPException(
+            status_code=503,
+            detail="VL extractor not loaded. Configure vl.model_path in config."
+        )
+
+    try:
+        import base64
+        import hashlib
+        from PIL import Image
+
+        # Decode base64 image
+        image_data = base64.b64decode(request.image)
+        image = Image.open(io.BytesIO(image_data)).convert("RGB")
+
+        logger.info(f"[VL] Extracting embeddings from {image.size[0]}x{image.size[1]} image")
+        logger.info(f"[VL] hidden_layer={request.hidden_layer}, image_tokens_only={request.image_tokens_only}")
+
+        start = time.time()
+
+        # Extract embeddings
+        result = vl_extractor.extract(
+            image=image,
+            text=request.text,
+            hidden_layer=request.hidden_layer,
+            image_tokens_only=request.image_tokens_only,
+            scale_to_text=request.scale_to_text,
+        )
+
+        extract_time = time.time() - start
+
+        # Generate cache ID
+        image_hash = hashlib.md5(image_data).hexdigest()[:8]
+        text_hash = hashlib.md5((request.text or "").encode()).hexdigest()[:4]
+        cache_id = f"vl_{image_hash}_{text_hash}_L{request.hidden_layer}"
+
+        # Cache the embeddings
+        vl_embeddings_cache[cache_id] = {
+            "embeddings": result.embeddings,
+            "num_tokens": result.num_tokens,
+            "hidden_layer": result.hidden_layer,
+            "original_std": result.original_std,
+            "scaled_std": result.scaled_std,
+            "text": request.text,
+            "timestamp": time.time(),
+        }
+
+        logger.info(f"[VL] Extracted {result.num_tokens} tokens in {extract_time:.2f}s -> {cache_id}")
+
+        return {
+            "embeddings_id": cache_id,
+            "num_tokens": result.num_tokens,
+            "shape": list(result.embeddings.shape),
+            "hidden_layer": result.hidden_layer,
+            "original_std": result.original_std,
+            "scaled_std": result.scaled_std,
+            "extract_time": extract_time,
+        }
+
+    except Exception as e:
+        logger.error(f"[VL] Extraction failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/vl/generate")
+async def vl_generate(request: VLGenerateRequest):
+    """Generate an image with VL conditioning.
+
+    This endpoint supports three modes:
+    1. vl_image provided: Extract VL embeddings on-the-fly and generate
+    2. vl_embeddings_id provided: Use pre-extracted embeddings
+    3. Neither provided: Falls back to standard text-only generation
+    """
+    if pipeline is None:
+        raise HTTPException(status_code=503, detail="Pipeline not loaded")
+
+    # Get VL embeddings
+    vl_emb = None
+
+    if request.vl_embeddings_id:
+        # Use cached embeddings
+        cached = vl_embeddings_cache.get(request.vl_embeddings_id)
+        if cached is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Embeddings not found: {request.vl_embeddings_id}"
+            )
+        vl_emb = cached["embeddings"]
+        logger.info(f"[VL] Using cached embeddings: {request.vl_embeddings_id}")
+
+    elif request.vl_image:
+        # Extract on-the-fly
+        if vl_extractor is None:
+            raise HTTPException(
+                status_code=503,
+                detail="VL extractor not loaded. Configure vl.model_path in config."
+            )
+
+        try:
+            import base64
+            from PIL import Image
+
+            image_data = base64.b64decode(request.vl_image)
+            image = Image.open(io.BytesIO(image_data)).convert("RGB")
+
+            logger.info(f"[VL] Extracting embeddings on-the-fly from {image.size[0]}x{image.size[1]} image")
+
+            result = vl_extractor.extract(
+                image=image,
+                text=request.vl_text,
+                hidden_layer=request.vl_hidden_layer,
+                image_tokens_only=request.vl_image_tokens_only,
+            )
+            vl_emb = result.embeddings
+
+        except Exception as e:
+            logger.error(f"[VL] On-the-fly extraction failed: {e}")
+            raise HTTPException(status_code=500, detail=f"VL extraction failed: {e}")
+
+    try:
+        logger.info("=" * 60)
+        logger.info("VL-CONDITIONED GENERATION REQUEST")
+        logger.info("=" * 60)
+        logger.info(f"  Prompt: {request.prompt[:80]}...")
+        logger.info(f"  VL alpha: {request.vl_alpha}")
+        logger.info(f"  VL blend mode: {request.vl_blend_mode}")
+        logger.info(f"  Size: {request.width}x{request.height}")
+        logger.info(f"  Steps: {request.steps}")
+
+        # Encode text prompt
+        enc = encoder if encoder is not None else (pipeline.encoder if pipeline else None)
+        if enc is None:
+            raise HTTPException(status_code=503, detail="Encoder not loaded")
+
+        text_output = enc.encode(
+            request.prompt,
+            template=request.template,
+            system_prompt=request.system_prompt,
+            thinking_content=request.thinking_content,
+            assistant_content=request.assistant_content,
+            force_think_block=request.force_think_block,
+            remove_quotes=request.strip_quotes,
+            long_prompt_mode=request.long_prompt_mode,
+            hidden_layer=request.hidden_layer,
+        )
+        text_emb = text_output.embeddings[0]
+
+        # Blend VL and text embeddings
+        if vl_emb is not None and request.vl_alpha > 0:
+            from llm_dit.vl import (
+                blend_embeddings,
+                blend_style_only,
+                blend_per_token,
+                create_graduated_alpha,
+            )
+
+            if request.vl_blend_mode == "linear":
+                blended = blend_embeddings(vl_emb, text_emb, request.vl_alpha)
+            elif request.vl_blend_mode == "style_only":
+                blended = blend_style_only(vl_emb, text_emb, request.vl_alpha)
+            elif request.vl_blend_mode == "graduated":
+                seq_len = min(vl_emb.shape[0], text_emb.shape[0])
+                token_alphas = create_graduated_alpha(seq_len, 0.0, request.vl_alpha * 2)
+                blended = blend_per_token(vl_emb, text_emb, token_alphas)
+            elif request.vl_blend_mode == "attention_weighted":
+                # For now, fall back to linear (attention weights not yet available)
+                blended = blend_embeddings(vl_emb, text_emb, request.vl_alpha)
+            else:
+                blended = blend_embeddings(vl_emb, text_emb, request.vl_alpha)
+
+            logger.info(f"[VL] Blended embeddings: shape={blended.shape}, std={blended.std():.2f}")
+            prompt_embeds = blended.unsqueeze(0)  # Add batch dim
+        else:
+            prompt_embeds = text_emb.unsqueeze(0)
+
+        # Set up generator
+        generator = None
+        if request.seed is not None:
+            generator = torch.Generator()
+            generator.manual_seed(request.seed)
+
+        start = time.time()
+
+        # Generate using prompt_embeds directly
+        image = pipeline(
+            prompt_embeds=prompt_embeds,
+            height=request.height,
+            width=request.width,
+            num_inference_steps=request.steps,
+            guidance_scale=request.guidance_scale,
+            shift=request.shift,
+            generator=generator,
+        )
+
+        gen_time = time.time() - start
+        logger.info(f"[VL] Generated in {gen_time:.1f}s")
+        logger.info("=" * 60)
+
+        # Convert to PNG bytes
+        img_bytes = io.BytesIO()
+        image.save(img_bytes, format="PNG")
+        img_bytes.seek(0)
+
+        # Store in history with VL info
+        import base64
+        img_bytes_copy = io.BytesIO()
+        image.save(img_bytes_copy, format="PNG")
+        img_b64 = base64.b64encode(img_bytes_copy.getvalue()).decode("ascii")
+
+        history_entry = {
+            "id": len(generation_history),
+            "timestamp": time.time(),
+            "prompt": request.prompt,
+            "vl_alpha": request.vl_alpha,
+            "vl_blend_mode": request.vl_blend_mode,
+            "vl_embeddings_id": request.vl_embeddings_id,
+            "width": request.width,
+            "height": request.height,
+            "steps": request.steps,
+            "seed": request.seed,
+            "gen_time": gen_time,
+            "image_b64": img_b64,
+        }
+        generation_history.insert(0, history_entry)
+        if len(generation_history) > MAX_HISTORY:
+            generation_history.pop()
+
+        return StreamingResponse(
+            img_bytes,
+            media_type="image/png",
+            headers={
+                "X-Generation-Time": str(gen_time),
+                "X-Seed": str(request.seed) if request.seed else "random",
+                "X-VL-Alpha": str(request.vl_alpha),
+                "X-VL-Blend-Mode": request.vl_blend_mode,
+            },
+        )
+
+    except Exception as e:
+        logger.error(f"[VL] Generation failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/vl/cache/{embeddings_id}")
+async def vl_clear_cache_entry(embeddings_id: str):
+    """Clear a specific cached VL embedding."""
+    if embeddings_id in vl_embeddings_cache:
+        del vl_embeddings_cache[embeddings_id]
+        return {"deleted": embeddings_id}
+    raise HTTPException(status_code=404, detail=f"Embeddings not found: {embeddings_id}")
+
+
+@app.delete("/api/vl/cache")
+async def vl_clear_cache():
+    """Clear all cached VL embeddings."""
+    global vl_embeddings_cache
+    count = len(vl_embeddings_cache)
+    vl_embeddings_cache = {}
+    return {"cleared": count}
 
 
 @app.get("/api/rewriter-config")
@@ -1093,6 +1447,31 @@ def main():
             logger.info(f"[Rewriter] Defaults: temperature={runtime_config.rewriter_temperature}, top_p={runtime_config.rewriter_top_p}, max_tokens={runtime_config.rewriter_max_tokens}")
         else:
             logger.warning("[Rewriter] use_api=True but no API URL configured. Using local model.")
+
+    # Initialize VL extractor if configured
+    global vl_extractor
+    if runtime_config.vl_model_path:
+        logger.info(f"[VL] Loading Qwen3-VL from {runtime_config.vl_model_path}")
+        logger.info(f"[VL] Device: {runtime_config.vl_device}, default alpha: {runtime_config.vl_alpha}")
+        try:
+            from llm_dit.vl import VLEmbeddingExtractor
+
+            # Determine torch dtype
+            vl_dtype = torch.bfloat16 if runtime_config.vl_device == "cuda" else torch.float32
+
+            vl_extractor = VLEmbeddingExtractor.from_pretrained(
+                runtime_config.vl_model_path,
+                device=runtime_config.vl_device,
+                torch_dtype=vl_dtype,
+            )
+            logger.info(f"[VL] Qwen3-VL loaded successfully")
+            logger.info(f"[VL] Default blend mode: {runtime_config.vl_blend_mode}")
+        except Exception as e:
+            logger.error(f"[VL] Failed to load Qwen3-VL: {e}")
+            logger.warning("[VL] Vision conditioning will be disabled")
+            vl_extractor = None
+    else:
+        logger.info("[VL] No vl_model_path configured, vision conditioning disabled")
 
     # Run server
     import uvicorn

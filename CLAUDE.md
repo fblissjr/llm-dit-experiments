@@ -440,6 +440,10 @@ src/llm_dit/
         lora.py         # LoRA loading and fusion
         attention.py    # Priority-based attention backend selector
         tiled_vae.py    # TiledVAEDecoder for 2K+ images
+    vl/                 # Vision conditioning (Qwen3-VL)
+        __init__.py     # Module exports
+        qwen3_vl.py     # VLEmbeddingExtractor class
+        blending.py     # Embedding blending utilities
     cli.py              # Shared CLI argument parser and config loading
     config.py           # Configuration dataclasses
 
@@ -468,6 +472,10 @@ experiments/            # Ablation studies and evaluation tools
     prompts/            # Standard evaluation prompts
     metrics/            # ImageReward, SigLIP scoring
     results/            # Generated images and logs
+    qwen3_vl/           # Vision conditioning experiments
+        README.md       # Feature documentation
+        CONDITIONING_GUIDE.md   # Usage guide
+        RESEARCH_FINDINGS.md    # Technical discoveries
 
 docs/                   # User-facing documentation
     distributed_inference.md  # Running encoder on Mac, DiT on CUDA
@@ -707,6 +715,16 @@ uv run scripts/profiler.py --show-info
 | `--rewriter-min-p` | Minimum probability threshold (default: 0.0, disabled) |
 | `--rewriter-max-tokens` | Maximum tokens to generate (default: 512) |
 
+### Vision Conditioning (Qwen3-VL)
+| Flag | Description |
+|------|-------------|
+| `--vl-model-path` | Path to Qwen3-VL-4B-Instruct model |
+| `--vl-device` | Device for VL model (cpu recommended to save VRAM) |
+| `--vl-alpha` | Default VL influence (0.0-1.0, default: 0.3) |
+| `--vl-hidden-layer` | Hidden layer for VL extraction (default: -2) |
+| `--vl-auto-unload` | Unload VL model after extraction (default: true) |
+| `--vl-blend-mode` | Blend mode: linear/style_only/graduated/attention_weighted |
+
 ## REST API Endpoints
 
 | Endpoint | Method | Description |
@@ -722,6 +740,12 @@ uv run scripts/profiler.py --show-info
 | `/api/history` | GET | Get generation history |
 | `/api/history/{index}` | DELETE | Delete specific history item |
 | `/api/history` | DELETE | Clear all history |
+| `/api/vl/status` | GET | Check VL availability and config |
+| `/api/vl/config` | GET | Get VL default parameters |
+| `/api/vl/extract` | POST | Extract VL embeddings from image |
+| `/api/vl/generate` | POST | Generate with VL conditioning |
+| `/api/vl/cache/{id}` | DELETE | Clear specific VL cache entry |
+| `/api/vl/cache` | DELETE | Clear all VL cache |
 | `/health` | GET | Health check |
 
 ## API Request Fields
@@ -1028,3 +1052,84 @@ rewritten = backend.generate(
 backend = APIBackend.from_url("http://localhost:8000", "qwen3-4b")
 rewritten = backend.generate(...)
 ```
+
+## Vision Conditioning (Qwen3-VL)
+
+Zero-shot vision conditioning using Qwen3-VL embeddings. This is a novel approach that uses a reference image to influence the generated output's style/content without any training.
+
+### Why It Works
+
+Qwen3-VL-4B's text model shares architecture with Qwen3-4B:
+- Both have `hidden_size=2560` (matching Z-Image's expected embedding dimension)
+- Qwen3-VL projects vision features into the same embedding space
+- Interpolating VL + text embeddings produces coherent conditioning
+
+### Quick Start
+
+**Configuration:**
+```toml
+[rtx4090.vl]
+model_path = "/path/to/Qwen3-VL-4B-Instruct"
+device = "cpu"              # Recommended to save VRAM
+default_alpha = 0.3         # 0.0=text only, 1.0=VL only
+default_hidden_layer = -2   # Penultimate layer
+auto_unload = true          # Unload after extraction
+```
+
+**Web UI:**
+1. Open "Vision Conditioning (Qwen3-VL)" section
+2. Upload a reference image
+3. Adjust alpha (0.2=subtle, 0.3=balanced, 0.5=strong)
+4. Select blend mode (linear, style_only, graduated)
+5. Generate
+
+**CLI:**
+```bash
+uv run web/server.py \
+  --model-path /path/to/z-image \
+  --vl-model-path /path/to/Qwen3-VL-4B-Instruct \
+  --vl-device cpu \
+  --vl-alpha 0.3
+```
+
+### Blend Modes
+
+| Mode | Description | Best For |
+|------|-------------|----------|
+| `linear` | Uniform interpolation | General use |
+| `style_only` | Only blend style dimensions | Preserve text subjects |
+| `graduated` | More VL for later tokens | Keep early text content |
+| `attention_weighted` | Reduce VL for important tokens | Experimental |
+
+### Key Parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `vl_alpha` | 0.3 | VL influence (0.0-1.0). Higher = more VL |
+| `vl_hidden_layer` | -2 | Layer to extract. -2 recommended |
+| `vl_image_tokens_only` | false | Only use image token embeddings |
+| `vl_blend_mode` | linear | Blending strategy |
+
+### Memory Management
+
+VL extraction workflow (recommended):
+1. Load Qwen3-VL on CPU
+2. Extract embeddings from reference image
+3. Cache embeddings (keyed by image hash)
+4. Unload Qwen3-VL
+5. Generate using cached embeddings
+
+This keeps VRAM free for the DiT.
+
+### Research Notes
+
+See `internal/research/vl_conditioning_hypotheses.md` for:
+- Hypotheses about embedding alignment
+- Alternative blending methods to try
+- Questions for future investigation
+- Hidden layer behavior analysis
+
+See `experiments/qwen3_vl/` for:
+- Feature documentation
+- Conditioning guide
+- Research findings
