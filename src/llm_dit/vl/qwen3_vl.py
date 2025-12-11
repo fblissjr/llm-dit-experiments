@@ -58,6 +58,7 @@ class VLExtractionResult:
     scale_factor: float
     token_selection: str  # "all", "image_only", "image_only_no_markers", "text_only"
     text_description: str | None
+    chat_template_format: str  # "with_think_block" or "no_think_block"
 
 
 class VLEmbeddingExtractor:
@@ -280,6 +281,7 @@ class VLEmbeddingExtractor:
             scale_factor=scale_factor,
             token_selection=token_selection,
             text_description=text,
+            chat_template_format="with_think_block",  # enable_thinking=False adds <think>\n\n</think>\n\n
         )
 
     def _filter_image_tokens(

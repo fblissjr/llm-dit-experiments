@@ -604,6 +604,7 @@ def run_experiments(
                 "vl_shape": list(vl_emb.shape),
                 "vl_std": vl_result.scaled_std,
                 "token_selection": vl_result.token_selection,
+                "chat_template_format": vl_result.chat_template_format,
                 "blended_std": blended.std().item(),
                 "elapsed_seconds": elapsed,
                 "generation_time": gen_time,
