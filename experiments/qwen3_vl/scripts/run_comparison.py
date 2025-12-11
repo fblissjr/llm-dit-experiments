@@ -112,12 +112,18 @@ TokenMode = Literal["full", "text_only", "image_only", "image_no_markers"]
 @dataclass
 class ExperimentConfig:
     """Configuration for a single experiment run."""
-    name: str
+    name: str  # Human-readable label for grid display
+    filename: str = ""  # Filesystem-safe name (auto-generated if empty)
     alpha: float = 1.0
     hidden_layer: int = -8
     token_mode: TokenMode = "text_only"
     vl_text: str | None = None  # None = no text, "__PROMPT__" = use CLI prompt
     scale_to_text: bool = True
+
+    def __post_init__(self):
+        if not self.filename:
+            # Generate filesystem-safe name from display name
+            self.filename = self.name.replace(" | ", "_").replace(" ", "_").replace("=", "").replace("%", "pct").replace("(", "").replace(")", "")
 
     @property
     def image_tokens_only(self) -> bool:
@@ -562,7 +568,7 @@ def run_experiments(
                 blended = blend_embeddings(vl_emb, text_emb, config.alpha)
 
             # Generate
-            output_path = output_dir / f"{config.name}.png"
+            output_path = output_dir / f"{config.filename}.png"
             generator.manual_seed(seed)
 
             logger.info(f"  Generating {z_config.width}x{z_config.height} image...")
