@@ -221,12 +221,14 @@ class TestCLIToRuntimeConfig:
             "output",      # Script-specific, not in RuntimeConfig
             "prompts",     # Script-specific positional
             "version",     # Just prints version
+            "embeddings_file",  # Script-specific (generate.py)
         }
 
         # CLI arg names that map to different RuntimeConfig field names
         cli_to_runtime_mapping = {
             "text_encoder_device": "encoder_device",
             "template": "default_template",
+            "vl_no_auto_unload": "vl_auto_unload",  # Inverted flag
         }
 
         cli_dests_filtered = cli_dests - excluded

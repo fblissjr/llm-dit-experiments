@@ -561,6 +561,234 @@ Warm orange and pink hues, soft clouds.
 Here is my painting:
 ```
 
+## Vision Conditioning (Qwen3-VL)
+
+The server supports vision-conditioned generation using Qwen3-VL embeddings. This is a zero-shot technique that uses a reference image to influence the generated output's style/content.
+
+### Configuration
+
+Add to your config.toml:
+
+```toml
+[default.vl]
+model_path = "/path/to/Qwen3-VL-4B-Instruct"  # Required to enable
+device = "cpu"                                  # Recommended to save VRAM
+default_alpha = 0.3                             # 0.0=text only, 1.0=VL only
+default_hidden_layer = -2                       # -2=penultimate (recommended)
+auto_unload = true                              # Unload after extraction
+target_std = 58.75                              # Scale VL embeddings to match text
+```
+
+Or use CLI flags:
+```bash
+uv run web/server.py \
+  --model-path /path/to/z-image-turbo \
+  --vl-model-path /path/to/Qwen3-VL-4B-Instruct \
+  --vl-device cpu \
+  --vl-alpha 0.3
+```
+
+---
+
+### GET /api/vl/status
+
+Check if VL conditioning is available.
+
+**Response:**
+```json
+{
+  "available": true,
+  "configured": true,
+  "model_path": "/path/to/Qwen3-VL-4B-Instruct",
+  "device": "cpu",
+  "default_alpha": 0.3,
+  "default_hidden_layer": -2,
+  "blend_modes": ["linear", "style_only", "graduated", "attention_weighted"],
+  "cached_embeddings": ["vl_abc123_def4_L-2"]
+}
+```
+
+---
+
+### GET /api/vl/config
+
+Get VL default parameters from server config.
+
+**Response:**
+```json
+{
+  "alpha": 0.3,
+  "hidden_layer": -2,
+  "auto_unload": true,
+  "blend_mode": "linear"
+}
+```
+
+---
+
+### POST /api/vl/extract
+
+Extract VL embeddings from an uploaded image. Returns a cache ID for use with `/api/vl/generate`.
+
+**Request:**
+```json
+{
+  "image": "base64_encoded_image_data",
+  "text": "optional description with image",
+  "hidden_layer": -2,
+  "image_tokens_only": false,
+  "scale_to_text": true
+}
+```
+
+**Fields:**
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| image | string | Yes | - | Base64-encoded image (PNG, JPG) |
+| text | string | No | null | Text description to process with image |
+| hidden_layer | int | No | -2 | Hidden layer to extract (-1 to -6) |
+| image_tokens_only | bool | No | false | Only extract image token embeddings |
+| scale_to_text | bool | No | true | Scale embeddings to match text statistics |
+
+**Response:**
+```json
+{
+  "embeddings_id": "vl_abc123_def4_L-2",
+  "num_tokens": 256,
+  "shape": [256, 2560],
+  "hidden_layer": -2,
+  "original_std": 13.25,
+  "scaled_std": 58.75,
+  "extract_time": 2.34
+}
+```
+
+---
+
+### POST /api/vl/generate
+
+Generate an image with VL conditioning.
+
+**Request:**
+```json
+{
+  "prompt": "A cat sleeping in sunlight",
+  "vl_image": "base64_encoded_image",
+  "vl_embeddings_id": null,
+  "vl_alpha": 0.3,
+  "vl_hidden_layer": -2,
+  "vl_image_tokens_only": false,
+  "vl_text": null,
+  "vl_blend_mode": "linear",
+  "width": 1024,
+  "height": 1024,
+  "steps": 9,
+  "seed": null
+}
+```
+
+**VL-specific Fields:**
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| vl_image | string | No | null | Base64 reference image (extracted on-the-fly) |
+| vl_embeddings_id | string | No | null | Pre-extracted embeddings ID from /api/vl/extract |
+| vl_alpha | float | No | 0.3 | VL influence: 0.0=text only, 1.0=VL only |
+| vl_hidden_layer | int | No | -2 | Hidden layer for extraction |
+| vl_image_tokens_only | bool | No | false | Only use image tokens |
+| vl_text | string | No | null | Text description with reference image |
+| vl_blend_mode | string | No | linear | Blend mode: linear, style_only, graduated, attention_weighted |
+
+**Blend Modes:**
+| Mode | Description |
+|------|-------------|
+| linear | Uniform interpolation (default) |
+| style_only | Only blend style dimensions, preserve text content |
+| graduated | More VL influence for later tokens |
+| attention_weighted | Reduce VL for important text tokens (experimental) |
+
+**Response:** PNG image stream (same as `/api/generate`)
+
+**Headers:**
+- `X-Generation-Time`: Generation time in seconds
+- `X-Seed`: Seed used
+- `X-VL-Alpha`: VL alpha value used
+- `X-VL-Blend-Mode`: Blend mode used
+
+---
+
+### DELETE /api/vl/cache/{embeddings_id}
+
+Clear a specific cached VL embedding.
+
+**Response:**
+```json
+{
+  "deleted": "vl_abc123_def4_L-2"
+}
+```
+
+---
+
+### DELETE /api/vl/cache
+
+Clear all cached VL embeddings.
+
+**Response:**
+```json
+{
+  "cleared": 5
+}
+```
+
+---
+
+### VL Workflow Example
+
+**Two-stage workflow (recommended for multiple generations with same reference):**
+
+```python
+import base64
+import requests
+
+# 1. Load and encode reference image
+with open("reference.jpg", "rb") as f:
+    image_b64 = base64.b64encode(f.read()).decode()
+
+# 2. Extract embeddings once
+extract_resp = requests.post("http://localhost:7860/api/vl/extract", json={
+    "image": image_b64,
+    "hidden_layer": -2,
+})
+embeddings_id = extract_resp.json()["embeddings_id"]
+
+# 3. Generate multiple images using cached embeddings
+for seed in [42, 123, 456]:
+    gen_resp = requests.post("http://localhost:7860/api/vl/generate", json={
+        "prompt": "A cat sleeping in sunlight",
+        "vl_embeddings_id": embeddings_id,
+        "vl_alpha": 0.3,
+        "vl_blend_mode": "style_only",
+        "seed": seed,
+    })
+    with open(f"output_{seed}.png", "wb") as f:
+        f.write(gen_resp.content)
+
+# 4. Clean up
+requests.delete(f"http://localhost:7860/api/vl/cache/{embeddings_id}")
+```
+
+**One-shot workflow (simpler but slower):**
+
+```python
+gen_resp = requests.post("http://localhost:7860/api/vl/generate", json={
+    "prompt": "A cat sleeping in sunlight",
+    "vl_image": image_b64,  # Extracted on-the-fly
+    "vl_alpha": 0.3,
+})
+```
+
+---
+
 ## Debug Mode
 
 Run with `--debug` to enable detailed logging:
