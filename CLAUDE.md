@@ -1053,35 +1053,95 @@ backend = APIBackend.from_url("http://localhost:8000", "qwen3-4b")
 rewritten = backend.generate(...)
 ```
 
-## Vision Conditioning (Qwen3-VL)
+## Vision Conditioning (Qwen3-VL) - EXPERIMENTAL
 
 Zero-shot vision conditioning using Qwen3-VL embeddings. This is a novel approach that uses a reference image to influence the generated output's style/content without any training.
 
-### Why It Works
+**Status: EXPERIMENTAL** - VL conditioning works but produces visible artifacts compared to pure text. See Research Findings below.
+
+### Why It Works (In Theory)
 
 Qwen3-VL-4B's text model shares architecture with Qwen3-4B:
 - Both have `hidden_size=2560` (matching Z-Image's expected embedding dimension)
-- Qwen3-VL projects vision features into the same embedding space
-- Interpolating VL + text embeddings produces coherent conditioning
+- Qwen3-VL projects vision features into the same embedding space via `PatchMerger.linear_fc2`
+- Interpolating VL + text embeddings should produce coherent conditioning
 
-### Quick Start
+### Current Implementation
 
-**Configuration:**
+**Optimal Settings (from experiments):**
 ```toml
 [rtx4090.vl]
 model_path = "/path/to/Qwen3-VL-4B-Instruct"
-device = "cpu"              # Recommended to save VRAM
-default_alpha = 0.3         # 0.0=text only, 1.0=VL only
-default_hidden_layer = -2   # Penultimate layer
-auto_unload = true          # Unload after extraction
+device = "cpu"                  # Recommended to save VRAM
+default_alpha = 1.0             # Use text_tokens_only=true, pure VL
+default_hidden_layer = -8       # Layer -8 produces cleaner results than -2
+text_tokens_only = true         # CRITICAL: Image tokens cause severe artifacts
+target_std = 70.0               # Match Qwen3-4B text embedding std
+auto_unload = true              # Unload after extraction
 ```
+
+**Key Technical Details:**
+
+| Parameter | Optimal Value | Notes |
+|-----------|---------------|-------|
+| `hidden_layer` | **-8** | Layer -2 (default for text) produces heavy artifacts for VL |
+| `text_tokens_only` | **true** | Image token positions cause severe grid/blocky artifacts |
+| `target_std` | **70.0** | Qwen3-4B text embeddings have std ~70, VL has ~13.25 |
+| `alpha` | **1.0** | With text_tokens_only=true, can use pure VL |
+
+### Chat Template Requirements
+
+Qwen3-VL does NOT support the `enable_thinking` parameter. We manually inject think block tokens after tokenization to match Qwen3-4B format:
+
+```python
+# Token IDs for manual injection (src/llm_dit/vl/qwen3_vl.py)
+THINK_START_TOKEN_ID = 151667   # <think>
+THINK_END_TOKEN_ID = 151668     # </think>
+DOUBLE_NEWLINE_TOKEN_ID = 271   # \n\n (NOT 198 twice!)
+
+# After tokenization:
+# input_ids = [...tokens..., 151667, 271, 151668, 271]
+```
+
+### Embedding Statistics
+
+| Source | Mean | Std | Notes |
+|--------|------|-----|-------|
+| Qwen3-4B text | ~0.0 | ~70 | Target for scaling |
+| Qwen3-VL text tokens | ~0.0 | ~13.25 | Needs ~5.3x scaling |
+| Qwen3-VL image tokens | ~0.0 | ~2.5-5.0 | Needs 10-25x scaling (problematic) |
+
+The extreme scaling needed for image tokens likely causes the artifacts. Text tokens need only ~1.5x scaling with `target_std=70`.
+
+### Research Findings (2025-12-11)
+
+**What Works:**
+- Text token positions from VL model contain prompt-following information
+- Layer -8 produces much cleaner results than layer -2
+- `text_tokens_only=True` reduces artifacts significantly
+- Character addition ("Homer Simpson") with ref image works reasonably
+
+**What Doesn't Work:**
+- Image token positions cause severe blocky/grid artifacts
+- Style transfer (applying ref image style to new subject) fails
+- Even optimal settings produce visible artifacts vs pure Qwen3-4B text
+- VL-conditioned backgrounds show grid patterns
+
+**Comparison Results:**
+- `pure_text_homer.png` (Qwen3-4B text only) = Clean output
+- `optimal_vl.png` (VL with optimal settings) = Visible grid artifacts in background
+- Image tokens at any alpha = Heavy corruption
+
+**Artifact Examples:**
+The grid/blocky pattern appears to come from the VL embedding space not perfectly aligning with the DiT's learned text embedding distribution, even after normalization.
+
+### Usage (Despite Artifacts)
 
 **Web UI:**
 1. Open "Vision Conditioning (Qwen3-VL)" section
 2. Upload a reference image
-3. Adjust alpha (0.2=subtle, 0.3=balanced, 0.5=strong)
-4. Select blend mode (linear, style_only, graduated)
-5. Generate
+3. Use optimal settings: layer -8, text_tokens_only=true
+4. Generate - expect some artifacts
 
 **CLI:**
 ```bash
@@ -1089,26 +1149,8 @@ uv run web/server.py \
   --model-path /path/to/z-image \
   --vl-model-path /path/to/Qwen3-VL-4B-Instruct \
   --vl-device cpu \
-  --vl-alpha 0.3
+  --vl-hidden-layer -8
 ```
-
-### Blend Modes
-
-| Mode | Description | Best For |
-|------|-------------|----------|
-| `linear` | Uniform interpolation | General use |
-| `style_only` | Only blend style dimensions | Preserve text subjects |
-| `graduated` | More VL for later tokens | Keep early text content |
-| `attention_weighted` | Reduce VL for important tokens | Experimental |
-
-### Key Parameters
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `vl_alpha` | 0.3 | VL influence (0.0-1.0). Higher = more VL |
-| `vl_hidden_layer` | -2 | Layer to extract. -2 recommended |
-| `vl_image_tokens_only` | false | Only use image token embeddings |
-| `vl_blend_mode` | linear | Blending strategy |
 
 ### Memory Management
 
@@ -1121,15 +1163,43 @@ VL extraction workflow (recommended):
 
 This keeps VRAM free for the DiT.
 
-### Research Notes
+### Experiment Runner
 
-See `internal/research/vl_conditioning_hypotheses.md` for:
-- Hypotheses about embedding alignment
-- Alternative blending methods to try
-- Questions for future investigation
-- Hidden layer behavior analysis
+Run VL experiments with comparison grids:
 
-See `experiments/qwen3_vl/` for:
-- Feature documentation
-- Conditioning guide
-- Research findings
+```bash
+cd experiments/qwen3_vl/scripts
+
+# Run optimal settings test
+uv run run_comparison.py --experiment optimal_vl
+
+# Run layer comparison
+uv run run_comparison.py --experiment hidden_layer
+
+# Run conditioning strength test
+uv run run_comparison.py --experiment conditioning_strength
+
+# Available experiments: baseline, alpha_sweep, hidden_layer,
+#   layer_and_norm, conditioning_strength, optimal_vl
+```
+
+Results are saved to `experiments/results/` with comparison grids.
+
+### Future Research Directions
+
+1. **Better normalization**: Per-dimension normalization instead of global std
+2. **Layer interpolation**: Blend multiple hidden layers
+3. **Attention-based selection**: Use attention weights to select important tokens
+4. **Training**: Fine-tune a small projection layer between VL and text space
+5. **Alternative VL models**: Try different vision-language models
+
+### Files
+
+| File | Description |
+|------|-------------|
+| `src/llm_dit/vl/qwen3_vl.py` | VLEmbeddingExtractor class |
+| `src/llm_dit/vl/blending.py` | Embedding blending utilities |
+| `experiments/qwen3_vl/RESEARCH_FINDINGS.md` | Detailed research notes |
+| `experiments/qwen3_vl/scripts/run_comparison.py` | Experiment runner |
+
+See `experiments/qwen3_vl/RESEARCH_FINDINGS.md` for complete technical documentation.

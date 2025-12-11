@@ -259,10 +259,11 @@ class VLConfig:
 
     model_path: str = ""  # Path to Qwen3-VL model (empty = disabled)
     device: str = "cpu"  # Device for Qwen3-VL (cpu recommended to save VRAM)
-    default_alpha: float = 0.3  # Default interpolation ratio (0.0=text, 1.0=VL)
-    default_hidden_layer: int = -2  # Default hidden layer to extract
+    default_alpha: float = 1.0  # Default interpolation ratio (0.0=text, 1.0=VL) - use 1.0 for pure VL
+    default_hidden_layer: int = -8  # Layer -8 produces cleaner results than -2 (penultimate)
+    text_tokens_only: bool = True  # Use only text token positions (image tokens cause artifacts)
     auto_unload: bool = True  # Unload after extraction to save VRAM
-    target_std: float = 58.75  # Target std for scaling (from text embeddings)
+    target_std: float = 70.0  # Target std for scaling (measured from Qwen3-4B text embeddings)
 
 
 @dataclass

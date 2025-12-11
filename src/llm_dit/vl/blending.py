@@ -12,8 +12,10 @@ import torch
 
 logger = logging.getLogger(__name__)
 
-# Default target statistics (from Qwen3-4B text embeddings)
-DEFAULT_TARGET_STD = 58.75
+# Default target statistics (measured from Qwen3-4B text embeddings)
+# Note: This is an approximation. Actual std varies by prompt but ~70 is typical.
+# The original 58.75 value was incorrect and caused corrupted outputs.
+DEFAULT_TARGET_STD = 70.0
 
 
 def scale_embeddings(

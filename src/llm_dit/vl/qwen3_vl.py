@@ -45,6 +45,11 @@ logger = logging.getLogger(__name__)
 VISION_START_TOKEN_ID = 151652
 VISION_END_TOKEN_ID = 151653
 
+# Qwen3 think block token IDs (for manual injection since Qwen3-VL doesn't support enable_thinking)
+THINK_START_TOKEN_ID = 151667  # <think>
+THINK_END_TOKEN_ID = 151668    # </think>
+DOUBLE_NEWLINE_TOKEN_ID = 271  # \n\n (Qwen3 tokenizes double newlines as single token)
+
 
 @dataclass
 class VLExtractionResult:
@@ -59,6 +64,8 @@ class VLExtractionResult:
     token_selection: str  # "all", "image_only", "image_only_no_markers", "text_only"
     text_description: str | None
     chat_template_format: str  # "with_think_block" or "no_think_block"
+    full_prompt_with_tokens: str  # Full decoded prompt including all special tokens
+    input_token_ids: list[int]  # Raw token IDs for debugging
 
 
 class VLEmbeddingExtractor:
@@ -162,10 +169,10 @@ class VLEmbeddingExtractor:
         self,
         image: Image.Image,
         text: str | None = None,
-        hidden_layer: int = -2,
+        hidden_layer: int = -8,
         image_tokens_only: bool = False,
         image_tokens_no_markers: bool = False,
-        text_tokens_only: bool = False,
+        text_tokens_only: bool = True,
         scale_to_text: bool = True,
         target_std: float = DEFAULT_TARGET_STD,
     ) -> VLExtractionResult:
@@ -175,10 +182,10 @@ class VLEmbeddingExtractor:
         Args:
             image: Input image (PIL Image)
             text: Optional text description to include with image
-            hidden_layer: Which hidden layer to extract (-2 = penultimate)
+            hidden_layer: Which hidden layer to extract (-8 recommended, produces cleaner results than -2)
             image_tokens_only: If True, only extract image token hidden states (includes marker tokens)
             image_tokens_no_markers: If True, only extract image tokens WITHOUT the special markers
-            text_tokens_only: If True, only extract text token hidden states (excludes image tokens)
+            text_tokens_only: If True (default), only extract text token hidden states (recommended - image tokens cause artifacts)
             scale_to_text: If True, scale embeddings to match text statistics
             target_std: Target standard deviation for scaling
 
@@ -208,19 +215,47 @@ class VLEmbeddingExtractor:
         messages = [{"role": "user", "content": content}]
 
         # Process inputs using Qwen3-VL's chat template
-        # CRITICAL: Use enable_thinking=False to get the empty <think>\n\n</think>\n\n block
-        # This matches Z-Image's training format where Qwen3-4B was used with think blocks.
-        # Qwen3's counterintuitive naming:
-        #   enable_thinking=True  -> NO think block (model CAN think on its own)
-        #   enable_thinking=False -> ADD empty think block (skip thinking)
+        # NOTE: Qwen3-VL does NOT support enable_thinking parameter (it's ignored with a warning).
+        # We must MANUALLY inject the think block tokens to match Z-Image's training format.
         inputs = self.processor.apply_chat_template(
             messages,
             tokenize=True,
             add_generation_prompt=True,
             return_dict=True,
             return_tensors="pt",
-            enable_thinking=False,  # This ADDS the empty think block to match training format
         )
+
+        # CRITICAL: Manually inject think block tokens to match Qwen3-4B training format.
+        # Z-Image was trained with Qwen3-4B using empty think blocks:
+        #   <|im_start|>assistant\n<think>\n\n</think>\n\n
+        # Qwen3-VL produces:
+        #   <|im_start|>assistant\n
+        # We need to append: <think>\n\n</think>\n\n (4 tokens - Qwen3 uses token 271 for \n\n)
+        think_block_tokens = torch.tensor([[
+            THINK_START_TOKEN_ID,    # <think>
+            DOUBLE_NEWLINE_TOKEN_ID, # \n\n
+            THINK_END_TOKEN_ID,      # </think>
+            DOUBLE_NEWLINE_TOKEN_ID, # \n\n
+        ]], dtype=inputs["input_ids"].dtype)
+
+        # Append think block tokens to input_ids
+        inputs["input_ids"] = torch.cat([inputs["input_ids"], think_block_tokens], dim=1)
+
+        # Also extend attention_mask if present
+        if "attention_mask" in inputs:
+            think_block_mask = torch.ones((1, 4), dtype=inputs["attention_mask"].dtype)
+            inputs["attention_mask"] = torch.cat([inputs["attention_mask"], think_block_mask], dim=1)
+
+        logger.debug(f"Injected think block tokens, new sequence length: {inputs['input_ids'].shape[1]}")
+
+        # Capture the full prompt with special tokens for debugging/metadata
+        # Decode the full input sequence (including image placeholders and think block)
+        input_token_ids = inputs["input_ids"][0].tolist()
+        full_prompt_with_tokens = self.processor.tokenizer.decode(
+            input_token_ids,
+            skip_special_tokens=False,  # Keep ALL special tokens visible
+        )
+        logger.debug(f"Full prompt with tokens: {repr(full_prompt_with_tokens[:200])}...")
 
         # Move to device
         device = next(self.model.parameters()).device
@@ -281,7 +316,9 @@ class VLEmbeddingExtractor:
             scale_factor=scale_factor,
             token_selection=token_selection,
             text_description=text,
-            chat_template_format="with_think_block",  # enable_thinking=False adds <think>\n\n</think>\n\n
+            chat_template_format="with_think_block",  # Manually injected <think>\n\n</think>\n\n
+            full_prompt_with_tokens=full_prompt_with_tokens,
+            input_token_ids=input_token_ids,
         )
 
     def _filter_image_tokens(
