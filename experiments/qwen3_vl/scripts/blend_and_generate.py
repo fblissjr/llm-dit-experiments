@@ -92,6 +92,10 @@ def blend_embeddings(
     if alpha == 1.0:
         return vl_emb
 
+    # Ensure same device
+    device = text_emb.device
+    vl_emb = vl_emb.to(device)
+
     # Match lengths (truncate to shorter)
     min_len = min(vl_emb.shape[0], text_emb.shape[0])
     vl_truncated = vl_emb[:min_len]
