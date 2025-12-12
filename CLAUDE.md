@@ -1137,12 +1137,21 @@ The extreme scaling needed for image tokens likely causes the artifacts. Text to
 - Layer -6 is naturally cleaner than -2 for VL embeddings
 - The fix to apply masking to image tokens only works but layer -6 doesn't have the outliers
 
-**VL + img2img BREAKTHROUGH:**
-- **Landscapes WORK**: VL + img2img successfully composes characters INTO scenic backgrounds
-- **Objects FAIL**: Foreground objects compete spatially with new subjects
-- Test: Sunset hills + "Homer Simpson standing on the hill" = SUCCESS (Homer placed in scene, landscape preserved)
-- Test: Cartoon house + "Homer Simpson on grass" = FAILURE (house morphs into Homer or is replaced)
-- This changes our conclusions: zero-shot CAN achieve spatial composition for compatible scenes
+**CRITICAL CORRECTION - `text_tokens_only` Setting:**
+- `text_tokens_only=True` (our previous default) = **VL does NOTHING** (all image info stripped)
+- `text_tokens_only=False` = **VL actually works** (1026 image tokens preserved)
+- Image information is in IMAGE TOKEN POSITIONS, not text tokens
+- Previous "landscape breakthrough" was just img2img working, not VL
+
+**Layer -2 vs -6 with Full Image Tokens:**
+- Layer -2 + full tokens = HEAVY GLITCH ARTIFACTS (617x outlier in dim 396)
+- Layer -6 + full tokens = CLEAN RESULTS
+
+**What VL Actually Does (When Configured Correctly):**
+- alpha=0.3: Slight style influence from reference
+- alpha=0.5: Strong style transfer (e.g., photorealistic from photo reference)
+- alpha=0.7: Reference strongly influences output
+- alpha=1.0: Essentially reconstructs reference scene
 
 **Style Delta Results (FAILED):**
 - Even at alpha 0.3, Homer was completely destroyed
@@ -1157,36 +1166,46 @@ The extreme scaling needed for image tokens likely causes the artifacts. Text to
 **Core Insight:**
 The embedding space doesn't cleanly separate "style" from "content". VL influence strong enough to transfer style also corrupts semantic content.
 
-### VL + img2img (Recommended for Landscapes)
+### Correct VL Configuration (CRITICAL)
 
-Compose characters into landscape images:
+**Previous documentation was WRONG.** The correct settings are:
 
-```bash
-uv run experiments/qwen3_vl/scripts/test_vl_img2img.py \
-    --image landscape.png \
-    --prompt "Character standing on the hill" \
-    --vl-alphas 0.3 \
-    --strengths 0.7 0.8 \
-    --hidden-layer -6 \
-    --output-dir experiments/results/my_test
+```python
+vl_result = vl_extractor.extract(
+    image,
+    text=prompt,
+    hidden_layer=-6,          # NOT -2 (has glitch artifacts)
+    text_tokens_only=False,   # MUST be False to include image info!
+    scale_to_text=True
+)
 ```
 
-| Parameter | Recommended | Notes |
-|-----------|-------------|-------|
-| `strength` | 0.7-0.8 | Preserves landscape while allowing character |
-| `vl_alpha` | 0.3 | Balances VL influence with text prompt |
-| `hidden_layer` | -6 | Cleanest VL embeddings |
+| Setting | Wrong | Correct |
+|---------|-------|---------|
+| `text_tokens_only` | True | **False** |
+| `hidden_layer` | -2 | **-6** |
 
-**Works for:** Landscapes, scenic backgrounds, environments
-**Doesn't work for:** Foreground objects, multi-object compositions
+**Why `text_tokens_only=False` is critical:**
+- Image info is in IMAGE TOKEN positions (~1026 tokens for 1024x1024)
+- `text_tokens_only=True` discards all image tokens
+- With True, VL embeddings ≈ pure text embeddings (VL does nothing)
+
+**Results at different alphas (with correct settings):**
+
+| Alpha | Effect |
+|-------|--------|
+| 0.3 | Slight style influence |
+| 0.5 | Strong style transfer (photorealistic from photo ref) |
+| 0.7 | Reference strongly influences output |
+| 1.0 | Reconstructs reference scene |
 
 ### Usage (Pure VL Blending)
 
 **Web UI:**
 1. Open "Vision Conditioning (Qwen3-VL)" section
 2. Upload a reference image
-3. Use optimal settings: layer -6, text_tokens_only=true
-4. Generate - expect some artifacts for non-landscape use cases
+3. Use settings: layer -6, **text_tokens_only=False** (critical!)
+4. Adjust alpha: 0.3-0.5 for style influence, higher for scene reconstruction
 
 **CLI:**
 ```bash
@@ -1195,6 +1214,18 @@ uv run web/server.py \
   --vl-model-path /path/to/Qwen3-VL-4B-Instruct \
   --vl-device cpu \
   --vl-hidden-layer -6
+```
+
+**Python (correct settings):**
+```python
+vl_result = vl_extractor.extract(
+    image,
+    text=prompt,
+    hidden_layer=-6,
+    text_tokens_only=False,  # CRITICAL!
+    scale_to_text=True
+)
+blended = blend_embeddings(vl_result.embeddings, text_emb, alpha=0.5)
 ```
 
 ### Memory Management

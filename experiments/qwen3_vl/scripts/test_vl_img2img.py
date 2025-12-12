@@ -3,8 +3,10 @@
 Test VL + img2img combined: VL-conditioned embeddings + VAE latent start.
 
 This combines both approaches:
-- VL provides semantic influence through blended text embeddings
+- VL provides style/mood influence through blended embeddings
 - img2img provides structural influence through VAE latents
+
+IMPORTANT: uses text_tokens_only=False to include image tokens (required for VL to work)
 """
 
 import argparse
@@ -20,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 from llm_dit.vl import VLEmbeddingExtractor, blend_embeddings
 from llm_dit.startup import PipelineLoader
 from llm_dit.cli import load_runtime_config
+from experiments.qwen3_vl.scripts.grid_utils import make_grid
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -53,11 +56,12 @@ def main():
         args.vl_model_path, device="cpu", torch_dtype=torch.bfloat16
     )
 
-    # Extract VL embeddings
-    logger.info(f"Extracting VL embeddings (layer {args.hidden_layer})...")
+    # Extract VL embeddings - MUST use text_tokens_only=False to include image info
+    logger.info(f"Extracting VL embeddings (layer {args.hidden_layer}, full tokens)...")
     vl_result = vl_extractor.extract(
         image, text=args.prompt, hidden_layer=args.hidden_layer,
-        text_tokens_only=True, scale_to_text=True
+        text_tokens_only=False,  # CRITICAL: must be False to include image tokens
+        scale_to_text=True
     )
     vl_emb = vl_result.embeddings
     logger.info(f"  VL: shape={vl_emb.shape}, std={vl_emb.std():.2f}")
@@ -102,12 +106,24 @@ def main():
                 generator=generator,
             )
 
-            out_path = output_dir / f"vl{vl_alpha}_str{strength}.png"
+            out_path = output_dir / f"a{int(vl_alpha*10)}_s{int(strength*10)}.png"
             result.save(out_path)
             logger.info(f"  Saved: {out_path}")
 
+    # Generate comparison grid
+    logger.info("Generating comparison grid...")
+    images = []
+    labels = []
+    for vl_alpha in args.vl_alphas:
+        for strength in args.strengths:
+            images.append(output_dir / f"a{int(vl_alpha*10)}_s{int(strength*10)}.png")
+            labels.append(f"a={vl_alpha} s={strength}")
+
+    grid_path = make_grid(images, labels, len(args.strengths), output_dir / "grid.png")
+    logger.info(f"Grid saved: {grid_path}")
+
     logger.info(f"\nDone! Results in {output_dir}/")
-    logger.info("Grid: rows=vl_alpha, cols=strength")
+    logger.info(f"Grid: {len(args.vl_alphas)} rows (alpha) x {len(args.strengths)} cols (strength)")
 
 
 if __name__ == "__main__":

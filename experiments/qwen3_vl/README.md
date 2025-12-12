@@ -202,79 +202,55 @@ masked, info = mask_outlier_dimensions(embeddings, threshold=10.0, mode="zero")
 - `clamp`: Balanced approach preserving some outlier signal
 - `scale`: Gradual proportional reduction
 
-## VL + img2img Combined (BREAKTHROUGH - 2025-12-12)
+## VL + img2img Combined (CORRECTION - 2025-12-12)
 
-A significant discovery: combining VL-conditioned embeddings with img2img latent start **successfully composes characters into landscape scenes**.
+**IMPORTANT:** Earlier tests showing "landscape composition" were misleading. The success was from **pure img2img**, not VL conditioning. With `text_tokens_only=True`, VL wasn't contributing anything.
 
-### The Discovery
+### What Actually Happened
 
-| Input Type | Result | Success |
-|------------|--------|---------|
-| **Landscape** (sunset hills) + "Homer Simpson standing on the hill" | Homer correctly placed IN scene, landscape preserved | **YES** |
-| **Object** (cartoon house) + "Homer Simpson standing on the grass" | House morphs into Homer, or Homer replaces house entirely | No |
+The original test used `text_tokens_only=True`, which strips out all image information:
+- VL embeddings with `text_tokens_only=True` ≈ pure text embeddings
+- The "success" was just img2img working well with landscapes
+- vl=0.0 and vl=0.3 produced nearly identical results (proof VL wasn't doing anything)
 
-### Why Landscapes Work
+### Corrected Understanding
 
-1. **Semantic compatibility**: "Standing on a hill" is a natural composition; the model knows how to place characters in landscapes
-2. **Background vs foreground**: Landscapes occupy "background" latent space; characters can be added without competition
-3. **No spatial conflict**: Hills don't need to persist as distinct objects; they become the ground Homer stands on
+When VL is configured correctly (`text_tokens_only=False`):
 
-### Why Objects Fail
+| Alpha | Result |
+|-------|--------|
+| 0.3 | Slight style influence from reference image |
+| 0.5 | Strong style transfer (e.g., photorealistic from photo reference) |
+| 0.7 | Reference image strongly influences output |
+| 1.0 | Essentially reconstructs reference scene |
 
-1. **Spatial competition**: House and Homer compete for foreground space
-2. **Morphing not composition**: At high strength, the house SHAPE influences Homer's body (house-shaped Homer)
-3. **Either/or behavior**: Low strength = house preserved, no Homer; High strength = Homer appears, house gone
+### Layer -2 vs -6 with Full Image Tokens
 
-### Optimal Settings for Landscape Composition
+| Layer | Result |
+|-------|--------|
+| **-2** | Heavy glitch artifacts (617x outlier in dim 396) |
+| **-6** | Clean results |
 
-```bash
-uv run experiments/qwen3_vl/scripts/test_vl_img2img.py \
-    --image landscape.png \
-    --prompt "Character description + scene context" \
-    --vl-alphas 0.3 \
-    --strengths 0.7 0.8 \
-    --hidden-layer -6
+### Corrected Test Script
+
+The `test_vl_img2img.py` script needs to be updated to use `text_tokens_only=False`:
+
+```python
+vl_result = vl_extractor.extract(
+    image,
+    text=args.prompt,
+    hidden_layer=-6,           # Not -2
+    text_tokens_only=False,    # CRITICAL: Must be False!
+    scale_to_text=True
+)
 ```
 
-| Parameter | Recommended | Notes |
-|-----------|-------------|-------|
-| `strength` | **0.7-0.8** | Preserves landscape while allowing character |
-| `vl_alpha` | **0.3** | Balances VL influence with text prompt |
-| `hidden_layer` | **-6** | Cleanest VL embeddings |
+### What VL Actually Does (When Configured Correctly)
 
-### Results Grid
-
-See `experiments/results/vl_img2img_sunset/comparison_grid.png` for full results.
-
-**Key observations:**
-- `vl=0.0, str=0.7-0.8`: Homer appears, landscape preserved (pure img2img works!)
-- `vl=0.3, str=0.7`: Two characters appear (VL adds variation)
-- `vl=0.3, str=0.8`: Single Homer, clean composition
-- `str=0.9`: Homer dominates, landscape partially overwritten
-
-### Implications
-
-This finding changes our conclusions about VL conditioning:
-
-| Previous Understanding | Updated Understanding |
-|------------------------|----------------------|
-| VL + text blending produces superimposition | VL + img2img produces **true composition** for compatible scenes |
-| Zero-shot cannot achieve spatial composition | Zero-shot **can** compose characters into landscapes |
-| Only trained methods (IP-Adapter) work | Training-free VL + img2img works for specific use cases |
-
-### Use Cases That Work
-
-1. Adding characters to landscape photos
-2. Inserting subjects into scenic backgrounds
-3. "Person standing in [environment]" compositions
-4. Style transfer via landscape reference + character prompt
-
-### Use Cases That Don't Work
-
-1. Adding characters next to foreground objects
-2. Multi-object spatial relationships
-3. "Character A next to Object B" compositions
-4. Preserving specific foreground elements while adding new subjects
+With `text_tokens_only=False` and layer -6:
+- Transfers visual style from reference (photorealistic, cartoon, etc.)
+- At high alpha, reconstructs the reference scene
+- Works as actual vision conditioning, not just text embedding variation
 
 ## Recommended Next Steps
 
@@ -286,15 +262,106 @@ This finding changes our conclusions about VL conditioning:
 | 4 | Compare with IP-Adapter baseline | Measure quality gap vs trained methods |
 | 5 | Test on second model family | Determine if approach generalizes |
 
-**Current least-artifacted settings (2025-12-12):**
-- `hidden_layer=-6` (layer -6 produces crisper images than -2 or -8, no outliers found)
-- `text_tokens_only=True` (image tokens have more severe artifacts)
-- `normalization_mode="global"` for text tokens
-- `normalization_mode="per_dim"` for image tokens (reduces but doesn't eliminate artifacts)
-- `outlier_masking="zero"` or `"clamp"` for image tokens at layer -2 (layer -6 has no outliers)
-- `alpha=1.0` possible with text tokens only (though quality loss vs pure text)
+**CRITICAL CORRECTION (2025-12-12):**
 
-**Key Finding (2025-12-12):** Layer -6 is naturally cleaner than -2 or -8 for VL conditioning. The 617x outlier in dimension 396 only appears at layer -2.
+Previous documentation was WRONG. `text_tokens_only=True` strips out ALL image information, making VL conditioning useless. The correct settings are:
+
+```python
+vl_result = vl_extractor.extract(
+    image,
+    text=prompt,
+    hidden_layer=-6,          # NOT -2 (has 617x outlier causing artifacts)
+    text_tokens_only=False,   # MUST be False to include image information!
+    scale_to_text=True
+)
+```
+
+**Why this matters:**
+- Image information is encoded in **image token positions** (~1026 tokens for 1024x1024)
+- `text_tokens_only=True` only keeps ~15-20 text tokens, discarding all visual info
+- With `text_tokens_only=True`, VL embeddings are functionally identical to pure text embeddings
+
+**Correct settings for VL conditioning:**
+- `hidden_layer=-6` (layer -2 has 617x outlier causing glitch artifacts)
+- `text_tokens_only=False` (REQUIRED to include image information)
+- `scale_to_text=True` (normalize std to match Qwen3-4B)
+- `alpha=0.3-0.7` (controls VL influence, 1.0 = reconstruct reference image)
+
+## Parameters Tested (Complete List)
+
+all variables experimented with during vl conditioning research:
+
+the pipeline has 3 sources of input:
+1. **qwen3-vl**: processes reference image + prompt -> vl embeddings (~1045 tokens: ~1026 image +  ~19 text tokens)
+2. **qwen3-4b**: processes prompt only -> text embeddings ~15-20 tokens
+3. **vae encoder**: processes reference image -> latent for img2img start
+
+vl extraction (from qwen3-vl)
+- `hidden_layer`: -1, -2, -4, -6, -8, -16, -24, -30 (winner -6)
+- `text_tokens_only`:  true/false (winner: false - true strips all image info making vl useless)
+- `image_tokens_only`: true/false
+- `scale_to_text`: true/false (norms vl std to ~70 to match qwen3-4b)
+- `target_std`: 70.0 (match qwen3-4b text embedding std)
+- `normalization_mode`: none, global,per_dim
+- `outlier_masking`: none, zero, clamp, scale
+- `outlier_threshold`: 10.0 (std ratio cutoff)
+
+blending (vl embeddings + text embeddings)
+- `alpha`: 0.0, 0.1, 0.3, 0.5, 0.7, 1.0 (0=pure text, 1=pure vl)
+- `blend_mode`: linear, adain, adain_per_dim, style_delta
+- formula: `blended = alpha * vl_emb + (1-alpha) * text_emb`
+
+img2img (vae encode first, then pass embeds)
+- `strength`: 0.3, 0.5, 0.7, 0.8, 0.9 (0=preserve input,1=full regen)
+- `prompt_embeds`: pass blended embeddings as conditioning
+- uses same ref image encoded by vae as the starting latent
+
+pipeline workflow across all: 9 steps. seed 42
+
+what i found each component seems to do:
+- vl embedding:  "vibe" from reference image
+- text embeddings from qwen3-4b: semantic content from prompt
+- img2img vae encode: structure/composition from reference image
+- blended embeddings: combined conditioning for dit, best result
+
+failed approaches:
+- `text_tokens_only=true`: vl embeddings dont work (not enough image info)
+- `layer -2 + text_tokens_only=false`: heavy glitch artifacts 
+- `style_delta`: destroyed all concepts even at alpha=0.3
+- `adain_per_token`: preserved content but no visible style transfer
+- `adain_per_dim`: transferred color but corrupted subject identity (homer morphing into a house)
+
+**working configuration (verified):**
+```python
+# vl extraction from qwen3-vl
+vl_emb = extractor.extract(
+    image=reference_image,        # image to extract style/scene from
+    text=prompt,                  # same prompt used for text encoding
+    hidden_layer=-6,              # not -2 (has glitch artifacts)
+    text_tokens_only=False,       # MUST be false to include image tokens
+    scale_to_text=True            # normalize std to match qwen3-4b
+).embeddings
+
+# text encoding from qwen3-4b
+text_emb = pipe.encoder.encode(prompt).embeddings[0]
+
+# blend vl + text
+blended = alpha * vl_emb + (1 - alpha) * text_emb  # alpha=0.3-0.7
+
+# generate with img2img (optional - adds structure preservation)
+result = pipe.img2img(
+    prompt_embeds=blended,        # blended conditioning
+    image=reference_image,        # same image for vae latent start
+    strength=0.7                  # how much to regenerate vs preserve
+)
+```
+
+**what you get at different alpha values (with text_tokens_only=false):**
+- alpha=0.0: pure text generation (baseline)
+- alpha=0.3: slight style influence from reference
+- alpha=0.5: strong style transfer (e.g., photorealistic from photo)
+- alpha=0.7: reference strongly dominates
+- alpha=1.0: reconstructs reference scene
 
 ## Documentation Structure
 

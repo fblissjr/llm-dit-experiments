@@ -9,21 +9,31 @@ This document tracks what experiments need to be run, modified, or created for t
 
 ## Current State Summary
 
+**CRITICAL CORRECTION (2025-12-12):**
+- `text_tokens_only=True` was WRONG - it strips ALL image information
+- `text_tokens_only=False` is REQUIRED for VL to actually work
+- Previous "landscape breakthrough" was just img2img, not VL
+
 **What we know (2025-12-12):**
-- VL text tokens have 0.999 correlation with Qwen3-4B per-dimension statistics
-- VL image tokens have only 0.737 correlation with extreme outliers (dim 396: 617x at layer -2)
-- **Layer -6 is optimal** - no outliers, crisper images than -2 or -8
-- Per-dimension normalization reduces but doesn't eliminate artifacts
-- Text tokens produce fewer artifacts than image tokens
-- **VL + img2img WORKS for landscapes** - characters can be composed into scenic backgrounds
-- **VL + img2img FAILS for objects** - foreground objects compete spatially with new subjects
+- Image information is in IMAGE TOKEN POSITIONS (~1026 tokens for 1024x1024 image)
+- `text_tokens_only=True` discards all image tokens → VL ≈ pure text (useless)
+- `text_tokens_only=False` preserves image tokens → VL actually conditions on image
+- **Layer -6 + full tokens = CLEAN RESULTS**
+- **Layer -2 + full tokens = HEAVY GLITCH ARTIFACTS** (617x outlier in dim 396)
+- VL at alpha 0.5-0.7 transfers style (e.g., photorealistic from photo reference)
+- VL at alpha 1.0 essentially reconstructs the reference scene
 - Style delta arithmetic fails (embedding space entangled)
 - AdaIN transfers some color but corrupts content identity
 
+**Correct VL settings:**
+```python
+hidden_layer=-6, text_tokens_only=False, scale_to_text=True
+```
+
 **What we don't know:**
-- Whether VL + img2img works for other background types (cityscapes, interiors, etc.)
-- Whether a trained single-layer adapter could eliminate remaining artifacts
-- Optimal parameters for different landscape types
+- Best alpha for style transfer vs content preservation
+- Whether a trained adapter could improve quality further
+- How to preserve prompt content while transferring style
 
 ---
 
@@ -401,31 +411,36 @@ These are new experiment types to create.
   - VL influence strong enough to transfer style also corrupts semantic content
   - This is a fundamental limitation of zero-shot approaches without training
 
-- **BREAKTHROUGH: VL + img2img Works for Landscapes!**
-  - Tested with sunset hills landscape + "Homer Simpson standing on the hill"
-  - **SUCCESS**: Homer correctly placed IN the scene, landscape preserved
-  - Tested with cartoon house + "Homer Simpson standing on the grass"
-  - **FAILURE**: House morphs into Homer or Homer replaces house entirely
+- **CORRECTION: VL + img2img "Landscape Breakthrough" Was Wrong**
+  - The test used `text_tokens_only=True` which strips ALL image information
+  - VL embeddings with `text_tokens_only=True` ≈ pure text embeddings
+  - The "success" was just img2img working well, VL wasn't contributing anything
+  - Proof: vl=0.0 and vl=0.3 produced nearly identical results
 
-- **Why Landscapes Work:**
-  - Landscapes are "backgrounds" - model naturally places characters in them
-  - No spatial conflict - hills become ground, not competing objects
-  - Semantic compatibility - "standing on a hill" is natural composition
+- **ACTUAL Discovery: `text_tokens_only` Setting is Critical**
+  - `text_tokens_only=True`: VL does NOTHING (image info discarded)
+  - `text_tokens_only=False`: VL actually works (1026 image tokens preserved)
+  - Image information is in IMAGE TOKEN POSITIONS, not text tokens
 
-- **Why Objects Fail:**
-  - House and Homer compete for foreground space
-  - Morphing effect: house SHAPE influences Homer's body (house-shaped Homer at str=0.9)
-  - Either/or: low strength preserves house (no Homer), high strength replaces house with Homer
+- **Layer -2 vs -6 with Full Image Tokens:**
+  - Layer -2 + full tokens = HEAVY GLITCH ARTIFACTS (617x outlier)
+  - Layer -6 + full tokens = CLEAN RESULTS
 
-- **Optimal Settings for Landscape Composition:**
-  - `strength=0.7-0.8`: Preserves landscape while allowing character
-  - `vl_alpha=0.3`: Balances VL influence with text prompt
-  - `hidden_layer=-6`: Cleanest VL embeddings
+- **Correct VL Settings (VERIFIED WORKING):**
+  ```python
+  vl_result = vl_extractor.extract(
+      image, text=prompt,
+      hidden_layer=-6,           # NOT -2 (outlier artifacts)
+      text_tokens_only=False,    # MUST be False!
+      scale_to_text=True
+  )
+  ```
 
-- **This Changes Our Conclusions:**
-  - Previous: "Zero-shot cannot achieve spatial composition"
-  - Updated: "Zero-shot CAN compose characters into landscapes"
-  - VL + img2img is a viable technique for specific use cases
+- **What VL Actually Does (When Configured Correctly):**
+  - alpha=0.3: Slight style influence
+  - alpha=0.5: Strong style transfer (photorealistic from photo ref)
+  - alpha=0.7: Reference strongly influences output
+  - alpha=1.0: Reconstructs reference scene
 
 - **Files Modified:**
   - `src/llm_dit/vl/blending.py` - Added style delta and AdaIN functions
