@@ -36,6 +36,7 @@ from PIL import Image
 
 from .blending import (
     DEFAULT_TARGET_STD,
+    mask_outlier_dimensions,
     normalize_hybrid,
     normalize_per_dimension,
     scale_embeddings,
@@ -72,6 +73,12 @@ class VLExtractionResult:
     full_prompt_with_tokens: str  # Full decoded prompt including all special tokens
     input_token_ids: list[int]  # Raw token IDs for debugging
     normalization_mode: str = "global"  # "global", "per_dim", or "hybrid"
+    system_prompt: str | None = None  # System prompt used (if any)
+    # Outlier masking fields
+    outlier_masking: str = "none"  # "none", "zero", "clamp", or "scale"
+    outlier_threshold: float = 10.0  # Std ratio threshold for masking
+    masked_dimensions: list[int] | None = None  # Dimensions that were masked
+    masked_dim_ratios: dict[int, float] | None = None  # Dimension index -> std ratio
 
 
 class VLEmbeddingExtractor:
@@ -182,6 +189,10 @@ class VLEmbeddingExtractor:
         scale_to_text: bool = True,
         target_std: float = DEFAULT_TARGET_STD,
         normalization_mode: str = "global",
+        force_think_block: bool = True,
+        system_prompt: str | None = None,
+        outlier_masking: str = "none",
+        outlier_threshold: float = 10.0,
     ) -> VLExtractionResult:
         """
         Extract vision-conditioned embeddings from an image.
@@ -200,6 +211,17 @@ class VLEmbeddingExtractor:
                 - "per_dim": Per-dimension normalization to match Qwen3-4B stats
                   (CRITICAL for image tokens which have 600x+ per-dim outliers)
                 - "hybrid": 50/50 blend of global and per-dim normalization
+            force_think_block: If True (default), inject empty think block tokens to match
+                Qwen3-4B training format. If False, no think block is added.
+            system_prompt: Optional system prompt to prepend. If provided, adds a system
+                message before the user message.
+            outlier_masking: How to handle dimensions with extreme std ratios vs Qwen3-4B:
+                - "none": No masking (default)
+                - "zero": Zero out outlier dimensions entirely
+                - "clamp": Scale outlier dimensions to threshold level
+                - "scale": Proportionally reduce outlier dimension values
+            outlier_threshold: Std ratio threshold for outlier detection (default: 10.0).
+                Dimension 396 has 617x ratio, dimension 4 has 42x ratio.
 
         Returns:
             VLExtractionResult with embeddings and metadata
@@ -224,16 +246,22 @@ class VLEmbeddingExtractor:
             raise ValueError("Token selection options are mutually exclusive")
 
         # Build message content
+        messages = []
+
+        # Add system message if provided
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+
         # Image is always in the user message
         content = [{"type": "image", "image": image}]
         if text:
             content.append({"type": "text", "text": text})
 
-        messages = [{"role": "user", "content": content}]
+        messages.append({"role": "user", "content": content})
 
         # Process inputs using Qwen3-VL's chat template
         # NOTE: Qwen3-VL does NOT support enable_thinking parameter (it's ignored with a warning).
-        # We must MANUALLY inject the think block tokens to match Z-Image's training format.
+        # We can optionally inject think block tokens to match Z-Image's training format.
         inputs = self.processor.apply_chat_template(
             messages,
             tokenize=True,
@@ -242,28 +270,33 @@ class VLEmbeddingExtractor:
             return_tensors="pt",
         )
 
-        # CRITICAL: Manually inject think block tokens to match Qwen3-4B training format.
+        # Optionally inject think block tokens to match Qwen3-4B training format.
         # Z-Image was trained with Qwen3-4B using empty think blocks:
         #   <|im_start|>assistant\n<think>\n\n</think>\n\n
         # Qwen3-VL produces:
         #   <|im_start|>assistant\n
-        # We need to append: <think>\n\n</think>\n\n (4 tokens - Qwen3 uses token 271 for \n\n)
-        think_block_tokens = torch.tensor([[
-            THINK_START_TOKEN_ID,    # <think>
-            DOUBLE_NEWLINE_TOKEN_ID, # \n\n
-            THINK_END_TOKEN_ID,      # </think>
-            DOUBLE_NEWLINE_TOKEN_ID, # \n\n
-        ]], dtype=inputs["input_ids"].dtype)
+        # When force_think_block=True: append <think>\n\n</think>\n\n (4 tokens)
+        chat_template_format = "no_think_block"
+        if force_think_block:
+            think_block_tokens = torch.tensor([[
+                THINK_START_TOKEN_ID,    # <think>
+                DOUBLE_NEWLINE_TOKEN_ID, # \n\n
+                THINK_END_TOKEN_ID,      # </think>
+                DOUBLE_NEWLINE_TOKEN_ID, # \n\n
+            ]], dtype=inputs["input_ids"].dtype)
 
-        # Append think block tokens to input_ids
-        inputs["input_ids"] = torch.cat([inputs["input_ids"], think_block_tokens], dim=1)
+            # Append think block tokens to input_ids
+            inputs["input_ids"] = torch.cat([inputs["input_ids"], think_block_tokens], dim=1)
 
-        # Also extend attention_mask if present
-        if "attention_mask" in inputs:
-            think_block_mask = torch.ones((1, 4), dtype=inputs["attention_mask"].dtype)
-            inputs["attention_mask"] = torch.cat([inputs["attention_mask"], think_block_mask], dim=1)
+            # Also extend attention_mask if present
+            if "attention_mask" in inputs:
+                think_block_mask = torch.ones((1, 4), dtype=inputs["attention_mask"].dtype)
+                inputs["attention_mask"] = torch.cat([inputs["attention_mask"], think_block_mask], dim=1)
 
-        logger.debug(f"Injected think block tokens, new sequence length: {inputs['input_ids'].shape[1]}")
+            chat_template_format = "with_think_block"
+            logger.debug(f"Injected think block tokens, new sequence length: {inputs['input_ids'].shape[1]}")
+        else:
+            logger.debug(f"No think block injection, sequence length: {inputs['input_ids'].shape[1]}")
 
         # Capture the full prompt with special tokens for debugging/metadata
         # Decode the full input sequence (including image placeholders and think block)
@@ -316,6 +349,23 @@ class VLEmbeddingExtractor:
             )
             token_selection = "text_only"
 
+        # Apply outlier masking if requested (before normalization)
+        masked_dims = None
+        masked_ratios = None
+        if outlier_masking != "none":
+            hidden_states, mask_info = mask_outlier_dimensions(
+                hidden_states,
+                threshold=outlier_threshold,
+                mode=outlier_masking,
+            )
+            masked_dims = mask_info.get("masked_dimensions", [])
+            masked_ratios = mask_info.get("ratios", {})
+            if masked_dims:
+                logger.debug(
+                    f"Masked {len(masked_dims)} outlier dimensions with mode={outlier_masking}: "
+                    f"{masked_dims[:5]}{'...' if len(masked_dims) > 5 else ''}"
+                )
+
         # Scale to match text embedding statistics
         original_std = hidden_states.std().item()
         if scale_to_text and original_std > 0:
@@ -343,10 +393,15 @@ class VLEmbeddingExtractor:
             scale_factor=scale_factor,
             token_selection=token_selection,
             text_description=text,
-            chat_template_format="with_think_block",  # Manually injected <think>\n\n</think>\n\n
+            chat_template_format=chat_template_format,
             full_prompt_with_tokens=full_prompt_with_tokens,
             input_token_ids=input_token_ids,
             normalization_mode=normalization_mode,
+            system_prompt=system_prompt,
+            outlier_masking=outlier_masking,
+            outlier_threshold=outlier_threshold,
+            masked_dimensions=masked_dims,
+            masked_dim_ratios=masked_ratios,
         )
 
     def _filter_image_tokens(

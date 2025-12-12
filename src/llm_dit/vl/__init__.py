@@ -15,6 +15,8 @@ Functions:
     normalize_per_dimension: Per-dimension normalization using Qwen3-4B reference
     normalize_hybrid: Blend of global and per-dimension normalization
     get_reference_stats: Get precomputed Qwen3-4B statistics
+    mask_outlier_dimensions: Mask dimensions with extreme std ratios
+    get_outlier_dimensions: List outlier dimensions above threshold
 
 Key parameters:
     - alpha: Interpolation ratio (0.0=text, 1.0=VL, recommended: 0.3)
@@ -36,7 +38,9 @@ from .blending import (
     blend_per_token,
     blend_style_only,
     create_graduated_alpha,
+    get_outlier_dimensions,
     get_reference_stats,
+    mask_outlier_dimensions,
     normalize_hybrid,
     normalize_per_dimension,
     scale_embeddings,
@@ -51,6 +55,8 @@ __all__ = [
     "normalize_per_dimension",
     "normalize_hybrid",
     "get_reference_stats",
+    "get_outlier_dimensions",
+    "mask_outlier_dimensions",
     "blend_style_only",
     "blend_per_token",
     "blend_attention_weighted",

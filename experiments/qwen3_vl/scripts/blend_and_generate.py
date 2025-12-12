@@ -37,9 +37,16 @@ import argparse
 import logging
 import sys
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 import torch
+
+# Add src to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "src"))
+
+# Import blending functions from core module (avoid duplication)
+from llm_dit.vl.blending import blend_embeddings  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -54,11 +61,31 @@ def load_vl_embeddings(path: str) -> dict:
     return saved
 
 
+@dataclass
+class TextEncodingResult:
+    """Result of text prompt encoding."""
+    embeddings: torch.Tensor  # (seq_len, hidden_dim)
+    formatted_prompt: str  # Full prompt with all special tokens
+
+
 def encode_text_prompt(
     prompt: str,
     config,
-) -> torch.Tensor:
-    """Encode text prompt using Z-Image's standard encoder."""
+    force_think_block: bool = False,
+    system_prompt: str | None = None,
+) -> TextEncodingResult:
+    """
+    Encode text prompt using Z-Image's standard encoder.
+
+    Args:
+        prompt: Text prompt to encode
+        config: RuntimeConfig with encoder settings
+        force_think_block: If True, add empty think block (matches VL's injected format)
+        system_prompt: Optional system message
+
+    Returns:
+        TextEncodingResult with embeddings and full formatted prompt
+    """
     # Import here to avoid loading until needed
     sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
     from llm_dit.startup import PipelineLoader
@@ -67,45 +94,15 @@ def encode_text_prompt(
     result = loader.load_encoder()
     encoder = result.encoder
 
-    output = encoder.encode(prompt)
-    return output.embeddings[0]
-
-
-def blend_embeddings(
-    vl_emb: torch.Tensor,
-    text_emb: torch.Tensor,
-    alpha: float,
-) -> torch.Tensor:
-    """
-    Blend VL and text embeddings.
-
-    Args:
-        vl_emb: Vision-conditioned embeddings
-        text_emb: Pure text embeddings
-        alpha: Blend ratio (0.0 = pure text, 1.0 = pure VL)
-
-    Returns:
-        Blended embeddings
-    """
-    if alpha == 0.0:
-        return text_emb
-    if alpha == 1.0:
-        return vl_emb
-
-    # Ensure same device
-    device = text_emb.device
-    vl_emb = vl_emb.to(device)
-
-    # Match lengths (truncate to shorter)
-    min_len = min(vl_emb.shape[0], text_emb.shape[0])
-    vl_truncated = vl_emb[:min_len]
-    text_truncated = text_emb[:min_len]
-
-    blended = alpha * vl_truncated + (1 - alpha) * text_truncated
-
-    logger.info(f"Blended embeddings (alpha={alpha}): shape={blended.shape}, std={blended.std():.2f}")
-
-    return blended
+    output = encoder.encode(
+        prompt,
+        force_think_block=force_think_block,
+        system_prompt=system_prompt,
+    )
+    return TextEncodingResult(
+        embeddings=output.embeddings[0],
+        formatted_prompt=output.formatted_prompts[0] if output.formatted_prompts else "",
+    )
 
 
 def generate_from_embeddings(

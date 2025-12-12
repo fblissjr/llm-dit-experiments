@@ -271,6 +271,161 @@ def compute_blend_stats(
 
 
 # =============================================================================
+# Outlier Dimension Masking
+# =============================================================================
+# VL image tokens have extreme per-dimension outliers that cause artifacts.
+# Key outliers: dimension 396 (617x std ratio), dimension 4 (42x std ratio).
+
+
+def mask_outlier_dimensions(
+    embeddings: torch.Tensor,
+    threshold: float = 10.0,
+    mode: str = "zero",
+    reference_stats: dict[str, np.ndarray] | None = None,
+) -> tuple[torch.Tensor, dict]:
+    """Mask dimensions with extreme std ratios vs reference.
+
+    VL image tokens have extreme per-dimension outliers (e.g., dimension 396 has
+    617x std ratio vs Qwen3-4B reference). This function masks those dimensions
+    to reduce artifacts.
+
+    Args:
+        embeddings: VL embeddings (seq_len, hidden_dim)
+        threshold: Max allowed std ratio before masking (default: 10.0)
+        mode: How to handle outlier dimensions:
+            - "zero": Zero out the dimension entirely
+            - "clamp": Scale dimension to threshold level
+            - "scale": Proportionally reduce dimension values
+        reference_stats: Pre-loaded stats dict (loads from file if None)
+
+    Returns:
+        Tuple of (masked_embeddings, info_dict) where info_dict contains:
+            - masked_dimensions: List of dimension indices that were masked
+            - ratios: Dict mapping dimension index to its std ratio
+            - mode: The masking mode used
+            - threshold: The threshold used
+    """
+    # Load reference stats if not provided
+    if reference_stats is None:
+        reference_stats = _load_reference_stats()
+
+    if not reference_stats:
+        logger.warning("No reference stats available, skipping outlier masking")
+        return embeddings, {"masked_dimensions": [], "ratios": {}}
+
+    ref_std = torch.from_numpy(reference_stats["per_dim_std"]).to(
+        device=embeddings.device, dtype=embeddings.dtype
+    )
+
+    # Compute per-dimension std of input
+    input_std = embeddings.std(dim=0)
+
+    # Avoid division by zero
+    ref_std_safe = torch.clamp(ref_std, min=1e-6)
+
+    # Calculate ratios
+    ratios = input_std / ref_std_safe
+
+    # Identify outlier dimensions
+    outlier_mask = ratios > threshold
+    outlier_indices = torch.where(outlier_mask)[0].cpu().tolist()
+
+    if not outlier_indices:
+        logger.debug(f"No outlier dimensions found above threshold {threshold}")
+        return embeddings, {
+            "masked_dimensions": [],
+            "ratios": {},
+            "mode": mode,
+            "threshold": threshold,
+        }
+
+    # Get ratios for outlier dimensions
+    ratio_dict = {idx: ratios[idx].item() for idx in outlier_indices}
+
+    # Clone to avoid modifying input
+    masked = embeddings.clone()
+
+    if mode == "zero":
+        # Zero out outlier dimensions entirely
+        masked[:, outlier_mask] = 0
+        logger.debug(f"Zeroed {len(outlier_indices)} outlier dimensions: {outlier_indices}")
+
+    elif mode == "clamp":
+        # Scale outlier dimensions down to threshold level
+        # New value = value * (threshold * ref_std) / input_std
+        for idx in outlier_indices:
+            scale = (threshold * ref_std_safe[idx]) / input_std[idx]
+            masked[:, idx] = masked[:, idx] * scale
+        logger.debug(f"Clamped {len(outlier_indices)} outlier dimensions to {threshold}x level")
+
+    elif mode == "scale":
+        # Proportionally reduce: scale = threshold / actual_ratio
+        # This gradually reduces high outliers more than low outliers
+        for idx in outlier_indices:
+            scale = threshold / ratios[idx]
+            masked[:, idx] = masked[:, idx] * scale
+        logger.debug(f"Scaled {len(outlier_indices)} outlier dimensions proportionally")
+
+    else:
+        raise ValueError(f"Unknown masking mode: {mode}. Use 'zero', 'clamp', or 'scale'")
+
+    return masked, {
+        "masked_dimensions": outlier_indices,
+        "ratios": ratio_dict,
+        "mode": mode,
+        "threshold": threshold,
+    }
+
+
+def get_outlier_dimensions(
+    embeddings: torch.Tensor,
+    threshold: float = 10.0,
+    reference_stats: dict[str, np.ndarray] | None = None,
+) -> list[tuple[int, float]]:
+    """Return list of (dim_index, ratio) for dimensions exceeding threshold.
+
+    Useful for analysis without modifying embeddings.
+
+    Args:
+        embeddings: VL embeddings (seq_len, hidden_dim)
+        threshold: Std ratio threshold (default: 10.0)
+        reference_stats: Pre-loaded stats dict (loads from file if None)
+
+    Returns:
+        List of (dimension_index, std_ratio) tuples, sorted by ratio descending
+    """
+    if reference_stats is None:
+        reference_stats = _load_reference_stats()
+
+    if not reference_stats:
+        logger.warning("No reference stats available")
+        return []
+
+    ref_std = torch.from_numpy(reference_stats["per_dim_std"]).to(
+        device=embeddings.device, dtype=embeddings.dtype
+    )
+
+    # Compute per-dimension std of input
+    input_std = embeddings.std(dim=0)
+
+    # Avoid division by zero
+    ref_std_safe = torch.clamp(ref_std, min=1e-6)
+
+    # Calculate ratios
+    ratios = input_std / ref_std_safe
+
+    # Find outliers
+    outlier_mask = ratios > threshold
+    outlier_indices = torch.where(outlier_mask)[0].cpu().tolist()
+
+    # Build result list sorted by ratio (highest first)
+    result = [(idx, ratios[idx].item()) for idx in outlier_indices]
+    result.sort(key=lambda x: x[1], reverse=True)
+
+    return result
+
+
+# =============================================================================
 # Advanced Blending Strategies
 # =============================================================================
 # These address the issue of VL embeddings overriding text content, not just style.

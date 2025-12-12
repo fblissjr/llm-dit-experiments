@@ -22,6 +22,10 @@ Sweep Types
                         image_only. Critical for fixing 600x+ per-dimension
                         outliers in image token embeddings.
 
+--sweep outlier Test outlier dimension masking modes
+                        Configs: none, zero, clamp, scale at layer -8,
+                        full tokens. Targets dim 396 (617x ratio) and dim 4 (42x).
+
 --sweep full    Comprehensive cross-product of all parameters
                 Configs: alphas [0.0, 0.3, 0.5, 1.0] x layers [-2, -8, -16]
                 x modes [text_only, image_only] = 24 total configs
@@ -96,6 +100,22 @@ Usage Examples
     # Skip baseline, don't include prompt in VL extraction
     uv run experiments/qwen3_vl/scripts/run_comparison.py \\
         -i image.png -p "Your prompt" --no-baseline --no-vl-text
+
+    # Run with prompts from standard prompts file
+    uv run experiments/qwen3_vl/scripts/run_comparison.py \\
+        -i image.png --prompt-ids animal_001,simple_002
+
+    # Run all prompts in a category
+    uv run experiments/qwen3_vl/scripts/run_comparison.py \\
+        -i image.png --prompt-category animals
+
+    # Run prompts by difficulty
+    uv run experiments/qwen3_vl/scripts/run_comparison.py \\
+        -i image.png --prompt-difficulty easy
+
+    # Use custom prompts file
+    uv run experiments/qwen3_vl/scripts/run_comparison.py \\
+        -i image.png --prompts-file my_prompts.yaml --prompt-ids my_001,my_002
 """
 
 import argparse
@@ -105,17 +125,70 @@ import sys
 import time
 from dataclasses import dataclass, asdict, field
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import torch
+import yaml
 from PIL import Image
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 
+def load_prompts_from_file(
+    prompts_file: str | Path | None = None,
+    prompt_ids: list[str] | None = None,
+    prompt_category: str | None = None,
+    prompt_difficulty: str | None = None,
+) -> list[dict[str, Any]]:
+    """Load and filter prompts from a YAML file.
+
+    Args:
+        prompts_file: Path to prompts YAML file. If None, uses standard_prompts.yaml
+        prompt_ids: List of specific prompt IDs to include
+        prompt_category: Filter by category (e.g., 'animals', 'scenes')
+        prompt_difficulty: Filter by difficulty ('easy', 'medium', 'hard', 'extreme')
+
+    Returns:
+        List of prompt dicts with 'id', 'prompt', 'category', 'difficulty' keys
+    """
+    # Default to standard prompts file
+    if prompts_file is None:
+        from experiments.prompts import STANDARD_PROMPTS_FILE
+        prompts_file = STANDARD_PROMPTS_FILE
+
+    prompts_file = Path(prompts_file)
+    if not prompts_file.exists():
+        raise FileNotFoundError(f"Prompts file not found: {prompts_file}")
+
+    with open(prompts_file) as f:
+        data = yaml.safe_load(f)
+
+    prompts = data.get("prompts", [])
+
+    # Filter by IDs if specified
+    if prompt_ids:
+        prompts = [p for p in prompts if p.get("id") in prompt_ids]
+        # Warn about missing IDs
+        found_ids = {p.get("id") for p in prompts}
+        missing = set(prompt_ids) - found_ids
+        if missing:
+            logger.warning(f"Prompt IDs not found: {missing}")
+
+    # Filter by category
+    if prompt_category:
+        prompts = [p for p in prompts if p.get("category") == prompt_category]
+
+    # Filter by difficulty
+    if prompt_difficulty:
+        prompts = [p for p in prompts if p.get("difficulty") == prompt_difficulty]
+
+    return prompts
+
+
 TokenMode = Literal["full", "text_only", "image_only", "image_no_markers"]
 NormalizationMode = Literal["global", "per_dim", "hybrid"]
+OutlierMaskingMode = Literal["none", "zero", "clamp", "scale"]
 
 
 @dataclass
@@ -126,9 +199,15 @@ class ExperimentConfig:
     alpha: float = 1.0
     hidden_layer: int = -8
     token_mode: TokenMode = "text_only"
-    normalization_mode: NormalizationMode = "global"  # NEW: global, per_dim, or hybrid
+    normalization_mode: NormalizationMode = "global"  # global, per_dim, or hybrid
+    outlier_masking: OutlierMaskingMode = "none"  # none, zero, clamp, or scale
+    outlier_threshold: float = 10.0  # Std ratio threshold for outlier detection
     vl_text: str | None = None  # None = no text, "__PROMPT__" = use CLI prompt
     scale_to_text: bool = True
+    # Chat template configuration - ensures VL and text use identical formats
+    # IMPORTANT: Official diffusers/DiffSynth use enable_thinking=True = NO think block
+    force_think_block: bool = False  # False = match official (no think block)
+    system_prompt: str | None = None  # Optional system message (official uses none)
 
     def __post_init__(self):
         if not self.filename:
@@ -153,8 +232,12 @@ def build_configs(
     layers: list[int] | None = None,
     token_modes: list[TokenMode] | None = None,
     normalization_modes: list[NormalizationMode] | None = None,
+    outlier_masking_modes: list[OutlierMaskingMode] | None = None,
+    outlier_threshold: float = 10.0,
     include_baseline: bool = True,
     vl_text: str | None = "__PROMPT__",
+    force_think_block: bool = False,
+    system_prompt: str | None = None,
 ) -> list[ExperimentConfig]:
     """
     Build experiment configurations from parameters.
@@ -164,8 +247,12 @@ def build_configs(
         layers: Hidden layers to test. Default [-8]
         token_modes: Token selection modes. Default ["text_only"]
         normalization_modes: Normalization modes. Default ["global"]
+        outlier_masking_modes: Outlier masking modes. Default ["none"]
+        outlier_threshold: Std ratio threshold for outlier detection. Default 10.0
         include_baseline: Add pure text baseline (alpha=0.0)
         vl_text: Text to include in VL extraction. "__PROMPT__" = use CLI prompt
+        force_think_block: If True, add empty think block (matches text encoding format)
+        system_prompt: Optional system message (matches text encoding format)
 
     Returns:
         List of ExperimentConfig objects
@@ -177,6 +264,7 @@ def build_configs(
     layers = layers or [-8]
     token_modes = token_modes or ["text_only"]
     normalization_modes = normalization_modes or ["global"]
+    outlier_masking_modes = outlier_masking_modes or ["none"]
 
     # Add baseline if requested
     if include_baseline and 0.0 not in alphas:
@@ -184,6 +272,8 @@ def build_configs(
             name="Pure Text (no VL)",
             alpha=0.0,
             vl_text=None,
+            force_think_block=force_think_block,
+            system_prompt=system_prompt,
         ))
 
     # Generate configs for all combinations
@@ -194,42 +284,57 @@ def build_configs(
         for layer in layers:
             for mode in token_modes:
                 for norm_mode in normalization_modes:
-                    name_parts = []
+                    for outlier_mode in outlier_masking_modes:
+                        name_parts = []
 
-                    # Alpha in name if varying
-                    if len(alphas) > 1:
-                        name_parts.append(f"alpha={alpha:.0%}")
+                        # Alpha in name if varying
+                        if len(alphas) > 1:
+                            name_parts.append(f"alpha={alpha:.0%}")
 
-                    # Layer in name if varying
-                    if len(layers) > 1:
-                        name_parts.append(f"layer {layer}")
+                        # Layer in name if varying
+                        if len(layers) > 1:
+                            name_parts.append(f"layer {layer}")
 
-                    # Mode in name - always include for clarity
-                    mode_labels = {
-                        "full": "all tokens",
-                        "text_only": "text tokens",
-                        "image_only": "image tokens",
-                        "image_no_markers": "image (no markers)",
-                    }
-                    name_parts.append(mode_labels.get(mode, mode))
-
-                    # Normalization in name if varying
-                    if len(normalization_modes) > 1:
-                        norm_labels = {
-                            "global": "global norm",
-                            "per_dim": "per-dim norm",
-                            "hybrid": "hybrid norm",
+                        # Mode in name - always include for clarity
+                        mode_labels = {
+                            "full": "all tokens",
+                            "text_only": "text tokens",
+                            "image_only": "image tokens",
+                            "image_no_markers": "image (no markers)",
                         }
-                        name_parts.append(norm_labels.get(norm_mode, norm_mode))
+                        name_parts.append(mode_labels.get(mode, mode))
 
-                    configs.append(ExperimentConfig(
-                        name=" | ".join(name_parts),
-                        alpha=alpha,
-                        hidden_layer=layer,
-                        token_mode=mode,
-                        normalization_mode=norm_mode,
-                        vl_text=vl_text,
-                    ))
+                        # Normalization in name if varying
+                        if len(normalization_modes) > 1:
+                            norm_labels = {
+                                "global": "global norm",
+                                "per_dim": "per-dim norm",
+                                "hybrid": "hybrid norm",
+                            }
+                            name_parts.append(norm_labels.get(norm_mode, norm_mode))
+
+                        # Outlier masking in name if varying
+                        if len(outlier_masking_modes) > 1:
+                            outlier_labels = {
+                                "none": "no masking",
+                                "zero": "zero outliers",
+                                "clamp": "clamp outliers",
+                                "scale": "scale outliers",
+                            }
+                            name_parts.append(outlier_labels.get(outlier_mode, outlier_mode))
+
+                        configs.append(ExperimentConfig(
+                            name=" | ".join(name_parts),
+                            alpha=alpha,
+                            hidden_layer=layer,
+                            token_mode=mode,
+                            normalization_mode=norm_mode,
+                            outlier_masking=outlier_mode,
+                            outlier_threshold=outlier_threshold,
+                            vl_text=vl_text,
+                            force_think_block=force_think_block,
+                            system_prompt=system_prompt,
+                        ))
 
     return configs
 
@@ -273,6 +378,17 @@ def get_sweep_configs(sweep_type: str) -> list[ExperimentConfig]:
             alphas=[0.0, 0.3, 0.5, 1.0],
             layers=[-2, -8, -16],
             token_modes=["text_only", "image_only"],
+        )
+
+    elif sweep_type == "outlier":
+        # Test outlier masking modes on image tokens (where outliers matter most)
+        # Key outliers: dimension 396 (617x std ratio), dimension 4 (42x ratio)
+        return build_configs(
+            alphas=[1.0],
+            layers=[-8],
+            token_modes=["full"],  # Image tokens where outliers are extreme
+            normalization_modes=["global"],
+            outlier_masking_modes=["none", "zero", "clamp", "scale"],
         )
 
     else:
@@ -498,11 +614,20 @@ def run_experiments(
     z_image_profile: str = "rtx4090",
     seed: int = 42,
     steps: int = 9,
+    force_think_block: bool = False,
+    system_prompt: str | None = None,
 ):
-    """Run all experiment configurations."""
+    """Run all experiment configurations.
+
+    Args:
+        force_think_block: If True, add empty think block to text encoding.
+            Default False to match official Z-Image format (enable_thinking=True = no think block).
+        system_prompt: Optional system message for text encoding (official uses none).
+    """
     from llm_dit.vl import VLEmbeddingExtractor
+    from llm_dit.vl.blending import blend_embeddings
     from llm_dit.startup import PipelineLoader
-    from blend_and_generate import encode_text_prompt, blend_embeddings
+    from blend_and_generate import encode_text_prompt, TextEncodingResult
 
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -539,10 +664,19 @@ def run_experiments(
             setattr(config_args, attr, None)
     z_config = load_runtime_config(config_args)
 
-    # Encode text prompt once
+    # Encode text prompt once (with format matching VL's injected think block)
     logger.info(f"Encoding text prompt: {prompt[:50]}...")
-    text_emb = encode_text_prompt(prompt, z_config)
+    logger.info(f"  force_think_block={force_think_block}, system_prompt={system_prompt}")
+    text_result = encode_text_prompt(
+        prompt,
+        z_config,
+        force_think_block=force_think_block,
+        system_prompt=system_prompt,
+    )
+    text_emb = text_result.embeddings
+    text_formatted_prompt = text_result.formatted_prompt
     logger.info(f"Text embeddings: shape={text_emb.shape}, std={text_emb.std():.2f}")
+    logger.debug(f"Text formatted prompt:\n{text_formatted_prompt}")
 
     # Get VL model path
     if not vl_model_path and hasattr(z_config, 'vl_model_path'):
@@ -584,6 +718,8 @@ def run_experiments(
         logger.info(f"\n{'='*60}")
         logger.info(f"[{i+1}/{len(configs)}] Running: {config.name}")
         logger.info(f"  alpha={config.alpha}, layer={config.hidden_layer}, mode={config.token_mode}")
+        if config.outlier_masking != "none":
+            logger.info(f"  outlier_masking={config.outlier_masking}, threshold={config.outlier_threshold}")
         logger.info(f"{'='*60}")
 
         start_time = time.time()
@@ -594,7 +730,7 @@ def run_experiments(
             if vl_text == "__PROMPT__":
                 vl_text = prompt
 
-            # Extract VL embeddings
+            # Extract VL embeddings with format configuration
             vl_result = vl_extractor.extract(
                 image=image,
                 text=vl_text,
@@ -604,6 +740,10 @@ def run_experiments(
                 text_tokens_only=config.text_tokens_only,
                 scale_to_text=config.scale_to_text,
                 normalization_mode=config.normalization_mode,
+                force_think_block=config.force_think_block,
+                system_prompt=config.system_prompt,
+                outlier_masking=config.outlier_masking,
+                outlier_threshold=config.outlier_threshold,
             )
             vl_emb = vl_result.embeddings
 
@@ -651,6 +791,12 @@ def run_experiments(
                 "elapsed_seconds": elapsed,
                 "generation_time": gen_time,
                 "success": True,
+                # Full prompt with special tokens for debugging
+                "vl_full_prompt": vl_result.full_prompt_with_tokens,
+                "vl_chat_template_format": vl_result.chat_template_format,
+                # Outlier masking info
+                "vl_masked_dimensions": vl_result.masked_dimensions,
+                "vl_masked_dim_ratios": vl_result.masked_dim_ratios,
             })
 
         except Exception as e:
@@ -671,12 +817,24 @@ def run_experiments(
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
-    # Save metadata
+    # Save metadata with full prompt details and model info
     metadata = {
         "image_path": str(image_path),
         "prompt": prompt,
         "seed": seed,
         "steps": steps,
+        # Text encoder configuration and formatted prompt
+        "text_encoder": {
+            "model": "Qwen3-4B",  # Z-Image text encoder
+            "force_think_block": force_think_block,
+            "system_prompt": system_prompt,
+            "formatted_prompt": text_formatted_prompt,  # Full prompt with special tokens
+        },
+        # VL model info
+        "vl_model": {
+            "model": "Qwen3-VL-4B-Instruct",
+            "path": vl_model_path,
+        },
         "results": results,
     }
 
@@ -718,14 +876,29 @@ Examples:
 
     # Required
     parser.add_argument("--image", "-i", required=True, help="Reference image path")
-    parser.add_argument("--prompt", "-p", required=True, help="Text prompt")
+
+    # Prompt source (one of these is required)
+    prompt_group = parser.add_argument_group("Prompt source (use ONE of these)")
+    prompt_group.add_argument("--prompt", "-p",
+                              help="Single text prompt (for quick tests)")
+    prompt_group.add_argument("--prompt-ids",
+                              help="Comma-separated prompt IDs from prompts file (e.g., animal_001,scene_002)")
+    prompt_group.add_argument("--prompt-category",
+                              help="Run all prompts in category (e.g., animals, scenes, landscapes)")
+    prompt_group.add_argument("--prompt-difficulty",
+                              choices=["easy", "medium", "hard", "extreme"],
+                              help="Run all prompts of a difficulty level")
+
+    # Prompts file (optional, defaults to standard_prompts.yaml)
+    parser.add_argument("--prompts-file",
+                        help="Path to prompts YAML file (default: experiments/prompts/standard_prompts.yaml)")
 
     # Output
     parser.add_argument("--output-dir", "-o", default=None,
                         help="Output directory (default: auto-generated)")
 
     # Sweep presets
-    parser.add_argument("--sweep", "-s", choices=["alpha", "layer", "token", "normalization", "full"],
+    parser.add_argument("--sweep", "-s", choices=["alpha", "layer", "token", "normalization", "outlier", "full"],
                         help="Use predefined sweep configuration")
 
     # Custom parameters
@@ -739,6 +912,11 @@ Examples:
     parser.add_argument("--normalization-modes", nargs="+",
                         choices=["global", "per_dim", "hybrid"],
                         help="Normalization modes to test")
+    parser.add_argument("--outlier-masking", nargs="+",
+                        choices=["none", "zero", "clamp", "scale"],
+                        help="Outlier masking modes to test (dim 396=617x, dim 4=42x std ratio)")
+    parser.add_argument("--outlier-threshold", type=float, default=10.0,
+                        help="Std ratio threshold for outlier detection (default: 10.0)")
 
     # Flags
     parser.add_argument("--no-baseline", action="store_true",
@@ -755,59 +933,160 @@ Examples:
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument("--steps", type=int, default=9, help="Inference steps")
 
+    # Chat template format (default matches official diffusers/DiffSynth implementation)
+    parser.add_argument("--force-think-block", action="store_true",
+                        help="Add empty think block to text encoding (NOT default - official uses none)")
+    parser.add_argument("--no-think-block", action="store_true",
+                        help="Explicitly disable think block (this is the default, matching official)")
+    parser.add_argument("--system-prompt", type=str, default=None,
+                        help="System prompt for text encoding")
+
     args = parser.parse_args()
+
+    # Validate prompt source - need at least one
+    has_prompt_source = any([
+        args.prompt,
+        args.prompt_ids,
+        args.prompt_category,
+        args.prompt_difficulty,
+    ])
+    if not has_prompt_source:
+        parser.error("Must provide a prompt source: --prompt, --prompt-ids, --prompt-category, or --prompt-difficulty")
+
+    # Build list of prompts to run
+    if args.prompt:
+        # Single prompt mode - create a simple dict
+        prompts_to_run = [{
+            "id": "cli_prompt",
+            "prompt": args.prompt,
+            "category": "cli",
+            "difficulty": "unknown",
+        }]
+    else:
+        # Load from prompts file with filters
+        prompt_ids = None
+        if args.prompt_ids:
+            prompt_ids = [p.strip() for p in args.prompt_ids.split(",")]
+
+        prompts_to_run = load_prompts_from_file(
+            prompts_file=args.prompts_file,
+            prompt_ids=prompt_ids,
+            prompt_category=args.prompt_category,
+            prompt_difficulty=args.prompt_difficulty,
+        )
+
+        if not prompts_to_run:
+            logger.error("No prompts found matching the specified filters")
+            return 1
+
+        logger.info(f"Loaded {len(prompts_to_run)} prompts from file")
+
+    # Handle think block flag
+    force_think_block = args.force_think_block and not args.no_think_block
 
     # Build configs - sweep sets defaults, CLI args override
     alphas = args.alphas
     layers = args.layers
     token_modes = args.token_modes
     normalization_modes = args.normalization_modes
+    outlier_masking_modes = args.outlier_masking
+    outlier_threshold = args.outlier_threshold
 
     # If sweep specified, use as defaults for any unset params
     if args.sweep:
         sweep_defaults = {
-            "alpha": {"alphas": [0.0, 0.1, 0.3, 0.5, 0.7, 1.0], "layers": [-8], "token_modes": ["text_only"], "normalization_modes": ["global"]},
-            "layer": {"alphas": [1.0], "layers": [-2, -4, -8, -16, -24], "token_modes": ["text_only"], "normalization_modes": ["global"]},
-            "token": {"alphas": [1.0], "layers": [-8], "token_modes": ["full", "text_only", "image_only", "image_no_markers"], "normalization_modes": ["global"]},
-            "normalization": {"alphas": [1.0], "layers": [-8], "token_modes": ["image_only"], "normalization_modes": ["global", "per_dim", "hybrid"]},
-            "full": {"alphas": [0.0, 0.3, 0.5, 1.0], "layers": [-2, -8, -16], "token_modes": ["text_only", "image_only"], "normalization_modes": ["global"]},
+            "alpha": {"alphas": [0.0, 0.1, 0.3, 0.5, 0.7, 1.0], "layers": [-8], "token_modes": ["text_only"], "normalization_modes": ["global"], "outlier_masking_modes": ["none"]},
+            "layer": {"alphas": [1.0], "layers": [-2, -4, -8, -16, -24], "token_modes": ["text_only"], "normalization_modes": ["global"], "outlier_masking_modes": ["none"]},
+            "token": {"alphas": [1.0], "layers": [-8], "token_modes": ["full", "text_only", "image_only", "image_no_markers"], "normalization_modes": ["global"], "outlier_masking_modes": ["none"]},
+            "normalization": {"alphas": [1.0], "layers": [-8], "token_modes": ["image_only"], "normalization_modes": ["global", "per_dim", "hybrid"], "outlier_masking_modes": ["none"]},
+            "outlier": {"alphas": [1.0], "layers": [-8], "token_modes": ["full"], "normalization_modes": ["global"], "outlier_masking_modes": ["none", "zero", "clamp", "scale"]},
+            "full": {"alphas": [0.0, 0.3, 0.5, 1.0], "layers": [-2, -8, -16], "token_modes": ["text_only", "image_only"], "normalization_modes": ["global"], "outlier_masking_modes": ["none"]},
         }
         defaults = sweep_defaults[args.sweep]
         alphas = alphas or defaults["alphas"]
         layers = layers or defaults["layers"]
         token_modes = token_modes or defaults["token_modes"]
         normalization_modes = normalization_modes or defaults["normalization_modes"]
+        outlier_masking_modes = outlier_masking_modes or defaults["outlier_masking_modes"]
 
     configs = build_configs(
         alphas=alphas,
         layers=layers,
         token_modes=token_modes,
         normalization_modes=normalization_modes,
+        outlier_masking_modes=outlier_masking_modes,
+        outlier_threshold=outlier_threshold,
         include_baseline=not args.no_baseline,
         vl_text=None if args.no_vl_text else "__PROMPT__",
+        force_think_block=force_think_block,
+        system_prompt=args.system_prompt,
     )
 
-    # Generate output directory
+    # Generate base output directory
+    from datetime import datetime
     if args.output_dir is None:
-        from datetime import datetime
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         sweep_name = args.sweep or "custom"
-        args.output_dir = f"experiments/results/vl_{sweep_name}_{timestamp}"
+        base_output_dir = f"experiments/results/vl_{sweep_name}_{timestamp}"
+    else:
+        base_output_dir = args.output_dir
 
-    logger.info(f"Running {len(configs)} experiment configurations")
-    logger.info(f"Output directory: {args.output_dir}")
+    total_configs = len(configs) * len(prompts_to_run)
+    logger.info(f"Running {len(configs)} configs x {len(prompts_to_run)} prompts = {total_configs} total experiments")
+    logger.info(f"Base output directory: {base_output_dir}")
 
-    run_experiments(
-        image_path=args.image,
-        prompt=args.prompt,
-        output_dir=args.output_dir,
-        configs=configs,
-        vl_model_path=args.vl_model_path,
-        z_image_config=args.config,
-        z_image_profile=args.profile,
-        seed=args.seed,
-        steps=args.steps,
-    )
+    # Run experiments for each prompt
+    all_results = []
+    for i, prompt_data in enumerate(prompts_to_run):
+        prompt_id = prompt_data["id"]
+        prompt_text = prompt_data["prompt"]
+
+        # Create subdirectory for each prompt if multiple prompts
+        if len(prompts_to_run) > 1:
+            output_dir = f"{base_output_dir}/{prompt_id}"
+        else:
+            output_dir = base_output_dir
+
+        logger.info(f"\n{'='*60}")
+        logger.info(f"Prompt {i+1}/{len(prompts_to_run)}: {prompt_id}")
+        logger.info(f"  Text: {prompt_text[:80]}{'...' if len(prompt_text) > 80 else ''}")
+        logger.info(f"  Output: {output_dir}")
+        logger.info(f"{'='*60}")
+
+        run_experiments(
+            image_path=args.image,
+            prompt=prompt_text,
+            output_dir=output_dir,
+            configs=configs,
+            vl_model_path=args.vl_model_path,
+            z_image_config=args.config,
+            z_image_profile=args.profile,
+            seed=args.seed,
+            steps=args.steps,
+            force_think_block=force_think_block,
+            system_prompt=args.system_prompt,
+        )
+
+        all_results.append({
+            "prompt_id": prompt_id,
+            "prompt_text": prompt_text,
+            "output_dir": output_dir,
+        })
+
+    # If multiple prompts, save a summary
+    if len(prompts_to_run) > 1:
+        summary_path = Path(base_output_dir) / "prompts_summary.json"
+        with open(summary_path, "w") as f:
+            json.dump({
+                "prompts_file": str(args.prompts_file) if args.prompts_file else "standard_prompts.yaml",
+                "prompt_ids": args.prompt_ids,
+                "prompt_category": args.prompt_category,
+                "prompt_difficulty": args.prompt_difficulty,
+                "total_prompts": len(prompts_to_run),
+                "configs_per_prompt": len(configs),
+                "results": all_results,
+            }, f, indent=2)
+        logger.info(f"\nSummary saved to {summary_path}")
 
     return 0
 

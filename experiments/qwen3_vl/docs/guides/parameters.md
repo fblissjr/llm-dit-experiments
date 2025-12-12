@@ -1,6 +1,6 @@
 # Qwen3-VL Conditioning Guide: Parameters and Tradeoffs
 
-> **Last Updated:** 2025-12-12
+> **Last Updated:** 2025-12-12 (added outlier masking)
 
 **IMPORTANT**: This is an EXPERIMENTAL approach that produces visible artifacts even with optimal settings. This guide documents parameter choices and their effects, but users should expect quality degradation compared to pure text generation or trained methods like IP-Adapter.
 
@@ -15,10 +15,13 @@ This guide explains how to control Qwen3-VL vision embedding influence on Z-Imag
 REFERENCE IMAGE -----> [Qwen3-VL] -----> VL Embeddings
                            |
                            |  Knobs:
-                           |  - hidden_layer (-1 to -6)
+                           |  - hidden_layer (-1 to -36)
                            |  - image_tokens_only (bool)
+                           |  - text_tokens_only (bool)
                            |  - text_with_image (str)
-                           |  - scale_factor (auto or manual)
+                           |  - normalization_mode (global/per_dim/hybrid)
+                           |  - outlier_masking (none/zero/clamp/scale)
+                           |  - outlier_threshold (default: 10.0)
                            |
                            v
                     +-------------+
@@ -208,6 +211,59 @@ result = extractor.extract(
     target_std=70.0,
 )
 ```
+
+## 6. Outlier Dimension Masking
+
+**What it controls**: Handling of dimensions with extreme std ratios vs Qwen3-4B reference.
+
+**Background:** Image tokens have severe per-dimension outliers:
+- Dimension 396: 617x std ratio (vs Qwen3-4B reference)
+- Dimension 4: 42x std ratio
+- These outliers may contribute to artifacts even after per-dim normalization
+
+| Mode | Behavior | Use Case |
+|------|----------|----------|
+| `none` | No masking (default) | Baseline comparison |
+| `zero` | Zero out outlier dimensions | Test if specific dims cause artifacts |
+| `clamp` | Scale outlier dims to threshold | Preserve some signal while limiting extremes |
+| `scale` | Proportionally reduce outlier dims | Gradual reduction based on ratio |
+
+**Threshold:** Default 10.0 (mask dims with >10x std ratio vs reference)
+
+**Usage:**
+```python
+# Via VLEmbeddingExtractor
+result = extractor.extract(
+    image=img,
+    text=prompt,
+    outlier_masking="zero",      # "none", "zero", "clamp", "scale"
+    outlier_threshold=10.0,
+)
+
+# Check results
+print(f"Masked: {result.masked_dimensions}")  # [396, 4]
+print(f"Ratios: {result.masked_dim_ratios}")  # {396: 617.9, 4: 42.0}
+```
+
+**Standalone functions:**
+```python
+from llm_dit.vl import mask_outlier_dimensions, get_outlier_dimensions
+
+# Analyze outliers
+outliers = get_outlier_dimensions(embeddings, threshold=10.0)
+# Returns: [(396, 617.9), (4, 42.0), ...]
+
+# Apply masking
+masked_emb, info = mask_outlier_dimensions(
+    embeddings,
+    threshold=10.0,
+    mode="clamp",
+)
+```
+
+**Recommended combinations:**
+- Text tokens: Usually don't need masking (0.999 correlation)
+- Image tokens: Use `outlier_masking="zero"` or `"clamp"` with `normalization_mode="per_dim"`
 
 ## Use Case Recipes
 

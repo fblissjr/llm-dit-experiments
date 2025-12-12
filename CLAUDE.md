@@ -1185,6 +1185,57 @@ uv run run_comparison.py --experiment conditioning_strength
 
 Results are saved to `experiments/results/` with comparison grids.
 
+### Outlier Dimension Masking
+
+VL image tokens have extreme per-dimension outliers that cause artifacts:
+- **Dimension 396:** 617x std ratio (vs Qwen3-4B reference)
+- **Dimension 4:** 42x std ratio
+
+Three masking modes are available via `mask_outlier_dimensions()`:
+
+| Mode | Description |
+|------|-------------|
+| `zero` | Zero out outlier dimensions entirely |
+| `clamp` | Scale outlier dimensions to threshold level |
+| `scale` | Proportionally reduce outlier dimension values |
+
+**Experiment Runner CLI:**
+```bash
+# Run outlier masking sweep (tests none, zero, clamp, scale)
+uv run python experiments/qwen3_vl/scripts/run_comparison.py \
+  -i experiments/inputs/test_scene.png \
+  -p "Your prompt" \
+  --sweep outlier \
+  -o experiments/results/outlier_sweep
+
+# Custom outlier masking modes
+uv run python experiments/qwen3_vl/scripts/run_comparison.py \
+  -i experiments/inputs/test_scene.png \
+  -p "Your prompt" \
+  --token-modes full \
+  --outlier-masking zero clamp \
+  --outlier-threshold 10.0 \
+  -o experiments/results/outlier_test
+```
+
+**Python API:**
+```python
+from llm_dit.vl import mask_outlier_dimensions, get_outlier_dimensions
+
+# Mask outlier dimensions
+masked_emb, info = mask_outlier_dimensions(
+    embeddings,
+    threshold=10.0,  # Std ratio threshold
+    mode="zero",     # "zero", "clamp", or "scale"
+)
+print(f"Masked {len(info['masked_dimensions'])} dimensions")
+
+# Analysis helper
+outliers = get_outlier_dimensions(embeddings, threshold=10.0)
+for dim, ratio in outliers[:5]:
+    print(f"Dimension {dim}: {ratio:.1f}x std ratio")
+```
+
 ### Future Research Directions
 
 1. **Better normalization**: Per-dimension normalization instead of global std
@@ -1198,8 +1249,9 @@ Results are saved to `experiments/results/` with comparison grids.
 | File | Description |
 |------|-------------|
 | `src/llm_dit/vl/qwen3_vl.py` | VLEmbeddingExtractor class |
-| `src/llm_dit/vl/blending.py` | Embedding blending utilities |
-| `experiments/qwen3_vl/RESEARCH_FINDINGS.md` | Detailed research notes |
-| `experiments/qwen3_vl/scripts/run_comparison.py` | Experiment runner |
+| `src/llm_dit/vl/blending.py` | Blending utilities, normalization, outlier masking |
+| `src/llm_dit/vl/qwen3_4b_stats.npz` | Per-dimension reference statistics |
+| `experiments/qwen3_vl/AGENTS.md` | Working task list and experiment priorities |
+| `experiments/qwen3_vl/scripts/run_comparison.py` | Experiment runner with sweep presets |
 
 See `experiments/qwen3_vl/RESEARCH_FINDINGS.md` for complete technical documentation.

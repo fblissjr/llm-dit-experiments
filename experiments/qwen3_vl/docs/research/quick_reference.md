@@ -1,6 +1,6 @@
 # Research Questions Index: Quick Reference
 
-> **Last Updated:** 2025-12-11
+> **Last Updated:** 2025-12-12
 
 This document maps your specific research questions to the detailed analysis in `techniques.md`.
 
@@ -177,6 +177,58 @@ def generate_with_injection(text_emb, vl_emb, inject_layers=[0,1,2]):
 
 ---
 
+## Your Question 6: Outlier Dimension Masking (NEW)
+
+**Question:** Can we improve image token quality by masking dimensions with extreme std ratios?
+
+**Answer Location:** `experiments/qwen3_vl/README.md` (Outlier Dimension Masking section)
+
+**Key Findings:**
+- **Problem:** Image tokens have extreme per-dimension outliers vs Qwen3-4B reference
+  - Dimension 396: 617x std ratio
+  - Dimension 4: 42x std ratio
+- **Hypothesis:** These outliers contribute to artifacts even after per-dim normalization
+- **Implementation:** Three masking modes available
+
+| Mode | Behavior | Use Case |
+|------|----------|----------|
+| `zero` | Zero out outlier dimensions | Test if dim is the artifact source |
+| `clamp` | Scale to threshold level | Preserve some signal |
+| `scale` | Proportional reduction | Gradual approach |
+
+**Recommended approach:**
+```python
+from llm_dit.vl import VLEmbeddingExtractor, get_outlier_dimensions
+
+# Check which dimensions are outliers
+outliers = get_outlier_dimensions(embeddings, threshold=10.0)
+# Returns: [(396, 617.9), (4, 42.0), ...]
+
+# Apply masking via extract()
+result = extractor.extract(
+    image=img,
+    text=prompt,
+    image_tokens_only=True,
+    normalization_mode="per_dim",
+    outlier_masking="zero",      # or "clamp", "scale"
+    outlier_threshold=10.0,
+)
+```
+
+**CLI experiment:**
+```bash
+# Run outlier masking sweep
+uv run experiments/qwen3_vl/scripts/run_comparison.py \
+    -i reference.png \
+    -p "Your prompt" \
+    --sweep outlier
+```
+
+- **Priority:** Tier 1 (already implemented, immediate testing)
+- **Status:** IMPLEMENTED (2025-12-12)
+
+---
+
 ## Recommended Execution Order
 
 ### Week 1: Quick Wins (Zero-Shot)
@@ -310,7 +362,35 @@ def blend_with_adain(text_emb, vl_emb, alpha=0.3):
     return alpha * restylized + (1 - alpha) * text_emb
 ```
 
----
+### Test Outlier Masking (Q6) - NEW
+```bash
+# Run outlier masking sweep (all modes)
+uv run experiments/qwen3_vl/scripts/run_comparison.py \
+    -i reference.png \
+    -p "Your prompt" \
+    --sweep outlier
+
+# Or test specific modes
+uv run experiments/qwen3_vl/scripts/run_comparison.py \
+    -i reference.png \
+    -p "Your prompt" \
+    --token-modes full \
+    --outlier-masking none zero clamp scale \
+    --alphas 1.0
+```
+
+```python
+# Python API
+from llm_dit.vl import mask_outlier_dimensions, get_outlier_dimensions
+
+# Analyze outliers first
+outliers = get_outlier_dimensions(embeddings, threshold=10.0)
+print(f"Outliers: {outliers}")  # [(396, 617.9), (4, 42.0), ...]
+
+# Apply masking
+masked, info = mask_outlier_dimensions(embeddings, threshold=10.0, mode="zero")
+print(f"Masked dims: {info['masked_dimensions']}")
+```
 
 ---
 

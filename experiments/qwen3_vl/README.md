@@ -95,6 +95,8 @@ The VL embeddings overrode: character identity, scene setting, second character
 
 **Observation:** VL text tokens have nearly identical per-dimension statistics to Qwen3-4B despite RoPE differences. Image tokens have extreme per-dimension outliers, but per-dimension normalization has not been sufficient to eliminate artifacts in our experiments.
 
+**Outlier Dimension Masking:** To address image token outliers, we implemented dimension masking that zeros, clamps, or scales dimensions exceeding a threshold (default 10x std ratio). Key outliers: dim 396 (617x), dim 4 (42x). See "Outlier Dimension Masking" section below.
+
 ## Novelty Assessment
 
 An arXiv literature search (2022-2025) suggests this specific approach has not been previously documented:
@@ -127,6 +129,77 @@ None of these explored architectural compatibility between same-family models as
 2. **High-quality style transfer** - Even optimal settings produce visible artifacts
 3. **Reliable content preservation** - VL influence is unpredictable; text semantics can be lost
 
+## Outlier Dimension Masking
+
+Image tokens have extreme per-dimension outliers compared to Qwen3-4B reference statistics. We implemented masking functions to handle these:
+
+### Key Outlier Dimensions
+
+| Dimension | Std Ratio | Impact |
+|-----------|-----------|--------|
+| **396** | **617x** | Most severe outlier |
+| **4** | **42x** | Second worst outlier |
+| 1710 | 3.4x | Minor outlier (text tokens worst) |
+
+### Masking Modes
+
+| Mode | Description | Use Case |
+|------|-------------|----------|
+| `none` | No masking (default) | Baseline comparison |
+| `zero` | Zero out outlier dimensions | Test if dim is the culprit |
+| `clamp` | Scale outlier dims to threshold level | Preserve some signal |
+| `scale` | Proportionally reduce outlier dims | Gradual reduction |
+
+### Usage
+
+**CLI (experiment runner):**
+```bash
+# Test all masking modes
+uv run experiments/qwen3_vl/scripts/run_comparison.py \
+    -i reference.png \
+    -p "Your prompt" \
+    --token-modes full \
+    --outlier-masking none zero clamp scale \
+    --outlier-threshold 10.0 \
+    --alphas 1.0
+
+# Use sweep preset
+uv run experiments/qwen3_vl/scripts/run_comparison.py \
+    -i reference.png \
+    -p "Your prompt" \
+    --sweep outlier
+```
+
+**Python API:**
+```python
+from llm_dit.vl import VLEmbeddingExtractor, mask_outlier_dimensions, get_outlier_dimensions
+
+# Via extract method
+result = extractor.extract(
+    image=img,
+    text=prompt,
+    outlier_masking="zero",      # "none", "zero", "clamp", or "scale"
+    outlier_threshold=10.0,      # Mask dims with >10x std ratio
+)
+
+# Check which dimensions were masked
+print(f"Masked dims: {result.masked_dimensions}")
+print(f"Ratios: {result.masked_dim_ratios}")
+
+# Or use standalone functions
+outliers = get_outlier_dimensions(embeddings, threshold=10.0)
+# Returns: [(396, 617.9), (4, 42.0), ...]
+
+masked, info = mask_outlier_dimensions(embeddings, threshold=10.0, mode="zero")
+```
+
+### Expected Results
+
+- `none`: Baseline with full outlier effects
+- `zero`: Tests hypothesis that specific dimensions cause artifacts
+- `clamp`: Balanced approach preserving some outlier signal
+- `scale`: Gradual proportional reduction
+
 ## Recommended Next Steps
 
 | Priority | Action | Why |
@@ -142,6 +215,7 @@ None of these explored architectural compatibility between same-family models as
 - `text_tokens_only=True` (image tokens have more severe artifacts)
 - `normalization_mode="global"` for text tokens
 - `normalization_mode="per_dim"` for image tokens (reduces but doesn't eliminate artifacts)
+- `outlier_masking="zero"` or `"clamp"` for image tokens (masks dim 396, 4, etc.)
 - `alpha=1.0` possible with text tokens only (though quality loss vs pure text)
 
 ## Documentation Structure
