@@ -720,3 +720,118 @@ def _interpolate_sequence(emb: torch.Tensor, target_len: int) -> torch.Tensor:
         emb_t, size=target_len, mode="linear", align_corners=False
     )
     return interpolated.squeeze(0).T  # (target, dim)
+
+
+# =============================================================================
+# AdaIN-Style Blending
+# =============================================================================
+# Transfer VL statistics (mean/std) to text embeddings while preserving content.
+# Based on Adaptive Instance Normalization from style transfer literature.
+
+
+def blend_adain(
+    text_emb: torch.Tensor,
+    vl_emb: torch.Tensor,
+    alpha: float = 0.3,
+    per_token: bool = True,
+) -> torch.Tensor:
+    """
+    Apply AdaIN-style blending: transfer VL statistics to text content.
+
+    This normalizes text embeddings and re-scales them using VL statistics.
+    The text *content* (relative structure) is preserved, but the *style*
+    (magnitude/distribution) comes from VL.
+
+    Formula per token:
+        normalized = (text - text_mean) / text_std
+        restylized = normalized * vl_std + vl_mean
+        result = alpha * restylized + (1 - alpha) * text
+
+    Args:
+        text_emb: Text embeddings (seq, dim)
+        vl_emb: VL embeddings (seq, dim)
+        alpha: Blend factor (0.0=pure text, 1.0=full style transfer)
+        per_token: If True, compute stats per token. If False, global stats.
+
+    Returns:
+        Text embeddings with VL statistics applied
+    """
+    # Match sequence lengths
+    min_len = min(text_emb.shape[0], vl_emb.shape[0])
+    text = text_emb[:min_len]
+    vl = vl_emb[:min_len].to(device=text.device, dtype=text.dtype)
+
+    if per_token:
+        # Per-token statistics (each token gets its own mean/std)
+        # Stats across dimension axis: (seq, dim) -> (seq, 1)
+        t_mean = text.mean(dim=-1, keepdim=True)
+        t_std = text.std(dim=-1, keepdim=True).clamp(min=1e-6)
+        v_mean = vl.mean(dim=-1, keepdim=True)
+        v_std = vl.std(dim=-1, keepdim=True).clamp(min=1e-6)
+    else:
+        # Global statistics (single mean/std for whole sequence)
+        t_mean = text.mean()
+        t_std = text.std().clamp(min=1e-6)
+        v_mean = vl.mean()
+        v_std = vl.std().clamp(min=1e-6)
+
+    # Normalize text to zero mean, unit std
+    normalized = (text - t_mean) / t_std
+
+    # Re-scale with VL statistics
+    restylized = normalized * v_std + v_mean
+
+    # Blend between original and restylized
+    result = alpha * restylized + (1 - alpha) * text
+
+    logger.debug(
+        f"AdaIN blend (alpha={alpha}, per_token={per_token}): "
+        f"text_std={text.std().item():.2f}, vl_std={vl.std().item():.2f}, "
+        f"result_std={result.std().item():.2f}"
+    )
+
+    return result
+
+
+def blend_adain_per_dim(
+    text_emb: torch.Tensor,
+    vl_emb: torch.Tensor,
+    alpha: float = 0.3,
+) -> torch.Tensor:
+    """
+    Apply AdaIN per dimension (channel-wise like original AdaIN).
+
+    This computes statistics per embedding dimension across the sequence,
+    which is closer to how AdaIN works in CNNs (per-channel normalization).
+
+    Args:
+        text_emb: Text embeddings (seq, dim)
+        vl_emb: VL embeddings (seq, dim)
+        alpha: Blend factor
+
+    Returns:
+        Text embeddings with per-dimension VL statistics
+    """
+    min_len = min(text_emb.shape[0], vl_emb.shape[0])
+    text = text_emb[:min_len]
+    vl = vl_emb[:min_len].to(device=text.device, dtype=text.dtype)
+
+    # Per-dimension statistics: (seq, dim) -> (1, dim)
+    t_mean = text.mean(dim=0, keepdim=True)
+    t_std = text.std(dim=0, keepdim=True).clamp(min=1e-6)
+    v_mean = vl.mean(dim=0, keepdim=True)
+    v_std = vl.std(dim=0, keepdim=True).clamp(min=1e-6)
+
+    # Normalize and restylize
+    normalized = (text - t_mean) / t_std
+    restylized = normalized * v_std + v_mean
+
+    # Blend
+    result = alpha * restylized + (1 - alpha) * text
+
+    logger.debug(
+        f"AdaIN per-dim blend (alpha={alpha}): "
+        f"result_std={result.std().item():.2f}"
+    )
+
+    return result

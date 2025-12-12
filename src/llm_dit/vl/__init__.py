@@ -33,6 +33,8 @@ See experiments/qwen3_vl/README.md for detailed documentation.
 """
 
 from .blending import (
+    blend_adain,
+    blend_adain_per_dim,
     blend_attention_weighted,
     blend_embeddings,
     blend_per_token,
@@ -65,4 +67,6 @@ __all__ = [
     "create_graduated_alpha",
     "compute_style_delta",
     "blend_with_style_delta",
+    "blend_adain",
+    "blend_adain_per_dim",
 ]
