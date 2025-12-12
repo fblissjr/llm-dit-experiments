@@ -1,14 +1,14 @@
 # Qwen3-VL Vision Conditioning for Z-Image
 
-> **Last Updated:** 2025-12-11
+> **Last Updated:** 2025-12-12
 
-Experiments using Qwen3-VL hidden states to condition Z-Image generation. This is a **zero-shot** approach that requires no training, but produces **out-of-distribution (OOD) embeddings** that must be interpolated with text to work.
+**EXPERIMENTAL** exploration of using Qwen3-VL hidden states to condition Z-Image generation. This approach requires no training but produces **visible artifacts** even with optimal settings. Results show that embeddings transfer partial information but quality is significantly lower than pure text generation.
 
 ## TL;DR
 
-We can extract hidden states from Qwen3-VL's text model (after it processes an image) and blend them with text embeddings to influence Z-Image generation. This works because Qwen3-VL and Qwen3-4B (Z-Image's text encoder) share the same base architecture (`hidden_size=2560`). However, the VL embeddings are OOD relative to what Z-Image was trained on, so quality is limited without training an adapter.
+We observed that extracting hidden states from Qwen3-VL's text model (after it processes an image) and blending them with text embeddings can influence Z-Image generation. This is possible because Qwen3-VL and Qwen3-4B (Z-Image's text encoder) share the same base architecture (`hidden_size=2560`). However, even with optimal settings, results show visible artifacts compared to pure text generation.
 
-**Bottom line:** Novel technique, useful for understanding embedding spaces, but a trained adapter (like IP-Adapter) would produce better results for practical use.
+**Bottom line:** Exploratory technique useful for understanding embedding spaces and architectural compatibility. For practical vision conditioning, trained adapters (like IP-Adapter) produce significantly better results.
 
 ## Why This Works (And Why It's Limited)
 
@@ -18,10 +18,13 @@ We can extract hidden states from Qwen3-VL's text model (after it processes an i
 Qwen3-VL training aligned:    vision tokens <---> VL text model
 Z-Image training aligned:     Qwen3-4B instruct hidden states <---> DiT
 
-NOT aligned:                  VL text model outputs <---> Qwen3-4B instruct outputs
+Mostly aligned:               VL text tokens (0.999 correlation) <---> Qwen3-4B text
+NOT aligned:                  VL image tokens (0.737 correlation) <---> Qwen3-4B text
 ```
 
-The VL model aligned vision tokens to *its own* text model during training, but that doesn't mean VL outputs are identical to the base Qwen3-4B outputs that Z-Image expects. They're close (same architecture, same base weights) but not identical.
+**Observed (2025-12-12):** VL text token positions have 0.999 per-dimension correlation with Qwen3-4B, despite RoPE configuration differences (rope_theta: 5M vs 1M, MRoPE vs standard RoPE). This suggests `text_tokens_only=True` produces fewer artifacts than image tokens.
+
+VL image token positions have only 0.737 correlation and extreme per-dimension outliers (up to 617x std ratio), which likely contributes to the artifacts observed even with per-dimension normalization.
 
 ### Why Interpolation is Required
 
@@ -61,26 +64,40 @@ The VL embeddings overrode: character identity, scene setting, second character
 | Layer | Observation |
 |-------|-------------|
 | -1 (last) | Most abstract, task-specific |
-| **-2 (penultimate)** | **Best results** - matches Z-Image's extraction layer |
+| -2 (penultimate) | Default for Qwen3-4B text |
+| -4 | Very good, clean output |
+| **-8** | **Best results for VL** - cleaner than -2 |
+| -16 | Good center, edge artifacts |
+| -24 | Heavy border noise |
 | -5 to -15 | Progressive "Asian bias" (Chinese training data influence) |
 | -18 to -25 | "Semantic averaging" - outputs look like prototypes/category centroids |
 | -30+ | Too abstract, loses all specificity |
 
-The middle layer "Asian bias" likely reflects Qwen's Chinese training data distribution at the semantic prototype level.
+**Important:** Layer -8 produces less artifacted results for VL than the -2 default used for Qwen3-4B text, though artifacts are still visible in generated images. The middle layer "Asian bias" likely reflects Qwen's Chinese training data distribution at the semantic prototype level.
 
 ### Embedding Statistics
 
+**Global statistics:**
+
 | Source | std | Notes |
 |--------|-----|-------|
-| Qwen3-4B text embeddings | 58.75 | What Z-Image expects |
-| VL text model hidden states | ~13 | 4-5x lower magnitude |
+| Qwen3-4B text embeddings | ~61.1 | What Z-Image expects |
+| VL text tokens (layer -2) | ~47.8 | **0.999 per-dim correlation** |
+| VL image tokens (layer -2) | ~7.0 | 0.737 per-dim correlation |
 | VL vision encoder output | 0.57 | Completely incompatible |
 
-Scaling VL embeddings to match text statistics helps but doesn't solve the fundamental OOD problem.
+**Per-dimension analysis (critical discovery):**
+
+| Token Type | Per-dim Correlation | Median Ratio | Worst Outlier |
+|------------|---------------------|--------------|---------------|
+| VL text tokens | **0.999** | 1.11x | 3.42x (dim 1710) |
+| VL image tokens | 0.737 | 1.55x | **617x (dim 396)** |
+
+**Observation:** VL text tokens have nearly identical per-dimension statistics to Qwen3-4B despite RoPE differences. Image tokens have extreme per-dimension outliers, but per-dimension normalization has not been sufficient to eliminate artifacts in our experiments.
 
 ## Novelty Assessment
 
-An arXiv literature search (2022-2025) confirmed this specific approach is **novel**:
+An arXiv literature search (2022-2025) suggests this specific approach has not been previously documented:
 
 | Aspect | Our Approach | Prior Art |
 |--------|--------------|-----------|
@@ -95,49 +112,60 @@ An arXiv literature search (2022-2025) confirmed this specific approach is **nov
 - **MoMA**: MLLM adapter but requires two-stage pretraining
 - **GILL**: LLM-to-diffusion mapping but requires trained projection network
 
-None of these exploit zero-shot architectural compatibility between same-family models.
+None of these explored architectural compatibility between same-family models as a path to training-free conditioning.
 
-## What This Is Good For
+## What This Exploration Demonstrates
 
-1. **Understanding embedding spaces** - How VLM and text encoder representations relate
-2. **Quick prototyping** - Test vision conditioning ideas without training
-3. **Baseline for trained methods** - Compare "what zero-shot gets you" vs trained adapters
-4. **Research finding** - Publishable as technical report on zero-shot cross-model transfer
+1. **Architectural compatibility matters** - Same hidden dimensions enable embedding transfer
+2. **Statistical alignment is measurable** - Per-dimension correlation reveals compatibility limits
+3. **Quality tradeoffs are real** - Training-free approaches sacrifice quality for simplicity
+4. **Research direction** - Shows what's possible without training and where the limits are
 
-## What This Is NOT Good For
+## What This Is NOT Suitable For
 
-1. **Production image conditioning** - Use IP-Adapter or similar trained methods
-2. **Precise style transfer** - VL influence is unpredictable (some attributes transfer, others don't)
-3. **Content preservation** - High alpha values override text semantics
+1. **Production image conditioning** - Use IP-Adapter or similar trained methods for practical use
+2. **High-quality style transfer** - Even optimal settings produce visible artifacts
+3. **Reliable content preservation** - VL influence is unpredictable; text semantics can be lost
 
 ## Recommended Next Steps
 
 | Priority | Action | Why |
 |----------|--------|-----|
-| 1 | Write up as arXiv technical report | Establishes priority, documents the finding |
-| 2 | Train minimal adapter (single linear layer) | Answers "how much training helps?" |
-| 3 | Systematic layer sweep with metrics | Characterize what each layer contributes |
-| 4 | Test on second model family | Validate generalization of the principle |
-| - | Stop optimizing zero-shot blending tricks | Diminishing returns without training |
+| 1 | Characterize artifact patterns | Understand what causes corruption, document failure modes |
+| 2 | Train minimal adapter (single linear layer) | Test if small amounts of training eliminate artifacts |
+| 3 | Systematic layer sweep with metrics | Quantify quality vs layer depth |
+| 4 | Compare with IP-Adapter baseline | Measure quality gap vs trained methods |
+| 5 | Test on second model family | Determine if approach generalizes |
 
-## Directory Structure
+**Current least-artifacted settings (2025-12-12):**
+- `hidden_layer=-8` (produces fewer artifacts than -2, but still visible)
+- `text_tokens_only=True` (image tokens have more severe artifacts)
+- `normalization_mode="global"` for text tokens
+- `normalization_mode="per_dim"` for image tokens (reduces but doesn't eliminate artifacts)
+- `alpha=1.0` possible with text tokens only (though quality loss vs pure text)
+
+## Documentation Structure
 
 ```
 experiments/qwen3_vl/
-  README.md                 # This file
-  __init__.py               # Python module init
-  scripts/                  # Executable scripts
-    extract_embeddings.py   # Extract VL embeddings from images
-    blend_and_generate.py   # Blend VL + text and generate
-    run_comparison.py       # Systematic comparison sweeps
+  README.md                    # This file - start here
+  __init__.py                  # Python module init
+  scripts/                     # Executable scripts
+    extract_embeddings.py      # Extract VL embeddings from images
+    blend_and_generate.py      # Blend VL + text and generate
+    run_comparison.py          # Systematic comparison sweeps
   docs/
-    guides/
-      conditioning_guide.md # Practical parameter guide
-    research/
-      research_findings.md  # Detailed experimental findings
-      research_questions.md # Deep dive on techniques from literature
-      research_index.md     # Quick reference
-      related_work.md       # Prior art analysis
+    guides/                    # How-to guides
+      parameters.md            # Parameter guide and use cases
+      interpreting.md          # How to interpret experiment results
+    research/                  # Research findings and analysis
+      findings.md              # Main research findings (start here for research)
+      quick_reference.md       # Quick lookup for specific questions
+      techniques.md            # Deep dive on techniques from literature
+      model_config_comparison.md  # Qwen3-4B vs Qwen3-VL comparison
+      related_work.md          # Prior art from other domains
+    experiments/               # Experiment-specific documentation
+      token_position.md        # Token position experiments and findings
 ```
 
 ## Quick Start
@@ -217,12 +245,24 @@ REFERENCE IMAGE                          TEXT PROMPT
               +---------------+
 ```
 
-## References
+## Where to Go From Here
 
-### Our Research
-- [docs/research/research_findings.md](docs/research/research_findings.md) - Detailed experimental results
-- [docs/research/research_questions.md](docs/research/research_questions.md) - Literature review and technique analysis
-- [docs/research/related_work.md](docs/research/related_work.md) - Prior art from other domains
+### For Users
+- **Getting started:** Read the [Quick Start](#quick-start) section above
+- **Parameter tuning:** See [docs/guides/parameters.md](docs/guides/parameters.md) for comprehensive parameter guide
+- **Interpreting results:** See [docs/guides/interpreting.md](docs/guides/interpreting.md) to understand experiment outputs
+
+### For Researchers
+- **Research findings:** Start with [docs/research/findings.md](docs/research/findings.md) for comprehensive experimental results
+- **Quick reference:** See [docs/research/quick_reference.md](docs/research/quick_reference.md) for specific questions
+- **Techniques:** Deep dive into [docs/research/techniques.md](docs/research/techniques.md) for literature review
+- **Related work:** See [docs/research/related_work.md](docs/research/related_work.md) for prior art analysis
+- **Model comparison:** See [docs/research/model_config_comparison.md](docs/research/model_config_comparison.md) for RoPE and architecture details
+
+### Experiments
+- **Token position experiments:** See [docs/experiments/token_position.md](docs/experiments/token_position.md) for detailed experiment proposals
+
+## References
 
 ### External
 - [IP-Adapter](https://arxiv.org/abs/2308.06721) - Closest prior art (trained adapter approach)

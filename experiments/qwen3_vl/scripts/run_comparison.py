@@ -17,6 +17,11 @@ Sweep Types
                 Configs: full, text_only, image_only, image_no_markers
                 at layer -8, alpha 1.0
 
+--sweep normalization   Test different normalization modes for image tokens
+                        Configs: global, per_dim, hybrid at layer -8,
+                        image_only. Critical for fixing 600x+ per-dimension
+                        outliers in image token embeddings.
+
 --sweep full    Comprehensive cross-product of all parameters
                 Configs: alphas [0.0, 0.3, 0.5, 1.0] x layers [-2, -8, -16]
                 x modes [text_only, image_only] = 24 total configs
@@ -51,6 +56,9 @@ Key Findings
 - image_only: Transfers visual content but ignores text prompt
 - Layer -8 produces cleaner results than -2 for VL conditioning
 - Cannot get both prompt following AND visual transfer with simple interpolation
+- Image tokens have extreme per-dimension outliers (up to 617x std ratio)
+- per_dim normalization is critical for image token quality (fixes outliers)
+- text_only tokens have 0.999 correlation with Qwen3-4B and only need global scaling
 
 Usage Examples
 --------------
@@ -107,6 +115,7 @@ logger = logging.getLogger(__name__)
 
 
 TokenMode = Literal["full", "text_only", "image_only", "image_no_markers"]
+NormalizationMode = Literal["global", "per_dim", "hybrid"]
 
 
 @dataclass
@@ -117,6 +126,7 @@ class ExperimentConfig:
     alpha: float = 1.0
     hidden_layer: int = -8
     token_mode: TokenMode = "text_only"
+    normalization_mode: NormalizationMode = "global"  # NEW: global, per_dim, or hybrid
     vl_text: str | None = None  # None = no text, "__PROMPT__" = use CLI prompt
     scale_to_text: bool = True
 
@@ -142,6 +152,7 @@ def build_configs(
     alphas: list[float] | None = None,
     layers: list[int] | None = None,
     token_modes: list[TokenMode] | None = None,
+    normalization_modes: list[NormalizationMode] | None = None,
     include_baseline: bool = True,
     vl_text: str | None = "__PROMPT__",
 ) -> list[ExperimentConfig]:
@@ -152,6 +163,7 @@ def build_configs(
         alphas: Alpha values to test. Default [1.0]
         layers: Hidden layers to test. Default [-8]
         token_modes: Token selection modes. Default ["text_only"]
+        normalization_modes: Normalization modes. Default ["global"]
         include_baseline: Add pure text baseline (alpha=0.0)
         vl_text: Text to include in VL extraction. "__PROMPT__" = use CLI prompt
 
@@ -164,6 +176,7 @@ def build_configs(
     alphas = alphas or [1.0]
     layers = layers or [-8]
     token_modes = token_modes or ["text_only"]
+    normalization_modes = normalization_modes or ["global"]
 
     # Add baseline if requested
     if include_baseline and 0.0 not in alphas:
@@ -180,32 +193,43 @@ def build_configs(
 
         for layer in layers:
             for mode in token_modes:
-                name_parts = []
+                for norm_mode in normalization_modes:
+                    name_parts = []
 
-                # Alpha in name if varying
-                if len(alphas) > 1:
-                    name_parts.append(f"alpha={alpha:.0%}")
+                    # Alpha in name if varying
+                    if len(alphas) > 1:
+                        name_parts.append(f"alpha={alpha:.0%}")
 
-                # Layer in name if varying
-                if len(layers) > 1:
-                    name_parts.append(f"layer {layer}")
+                    # Layer in name if varying
+                    if len(layers) > 1:
+                        name_parts.append(f"layer {layer}")
 
-                # Mode in name - always include for clarity
-                mode_labels = {
-                    "full": "all tokens",
-                    "text_only": "text tokens",
-                    "image_only": "image tokens",
-                    "image_no_markers": "image (no markers)",
-                }
-                name_parts.append(mode_labels.get(mode, mode))
+                    # Mode in name - always include for clarity
+                    mode_labels = {
+                        "full": "all tokens",
+                        "text_only": "text tokens",
+                        "image_only": "image tokens",
+                        "image_no_markers": "image (no markers)",
+                    }
+                    name_parts.append(mode_labels.get(mode, mode))
 
-                configs.append(ExperimentConfig(
-                    name=" | ".join(name_parts),
-                    alpha=alpha,
-                    hidden_layer=layer,
-                    token_mode=mode,
-                    vl_text=vl_text,
-                ))
+                    # Normalization in name if varying
+                    if len(normalization_modes) > 1:
+                        norm_labels = {
+                            "global": "global norm",
+                            "per_dim": "per-dim norm",
+                            "hybrid": "hybrid norm",
+                        }
+                        name_parts.append(norm_labels.get(norm_mode, norm_mode))
+
+                    configs.append(ExperimentConfig(
+                        name=" | ".join(name_parts),
+                        alpha=alpha,
+                        hidden_layer=layer,
+                        token_mode=mode,
+                        normalization_mode=norm_mode,
+                        vl_text=vl_text,
+                    ))
 
     return configs
 
@@ -232,6 +256,15 @@ def get_sweep_configs(sweep_type: str) -> list[ExperimentConfig]:
             alphas=[1.0],
             layers=[-8],
             token_modes=["full", "text_only", "image_only", "image_no_markers"],
+        )
+
+    elif sweep_type == "normalization":
+        # Test different normalization modes on image tokens (where it matters most)
+        return build_configs(
+            alphas=[1.0],
+            layers=[-8],
+            token_modes=["image_only"],
+            normalization_modes=["global", "per_dim", "hybrid"],
         )
 
     elif sweep_type == "full":
@@ -280,6 +313,7 @@ def generate_comparison_grid(
     alphas = sorted(set(r["alpha"] for r in successful))
     layers = sorted(set(r["hidden_layer"] for r in successful), reverse=True)
     modes = list(dict.fromkeys(r["token_mode"] for r in successful))  # preserve order
+    norm_modes = list(dict.fromkeys(r.get("normalization_mode", "global") for r in successful))
 
     # Determine grid layout based on varying parameters
     # Priority: rows=layers, cols=modes, or rows=alphas, cols=modes
@@ -290,6 +324,8 @@ def generate_comparison_grid(
         varying_params.append(("layer", layers))
     if len(modes) > 1:
         varying_params.append(("mode", modes))
+    if len(norm_modes) > 1:
+        varying_params.append(("normalization", norm_modes))
 
     # Build 2D grid if exactly 2 params vary, otherwise 1D
     if len(varying_params) == 2:
@@ -313,11 +349,15 @@ def generate_comparison_grid(
                 match = False
             elif row_param == "mode" and r["token_mode"] != row_val:
                 match = False
+            elif row_param == "normalization" and r.get("normalization_mode", "global") != row_val:
+                match = False
             if col_param == "alpha" and r["alpha"] != col_val:
                 match = False
             elif col_param == "layer" and r["hidden_layer"] != col_val:
                 match = False
             elif col_param == "mode" and r["token_mode"] != col_val:
+                match = False
+            elif col_param == "normalization" and r.get("normalization_mode", "global") != col_val:
                 match = False
             elif col_param == "name" and r["name"] != col_val:
                 match = False
@@ -339,6 +379,13 @@ def generate_comparison_grid(
                 "image_no_markers": "img (no markers)",
             }
             return mode_labels.get(val, val)
+        elif param == "normalization":
+            norm_labels = {
+                "global": "global norm",
+                "per_dim": "per-dim norm",
+                "hybrid": "hybrid norm",
+            }
+            return norm_labels.get(val, val)
         elif param == "name":
             return val[:18] + ".." if len(val) > 20 else val
         return str(val)
@@ -556,6 +603,7 @@ def run_experiments(
                 image_tokens_no_markers=config.image_tokens_no_markers,
                 text_tokens_only=config.text_tokens_only,
                 scale_to_text=config.scale_to_text,
+                normalization_mode=config.normalization_mode,
             )
             vl_emb = vl_result.embeddings
 
@@ -677,7 +725,7 @@ Examples:
                         help="Output directory (default: auto-generated)")
 
     # Sweep presets
-    parser.add_argument("--sweep", "-s", choices=["alpha", "layer", "token", "full"],
+    parser.add_argument("--sweep", "-s", choices=["alpha", "layer", "token", "normalization", "full"],
                         help="Use predefined sweep configuration")
 
     # Custom parameters
@@ -688,6 +736,9 @@ Examples:
     parser.add_argument("--token-modes", nargs="+",
                         choices=["full", "text_only", "image_only", "image_no_markers"],
                         help="Token selection modes to test")
+    parser.add_argument("--normalization-modes", nargs="+",
+                        choices=["global", "per_dim", "hybrid"],
+                        help="Normalization modes to test")
 
     # Flags
     parser.add_argument("--no-baseline", action="store_true",
@@ -710,24 +761,28 @@ Examples:
     alphas = args.alphas
     layers = args.layers
     token_modes = args.token_modes
+    normalization_modes = args.normalization_modes
 
     # If sweep specified, use as defaults for any unset params
     if args.sweep:
         sweep_defaults = {
-            "alpha": {"alphas": [0.0, 0.1, 0.3, 0.5, 0.7, 1.0], "layers": [-8], "token_modes": ["text_only"]},
-            "layer": {"alphas": [1.0], "layers": [-2, -4, -8, -16, -24], "token_modes": ["text_only"]},
-            "token": {"alphas": [1.0], "layers": [-8], "token_modes": ["full", "text_only", "image_only", "image_no_markers"]},
-            "full": {"alphas": [0.0, 0.3, 0.5, 1.0], "layers": [-2, -8, -16], "token_modes": ["text_only", "image_only"]},
+            "alpha": {"alphas": [0.0, 0.1, 0.3, 0.5, 0.7, 1.0], "layers": [-8], "token_modes": ["text_only"], "normalization_modes": ["global"]},
+            "layer": {"alphas": [1.0], "layers": [-2, -4, -8, -16, -24], "token_modes": ["text_only"], "normalization_modes": ["global"]},
+            "token": {"alphas": [1.0], "layers": [-8], "token_modes": ["full", "text_only", "image_only", "image_no_markers"], "normalization_modes": ["global"]},
+            "normalization": {"alphas": [1.0], "layers": [-8], "token_modes": ["image_only"], "normalization_modes": ["global", "per_dim", "hybrid"]},
+            "full": {"alphas": [0.0, 0.3, 0.5, 1.0], "layers": [-2, -8, -16], "token_modes": ["text_only", "image_only"], "normalization_modes": ["global"]},
         }
         defaults = sweep_defaults[args.sweep]
         alphas = alphas or defaults["alphas"]
         layers = layers or defaults["layers"]
         token_modes = token_modes or defaults["token_modes"]
+        normalization_modes = normalization_modes or defaults["normalization_modes"]
 
     configs = build_configs(
         alphas=alphas,
         layers=layers,
         token_modes=token_modes,
+        normalization_modes=normalization_modes,
         include_baseline=not args.no_baseline,
         vl_text=None if args.no_vl_text else "__PROMPT__",
     )

@@ -34,7 +34,12 @@ from typing import TYPE_CHECKING
 import torch
 from PIL import Image
 
-from .blending import DEFAULT_TARGET_STD, scale_embeddings
+from .blending import (
+    DEFAULT_TARGET_STD,
+    normalize_hybrid,
+    normalize_per_dimension,
+    scale_embeddings,
+)
 
 if TYPE_CHECKING:
     from transformers import AutoProcessor, Qwen3VLForConditionalGeneration
@@ -66,6 +71,7 @@ class VLExtractionResult:
     chat_template_format: str  # "with_think_block" or "no_think_block"
     full_prompt_with_tokens: str  # Full decoded prompt including all special tokens
     input_token_ids: list[int]  # Raw token IDs for debugging
+    normalization_mode: str = "global"  # "global", "per_dim", or "hybrid"
 
 
 class VLEmbeddingExtractor:
@@ -175,6 +181,7 @@ class VLEmbeddingExtractor:
         text_tokens_only: bool = True,
         scale_to_text: bool = True,
         target_std: float = DEFAULT_TARGET_STD,
+        normalization_mode: str = "global",
     ) -> VLExtractionResult:
         """
         Extract vision-conditioned embeddings from an image.
@@ -187,7 +194,12 @@ class VLEmbeddingExtractor:
             image_tokens_no_markers: If True, only extract image tokens WITHOUT the special markers
             text_tokens_only: If True (default), only extract text token hidden states (recommended - image tokens cause artifacts)
             scale_to_text: If True, scale embeddings to match text statistics
-            target_std: Target standard deviation for scaling
+            target_std: Target standard deviation for global scaling
+            normalization_mode: How to normalize embeddings:
+                - "global": Scale by global std only (original behavior)
+                - "per_dim": Per-dimension normalization to match Qwen3-4B stats
+                  (CRITICAL for image tokens which have 600x+ per-dim outliers)
+                - "hybrid": 50/50 blend of global and per-dim normalization
 
         Returns:
             VLExtractionResult with embeddings and metadata
@@ -197,6 +209,11 @@ class VLEmbeddingExtractor:
             After transformer self-attention, ALL positions carry mixed information
             from the entire sequence. This filtering tests whether token position
             affects quality, not whether information is "pure" image or text.
+
+        Key Finding (2025-12-12):
+            VL text tokens have 0.999 correlation with Qwen3-4B per-dimension stats.
+            VL image tokens have only 0.737 correlation with extreme outliers.
+            For image tokens, use normalization_mode="per_dim" for best results.
         """
         if not self._loaded:
             raise RuntimeError("Model has been unloaded. Create new extractor.")
@@ -302,8 +319,18 @@ class VLEmbeddingExtractor:
         # Scale to match text embedding statistics
         original_std = hidden_states.std().item()
         if scale_to_text and original_std > 0:
-            hidden_states = scale_embeddings(hidden_states, target_std)
-            scale_factor = target_std / original_std
+            if normalization_mode == "per_dim":
+                hidden_states = normalize_per_dimension(hidden_states)
+                # Scale factor is approximate for per-dim normalization
+                scale_factor = DEFAULT_TARGET_STD / original_std
+                logger.debug("Applied per-dimension normalization")
+            elif normalization_mode == "hybrid":
+                hidden_states = normalize_hybrid(hidden_states)
+                scale_factor = DEFAULT_TARGET_STD / original_std
+                logger.debug("Applied hybrid normalization")
+            else:  # "global" or default
+                hidden_states = scale_embeddings(hidden_states, target_std)
+                scale_factor = target_std / original_std
         else:
             scale_factor = 1.0
 
@@ -319,6 +346,7 @@ class VLEmbeddingExtractor:
             chat_template_format="with_think_block",  # Manually injected <think>\n\n</think>\n\n
             full_prompt_with_tokens=full_prompt_with_tokens,
             input_token_ids=input_token_ids,
+            normalization_mode=normalization_mode,
         )
 
     def _filter_image_tokens(
@@ -420,9 +448,10 @@ def estimate_token_count(image: Image.Image) -> int:
     Estimate the number of vision tokens for an image.
 
     Qwen3-VL uses spatial merge (2x2 patches -> 1 token), so:
-    - 512x512 image -> ~256 tokens
-    - 1024x1024 image -> ~1024 tokens
-    - 2048x2048 image -> ~4096 tokens (exceeds Z-Image 1504 limit!)
+    - 256x256 image -> 64 tokens
+    - 512x512 image -> 256 tokens
+    - 1024x1024 image -> 1024 tokens
+    - 2048x2048 image -> 4096 tokens (exceeds Z-Image 1504 limit!)
 
     Args:
         image: Input image
@@ -430,15 +459,16 @@ def estimate_token_count(image: Image.Image) -> int:
     Returns:
         Estimated number of vision tokens
     """
-    # Qwen3-VL uses 14x14 patch size with 2x2 spatial merge
-    patch_size = 14
+    # Qwen3-VL uses 16x16 patch size with 2x2 spatial merge
+    # This gives an effective 32x32 pixel per token
+    # See config.json: vision_config.patch_size=16, vision_config.spatial_merge_size=2
+    patch_size = 16
     spatial_merge = 2
 
     w, h = image.size
-    patches_w = w // patch_size
-    patches_h = h // patch_size
+    # Effective merged patch size
+    merged_patch_size = patch_size * spatial_merge  # 32 pixels
 
-    # After spatial merge
-    tokens = (patches_w // spatial_merge) * (patches_h // spatial_merge)
+    tokens = (w // merged_patch_size) * (h // merged_patch_size)
 
     return tokens

@@ -11,13 +11,21 @@ Classes:
 
 Functions:
     blend_embeddings: Interpolate between VL and text embeddings
-    scale_embeddings: Scale embeddings to match target statistics
+    scale_embeddings: Scale embeddings to match target statistics (global)
+    normalize_per_dimension: Per-dimension normalization using Qwen3-4B reference
+    normalize_hybrid: Blend of global and per-dimension normalization
+    get_reference_stats: Get precomputed Qwen3-4B statistics
 
 Key parameters:
     - alpha: Interpolation ratio (0.0=text, 1.0=VL, recommended: 0.3)
-    - hidden_layer: Which layer to extract (-2 recommended)
-    - image_tokens_only: Use only image tokens vs full sequence
-    - scale_to_text: Scale VL embeddings to match text statistics
+    - hidden_layer: Which layer to extract (-8 recommended for VL, -2 for text)
+    - text_tokens_only: Use only text token positions (recommended: True)
+    - normalization_mode: "global", "per_dim", or "hybrid"
+
+Key Finding (2025-12-12):
+    VL text tokens have 0.999 correlation with Qwen3-4B per-dimension statistics.
+    VL image tokens have only 0.737 correlation with extreme outliers (600x+ ratio).
+    For image tokens, use normalization_mode="per_dim" for best results.
 
 See experiments/qwen3_vl/README.md for detailed documentation.
 """
@@ -28,6 +36,9 @@ from .blending import (
     blend_per_token,
     blend_style_only,
     create_graduated_alpha,
+    get_reference_stats,
+    normalize_hybrid,
+    normalize_per_dimension,
     scale_embeddings,
 )
 from .qwen3_vl import VLEmbeddingExtractor, estimate_token_count
@@ -37,6 +48,9 @@ __all__ = [
     "estimate_token_count",
     "blend_embeddings",
     "scale_embeddings",
+    "normalize_per_dimension",
+    "normalize_hybrid",
+    "get_reference_stats",
     "blend_style_only",
     "blend_per_token",
     "blend_attention_weighted",

@@ -4,18 +4,61 @@ Embedding blending utilities for VL conditioning.
 This module provides functions for blending vision-conditioned embeddings
 with text embeddings to control the influence of reference images on
 Z-Image generation.
+
+Key Finding (2025-12-12):
+    Qwen3-VL text tokens have 0.999 correlation with Qwen3-4B per-dimension
+    statistics, but image tokens have only 0.737 correlation with extreme
+    outliers (some dimensions have 600x+ std ratio). Per-dimension
+    normalization is critical for image token quality.
 """
 
 import logging
+from functools import lru_cache
+from pathlib import Path
 
+import numpy as np
 import torch
 
 logger = logging.getLogger(__name__)
 
 # Default target statistics (measured from Qwen3-4B text embeddings)
-# Note: This is an approximation. Actual std varies by prompt but ~70 is typical.
-# The original 58.75 value was incorrect and caused corrupted outputs.
-DEFAULT_TARGET_STD = 70.0
+# Updated based on comprehensive analysis with 10 diverse prompts.
+DEFAULT_TARGET_STD = 61.0  # Updated from 70.0 based on empirical measurement
+
+# Path to precomputed Qwen3-4B statistics
+_STATS_PATH = Path(__file__).parent / "qwen3_4b_stats.npz"
+
+
+@lru_cache(maxsize=1)
+def _load_reference_stats() -> dict[str, np.ndarray]:
+    """Load precomputed Qwen3-4B per-dimension statistics.
+
+    Returns:
+        Dictionary with 'per_dim_mean', 'per_dim_std', 'global_mean', 'global_std'
+    """
+    if not _STATS_PATH.exists():
+        logger.warning(
+            f"Reference stats not found at {_STATS_PATH}. "
+            "Per-dimension normalization will fall back to global scaling."
+        )
+        return {}
+
+    data = np.load(_STATS_PATH)
+    return {
+        "per_dim_mean": data["per_dim_mean"],
+        "per_dim_std": data["per_dim_std"],
+        "global_mean": float(data["global_mean"]),
+        "global_std": float(data["global_std"]),
+    }
+
+
+def get_reference_stats() -> dict[str, np.ndarray]:
+    """Get precomputed Qwen3-4B reference statistics.
+
+    Returns:
+        Dictionary with per-dimension and global statistics, or empty dict if unavailable.
+    """
+    return _load_reference_stats()
 
 
 def scale_embeddings(
@@ -23,14 +66,18 @@ def scale_embeddings(
     target_std: float = DEFAULT_TARGET_STD,
 ) -> torch.Tensor:
     """
-    Scale embeddings to match target statistics.
+    Scale embeddings to match target global statistics.
 
-    VL embeddings typically have lower std (~13) than text embeddings (~58).
+    VL embeddings typically have lower std (~13) than text embeddings (~61).
     Scaling helps align the distributions for better blending.
+
+    Note:
+        This uses global scaling only. For image tokens with extreme per-dimension
+        outliers, use `normalize_per_dimension()` instead.
 
     Args:
         embeddings: Input embeddings to scale
-        target_std: Target standard deviation (default: 58.75 from text embeddings)
+        target_std: Target standard deviation (default: 61.0 from Qwen3-4B)
 
     Returns:
         Scaled embeddings
@@ -49,6 +96,91 @@ def scale_embeddings(
     )
 
     return scaled
+
+
+def normalize_per_dimension(
+    embeddings: torch.Tensor,
+    clip_outliers: bool = True,
+    outlier_sigma: float = 3.0,
+) -> torch.Tensor:
+    """
+    Normalize embeddings per-dimension to match Qwen3-4B statistics.
+
+    This is critical for image tokens from Qwen3-VL, which have extreme
+    per-dimension distribution mismatches (up to 600x std ratio for some dims).
+
+    The normalization:
+    1. Z-scores embeddings using their own per-dim mean/std
+    2. Rescales to Qwen3-4B's per-dim mean/std
+
+    Args:
+        embeddings: Input embeddings (seq_len, hidden_dim)
+        clip_outliers: If True, clip values beyond outlier_sigma before scaling
+        outlier_sigma: Number of std devs to clip at (default: 3.0)
+
+    Returns:
+        Normalized embeddings matching Qwen3-4B per-dimension distribution
+    """
+    stats = _load_reference_stats()
+    if not stats:
+        logger.warning("No reference stats available, falling back to global scaling")
+        return scale_embeddings(embeddings)
+
+    ref_mean = torch.from_numpy(stats["per_dim_mean"]).to(
+        device=embeddings.device, dtype=embeddings.dtype
+    )
+    ref_std = torch.from_numpy(stats["per_dim_std"]).to(
+        device=embeddings.device, dtype=embeddings.dtype
+    )
+
+    # Compute input per-dim statistics
+    input_mean = embeddings.mean(dim=0)
+    input_std = embeddings.std(dim=0)
+
+    # Avoid division by zero
+    input_std = torch.clamp(input_std, min=1e-6)
+    ref_std = torch.clamp(ref_std, min=1e-6)
+
+    # Z-score using input stats
+    z_scored = (embeddings - input_mean) / input_std
+
+    # Optional: clip outliers to prevent extreme values
+    if clip_outliers:
+        z_scored = torch.clamp(z_scored, -outlier_sigma, outlier_sigma)
+
+    # Rescale to reference distribution
+    normalized = z_scored * ref_std + ref_mean
+
+    logger.debug(
+        f"Per-dim normalized: input_std range [{input_std.min():.1f}, {input_std.max():.1f}] "
+        f"-> ref_std range [{ref_std.min():.1f}, {ref_std.max():.1f}]"
+    )
+
+    return normalized
+
+
+def normalize_hybrid(
+    embeddings: torch.Tensor,
+    per_dim_weight: float = 0.5,
+) -> torch.Tensor:
+    """
+    Hybrid normalization: blend per-dimension and global scaling.
+
+    This is a softer approach than pure per-dimension normalization,
+    useful when you want partial correction without fully overriding
+    the input's distribution characteristics.
+
+    Args:
+        embeddings: Input embeddings
+        per_dim_weight: Weight for per-dim normalization (0=global only, 1=per-dim only)
+
+    Returns:
+        Hybrid normalized embeddings
+    """
+    global_scaled = scale_embeddings(embeddings)
+    per_dim_scaled = normalize_per_dimension(embeddings, clip_outliers=True)
+
+    return per_dim_weight * per_dim_scaled + (1 - per_dim_weight) * global_scaled
 
 
 def blend_embeddings(
