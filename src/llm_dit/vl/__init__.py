@@ -37,6 +37,8 @@ from .blending import (
     blend_embeddings,
     blend_per_token,
     blend_style_only,
+    blend_with_style_delta,
+    compute_style_delta,
     create_graduated_alpha,
     get_outlier_dimensions,
     get_reference_stats,
@@ -61,4 +63,6 @@ __all__ = [
     "blend_per_token",
     "blend_attention_weighted",
     "create_graduated_alpha",
+    "compute_style_delta",
+    "blend_with_style_delta",
 ]

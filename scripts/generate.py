@@ -83,6 +83,18 @@ def main():
         default=None,
         help="Load embeddings from file (skip encoding)",
     )
+    parser.add_argument(
+        "--img2img",
+        type=str,
+        default=None,
+        help="Input image for img2img generation",
+    )
+    parser.add_argument(
+        "--strength",
+        type=float,
+        default=0.7,
+        help="img2img strength (0.0=no change, 1.0=full regeneration, default: 0.7)",
+    )
 
     args = parser.parse_args()
 
@@ -106,12 +118,9 @@ def main():
             templates_dir = str(default_templates)
             logger.info(f"Using default templates: {templates_dir}")
 
-    # Set up generator
-    generator = None
+    # Set up seed (generator created later based on code path)
     seed = getattr(args, 'seed', None)
     if seed is not None:
-        generator = torch.Generator()
-        generator.manual_seed(seed)
         logger.info(f"Using seed: {seed}")
 
     if args.encoder_only or args.save_embeddings:
@@ -208,6 +217,12 @@ def main():
         # Generate from embeddings
         logger.info(f"Generating {config.width}x{config.height} image...")
 
+        # CPU generator for generate_from_embeddings
+        generator = None
+        if seed is not None:
+            generator = torch.Generator(device="cpu")
+            generator.manual_seed(seed)
+
         start = time.time()
         image = pipe.generate_from_embeddings(
             embeds,
@@ -274,6 +289,12 @@ def main():
         # Generate using prompt_embeds (skips text encoding)
         logger.info(f"Generating {config.width}x{config.height} image from embeddings...")
 
+        # CPU generator for txt2img
+        generator = None
+        if seed is not None:
+            generator = torch.Generator(device="cpu")
+            generator.manual_seed(seed)
+
         start = time.time()
         image = pipe(
             prompt_embeds=embeddings,  # Use pre-computed embeddings
@@ -318,34 +339,79 @@ def main():
     def progress_callback(step: int, total: int, latents: torch.Tensor):
         logger.info(f"Step {step + 1}/{total}")
 
-    # Generate
-    logger.info(f"Generating {config.width}x{config.height} image...")
-    logger.info(f"Prompt: {args.prompt}")
-    if config.default_template:
-        logger.info(f"Template: {config.default_template}")
-
     # Get negative prompt from CLI
     negative_prompt = getattr(args, 'negative_prompt', None)
 
-    start = time.time()
-    image = pipe(
-        args.prompt,
-        height=config.height,
-        width=config.width,
-        num_inference_steps=config.steps,
-        guidance_scale=config.guidance_scale,
-        negative_prompt=negative_prompt,
-        generator=generator,
-        template=config.default_template,
-        system_prompt=config.system_prompt,
-        thinking_content=config.thinking_content,
-        assistant_content=config.assistant_content,
-        force_think_block=config.enable_thinking,  # enable_thinking maps to force_think_block
-        long_prompt_mode=config.long_prompt_mode,
-        hidden_layer=config.hidden_layer,
-        callback=progress_callback if config.verbose else None,
-    )
-    gen_time = time.time() - start
+    # Check for img2img mode
+    if args.img2img:
+        from PIL import Image
+
+        logger.info(f"Running img2img with strength={args.strength}")
+        logger.info(f"Input image: {args.img2img}")
+
+        input_image = Image.open(args.img2img)
+        logger.info(f"  Size: {input_image.size}")
+
+        logger.info(f"Prompt: {args.prompt}")
+
+        # img2img needs CUDA generator (creates noise directly on device)
+        generator = None
+        if seed is not None:
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+            generator = torch.Generator(device=device)
+            generator.manual_seed(seed)
+
+        start = time.time()
+        image = pipe.img2img(
+            prompt=args.prompt,
+            image=input_image,
+            strength=args.strength,
+            num_inference_steps=config.steps,
+            guidance_scale=config.guidance_scale,
+            negative_prompt=negative_prompt,
+            generator=generator,
+            template=config.default_template,
+            system_prompt=config.system_prompt,
+            thinking_content=config.thinking_content,
+            assistant_content=config.assistant_content,
+            force_think_block=config.enable_thinking,
+            long_prompt_mode=config.long_prompt_mode,
+            hidden_layer=config.hidden_layer,
+            callback=progress_callback if config.verbose else None,
+        )
+        gen_time = time.time() - start
+    else:
+        # Normal txt2img generation
+        logger.info(f"Generating {config.width}x{config.height} image...")
+        logger.info(f"Prompt: {args.prompt}")
+        if config.default_template:
+            logger.info(f"Template: {config.default_template}")
+
+        # txt2img needs CPU generator (creates noise on CPU then moves to device)
+        generator = None
+        if seed is not None:
+            generator = torch.Generator(device="cpu")
+            generator.manual_seed(seed)
+
+        start = time.time()
+        image = pipe(
+            args.prompt,
+            height=config.height,
+            width=config.width,
+            num_inference_steps=config.steps,
+            guidance_scale=config.guidance_scale,
+            negative_prompt=negative_prompt,
+            generator=generator,
+            template=config.default_template,
+            system_prompt=config.system_prompt,
+            thinking_content=config.thinking_content,
+            assistant_content=config.assistant_content,
+            force_think_block=config.enable_thinking,  # enable_thinking maps to force_think_block
+            long_prompt_mode=config.long_prompt_mode,
+            hidden_layer=config.hidden_layer,
+            callback=progress_callback if config.verbose else None,
+        )
+        gen_time = time.time() - start
 
     # Save
     output_path = Path(args.output)

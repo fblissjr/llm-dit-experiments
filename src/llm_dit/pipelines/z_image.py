@@ -699,8 +699,10 @@ class ZImagePipeline:
         else:
             sigma_start = self.scheduler.sigmas[-1]
 
-        # Add noise: latents = (1 - sigma) * init + sigma * noise
-        latents = self.scheduler.add_noise(init_latents, noise, timesteps[:1])
+        # Add noise for flow matching: latents = (1 - sigma) * init + sigma * noise
+        # FlowMatchEulerDiscreteScheduler doesn't have add_noise, so we do it manually
+        sigma = sigma_start.to(device=device, dtype=dtype)
+        latents = (1 - sigma) * init_latents + sigma * noise
         latents = latents.to(dtype=torch.float32)
 
         logger.info(f"[img2img] Starting denoising from step {t_start}, {len(timesteps)} steps remaining")

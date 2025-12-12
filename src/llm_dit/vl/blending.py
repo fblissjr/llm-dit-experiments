@@ -602,3 +602,121 @@ def blend_attention_weighted(
     per_token_alpha = alpha * (1 - weights * 0.8)  # Scale down by up to 80%
 
     return blend_per_token(vl_truncated, text_truncated, per_token_alpha)
+
+
+# =============================================================================
+# Style Delta Arithmetic
+# =============================================================================
+# Extract pure "style" by computing: style_delta = VL(styled) - VL(neutral)
+# Then apply: result = text_emb + alpha * style_delta
+# This isolates style without content override.
+
+
+def compute_style_delta(
+    styled_vl_emb: torch.Tensor,
+    neutral_vl_emb: torch.Tensor,
+    normalize: bool = True,
+) -> torch.Tensor:
+    """
+    Extract style-only component by subtracting neutral baseline.
+
+    The idea: VL embeddings contain both style AND content information.
+    By subtracting a "neutral" VL embedding (e.g., from a plain gray image),
+    we isolate just the style component.
+
+    Args:
+        styled_vl_emb: VL embeddings from styled image (seq, dim)
+        neutral_vl_emb: VL embeddings from neutral image (seq, dim)
+        normalize: If True, normalize the delta to unit std
+
+    Returns:
+        Style delta tensor (seq, dim)
+    """
+    # Match sequence lengths
+    min_len = min(styled_vl_emb.shape[0], neutral_vl_emb.shape[0])
+    styled = styled_vl_emb[:min_len]
+    neutral = neutral_vl_emb[:min_len]
+
+    # Ensure same device/dtype
+    neutral = neutral.to(device=styled.device, dtype=styled.dtype)
+
+    # Compute delta
+    delta = styled - neutral
+
+    if normalize:
+        # Normalize to unit std for easier scaling
+        delta_std = delta.std()
+        if delta_std > 0:
+            delta = delta / delta_std
+            logger.debug(f"Style delta normalized: std {delta_std:.2f} -> 1.0")
+
+    logger.debug(
+        f"Computed style delta: shape={delta.shape}, "
+        f"mean={delta.mean().item():.4f}, std={delta.std().item():.4f}"
+    )
+
+    return delta
+
+
+def blend_with_style_delta(
+    text_emb: torch.Tensor,
+    style_delta: torch.Tensor,
+    alpha: float = 0.3,
+    scale_to_text: bool = True,
+) -> torch.Tensor:
+    """
+    Add style delta to text embeddings.
+
+    Unlike standard blending which interpolates between VL and text (causing
+    content override), this ADDS style information while preserving text content.
+
+    Formula: result = text_emb + alpha * style_delta
+
+    Args:
+        text_emb: Text embeddings (seq, dim)
+        style_delta: Style delta from compute_style_delta (seq, dim)
+        alpha: Scale factor for style delta (0.0=no style, higher=more style)
+        scale_to_text: If True, scale delta to match text embedding magnitude
+
+    Returns:
+        Text embeddings with added style
+    """
+    # Match sequence lengths via interpolation
+    if style_delta.shape[0] != text_emb.shape[0]:
+        # Interpolate style delta to match text length
+        style_delta = _interpolate_sequence(style_delta, text_emb.shape[0])
+
+    # Ensure same device/dtype
+    style_delta = style_delta.to(device=text_emb.device, dtype=text_emb.dtype)
+
+    # Optionally scale delta to match text embedding magnitude
+    if scale_to_text:
+        text_std = text_emb.std()
+        delta_std = style_delta.std()
+        if delta_std > 0:
+            style_delta = style_delta * (text_std / delta_std)
+            logger.debug(f"Scaled style delta to match text std: {text_std:.2f}")
+
+    # Add style to text (not interpolate!)
+    result = text_emb + alpha * style_delta
+
+    logger.debug(
+        f"Style delta blend: alpha={alpha}, "
+        f"text_std={text_emb.std().item():.2f}, result_std={result.std().item():.2f}"
+    )
+
+    return result
+
+
+def _interpolate_sequence(emb: torch.Tensor, target_len: int) -> torch.Tensor:
+    """Interpolate embedding sequence to target length."""
+    if emb.shape[0] == target_len:
+        return emb
+
+    # Use linear interpolation
+    # emb: (seq, dim) -> (1, dim, seq) for F.interpolate -> (1, dim, target) -> (target, dim)
+    emb_t = emb.T.unsqueeze(0)  # (1, dim, seq)
+    interpolated = torch.nn.functional.interpolate(
+        emb_t, size=target_len, mode="linear", align_corners=False
+    )
+    return interpolated.squeeze(0).T  # (target, dim)
