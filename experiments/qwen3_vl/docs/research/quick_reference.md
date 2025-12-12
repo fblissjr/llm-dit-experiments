@@ -177,18 +177,20 @@ def generate_with_injection(text_emb, vl_emb, inject_layers=[0,1,2]):
 
 ---
 
-## Your Question 6: Outlier Dimension Masking (NEW)
+## Your Question 6: Outlier Dimension Masking
 
 **Question:** Can we improve image token quality by masking dimensions with extreme std ratios?
 
 **Answer Location:** `experiments/qwen3_vl/README.md` (Outlier Dimension Masking section)
 
-**Key Findings:**
-- **Problem:** Image tokens have extreme per-dimension outliers vs Qwen3-4B reference
-  - Dimension 396: 617x std ratio
-  - Dimension 4: 42x std ratio
-- **Hypothesis:** These outliers contribute to artifacts even after per-dim normalization
-- **Implementation:** Three masking modes available
+**Key Findings (2025-12-12):**
+- **Problem:** Image tokens have extreme per-dimension outliers vs Qwen3-4B reference AT LAYER -2
+  - Dimension 396: 617x std ratio at layer -2
+  - Dimension 4: 42x std ratio at layer -2
+  - **Layer -6: NO outliers** - naturally cleaner than -2
+- **Implementation:** Three masking modes available (zero, clamp, scale)
+- **Fix Applied:** Masking now applies to image tokens ONLY before combining with text tokens
+- **Result:** Layer -6 recommended over masking at layer -2
 
 | Mode | Behavior | Use Case |
 |------|----------|----------|
@@ -224,25 +226,74 @@ uv run experiments/qwen3_vl/scripts/run_comparison.py \
     --sweep outlier
 ```
 
-- **Priority:** Tier 1 (already implemented, immediate testing)
-- **Status:** IMPLEMENTED (2025-12-12)
+- **Priority:** Tier 1 (already implemented, tested)
+- **Status:** IMPLEMENTED (2025-12-12), SUPERSEDED BY LAYER -6 DISCOVERY
+
+---
+
+## Your Question 7: Style Delta Arithmetic (NEW - TESTED)
+
+**Question:** Could we do `result = text_emb + alpha * (VL_style - VL_neutral)` to extract pure style influence?
+
+**Status:** TESTED AND FAILED (2025-12-12)
+
+**Implementation:**
+```python
+from llm_dit.vl import compute_style_delta, blend_with_style_delta
+
+style_delta = compute_style_delta(styled_vl_emb, neutral_vl_emb)
+result = blend_with_style_delta(text_emb, style_delta, alpha=0.3)
+```
+
+**Results:**
+- Even at alpha 0.3, completely destroyed content (Homer became woman on beach, cyan ball)
+- The delta contains too much "content" information, not just style
+- Style and content are not cleanly separable in VL embedding space
+
+**Conclusion:** Style delta arithmetic does not work for VL embeddings. The embedding space doesn't decompose cleanly into style and content components.
+
+---
+
+## Your Question 8: AdaIN Blending (NEW - TESTED)
+
+**Question:** Could we apply AdaIN-style normalization to transfer VL statistics to text embeddings?
+
+**Status:** TESTED WITH PARTIAL SUCCESS (2025-12-12)
+
+**Implementation:**
+```python
+from llm_dit.vl import blend_adain, blend_adain_per_dim
+
+# Per-token AdaIN (preserves content)
+result = blend_adain(text_emb, vl_emb, alpha=0.3)
+
+# Per-dimension AdaIN (stronger style transfer)
+result = blend_adain_per_dim(text_emb, vl_emb, alpha=0.3)
+```
+
+**Results:**
+- `per_token` mode: Preserves Homer perfectly but NO visible style transfer
+- `per_dim` mode: Transfers colors (orange shirt from hexagon!) but corrupts subject (Homer becomes Bart)
+- Fundamental tradeoff: style transfer strong enough to be visible also corrupts content
+
+**Conclusion:** AdaIN can transfer some style (color) but at the cost of content corruption. Same fundamental limitation as style delta.
 
 ---
 
 ## Recommended Execution Order
 
-### Week 1: Quick Wins (Zero-Shot)
-1. **Style delta arithmetic** (Q1) - Section 1
-   - Low effort, potentially high impact
-   - Test: `style_delta = vl_style - vl_neutral; result = text + 0.3 * delta`
+### Week 1: Quick Wins (Zero-Shot) - COMPLETED
+1. **Style delta arithmetic** (Q1) - Section 1 - **FAILED**
+   - Implemented and tested
+   - Result: Destroys content even at low alpha
 
-2. **AdaIN for embeddings** (Q4) - Section 4
-   - Low effort, medium impact
-   - Test: Match VL mean/std to text
+2. **AdaIN for embeddings** (Q4) - Section 4 - **PARTIAL**
+   - Implemented and tested
+   - Result: Tradeoff between style transfer and content preservation
 
-3. **Layer sweep** (Q3) - Section 3
-   - Already implemented via `--hidden-layer`
-   - Systematically characterize layers -1 to -30
+3. **Layer sweep** (Q3) - Section 3 - **DONE**
+   - Layer -6 discovered as optimal for VL conditioning
+   - No outliers at layer -6
 
 ### Week 2: Direction Methods
 4. **Activation steering** (Q2) - Section 2

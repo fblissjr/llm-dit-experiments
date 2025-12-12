@@ -80,23 +80,24 @@ blended = 0.6 * vl_emb + 0.4 * text_emb
 | Layer | Artifact Severity | Notes |
 |-------|-----------------|----------|
 | -1 (last) | Heavy | Most abstract, task-specific |
-| -2 (penultimate) | Heavy | Default for Qwen3-4B text, but bad for VL |
+| -2 (penultimate) | Heavy | Default for Qwen3-4B text, but bad for VL. Has 617x outlier in dim 396. |
 | -4 | Moderate | Better than -2, artifacts still visible |
-| **-8** | **Least (but still visible)** | **Fewest artifacts observed** |
+| **-6** | **Least (but still visible)** | **Best layer for VL - crisp images, NO outliers** |
+| -8 | Moderate | Previously recommended, -6 is better |
 | -16 | Moderate-Heavy | Good center, edge artifacts |
 | -24 | Severe | Heavy border noise |
 
-**Important:** Layer -8 produces fewer artifacts than -2 for VL conditioning, but quality still falls short of pure text generation. No layer eliminates artifacts completely.
+**Important (2025-12-12):** Layer -6 is the best choice for VL conditioning - produces crisper images than -2 or -8 and has NO outlier dimensions. The 617x outlier in dimension 396 is specific to layer -2.
 
 ```python
-# Recommended for VL conditioning (NEW)
-outputs.hidden_states[-8]
+# Recommended for VL conditioning (2025-12-12)
+outputs.hidden_states[-6]  # Best: crisp images, no outliers
 
-# Default for text encoding (old default)
-outputs.hidden_states[-2]
+# Alternative (previously recommended)
+outputs.hidden_states[-8]  # Good, but -6 is better
 
-# Alternative clean layer
-outputs.hidden_states[-4]
+# Default for text encoding (avoid for VL)
+outputs.hidden_states[-2]  # Has 617x outlier in dim 396
 ```
 
 ## 3. Image Tokens Only vs Text Tokens vs Full Sequence
@@ -216,10 +217,12 @@ result = extractor.extract(
 
 **What it controls**: Handling of dimensions with extreme std ratios vs Qwen3-4B reference.
 
-**Background:** Image tokens have severe per-dimension outliers:
+**Background (Layer -2 Only):** Image tokens at layer -2 have severe per-dimension outliers:
 - Dimension 396: 617x std ratio (vs Qwen3-4B reference)
 - Dimension 4: 42x std ratio
-- These outliers may contribute to artifacts even after per-dim normalization
+- **Layer -6 has NO outliers** above 10x threshold
+
+**Recommendation (2025-12-12):** Use layer -6 instead of masking at layer -2.
 
 | Mode | Behavior | Use Case |
 |------|----------|----------|
@@ -262,8 +265,9 @@ masked_emb, info = mask_outlier_dimensions(
 ```
 
 **Recommended combinations:**
+- **Best approach:** Use layer -6 (no outliers, no masking needed)
 - Text tokens: Usually don't need masking (0.999 correlation)
-- Image tokens: Use `outlier_masking="zero"` or `"clamp"` with `normalization_mode="per_dim"`
+- Image tokens at layer -2: Use `outlier_masking="zero"` or `"clamp"` with `normalization_mode="per_dim"`
 
 ## Use Case Recipes
 
@@ -272,11 +276,11 @@ masked_emb, info = mask_outlier_dimensions(
 Attempt to transfer visual style from reference while generating different content.
 
 ```python
-# Use text tokens for fewer artifacts (but artifacts still present)
+# Use text tokens at layer -6 for best results (but artifacts still present)
 result = extractor.extract(
     image=style_image,
     text="flat colors, simple shapes, cartoon style",
-    hidden_layer=-8,                # Fewest artifacts observed
+    hidden_layer=-6,                # Best layer for VL (2025-12-12)
     text_tokens_only=True,          # Fewer artifacts than image tokens
     normalization_mode="global",    # Sufficient for text tokens
     target_std=70.0,
@@ -315,18 +319,18 @@ blended = 0.5 * vl_emb + 0.5 * text_emb
 Use reference for layout/composition, text for content.
 
 ```python
-# NEW: Image tokens require per_dim normalization
+# Use layer -6 for image tokens (no outliers)
 result = extractor.extract(
     image=composition_ref,
     text=None,                           # No text for pure visual
-    hidden_layer=-8,
+    hidden_layer=-6,                     # Best layer, no outliers
     image_tokens_only=True,
     normalization_mode="per_dim",        # CRITICAL for image tokens
     target_std=70.0,
 )
 
 # Lower alpha to reduce artifacts
-alpha = 0.2  # (image tokens still have some artifacts)
+alpha = 0.2  # (artifacts reduced at layer -6)
 blended = 0.2 * result.embeddings + 0.8 * text_emb
 ```
 
@@ -370,6 +374,35 @@ blended = 0.15 * vl_emb + 0.85 * text_emb
 - **Artifact-free generation**: No parameter combination eliminates artifacts
 - **Production-quality images**: Quality gap vs trained methods is significant
 - **Text/writing preservation**: Rendering quality degrades
+
+## Blending Mode Variations
+
+### Style Delta (TESTED - FAILED)
+```python
+from llm_dit.vl import compute_style_delta, blend_with_style_delta
+
+# Extract style by subtracting neutral from styled
+style_delta = compute_style_delta(styled_vl_emb, neutral_vl_emb)
+result = blend_with_style_delta(text_emb, style_delta, alpha=0.3)
+```
+
+**Result (2025-12-12):** Failed. Even at alpha 0.3, completely destroys content. The delta contains too much "content" information, not just style.
+
+### AdaIN Blending (TESTED - PARTIAL SUCCESS)
+```python
+from llm_dit.vl import blend_adain, blend_adain_per_dim
+
+# Per-token AdaIN (preserves content, weak style transfer)
+result = blend_adain(text_emb, vl_emb, alpha=0.3)
+
+# Per-dimension AdaIN (stronger style, corrupts content)
+result = blend_adain_per_dim(text_emb, vl_emb, alpha=0.3)
+```
+
+**Results (2025-12-12):**
+- `per_token`: Preserves content perfectly but NO visible style transfer
+- `per_dim`: Transfers colors but corrupts subject identity
+- Fundamental tradeoff: visible style transfer requires accepting content corruption
 
 ## Experimental Parameters to Explore
 

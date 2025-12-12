@@ -133,13 +133,15 @@ None of these explored architectural compatibility between same-family models as
 
 Image tokens have extreme per-dimension outliers compared to Qwen3-4B reference statistics. We implemented masking functions to handle these:
 
-### Key Outlier Dimensions
+### Key Outlier Dimensions (Layer -2 Only)
 
 | Dimension | Std Ratio | Impact |
 |-----------|-----------|--------|
-| **396** | **617x** | Most severe outlier |
-| **4** | **42x** | Second worst outlier |
+| **396** | **617x** | Most severe outlier at layer -2 |
+| **4** | **42x** | Second worst outlier at layer -2 |
 | 1710 | 3.4x | Minor outlier (text tokens worst) |
+
+**Important:** These outliers are layer-specific. Layer -6 has NO outliers above 10x threshold.
 
 ### Masking Modes
 
@@ -211,12 +213,14 @@ masked, info = mask_outlier_dimensions(embeddings, threshold=10.0, mode="zero")
 | 5 | Test on second model family | Determine if approach generalizes |
 
 **Current least-artifacted settings (2025-12-12):**
-- `hidden_layer=-8` (produces fewer artifacts than -2, but still visible)
+- `hidden_layer=-6` (layer -6 produces crisper images than -2 or -8, no outliers found)
 - `text_tokens_only=True` (image tokens have more severe artifacts)
 - `normalization_mode="global"` for text tokens
 - `normalization_mode="per_dim"` for image tokens (reduces but doesn't eliminate artifacts)
-- `outlier_masking="zero"` or `"clamp"` for image tokens (masks dim 396, 4, etc.)
+- `outlier_masking="zero"` or `"clamp"` for image tokens at layer -2 (layer -6 has no outliers)
 - `alpha=1.0` possible with text tokens only (though quality loss vs pure text)
+
+**Key Finding (2025-12-12):** Layer -6 is naturally cleaner than -2 or -8 for VL conditioning. The 617x outlier in dimension 396 only appears at layer -2.
 
 ## Documentation Structure
 

@@ -580,6 +580,14 @@ uv run scripts/generate.py \
   --thinking-content "Natural lighting, sharp focus." \
   --output photo.png \
   "A portrait of a woman"
+
+# Image-to-image generation
+uv run scripts/generate.py \
+  --model-path /path/to/z-image \
+  --img2img input.jpg \
+  --strength 0.7 \
+  --output transformed.png \
+  "Transform this into an oil painting"
 ```
 
 ## Profiler Script (scripts/profiler.py)
@@ -689,6 +697,8 @@ uv run scripts/profiler.py --show-info
 | `--guidance-scale` | CFG scale (default: 0.0) |
 | `--shift` | Scheduler shift/mu (default: 3.0) |
 | `--seed` | Random seed |
+| `--img2img` | Input image path for img2img generation |
+| `--strength` | img2img strength: 0.0 (no change) to 1.0 (full regeneration) (default: 0.7) |
 
 ### Prompt Control
 | Flag | Description |
@@ -721,9 +731,11 @@ uv run scripts/profiler.py --show-info
 | `--vl-model-path` | Path to Qwen3-VL-4B-Instruct model |
 | `--vl-device` | Device for VL model (cpu recommended to save VRAM) |
 | `--vl-alpha` | Default VL influence (0.0-1.0, default: 0.3) |
-| `--vl-hidden-layer` | Hidden layer for VL extraction (default: -2) |
+| `--vl-hidden-layer` | Hidden layer for VL extraction (default: -2, recommend: -6 for VL) |
 | `--vl-auto-unload` | Unload VL model after extraction (default: true) |
-| `--vl-blend-mode` | Blend mode: linear/style_only/graduated/attention_weighted |
+| `--vl-blend-mode` | Blend mode: linear/adain/adain_per_dim/style_delta |
+| `--vl-outlier-masking` | Outlier masking mode: none/zero/clamp/scale (default: none) |
+| `--vl-outlier-threshold` | Std ratio threshold for outlier masking (default: 10.0) |
 
 ## REST API Endpoints
 
@@ -1113,27 +1125,36 @@ DOUBLE_NEWLINE_TOKEN_ID = 271   # \n\n (NOT 198 twice!)
 
 The extreme scaling needed for image tokens likely causes the artifacts. Text tokens need only ~1.5x scaling with `target_std=70`.
 
-### Research Findings (2025-12-11)
+### Research Findings (2025-12-12)
 
-**What Works:**
-- Text token positions from VL model contain prompt-following information
-- Layer -8 produces much cleaner results than layer -2
-- `text_tokens_only=True` reduces artifacts significantly
-- Character addition ("Homer Simpson") with ref image works reasonably
+**Layer Selection:**
+- Layer -2 (Z-Image default) loses text prompt content with VL conditioning
+- Layer -6 produces crisper images and preserves text prompt (Homer appears correctly)
+- VL fine-tuning overwrote later layers for vision tasks, making middle layers better
 
-**What Doesn't Work:**
-- Image token positions cause severe blocky/grid artifacts
-- Style transfer (applying ref image style to new subject) fails
-- Even optimal settings produce visible artifacts vs pure Qwen3-4B text
-- VL-conditioned backgrounds show grid patterns
+**Outlier Masking Results:**
+- Outlier masking found NO outliers at layer -6 (the 617x outlier is layer -2 specific)
+- Layer -6 is naturally cleaner than -2 for VL embeddings
+- The fix to apply masking to image tokens only works but layer -6 doesn't have the outliers
 
-**Comparison Results:**
-- `pure_text_homer.png` (Qwen3-4B text only) = Clean output
-- `optimal_vl.png` (VL with optimal settings) = Visible grid artifacts in background
-- Image tokens at any alpha = Heavy corruption
+**VL vs img2img Comparison:**
+- VL blending: Produces superimposition (Homer merged with house)
+- img2img low strength (0.3-0.7): Preserves input structure, no new subjects appear
+- img2img high strength (0.9+): New subject appears but transforms/replaces original
+- Neither achieves true spatial composition ("Homer next to house")
 
-**Artifact Examples:**
-The grid/blocky pattern appears to come from the VL embedding space not perfectly aligning with the DiT's learned text embedding distribution, even after normalization.
+**Style Delta Results (FAILED):**
+- Even at alpha 0.3, Homer was completely destroyed
+- Replaced with random style-influenced content (woman on beach, cyan ball)
+- The delta contains too much "content" information, not just style
+
+**AdaIN Results (PARTIAL SUCCESS):**
+- `per_token` mode: Preserves Homer perfectly but no visible style transfer
+- `per_dim` mode: Transfers colors (orange shirt from hexagon) but corrupts subject (Homer becomes Bart)
+- Fundamental tradeoff: style transfer strong enough to be visible also corrupts content
+
+**Core Insight:**
+The embedding space doesn't cleanly separate "style" from "content". VL influence strong enough to transfer style also corrupts semantic content.
 
 ### Usage (Despite Artifacts)
 
@@ -1188,8 +1209,9 @@ Results are saved to `experiments/results/` with comparison grids.
 ### Outlier Dimension Masking
 
 VL image tokens have extreme per-dimension outliers that cause artifacts:
-- **Dimension 396:** 617x std ratio (vs Qwen3-4B reference)
-- **Dimension 4:** 42x std ratio
+- **Dimension 396:** 617x std ratio at layer -2 (vs Qwen3-4B reference)
+- **Dimension 4:** 42x std ratio at layer -2
+- **Layer -6:** NO outliers found (naturally cleaner than -2)
 
 Three masking modes are available via `mask_outlier_dimensions()`:
 
@@ -1198,6 +1220,8 @@ Three masking modes are available via `mask_outlier_dimensions()`:
 | `zero` | Zero out outlier dimensions entirely |
 | `clamp` | Scale outlier dimensions to threshold level |
 | `scale` | Proportionally reduce outlier dimension values |
+
+**Note:** Fixed to apply masking to image tokens ONLY before combining with text tokens.
 
 **Experiment Runner CLI:**
 ```bash
@@ -1236,22 +1260,58 @@ for dim, ratio in outliers[:5]:
     print(f"Dimension {dim}: {ratio:.1f}x std ratio")
 ```
 
+### Style Delta and AdaIN Blending
+
+Two new blending modes implemented in `src/llm_dit/vl/blending.py`:
+
+**Style Delta Arithmetic:**
+```python
+from llm_dit.vl import compute_style_delta, blend_with_style_delta
+
+# Extract style by subtracting neutral from styled
+style_delta = compute_style_delta(styled_vl_emb, neutral_vl_emb)
+
+# Add style delta to text embeddings
+result = blend_with_style_delta(text_emb, style_delta, alpha=0.3)
+```
+
+**AdaIN Blending:**
+```python
+from llm_dit.vl import blend_adain, blend_adain_per_dim
+
+# Per-token AdaIN (preserves content)
+result = blend_adain(text_emb, vl_emb, alpha=0.3)
+
+# Per-dimension AdaIN (stronger style transfer, may corrupt content)
+result = blend_adain_per_dim(text_emb, vl_emb, alpha=0.3)
+```
+
+**Test scripts:**
+- `experiments/qwen3_vl/scripts/test_style_delta.py` - Style delta experiments
+- `experiments/qwen3_vl/scripts/test_adain.py` - AdaIN experiments
+
+**Results:** Both methods show fundamental tradeoff - style transfer strong enough to be visible also corrupts content.
+
 ### Future Research Directions
 
-1. **Better normalization**: Per-dimension normalization instead of global std
+1. **Trained minimal adapter**: Single linear layer to bridge VL and text space
 2. **Layer interpolation**: Blend multiple hidden layers
 3. **Attention-based selection**: Use attention weights to select important tokens
-4. **Training**: Fine-tune a small projection layer between VL and text space
-5. **Alternative VL models**: Try different vision-language models
+4. **Alternative VL models**: Try different vision-language models
+5. **IP-Adapter comparison**: Measure quality gap vs trained methods
 
 ### Files
 
 | File | Description |
 |------|-------------|
 | `src/llm_dit/vl/qwen3_vl.py` | VLEmbeddingExtractor class |
-| `src/llm_dit/vl/blending.py` | Blending utilities, normalization, outlier masking |
+| `src/llm_dit/vl/blending.py` | Blending utilities: normalization, outlier masking, style delta, AdaIN |
 | `src/llm_dit/vl/qwen3_4b_stats.npz` | Per-dimension reference statistics |
+| `src/llm_dit/pipelines/z_image.py` | ZImagePipeline with img2img support |
+| `scripts/generate.py` | CLI script with img2img flags |
 | `experiments/qwen3_vl/AGENTS.md` | Working task list and experiment priorities |
 | `experiments/qwen3_vl/scripts/run_comparison.py` | Experiment runner with sweep presets |
+| `experiments/qwen3_vl/scripts/test_style_delta.py` | Style delta arithmetic experiments |
+| `experiments/qwen3_vl/scripts/test_adain.py` | AdaIN blending experiments |
 
 See `experiments/qwen3_vl/RESEARCH_FINDINGS.md` for complete technical documentation.

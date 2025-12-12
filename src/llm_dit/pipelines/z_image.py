@@ -527,8 +527,8 @@ class ZImagePipeline:
 
     def img2img(
         self,
-        prompt: Union[str, "Conversation"],
-        image: Union[Image.Image, torch.Tensor],
+        prompt: Union[str, "Conversation", None] = None,
+        image: Union[Image.Image, torch.Tensor] = None,
         strength: float = 0.75,
         height: Optional[int] = None,
         width: Optional[int] = None,
@@ -547,6 +547,7 @@ class ZImagePipeline:
         shift: Optional[float] = None,
         long_prompt_mode: str = "truncate",
         hidden_layer: int = -2,
+        prompt_embeds: Optional[torch.Tensor] = None,
     ) -> Union[Image.Image, List[Image.Image], torch.Tensor]:
         """
         Generate an image from a text prompt and an input image.
@@ -641,23 +642,30 @@ class ZImagePipeline:
 
         logger.info(f"[img2img] strength={strength}, steps={num_inference_steps}, actual_steps={init_timestep}")
 
-        # 1. Encode prompt
-        logger.info(f"[img2img] Encoding prompt...")
-        prompt_output = self.encoder.encode(
-            prompt,
-            template=template,
-            system_prompt=system_prompt,
-            thinking_content=thinking_content,
-            assistant_content=assistant_content,
-            force_think_block=force_think_block,
-            remove_quotes=remove_quotes,
-            layer_index=hidden_layer,
-        )
-        raw_embeds = prompt_output.embeddings[0]
-        # Compress if needed
-        if raw_embeds.shape[0] > MAX_TEXT_SEQ_LEN:
-            raw_embeds = compress_embeddings(raw_embeds, MAX_TEXT_SEQ_LEN, mode=long_prompt_mode)
-        prompt_embeds = [raw_embeds.to(device=device, dtype=dtype)]
+        # 1. Encode prompt (or use provided embeddings)
+        if prompt_embeds is not None:
+            logger.info(f"[img2img] Using provided prompt_embeds: shape={prompt_embeds.shape}")
+            raw_embeds = prompt_embeds
+            if raw_embeds.shape[0] > MAX_TEXT_SEQ_LEN:
+                raw_embeds = compress_embeddings(raw_embeds, MAX_TEXT_SEQ_LEN, mode=long_prompt_mode)
+            prompt_embeds_list = [raw_embeds.to(device=device, dtype=dtype)]
+        else:
+            logger.info(f"[img2img] Encoding prompt...")
+            prompt_output = self.encoder.encode(
+                prompt,
+                template=template,
+                system_prompt=system_prompt,
+                thinking_content=thinking_content,
+                assistant_content=assistant_content,
+                force_think_block=force_think_block,
+                remove_quotes=remove_quotes,
+                layer_index=hidden_layer,
+            )
+            raw_embeds = prompt_output.embeddings[0]
+            # Compress if needed
+            if raw_embeds.shape[0] > MAX_TEXT_SEQ_LEN:
+                raw_embeds = compress_embeddings(raw_embeds, MAX_TEXT_SEQ_LEN, mode=long_prompt_mode)
+            prompt_embeds_list = [raw_embeds.to(device=device, dtype=dtype)]
 
         # 2. Encode input image
         logger.info(f"[img2img] Encoding input image...")
@@ -741,11 +749,11 @@ class ZImagePipeline:
 
                 if apply_cfg:
                     latent_input = latents.to(dtype).repeat(2, 1, 1, 1)
-                    embeds_input = prompt_embeds + negative_prompt_embeds
+                    embeds_input = prompt_embeds_list + negative_prompt_embeds
                     timestep_input = timestep.repeat(2)
                 else:
                     latent_input = latents.to(dtype)
-                    embeds_input = prompt_embeds
+                    embeds_input = prompt_embeds_list
                     timestep_input = timestep
 
                 latent_input = latent_input.unsqueeze(2)

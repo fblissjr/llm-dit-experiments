@@ -320,8 +320,9 @@ These are new experiment types to create.
 | P0 | VL vs Qwen3-4B comparison | None | High | **DONE** |
 | P0 | Layer-by-token sweep | None | Medium | **DONE** |
 | P1 | VL format config (think_block, system_prompt) | Medium | High | **DONE** |
-| P1 | Style delta arithmetic | Medium | High | Needs impl |
-| P1 | AdaIN blending | Low | Medium | Needs impl |
+| P1 | Style delta arithmetic | Medium | High | **DONE - FAILED** |
+| P1 | AdaIN blending | Low | Medium | **DONE - PARTIAL** |
+| P1 | img2img comparison vs VL | Low | High | **DONE** |
 | P1 | Intra-VL blending | High | High | Needs infra |
 | P2 | Cross-normalization | Low | Low | Needs config |
 | P2 | Timestep-dependent alpha | High | Medium | Needs pipeline |
@@ -350,6 +351,58 @@ These are new experiment types to create.
 ---
 
 ## Session Log
+
+### 2025-12-12 (Session 6 - img2img, Style Delta, AdaIN)
+- **img2img Support Added to CLI**
+  - New flags in `scripts/generate.py`: `--img2img`, `--strength`
+  - Fixed generator device handling (CUDA for img2img, CPU for txt2img)
+  - Fixed flow matching noise addition in `src/llm_dit/pipelines/z_image.py`
+  - Formula: `latents = (1 - sigma) * init_latents + sigma * noise` (replaced incorrect `scheduler.add_noise()`)
+
+- **Outlier Masking Fix Applied**
+  - Fixed to apply masking to image tokens ONLY before combining with text tokens
+  - Previously masked the combined embeddings, which was incorrect
+  - Layer -6 has NO outliers above 10x threshold (617x outlier is layer -2 specific)
+
+- **Style Delta Arithmetic Implemented**
+  - Added `compute_style_delta()` to `src/llm_dit/vl/blending.py`
+  - Added `blend_with_style_delta()` for applying deltas
+  - Created test script: `experiments/qwen3_vl/scripts/test_style_delta.py`
+  - **Result: FAILED** - Even at alpha 0.3, completely destroys content (Homer becomes woman on beach, cyan ball)
+  - Delta contains too much "content" information, not just style
+
+- **AdaIN Blending Implemented**
+  - Added `blend_adain()` (per-token) to `src/llm_dit/vl/blending.py`
+  - Added `blend_adain_per_dim()` (per-dimension) for stronger style transfer
+  - Created test script: `experiments/qwen3_vl/scripts/test_adain.py`
+  - **Result: PARTIAL SUCCESS**
+    - `per_token`: Preserves Homer perfectly but no visible style transfer
+    - `per_dim`: Transfers colors (orange shirt from hexagon!) but corrupts subject (Homer becomes Bart)
+  - Fundamental tradeoff discovered: style transfer strong enough to be visible also corrupts content
+
+- **VL vs img2img Comparison**
+  - VL blending: Superimposition (Homer merged with house)
+  - img2img low strength (0.3-0.7): Preserves input structure, no new subjects
+  - img2img high strength (0.9+): New subject appears but transforms original
+  - Neither achieves true spatial composition ("Homer next to house")
+
+- **Layer -6 Discovery**
+  - Layer -6 produces crisper images than -2 or -8
+  - Preserves text prompt content better (Homer appears correctly)
+  - NO outliers at layer -6 (617x outlier is specific to layer -2)
+  - VL fine-tuning overwrote later layers for vision tasks
+
+- **Core Research Finding:**
+  - Embedding space doesn't cleanly separate "style" from "content"
+  - VL influence strong enough to transfer style also corrupts semantic content
+  - This is a fundamental limitation of zero-shot approaches without training
+
+- **Files Modified:**
+  - `src/llm_dit/vl/blending.py` - Added style delta and AdaIN functions
+  - `src/llm_dit/pipelines/z_image.py` - Fixed img2img noise formula
+  - `scripts/generate.py` - Added img2img CLI flags
+  - `experiments/qwen3_vl/scripts/test_style_delta.py` - New test script
+  - `experiments/qwen3_vl/scripts/test_adain.py` - New test script
 
 ### 2025-12-12 (Session 5)
 - **Outlier Dimension Masking Implemented**
