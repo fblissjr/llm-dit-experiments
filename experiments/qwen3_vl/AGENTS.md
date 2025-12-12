@@ -9,17 +9,21 @@ This document tracks what experiments need to be run, modified, or created for t
 
 ## Current State Summary
 
-**What we know:**
+**What we know (2025-12-12):**
 - VL text tokens have 0.999 correlation with Qwen3-4B per-dimension statistics
-- VL image tokens have only 0.737 correlation with extreme outliers (dim 396: 617x, dim 4: 42x)
+- VL image tokens have only 0.737 correlation with extreme outliers (dim 396: 617x at layer -2)
+- **Layer -6 is optimal** - no outliers, crisper images than -2 or -8
 - Per-dimension normalization reduces but doesn't eliminate artifacts
 - Text tokens produce fewer artifacts than image tokens
-- Layer -8 appears to work better than layer -2 for VL embeddings
+- **VL + img2img WORKS for landscapes** - characters can be composed into scenic backgrounds
+- **VL + img2img FAILS for objects** - foreground objects compete spatially with new subjects
+- Style delta arithmetic fails (embedding space entangled)
+- AdaIN transfers some color but corrupts content identity
 
 **What we don't know:**
-- Why artifacts persist despite 0.999 correlation for text tokens
-- Whether dim 396 (617x outlier) is the primary cause of image token artifacts
-- Whether any zero-shot approach can match pure Qwen3-4B quality
+- Whether VL + img2img works for other background types (cityscapes, interiors, etc.)
+- Whether a trained single-layer adapter could eliminate remaining artifacts
+- Optimal parameters for different landscape types
 
 ---
 
@@ -397,12 +401,43 @@ These are new experiment types to create.
   - VL influence strong enough to transfer style also corrupts semantic content
   - This is a fundamental limitation of zero-shot approaches without training
 
+- **BREAKTHROUGH: VL + img2img Works for Landscapes!**
+  - Tested with sunset hills landscape + "Homer Simpson standing on the hill"
+  - **SUCCESS**: Homer correctly placed IN the scene, landscape preserved
+  - Tested with cartoon house + "Homer Simpson standing on the grass"
+  - **FAILURE**: House morphs into Homer or Homer replaces house entirely
+
+- **Why Landscapes Work:**
+  - Landscapes are "backgrounds" - model naturally places characters in them
+  - No spatial conflict - hills become ground, not competing objects
+  - Semantic compatibility - "standing on a hill" is natural composition
+
+- **Why Objects Fail:**
+  - House and Homer compete for foreground space
+  - Morphing effect: house SHAPE influences Homer's body (house-shaped Homer at str=0.9)
+  - Either/or: low strength preserves house (no Homer), high strength replaces house with Homer
+
+- **Optimal Settings for Landscape Composition:**
+  - `strength=0.7-0.8`: Preserves landscape while allowing character
+  - `vl_alpha=0.3`: Balances VL influence with text prompt
+  - `hidden_layer=-6`: Cleanest VL embeddings
+
+- **This Changes Our Conclusions:**
+  - Previous: "Zero-shot cannot achieve spatial composition"
+  - Updated: "Zero-shot CAN compose characters into landscapes"
+  - VL + img2img is a viable technique for specific use cases
+
 - **Files Modified:**
   - `src/llm_dit/vl/blending.py` - Added style delta and AdaIN functions
-  - `src/llm_dit/pipelines/z_image.py` - Fixed img2img noise formula
+  - `src/llm_dit/pipelines/z_image.py` - Fixed img2img noise formula, added prompt_embeds to img2img
   - `scripts/generate.py` - Added img2img CLI flags
   - `experiments/qwen3_vl/scripts/test_style_delta.py` - New test script
   - `experiments/qwen3_vl/scripts/test_adain.py` - New test script
+  - `experiments/qwen3_vl/scripts/test_vl_img2img.py` - New combined test script
+
+- **Results Saved:**
+  - `experiments/results/vl_img2img_house/` - Object failure case
+  - `experiments/results/vl_img2img_sunset/` - Landscape success case (with comparison_grid.png)
 
 ### 2025-12-12 (Session 5)
 - **Outlier Dimension Masking Implemented**

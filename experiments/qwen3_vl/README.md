@@ -202,11 +202,85 @@ masked, info = mask_outlier_dimensions(embeddings, threshold=10.0, mode="zero")
 - `clamp`: Balanced approach preserving some outlier signal
 - `scale`: Gradual proportional reduction
 
+## VL + img2img Combined (BREAKTHROUGH - 2025-12-12)
+
+A significant discovery: combining VL-conditioned embeddings with img2img latent start **successfully composes characters into landscape scenes**.
+
+### The Discovery
+
+| Input Type | Result | Success |
+|------------|--------|---------|
+| **Landscape** (sunset hills) + "Homer Simpson standing on the hill" | Homer correctly placed IN scene, landscape preserved | **YES** |
+| **Object** (cartoon house) + "Homer Simpson standing on the grass" | House morphs into Homer, or Homer replaces house entirely | No |
+
+### Why Landscapes Work
+
+1. **Semantic compatibility**: "Standing on a hill" is a natural composition; the model knows how to place characters in landscapes
+2. **Background vs foreground**: Landscapes occupy "background" latent space; characters can be added without competition
+3. **No spatial conflict**: Hills don't need to persist as distinct objects; they become the ground Homer stands on
+
+### Why Objects Fail
+
+1. **Spatial competition**: House and Homer compete for foreground space
+2. **Morphing not composition**: At high strength, the house SHAPE influences Homer's body (house-shaped Homer)
+3. **Either/or behavior**: Low strength = house preserved, no Homer; High strength = Homer appears, house gone
+
+### Optimal Settings for Landscape Composition
+
+```bash
+uv run experiments/qwen3_vl/scripts/test_vl_img2img.py \
+    --image landscape.png \
+    --prompt "Character description + scene context" \
+    --vl-alphas 0.3 \
+    --strengths 0.7 0.8 \
+    --hidden-layer -6
+```
+
+| Parameter | Recommended | Notes |
+|-----------|-------------|-------|
+| `strength` | **0.7-0.8** | Preserves landscape while allowing character |
+| `vl_alpha` | **0.3** | Balances VL influence with text prompt |
+| `hidden_layer` | **-6** | Cleanest VL embeddings |
+
+### Results Grid
+
+See `experiments/results/vl_img2img_sunset/comparison_grid.png` for full results.
+
+**Key observations:**
+- `vl=0.0, str=0.7-0.8`: Homer appears, landscape preserved (pure img2img works!)
+- `vl=0.3, str=0.7`: Two characters appear (VL adds variation)
+- `vl=0.3, str=0.8`: Single Homer, clean composition
+- `str=0.9`: Homer dominates, landscape partially overwritten
+
+### Implications
+
+This finding changes our conclusions about VL conditioning:
+
+| Previous Understanding | Updated Understanding |
+|------------------------|----------------------|
+| VL + text blending produces superimposition | VL + img2img produces **true composition** for compatible scenes |
+| Zero-shot cannot achieve spatial composition | Zero-shot **can** compose characters into landscapes |
+| Only trained methods (IP-Adapter) work | Training-free VL + img2img works for specific use cases |
+
+### Use Cases That Work
+
+1. Adding characters to landscape photos
+2. Inserting subjects into scenic backgrounds
+3. "Person standing in [environment]" compositions
+4. Style transfer via landscape reference + character prompt
+
+### Use Cases That Don't Work
+
+1. Adding characters next to foreground objects
+2. Multi-object spatial relationships
+3. "Character A next to Object B" compositions
+4. Preserving specific foreground elements while adding new subjects
+
 ## Recommended Next Steps
 
 | Priority | Action | Why |
 |----------|--------|-----|
-| 1 | Characterize artifact patterns | Understand what causes corruption, document failure modes |
+| 1 | Test more landscape types | Confirm pattern holds for various backgrounds |
 | 2 | Train minimal adapter (single linear layer) | Test if small amounts of training eliminate artifacts |
 | 3 | Systematic layer sweep with metrics | Quantify quality vs layer depth |
 | 4 | Compare with IP-Adapter baseline | Measure quality gap vs trained methods |

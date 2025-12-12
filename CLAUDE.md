@@ -1137,11 +1137,12 @@ The extreme scaling needed for image tokens likely causes the artifacts. Text to
 - Layer -6 is naturally cleaner than -2 for VL embeddings
 - The fix to apply masking to image tokens only works but layer -6 doesn't have the outliers
 
-**VL vs img2img Comparison:**
-- VL blending: Produces superimposition (Homer merged with house)
-- img2img low strength (0.3-0.7): Preserves input structure, no new subjects appear
-- img2img high strength (0.9+): New subject appears but transforms/replaces original
-- Neither achieves true spatial composition ("Homer next to house")
+**VL + img2img BREAKTHROUGH:**
+- **Landscapes WORK**: VL + img2img successfully composes characters INTO scenic backgrounds
+- **Objects FAIL**: Foreground objects compete spatially with new subjects
+- Test: Sunset hills + "Homer Simpson standing on the hill" = SUCCESS (Homer placed in scene, landscape preserved)
+- Test: Cartoon house + "Homer Simpson on grass" = FAILURE (house morphs into Homer or is replaced)
+- This changes our conclusions: zero-shot CAN achieve spatial composition for compatible scenes
 
 **Style Delta Results (FAILED):**
 - Even at alpha 0.3, Homer was completely destroyed
@@ -1156,13 +1157,36 @@ The extreme scaling needed for image tokens likely causes the artifacts. Text to
 **Core Insight:**
 The embedding space doesn't cleanly separate "style" from "content". VL influence strong enough to transfer style also corrupts semantic content.
 
-### Usage (Despite Artifacts)
+### VL + img2img (Recommended for Landscapes)
+
+Compose characters into landscape images:
+
+```bash
+uv run experiments/qwen3_vl/scripts/test_vl_img2img.py \
+    --image landscape.png \
+    --prompt "Character standing on the hill" \
+    --vl-alphas 0.3 \
+    --strengths 0.7 0.8 \
+    --hidden-layer -6 \
+    --output-dir experiments/results/my_test
+```
+
+| Parameter | Recommended | Notes |
+|-----------|-------------|-------|
+| `strength` | 0.7-0.8 | Preserves landscape while allowing character |
+| `vl_alpha` | 0.3 | Balances VL influence with text prompt |
+| `hidden_layer` | -6 | Cleanest VL embeddings |
+
+**Works for:** Landscapes, scenic backgrounds, environments
+**Doesn't work for:** Foreground objects, multi-object compositions
+
+### Usage (Pure VL Blending)
 
 **Web UI:**
 1. Open "Vision Conditioning (Qwen3-VL)" section
 2. Upload a reference image
-3. Use optimal settings: layer -8, text_tokens_only=true
-4. Generate - expect some artifacts
+3. Use optimal settings: layer -6, text_tokens_only=true
+4. Generate - expect some artifacts for non-landscape use cases
 
 **CLI:**
 ```bash
@@ -1170,7 +1194,7 @@ uv run web/server.py \
   --model-path /path/to/z-image \
   --vl-model-path /path/to/Qwen3-VL-4B-Instruct \
   --vl-device cpu \
-  --vl-hidden-layer -8
+  --vl-hidden-layer -6
 ```
 
 ### Memory Management
@@ -1313,5 +1337,6 @@ result = blend_adain_per_dim(text_emb, vl_emb, alpha=0.3)
 | `experiments/qwen3_vl/scripts/run_comparison.py` | Experiment runner with sweep presets |
 | `experiments/qwen3_vl/scripts/test_style_delta.py` | Style delta arithmetic experiments |
 | `experiments/qwen3_vl/scripts/test_adain.py` | AdaIN blending experiments |
+| `experiments/qwen3_vl/scripts/test_vl_img2img.py` | VL + img2img combined (landscape composition) |
 
-See `experiments/qwen3_vl/RESEARCH_FINDINGS.md` for complete technical documentation.
+See `experiments/qwen3_vl/README.md` for complete technical documentation.
