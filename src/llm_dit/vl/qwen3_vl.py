@@ -331,6 +331,43 @@ class VLEmbeddingExtractor:
             f"mean={hidden_states.mean():.4f}, std={hidden_states.std():.4f}"
         )
 
+        # Apply outlier masking to IMAGE TOKENS ONLY before token selection.
+        # This is critical because image tokens have extreme per-dimension outliers
+        # (dim 396: 617x, dim 4: 42x) that get diluted when averaged with text tokens.
+        masked_dims = None
+        masked_ratios = None
+        if outlier_masking != "none":
+            start_idx, end_idx = self._find_vision_token_range(inputs["input_ids"][0])
+            if start_idx is not None and end_idx is not None:
+                # Extract image tokens (excluding markers for cleaner stats)
+                image_tokens = hidden_states[start_idx + 1 : end_idx]
+
+                if image_tokens.shape[0] > 0:
+                    # Apply masking to image tokens only
+                    masked_image_tokens, mask_info = mask_outlier_dimensions(
+                        image_tokens,
+                        threshold=outlier_threshold,
+                        mode=outlier_masking,
+                    )
+                    masked_dims = mask_info.get("masked_dimensions", [])
+                    masked_ratios = mask_info.get("ratios", {})
+
+                    if masked_dims:
+                        # Replace image tokens in the full sequence
+                        hidden_states = hidden_states.clone()
+                        hidden_states[start_idx + 1 : end_idx] = masked_image_tokens
+                        logger.debug(
+                            f"Masked {len(masked_dims)} outlier dimensions in image tokens "
+                            f"with mode={outlier_masking}: {masked_dims[:5]}"
+                            f"{'...' if len(masked_dims) > 5 else ''}"
+                        )
+                    else:
+                        logger.debug(
+                            f"No outlier dimensions found in image tokens above threshold {outlier_threshold}"
+                        )
+            else:
+                logger.warning("Could not find vision token markers for outlier masking")
+
         # Determine token selection mode
         token_selection = "all"
         if image_tokens_only:
@@ -348,23 +385,6 @@ class VLEmbeddingExtractor:
                 hidden_states, inputs["input_ids"][0]
             )
             token_selection = "text_only"
-
-        # Apply outlier masking if requested (before normalization)
-        masked_dims = None
-        masked_ratios = None
-        if outlier_masking != "none":
-            hidden_states, mask_info = mask_outlier_dimensions(
-                hidden_states,
-                threshold=outlier_threshold,
-                mode=outlier_masking,
-            )
-            masked_dims = mask_info.get("masked_dimensions", [])
-            masked_ratios = mask_info.get("ratios", {})
-            if masked_dims:
-                logger.debug(
-                    f"Masked {len(masked_dims)} outlier dimensions with mode={outlier_masking}: "
-                    f"{masked_dims[:5]}{'...' if len(masked_dims) > 5 else ''}"
-                )
 
         # Scale to match text embedding statistics
         original_std = hidden_states.std().item()
