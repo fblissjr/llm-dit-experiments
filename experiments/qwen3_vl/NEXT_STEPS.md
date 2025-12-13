@@ -270,3 +270,168 @@ Gemini's research prompt is valuable but contains one significant error: the cla
 This suggests the "In-Context LoRA" metaphor is misleading for our use case. The VLM's attention mechanism CONDITIONS the outputs on image tokens at runtime, but the hidden states at text positions don't STORE that conditioning - they're computed fresh each forward pass.
 
 For style transfer to work, we need to explicitly include image token information in our blending, which is why `text_tokens_only=False` (token_mode="full") is required.
+
+---
+
+## Gemini's Deep Research Prompt (For Future Use)
+
+This prompt can be used with deep research tools (Gemini Deep Research, Perplexity Pro, etc.) to find academic papers supporting our work:
+
+```
+**Research Goal: Theoretical Basis and Engineering Techniques for Zero-Shot Vision Conditioning via VLM Hidden States**
+
+**Context:**
+I am researching a novel, training-free method to generate images by "transplanting" hidden states from a Vision-Language Model (specifically **Qwen3-VL-4B**) into a Text-to-Image Diffusion Transformer (specifically **Z-Image**, which uses the Qwen3-4B text encoder). Because both models share the exact same base transformer architecture (hidden size 2560, same tokenizer), I have achieved successful zero-shot transfer. However, I have encountered specific "out-of-distribution" (OOD) artifacts that I need to solve using inference-time activation manipulation.
+
+**My Empirical Discoveries:**
+1.  **The "Text Token" Anomaly:** When the VLM processes an image + text prompt, the hidden states at the *text token positions* (after the image) act as a perfect conditioning signal. They appear to "absorb" visual context via self-attention (acting as an "In-Context LoRA") and drive the diffusion model correctly without artifacts.
+2.  **The "Image Token" Artifacts:** The hidden states at the *image token positions* contain the strongest visual style information, but they are "toxic" to the diffusion model. They possess extremely low standard deviation (~7.0 compared to the expected ~58.0) and cause severe high-frequency grid artifacts and color bleeding when injected.
+3.  **The "Layer -8" Sweet Spot:** Extracting hidden states from the penultimate layer (Layer -2) often fails or degrades quality. The optimal extraction point is deep in the model (Layer -8, approx 75% depth), which produces the cleanest semantic alignment.
+
+**Research Request:**
+Please conduct a deep literature review (prioritizing papers from 2023-2025) to answer the following four questions. I am looking for theoretical explanations for my findings and concrete mathematical techniques for my next phase ("Style Vector Injection").
+
+**1. The "Modality Gap" and Geometric Anisotropy**
+Search for research analyzing the geometric differences between vision-encoder projections and native text embeddings within Multimodal LLMs (like LLaVA, Qwen-VL, or Flamingo).
+*   Why do vision tokens often occupy a different "cone" or sub-manifold than text tokens, even after the projection layer?
+*   Search for "Representation Collapse" or "Anisotropy" in vision tokens. Does the literature confirm that vision tokens typically exhibit lower variance or different "outlier dimension" behavior than text tokens?
+*   Are there known **inference-time normalization techniques** (e.g., Whitening, Centering, or "Moment Matching") used to align these OOD manifolds zero-shot?
+
+**2. Layer-Wise Representation Evolution (The "Layer -8" Theory)**
+I hypothesize that the final layers of Instruct-tuned models suffer from "SFT Drift"--becoming over-specialized to next-token prediction (syntax/formatting)--while the middle-late layers (like Layer -8) preserve the "Platonic" or universal semantic concepts.
+*   Search for **"BERTology"** or **"Layer-wise information probing"** applied to modern Large Language Models.
+*   Is there evidence that "Semantic Averaging" or "Prototype" representations peak at 75% depth?
+*   Does the **"Platonic Representation Hypothesis"** (Huh et al., 2024) suggest that intermediate layers of different models are more aligned than their final output layers?
+
+**3. "Model Stitching" and Zero-Shot Transfer**
+Has anyone else attempted to stitch a VLM's hidden states directly into a Diffusion model's text encoder without training an adapter?
+*   Search for **"Model Stitching"**, **"Representation Stitching"**, or **"Zero-Shot Cross-Model Transfer"**.
+*   Look for papers similar to "Z-Image" or "GILL" but that focus on *training-free* mechanisms. Are there established best practices for connecting two frozen models that share a base architecture?
+
+**4. Techniques for "Style Vector" Extraction**
+My goal is to condense the 256 "toxic" image tokens into a single clean "Style Vector" to add to my text embeddings (`Text_Emb + alpha * Style_Vec`).
+*   What are the state-of-the-art methods for **pooling** transformer tokens to capture global style while filtering out spatial grid noise? (e.g., Attention-Weighted Pooling, GeM Pooling, or SVD/PCA-based extraction).
+*   Search for **"Representation Engineering"** (Zou et al.) or **"Activation Steering"** specifically applied to visual style in LLMs.
+*   Are there **AdaIN (Adaptive Instance Normalization)** variants designed for *Transformer* embeddings (not CNNs)?
+
+**Output Format:**
+Please provide a report that:
+1.  Validates or corrects my "Layer -8" and "Modality Gap" hypotheses with citations.
+2.  Suggests specific mathematical formulas (e.g., "Match the second moment," "Apply a whitening transform") that I can implement in Python to fix the Image Token variance mismatch.
+3.  Recommends the best pooling strategy for creating a "Style Vector" from VLM hidden states.
+```
+
+### Critical Correction to Gemini's Prompt
+
+**Discovery #1 ("Text Token Anomaly") is INCORRECT based on our testing.**
+
+Gemini states: "Text tokens absorb visual context via self-attention (acting as In-Context LoRA)"
+
+**Our empirical finding:** `text_tokens_only=True` removes ALL image information. VL does literally nothing when you only extract text token positions. The visual information is stored in the IMAGE TOKEN POSITIONS (~1026 tokens for 1024x1024), not "absorbed" into text tokens.
+
+The attention mechanism CONDITIONS outputs at runtime but doesn't STORE conditioning in hidden states. When we extract just text token positions, we get pure text embeddings with no visual content.
+
+**Corrected understanding:**
+- Image tokens: Contain visual information but have distribution mismatch (low std, outliers)
+- Text tokens: Contain NO visual information when extracted - just text embeddings
+- Full sequence: Required to get any VL effect
+
+This fundamentally changes the "Style Vector" approach - we can't just use text tokens and expect them to carry style. We need to work with the "toxic" image tokens directly and fix their distribution issues.
+
+---
+
+## Gemini's Roadmap Analysis (With Corrections)
+
+Gemini provided this analysis based on earlier findings. **Several conclusions are incorrect based on our later testing.**
+
+### Gemini's Conclusions
+
+**Q1: Can we eliminate the separate Qwen3-4B text encoder?**
+Gemini says: "YES - VL Text Token positions contain sufficient prompt adherence"
+
+**INCORRECT.** Our testing shows `text_tokens_only=True` makes VL do literally nothing. Text token positions contain NO visual information - they're just text embeddings. We CANNOT eliminate Qwen3-4B using text tokens alone.
+
+**Q2: Where does Style vs Content live?**
+Gemini says: "Style in image tokens, Content in text tokens - blend VL(Image) + VL(Text)"
+
+**PARTIALLY CORRECT but misleading.** Image tokens DO contain style, but text tokens contain NO visual content at all. The "blend VL tokens" approach won't work because:
+- Image tokens: Have visual info but distribution mismatch
+- Text tokens: Have NO visual info, just text embeddings
+- You can't get "content from text tokens" because there's no visual content there
+
+**Q3: Which hidden layer is best?**
+Gemini says: "Layer -8 is the new standard"
+
+**CLOSE.** We found Layer -6 works best (~83% depth). Layer -8 (~78% depth) is similar range. Both are better than -2.
+
+### Gemini's Suggested Roadmap
+
+#### Step 1: "Architecture Killer" Experiment
+```bash
+uv run experiments/qwen3_vl/scripts/run_comparison.py \
+  --image experiments/inputs/test_scene.png \
+  --prompt "Homer Simpson eating spaghetti" \
+  --sweep vl_only_vs_qwen3 \
+  -o experiments/results/vl_vs_qwen3
+```
+
+**Status:** Implemented. This sweep now exists.
+
+**Expected result:** Based on our testing, `pure_vl_text_tokens` will look IDENTICAL to `pure_qwen3_4b` because text tokens contain no VL info. This will DISPROVE the "deprecate Qwen3-4B" hypothesis.
+
+#### Step 2: Layer Verification
+Run layer sweep with -8 included.
+
+**Status:** Our sweeps include -6, -8 is close. Could add explicit -8 test.
+
+#### Step 3: Style Vector Injection (Gemini's Proposed Code)
+
+```python
+# Gemini's suggestion
+def extract_with_style_injection(self, image, text, ratio=0.3):
+    outputs = self.model(image, text, output_hidden_states=True)
+    hidden = outputs.hidden_states[-8]
+
+    # Separate components
+    img_tokens = hidden[:, vision_start:vision_end, :]  # [1, 258, 2560]
+    txt_tokens = hidden[:, vision_end:, :]              # [1, N, 2560]
+
+    # Pool image tokens to single style vector
+    style_vector = img_tokens.mean(dim=1, keepdim=True)
+
+    # Add style to text tokens
+    final_embeddings = txt_tokens + (ratio * style_vector)
+
+    return final_embeddings
+```
+
+**Analysis:** This is essentially what our `blend_with_style_delta` does. We tried similar approaches:
+- AdaIN: Transfers statistics, corrupts content (Homer -> Bart)
+- Style delta: Adding style vector corrupts content too
+
+**Why it fails:** The style vector contains "content" information too, not just style. Adding it shifts the semantic meaning, not just the visual style. The embedding space doesn't cleanly separate style from content.
+
+**Potential fix:** Instead of mean pooling (which preserves all info), try:
+- SVD to extract only top-k principal components (global structure)
+- GeM pooling to emphasize larger activations
+- Attention-weighted pooling to focus on "important" tokens
+
+### Key Disagreement with Gemini
+
+Gemini's entire analysis rests on the assumption that "text tokens absorb visual context via self-attention." This is **empirically false**.
+
+When you extract hidden states at text token positions from Qwen3-VL after processing an image+text input:
+- The attention mechanism DID condition on image tokens during forward pass
+- But the HIDDEN STATES at text positions don't "store" that conditioning
+- They're computed fresh each layer based on attention
+- Extracting just those positions gives you text-only embeddings
+
+The visual information is in the IMAGE TOKEN hidden states, period. There's no "In-Context LoRA" effect that transfers to text token positions in the extractable hidden states.
+
+### What We Should Actually Try
+
+1. **Fix image token distribution** - Whitening, better normalization
+2. **Better pooling for style vector** - SVD, GeM, attention-weighted
+3. **Surgical dimension fixing** - The 617x outlier in dim 396 might be fixable
+4. **Different blend strategies** - Not AdaIN statistics transfer, but something else
+5. **Minimal trained adapter** - If zero-shot hits a wall, one linear layer might bridge the gap
