@@ -239,9 +239,12 @@ def build_configs(
     normalization_modes: list[NormalizationMode] | None = None,
     outlier_masking_modes: list[OutlierMaskingMode] | None = None,
     outlier_threshold: float = 10.0,
+    blend_modes: list[BlendMode] | None = None,
+    use_img2img: bool = False,
+    strengths: list[float] | None = None,
+    think_modes: list[bool] | None = None,
     include_baseline: bool = True,
     vl_text: str | None = "__PROMPT__",
-    force_think_block: bool = False,
     system_prompt: str | None = None,
 ) -> list[ExperimentConfig]:
     """
@@ -254,9 +257,13 @@ def build_configs(
         normalization_modes: Normalization modes. Default ["global"]
         outlier_masking_modes: Outlier masking modes. Default ["none"]
         outlier_threshold: Std ratio threshold for outlier detection. Default 10.0
+        blend_modes: Blend modes to test. Default ["interpolate"]
+        use_img2img: Use img2img instead of txt2img. Default False
+        strengths: img2img strengths to test. Default [0.9]
+        think_modes: List of think block settings to test. Default [False] (no think block).
+            [True] = with think block, [False] = without, [True, False] = compare both
         include_baseline: Add pure text baseline (alpha=0.0)
         vl_text: Text to include in VL extraction. "__PROMPT__" = use CLI prompt
-        force_think_block: If True, add empty think block (matches text encoding format)
         system_prompt: Optional system message (matches text encoding format)
 
     Returns:
@@ -270,76 +277,99 @@ def build_configs(
     token_modes = token_modes or ["text_only"]
     normalization_modes = normalization_modes or ["global"]
     outlier_masking_modes = outlier_masking_modes or ["none"]
+    blend_modes = blend_modes or ["interpolate"]
+    strengths = strengths or [0.9]
+    think_modes = think_modes if think_modes is not None else [False]
 
-    # Add baseline if requested
-    if include_baseline and 0.0 not in alphas:
+    # Add baseline if requested (only for txt2img mode)
+    if include_baseline and 0.0 not in alphas and not use_img2img:
         configs.append(ExperimentConfig(
             name="Pure Text (no VL)",
             alpha=0.0,
             vl_text=None,
-            force_think_block=force_think_block,
+            force_think_block=think_modes[0],  # Use first think mode for baseline
             system_prompt=system_prompt,
         ))
 
     # Generate configs for all combinations
     for alpha in alphas:
-        if alpha == 0.0:
+        if alpha == 0.0 and not use_img2img:
             continue  # Skip, handled by baseline
 
         for layer in layers:
             for mode in token_modes:
                 for norm_mode in normalization_modes:
                     for outlier_mode in outlier_masking_modes:
-                        name_parts = []
+                        for blend_mode in blend_modes:
+                            # If img2img, iterate over strengths; otherwise just one pass
+                            strength_list = strengths if use_img2img else [0.9]
+                            for strength in strength_list:
+                                for think_mode in think_modes:
+                                    name_parts = []
 
-                        # Alpha in name if varying
-                        if len(alphas) > 1:
-                            name_parts.append(f"alpha={alpha:.0%}")
+                                    # Think mode in name if varying
+                                    if len(think_modes) > 1:
+                                        name_parts.append("think" if think_mode else "no_think")
 
-                        # Layer in name if varying
-                        if len(layers) > 1:
-                            name_parts.append(f"layer {layer}")
+                                    # Alpha in name if varying
+                                    if len(alphas) > 1:
+                                        name_parts.append(f"a={alpha:.0%}")
 
-                        # Mode in name - always include for clarity
-                        mode_labels = {
-                            "full": "all tokens",
-                            "text_only": "text tokens",
-                            "image_only": "image tokens",
-                            "image_no_markers": "image (no markers)",
-                        }
-                        name_parts.append(mode_labels.get(mode, mode))
+                                    # Strength in name if img2img with varying strengths
+                                    if use_img2img and len(strengths) > 1:
+                                        name_parts.append(f"s={strength}")
 
-                        # Normalization in name if varying
-                        if len(normalization_modes) > 1:
-                            norm_labels = {
-                                "global": "global norm",
-                                "per_dim": "per-dim norm",
-                                "hybrid": "hybrid norm",
-                            }
-                            name_parts.append(norm_labels.get(norm_mode, norm_mode))
+                                    # Blend mode in name if varying
+                                    if len(blend_modes) > 1:
+                                        name_parts.append(blend_mode)
 
-                        # Outlier masking in name if varying
-                        if len(outlier_masking_modes) > 1:
-                            outlier_labels = {
-                                "none": "no masking",
-                                "zero": "zero outliers",
-                                "clamp": "clamp outliers",
-                                "scale": "scale outliers",
-                            }
-                            name_parts.append(outlier_labels.get(outlier_mode, outlier_mode))
+                                    # Layer in name if varying
+                                    if len(layers) > 1:
+                                        name_parts.append(f"L{layer}")
 
-                        configs.append(ExperimentConfig(
-                            name=" | ".join(name_parts),
-                            alpha=alpha,
-                            hidden_layer=layer,
-                            token_mode=mode,
-                            normalization_mode=norm_mode,
-                            outlier_masking=outlier_mode,
-                            outlier_threshold=outlier_threshold,
-                            vl_text=vl_text,
-                            force_think_block=force_think_block,
-                            system_prompt=system_prompt,
-                        ))
+                                    # Mode in name - always include for clarity
+                                    mode_labels = {
+                                        "full": "all",
+                                        "text_only": "text",
+                                        "image_only": "image",
+                                        "image_no_markers": "img_raw",
+                                    }
+                                    name_parts.append(mode_labels.get(mode, mode))
+
+                                    # Normalization in name if varying
+                                    if len(normalization_modes) > 1:
+                                        norm_labels = {
+                                            "global": "glob",
+                                            "per_dim": "pdim",
+                                            "hybrid": "hyb",
+                                        }
+                                        name_parts.append(norm_labels.get(norm_mode, norm_mode))
+
+                                    # Outlier masking in name if varying
+                                    if len(outlier_masking_modes) > 1:
+                                        outlier_labels = {
+                                            "none": "no_mask",
+                                            "zero": "zero",
+                                            "clamp": "clamp",
+                                            "scale": "scale",
+                                        }
+                                        name_parts.append(outlier_labels.get(outlier_mode, outlier_mode))
+
+                                    configs.append(ExperimentConfig(
+                                        name=" | ".join(name_parts) if name_parts else f"a={alpha:.0%} | {mode}",
+                                        alpha=alpha,
+                                        hidden_layer=layer,
+                                        token_mode=mode,
+                                        normalization_mode=norm_mode,
+                                        outlier_masking=outlier_mode,
+                                        outlier_threshold=outlier_threshold,
+                                        blend_mode=blend_mode,
+                                        use_img2img=use_img2img,
+                                        strength=strength,
+                                        vl_text=vl_text,
+                                        force_think_block=think_mode,
+                                        system_prompt=system_prompt,
+                                    ))
 
     return configs
 
@@ -394,6 +424,63 @@ def get_sweep_configs(sweep_type: str) -> list[ExperimentConfig]:
             token_modes=["full"],  # Image tokens where outliers are extreme
             normalization_modes=["global"],
             outlier_masking_modes=["none", "zero", "clamp", "scale"],
+        )
+
+    # Style transfer presets (NEW)
+    elif sweep_type == "style_transfer":
+        # Recommended style transfer settings with img2img
+        # adain_per_dim preserves text content while transferring VL style
+        return build_configs(
+            alphas=[0.3, 0.5],
+            layers=[-6],  # Layer -6 works best for style transfer
+            token_modes=["full"],  # text_tokens_only=False required for VL to work
+            normalization_modes=["global"],
+            blend_modes=["adain_per_dim"],  # adain preserves text content
+            use_img2img=True,
+            strengths=[0.9],
+            include_baseline=False,  # No baseline for img2img
+        )
+
+    elif sweep_type == "blend_comparison":
+        # Compare blend modes (exclude interpolate - it overwrites text content)
+        return build_configs(
+            alphas=[0.3],
+            layers=[-6],
+            token_modes=["full"],
+            normalization_modes=["global"],
+            blend_modes=["adain_per_dim", "adain", "linear"],  # Working modes only
+            use_img2img=True,
+            strengths=[0.9],
+            include_baseline=False,
+        )
+
+    elif sweep_type == "strength_sweep":
+        # Test different img2img strengths
+        return build_configs(
+            alphas=[0.3],
+            layers=[-6],
+            token_modes=["full"],
+            normalization_modes=["global"],
+            blend_modes=["adain_per_dim"],  # Use working blend mode
+            use_img2img=True,
+            strengths=[0.5, 0.7, 0.9],
+            include_baseline=False,
+        )
+
+    elif sweep_type == "think_comparison":
+        # Compare with/without think block tokens
+        # Format without: <|im_start|>user\n{prompt}<|im_end|>\n<|im_start|>assistant\n
+        # Format with:    <|im_start|>user\n{prompt}<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n
+        return build_configs(
+            alphas=[0.3],  # Need text influence to see prompt effect
+            layers=[-6],
+            token_modes=["full"],
+            normalization_modes=["global"],
+            blend_modes=["adain_per_dim"],  # Use adain - interpolate overwrites text content
+            use_img2img=True,
+            strengths=[0.9],
+            think_modes=[False, True],  # Compare both
+            include_baseline=False,
         )
 
     else:
@@ -630,9 +717,23 @@ def run_experiments(
         system_prompt: Optional system message for text encoding (official uses none).
     """
     from llm_dit.vl import VLEmbeddingExtractor
-    from llm_dit.vl.blending import blend_embeddings
+    from llm_dit.vl.blending import (
+        blend_embeddings,
+        blend_interpolate,
+        blend_adain,
+        blend_adain_per_dim,
+    )
     from llm_dit.startup import PipelineLoader
     from blend_and_generate import encode_text_prompt, TextEncodingResult
+
+    # Blend function lookup - maps blend_mode to function
+    # Note: adain functions take (text, vl, alpha) not (vl, text, alpha)
+    BLEND_FUNCTIONS = {
+        "interpolate": blend_interpolate,  # RECOMMENDED: interpolates VL to text length
+        "adain": lambda vl, text, alpha: blend_adain(text, vl, alpha),
+        "adain_per_dim": lambda vl, text, alpha: blend_adain_per_dim(text, vl, alpha),
+        "linear": blend_embeddings,  # WARNING: truncates, loses 99% of VL info
+    }
 
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -716,7 +817,12 @@ def run_experiments(
     pipe = pipeline_result.pipeline
     logger.info("Pipeline loaded successfully")
 
-    generator = torch.Generator()
+    # Determine generator device - img2img requires generator on same device as latents
+    # Check if any config uses img2img
+    uses_img2img = any(c.use_img2img for c in configs)
+    generator_device = "cuda" if uses_img2img and torch.cuda.is_available() else "cpu"
+    generator = torch.Generator(device=generator_device)
+    logger.info(f"Generator device: {generator_device} (img2img={uses_img2img})")
     results = []
 
     for i, config in enumerate(configs):
@@ -752,29 +858,49 @@ def run_experiments(
             )
             vl_emb = vl_result.embeddings
 
-            # Blend embeddings
+            # Blend embeddings using selected blend mode
             if config.alpha == 0.0:
                 blended = text_emb
             elif config.alpha == 1.0:
-                blended = vl_emb
+                # For alpha=1.0, still use blend function to handle sequence length mismatch
+                blend_fn = BLEND_FUNCTIONS.get(config.blend_mode, blend_interpolate)
+                blended = blend_fn(vl_emb, text_emb, config.alpha)
             else:
-                blended = blend_embeddings(vl_emb, text_emb, config.alpha)
+                blend_fn = BLEND_FUNCTIONS.get(config.blend_mode, blend_interpolate)
+                blended = blend_fn(vl_emb, text_emb, config.alpha)
+
+            logger.info(f"  Blend mode: {config.blend_mode}, blended std: {blended.std():.2f}")
 
             # Generate
             output_path = output_dir / f"{config.filename}.png"
             generator.manual_seed(seed)
 
-            logger.info(f"  Generating {z_config.width}x{z_config.height} image...")
             gen_start = time.time()
 
-            result_image = pipe(
-                prompt_embeds=blended,
-                height=z_config.height,
-                width=z_config.width,
-                num_inference_steps=z_config.steps,
-                guidance_scale=z_config.guidance_scale,
-                generator=generator,
-            )
+            if config.use_img2img:
+                # img2img: use reference image as VAE latent initialization
+                logger.info(f"  Generating img2img {z_config.width}x{z_config.height} (strength={config.strength})...")
+                result_image = pipe.img2img(
+                    prompt_embeds=blended,
+                    image=image,  # Reference image as init
+                    strength=config.strength,
+                    num_inference_steps=z_config.steps,
+                    generator=generator,
+                )
+                # Handle different return types
+                if hasattr(result_image, 'images'):
+                    result_image = result_image.images[0]
+            else:
+                # txt2img: generate from embeddings only
+                logger.info(f"  Generating txt2img {z_config.width}x{z_config.height}...")
+                result_image = pipe(
+                    prompt_embeds=blended,
+                    height=z_config.height,
+                    width=z_config.width,
+                    num_inference_steps=z_config.steps,
+                    guidance_scale=z_config.guidance_scale,
+                    generator=generator,
+                )
 
             gen_time = time.time() - gen_start
             logger.info(f"  Generation time: {gen_time:.1f}s")
@@ -903,8 +1029,10 @@ Examples:
                         help="Output directory (default: auto-generated)")
 
     # Sweep presets
-    parser.add_argument("--sweep", "-s", choices=["alpha", "layer", "token", "normalization", "outlier", "full"],
-                        help="Use predefined sweep configuration")
+    parser.add_argument("--sweep", "-s",
+                        choices=["alpha", "layer", "token", "normalization", "outlier", "full",
+                                 "style_transfer", "blend_comparison", "strength_sweep", "think_comparison"],
+                        help="Use predefined sweep configuration. style_transfer/blend_comparison/strength_sweep/think_comparison use img2img.")
 
     # Custom parameters
     parser.add_argument("--alphas", type=float, nargs="+",
@@ -926,14 +1054,21 @@ Examples:
     # Style transfer parameters (NEW)
     parser.add_argument("--blend-modes", nargs="+",
                         choices=["interpolate", "adain_per_dim", "adain", "linear"],
-                        default=["interpolate"],
-                        help="Blend modes to test. interpolate (recommended), adain_per_dim (best for style), "
-                             "adain, linear (WARNING: truncates, loses 99%% VL info)")
+                        default=["adain_per_dim"],
+                        help="Blend modes to test. adain_per_dim (recommended - preserves text content), "
+                             "adain, linear, interpolate (WARNING: overwrites text content with VL)")
     parser.add_argument("--img2img", action="store_true",
                         help="Use img2img (reference image as VAE latent init) for style transfer")
     parser.add_argument("--strengths", type=float, nargs="+",
                         default=[0.9],
                         help="img2img strengths to test (requires --img2img). 0.9 recommended.")
+
+    # Think token control
+    parser.add_argument("--think-modes", nargs="+",
+                        choices=["true", "false"],
+                        default=["false"],
+                        help="Think block modes to test. 'false' = minimal chat template (user/assistant only), "
+                             "'true' = include <think></think> block. Use 'true false' to compare both.")
 
     # Flags
     parser.add_argument("--no-baseline", action="store_true",
@@ -950,11 +1085,7 @@ Examples:
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument("--steps", type=int, default=9, help="Inference steps")
 
-    # Chat template format (default matches official diffusers/DiffSynth implementation)
-    parser.add_argument("--force-think-block", action="store_true",
-                        help="Add empty think block to text encoding (NOT default - official uses none)")
-    parser.add_argument("--no-think-block", action="store_true",
-                        help="Explicitly disable think block (this is the default, matching official)")
+    # System prompt (optional)
     parser.add_argument("--system-prompt", type=str, default=None,
                         help="System prompt for text encoding")
 
@@ -998,8 +1129,8 @@ Examples:
 
         logger.info(f"Loaded {len(prompts_to_run)} prompts from file")
 
-    # Handle think block flag
-    force_think_block = args.force_think_block and not args.no_think_block
+    # Parse think_modes from CLI (convert "true"/"false" strings to booleans)
+    think_modes = [m.lower() == "true" for m in args.think_modes]
 
     # Build configs - sweep sets defaults, CLI args override
     alphas = args.alphas
@@ -1008,16 +1139,24 @@ Examples:
     normalization_modes = args.normalization_modes
     outlier_masking_modes = args.outlier_masking
     outlier_threshold = args.outlier_threshold
+    blend_modes = args.blend_modes
+    use_img2img = args.img2img
+    strengths = args.strengths
 
     # If sweep specified, use as defaults for any unset params
     if args.sweep:
         sweep_defaults = {
-            "alpha": {"alphas": [0.0, 0.1, 0.3, 0.5, 0.7, 1.0], "layers": [-8], "token_modes": ["text_only"], "normalization_modes": ["global"], "outlier_masking_modes": ["none"]},
-            "layer": {"alphas": [1.0], "layers": [-2, -4, -8, -16, -24], "token_modes": ["text_only"], "normalization_modes": ["global"], "outlier_masking_modes": ["none"]},
-            "token": {"alphas": [1.0], "layers": [-8], "token_modes": ["full", "text_only", "image_only", "image_no_markers"], "normalization_modes": ["global"], "outlier_masking_modes": ["none"]},
-            "normalization": {"alphas": [1.0], "layers": [-8], "token_modes": ["image_only"], "normalization_modes": ["global", "per_dim", "hybrid"], "outlier_masking_modes": ["none"]},
-            "outlier": {"alphas": [1.0], "layers": [-8], "token_modes": ["full"], "normalization_modes": ["global"], "outlier_masking_modes": ["none", "zero", "clamp", "scale"]},
-            "full": {"alphas": [0.0, 0.3, 0.5, 1.0], "layers": [-2, -8, -16], "token_modes": ["text_only", "image_only"], "normalization_modes": ["global"], "outlier_masking_modes": ["none"]},
+            "alpha": {"alphas": [0.0, 0.1, 0.3, 0.5, 0.7, 1.0], "layers": [-8], "token_modes": ["text_only"], "normalization_modes": ["global"], "outlier_masking_modes": ["none"], "blend_modes": ["interpolate"], "use_img2img": False, "strengths": [0.9], "think_modes": [False]},
+            "layer": {"alphas": [1.0], "layers": [-2, -4, -8, -16, -24], "token_modes": ["text_only"], "normalization_modes": ["global"], "outlier_masking_modes": ["none"], "blend_modes": ["interpolate"], "use_img2img": False, "strengths": [0.9], "think_modes": [False]},
+            "token": {"alphas": [1.0], "layers": [-8], "token_modes": ["full", "text_only", "image_only", "image_no_markers"], "normalization_modes": ["global"], "outlier_masking_modes": ["none"], "blend_modes": ["interpolate"], "use_img2img": False, "strengths": [0.9], "think_modes": [False]},
+            "normalization": {"alphas": [1.0], "layers": [-8], "token_modes": ["image_only"], "normalization_modes": ["global", "per_dim", "hybrid"], "outlier_masking_modes": ["none"], "blend_modes": ["interpolate"], "use_img2img": False, "strengths": [0.9], "think_modes": [False]},
+            "outlier": {"alphas": [1.0], "layers": [-8], "token_modes": ["full"], "normalization_modes": ["global"], "outlier_masking_modes": ["none", "zero", "clamp", "scale"], "blend_modes": ["interpolate"], "use_img2img": False, "strengths": [0.9], "think_modes": [False]},
+            "full": {"alphas": [0.0, 0.3, 0.5, 1.0], "layers": [-2, -8, -16], "token_modes": ["text_only", "image_only"], "normalization_modes": ["global"], "outlier_masking_modes": ["none"], "blend_modes": ["interpolate"], "use_img2img": False, "strengths": [0.9], "think_modes": [False]},
+            # Style transfer presets (use img2img) - adain_per_dim preserves text content better than interpolate
+            "style_transfer": {"alphas": [0.3, 0.5], "layers": [-6], "token_modes": ["full"], "normalization_modes": ["global"], "outlier_masking_modes": ["none"], "blend_modes": ["adain_per_dim"], "use_img2img": True, "strengths": [0.9], "think_modes": [False]},
+            "blend_comparison": {"alphas": [0.3], "layers": [-6], "token_modes": ["full"], "normalization_modes": ["global"], "outlier_masking_modes": ["none"], "blend_modes": ["adain_per_dim", "adain", "linear"], "use_img2img": True, "strengths": [0.9], "think_modes": [False]},
+            "strength_sweep": {"alphas": [0.3], "layers": [-6], "token_modes": ["full"], "normalization_modes": ["global"], "outlier_masking_modes": ["none"], "blend_modes": ["adain_per_dim"], "use_img2img": True, "strengths": [0.5, 0.7, 0.9], "think_modes": [False]},
+            "think_comparison": {"alphas": [0.3], "layers": [-6], "token_modes": ["full"], "normalization_modes": ["global"], "outlier_masking_modes": ["none"], "blend_modes": ["adain_per_dim"], "use_img2img": True, "strengths": [0.9], "think_modes": [False, True]},
         }
         defaults = sweep_defaults[args.sweep]
         alphas = alphas or defaults["alphas"]
@@ -1025,6 +1164,16 @@ Examples:
         token_modes = token_modes or defaults["token_modes"]
         normalization_modes = normalization_modes or defaults["normalization_modes"]
         outlier_masking_modes = outlier_masking_modes or defaults["outlier_masking_modes"]
+        # Style transfer params - CLI args override sweep defaults
+        # Note: blend_modes has a CLI default of ["adain_per_dim"], so check if user changed it
+        if blend_modes == ["adain_per_dim"]:  # CLI default, use sweep value
+            blend_modes = defaults["blend_modes"]
+        if not use_img2img:  # CLI default is False, use sweep value
+            use_img2img = defaults["use_img2img"]
+        if strengths == [0.9]:  # CLI default, use sweep value
+            strengths = defaults["strengths"]
+        if think_modes == [False]:  # CLI default, use sweep value
+            think_modes = defaults["think_modes"]
 
     configs = build_configs(
         alphas=alphas,
@@ -1033,9 +1182,12 @@ Examples:
         normalization_modes=normalization_modes,
         outlier_masking_modes=outlier_masking_modes,
         outlier_threshold=outlier_threshold,
+        blend_modes=blend_modes,
+        use_img2img=use_img2img,
+        strengths=strengths,
+        think_modes=think_modes,
         include_baseline=not args.no_baseline,
         vl_text=None if args.no_vl_text else "__PROMPT__",
-        force_think_block=force_think_block,
         system_prompt=args.system_prompt,
     )
 
@@ -1080,7 +1232,7 @@ Examples:
             z_image_profile=args.profile,
             seed=args.seed,
             steps=args.steps,
-            force_think_block=force_think_block,
+            force_think_block=think_modes[0],  # Use first think mode for text encoding
             system_prompt=args.system_prompt,
         )
 
