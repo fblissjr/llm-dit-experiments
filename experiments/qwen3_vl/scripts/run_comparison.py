@@ -426,7 +426,46 @@ def get_sweep_configs(sweep_type: str) -> list[ExperimentConfig]:
             outlier_masking_modes=["none", "zero", "clamp", "scale"],
         )
 
-    # Style transfer presets (NEW)
+    elif sweep_type == "vl_only_vs_qwen3":
+        # Direct comparison: Can VL replace Qwen3-4B?
+        # Tests if VL text tokens can match pure Qwen3-4B quality
+        # Uses txt2img (not img2img) for fair comparison
+        configs = []
+        # 1. Pure Qwen3-4B baseline (alpha=0.0)
+        configs.append(ExperimentConfig(
+            name="Pure Qwen3-4B",
+            alpha=0.0,
+            hidden_layer=-6,
+            token_mode="full",
+            vl_text=None,
+        ))
+        # 2. Pure VL text tokens only (alpha=1.0, text_tokens_only=True)
+        configs.append(ExperimentConfig(
+            name="VL text tokens",
+            alpha=1.0,
+            hidden_layer=-6,
+            token_mode="text_only",
+            vl_text="__PROMPT__",
+        ))
+        # 3. Pure VL full sequence (alpha=1.0, includes image+text tokens)
+        configs.append(ExperimentConfig(
+            name="VL full (img+text)",
+            alpha=1.0,
+            hidden_layer=-6,
+            token_mode="full",
+            vl_text="__PROMPT__",
+        ))
+        # 4. Traditional blend (alpha=0.3)
+        configs.append(ExperimentConfig(
+            name="Blend a=0.3",
+            alpha=0.3,
+            hidden_layer=-6,
+            token_mode="full",
+            vl_text="__PROMPT__",
+        ))
+        return configs
+
+    # Style transfer presets
     elif sweep_type == "style_transfer":
         # Recommended style transfer settings with img2img
         # adain_per_dim preserves text content while transferring VL style
@@ -1031,8 +1070,9 @@ Examples:
     # Sweep presets
     parser.add_argument("--sweep", "-s",
                         choices=["alpha", "layer", "token", "normalization", "outlier", "full",
+                                 "vl_only_vs_qwen3",
                                  "style_transfer", "blend_comparison", "strength_sweep", "think_comparison"],
-                        help="Use predefined sweep configuration. style_transfer/blend_comparison/strength_sweep/think_comparison use img2img.")
+                        help="Use predefined sweep configuration. vl_only_vs_qwen3 compares VL vs Qwen3-4B. style_transfer/blend_comparison/strength_sweep/think_comparison use img2img.")
 
     # Custom parameters
     parser.add_argument("--alphas", type=float, nargs="+",
@@ -1143,8 +1183,11 @@ Examples:
     use_img2img = args.img2img
     strengths = args.strengths
 
-    # If sweep specified, use as defaults for any unset params
-    if args.sweep:
+    # Special sweeps that use get_sweep_configs() instead of build_configs()
+    special_sweeps = {"vl_only_vs_qwen3"}
+
+    # If sweep specified, use as defaults for any unset params (skip for special sweeps)
+    if args.sweep and args.sweep not in special_sweeps:
         sweep_defaults = {
             "alpha": {"alphas": [0.0, 0.1, 0.3, 0.5, 0.7, 1.0], "layers": [-8], "token_modes": ["text_only"], "normalization_modes": ["global"], "outlier_masking_modes": ["none"], "blend_modes": ["interpolate"], "use_img2img": False, "strengths": [0.9], "think_modes": [False]},
             "layer": {"alphas": [1.0], "layers": [-2, -4, -8, -16, -24], "token_modes": ["text_only"], "normalization_modes": ["global"], "outlier_masking_modes": ["none"], "blend_modes": ["interpolate"], "use_img2img": False, "strengths": [0.9], "think_modes": [False]},
@@ -1175,21 +1218,25 @@ Examples:
         if think_modes == [False]:  # CLI default, use sweep value
             think_modes = defaults["think_modes"]
 
-    configs = build_configs(
-        alphas=alphas,
-        layers=layers,
-        token_modes=token_modes,
-        normalization_modes=normalization_modes,
-        outlier_masking_modes=outlier_masking_modes,
-        outlier_threshold=outlier_threshold,
-        blend_modes=blend_modes,
-        use_img2img=use_img2img,
-        strengths=strengths,
-        think_modes=think_modes,
-        include_baseline=not args.no_baseline,
-        vl_text=None if args.no_vl_text else "__PROMPT__",
-        system_prompt=args.system_prompt,
-    )
+    # Use get_sweep_configs() for special sweeps, build_configs() for standard ones
+    if args.sweep in special_sweeps:
+        configs = get_sweep_configs(args.sweep)
+    else:
+        configs = build_configs(
+            alphas=alphas,
+            layers=layers,
+            token_modes=token_modes,
+            normalization_modes=normalization_modes,
+            outlier_masking_modes=outlier_masking_modes,
+            outlier_threshold=outlier_threshold,
+            blend_modes=blend_modes,
+            use_img2img=use_img2img,
+            strengths=strengths,
+            think_modes=think_modes,
+            include_baseline=not args.no_baseline,
+            vl_text=None if args.no_vl_text else "__PROMPT__",
+            system_prompt=args.system_prompt,
+        )
 
     # Generate base output directory
     from datetime import datetime
