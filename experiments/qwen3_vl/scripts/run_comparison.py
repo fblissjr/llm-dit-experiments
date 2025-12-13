@@ -703,7 +703,7 @@ def run_experiments(
     configs: list[ExperimentConfig],
     vl_model_path: str | None = None,
     z_image_config: str = "config.toml",
-    z_image_profile: str = "rtx4090",
+    z_image_profile: str = "default",
     seed: int = 42,
     steps: int = 9,
     force_think_block: bool = False,
@@ -1079,7 +1079,7 @@ Examples:
     # Model paths
     parser.add_argument("--vl-model-path", help="Qwen3-VL model path")
     parser.add_argument("--config", default="config.toml", help="Z-Image config file")
-    parser.add_argument("--profile", default="rtx4090", help="Z-Image config profile")
+    parser.add_argument("--profile", default="default", help="Z-Image config profile (use 'default' for consistency with test_all_blend_modes.py)")
 
     # Generation
     parser.add_argument("--seed", type=int, default=42, help="Random seed")

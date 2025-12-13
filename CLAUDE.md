@@ -1246,20 +1246,53 @@ Run VL experiments with comparison grids:
 ```bash
 cd experiments/qwen3_vl/scripts
 
-# Run optimal settings test
-uv run run_comparison.py --experiment optimal_vl
+# Run style transfer test (recommended)
+uv run run_comparison.py \
+    -i experiments/inputs/style_anime_girl.png \
+    -p "Homer Simpson" \
+    --sweep style_transfer \
+    --steps 4 \
+    -o experiments/results/style_test
 
-# Run layer comparison
-uv run run_comparison.py --experiment hidden_layer
+# Run blend mode comparison
+uv run run_comparison.py \
+    -i experiments/inputs/style_anime_girl.png \
+    -p "Your prompt" \
+    --sweep blend_comparison \
+    --steps 4
 
-# Run conditioning strength test
-uv run run_comparison.py --experiment conditioning_strength
-
-# Available experiments: baseline, alpha_sweep, hidden_layer,
-#   layer_and_norm, conditioning_strength, optimal_vl
+# Run think block comparison (with/without <think> tokens)
+uv run run_comparison.py \
+    -i experiments/inputs/style_anime_girl.png \
+    -p "Your prompt" \
+    --sweep think_comparison \
+    --steps 4
 ```
 
 Results are saved to `experiments/results/` with comparison grids.
+
+**Profile Configuration (CRITICAL):**
+
+`run_comparison.py` uses the `default` profile by default to match `test_all_blend_modes.py`. This is important because the profiles have different `long_prompt_mode` settings:
+
+| Profile | `long_prompt_mode` | Effect |
+|---------|-------------------|--------|
+| `default` | `interpolate` | Simple linear resampling (recommended for VL) |
+| `rtx4090` | `attention_pool` | Cosine similarity weighting (can cause issues with VL) |
+
+If you see unexpected results, verify you're using the correct profile:
+```bash
+# Explicitly use default profile (recommended for VL experiments)
+uv run run_comparison.py --profile default ...
+
+# Or use rtx4090 for non-VL experiments with long prompts
+uv run run_comparison.py --profile rtx4090 ...
+```
+
+**Recommended Style Transfer Settings:**
+- `--steps 4` (better style fusion than 9)
+- `--sweep style_transfer` (uses `adain_per_dim` blend mode, layer -6, alpha 0.3-0.5)
+- Profile: `default` (uses `interpolate` long_prompt_mode)
 
 ### Outlier Dimension Masking
 
