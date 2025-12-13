@@ -151,7 +151,7 @@ class RuntimeConfig:
     vl_alpha: float = 0.3  # Default interpolation ratio (0.0=text, 1.0=VL)
     vl_hidden_layer: int = -2  # Hidden layer to extract
     vl_auto_unload: bool = True  # Unload after extraction to save VRAM
-    vl_blend_mode: str = "linear"  # linear, style_only, graduated, attention_weighted
+    vl_blend_mode: str = "interpolate"  # interpolate (recommended), adain_per_dim, adain, linear
 
     # Debug
     debug: bool = False
@@ -470,14 +470,19 @@ def create_base_parser(
     vl_group.add_argument(
         "--vl-blend-mode",
         type=str,
-        choices=["linear", "style_only", "graduated", "attention_weighted"],
+        choices=[
+            "interpolate", "adain_per_dim", "adain", "linear",
+            "style_only", "graduated", "attention_weighted"
+        ],
         default=None,
         help=(
             "Blending strategy: "
-            "linear (default, uniform blend), "
+            "interpolate (recommended, compresses all VL tokens), "
+            "adain_per_dim (best for style transfer), "
+            "adain (transfer VL statistics to text), "
+            "linear (WARNING: truncates, loses most VL info), "
             "style_only (blend only style dimensions), "
-            "graduated (more VL influence for later tokens), "
-            "attention_weighted (preserve important text tokens)"
+            "graduated (more VL for later tokens)"
         ),
     )
 

@@ -5,7 +5,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 
 def make_grid(
-    images: list[Path | str],
+    images: list,
     labels: list[str],
     cols: int,
     output_path: Path | str,
@@ -15,7 +15,7 @@ def make_grid(
     """create a labeled grid from a list of images.
 
     args:
-        images: list of image paths
+        images: list of image paths or PIL Image objects
         labels: list of labels (same length as images)
         cols: number of columns
         output_path: where to save the grid
@@ -25,7 +25,6 @@ def make_grid(
     returns:
         path to saved grid
     """
-    images = [Path(p) for p in images]
     output_path = Path(output_path)
 
     rows = (len(images) + cols - 1) // cols
@@ -40,18 +39,24 @@ def make_grid(
     except:
         font = ImageFont.load_default()
 
-    for i, (img_path, label) in enumerate(zip(images, labels)):
+    for i, (img_item, label) in enumerate(zip(images, labels)):
         row, col = i // cols, i % cols
         x = col * cell_size
         y = row * (cell_size + label_height)
 
-        if img_path.exists():
-            img = Image.open(img_path).convert('RGB').resize((cell_size, cell_size))
+        # Handle both paths and PIL Image objects
+        if isinstance(img_item, Image.Image):
+            img = img_item.convert('RGB').resize((cell_size, cell_size))
             grid.paste(img, (x, y + label_height))
         else:
-            # draw placeholder for missing image
-            draw.rectangle([x, y + label_height, x + cell_size, y + label_height + cell_size], fill='gray')
-            draw.text((x + 10, y + label_height + cell_size // 2), 'missing', fill='white', font=font)
+            img_path = Path(img_item)
+            if img_path.exists():
+                img = Image.open(img_path).convert('RGB').resize((cell_size, cell_size))
+                grid.paste(img, (x, y + label_height))
+            else:
+                # draw placeholder for missing image
+                draw.rectangle([x, y + label_height, x + cell_size, y + label_height + cell_size], fill='gray')
+                draw.text((x + 10, y + label_height + cell_size // 2), 'missing', fill='white', font=font)
 
         draw.text((x + 5, y + 5), label, fill='black', font=font)
 

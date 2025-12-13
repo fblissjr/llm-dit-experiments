@@ -171,7 +171,15 @@ async def vl_status():
         "device": runtime_config.vl_device if vl_configured else None,
         "default_alpha": runtime_config.vl_alpha if vl_configured else 0.3,
         "default_hidden_layer": runtime_config.vl_hidden_layer if vl_configured else -2,
-        "blend_modes": ["linear", "style_only", "graduated", "attention_weighted"],
+        "blend_modes": [
+            "interpolate",      # RECOMMENDED: compresses all VL tokens
+            "adain_per_dim",    # Best for style transfer
+            "adain",            # Transfer VL statistics to text
+            "linear",           # WARNING: truncates, loses most VL info
+            "style_only",       # Blend only style dimensions
+            "graduated",        # Graduated alpha per token
+            "attention_weighted",  # Falls back to interpolate
+        ],
         "cached_embeddings": list(vl_embeddings_cache.keys()),
     }
 
@@ -352,13 +360,26 @@ async def vl_generate(request: VLGenerateRequest):
         if vl_emb is not None and request.vl_alpha > 0:
             from llm_dit.vl import (
                 blend_embeddings,
+                blend_interpolate,
                 blend_style_only,
                 blend_per_token,
+                blend_adain,
+                blend_adain_per_dim,
                 create_graduated_alpha,
             )
 
             if request.vl_blend_mode == "linear":
+                # WARNING: truncates VL to text length, losing most image info
                 blended = blend_embeddings(vl_emb, text_emb, request.vl_alpha)
+            elif request.vl_blend_mode == "interpolate":
+                # RECOMMENDED: compresses all VL tokens via interpolation
+                blended = blend_interpolate(vl_emb, text_emb, request.vl_alpha)
+            elif request.vl_blend_mode == "adain":
+                # Transfer VL statistics (mean/std) to text structure
+                blended = blend_adain(text_emb, vl_emb, request.vl_alpha)
+            elif request.vl_blend_mode == "adain_per_dim":
+                # Per-dimension AdaIN - best for style transfer
+                blended = blend_adain_per_dim(text_emb, vl_emb, request.vl_alpha)
             elif request.vl_blend_mode == "style_only":
                 blended = blend_style_only(vl_emb, text_emb, request.vl_alpha)
             elif request.vl_blend_mode == "graduated":
@@ -366,10 +387,11 @@ async def vl_generate(request: VLGenerateRequest):
                 token_alphas = create_graduated_alpha(seq_len, 0.0, request.vl_alpha * 2)
                 blended = blend_per_token(vl_emb, text_emb, token_alphas)
             elif request.vl_blend_mode == "attention_weighted":
-                # For now, fall back to linear (attention weights not yet available)
-                blended = blend_embeddings(vl_emb, text_emb, request.vl_alpha)
+                # For now, fall back to interpolate (attention weights not yet available)
+                blended = blend_interpolate(vl_emb, text_emb, request.vl_alpha)
             else:
-                blended = blend_embeddings(vl_emb, text_emb, request.vl_alpha)
+                # Default to interpolate (recommended)
+                blended = blend_interpolate(vl_emb, text_emb, request.vl_alpha)
 
             logger.info(f"[VL] Blended embeddings: shape={blended.shape}, std={blended.std():.2f}")
             prompt_embeds = blended.unsqueeze(0)  # Add batch dim

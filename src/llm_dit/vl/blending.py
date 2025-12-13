@@ -190,7 +190,11 @@ def blend_embeddings(
     match_lengths: bool = True,
 ) -> torch.Tensor:
     """
-    Blend VL and text embeddings with linear interpolation.
+    Blend VL and text embeddings with linear interpolation (truncation mode).
+
+    WARNING: This function TRUNCATES to the shorter sequence length, which
+    discards most VL information when VL has many image tokens. For better
+    results, use blend_interpolate() which compresses all tokens via interpolation.
 
     Args:
         vl_emb: Vision-conditioned embeddings from Qwen3-VL (seq, dim)
@@ -237,6 +241,59 @@ def blend_embeddings(
     logger.debug(
         f"Blended embeddings (alpha={alpha}): "
         f"shape={blended.shape}, std={blended.std().item():.2f}"
+    )
+
+    return blended
+
+
+def blend_interpolate(
+    vl_emb: torch.Tensor,
+    text_emb: torch.Tensor,
+    alpha: float,
+) -> torch.Tensor:
+    """
+    Blend VL and text embeddings by interpolating VL to text length first.
+
+    Unlike blend_embeddings() which truncates (losing most VL information),
+    this function compresses all VL tokens via linear interpolation to match
+    the text sequence length, preserving more information.
+
+    This is the RECOMMENDED blending method for VL conditioning.
+
+    Args:
+        vl_emb: Vision-conditioned embeddings from Qwen3-VL (seq, dim)
+        text_emb: Pure text embeddings from text encoder (seq, dim)
+        alpha: Blend ratio (0.0 = pure text, 1.0 = pure VL)
+
+    Returns:
+        Blended embeddings with VL interpolated to text length
+
+    Raises:
+        ValueError: If alpha is not in [0, 1] range
+    """
+    if not 0.0 <= alpha <= 1.0:
+        raise ValueError(f"Alpha must be in [0, 1], got {alpha}")
+
+    # Short-circuit for pure cases
+    if alpha == 0.0:
+        return text_emb
+    if alpha == 1.0:
+        # Interpolate VL to text length
+        return _interpolate_sequence(vl_emb, text_emb.shape[0]).to(
+            device=text_emb.device, dtype=text_emb.dtype
+        )
+
+    # Interpolate VL to match text length
+    vl_interp = _interpolate_sequence(vl_emb, text_emb.shape[0])
+    vl_interp = vl_interp.to(device=text_emb.device, dtype=text_emb.dtype)
+
+    # Linear interpolation
+    blended = alpha * vl_interp + (1 - alpha) * text_emb
+
+    logger.debug(
+        f"Interpolate blend (alpha={alpha}): "
+        f"VL {vl_emb.shape[0]} -> {text_emb.shape[0]} tokens, "
+        f"result std={blended.std().item():.2f}"
     )
 
     return blended

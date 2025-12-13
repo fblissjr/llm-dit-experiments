@@ -189,6 +189,7 @@ def load_prompts_from_file(
 TokenMode = Literal["full", "text_only", "image_only", "image_no_markers"]
 NormalizationMode = Literal["global", "per_dim", "hybrid"]
 OutlierMaskingMode = Literal["none", "zero", "clamp", "scale"]
+BlendMode = Literal["interpolate", "adain_per_dim", "adain", "linear"]
 
 
 @dataclass
@@ -208,6 +209,10 @@ class ExperimentConfig:
     # IMPORTANT: Official diffusers/DiffSynth use enable_thinking=True = NO think block
     force_think_block: bool = False  # False = match official (no think block)
     system_prompt: str | None = None  # Optional system message (official uses none)
+    # Style transfer parameters (NEW)
+    blend_mode: BlendMode = "interpolate"  # interpolate (recommended), adain_per_dim, adain, linear
+    use_img2img: bool = False  # Use img2img instead of txt2img for style transfer
+    strength: float = 0.9  # img2img strength (only used if use_img2img=True)
 
     def __post_init__(self):
         if not self.filename:
@@ -917,6 +922,18 @@ Examples:
                         help="Outlier masking modes to test (dim 396=617x, dim 4=42x std ratio)")
     parser.add_argument("--outlier-threshold", type=float, default=10.0,
                         help="Std ratio threshold for outlier detection (default: 10.0)")
+
+    # Style transfer parameters (NEW)
+    parser.add_argument("--blend-modes", nargs="+",
+                        choices=["interpolate", "adain_per_dim", "adain", "linear"],
+                        default=["interpolate"],
+                        help="Blend modes to test. interpolate (recommended), adain_per_dim (best for style), "
+                             "adain, linear (WARNING: truncates, loses 99%% VL info)")
+    parser.add_argument("--img2img", action="store_true",
+                        help="Use img2img (reference image as VAE latent init) for style transfer")
+    parser.add_argument("--strengths", type=float, nargs="+",
+                        default=[0.9],
+                        help="img2img strengths to test (requires --img2img). 0.9 recommended.")
 
     # Flags
     parser.add_argument("--no-baseline", action="store_true",

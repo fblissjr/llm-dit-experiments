@@ -4,7 +4,7 @@
 Tests whether VL responds differently to:
 1. Edit-style instructions: "Add Homer Simpson to this image"
 2. Descriptive prompts: "Homer Simpson in a sunset landscape"
-3. Hybrid prompts: "Homer Simpson standing in this scenic landscape"
+3. Hybrid prompts: "Homer Simpson standing in this scenic landscape from the image"
 """
 
 import argparse
@@ -93,51 +93,67 @@ def main():
     reference = Image.open(args.reference).convert("RGB")
     reference.save(output_dir / "reference.png")
 
-    # Load models
-    print("Loading Z-Image pipeline...")
-    pipe = ZImagePipeline.from_pretrained(
-        args.model_path,
-        torch_dtype=torch.bfloat16,
-        device="cuda",
-    )
-
-    print("Loading VL extractor...")
-    vl_extractor = VLEmbeddingExtractor.from_pretrained(
-        args.vl_model_path,
-        device="cpu",  # Save VRAM
-        torch_dtype=torch.bfloat16,
-    )
-
     all_prompt_sets = [
         ("edit", EDIT_PROMPTS),
         ("desc", DESCRIPTIVE_PROMPTS),
         ("hybrid", HYBRID_PROMPTS),
     ]
 
-    # Test each prompt set
+    # PHASE 1: Extract all VL embeddings first (load VL on GPU, cache results)
+    print("\n=== PHASE 1: Extracting VL Embeddings ===")
+    print("Loading VL extractor...")
+    vl_extractor = VLEmbeddingExtractor.from_pretrained(
+        args.vl_model_path,
+        device="cuda",
+        torch_dtype=torch.bfloat16,
+    )
+
+    vl_cache = {}  # (set_name, prompt_idx) -> embeddings
+
     for set_name, prompts in all_prompt_sets:
-        print(f"\n=== Testing {set_name.upper()} Prompts ===")
+        print(f"\nExtracting VL for {set_name} prompts...")
+        for i, prompt in enumerate(prompts):
+            print(f"  {i+1}: {prompt[:50]}...")
+            vl_result = vl_extractor.extract(
+                reference,
+                text=prompt,
+                hidden_layer=-6,
+                text_tokens_only=False,
+                scale_to_text=True,
+            )
+            # Move to CPU to free GPU memory
+            vl_cache[(set_name, i)] = vl_result.embeddings.cpu()
+
+    # Unload VL to free VRAM
+    print("\nUnloading VL model...")
+    vl_extractor.unload()
+    del vl_extractor
+    torch.cuda.empty_cache()
+
+    # PHASE 2: Load Z-Image and generate
+    print("\n=== PHASE 2: Loading Z-Image Pipeline ===")
+    pipe = ZImagePipeline.from_pretrained(
+        args.model_path,
+        torch_dtype=torch.bfloat16,
+        device="cuda",
+    )
+
+    # Generate images
+    print("\n=== PHASE 3: Generating Images ===")
+    for set_name, prompts in all_prompt_sets:
+        print(f"\n--- {set_name.upper()} Prompts ---")
 
         for i, prompt in enumerate(prompts):
             print(f"\nPrompt {i+1}: {prompt}")
+            vl_emb = vl_cache[(set_name, i)].to("cuda")
 
             for alpha in ALPHAS:
                 print(f"  Alpha {alpha}...")
 
-                # Extract VL embeddings with this prompt
-                vl_result = vl_extractor.extract(
-                    reference,
-                    text=prompt,
-                    hidden_layer=-6,
-                    text_tokens_only=False,
-                    scale_to_text=True,
-                )
-                vl_emb = vl_result.embeddings
-
                 # Get text embeddings
                 text_emb = pipe.encode_prompt(prompt)
 
-                # Blend using the utility function (handles length mismatch)
+                # Blend
                 blended = blend_embeddings(vl_emb, text_emb, alpha)
 
                 # Generate
@@ -171,9 +187,6 @@ def main():
         )
         image = result.images[0] if hasattr(result, 'images') else result
         image.save(output_dir / f"baseline_{name}.png")
-
-    # Unload VL model
-    vl_extractor.unload()
 
     # Create comparison grids
     print("\n=== Creating Grids ===")
