@@ -144,6 +144,10 @@ class RuntimeConfig:
     rewriter_min_p: float = 0.0  # Qwen3: 0.0 (disabled)
     rewriter_max_tokens: int = 512  # Maximum tokens to generate
     rewriter_presence_penalty: float = 0.0  # 0-2, helps reduce endless repetitions
+    rewriter_vl_enabled: bool = True  # Allow VL model selection in rewriter UI
+    rewriter_preload_vl: bool = False  # Load Qwen3-VL at startup for rewriter
+    rewriter_vl_api_model: str = ""  # Model ID for VL via API (e.g., "qwen2.5-vl-72b-mlx")
+    rewriter_timeout: float = 120.0  # API request timeout in seconds
 
     # Vision conditioning (Qwen3-VL)
     vl_model_path: str = ""  # Path to Qwen3-VL model (empty = disabled)
@@ -541,6 +545,28 @@ def create_base_parser(
         default=None,
         help="Maximum tokens to generate for rewriter (default: 512)",
     )
+    rewriter_group.add_argument(
+        "--rewriter-no-vl",
+        action="store_true",
+        help="Disable VL model selection in rewriter UI",
+    )
+    rewriter_group.add_argument(
+        "--rewriter-preload-vl",
+        action="store_true",
+        help="Preload Qwen3-VL for rewriter at startup (uses vl.model_path)",
+    )
+    rewriter_group.add_argument(
+        "--rewriter-vl-api-model",
+        type=str,
+        default=None,
+        help="Model ID for VL rewriting via API (e.g., qwen2.5-vl-72b-mlx)",
+    )
+    rewriter_group.add_argument(
+        "--rewriter-timeout",
+        type=float,
+        default=None,
+        help="API request timeout in seconds (default: 120, VL models may need longer)",
+    )
 
     # Generation parameters (optional)
     if include_generation_args:
@@ -706,6 +732,10 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
                 config.rewriter_min_p = getattr(rewriter, 'min_p', 0.0)
                 config.rewriter_presence_penalty = getattr(rewriter, 'presence_penalty', 0.0)
                 config.rewriter_max_tokens = getattr(rewriter, 'max_tokens', 512)
+                config.rewriter_vl_enabled = getattr(rewriter, 'vl_enabled', True)
+                config.rewriter_preload_vl = getattr(rewriter, 'preload_vl', False)
+                config.rewriter_vl_api_model = getattr(rewriter, 'vl_api_model', '')
+                config.rewriter_timeout = getattr(rewriter, 'timeout', 120.0)
 
             # Check for VL section
             if hasattr(toml_config, 'vl'):
@@ -831,6 +861,14 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
         config.rewriter_presence_penalty = args.rewriter_presence_penalty
     if getattr(args, 'rewriter_max_tokens', None) is not None:
         config.rewriter_max_tokens = args.rewriter_max_tokens
+    if getattr(args, 'rewriter_no_vl', False):
+        config.rewriter_vl_enabled = False
+    if getattr(args, 'rewriter_preload_vl', False):
+        config.rewriter_preload_vl = True
+    if getattr(args, 'rewriter_vl_api_model', None) is not None:
+        config.rewriter_vl_api_model = args.rewriter_vl_api_model
+    if getattr(args, 'rewriter_timeout', None) is not None:
+        config.rewriter_timeout = args.rewriter_timeout
 
     # Vision conditioning (VL) overrides
     if getattr(args, 'vl_model_path', None) is not None:

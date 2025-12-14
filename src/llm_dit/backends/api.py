@@ -313,8 +313,9 @@ class APIBackend:
 
     def generate(
         self,
-        prompt: str,
+        prompt: str | None = None,
         system_prompt: str | None = None,
+        image: str | None = None,
         max_new_tokens: int = 512,
         temperature: float = 0.6,
         top_p: float = 0.95,
@@ -326,14 +327,17 @@ class APIBackend:
         """
         Generate text via API chat completions endpoint.
 
+        Supports vision-language models when image is provided.
+
         Qwen3 Best Practices (thinking mode):
         - temperature=0.6, top_p=0.95, top_k=20, min_p=0 (default)
         - DO NOT use greedy decoding (causes repetition)
         - presence_penalty=0-2 helps reduce endless repetitions
 
         Args:
-            prompt: User prompt/message
+            prompt: User prompt/message (optional if image provided)
             system_prompt: Optional system prompt (rewriter template content)
+            image: Optional base64-encoded image (data:image/...;base64,...)
             max_new_tokens: Maximum tokens to generate
             temperature: Sampling temperature (Qwen3 thinking: 0.6)
             top_p: Nucleus sampling threshold (Qwen3 thinking: 0.95)
@@ -353,16 +357,41 @@ class APIBackend:
                 temperature=0.6,  # Qwen3 thinking mode
                 top_k=20,
             )
+
+            # With image (VL model)
+            backend = APIBackend.from_url("http://localhost:8000", "qwen2.5-vl-72b-mlx")
+            description = backend.generate(
+                prompt="Describe this image",
+                image="data:image/png;base64,...",
+            )
         """
+        # Validate inputs
+        if not prompt and not image:
+            raise ValueError("Either prompt or image must be provided")
+
         # Build messages
         messages = []
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
-        messages.append({"role": "user", "content": prompt})
+
+        # Build user content (text, image, or both)
+        if image:
+            # VL model: use content array with text and image parts
+            user_content = []
+            if prompt:
+                user_content.append({"type": "text", "text": prompt})
+            user_content.append({
+                "type": "image_url",
+                "image_url": {"url": image}
+            })
+            messages.append({"role": "user", "content": user_content})
+        else:
+            # Text-only: simple string content
+            messages.append({"role": "user", "content": prompt})
 
         try:
             logger.info(f"[APIBackend.generate] Requesting chat completion from API")
-            logger.debug(f"[APIBackend.generate] Messages: {len(messages)}, max_tokens: {max_new_tokens}")
+            logger.debug(f"[APIBackend.generate] Messages: {len(messages)}, max_tokens: {max_new_tokens}, has_image: {image is not None}")
 
             # Build request payload
             payload = {

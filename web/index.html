@@ -163,6 +163,35 @@
                             <button type="button" id="rewriterModeCustom" class="flex-1 px-3 py-1.5 text-sm rounded-lg bg-gray-700 text-gray-300 hover:bg-gray-600">Custom</button>
                         </div>
 
+                        <!-- Model Selector -->
+                        <div id="rewriterModelContainer">
+                            <label class="block text-sm font-medium text-gray-300 mb-2">Model</label>
+                            <select id="rewriterModel" class="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:ring-2 focus:ring-blue-500 text-sm">
+                                <option value="qwen3-4b">Qwen3-4B (Text)</option>
+                                <!-- VL option added dynamically if available -->
+                            </select>
+                        </div>
+
+                        <!-- VL Image Upload (hidden by default, shown when VL model selected) -->
+                        <div id="rewriterImageUpload" class="hidden">
+                            <label class="block text-sm font-medium text-gray-300 mb-2">Reference Image <span class="text-gray-500">(optional)</span></label>
+                            <div id="rewriterDropzone" class="relative border-2 border-dashed border-gray-600 rounded-lg p-3 text-center cursor-pointer hover:border-purple-500 hover:bg-gray-800/50 transition-colors">
+                                <input type="file" id="rewriterImageInput" accept="image/*" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer">
+                                <div id="rewriterDropzoneContent">
+                                    <svg class="w-6 h-6 mx-auto text-gray-500 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+                                    </svg>
+                                    <p class="text-xs text-gray-400">Drop image or click to upload</p>
+                                </div>
+                                <!-- Image Preview -->
+                                <div id="rewriterImagePreview" class="hidden">
+                                    <img id="rewriterPreviewImg" class="max-h-20 mx-auto rounded-lg" alt="Rewriter reference image">
+                                    <button type="button" id="rewriterClearImage" class="mt-2 text-xs text-red-400 hover:text-red-300">Clear</button>
+                                </div>
+                            </div>
+                            <p class="text-xs text-gray-500 mt-1">Use an image as input for VL rewriting</p>
+                        </div>
+
                         <!-- Template Mode -->
                         <div id="rewriterTemplateMode">
                             <label class="block text-sm font-medium text-gray-300 mb-2">Rewriter Style</label>
@@ -1069,6 +1098,123 @@
         let lastRewrittenPrompt = '';
         let lastThinkingContent = null;
 
+        // Rewriter model and image state
+        let rewriterModels = [];
+        let rewriterImageBase64 = null;
+
+        // Load available rewriter models
+        async function loadRewriterModels() {
+            try {
+                const response = await fetch(`${API_BASE}/api/rewriter-models`);
+                const data = await response.json();
+                rewriterModels = data.models;
+
+                const select = document.getElementById('rewriterModel');
+                select.innerHTML = data.models.map(m =>
+                    `<option value="${m.id}">${m.name}${m.loaded ? ' (loaded)' : ''}</option>`
+                ).join('');
+
+                // Set up model change handler
+                select.addEventListener('change', onRewriterModelChange);
+
+                // Initial state check
+                onRewriterModelChange();
+            } catch (err) {
+                console.error('Failed to load rewriter models:', err);
+            }
+        }
+
+        // Handle rewriter model change - show/hide image upload
+        function onRewriterModelChange() {
+            const modelId = document.getElementById('rewriterModel').value;
+            const model = rewriterModels.find(m => m.id === modelId);
+            const imageUpload = document.getElementById('rewriterImageUpload');
+
+            if (model?.supports_image) {
+                imageUpload.classList.remove('hidden');
+            } else {
+                imageUpload.classList.add('hidden');
+                rewriterImageBase64 = null;
+                clearRewriterImagePreview();
+            }
+        }
+
+        // Clear rewriter image preview
+        function clearRewriterImagePreview() {
+            const dropzoneContent = document.getElementById('rewriterDropzoneContent');
+            const imagePreview = document.getElementById('rewriterImagePreview');
+            dropzoneContent.classList.remove('hidden');
+            imagePreview.classList.add('hidden');
+            rewriterImageBase64 = null;
+        }
+
+        // Set up rewriter image upload handlers
+        function setupRewriterImageUpload() {
+            const imageInput = document.getElementById('rewriterImageInput');
+            const dropzone = document.getElementById('rewriterDropzone');
+            const clearBtn = document.getElementById('rewriterClearImage');
+
+            // File input change
+            imageInput.addEventListener('change', (e) => {
+                if (e.target.files && e.target.files[0]) {
+                    handleRewriterImageFile(e.target.files[0]);
+                }
+            });
+
+            // Drag and drop
+            dropzone.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                dropzone.classList.add('border-purple-500', 'bg-gray-800/50');
+            });
+
+            dropzone.addEventListener('dragleave', (e) => {
+                e.preventDefault();
+                dropzone.classList.remove('border-purple-500', 'bg-gray-800/50');
+            });
+
+            dropzone.addEventListener('drop', (e) => {
+                e.preventDefault();
+                dropzone.classList.remove('border-purple-500', 'bg-gray-800/50');
+                if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+                    handleRewriterImageFile(e.dataTransfer.files[0]);
+                }
+            });
+
+            // Clear button
+            clearBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                clearRewriterImagePreview();
+                imageInput.value = '';
+            });
+        }
+
+        // Handle rewriter image file upload
+        function handleRewriterImageFile(file) {
+            if (!file.type.startsWith('image/')) {
+                alert('Please select an image file');
+                return;
+            }
+
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                rewriterImageBase64 = e.target.result;
+
+                // Show preview
+                const dropzoneContent = document.getElementById('rewriterDropzoneContent');
+                const imagePreview = document.getElementById('rewriterImagePreview');
+                const previewImg = document.getElementById('rewriterPreviewImg');
+
+                dropzoneContent.classList.add('hidden');
+                imagePreview.classList.remove('hidden');
+                previewImg.src = rewriterImageBase64;
+            };
+            reader.readAsDataURL(file);
+        }
+
+        // Initialize rewriter image upload
+        setupRewriterImageUpload();
+
         rewriteBtn.addEventListener('click', async () => {
             const prompt = document.getElementById('prompt').value.trim();
             const rewriter = document.getElementById('rewriterTemplate').value;
@@ -1079,9 +1225,12 @@
             const topK = parseInt(document.getElementById('rewriterTopK').value) || 20;
             const minP = parseFloat(document.getElementById('rewriterMinP').value) || 0.0;
             const presencePenalty = parseFloat(document.getElementById('rewriterPresencePenalty').value) || 0.0;
+            const selectedModel = document.getElementById('rewriterModel').value;
+            const isVLModel = selectedModel === 'qwen3-vl' || selectedModel === 'qwen3-vl-api';
 
-            if (!prompt) {
-                alert('Please enter a prompt first');
+            // Validate: need prompt OR image (VL only)
+            if (!prompt && !(isVLModel && rewriterImageBase64)) {
+                alert(isVLModel ? 'Please enter a prompt or upload an image' : 'Please enter a prompt first');
                 return;
             }
 
@@ -1103,7 +1252,8 @@
             try {
                 // Build request based on mode
                 const requestBody = {
-                    prompt,
+                    prompt: prompt || null,
+                    model: selectedModel,
                     max_tokens: maxTokens,
                     temperature,
                     top_p: topP,
@@ -1111,6 +1261,11 @@
                     min_p: minP,
                     presence_penalty: presencePenalty,
                 };
+
+                // Add image if using VL model
+                if (isVLModel && rewriterImageBase64) {
+                    requestBody.image = rewriterImageBase64;
+                }
 
                 if (rewriterMode === 'template') {
                     requestBody.rewriter = rewriter;
@@ -1134,7 +1289,14 @@
                 lastThinkingContent = data.thinking_content || null;
                 rewrittenText.textContent = data.rewritten_prompt;
                 const modeLabel = rewriterMode === 'custom' ? 'custom prompt' : data.rewriter;
-                let infoText = `Generated in ${data.gen_time.toFixed(2)}s using ${modeLabel}`;
+                // Model label: use returned model name, with fallback mapping for known models
+                let modelLabel = data.model;
+                if (data.model === 'qwen3-vl') modelLabel = 'Qwen3-VL (local)';
+                else if (data.model === 'qwen3-4b') modelLabel = 'Qwen3-4B';
+                let infoText = `Generated in ${data.gen_time.toFixed(2)}s using ${modelLabel}`;
+                if (modeLabel) {
+                    infoText += ` + ${modeLabel}`;
+                }
                 if (lastThinkingContent) {
                     infoText += ` (thinking: ${lastThinkingContent.length} chars)`;
                 }
@@ -1853,6 +2015,7 @@
         // Initialize
         loadTemplates();
         loadRewriters();
+        loadRewriterModels();
         loadHistory();
         checkVLStatus();
     </script>

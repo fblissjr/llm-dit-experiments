@@ -18,6 +18,7 @@ import time
 from pathlib import Path
 from typing import Optional
 
+import httpx
 import torch
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -44,6 +45,7 @@ pipeline = None
 encoder = None  # For encoder-only mode
 rewriter_backend = None  # API backend for rewriting (if configured)
 vl_extractor = None  # Qwen3-VL embedding extractor (if configured)
+vl_rewriter = None  # Qwen3-VL instance for vision rewriting (may share with vl_extractor)
 vl_embeddings_cache = {}  # Cache for extracted VL embeddings (keyed by hash)
 runtime_config = None  # RuntimeConfig from CLI/TOML
 encoder_only_mode = False
@@ -82,7 +84,7 @@ class EncodeRequest(BaseModel):
 
 
 class RewriteRequest(BaseModel):
-    prompt: str  # User prompt to rewrite/expand
+    prompt: Optional[str] = None  # User prompt to rewrite/expand (optional if image provided)
     rewriter: Optional[str] = None  # Name of rewriter template (optional if custom_system_prompt provided)
     custom_system_prompt: Optional[str] = None  # Ad-hoc system prompt for rewriting
     max_tokens: Optional[int] = None  # Maximum tokens to generate (default from config: 512)
@@ -91,6 +93,9 @@ class RewriteRequest(BaseModel):
     top_k: Optional[int] = None  # Top-k sampling (default: 20 for Qwen3)
     min_p: Optional[float] = None  # Minimum probability (default: 0.0)
     presence_penalty: Optional[float] = None  # Presence penalty (0-2, default: 0.0)
+    # VL rewriter fields
+    model: str = "qwen3-4b"  # "qwen3-4b" (text-only) or "qwen3-vl" (vision+text)
+    image: Optional[str] = None  # Base64-encoded image (VL model only)
 
 
 class VLExtractRequest(BaseModel):
@@ -515,6 +520,56 @@ async def get_rewriter_config():
     }
 
 
+@app.get("/api/rewriter-models")
+async def get_rewriter_models():
+    """Return available rewriter models.
+
+    Models:
+    - qwen3-4b: Text-only model (always available)
+    - qwen3-vl: Vision+text model (available if vl_model_path is configured)
+    - qwen3-vl-api: Vision+text model via API (available if vl_api_model is configured)
+    """
+    models = [
+        {
+            "id": "qwen3-4b",
+            "name": "Qwen3-4B (Text)",
+            "supports_image": False,
+            "loaded": True,  # Always available via encoder
+        }
+    ]
+
+    # Check if VL rewriter via API is available (higher priority than local VL)
+    vl_api_available = False
+    if runtime_config and runtime_config.rewriter_vl_api_model and runtime_config.rewriter_vl_enabled:
+        vl_api_available = True
+        models.append({
+            "id": "qwen3-vl-api",
+            "name": f"VL via API ({runtime_config.rewriter_vl_api_model})",
+            "supports_image": True,
+            "loaded": True,  # API is always available
+        })
+
+    # Check if local VL rewriter is available
+    vl_local_available = False
+    vl_loaded = False
+    if runtime_config and runtime_config.vl_model_path and runtime_config.rewriter_vl_enabled:
+        vl_local_available = True
+        vl_loaded = vl_rewriter is not None or vl_extractor is not None
+        models.append({
+            "id": "qwen3-vl",
+            "name": "Qwen3-VL (Vision+Text)",
+            "supports_image": True,
+            "loaded": vl_loaded,
+        })
+
+    return {
+        "models": models,
+        "default": "qwen3-4b",
+        "vl_available": vl_api_available or vl_local_available,
+        "vl_enabled": runtime_config.rewriter_vl_enabled if runtime_config else True,
+    }
+
+
 @app.post("/api/encode")
 async def encode(request: EncodeRequest):
     """Encode a prompt to embeddings (for distributed inference)."""
@@ -795,6 +850,333 @@ async def list_rewriters():
     return {"rewriters": rewriters}
 
 
+async def _rewrite_with_vl_api(request: RewriteRequest) -> dict:
+    """
+    Handle VL-based rewriting via remote API (heylookitsanllm).
+
+    Uses the configured vl_api_model for vision+text generation.
+    """
+    import re
+
+    # Check if VL API is available
+    if not runtime_config or not runtime_config.rewriter_vl_api_model:
+        raise HTTPException(
+            status_code=400,
+            detail="VL API model not configured. Set rewriter.vl_api_model in config.toml."
+        )
+
+    if not runtime_config.rewriter_vl_enabled:
+        raise HTTPException(
+            status_code=400,
+            detail="VL rewriter is disabled. Enable with rewriter.vl_enabled=true in config."
+        )
+
+    # Determine API URL
+    api_url = runtime_config.rewriter_api_url or runtime_config.api_url
+    if not api_url:
+        raise HTTPException(
+            status_code=400,
+            detail="No API URL configured. Set rewriter.api_url or api.url in config.toml."
+        )
+
+    # Create API backend with VL model
+    from llm_dit.backends.api import APIBackend, APIBackendConfig
+
+    timeout = runtime_config.rewriter_timeout if runtime_config else 120.0
+    vl_api_config = APIBackendConfig(
+        base_url=api_url,
+        model_id=runtime_config.rewriter_vl_api_model,
+        timeout=timeout,
+    )
+    vl_api_backend = APIBackend(vl_api_config)
+
+    # Get template loader from encoder (for template lookup)
+    enc = encoder if encoder is not None else (pipeline.encoder if pipeline else None)
+
+    # Determine system prompt
+    system_prompt = None
+    rewriter_name = "custom"
+
+    if request.custom_system_prompt:
+        system_prompt = request.custom_system_prompt.strip()
+        rewriter_name = "custom"
+    elif request.rewriter:
+        if enc is None or enc.templates is None:
+            raise HTTPException(status_code=400, detail="No templates loaded")
+
+        rewriter_template = enc.templates.get(request.rewriter)
+        if rewriter_template is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Rewriter template not found: {request.rewriter}"
+            )
+
+        if rewriter_template.category != "rewriter":
+            raise HTTPException(
+                status_code=400,
+                detail=f"Template '{request.rewriter}' is not a rewriter template"
+            )
+
+        system_prompt = rewriter_template.content
+        rewriter_name = request.rewriter
+    else:
+        # Use a default system prompt for VL rewriting
+        system_prompt = "Describe what you see in this image in detail, suitable for use as an image generation prompt."
+        rewriter_name = "default_vl"
+
+    # Get generation parameters
+    max_tokens = request.max_tokens or (runtime_config.rewriter_max_tokens if runtime_config else 512)
+    temperature = request.temperature or (runtime_config.rewriter_temperature if runtime_config else 0.6)
+    top_p = request.top_p or (runtime_config.rewriter_top_p if runtime_config else 0.95)
+    top_k = request.top_k or (runtime_config.rewriter_top_k if runtime_config else 20)
+    min_p = request.min_p if request.min_p is not None else (runtime_config.rewriter_min_p if runtime_config else 0.0)
+    presence_penalty = request.presence_penalty if request.presence_penalty is not None else (runtime_config.rewriter_presence_penalty if runtime_config else 0.0)
+
+    try:
+        start = time.time()
+        logger.info(f"[VL API Rewrite] Using: {rewriter_name} (model: {runtime_config.rewriter_vl_api_model})")
+        if request.prompt:
+            logger.info(f"[VL API Rewrite] Input prompt: {request.prompt[:100]}...")
+        logger.info(f"[VL API Rewrite] Has image: {request.image is not None}")
+        logger.info(f"[VL API Rewrite] Params: max_tokens={max_tokens}, temperature={temperature}")
+
+        # Generate using VL API backend
+        # The image should already be in data URL format from the request
+        generated = vl_api_backend.generate(
+            prompt=request.prompt,
+            image=request.image,  # Pass the data URL directly
+            system_prompt=system_prompt,
+            max_new_tokens=max_tokens,
+            temperature=temperature,
+            top_p=top_p,
+            top_k=top_k,
+            min_p=min_p,
+            presence_penalty=presence_penalty,
+        )
+
+        gen_time = time.time() - start
+        logger.info(f"[VL API Rewrite] Generated {len(generated)} chars in {gen_time:.2f}s")
+
+        # Parse thinking content (same logic as local rewrite)
+        thinking_content = None
+        rewritten_prompt = generated
+
+        think_match = re.search(r'<think>\s*(.*?)\s*</think>', generated, re.DOTALL)
+        if think_match:
+            thinking_content = think_match.group(1).strip()
+            rewritten_prompt = re.sub(r'<think>.*?</think>\s*', '', generated, flags=re.DOTALL).strip()
+            logger.info(f"[VL API Rewrite] Extracted thinking ({len(thinking_content)} chars)")
+
+        # Clean up any remaining tags
+        if thinking_content:
+            thinking_content = re.sub(r'</?think>', '', thinking_content).strip()
+        if rewritten_prompt:
+            rewritten_prompt = re.sub(r'</?think>', '', rewritten_prompt).strip()
+
+        return {
+            "original_prompt": request.prompt or "(image only)",
+            "rewritten_prompt": rewritten_prompt,
+            "thinking_content": thinking_content,
+            "rewriter": rewriter_name,
+            "backend": "vl-api",
+            "model": runtime_config.rewriter_vl_api_model,
+            "gen_time": gen_time,
+        }
+
+    except httpx.TimeoutException as e:
+        logger.error(f"[VL API Rewrite] Timeout after {timeout}s: {e}")
+        raise HTTPException(
+            status_code=504,
+            detail=f"API request timed out after {timeout}s. Try increasing rewriter.timeout in config.toml."
+        )
+    except httpx.HTTPStatusError as e:
+        # Parse API error details if available
+        error_detail = str(e)
+        try:
+            error_json = e.response.json()
+            if "detail" in error_json:
+                error_detail = error_json["detail"]
+        except Exception:
+            pass
+        logger.error(f"[VL API Rewrite] HTTP {e.response.status_code}: {error_detail}")
+        raise HTTPException(
+            status_code=e.response.status_code,
+            detail=f"API error: {error_detail}"
+        )
+    except httpx.ConnectError as e:
+        logger.error(f"[VL API Rewrite] Connection failed: {e}")
+        raise HTTPException(
+            status_code=503,
+            detail=f"Cannot connect to API at {api_url}. Is the server running?"
+        )
+    except Exception as e:
+        logger.error(f"[VL API Rewrite] Failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+async def _rewrite_with_vl(request: RewriteRequest) -> dict:
+    """
+    Handle VL-based rewriting (image+text or image-only).
+
+    Loads Qwen3-VL on-demand if not already loaded.
+    """
+    import base64
+    from PIL import Image
+
+    global vl_rewriter, vl_extractor
+
+    # Check if VL is available
+    if not runtime_config or not runtime_config.vl_model_path:
+        raise HTTPException(
+            status_code=400,
+            detail="VL model not configured. Set vl.model_path in config.toml."
+        )
+
+    if not runtime_config.rewriter_vl_enabled:
+        raise HTTPException(
+            status_code=400,
+            detail="VL rewriter is disabled. Enable with rewriter.vl_enabled=true in config."
+        )
+
+    # Load VL model on-demand if not already loaded
+    # Try to reuse vl_extractor if available (same model)
+    if vl_rewriter is None:
+        if vl_extractor is not None:
+            logger.info("[VL Rewrite] Reusing existing VL extractor for rewriting")
+            vl_rewriter = vl_extractor
+        else:
+            logger.info(f"[VL Rewrite] Loading Qwen3-VL from {runtime_config.vl_model_path}")
+            from llm_dit.vl import VLEmbeddingExtractor
+            vl_dtype = torch.bfloat16 if runtime_config.vl_device == "cuda" else torch.float32
+            vl_rewriter = VLEmbeddingExtractor.from_pretrained(
+                runtime_config.vl_model_path,
+                device=runtime_config.vl_device,
+                torch_dtype=vl_dtype,
+            )
+            logger.info("[VL Rewrite] Qwen3-VL loaded for rewriting")
+
+    # Decode image if provided
+    pil_image = None
+    if request.image:
+        try:
+            # Handle data URL format (data:image/png;base64,...)
+            image_data = request.image
+            if image_data.startswith("data:"):
+                # Extract base64 part after the comma
+                image_data = image_data.split(",", 1)[1]
+            image_bytes = base64.b64decode(image_data)
+            pil_image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+            logger.info(f"[VL Rewrite] Decoded image: {pil_image.size}")
+        except Exception as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Failed to decode image: {e}"
+            )
+
+    # Get template loader from encoder (for template lookup)
+    enc = encoder if encoder is not None else (pipeline.encoder if pipeline else None)
+
+    # Determine system prompt
+    system_prompt = None
+    rewriter_name = "custom"
+
+    if request.custom_system_prompt:
+        system_prompt = request.custom_system_prompt.strip()
+        rewriter_name = "custom"
+    elif request.rewriter:
+        if enc is None or enc.templates is None:
+            raise HTTPException(status_code=400, detail="No templates loaded")
+
+        rewriter_template = enc.templates.get(request.rewriter)
+        if rewriter_template is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Rewriter template not found: {request.rewriter}"
+            )
+
+        if rewriter_template.category != "rewriter":
+            raise HTTPException(
+                status_code=400,
+                detail=f"Template '{request.rewriter}' is not a rewriter template"
+            )
+
+        system_prompt = rewriter_template.content
+        rewriter_name = request.rewriter
+    else:
+        # Use a default system prompt for VL rewriting
+        system_prompt = "Describe what you see in this image in detail, suitable for use as an image generation prompt."
+        rewriter_name = "default_vl"
+
+    # Get generation parameters
+    max_tokens = request.max_tokens or (runtime_config.rewriter_max_tokens if runtime_config else 512)
+    temperature = request.temperature or (runtime_config.rewriter_temperature if runtime_config else 0.6)
+    top_p = request.top_p or (runtime_config.rewriter_top_p if runtime_config else 0.95)
+    top_k = request.top_k or (runtime_config.rewriter_top_k if runtime_config else 20)
+    min_p = request.min_p if request.min_p is not None else (runtime_config.rewriter_min_p if runtime_config else 0.0)
+    presence_penalty = request.presence_penalty if request.presence_penalty is not None else (runtime_config.rewriter_presence_penalty if runtime_config else 0.0)
+
+    try:
+        start = time.time()
+        logger.info(f"[VL Rewrite] Using: {rewriter_name} (model: qwen3-vl)")
+        if request.prompt:
+            logger.info(f"[VL Rewrite] Input prompt: {request.prompt[:100]}...")
+        logger.info(f"[VL Rewrite] Has image: {pil_image is not None}")
+        logger.info(f"[VL Rewrite] Params: max_tokens={max_tokens}, temperature={temperature}")
+
+        # Generate using VL model
+        generated = vl_rewriter.generate(
+            prompt=request.prompt,
+            image=pil_image,
+            system_prompt=system_prompt,
+            max_new_tokens=max_tokens,
+            temperature=temperature,
+            top_p=top_p,
+            top_k=top_k,
+            min_p=min_p,
+            presence_penalty=presence_penalty,
+        )
+
+        gen_time = time.time() - start
+        logger.info(f"[VL Rewrite] Generated {len(generated)} chars in {gen_time:.2f}s")
+
+        # Parse thinking content (same logic as text-only rewrite)
+        import re
+        thinking_content = None
+        rewritten_prompt = generated
+
+        think_match = re.search(r'<think>\s*(.*?)\s*</think>', generated, re.DOTALL)
+        if think_match:
+            thinking_content = think_match.group(1).strip()
+            rewritten_prompt = re.sub(r'<think>.*?</think>\s*', '', generated, flags=re.DOTALL).strip()
+            logger.info(f"[VL Rewrite] Extracted thinking ({len(thinking_content)} chars)")
+
+        # Clean up any remaining tags
+        if thinking_content:
+            thinking_content = re.sub(r'</?think>', '', thinking_content).strip()
+        if rewritten_prompt:
+            rewritten_prompt = re.sub(r'</?think>', '', rewritten_prompt).strip()
+
+        # Clear CUDA cache
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+        return {
+            "original_prompt": request.prompt or "(image only)",
+            "rewritten_prompt": rewritten_prompt,
+            "thinking_content": thinking_content,
+            "rewriter": rewriter_name,
+            "backend": "vl",
+            "model": "qwen3-vl",
+            "gen_time": gen_time,
+        }
+
+    except Exception as e:
+        logger.error(f"[VL Rewrite] Failed: {e}")
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/api/rewrite")
 async def rewrite_prompt(request: RewriteRequest):
     """
@@ -807,10 +1189,41 @@ async def rewrite_prompt(request: RewriteRequest):
     1. Template mode: Use `rewriter` to specify a rewriter template
     2. Ad-hoc mode: Use `custom_system_prompt` for custom rewriting instructions
 
-    Backend selection:
+    Model selection:
+    - qwen3-4b: Text-only model (default)
+    - qwen3-vl: Vision+text model (requires vl_model_path configured)
+    - qwen3-vl-api: Vision+text via remote API (requires vl_api_model configured)
+
+    Backend selection (for qwen3-4b):
     - If rewriter_use_api is True and rewriter_backend is configured, uses API backend
     - Otherwise, uses the local encoder's backend
     """
+    global vl_rewriter
+
+    # Validate that at least prompt or image is provided
+    if not request.prompt and not request.image:
+        raise HTTPException(
+            status_code=400,
+            detail="At least one of 'prompt' or 'image' must be provided"
+        )
+
+    # Handle VL model selection
+    if request.model == "qwen3-vl":
+        return await _rewrite_with_vl(request)
+    elif request.model == "qwen3-vl-api":
+        return await _rewrite_with_vl_api(request)
+
+    # If image provided but model is not VL, warn and ignore
+    if request.image:
+        logger.warning("[Rewrite] Image provided but model is qwen3-4b (text-only). Image will be ignored.")
+
+    # Require prompt for text-only model
+    if not request.prompt:
+        raise HTTPException(
+            status_code=400,
+            detail="Text prompt is required for qwen3-4b model. Use qwen3-vl for image-only rewriting."
+        )
+
     # Determine which backend to use for generation
     # Priority: rewriter_backend (if API mode), encoder's backend, pipeline's encoder backend
     backend = None
@@ -1471,7 +1884,7 @@ def main():
             logger.warning("[Rewriter] use_api=True but no API URL configured. Using local model.")
 
     # Initialize VL extractor if configured
-    global vl_extractor
+    global vl_extractor, vl_rewriter
     if runtime_config.vl_model_path:
         logger.info(f"[VL] Loading Qwen3-VL from {runtime_config.vl_model_path}")
         logger.info(f"[VL] Device: {runtime_config.vl_device}, default alpha: {runtime_config.vl_alpha}")
@@ -1488,12 +1901,23 @@ def main():
             )
             logger.info(f"[VL] Qwen3-VL loaded successfully")
             logger.info(f"[VL] Default blend mode: {runtime_config.vl_blend_mode}")
+
+            # If VL rewriter preload is enabled, share the extractor
+            if runtime_config.rewriter_preload_vl:
+                vl_rewriter = vl_extractor
+                logger.info("[VL Rewrite] Preloaded Qwen3-VL for rewriting (shared with extractor)")
         except Exception as e:
             logger.error(f"[VL] Failed to load Qwen3-VL: {e}")
             logger.warning("[VL] Vision conditioning will be disabled")
             vl_extractor = None
     else:
         logger.info("[VL] No vl_model_path configured, vision conditioning disabled")
+
+        # Log VL rewriter status
+        if runtime_config.rewriter_vl_enabled:
+            logger.info("[VL Rewrite] VL rewriter enabled but no model configured (on-demand loading)")
+        else:
+            logger.info("[VL Rewrite] VL rewriter disabled")
 
     # Run server
     import uvicorn

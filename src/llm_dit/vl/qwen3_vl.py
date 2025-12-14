@@ -424,6 +424,199 @@ class VLEmbeddingExtractor:
             masked_dim_ratios=masked_ratios,
         )
 
+    def generate(
+        self,
+        prompt: str | None = None,
+        image: Image.Image | None = None,
+        system_prompt: str | None = None,
+        max_new_tokens: int = 512,
+        temperature: float = 0.6,
+        top_p: float = 0.95,
+        top_k: int = 20,
+        min_p: float = 0.0,
+        presence_penalty: float = 0.0,
+        do_sample: bool = True,
+    ) -> str:
+        """
+        Generate text using Qwen3-VL with optional image input.
+
+        This method enables using Qwen3-VL for prompt rewriting with vision support.
+        It can process text-only, image-only, or combined image+text inputs.
+
+        Qwen3 Best Practices (thinking mode):
+        - temperature=0.6, top_p=0.95, top_k=20, min_p=0 (default)
+        - DO NOT use greedy decoding (causes repetition)
+        - presence_penalty=0-2 helps reduce endless repetitions
+
+        Args:
+            prompt: User prompt/message (optional if image provided)
+            image: Input image for vision-language processing (optional if prompt provided)
+            system_prompt: Optional system prompt (rewriter template content)
+            max_new_tokens: Maximum tokens to generate
+            temperature: Sampling temperature (Qwen3 thinking: 0.6)
+            top_p: Nucleus sampling threshold (Qwen3 thinking: 0.95)
+            top_k: Top-k sampling (Qwen3: 20)
+            min_p: Minimum probability threshold (Qwen3: 0.0)
+            presence_penalty: Penalty for token presence (0-2, helps reduce repetition)
+            do_sample: Whether to use sampling (False = greedy, NOT recommended for Qwen3)
+
+        Returns:
+            Generated text (assistant response, may include <think> tags if model used them)
+
+        Raises:
+            RuntimeError: If model has been unloaded
+            ValueError: If neither prompt nor image is provided
+
+        Example:
+            # Image-only (describe what's in the image)
+            result = extractor.generate(
+                image=pil_image,
+                system_prompt="Describe this image for use as an image generation prompt.",
+            )
+
+            # Image + text (rewrite prompt based on image style)
+            result = extractor.generate(
+                prompt="A cat sleeping in sunlight",
+                image=style_reference,
+                system_prompt="Rewrite this prompt to match the style of the image.",
+            )
+        """
+        if not self._loaded:
+            raise RuntimeError("Model has been unloaded. Create new extractor.")
+
+        if prompt is None and image is None:
+            raise ValueError("At least one of 'prompt' or 'image' must be provided")
+
+        # Build messages for chat template
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+
+        # Build user message content (can have image, text, or both)
+        content = []
+        if image is not None:
+            content.append({"type": "image", "image": image})
+        if prompt is not None:
+            content.append({"type": "text", "text": prompt})
+
+        messages.append({"role": "user", "content": content})
+
+        # Process inputs using Qwen3-VL's chat template
+        inputs = self.processor.apply_chat_template(
+            messages,
+            tokenize=True,
+            add_generation_prompt=True,
+            return_dict=True,
+            return_tensors="pt",
+        )
+
+        input_length = inputs["input_ids"].shape[1]
+        logger.debug(f"[VLEmbeddingExtractor.generate] Input tokens: {input_length}")
+
+        # Move to device
+        device = next(self.model.parameters()).device
+        inputs = {
+            k: v.to(device) if isinstance(v, torch.Tensor) else v
+            for k, v in inputs.items()
+        }
+
+        # Get proper termination tokens for Qwen3
+        tokenizer = self.processor.tokenizer
+        eos_token_ids = []
+        if tokenizer.eos_token_id is not None:
+            eos_token_ids.append(tokenizer.eos_token_id)
+
+        # Add Qwen3-specific stop tokens
+        for stop_token in ["<|im_end|>", "<|endoftext|>"]:
+            try:
+                token_id = tokenizer.convert_tokens_to_ids(stop_token)
+                if token_id is not None and token_id not in eos_token_ids:
+                    eos_token_ids.append(token_id)
+            except Exception:
+                pass
+
+        # Use single token or list
+        eos_token_id = eos_token_ids if len(eos_token_ids) > 1 else (eos_token_ids[0] if eos_token_ids else None)
+        pad_token_id = tokenizer.pad_token_id or (eos_token_ids[0] if eos_token_ids else 0)
+
+        # Build generation kwargs
+        gen_kwargs = {
+            "max_new_tokens": max_new_tokens,
+            "pad_token_id": pad_token_id,
+            "eos_token_id": eos_token_id,
+        }
+
+        if do_sample and temperature > 0:
+            gen_kwargs["do_sample"] = True
+            gen_kwargs["temperature"] = temperature
+            gen_kwargs["top_p"] = top_p
+            gen_kwargs["top_k"] = top_k
+            if min_p > 0.0:
+                gen_kwargs["min_p"] = min_p
+            if presence_penalty > 0.0:
+                # transformers uses repetition_penalty (multiplicative, >1.0 = more penalty)
+                gen_kwargs["repetition_penalty"] = 1.0 + (presence_penalty * 0.15)
+        else:
+            gen_kwargs["do_sample"] = False
+
+        logger.debug(f"[VLEmbeddingExtractor.generate] Generation kwargs: {gen_kwargs}")
+        logger.info(f"[VLEmbeddingExtractor.generate] Starting generation (max_new_tokens={max_new_tokens})...")
+
+        # Generate
+        with torch.no_grad():
+            outputs = self.model.generate(
+                **inputs,
+                **gen_kwargs,
+                use_cache=True,
+            )
+
+        logger.info("[VLEmbeddingExtractor.generate] Generation completed")
+
+        # Decode only the generated part (skip input tokens)
+        generated_ids = outputs[0, input_length:].tolist()
+
+        # Parse thinking content at token level (most reliable)
+        thinking_content = None
+        content_ids = generated_ids
+
+        try:
+            # Find </think> token from the end (in case of multiple)
+            think_end_idx = len(generated_ids) - generated_ids[::-1].index(THINK_END_TOKEN_ID)
+            # Everything before </think> is thinking (may include <think> token at start)
+            thinking_ids = generated_ids[:think_end_idx]
+            content_ids = generated_ids[think_end_idx:]
+
+            # Remove <think> token from start if present
+            if thinking_ids and thinking_ids[0] == THINK_START_TOKEN_ID:
+                thinking_ids = thinking_ids[1:]
+
+            # Decode thinking
+            thinking_content = tokenizer.decode(thinking_ids, skip_special_tokens=True).strip()
+            thinking_content = thinking_content.removeprefix("<think>").removesuffix("</think>").strip()
+
+            logger.info(f"[VLEmbeddingExtractor.generate] Extracted thinking ({len(thinking_content)} chars)")
+        except ValueError:
+            # No </think> token found - model didn't use thinking format
+            logger.debug("[VLEmbeddingExtractor.generate] No </think> token found, using full output")
+
+        # Decode the content
+        generated_text = tokenizer.decode(content_ids, skip_special_tokens=False)
+
+        # Clean up end tokens
+        for end_token in ["<|im_end|>", "<|endoftext|>"]:
+            if generated_text.endswith(end_token):
+                generated_text = generated_text[:-len(end_token)]
+
+        generated_text = generated_text.strip()
+
+        # If we extracted thinking, prepend it with <think> tags for downstream parsing
+        if thinking_content:
+            generated_text = f"<think>\n{thinking_content}\n</think>\n\n{generated_text}"
+
+        logger.debug(f"[VLEmbeddingExtractor.generate] Generated {len(generated_ids)} tokens")
+
+        return generated_text
+
     def _filter_image_tokens(
         self,
         hidden_states: torch.Tensor,

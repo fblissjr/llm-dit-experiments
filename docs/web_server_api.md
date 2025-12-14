@@ -150,13 +150,21 @@ Example: `--lora style.safetensors:0.8 --lora detail.safetensors:0.5`
 |------|------|---------|-------------|
 | `--rewriter-use-api` | flag | False | Use API backend for prompt rewriting |
 | `--rewriter-api-url` | str | None | API URL for rewriter (defaults to --api-url) |
-| `--rewriter-api-model` | str | Qwen3-4B | Model ID for rewriter API |
-| `--rewriter-temperature` | float | 1.0 | Sampling temperature |
+| `--rewriter-api-model` | str | Qwen3-4B | Model ID for text-only rewriter API |
+| `--rewriter-vl-api-model` | str | None | Model ID for VL rewriting via API (e.g., qwen2.5-vl-72b-mlx) |
+| `--rewriter-temperature` | float | 0.6 | Sampling temperature |
 | `--rewriter-top-p` | float | 0.95 | Nucleus sampling threshold |
 | `--rewriter-min-p` | float | 0.0 | Minimum probability threshold (0.0 = disabled) |
 | `--rewriter-max-tokens` | int | 512 | Maximum tokens to generate |
+| `--rewriter-timeout` | float | 120.0 | API request timeout in seconds (VL models may need longer) |
+| `--rewriter-no-vl` | flag | False | Disable VL model selection in rewriter UI |
+| `--rewriter-preload-vl` | flag | False | Preload Qwen3-VL at startup for rewriting |
 
-Example: `--rewriter-use-api --rewriter-api-url http://mac:8080 --rewriter-temperature 0.8`
+Example: `--rewriter-use-api --rewriter-api-url http://mac:8080 --rewriter-temperature 0.8 --rewriter-timeout 120.0`
+
+Example (with VL preloading): `--vl-model-path /path/to/Qwen3-VL-4B-Instruct --rewriter-preload-vl`
+
+Example (with VL API): `--rewriter-use-api --rewriter-vl-api-model qwen2.5-vl-72b-mlx --rewriter-timeout 180.0`
 
 ## API Endpoints
 
@@ -310,6 +318,7 @@ List available rewriter templates (templates with `category: rewriter`).
 ```json
 {
   "rewriters": [
+    {"name": "rewriter_official", "description": "Official (Z-Image prompt enhancer)"},
     {"name": "rewriter_character_generator", "description": "Character Generator (prompt rewriter)"},
     {"name": "rewriter_scene_enhancer", "description": "Scene Enhancer (prompt rewriter)"}
   ]
@@ -318,20 +327,49 @@ List available rewriter templates (templates with `category: rewriter`).
 
 ---
 
+### GET /api/rewriter-models
+
+List available rewriter models. Returns text-only and VL models (local and API) if configured.
+
+**Response:**
+```json
+{
+  "models": [
+    {"id": "qwen3-4b", "name": "Qwen3-4B (Text)", "supports_image": false},
+    {"id": "qwen3-vl", "name": "Qwen3-VL (Vision+Text)", "supports_image": true, "loaded": false},
+    {"id": "qwen3-vl-api", "name": "Qwen3-VL API (qwen2.5-vl-72b-mlx)", "supports_image": true}
+  ],
+  "default": "qwen3-4b"
+}
+```
+
+**Notes:**
+- The `qwen3-vl` model is only available if `--vl-model-path` is configured and `--rewriter-no-vl` is not set
+- The `loaded` field indicates whether the VL model is currently loaded in memory
+- The `qwen3-vl-api` model is only available if `--rewriter-vl-api-model` is configured
+- The API VL model name in the response reflects the configured `vl_api_model` value
+
+---
+
 ### POST /api/rewrite
 
 Rewrite/expand a prompt using a rewriter template or custom system prompt.
 
-Uses either the local Qwen3 model or an API backend (if configured with `--rewriter-use-api`).
+Supports three models:
+- **qwen3-4b** (default): Text-only rewriting using the local Qwen3 encoder or API backend
+- **qwen3-vl**: Vision+text rewriting using local Qwen3-VL (requires `--vl-model-path`)
+- **qwen3-vl-api**: Vision+text rewriting via remote API (requires `--rewriter-vl-api-model`)
 
 **Request:**
 ```json
 {
   "prompt": "A cat sleeping",
-  "rewriter": "rewriter_character_generator",
+  "model": "qwen3-4b",
+  "image": null,
+  "rewriter": "rewriter_official",
   "custom_system_prompt": null,
   "max_tokens": 512,
-  "temperature": 1.0,
+  "temperature": 0.6,
   "top_p": 0.95,
   "min_p": 0.0
 }
@@ -340,15 +378,19 @@ Uses either the local Qwen3 model or an API backend (if configured with `--rewri
 **Fields:**
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
-| prompt | string | Yes | - | User prompt to rewrite/expand |
-| rewriter | string | No* | null | Name of rewriter template |
-| custom_system_prompt | string | No* | null | Ad-hoc system prompt for rewriting |
+| prompt | string | No* | null | User prompt to rewrite/expand |
+| model | string | No | "qwen3-4b" | Model to use: "qwen3-4b", "qwen3-vl", or "qwen3-vl-api" |
+| image | string | No | null | Base64-encoded image (data:image/...) for VL models only |
+| rewriter | string | No** | null | Name of rewriter template |
+| custom_system_prompt | string | No** | null | Ad-hoc system prompt for rewriting |
 | max_tokens | int | No | from config (512) | Maximum tokens to generate |
-| temperature | float | No | from config (1.0) | Sampling temperature |
+| temperature | float | No | from config (0.6) | Sampling temperature |
 | top_p | float | No | from config (0.95) | Nucleus sampling threshold |
 | min_p | float | No | from config (0.0) | Minimum probability threshold (0.0 = disabled) |
 
-*Either `rewriter` or `custom_system_prompt` must be provided.
+*For `qwen3-4b`, prompt is required. For VL models (`qwen3-vl` and `qwen3-vl-api`), either prompt or image must be provided.
+
+**Either `rewriter` or `custom_system_prompt` must be provided.
 
 **Response:**
 ```json
@@ -356,7 +398,8 @@ Uses either the local Qwen3 model or an API backend (if configured with `--rewri
   "original_prompt": "A cat sleeping",
   "rewritten_prompt": "A fluffy orange tabby cat curled up in a warm sunbeam...",
   "thinking_content": "I should describe a cozy scene with warm lighting...",
-  "rewriter": "rewriter_character_generator",
+  "rewriter": "rewriter_official",
+  "model": "qwen3-4b",
   "backend": "local",
   "gen_time": 2.5
 }
@@ -364,9 +407,62 @@ Uses either the local Qwen3 model or an API backend (if configured with `--rewri
 
 **Note:** If the LLM generates `<think>...</think>` tags in its output, the content is extracted into `thinking_content` and removed from `rewritten_prompt`. This allows the thinking to be used directly in subsequent image generation.
 
-**Backend Types:**
+**Model Types:**
+- `"qwen3-4b"`: Text-only rewriting (default)
+- `"qwen3-vl"`: Vision+text rewriting using local model (supports image input)
+- `"qwen3-vl-api"`: Vision+text rewriting via remote API (supports image input)
+
+**Backend Types (for qwen3-4b only):**
 - `"local"`: Using local Qwen3 model (default)
 - `"api"`: Using remote API backend (when `--rewriter-use-api` is set)
+
+**Timeout Configuration:**
+API requests use the configured timeout (default: 120 seconds). VL models may need longer timeouts (180+ seconds) for image processing. Configure with `--rewriter-timeout` or `rewriter.timeout` in config.toml.
+
+**Error Handling:**
+- **Timeout errors**: Request exceeded configured timeout
+- **HTTP errors**: API returned non-200 status code
+- **Connection errors**: Failed to connect to API server
+
+**VL Rewriting Examples:**
+
+Image-only (describe image - local model):
+```json
+{
+  "model": "qwen3-vl",
+  "image": "data:image/jpeg;base64,...",
+  "rewriter": "rewriter_official"
+}
+```
+
+Image + text (rewrite with image context - local model):
+```json
+{
+  "model": "qwen3-vl",
+  "prompt": "Make this more dramatic",
+  "image": "data:image/jpeg;base64,...",
+  "rewriter": "rewriter_official"
+}
+```
+
+Image-only (describe image - API model for larger VL models):
+```json
+{
+  "model": "qwen3-vl-api",
+  "image": "data:image/jpeg;base64,...",
+  "rewriter": "rewriter_official"
+}
+```
+
+Image + text (rewrite with image context - API model):
+```json
+{
+  "model": "qwen3-vl-api",
+  "prompt": "Make this more dramatic",
+  "image": "data:image/jpeg;base64,...",
+  "rewriter": "rewriter_official"
+}
+```
 
 ---
 

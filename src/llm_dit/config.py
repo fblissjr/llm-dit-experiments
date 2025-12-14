@@ -274,6 +274,12 @@ class RewriterConfig:
     for text generation. When use_api is True and api_url is set,
     the rewriter will use the API backend instead of the local model.
 
+    VL Rewriting:
+    - When vl_enabled is True and vl.model_path is configured, users can
+      select Qwen3-VL for vision-enabled prompt rewriting in the web UI.
+    - VL model is loaded on-demand when first selected (unless preload_vl is True).
+    - Supports image-only, text-only, or combined image+text rewriting.
+
     Qwen3 Best Practices (thinking mode):
     - temperature=0.6, top_p=0.95, top_k=20, min_p=0 (default)
     - DO NOT use greedy decoding (causes repetition)
@@ -293,6 +299,12 @@ class RewriterConfig:
     min_p: float = 0.0  # Qwen3: 0.0 (disabled)
     presence_penalty: float = 0.0  # 0-2, helps reduce endless repetitions
     max_tokens: int = 512  # Maximum tokens to generate
+    # VL rewriter settings
+    vl_enabled: bool = True  # Allow VL model selection in rewriter UI
+    preload_vl: bool = False  # Load Qwen3-VL at startup for rewriter (uses vl.model_path)
+    vl_api_model: str = ""  # Model ID for VL via API (e.g., "qwen2.5-vl-72b-mlx"). Empty = use local VL
+    # API timeout settings
+    timeout: float = 120.0  # API request timeout in seconds (VL models need longer)
 
 
 @dataclass
@@ -449,6 +461,8 @@ class Config:
                 "min_p": self.rewriter.min_p,
                 "presence_penalty": self.rewriter.presence_penalty,
                 "max_tokens": self.rewriter.max_tokens,
+                "vl_enabled": self.rewriter.vl_enabled,
+                "preload_vl": self.rewriter.preload_vl,
             },
             "vl": {
                 "model_path": self.vl.model_path,

@@ -720,10 +720,14 @@ uv run scripts/profiler.py --show-info
 | `--rewriter-use-api` | Use API backend for prompt rewriting |
 | `--rewriter-api-url` | API URL for rewriter (defaults to --api-url) |
 | `--rewriter-api-model` | Model ID for rewriter API (default: Qwen3-4B) |
-| `--rewriter-temperature` | Sampling temperature (default: 1.0) |
+| `--rewriter-vl-api-model` | Model ID for VL rewriting via API (e.g., qwen2.5-vl-72b-mlx) |
+| `--rewriter-temperature` | Sampling temperature (default: 0.6) |
 | `--rewriter-top-p` | Nucleus sampling threshold (default: 0.95) |
 | `--rewriter-min-p` | Minimum probability threshold (default: 0.0, disabled) |
 | `--rewriter-max-tokens` | Maximum tokens to generate (default: 512) |
+| `--rewriter-timeout` | API request timeout in seconds (default: 120.0, VL models may need longer) |
+| `--rewriter-no-vl` | Disable VL model selection in rewriter UI |
+| `--rewriter-preload-vl` | Preload Qwen3-VL at startup for rewriting |
 
 ### Vision Conditioning (Qwen3-VL)
 | Flag | Description |
@@ -746,6 +750,7 @@ uv run scripts/profiler.py --show-info
 | `/api/format-prompt` | POST | Preview formatted prompt (no encoding) |
 | `/api/templates` | GET | List available templates |
 | `/api/rewriters` | GET | List available rewriter templates |
+| `/api/rewriter-models` | GET | List available rewriter models (text/VL) |
 | `/api/rewriter-config` | GET | Get rewriter default parameters |
 | `/api/rewrite` | POST | Rewrite prompt using Qwen3 model |
 | `/api/save-embeddings` | POST | Save embeddings to file |
@@ -981,9 +986,36 @@ uv run scripts/generate.py --config config.toml --profile low_vram "A cat"
 
 The loaded Qwen3 model can be used for prompt rewriting/expansion in addition to embedding extraction. This enables creative prompt enhancement without loading additional models.
 
+The rewriter supports three models:
+- **Qwen3-4B (Text)**: Default text-only rewriter using the loaded encoder
+- **Qwen3-VL (Vision+Text)**: Vision-language model that can rewrite based on images (local)
+- **Qwen3-VL API**: Vision-language model via remote API (for larger VL models)
+
+### Model Selection
+
+The rewriter can use text-only or vision-language models, locally or via API:
+
+| Model | Input Types | Use Case |
+|-------|-------------|----------|
+| qwen3-4b | Text only | Standard prompt expansion |
+| qwen3-vl | Text, Image, or both | Image-based prompts, describe images (local) |
+| qwen3-vl-api | Text, Image, or both | Image-based prompts via API (e.g., qwen2.5-vl-72b-mlx) |
+
+**Local VL Model Configuration:**
+- Uses the same model path as VL conditioning (`vl.model_path`)
+- Loads on-demand when user selects it in the UI
+- Can optionally preload at startup with `--rewriter-preload-vl`
+
+**API VL Model Configuration:**
+- Configure with `rewriter.vl_api_model` in config.toml or `--rewriter-vl-api-model` on CLI
+- Uses configured `rewriter.api_url` or falls back to main `api.url`
+- Image is sent as base64 data URL to OpenAI-compatible API
+- Requires API server that supports vision models (e.g., heylookitsanllm with qwen2.5-vl)
+
+### Backend Selection
+
 The rewriter can use either the local model or a remote API backend (heylookitsanllm).
 
-**Backend Selection:**
 - By default, uses the local encoder's Qwen3 model
 - With `--rewriter-use-api`, uses a remote API backend for generation
 - The API URL defaults to `--api-url` but can be overridden with `--rewriter-api-url`
@@ -993,10 +1025,14 @@ The rewriter can use either the local model or a remote API backend (heylookitsa
 [default.rewriter]
 use_api = true                # Use API backend
 api_url = "http://mac:8080"   # API endpoint (or leave empty to use [api].url)
-api_model = "Qwen3-4B"        # Model ID
-temperature = 1.0             # Sampling temperature
+api_model = "Qwen3-4B"        # Model ID for text-only rewriting
+vl_api_model = "qwen2.5-vl-72b-mlx"  # Model ID for VL rewriting via API
+temperature = 0.6             # Sampling temperature (Qwen3 thinking mode)
 top_p = 0.95                  # Nucleus sampling
 max_tokens = 512              # Max tokens to generate
+timeout = 120.0               # API request timeout in seconds (VL models may need longer)
+vl_enabled = true             # Allow VL model selection in rewriter UI
+preload_vl = false            # Load Qwen3-VL at startup for rewriter
 ```
 
 **Configuration via CLI:**
@@ -1007,9 +1043,24 @@ uv run web/server.py \
   --rewriter-use-api \
   --rewriter-api-url http://mac:8080 \
   --rewriter-api-model Qwen3-4B \
-  --rewriter-temperature 1.0 \
+  --rewriter-temperature 0.6 \
   --rewriter-top-p 0.95 \
-  --rewriter-max-tokens 512
+  --rewriter-max-tokens 512 \
+  --rewriter-timeout 120.0
+
+# Enable local VL rewriter with preloading
+uv run web/server.py \
+  --model-path /path/to/z-image \
+  --vl-model-path /path/to/Qwen3-VL-4B-Instruct \
+  --rewriter-preload-vl
+
+# Enable API VL rewriter for larger models (e.g., qwen2.5-vl-72b)
+uv run web/server.py \
+  --model-path /path/to/z-image \
+  --rewriter-use-api \
+  --rewriter-api-url http://mac:8080 \
+  --rewriter-vl-api-model qwen2.5-vl-72b-mlx \
+  --rewriter-timeout 180.0
 ```
 
 **Rewriter Templates:**
@@ -1026,26 +1077,46 @@ You are an expert character designer...
 ```
 
 **Via Web UI:**
-1. Enter a basic prompt
+1. Enter a basic prompt (or skip for image-only with VL model)
 2. Open "Prompt Rewriter (Qwen3)" section
-3. Select a rewriter style
-4. Click "Rewrite Prompt"
-5. Click "Use This Prompt" to apply
+3. Select a model (Qwen3-4B or Qwen3-VL if configured)
+4. If using Qwen3-VL, optionally upload a reference image
+5. Select a rewriter style
+6. Click "Rewrite Prompt"
+7. Click "Use This Prompt" to apply
 
 **Via API:**
 ```bash
 # List available rewriters
 curl http://localhost:8000/api/rewriters
 
-# Rewrite a prompt (uses server's configured backend)
+# List available rewriter models
+curl http://localhost:8000/api/rewriter-models
+
+# Rewrite with text-only model (default)
 curl -X POST http://localhost:8000/api/rewrite \
   -H "Content-Type: application/json" \
-  -d '{"prompt": "An Israeli woman", "rewriter": "rewriter_z_image_character_generator"}'
+  -d '{"prompt": "An Israeli woman", "rewriter": "rewriter_official"}'
+
+# Rewrite with local VL model and image
+curl -X POST http://localhost:8000/api/rewrite \
+  -H "Content-Type: application/json" \
+  -d '{"model": "qwen3-vl", "prompt": "Describe this image", "image": "data:image/jpeg;base64,..."}'
+
+# Rewrite with API VL model (for larger models)
+curl -X POST http://localhost:8000/api/rewrite \
+  -H "Content-Type: application/json" \
+  -d '{"model": "qwen3-vl-api", "prompt": "Describe this image", "image": "data:image/jpeg;base64,..."}'
+
+# Image-only rewriting (VL model only)
+curl -X POST http://localhost:8000/api/rewrite \
+  -H "Content-Type: application/json" \
+  -d '{"model": "qwen3-vl", "image": "data:image/jpeg;base64,...", "rewriter": "rewriter_official"}'
 
 # Override generation parameters
 curl -X POST http://localhost:8000/api/rewrite \
   -H "Content-Type: application/json" \
-  -d '{"prompt": "A cat", "rewriter": "rewriter_z_image_character_generator", "temperature": 0.8, "top_p": 0.9, "max_tokens": 256}'
+  -d '{"prompt": "A cat", "rewriter": "rewriter_official", "temperature": 0.8, "top_p": 0.9, "max_tokens": 256}'
 ```
 
 **Via Python:**

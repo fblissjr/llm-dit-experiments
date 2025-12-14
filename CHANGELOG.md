@@ -18,6 +18,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Embeddings caching for efficient multi-generation workflows
   - Blend modes: linear, style_only (preserves text content), graduated, attention_weighted
   - Research documentation in `experiments/qwen3_vl/` and `internal/research/vl_conditioning_hypotheses.md`
+- VL Rewriter feature for vision-based prompt rewriting
+  - Three model options: qwen3-4b (text-only), qwen3-vl (local VL), qwen3-vl-api (VL via remote API)
+  - Image upload support for VL models in rewriter UI
+  - API VL rewriting via heylookitsanllm for larger VL models (e.g., qwen2.5-vl-72b-mlx)
+  - Three input modes: text-only, image-only, or combined image+text
+  - CLI flags: `--rewriter-vl-api-model`, `--rewriter-timeout`
+  - Config options: `rewriter.vl_api_model`, `rewriter.timeout` (default: 120.0 seconds)
+  - Enhanced error handling with specific messages for timeout, HTTP errors, and connection failures
+  - `/api/rewriter-models` endpoint now includes VL API option when configured
+  - `/api/rewrite` endpoint accepts `model: "qwen3-vl-api"` for API-based VL rewriting
 
 ### Changed
 - Config dataclasses include `VLConfig` for vision conditioning settings

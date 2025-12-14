@@ -229,6 +229,7 @@ class TestCLIToRuntimeConfig:
             "text_encoder_device": "encoder_device",
             "template": "default_template",
             "vl_no_auto_unload": "vl_auto_unload",  # Inverted flag
+            "rewriter_no_vl": "rewriter_vl_enabled",  # Inverted flag
         }
 
         cli_dests_filtered = cli_dests - excluded
