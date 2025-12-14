@@ -56,35 +56,49 @@ cache_size = 100              # Max cached embeddings before LRU eviction
 long_prompt_mode = "interpolate" # What to do if tokens > 1504: truncate/interpolate/pool/attention_pool
 
 [default.api]
-# Remote API backend for distributed inference (encoder on remote, DiT local)
-url = ""                     # e.g., http://mac-host:8080
-model = "Qwen3-4B"           # Model ID on remote server
+# TEXT ENCODER via remote API (for distributed inference)
+# This extracts hidden states/embeddings from text - used for IMAGE GENERATION conditioning
+# When set, the encoder runs on a remote server (e.g., Mac) while DiT runs locally (e.g., CUDA)
+# CLI: --api-url, --api-model, --use-api-encoder
+url = ""                     # Remote API URL, e.g., "http://mac-host:8080"
+model = "Qwen3-4B"           # Model ID for embedding extraction (must be Qwen3-4B for Z-Image)
 
 [default.lora]
 paths = []                   # List of LoRA safetensors paths
 scales = []                  # Scale for each LoRA (0.0-1.0 typical)
 
 [default.rewriter]
-# Prompt rewriter: expand short prompts into detailed descriptions
-# Uses Qwen3 for text generation (same model as encoder)
+# PROMPT REWRITER: Expands short prompts into detailed descriptions via text generation
+# This is SEPARATE from text encoding - it generates new text, not embeddings
+# Three modes: local (uses encoder model), API text-only, API vision-language
+#
 # Qwen3 optimal settings: https://huggingface.co/Qwen/Qwen3-4B#best-practices
-use_api = false              # true=use remote API, false=use local encoder model
-api_url = ""                 # API URL (falls back to [api].url if empty)
-api_model = "Qwen3-4B"       # Model ID for API backend
+
+# --- Text-only rewriter backend ---
+use_api = false              # false=use local encoder model, true=use remote API for rewriting
+api_url = ""                 # API URL for rewriting (empty=falls back to [api].url)
+api_model = "Qwen3-4B"       # Model ID for TEXT-ONLY rewriting via API
+
+# --- VL (Vision-Language) rewriter ---
+vl_enabled = true            # Show VL model option in rewriter UI
+preload_vl = false           # Preload local VL at startup (false=load on-demand)
+vl_api_model = ""            # Model ID for VL rewriting via API (e.g., "qwen2.5-vl-72b-mlx")
+                             # Empty = use local VL from [vl].model_path
+                             # Uses api_url above, or falls back to [api].url
+
+# --- Generation parameters (apply to all rewriter backends) ---
 temperature = 0.6            # 0.6 for thinking mode (NEVER use 0.0, causes repetition)
 top_p = 0.95                 # Nucleus sampling threshold
 top_k = 20                   # Top-k sampling
 min_p = 0.0                  # Min probability cutoff (0.0=disabled)
 presence_penalty = 0.0       # 0.0-2.0, increase if seeing repetitive output
 max_tokens = 512             # Max tokens to generate
-# VL rewriter: enable Qwen3-VL for vision+text prompt rewriting
-vl_enabled = true            # Allow VL model selection in rewriter UI (uses [vl].model_path)
-preload_vl = false           # Load Qwen3-VL at startup (false=load on-demand when selected)
-vl_api_model = ""            # VL model ID for API (e.g., "qwen2.5-vl-72b-mlx"). Empty = use local VL
 timeout = 120.0              # API request timeout in seconds (VL models may need longer)
 
 [default.vl]
-# Vision conditioning using Qwen3-VL (zero-shot, no training required)
+# VISION CONDITIONING: Extract embeddings from images to blend with text embeddings
+# This is for IMAGE-TO-IMAGE style transfer, NOT for prompt rewriting
+# Uses local Qwen3-VL model to extract visual features, then blends with text
 # See experiments/qwen3_vl/README.md for detailed documentation
 model_path = ""              # Path to Qwen3-VL-4B-Instruct (empty=disabled)
 device = "cpu"               # cpu recommended to save VRAM (loads VL, extracts, unloads)
@@ -141,6 +155,7 @@ cache_size = 100
 long_prompt_mode = "interpolate"  # interpolate preserves all content; truncate cuts off end
 
 [rtx4090.api]
+# TEXT ENCODER API - not used in rtx4090 profile (local encoder on CPU)
 url = ""
 model = "Qwen3-4B"
 
@@ -149,23 +164,26 @@ paths = []
 scales = []
 
 [rtx4090.rewriter]
-# Qwen3 thinking mode optimal settings
-use_api = false
+# PROMPT REWRITER - uses local encoder model (not API)
+# --- Text-only rewriter ---
+use_api = false              # Use local encoder model for rewriting
 api_url = ""
 api_model = "Qwen3-4B"
+# --- VL rewriter ---
+vl_enabled = true            # Enable VL rewriter with image upload
+preload_vl = false           # On-demand loading (24GB VRAM can handle it)
+vl_api_model = ""            # Empty = use local VL from [vl].model_path
+# --- Generation parameters ---
 temperature = 0.6
 top_p = 0.95
 top_k = 20
 min_p = 0.0
 presence_penalty = 0.0
 max_tokens = 2048            # More headroom for detailed rewrites
-vl_enabled = true            # Enable VL rewriter with image upload
-preload_vl = false           # On-demand loading (24GB VRAM can handle it)
-vl_api_model = ""            # VL model ID for API (empty = use local VL)
-timeout = 120.0              # API request timeout in seconds
+timeout = 120.0
 
 [rtx4090.vl]
-# Vision conditioning - can load on CPU then unload before DiT runs
+# VISION CONDITIONING - extracts embeddings for image-to-image style transfer
 model_path = ""              # /path/to/Qwen3-VL-4B-Instruct
 device = "cpu"               # Load on CPU, keeps VRAM free for DiT
 default_alpha = 0.3          # 0.2-0.3 for style transfer, 0.5 for variations
@@ -221,6 +239,7 @@ cache_size = 50
 long_prompt_mode = "truncate"
 
 [low_vram.api]
+# TEXT ENCODER API - not used in low_vram profile
 url = ""
 model = "Qwen3-4B"
 
@@ -229,22 +248,26 @@ paths = []
 scales = []
 
 [low_vram.rewriter]
+# PROMPT REWRITER - disabled VL to save VRAM
+# --- Text-only rewriter ---
 use_api = false
 api_url = ""
 api_model = "Qwen3-4B"
+# --- VL rewriter ---
+vl_enabled = false           # Disabled to save VRAM
+preload_vl = false
+vl_api_model = ""            # Could use API VL to avoid local VRAM usage
+# --- Generation parameters ---
 temperature = 0.6
 top_p = 0.95
 top_k = 20
 min_p = 0.0
 presence_penalty = 0.0
 max_tokens = 256             # Shorter output to save memory
-vl_enabled = false           # Disable VL rewriter to save VRAM
-preload_vl = false
-vl_api_model = ""            # VL model ID for API (empty = use local VL)
-timeout = 120.0              # API request timeout in seconds
+timeout = 120.0
 
 [low_vram.vl]
-# Vision conditioning may be tight on low VRAM - use CPU and auto-unload
+# VISION CONDITIONING - use CPU to avoid VRAM pressure
 model_path = ""
 device = "cpu"               # Must be CPU for low VRAM
 default_alpha = 0.3
@@ -301,31 +324,39 @@ cache_size = 200
 long_prompt_mode = "interpolate"  # interpolate preserves all content; truncate cuts off end
 
 [distributed.api]
+# TEXT ENCODER API - runs on remote Mac for embedding extraction
+# The Mac extracts hidden states, sends them back, DiT runs locally on CUDA
 url = "http://mac-host:8080" # Your Mac running heylookitsanllm
-model = "Qwen3-4B-mlx"       # MLX model ID
+model = "Qwen3-4B-mlx"       # MLX model ID for ENCODING (hidden states)
 
 [distributed.lora]
 paths = []
 scales = []
 
 [distributed.rewriter]
-use_api = true               # Use remote Mac for rewriting too
-api_url = ""                 # Falls back to [api].url
-api_model = "Qwen3-4B-mlx"
+# PROMPT REWRITER - also runs on remote Mac
+# --- Text-only rewriter ---
+use_api = true               # Use remote Mac for text rewriting
+api_url = ""                 # Empty = use [api].url above (http://mac-host:8080)
+api_model = "Qwen3-4B-mlx"   # MLX model ID for TEXT-ONLY rewriting
+# --- VL rewriter ---
+vl_enabled = true            # Enable VL rewriter
+preload_vl = false           # On-demand loading
+vl_api_model = ""            # VL model ID for API (e.g., "qwen2.5-vl-72b-mlx")
+                             # Empty = use local VL from [vl].model_path
+                             # Set this to use Mac's larger VL models
+# --- Generation parameters ---
 temperature = 0.6
 top_p = 0.95
 top_k = 20
 min_p = 0.0
 presence_penalty = 0.0
 max_tokens = 2048
-vl_enabled = true            # VL rewriter still works (VL loaded locally or via API)
-preload_vl = false           # On-demand loading
-vl_api_model = ""            # VL model ID for API (e.g., "qwen2.5-vl-72b-mlx"). Empty = use local VL
-timeout = 180.0              # API request timeout in seconds (remote inference may be slower)
+timeout = 180.0              # Remote inference may be slower
 
 [distributed.vl]
-# For distributed setup, VL extraction can run on Mac or locally
-# TODO: Consider remote VL extraction via API in future
+# VISION CONDITIONING - runs locally (CPU) to extract image embeddings
+# These embeddings are blended with text embeddings for style transfer
 model_path = ""
 device = "cpu"
 default_alpha = 0.3
