@@ -489,6 +489,34 @@ async def vl_clear_cache():
     return {"cleared": count}
 
 
+@app.get("/api/generation-config")
+async def get_generation_config():
+    """Get generation configuration defaults from server config.
+
+    Returns default values for width, height, steps, shift, long_prompt_mode, hidden_layer.
+    The UI should call this on load to sync with server config.
+    """
+    if runtime_config is None:
+        return {
+            "width": 1024,
+            "height": 1024,
+            "steps": 9,
+            "guidance_scale": 0.0,
+            "shift": 3.0,
+            "long_prompt_mode": "interpolate",
+            "hidden_layer": -2,
+        }
+    return {
+        "width": runtime_config.width,
+        "height": runtime_config.height,
+        "steps": runtime_config.steps,
+        "guidance_scale": runtime_config.guidance_scale,
+        "shift": runtime_config.shift,
+        "long_prompt_mode": runtime_config.long_prompt_mode,
+        "hidden_layer": runtime_config.hidden_layer,
+    }
+
+
 @app.get("/api/rewriter-config")
 async def get_rewriter_config():
     """Get rewriter configuration defaults from server config.
@@ -924,11 +952,11 @@ async def _rewrite_with_vl_api(request: RewriteRequest) -> dict:
         system_prompt = "Describe what you see in this image in detail, suitable for use as an image generation prompt."
         rewriter_name = "default_vl"
 
-    # Get generation parameters
-    max_tokens = request.max_tokens or (runtime_config.rewriter_max_tokens if runtime_config else 512)
-    temperature = request.temperature or (runtime_config.rewriter_temperature if runtime_config else 0.6)
-    top_p = request.top_p or (runtime_config.rewriter_top_p if runtime_config else 0.95)
-    top_k = request.top_k or (runtime_config.rewriter_top_k if runtime_config else 20)
+    # Get generation parameters (use 'is not None' to preserve 0 values)
+    max_tokens = request.max_tokens if request.max_tokens is not None else (runtime_config.rewriter_max_tokens if runtime_config else 512)
+    temperature = request.temperature if request.temperature is not None else (runtime_config.rewriter_temperature if runtime_config else 0.6)
+    top_p = request.top_p if request.top_p is not None else (runtime_config.rewriter_top_p if runtime_config else 0.95)
+    top_k = request.top_k if request.top_k is not None else (runtime_config.rewriter_top_k if runtime_config else 20)
     min_p = request.min_p if request.min_p is not None else (runtime_config.rewriter_min_p if runtime_config else 0.0)
     presence_penalty = request.presence_penalty if request.presence_penalty is not None else (runtime_config.rewriter_presence_penalty if runtime_config else 0.0)
 
@@ -1107,11 +1135,11 @@ async def _rewrite_with_vl(request: RewriteRequest) -> dict:
         system_prompt = "Describe what you see in this image in detail, suitable for use as an image generation prompt."
         rewriter_name = "default_vl"
 
-    # Get generation parameters
-    max_tokens = request.max_tokens or (runtime_config.rewriter_max_tokens if runtime_config else 512)
-    temperature = request.temperature or (runtime_config.rewriter_temperature if runtime_config else 0.6)
-    top_p = request.top_p or (runtime_config.rewriter_top_p if runtime_config else 0.95)
-    top_k = request.top_k or (runtime_config.rewriter_top_k if runtime_config else 20)
+    # Get generation parameters (use 'is not None' to preserve 0 values)
+    max_tokens = request.max_tokens if request.max_tokens is not None else (runtime_config.rewriter_max_tokens if runtime_config else 512)
+    temperature = request.temperature if request.temperature is not None else (runtime_config.rewriter_temperature if runtime_config else 0.6)
+    top_p = request.top_p if request.top_p is not None else (runtime_config.rewriter_top_p if runtime_config else 0.95)
+    top_k = request.top_k if request.top_k is not None else (runtime_config.rewriter_top_k if runtime_config else 20)
     min_p = request.min_p if request.min_p is not None else (runtime_config.rewriter_min_p if runtime_config else 0.0)
     presence_penalty = request.presence_penalty if request.presence_penalty is not None else (runtime_config.rewriter_presence_penalty if runtime_config else 0.0)
 

@@ -1040,18 +1040,40 @@
             });
         }
 
+        // Load generation config from server (long_prompt_mode, hidden_layer, etc.)
+        async function loadGenerationConfig() {
+            try {
+                const response = await fetch(`${API_BASE}/api/generation-config`);
+                const config = await response.json();
+                // Update form fields with server config defaults
+                document.getElementById('longPromptMode').value = config.long_prompt_mode ?? 'interpolate';
+                document.getElementById('hiddenLayer').value = config.hidden_layer ?? -2;
+                updateHiddenLayerUI(config.hidden_layer ?? -2);
+                document.getElementById('shift').value = config.shift ?? 3.0;
+                document.getElementById('shiftValue').textContent = (config.shift ?? 3.0).toFixed(1);
+                document.getElementById('steps').value = config.steps ?? 9;
+                document.getElementById('stepsValue').textContent = config.steps ?? 9;
+                document.getElementById('guidanceScale').value = config.guidance_scale ?? 0.0;
+                document.getElementById('guidanceValue').textContent = (config.guidance_scale ?? 0.0).toFixed(1);
+                console.log(`[Generation Config] Loaded: long_prompt_mode=${config.long_prompt_mode}, hidden_layer=${config.hidden_layer}`);
+            } catch (err) {
+                console.error('Failed to load generation config:', err);
+            }
+        }
+
         // Load rewriter config from server
         async function loadRewriterConfig() {
             try {
                 const response = await fetch(`${API_BASE}/api/rewriter-config`);
                 const config = await response.json();
                 // Update form fields with server config defaults
-                document.getElementById('rewriterMaxTokens').value = config.max_tokens || 512;
-                document.getElementById('rewriterTemperature').value = config.temperature || 0.6;
-                document.getElementById('rewriterTopP').value = config.top_p || 0.95;
-                document.getElementById('rewriterTopK').value = config.top_k || 20;
-                document.getElementById('rewriterMinP').value = config.min_p || 0.0;
-                document.getElementById('rewriterPresencePenalty').value = config.presence_penalty || 0.0;
+                // Use ?? (nullish coalescing) instead of || so that 0 values are preserved
+                document.getElementById('rewriterMaxTokens').value = config.max_tokens ?? 512;
+                document.getElementById('rewriterTemperature').value = config.temperature ?? 0.6;
+                document.getElementById('rewriterTopP').value = config.top_p ?? 0.95;
+                document.getElementById('rewriterTopK').value = config.top_k ?? 20;
+                document.getElementById('rewriterMinP').value = config.min_p ?? 0.0;
+                document.getElementById('rewriterPresencePenalty').value = config.presence_penalty ?? 0.0;
             } catch (err) {
                 console.error('Failed to load rewriter config:', err);
             }
@@ -1219,12 +1241,14 @@
             const prompt = document.getElementById('prompt').value.trim();
             const rewriter = document.getElementById('rewriterTemplate').value;
             const customPrompt = document.getElementById('customRewriterPrompt').value.trim();
+            // Use helper to preserve 0 values while handling NaN from empty inputs
+            const parseNum = (val, fallback) => { const n = parseFloat(val); return Number.isNaN(n) ? fallback : n; };
             const maxTokens = parseInt(document.getElementById('rewriterMaxTokens').value) || 512;
-            const temperature = parseFloat(document.getElementById('rewriterTemperature').value) || 0.6;
-            const topP = parseFloat(document.getElementById('rewriterTopP').value) || 0.95;
+            const temperature = parseNum(document.getElementById('rewriterTemperature').value, 0.6);
+            const topP = parseNum(document.getElementById('rewriterTopP').value, 0.95);
             const topK = parseInt(document.getElementById('rewriterTopK').value) || 20;
-            const minP = parseFloat(document.getElementById('rewriterMinP').value) || 0.0;
-            const presencePenalty = parseFloat(document.getElementById('rewriterPresencePenalty').value) || 0.0;
+            const minP = parseNum(document.getElementById('rewriterMinP').value, 0.0);
+            const presencePenalty = parseNum(document.getElementById('rewriterPresencePenalty').value, 0.0);
             const selectedModel = document.getElementById('rewriterModel').value;
             const isVLModel = selectedModel === 'qwen3-vl' || selectedModel === 'qwen3-vl-api';
 
@@ -2016,6 +2040,7 @@
         loadTemplates();
         loadRewriters();
         loadRewriterModels();
+        loadGenerationConfig();
         loadHistory();
         checkVLStatus();
     </script>
