@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- Caption length study experiment scripts
+  - `sweep_caption_fill_modes.sh` - Compare padding strategies (pad_both, pad_left, pad_right) at fixed length 600
+  - `sweep_caption_lengths.sh` - Test embedding lengths from 50 to 1504 tokens in steps of 50
+  - `sweep_caption_hidden_layer.sh` - Sweep Qwen3-4B hidden layers (-2, -6, -8, -12, -16, -21)
+  - `sweep_caption_vl.sh` - Compare VL embeddings vs text encoding, test token modes (text-only vs full)
+  - `run_all_caption_sweeps.sh` - Master script to run all caption experiments with unified flags
+  - All scripts support `--quick`, `--dry-run`, `--config`, `--profile` flags
+  - Master script includes `--skip-vl` option to skip VL experiments
+  - Scripts use `=` syntax for negative number arguments (e.g., `--hidden-layers="-2,-6"`)
+
 ## [0.6.0]
 
 ### Added

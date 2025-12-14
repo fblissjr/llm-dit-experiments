@@ -9,21 +9,15 @@ Architecture Insight:
     The vision encoder projects image features into this 2560-dim space via
     PatchMerger.linear_fc2, enabling zero-shot vision conditioning without training.
 
-Chat Template Format:
-    Z-Image was trained with Qwen3-4B using the format that includes empty think blocks:
-        <|im_start|>user
-        {prompt}<|im_end|>
-        <|im_start|>assistant
-        <think>
+Model Variant Note:
+    This module is designed for Qwen3-VL-4B-Instruct, which is a NON-THINKING model.
+    It does NOT use <think>...</think> blocks - those are only for the separate
+    Qwen3-VL-4B-Thinking model (https://huggingface.co/Qwen/Qwen3-VL-4B-Thinking).
 
-        </think>
+    Official generation parameters for VL mode (from model card):
+        temperature=0.7, top_p=0.8, top_k=20, presence_penalty=1.5
 
-        {content}
-
-    To match this, we use apply_chat_template(enable_thinking=False) which
-    ADDS the empty think block. Qwen3's naming is counterintuitive:
-        enable_thinking=True  -> NO think block (model CAN think)
-        enable_thinking=False -> ADD empty think block (skip thinking)
+    See src/llm_dit/constants/__init__.py for all token IDs.
 """
 
 import logging
@@ -42,19 +36,19 @@ from .blending import (
     scale_embeddings,
 )
 
+# Import token constants from central location
+# Note: THINK_* tokens kept for parsing output from Thinking model variant
+from llm_dit.constants import (
+    THINK_END_TOKEN_ID,
+    THINK_START_TOKEN_ID,
+    VISION_END_TOKEN_ID,
+    VISION_START_TOKEN_ID,
+)
+
 if TYPE_CHECKING:
     from transformers import AutoProcessor, Qwen3VLForConditionalGeneration
 
 logger = logging.getLogger(__name__)
-
-# Qwen3 vision token markers
-VISION_START_TOKEN_ID = 151652
-VISION_END_TOKEN_ID = 151653
-
-# Qwen3 think block token IDs (for manual injection since Qwen3-VL doesn't support enable_thinking)
-THINK_START_TOKEN_ID = 151667  # <think>
-THINK_END_TOKEN_ID = 151668    # </think>
-DOUBLE_NEWLINE_TOKEN_ID = 271  # \n\n (Qwen3 tokenizes double newlines as single token)
 
 
 @dataclass
@@ -69,7 +63,6 @@ class VLExtractionResult:
     scale_factor: float
     token_selection: str  # "all", "image_only", "image_only_no_markers", "text_only"
     text_description: str | None
-    chat_template_format: str  # "with_think_block" or "no_think_block"
     full_prompt_with_tokens: str  # Full decoded prompt including all special tokens
     input_token_ids: list[int]  # Raw token IDs for debugging
     normalization_mode: str = "global"  # "global", "per_dim", or "hybrid"
@@ -139,6 +132,10 @@ class VLEmbeddingExtractor:
         logger.info(f"Loading Qwen3-VL from {model_path}...")
 
         processor = AutoProcessor.from_pretrained(model_path)
+
+        # Qwen3 uses left padding (consistent with text-only model)
+        processor.tokenizer.padding_side = "left"
+
         model = Qwen3VLForConditionalGeneration.from_pretrained(
             model_path,
             torch_dtype=torch_dtype,
@@ -189,13 +186,15 @@ class VLEmbeddingExtractor:
         scale_to_text: bool = True,
         target_std: float = DEFAULT_TARGET_STD,
         normalization_mode: str = "global",
-        force_think_block: bool = True,
         system_prompt: str | None = None,
         outlier_masking: str = "none",
         outlier_threshold: float = 10.0,
     ) -> VLExtractionResult:
         """
         Extract vision-conditioned embeddings from an image.
+
+        This uses Qwen3-VL-4B-Instruct, which is a NON-THINKING model.
+        No think block tokens are injected (unlike the separate Thinking model variant).
 
         Args:
             image: Input image (PIL Image)
@@ -211,8 +210,6 @@ class VLEmbeddingExtractor:
                 - "per_dim": Per-dimension normalization to match Qwen3-4B stats
                   (CRITICAL for image tokens which have 600x+ per-dim outliers)
                 - "hybrid": 50/50 blend of global and per-dim normalization
-            force_think_block: If True (default), inject empty think block tokens to match
-                Qwen3-4B training format. If False, no think block is added.
             system_prompt: Optional system prompt to prepend. If provided, adds a system
                 message before the user message.
             outlier_masking: How to handle dimensions with extreme std ratios vs Qwen3-4B:
@@ -260,8 +257,7 @@ class VLEmbeddingExtractor:
         messages.append({"role": "user", "content": content})
 
         # Process inputs using Qwen3-VL's chat template
-        # NOTE: Qwen3-VL does NOT support enable_thinking parameter (it's ignored with a warning).
-        # We can optionally inject think block tokens to match Z-Image's training format.
+        # Qwen3-VL-4B-Instruct is a non-thinking model - no think block injection needed.
         inputs = self.processor.apply_chat_template(
             messages,
             tokenize=True,
@@ -269,37 +265,10 @@ class VLEmbeddingExtractor:
             return_dict=True,
             return_tensors="pt",
         )
-
-        # Optionally inject think block tokens to match Qwen3-4B training format.
-        # Z-Image was trained with Qwen3-4B using empty think blocks:
-        #   <|im_start|>assistant\n<think>\n\n</think>\n\n
-        # Qwen3-VL produces:
-        #   <|im_start|>assistant\n
-        # When force_think_block=True: append <think>\n\n</think>\n\n (4 tokens)
-        chat_template_format = "no_think_block"
-        if force_think_block:
-            think_block_tokens = torch.tensor([[
-                THINK_START_TOKEN_ID,    # <think>
-                DOUBLE_NEWLINE_TOKEN_ID, # \n\n
-                THINK_END_TOKEN_ID,      # </think>
-                DOUBLE_NEWLINE_TOKEN_ID, # \n\n
-            ]], dtype=inputs["input_ids"].dtype)
-
-            # Append think block tokens to input_ids
-            inputs["input_ids"] = torch.cat([inputs["input_ids"], think_block_tokens], dim=1)
-
-            # Also extend attention_mask if present
-            if "attention_mask" in inputs:
-                think_block_mask = torch.ones((1, 4), dtype=inputs["attention_mask"].dtype)
-                inputs["attention_mask"] = torch.cat([inputs["attention_mask"], think_block_mask], dim=1)
-
-            chat_template_format = "with_think_block"
-            logger.debug(f"Injected think block tokens, new sequence length: {inputs['input_ids'].shape[1]}")
-        else:
-            logger.debug(f"No think block injection, sequence length: {inputs['input_ids'].shape[1]}")
+        logger.debug(f"Input sequence length: {inputs['input_ids'].shape[1]}")
 
         # Capture the full prompt with special tokens for debugging/metadata
-        # Decode the full input sequence (including image placeholders and think block)
+        # Decode the full input sequence (including image placeholders)
         input_token_ids = inputs["input_ids"][0].tolist()
         full_prompt_with_tokens = self.processor.tokenizer.decode(
             input_token_ids,
@@ -413,7 +382,6 @@ class VLEmbeddingExtractor:
             scale_factor=scale_factor,
             token_selection=token_selection,
             text_description=text,
-            chat_template_format=chat_template_format,
             full_prompt_with_tokens=full_prompt_with_tokens,
             input_token_ids=input_token_ids,
             normalization_mode=normalization_mode,
@@ -430,11 +398,11 @@ class VLEmbeddingExtractor:
         image: Image.Image | None = None,
         system_prompt: str | None = None,
         max_new_tokens: int = 512,
-        temperature: float = 0.6,
-        top_p: float = 0.95,
+        temperature: float = 0.7,
+        top_p: float = 0.8,
         top_k: int = 20,
         min_p: float = 0.0,
-        presence_penalty: float = 0.0,
+        presence_penalty: float = 1.5,
         do_sample: bool = True,
     ) -> str:
         """
@@ -443,25 +411,30 @@ class VLEmbeddingExtractor:
         This method enables using Qwen3-VL for prompt rewriting with vision support.
         It can process text-only, image-only, or combined image+text inputs.
 
-        Qwen3 Best Practices (thinking mode):
-        - temperature=0.6, top_p=0.95, top_k=20, min_p=0 (default)
-        - DO NOT use greedy decoding (causes repetition)
-        - presence_penalty=0-2 helps reduce endless repetitions
+        Sampling Defaults (from Qwen3-VL-4B-Instruct model card):
+            temperature=0.7, top_p=0.8, top_k=20, presence_penalty=1.5
+
+            This is a NON-THINKING model (Instruct variant). For the Thinking variant,
+            use Qwen3-VL-4B-Thinking with different parameters.
+
+        Qwen3 Best Practices:
+        - DO NOT use greedy decoding (causes repetition loops)
+        - presence_penalty=1.5 (model card default) helps reduce repetitions
 
         Args:
             prompt: User prompt/message (optional if image provided)
             image: Input image for vision-language processing (optional if prompt provided)
             system_prompt: Optional system prompt (rewriter template content)
             max_new_tokens: Maximum tokens to generate
-            temperature: Sampling temperature (Qwen3 thinking: 0.6)
-            top_p: Nucleus sampling threshold (Qwen3 thinking: 0.95)
-            top_k: Top-k sampling (Qwen3: 20)
-            min_p: Minimum probability threshold (Qwen3: 0.0)
-            presence_penalty: Penalty for token presence (0-2, helps reduce repetition)
+            temperature: Sampling temperature (default: 0.7, VL Instruct)
+            top_p: Nucleus sampling threshold (default: 0.8, VL Instruct)
+            top_k: Top-k sampling (default: 20)
+            min_p: Minimum probability threshold (default: 0.0, disabled)
+            presence_penalty: Penalty for token presence (default: 1.5, VL Instruct)
             do_sample: Whether to use sampling (False = greedy, NOT recommended for Qwen3)
 
         Returns:
-            Generated text (assistant response, may include <think> tags if model used them)
+            Generated text (assistant response)
 
         Raises:
             RuntimeError: If model has been unloaded
@@ -488,9 +461,11 @@ class VLEmbeddingExtractor:
             raise ValueError("At least one of 'prompt' or 'image' must be provided")
 
         # Build messages for chat template
+        # Note: Qwen3-VL processor expects content to be a list of dicts for all messages
+        # when processing vision inputs, so we wrap system prompt in the same format
         messages = []
         if system_prompt:
-            messages.append({"role": "system", "content": system_prompt})
+            messages.append({"role": "system", "content": [{"type": "text", "text": system_prompt}]})
 
         # Build user message content (can have image, text, or both)
         content = []

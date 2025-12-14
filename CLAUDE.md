@@ -271,11 +271,25 @@ The config specifies `axes_lens=[1536, 512, 512]` and `axes_dims=[32, 48, 48]`. 
 
 **Note**: This limit is architectural, not a fundamental constraint. Future research directions include RoPE extrapolation, hierarchical encoding, and chunked attention. See the research doc for exploration plans.
 
-## Chat Template Format (Qwen3-4B)
+## Chat Template Format (Qwen3-4B and Qwen3-VL)
 
-### Official HuggingFace Space Format (Default)
+### CRITICAL: Model-Specific Template Behavior
 
-The official Z-Image HuggingFace Space uses this format by default:
+**Qwen3-4B** and **Qwen3-VL-4B-Instruct** have DIFFERENT chat template capabilities:
+
+| Feature | Qwen3-4B | Qwen3-VL-4B-Instruct |
+|---------|----------|----------------------|
+| `enable_thinking` parameter | Supported | **NOT supported** |
+| Auto think block generation | Yes (via template) | No |
+| Manual token injection needed | No | **Yes** |
+
+### Qwen3-4B Chat Template
+
+The Qwen3-4B tokenizer supports the `enable_thinking` parameter with counterintuitive naming:
+- `enable_thinking=True` -> NO think block (model CAN think on its own)
+- `enable_thinking=False` -> ADD empty `<think>\n\n</think>\n\n` (skip thinking)
+
+The official Z-Image HuggingFace Space uses `enable_thinking=True` which produces NO think block:
 
 ```
 <|im_start|>user
@@ -283,7 +297,27 @@ The official Z-Image HuggingFace Space uses this format by default:
 <|im_start|>assistant
 ```
 
-**No think block by default.** This matches calling `tokenizer.apply_chat_template(enable_thinking=True)`.
+### Qwen3-VL Chat Template (DIFFERENT)
+
+**Qwen3-VL's tokenizer does NOT support `enable_thinking`.** The template will:
+- Silently ignore the parameter if passed
+- Never auto-generate thinking blocks
+
+For Qwen3-VL, you MUST manually inject think block tokens:
+
+```python
+from llm_dit.constants import (
+    THINK_START_TOKEN_ID,  # 151667
+    THINK_END_TOKEN_ID,    # 151668
+    DOUBLE_NEWLINE_TOKEN_ID,  # 271
+)
+
+# Manual injection after tokenization
+think_tokens = [THINK_START_TOKEN_ID, DOUBLE_NEWLINE_TOKEN_ID,
+                THINK_END_TOKEN_ID, DOUBLE_NEWLINE_TOKEN_ID]
+```
+
+This is implemented in `src/llm_dit/vl/qwen3_vl.py`.
 
 ### Full Format (All Components)
 
@@ -314,15 +348,6 @@ Our implementation uses **content-driven** logic to match the official HF Space 
 - Empty think: `<think>\n\n</think>\n\n`
 - With content: `<think>\n{content}\n</think>\n\n`
 - With assistant: `<think>\n{content}\n</think>\n\n{assistant}<|im_end|>`
-
-### Qwen3 Tokenizer Behavior (Reference)
-
-Note: Qwen3's `enable_thinking` parameter has counterintuitive naming:
-- `enable_thinking=True` -> NO think block (model CAN think on its own)
-- `enable_thinking=False` -> ADD empty `<think>\n\n</think>\n\n` (skip thinking)
-
-The official HF Space uses `enable_thinking=True` which produces NO think block.
-Our `force_think_block` parameter provides explicit control without this confusion.
 
 ### API Components
 
@@ -369,27 +394,52 @@ For Qwen3 Instruct models without thinking capability (e.g., Qwen3-4B-Instruct-2
 | top_k | 20 | Same as thinking mode |
 | min_p | 0.0 | Disabled |
 
-### Token IDs (Qwen3-4B)
+### Token IDs (Shared by Qwen3-4B and Qwen3-VL)
 
-| Token | ID | Usage |
-|-------|-----|-------|
-| `<think>` | 151667 | Start thinking block |
-| `</think>` | 151668 | End thinking block |
-| `<|im_start|>` | 151644 | Chat template start |
-| `<|im_end|>` | 151645 | Chat template end |
+Both models share **identical tokenizers** with the same token IDs. All constants are defined in `src/llm_dit/constants/__init__.py`.
+
+| Token | ID | Constant | Usage |
+|-------|-----|----------|-------|
+| `<|endoftext|>` | 151643 | `ENDOFTEXT_TOKEN_ID` | PAD token |
+| `<|im_start|>` | 151644 | `IM_START_TOKEN_ID` | Chat message start |
+| `<|im_end|>` | 151645 | `IM_END_TOKEN_ID` | Chat message end / EOS |
+| `<|vision_start|>` | 151652 | `VISION_START_TOKEN_ID` | Vision content start (VL) |
+| `<|vision_end|>` | 151653 | `VISION_END_TOKEN_ID` | Vision content end (VL) |
+| `<|image_pad|>` | 151655 | `IMAGE_PAD_TOKEN_ID` | Image placeholder (VL) |
+| `<think>` | 151667 | `THINK_START_TOKEN_ID` | Thinking block start |
+| `</think>` | 151668 | `THINK_END_TOKEN_ID` | Thinking block end |
+| `\n\n` | 271 | `DOUBLE_NEWLINE_TOKEN_ID` | Double newline |
+
+**Usage:**
+```python
+from llm_dit.constants import (
+    THINK_START_TOKEN_ID,
+    THINK_END_TOKEN_ID,
+    EMPTY_THINK_BLOCK_TOKENS,
+    PAD_TOKEN_ID,
+    PADDING_SIDE,
+)
+```
 
 ### Compatible Qwen3 Models
 
 For Z-Image text encoding, the model must have **2560 hidden dimensions** (matching the DiT's expected input):
 
-| Model | Hidden Dim | Compatible |
-|-------|-----------|------------|
-| Qwen3-4B | 2560 | Yes |
-| Qwen3-4B-Instruct-2507 | 2560 | Yes (non-thinking only) |
-| Qwen3-8B | 4096 | No |
-| Qwen3-14B | 5120 | No |
-| Qwen3-32B | 5120 | No |
-| Qwen3-72B | 8192 | No |
+| Model | Hidden Dim | Compatible | Notes |
+|-------|-----------|------------|-------|
+| Qwen3-4B | 2560 | Yes | Primary text encoder |
+| Qwen3-VL-4B-Instruct | 2560 | Yes | Vision + text, projects vision to 2560 |
+| Qwen3-4B-Instruct-2507 | 2560 | Yes | Non-thinking only |
+| Qwen3-8B | 4096 | No | |
+| Qwen3-14B | 5120 | No | |
+| Qwen3-32B | 5120 | No | |
+| Qwen3-72B | 8192 | No | |
+
+**Qwen3-VL-4B-Instruct specifics:**
+- Vision encoder: 1024 hidden dim, 24 layers
+- Vision output: Projects to 2560 dims (text-compatible)
+- RoPE: Uses MRoPE with 5x higher theta (5,000,000 vs 1,000,000)
+- Max positions: 262,144 (vs 40,960 for Qwen3-4B)
 
 ### Configuration Examples
 
@@ -422,6 +472,8 @@ src/llm_dit/
         config.py       # BackendConfig dataclass
         transformers.py # HuggingFace transformers backend
         api.py          # API backend (heylookitsanllm)
+    constants/          # Qwen3 token IDs and model configs
+        __init__.py     # Token IDs, generation defaults, model configs
     conversation/       # Chat formatting
         types.py        # Message, Conversation dataclasses
         formatter.py    # Qwen3Formatter
@@ -460,7 +512,12 @@ config.toml             # Example configuration file
 
 experiments/            # Ablation studies and evaluation tools
     run_ablation.py     # Automated experiment runner
-    sweep_*.sh          # Priority sweep scripts
+    sweep_*.sh          # Parameter sweep scripts (various experiments)
+    sweep_caption_fill_modes.sh    # Compare padding strategies at fixed length
+    sweep_caption_lengths.sh       # Test embedding lengths 50-1504
+    sweep_caption_hidden_layer.sh  # Sweep Qwen3-4B layers -2,-6,-8,-12,-16,-21
+    sweep_caption_vl.sh            # Compare VL embeddings vs text encoding
+    run_all_caption_sweeps.sh      # Master script for caption experiments
     compare.py          # CLI comparison tool (grids, diffs)
     compare/            # Comparison module
         discovery.py    # Auto-discover experiments from results/
