@@ -309,6 +309,9 @@ class EmbeddingExtractor:
         Uses full_sequence mode with layer -2 (penultimate) to match
         the default Qwen3-4B extraction for Z-Image.
 
+        NOTE: This encodes raw text without chat template. For best results
+        matching Qwen3-4B output, use encode_for_zimage_formatted() instead.
+
         IMPORTANT: Based on experiments (2025-12-14):
         - Always use layer -2 (NOT -1, which is incompatible)
         - Do NOT use instruction prefixes (they dilute the prompt)
@@ -335,6 +338,64 @@ class EmbeddingExtractor:
             hidden_layer=hidden_layer,
             normalize=False,
             instruction=None,  # Explicitly no instruction for Z-Image
+        )
+
+        embeddings = result.embeddings
+        if scale_factor != 1.0:
+            embeddings = embeddings * scale_factor
+
+        return embeddings
+
+    def encode_for_zimage_formatted(
+        self,
+        text: str,
+        hidden_layer: int = -2,
+        scale_factor: float = 1.0,
+    ) -> torch.Tensor:
+        """
+        Encode with Qwen3 chat template for Z-Image conditioning.
+
+        This method applies the same chat template formatting as Qwen3-4B,
+        producing embeddings that should be visually equivalent when used
+        with Z-Image DiT.
+
+        Format applied (matches official Z-Image HF Space with enable_thinking=True):
+            <|im_start|>user
+            {text}<|im_end|>
+            <|im_start|>assistant
+
+        IMPORTANT: This does NOT include think blocks because:
+        1. Qwen3-Embedding-4B doesn't have <think>/<think> as special tokens
+           (they get tokenized as regular text, breaking compatibility)
+        2. The official Z-Image HF Space uses enable_thinking=True which
+           means NO think block
+
+        Args:
+            text: Prompt text to encode
+            hidden_layer: Hidden layer to extract from (default: -2)
+            scale_factor: Magnitude scaling (default: 1.0)
+
+        Returns:
+            Embeddings tensor of shape (seq_len, 2560)
+        """
+        if hidden_layer == -1:
+            logger.warning(
+                "Layer -1 produces only 6% cosine similarity with Qwen3-4B. "
+                "Use -2 instead for Z-Image compatibility."
+            )
+
+        # Build chat template format matching Qwen3-4B (NO think block)
+        # This matches the official Z-Image HF Space which uses enable_thinking=True
+        formatted = f"<|im_start|>user\n{text}<|im_end|>\n<|im_start|>assistant\n"
+
+        logger.debug(f"Formatted prompt: {repr(formatted)}")
+
+        result = self.extract(
+            formatted,
+            mode="full_sequence",
+            hidden_layer=hidden_layer,
+            normalize=False,
+            instruction=None,
         )
 
         embeddings = result.embeddings

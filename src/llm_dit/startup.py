@@ -271,11 +271,11 @@ class PipelineLoader:
         logger.info("Final pipeline state:")
         logger.info(f"  pipeline.device: {self._pipeline.device}")
         logger.info(f"  pipeline.dtype: {self._pipeline.dtype}")
-        if self._pipeline.encoder:
+        if self._pipeline.encoder is not None:
             logger.info(f"  encoder.device: {self._pipeline.encoder.device}")
-        if self._pipeline.transformer:
+        if self._pipeline.transformer is not None:
             logger.info(f"  transformer.device: {next(self._pipeline.transformer.parameters()).device}")
-        if self._pipeline.vae:
+        if self._pipeline.vae is not None:
             logger.info(f"  vae.device: {next(self._pipeline.vae.parameters()).device}")
         logger.info("=" * 60)
 
@@ -284,9 +284,9 @@ class PipelineLoader:
             encoder=self._encoder,
             load_time=load_time,
             mode="full",
-            encoder_device=str(self._pipeline.encoder.device) if self._pipeline.encoder else None,
-            dit_device=str(next(self._pipeline.transformer.parameters()).device) if self._pipeline.transformer else None,
-            vae_device=str(next(self._pipeline.vae.parameters()).device) if self._pipeline.vae else None,
+            encoder_device=str(self._pipeline.encoder.device) if self._pipeline.encoder is not None else None,
+            dit_device=str(next(self._pipeline.transformer.parameters()).device) if self._pipeline.transformer is not None else None,
+            vae_device=str(next(self._pipeline.vae.parameters()).device) if self._pipeline.vae is not None else None,
         )
 
     def load_api_encoder(self) -> LoadResult:

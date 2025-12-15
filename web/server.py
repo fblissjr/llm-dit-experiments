@@ -672,10 +672,10 @@ async def generate(request: GenerateRequest):
         logger.info("Pipeline state:")
         logger.info(f"  pipeline.device: {pipeline.device}")
         logger.info(f"  pipeline.dtype: {pipeline.dtype}")
-        logger.info(f"  pipeline.encoder: {type(pipeline.encoder).__name__ if pipeline.encoder else 'None'}")
+        logger.info(f"  pipeline.encoder: {type(pipeline.encoder).__name__ if pipeline.encoder is not None else 'None'}")
         logger.info(f"  pipeline.transformer: {pipeline.transformer is not None}")
         logger.info(f"  pipeline.vae: {pipeline.vae is not None}")
-        if pipeline.encoder:
+        if pipeline.encoder is not None:
             backend = getattr(pipeline.encoder, 'backend', None)
             logger.info(f"  encoder.backend: {type(backend).__name__ if backend else 'None'}")
         logger.info("-" * 60)

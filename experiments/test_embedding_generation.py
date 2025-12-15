@@ -125,18 +125,22 @@ def main():
     from llm_dit.embedding import EmbeddingExtractor
     from llm_dit.backends.transformers import TransformersBackend
     from llm_dit.pipelines.z_image import ZImagePipeline
-    from llm_dit.conversation import Qwen3Formatter, Conversation, Message, Role
 
-    formatter = Qwen3Formatter()
+    def format_prompt_chat(prompt: str) -> str:
+        """Format prompt with Qwen3 chat template.
 
-    def format_prompt(prompt: str) -> str:
-        """Format prompt with Qwen3 chat template."""
-        conv = Conversation(
-            messages=[Message(role=Role.USER, content=prompt)],
-            enable_thinking=True,  # Add empty think block (Z-Image default)
-            is_final=True,
-        )
-        return formatter.format(conv)
+        Note: This produces 58% cosine similarity between models due to
+        different handling of special tokens. Use for Qwen3-4B only.
+        """
+        return f"<|im_start|>user\n{prompt}<|im_end|>\n<|im_start|>assistant\n"
+
+    def format_prompt_raw(prompt: str) -> str:
+        """Return raw prompt without chat template.
+
+        Note: This produces 98% cosine similarity between models.
+        Use for Qwen3-Embedding-4B to maximize compatibility.
+        """
+        return prompt
 
     # -------------------------------------------------------------------------
     # Phase 1: Extract embeddings from both models (sequentially to save VRAM)
@@ -155,10 +159,16 @@ def main():
 
     logger.info("Encoding prompts with Qwen3-4B...")
     for prompt in args.prompts:
-        formatted = format_prompt(prompt)
+        # Use chat template for Qwen3-4B (Z-Image official format)
+        formatted = format_prompt_chat(prompt)
         output = qwen3_backend.encode([formatted])  # Note: expects list of strings
-        all_embeddings[prompt] = {"qwen3": output.embeddings[0].cpu()}
-        logger.info(f"  '{prompt}': {len(all_embeddings[prompt]['qwen3'])} tokens")
+        all_embeddings[prompt] = {"qwen3_chat": output.embeddings[0].cpu()}
+        logger.info(f"  '{prompt}' (chat): {len(all_embeddings[prompt]['qwen3_chat'])} tokens")
+
+        # Also encode raw prompt for comparison
+        output_raw = qwen3_backend.encode([prompt])
+        all_embeddings[prompt]["qwen3_raw"] = output_raw.embeddings[0].cpu()
+        logger.info(f"  '{prompt}' (raw): {len(all_embeddings[prompt]['qwen3_raw'])} tokens")
 
     # Unload Qwen3-4B
     logger.info("Unloading Qwen3-4B...")
@@ -173,12 +183,15 @@ def main():
         torch_dtype=torch.bfloat16,
     )
 
-    logger.info("Encoding prompts with Qwen3-Embedding-4B...")
+    logger.info("Encoding prompts with Qwen3-Embedding-4B (raw prompt)...")
     for prompt in args.prompts:
         for scale in args.scale_factors:
-            emb = embedding_extractor.encode_for_zimage(prompt, hidden_layer=-2, scale_factor=scale)
-            all_embeddings[prompt][f"embedding_{scale}"] = emb.cpu()
-            logger.info(f"  '{prompt}' (scale={scale}): {len(emb)} tokens, std={emb.std():.2f}")
+            # Use RAW prompt - chat template breaks compatibility (58% vs 98% cosine sim)
+            emb = embedding_extractor.encode_for_zimage(
+                prompt, hidden_layer=-2, scale_factor=scale
+            )
+            all_embeddings[prompt][f"embedding_raw_{scale}"] = emb.cpu()
+            logger.info(f"  '{prompt}' (raw, scale={scale}): {len(emb)} tokens, std={emb.std():.2f}")
 
     # Unload embedding model
     logger.info("Unloading Qwen3-Embedding-4B...")
@@ -209,44 +222,54 @@ def main():
         prompt_embeddings = all_embeddings[prompt]
         safe_prompt = prompt.replace(" ", "_")[:30]
 
-        # Generate with Qwen3-4B (baseline)
-        logger.info("Generating with Qwen3-4B...")
-        qwen3_embeddings = prompt_embeddings["qwen3"]
-        logger.info(f"  Qwen3-4B: {len(qwen3_embeddings)} tokens, std={qwen3_embeddings.std():.2f}")
+        # Generate with Qwen3-4B (chat template - official Z-Image format)
+        logger.info("Generating with Qwen3-4B (chat template)...")
+        qwen3_chat_emb = prompt_embeddings["qwen3_chat"]
+        logger.info(f"  Qwen3-4B chat: {len(qwen3_chat_emb)} tokens, std={qwen3_chat_emb.std():.2f}")
 
-        # Generate image (embeddings should be 2D: seq_len x dim, not batched)
         generator = torch.Generator(device="cpu").manual_seed(args.seed)
         result = pipe(
-            prompt_embeds=qwen3_embeddings.to("cuda", torch.bfloat16),
+            prompt_embeds=qwen3_chat_emb.to("cuda", torch.bfloat16),
             num_inference_steps=args.steps,
             generator=generator,
         )
-        qwen3_image = result.images[0] if hasattr(result, 'images') else result
-        images.append(qwen3_image)
-        labels.append(f"Qwen3-4B\nstd={qwen3_embeddings.std():.1f}")
+        img = result.images[0] if hasattr(result, 'images') else result
+        images.append(img)
+        labels.append(f"Qwen3-4B\n(chat)\nstd={qwen3_chat_emb.std():.1f}")
+        img.save(args.output_dir / f"{safe_prompt}_qwen3_4b_chat.png")
 
-        # Save individual image
-        qwen3_image.save(args.output_dir / f"{safe_prompt}_qwen3_4b.png")
+        # Generate with Qwen3-4B (raw prompt - for fair comparison)
+        logger.info("Generating with Qwen3-4B (raw prompt)...")
+        qwen3_raw_emb = prompt_embeddings["qwen3_raw"]
+        logger.info(f"  Qwen3-4B raw: {len(qwen3_raw_emb)} tokens, std={qwen3_raw_emb.std():.2f}")
 
-        # Generate with Qwen3-Embedding-4B at different scale factors
+        generator = torch.Generator(device="cpu").manual_seed(args.seed)
+        result = pipe(
+            prompt_embeds=qwen3_raw_emb.to("cuda", torch.bfloat16),
+            num_inference_steps=args.steps,
+            generator=generator,
+        )
+        img = result.images[0] if hasattr(result, 'images') else result
+        images.append(img)
+        labels.append(f"Qwen3-4B\n(raw)\nstd={qwen3_raw_emb.std():.1f}")
+        img.save(args.output_dir / f"{safe_prompt}_qwen3_4b_raw.png")
+
+        # Generate with Qwen3-Embedding-4B (raw prompt) at different scale factors
         for scale in args.scale_factors:
-            logger.info(f"Generating with Qwen3-Embedding-4B (scale={scale})...")
-            emb_embeddings = prompt_embeddings[f"embedding_{scale}"]
-            logger.info(f"  Embedding: {len(emb_embeddings)} tokens, std={emb_embeddings.std():.2f}")
+            logger.info(f"Generating with Qwen3-Embedding-4B (raw, scale={scale})...")
+            emb_embeddings = prompt_embeddings[f"embedding_raw_{scale}"]
+            logger.info(f"  Embedding raw: {len(emb_embeddings)} tokens, std={emb_embeddings.std():.2f}")
 
-            # Generate image (embeddings should be 2D: seq_len x dim, not batched)
             generator = torch.Generator(device="cpu").manual_seed(args.seed)
             result = pipe(
                 prompt_embeds=emb_embeddings.to("cuda", torch.bfloat16),
                 num_inference_steps=args.steps,
                 generator=generator,
             )
-            emb_image = result.images[0] if hasattr(result, 'images') else result
-            images.append(emb_image)
-            labels.append(f"Qwen3-Emb\nscale={scale}\nstd={emb_embeddings.std():.1f}")
-
-            # Save individual image
-            emb_image.save(args.output_dir / f"{safe_prompt}_qwen3_embedding_scale{scale}.png")
+            img = result.images[0] if hasattr(result, 'images') else result
+            images.append(img)
+            labels.append(f"Qwen3-Emb\n(raw)\nscale={scale}")
+            img.save(args.output_dir / f"{safe_prompt}_embedding_raw_scale{scale}.png")
 
         # Create comparison grid
         grid = create_comparison_grid(
