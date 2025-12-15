@@ -1094,6 +1094,12 @@
                         opt.textContent = r.description || r.name;
                         select.appendChild(opt);
                     });
+                    // Set default to detailed_captioner if available, otherwise rewriter_official
+                    const defaultRewriter = data.rewriters.find(r => r.name === 'rewriter_detailed_captioner')
+                        || data.rewriters.find(r => r.name === 'rewriter_official');
+                    if (defaultRewriter) {
+                        select.value = defaultRewriter.name;
+                    }
                 }
                 // Always setup mode toggle (custom mode always available)
                 setupRewriterModeToggle();

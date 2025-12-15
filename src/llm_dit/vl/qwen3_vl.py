@@ -9,14 +9,20 @@ Architecture Insight:
     The vision encoder projects image features into this 2560-dim space via
     PatchMerger.linear_fc2, enabling zero-shot vision conditioning without training.
 
-Model Variant Note:
-    This module is designed for Qwen3-VL-4B-Instruct, which is a NON-THINKING model.
-    It does NOT use <think>...</think> blocks - those are only for the separate
-    Qwen3-VL-4B-Thinking model (https://huggingface.co/Qwen/Qwen3-VL-4B-Thinking).
+Supported Model Variants:
+    This module supports two Qwen3-VL-4B variants, both compatible with Z-Image:
 
-    Official generation parameters for VL mode (from model card):
-        temperature=0.7, top_p=0.8, top_k=20, presence_penalty=1.5
+    1. Qwen3-VL-4B-Instruct (non-thinking):
+       - Does NOT use <think>...</think> blocks
+       - Chat template ends with: <|im_start|>assistant\\n
+       - Official params: temperature=0.7, top_p=0.8, top_k=20, presence_penalty=1.5
 
+    2. Qwen3-VL-4B-Thinking:
+       - NATIVELY supports <think>...</think> blocks in chat template
+       - Chat template ends with: <|im_start|>assistant\\n<think>\\n
+       - May preserve visual concepts better in later layers due to "thinking" training
+
+    The model variant is auto-detected from the chat_template at load time.
     See src/llm_dit/constants/__init__.py for all token IDs.
 """
 
@@ -72,6 +78,8 @@ class VLExtractionResult:
     outlier_threshold: float = 10.0  # Std ratio threshold for masking
     masked_dimensions: list[int] | None = None  # Dimensions that were masked
     masked_dim_ratios: dict[int, float] | None = None  # Dimension index -> std ratio
+    # Model variant info
+    model_variant: str = "instruct"  # "instruct" or "thinking"
 
 
 class VLEmbeddingExtractor:
@@ -81,8 +89,13 @@ class VLEmbeddingExtractor:
     This class manages the Qwen3-VL model lifecycle and provides methods
     for extracting embeddings suitable for Z-Image conditioning.
 
+    Supported variants (auto-detected):
+        - "instruct": Qwen3-VL-4B-Instruct (no think blocks)
+        - "thinking": Qwen3-VL-4B-Thinking (native <think> support)
+
     Example:
         >>> extractor = VLEmbeddingExtractor.from_pretrained("/path/to/Qwen3-VL-4B")
+        >>> print(f"Model variant: {extractor.model_variant}")
         >>> result = extractor.extract(image, text="A house with a red roof")
         >>> print(result.embeddings.shape)  # (seq_len, 2560)
 
@@ -98,15 +111,24 @@ class VLEmbeddingExtractor:
         model: "Qwen3VLForConditionalGeneration",
         processor: "AutoProcessor",
         device: str = "cuda",
+        model_variant: str = "instruct",
     ):
         """
         Initialize with pre-loaded model and processor.
 
-        Use `from_pretrained()` or `from_path()` factory methods instead.
+        Use `from_pretrained()` factory method instead.
+
+        Args:
+            model: Loaded Qwen3VL model
+            processor: AutoProcessor for tokenization
+            device: Device the model is on
+            model_variant: "instruct" or "thinking" (auto-detected by from_pretrained)
         """
         self.model = model
         self.processor = processor
         self.device = device
+        self.model_variant = model_variant
+        self._is_thinking_model = model_variant == "thinking"
         self._loaded = True
 
     @classmethod
@@ -119,13 +141,16 @@ class VLEmbeddingExtractor:
         """
         Load Qwen3-VL model from path or HuggingFace ID.
 
+        The model variant (instruct vs thinking) is auto-detected from the
+        chat_template. Thinking models have native <think> block support.
+
         Args:
             model_path: Path to model directory or HuggingFace model ID
             device: Device to load model on (cuda, cpu, auto)
             torch_dtype: Model precision (default: bfloat16)
 
         Returns:
-            VLEmbeddingExtractor instance
+            VLEmbeddingExtractor instance with model_variant set
         """
         from transformers import AutoProcessor, Qwen3VLForConditionalGeneration
 
@@ -136,6 +161,13 @@ class VLEmbeddingExtractor:
         # Qwen3 uses left padding (consistent with text-only model)
         processor.tokenizer.padding_side = "left"
 
+        # Auto-detect model variant from chat_template
+        # Thinking model template ends with: <|im_start|>assistant\n<think>\n
+        # Instruct model template ends with: <|im_start|>assistant\n
+        chat_template = processor.tokenizer.chat_template or ""
+        is_thinking = "assistant\\n<think>" in chat_template
+        model_variant = "thinking" if is_thinking else "instruct"
+
         model = Qwen3VLForConditionalGeneration.from_pretrained(
             model_path,
             torch_dtype=torch_dtype,
@@ -143,7 +175,7 @@ class VLEmbeddingExtractor:
         )
 
         hidden_size = model.config.text_config.hidden_size
-        logger.info(f"Qwen3-VL loaded. Hidden size: {hidden_size}")
+        logger.info(f"Qwen3-VL loaded. Hidden size: {hidden_size}, variant: {model_variant}")
 
         if hidden_size != 2560:
             logger.warning(
@@ -151,29 +183,46 @@ class VLEmbeddingExtractor:
                 f"Embeddings may not be compatible without projection."
             )
 
-        return cls(model, processor, device)
+        return cls(model, processor, device, model_variant)
 
     @classmethod
-    def find_model_path(cls) -> str | None:
+    def find_model_path(
+        cls,
+        prefer_variant: str | None = None,
+    ) -> tuple[str | None, str | None]:
         """
         Auto-detect Qwen3-VL model in common locations.
 
+        Args:
+            prefer_variant: If specified ("thinking" or "instruct"), prioritize
+                that variant. Otherwise, checks Thinking first, then Instruct.
+
         Returns:
-            Path to model directory if found, None otherwise
+            Tuple of (model_path, variant) if found, (None, None) otherwise.
+            variant is "thinking" or "instruct".
         """
+        # Candidates: (path, variant)
         candidates = [
-            Path.home() / "Storage" / "Qwen3-VL-4B-Instruct",
-            Path.home() / "models" / "Qwen3-VL-4B-Instruct",
-            Path("/models/Qwen3-VL-4B-Instruct"),
-            Path.home() / ".cache" / "huggingface" / "hub" / "models--Qwen--Qwen3-VL-4B-Instruct",
+            # Thinking variants (prioritized for experiments)
+            (Path.home() / "Storage" / "Qwen3-VL-4B-Thinking", "thinking"),
+            (Path.home() / "models" / "Qwen3-VL-4B-Thinking", "thinking"),
+            # Instruct variants
+            (Path.home() / "Storage" / "Qwen3-VL-4B-Instruct", "instruct"),
+            (Path.home() / "models" / "Qwen3-VL-4B-Instruct", "instruct"),
+            (Path("/models/Qwen3-VL-4B-Instruct"), "instruct"),
+            (Path.home() / ".cache" / "huggingface" / "hub" / "models--Qwen--Qwen3-VL-4B-Instruct", "instruct"),
         ]
 
-        for candidate in candidates:
-            if candidate.exists():
-                logger.info(f"Found Qwen3-VL at {candidate}")
-                return str(candidate)
+        # If prefer_variant specified, sort to prioritize that variant
+        if prefer_variant:
+            candidates.sort(key=lambda x: x[1] != prefer_variant)
 
-        return None
+        for path, variant in candidates:
+            if path.exists():
+                logger.info(f"Found Qwen3-VL at {path} (variant: {variant})")
+                return str(path), variant
+
+        return None, None
 
     def extract(
         self,
@@ -257,7 +306,9 @@ class VLEmbeddingExtractor:
         messages.append({"role": "user", "content": content})
 
         # Process inputs using Qwen3-VL's chat template
-        # Qwen3-VL-4B-Instruct is a non-thinking model - no think block injection needed.
+        # - Instruct model: add_generation_prompt=True produces `assistant\n` (no think block)
+        # - Thinking model: add_generation_prompt=True produces `assistant\n<think>\n` (native)
+        # No manual think token injection needed - the template handles it based on model variant.
         inputs = self.processor.apply_chat_template(
             messages,
             tokenize=True,
@@ -275,6 +326,9 @@ class VLEmbeddingExtractor:
             skip_special_tokens=False,  # Keep ALL special tokens visible
         )
         logger.debug(f"Full prompt with tokens: {repr(full_prompt_with_tokens[:200])}...")
+        # Log the prompt ending to verify think block presence for different model variants
+        prompt_ending = full_prompt_with_tokens[-100:] if len(full_prompt_with_tokens) > 100 else full_prompt_with_tokens
+        logger.info(f"Prompt template ending ({self.model_variant}): ...{repr(prompt_ending)}")
 
         # Move to device
         device = next(self.model.parameters()).device
@@ -390,6 +444,7 @@ class VLEmbeddingExtractor:
             outlier_threshold=outlier_threshold,
             masked_dimensions=masked_dims,
             masked_dim_ratios=masked_ratios,
+            model_variant=self.model_variant,
         )
 
     def generate(

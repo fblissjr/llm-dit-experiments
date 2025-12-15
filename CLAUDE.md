@@ -275,13 +275,15 @@ The config specifies `axes_lens=[1536, 512, 512]` and `axes_dims=[32, 48, 48]`. 
 
 ### CRITICAL: Model-Specific Template Behavior
 
-**Qwen3-4B** and **Qwen3-VL-4B-Instruct** have DIFFERENT chat template capabilities:
+**Qwen3-4B** and **Qwen3-VL** models have DIFFERENT chat template capabilities:
 
-| Feature | Qwen3-4B | Qwen3-VL-4B-Instruct |
-|---------|----------|----------------------|
-| `enable_thinking` parameter | Supported | **NOT supported** |
-| Auto think block generation | Yes (via template) | No |
-| Manual token injection needed | No | **Yes** |
+| Feature | Qwen3-4B | Qwen3-VL-4B-Instruct | Qwen3-VL-4B-Thinking |
+|---------|----------|----------------------|----------------------|
+| `enable_thinking` parameter | Supported | **NOT supported** | **NOT supported** |
+| Auto think block generation | Yes (via template) | No | **Yes (native)** |
+| Manual token injection needed | No | **Yes** | No |
+
+**Model variant auto-detection**: The VL extractor automatically detects if a model is Instruct or Thinking based on the chat template content (`"assistant\\n<think>"` pattern).
 
 ### Qwen3-4B Chat Template
 
@@ -429,13 +431,14 @@ For Z-Image text encoding, the model must have **2560 hidden dimensions** (match
 |-------|-----------|------------|-------|
 | Qwen3-4B | 2560 | Yes | Primary text encoder |
 | Qwen3-VL-4B-Instruct | 2560 | Yes | Vision + text, projects vision to 2560 |
+| Qwen3-VL-4B-Thinking | 2560 | Yes | Vision + text, native think block support |
 | Qwen3-4B-Instruct-2507 | 2560 | Yes | Non-thinking only |
 | Qwen3-8B | 4096 | No | |
 | Qwen3-14B | 5120 | No | |
 | Qwen3-32B | 5120 | No | |
 | Qwen3-72B | 8192 | No | |
 
-**Qwen3-VL-4B-Instruct specifics:**
+**Qwen3-VL-4B model variants:**
 - Vision encoder: 1024 hidden dim, 24 layers
 - Vision output: Projects to 2560 dims (text-compatible)
 - RoPE: Uses MRoPE with 5x higher theta (5,000,000 vs 1,000,000)
@@ -789,7 +792,8 @@ uv run scripts/profiler.py --show-info
 ### Vision Conditioning (Qwen3-VL)
 | Flag | Description |
 |------|-------------|
-| `--vl-model-path` | Path to Qwen3-VL-4B-Instruct model |
+| `--vl-model-path` | Path to Qwen3-VL-4B model (Instruct or Thinking) |
+| `--vl-model-variant` | Model variant: instruct/thinking/both (auto-detected from template) |
 | `--vl-device` | Device for VL model (cpu recommended to save VRAM) |
 | `--vl-alpha` | Default VL influence (0.0-1.0, default: 0.3) |
 | `--vl-hidden-layer` | Hidden layer for VL extraction (default: -2, recommend: -6 for VL) |

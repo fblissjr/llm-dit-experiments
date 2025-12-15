@@ -119,6 +119,7 @@ Usage Examples
 """
 
 import argparse
+import gc
 import json
 import logging
 import sys
@@ -741,6 +742,7 @@ def run_experiments(
     output_dir: str,
     configs: list[ExperimentConfig],
     vl_model_path: str | None = None,
+    vl_model_variant: str = "instruct",
     z_image_config: str = "config.toml",
     z_image_profile: str = "default",
     seed: int = 42,
@@ -751,6 +753,8 @@ def run_experiments(
     """Run all experiment configurations.
 
     Args:
+        vl_model_path: Explicit path to VL model. If None, auto-detects based on variant.
+        vl_model_variant: "instruct" or "thinking". Used for auto-detection and metadata.
         force_think_block: If True, add empty think block to text encoding.
             Default False to match official Z-Image format (enable_thinking=True = no think block).
         system_prompt: Optional system message for text encoding (official uses none).
@@ -823,21 +827,25 @@ def run_experiments(
     logger.info(f"Text embeddings: shape={text_emb.shape}, std={text_emb.std():.2f}")
     logger.debug(f"Text formatted prompt:\n{text_formatted_prompt}")
 
-    # Get VL model path
+    # Get VL model path - use explicit path or auto-detect based on variant
     if not vl_model_path and hasattr(z_config, 'vl_model_path'):
         vl_model_path = z_config.vl_model_path
     if not vl_model_path:
-        candidates = [
-            Path.home() / "Storage" / "Qwen3-VL-4B-Instruct",
-            Path.home() / "models" / "Qwen3-VL-4B-Instruct",
-        ]
-        for candidate in candidates:
-            if candidate.exists():
-                vl_model_path = str(candidate)
-                break
+        # Use new find_model_path with variant preference
+        vl_model_path, detected_variant = VLEmbeddingExtractor.find_model_path(
+            prefer_variant=vl_model_variant
+        )
+        if detected_variant and detected_variant != vl_model_variant:
+            logger.warning(
+                f"Requested variant '{vl_model_variant}' not found, "
+                f"using '{detected_variant}' instead"
+            )
 
     if not vl_model_path:
-        raise ValueError("Could not find Qwen3-VL model. Set vl.model_path in config.toml or use --vl-model-path")
+        raise ValueError(
+            f"Could not find Qwen3-VL model for variant '{vl_model_variant}'. "
+            f"Set vl.model_path in config.toml or use --vl-model-path"
+        )
 
     # Load VL extractor
     vl_device = getattr(z_config, 'vl_device', None) or "cuda"
@@ -848,6 +856,13 @@ def run_experiments(
         device=vl_device,
         torch_dtype=vl_dtype,
     )
+
+    # Explicit memory cleanup before loading pipeline
+    # This helps prevent CUDA memory fragmentation
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
 
     # Load Z-Image pipeline
     logger.info("Loading Z-Image pipeline...")
@@ -881,6 +896,8 @@ def run_experiments(
                 vl_text = prompt
 
             # Extract VL embeddings with format configuration
+            # Note: Think block handling is automatic based on model variant
+            # (Thinking model template adds <think> automatically, Instruct does not)
             vl_result = vl_extractor.extract(
                 image=image,
                 text=vl_text,
@@ -890,7 +907,6 @@ def run_experiments(
                 text_tokens_only=config.text_tokens_only,
                 scale_to_text=config.scale_to_text,
                 normalization_mode=config.normalization_mode,
-                force_think_block=config.force_think_block,
                 system_prompt=config.system_prompt,
                 outlier_masking=config.outlier_masking,
                 outlier_threshold=config.outlier_threshold,
@@ -909,6 +925,24 @@ def run_experiments(
                 blended = blend_fn(vl_emb, text_emb, config.alpha)
 
             logger.info(f"  Blend mode: {config.blend_mode}, blended std: {blended.std():.2f}")
+
+            # Save VL metadata before cleanup
+            vl_shape = list(vl_emb.shape)
+            vl_original_std = vl_result.original_std
+            vl_scaled_std = vl_result.scaled_std
+            vl_scale_factor = vl_result.scale_factor
+            vl_full_prompt = vl_result.full_prompt_with_tokens
+            vl_model_variant_result = vl_result.model_variant
+            vl_masked_dimensions = vl_result.masked_dimensions
+            vl_masked_dim_ratios = vl_result.masked_dim_ratios
+
+            # Cleanup VL tensors before CUDA operations
+            # This helps prevent CUDA memory fragmentation
+            del vl_emb
+            del vl_result
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
             # Generate
             output_path = output_dir / f"{config.filename}.png"
@@ -953,20 +987,20 @@ def run_experiments(
             results.append({
                 **asdict(config),
                 "output_path": str(output_path),
-                "vl_shape": list(vl_emb.shape),
-                "vl_original_std": vl_result.original_std,
-                "vl_scaled_std": vl_result.scaled_std,
-                "vl_scale_factor": vl_result.scale_factor,
+                "vl_shape": vl_shape,
+                "vl_original_std": vl_original_std,
+                "vl_scaled_std": vl_scaled_std,
+                "vl_scale_factor": vl_scale_factor,
                 "blended_std": blended.std().item(),
                 "elapsed_seconds": elapsed,
                 "generation_time": gen_time,
                 "success": True,
                 # Full prompt with special tokens for debugging
-                "vl_full_prompt": vl_result.full_prompt_with_tokens,
-                "vl_chat_template_format": vl_result.chat_template_format,
+                "vl_full_prompt": vl_full_prompt,
+                "vl_model_variant": vl_model_variant_result,
                 # Outlier masking info
-                "vl_masked_dimensions": vl_result.masked_dimensions,
-                "vl_masked_dim_ratios": vl_result.masked_dim_ratios,
+                "vl_masked_dimensions": vl_masked_dimensions,
+                "vl_masked_dim_ratios": vl_masked_dim_ratios,
             })
 
         except Exception as e:
@@ -978,6 +1012,9 @@ def run_experiments(
                 "success": False,
                 "error": str(e),
             })
+
+    # Save model info before cleanup
+    vl_model_variant = vl_extractor.model_variant
 
     # Cleanup
     logger.info("\nCleaning up models...")
@@ -1002,7 +1039,7 @@ def run_experiments(
         },
         # VL model info
         "vl_model": {
-            "model": "Qwen3-VL-4B-Instruct",
+            "variant": vl_model_variant,  # "instruct" or "thinking"
             "path": vl_model_path,
         },
         "results": results,
@@ -1118,6 +1155,10 @@ Examples:
 
     # Model paths
     parser.add_argument("--vl-model-path", help="Qwen3-VL model path")
+    parser.add_argument("--vl-model-variant",
+                        choices=["instruct", "thinking", "both"],
+                        default="instruct",
+                        help="VL model variant: instruct (VL-4B-Instruct), thinking (VL-4B-Thinking), or both for A/B comparison")
     parser.add_argument("--config", default="config.toml", help="Z-Image config file")
     parser.add_argument("--profile", default="default", help="Z-Image config profile (use 'default' for consistency with test_all_blend_modes.py)")
 
@@ -1247,50 +1288,66 @@ Examples:
     else:
         base_output_dir = args.output_dir
 
-    total_configs = len(configs) * len(prompts_to_run)
-    logger.info(f"Running {len(configs)} configs x {len(prompts_to_run)} prompts = {total_configs} total experiments")
-    logger.info(f"Base output directory: {base_output_dir}")
+    # Determine which variants to run
+    if args.vl_model_variant == "both":
+        variants_to_run = ["instruct", "thinking"]
+    else:
+        variants_to_run = [args.vl_model_variant]
 
-    # Run experiments for each prompt
+    total_experiments = len(configs) * len(prompts_to_run) * len(variants_to_run)
+    logger.info(f"Running {len(configs)} configs x {len(prompts_to_run)} prompts x {len(variants_to_run)} variants = {total_experiments} total experiments")
+    logger.info(f"Base output directory: {base_output_dir}")
+    logger.info(f"VL model variant(s): {variants_to_run}")
+
+    # Run experiments for each prompt and variant
     all_results = []
     for i, prompt_data in enumerate(prompts_to_run):
         prompt_id = prompt_data["id"]
         prompt_text = prompt_data["prompt"]
 
-        # Create subdirectory for each prompt if multiple prompts
-        if len(prompts_to_run) > 1:
-            output_dir = f"{base_output_dir}/{prompt_id}"
-        else:
-            output_dir = base_output_dir
+        for variant in variants_to_run:
+            # Create subdirectory structure based on prompts and variants
+            if len(prompts_to_run) > 1 and len(variants_to_run) > 1:
+                output_dir = f"{base_output_dir}/{prompt_id}/{variant}"
+            elif len(prompts_to_run) > 1:
+                output_dir = f"{base_output_dir}/{prompt_id}"
+            elif len(variants_to_run) > 1:
+                output_dir = f"{base_output_dir}/{variant}"
+            else:
+                output_dir = base_output_dir
 
-        logger.info(f"\n{'='*60}")
-        logger.info(f"Prompt {i+1}/{len(prompts_to_run)}: {prompt_id}")
-        logger.info(f"  Text: {prompt_text[:80]}{'...' if len(prompt_text) > 80 else ''}")
-        logger.info(f"  Output: {output_dir}")
-        logger.info(f"{'='*60}")
+            variant_label = f" [{variant}]" if len(variants_to_run) > 1 else ""
+            logger.info(f"\n{'='*60}")
+            logger.info(f"Prompt {i+1}/{len(prompts_to_run)}{variant_label}: {prompt_id}")
+            logger.info(f"  Text: {prompt_text[:80]}{'...' if len(prompt_text) > 80 else ''}")
+            logger.info(f"  Variant: {variant}")
+            logger.info(f"  Output: {output_dir}")
+            logger.info(f"{'='*60}")
 
-        run_experiments(
-            image_path=args.image,
-            prompt=prompt_text,
-            output_dir=output_dir,
-            configs=configs,
-            vl_model_path=args.vl_model_path,
-            z_image_config=args.config,
-            z_image_profile=args.profile,
-            seed=args.seed,
-            steps=args.steps,
-            force_think_block=think_modes[0],  # Use first think mode for text encoding
-            system_prompt=args.system_prompt,
-        )
+            run_experiments(
+                image_path=args.image,
+                prompt=prompt_text,
+                output_dir=output_dir,
+                configs=configs,
+                vl_model_path=args.vl_model_path,
+                vl_model_variant=variant,
+                z_image_config=args.config,
+                z_image_profile=args.profile,
+                seed=args.seed,
+                steps=args.steps,
+                force_think_block=think_modes[0],  # Use first think mode for text encoding
+                system_prompt=args.system_prompt,
+            )
 
-        all_results.append({
-            "prompt_id": prompt_id,
-            "prompt_text": prompt_text,
-            "output_dir": output_dir,
-        })
+            all_results.append({
+                "prompt_id": prompt_id,
+                "prompt_text": prompt_text,
+                "variant": variant,
+                "output_dir": output_dir,
+            })
 
-    # If multiple prompts, save a summary
-    if len(prompts_to_run) > 1:
+    # If multiple prompts or variants, save a summary
+    if len(prompts_to_run) > 1 or len(variants_to_run) > 1:
         summary_path = Path(base_output_dir) / "prompts_summary.json"
         with open(summary_path, "w") as f:
             json.dump({
@@ -1299,7 +1356,9 @@ Examples:
                 "prompt_category": args.prompt_category,
                 "prompt_difficulty": args.prompt_difficulty,
                 "total_prompts": len(prompts_to_run),
+                "vl_variants": variants_to_run,
                 "configs_per_prompt": len(configs),
+                "total_experiments": len(configs) * len(prompts_to_run) * len(variants_to_run),
                 "results": all_results,
             }, f, indent=2)
         logger.info(f"\nSummary saved to {summary_path}")
