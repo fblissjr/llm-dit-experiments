@@ -168,7 +168,7 @@ See `internal/research/hidden_layer_selection.md` for detailed analysis and expe
 
 ## Resolution Constraints
 
-Z-Image requires image dimensions divisible by 16 (VAE constraint). The pipeline validates and auto-snaps invalid resolutions.
+Z-Image requires image dimensions divisible by 16 (VAE constraint). All preset resolutions are pre-validated.
 
 ### Constants
 
@@ -180,9 +180,27 @@ Z-Image requires image dimensions divisible by 16 (VAE constraint). The pipeline
 | `MAX_RESOLUTION` | 4096 | Maximum recommended resolution |
 | `DEFAULT_RESOLUTION` | 1024 | Default width/height |
 
+### Available Presets (Web UI)
+
+| Category | Resolutions |
+|----------|-------------|
+| Square | 512, 768, 1024, 1280, 1536, 1920 |
+| Landscape (16:9) | 1280x720 (HD), 1920x1088 (Full HD) |
+| Portrait (9:16) | 720x1280 (HD), 1088x1920 (Full HD) |
+| Mobile Landscape | 1024x576, 1280x576 |
+| Mobile Portrait | 576x1024, 576x1280 |
+| Classic (4:3) | 1024x768, 768x1024, 1280x960, 960x1280 |
+
+### CLI Validation
+
+The CLI (`scripts/generate.py`) automatically:
+1. Validates dimensions are divisible by 16
+2. Snaps invalid values to nearest valid resolution with a warning
+3. Warns if resolution is below minimum or above maximum
+
 ### Helper Functions
 
-Available in `llm_dit.constants`:
+Available in `llm_dit.constants` for programmatic use:
 
 ```python
 from llm_dit.constants import (
@@ -194,49 +212,12 @@ from llm_dit.constants import (
 
 # Snap to nearest valid resolution
 snap_to_multiple(1000)  # -> 1008 (nearest multiple of 16)
-snap_to_multiple(1010)  # -> 1008
 
 # Validate resolution
 is_valid, error = validate_resolution(1024, 768)  # -> (True, "")
-is_valid, error = validate_resolution(1000, 768)  # -> (False, "Width must be...")
 
 # Calculate latent dimensions
 latent_w, latent_h = calculate_latent_size(1024, 1024)  # -> (128, 128)
-```
-
-### CLI Validation
-
-The CLI (`scripts/generate.py`) automatically:
-1. Validates dimensions are divisible by 16
-2. Snaps invalid values to nearest valid resolution with a warning
-3. Warns if resolution is below minimum or above maximum
-
-### Web UI
-
-The web UI provides:
-- Number inputs for custom width/height (not dropdowns)
-- Real-time validation feedback (red border for invalid)
-- "Snap to Valid" button for quick correction
-- Latent size display showing the actual latent dimensions
-- Common aspect ratio presets for convenience
-
-### API Endpoint
-
-`GET /api/resolution-config` returns validation constants:
-
-```json
-{
-  "vae_multiple": 16,
-  "vae_scale_factor": 8,
-  "min_resolution": 256,
-  "max_resolution": 4096,
-  "default_resolution": 1024,
-  "presets": [
-    {"name": "Square (1:1)", "width": 1024, "height": 1024},
-    {"name": "Landscape (16:9)", "width": 1280, "height": 720},
-    ...
-  ]
-}
 ```
 
 ## Text Sequence Length Limits
@@ -824,8 +805,8 @@ uv run scripts/profiler.py --show-info
 ### Generation
 | Flag | Description |
 |------|-------------|
-| `--width` | Image width in pixels, must be divisible by 16 (default: 1024, auto-snaps invalid values) |
-| `--height` | Image height in pixels, must be divisible by 16 (default: 1024, auto-snaps invalid values) |
+| `--width` | Image width in pixels (default: 1024, must be divisible by 16) |
+| `--height` | Image height in pixels (default: 1024, must be divisible by 16) |
 | `--steps` | Inference steps (default: 9) |
 | `--guidance-scale` | CFG scale (default: 0.0) |
 | `--shift` | Scheduler shift/mu (default: 3.0) |
