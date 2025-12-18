@@ -109,6 +109,26 @@ def main():
         logger.error("No model path specified. Use --model-path or --config.")
         return 1
 
+    # Validate and fix resolution
+    from llm_dit.constants import VAE_MULTIPLE, MIN_RESOLUTION, MAX_RESOLUTION, snap_to_multiple
+
+    width_valid = config.width % VAE_MULTIPLE == 0
+    height_valid = config.height % VAE_MULTIPLE == 0
+
+    if not width_valid or not height_valid:
+        orig_width, orig_height = config.width, config.height
+        config.width = snap_to_multiple(config.width, VAE_MULTIPLE)
+        config.height = snap_to_multiple(config.height, VAE_MULTIPLE)
+        logger.warning(
+            f"Resolution {orig_width}x{orig_height} not divisible by {VAE_MULTIPLE}. "
+            f"Snapped to {config.width}x{config.height}"
+        )
+
+    if config.width < MIN_RESOLUTION or config.height < MIN_RESOLUTION:
+        logger.warning(f"Resolution below minimum {MIN_RESOLUTION}px may produce poor results")
+    if config.width > MAX_RESOLUTION or config.height > MAX_RESOLUTION:
+        logger.warning(f"Resolution above {MAX_RESOLUTION}px may require tiled VAE (--tiled-vae)")
+
     # Find templates directory
     templates_dir = config.templates_dir
     if templates_dir is None:

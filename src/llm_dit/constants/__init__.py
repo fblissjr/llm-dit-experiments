@@ -220,6 +220,94 @@ DEFAULT_HIDDEN_LAYER = -2
 # Recommended VL hidden layer (cleaner than -2 for VL embeddings)
 RECOMMENDED_VL_HIDDEN_LAYER = -6
 
+# =============================================================================
+# Z-IMAGE RESOLUTION CONSTRAINTS
+# =============================================================================
+
+# VAE scale factor (latent to pixel ratio)
+# For Z-Image: latent_dim = image_dim / VAE_SCALE_FACTOR
+VAE_SCALE_FACTOR = 8
+
+# Required divisibility for image dimensions
+# Z-Image requires dimensions divisible by 16 (VAE_SCALE_FACTOR * 2)
+# This is due to the latent grid structure: latent_height = 2 * (height // 16)
+VAE_MULTIPLE = 16
+
+# Resolution limits (practical limits, not hard constraints)
+MIN_RESOLUTION = 256   # Below this, quality degrades significantly
+MAX_RESOLUTION = 4096  # Above this, VRAM becomes prohibitive
+DEFAULT_RESOLUTION = 1024
+
+# Common aspect ratios with their names
+ASPECT_RATIOS = {
+    "1:1": (1, 1),      # Square
+    "4:3": (4, 3),      # Standard landscape
+    "3:4": (3, 4),      # Standard portrait
+    "16:9": (16, 9),    # Widescreen landscape
+    "9:16": (9, 16),    # Phone portrait
+    "3:2": (3, 2),      # Classic photo landscape
+    "2:3": (2, 3),      # Classic photo portrait
+    "21:9": (21, 9),    # Ultrawide
+}
+
+
+def snap_to_multiple(value: int, multiple: int = VAE_MULTIPLE) -> int:
+    """Round value to nearest multiple.
+
+    Args:
+        value: The value to snap
+        multiple: The multiple to snap to (default: VAE_MULTIPLE=16)
+
+    Returns:
+        Value rounded to nearest multiple
+    """
+    return round(value / multiple) * multiple
+
+
+def validate_resolution(width: int, height: int) -> tuple[bool, str]:
+    """Validate image resolution for Z-Image.
+
+    Args:
+        width: Image width in pixels
+        height: Image height in pixels
+
+    Returns:
+        Tuple of (is_valid, error_message)
+    """
+    errors = []
+
+    if width % VAE_MULTIPLE != 0:
+        errors.append(f"Width must be divisible by {VAE_MULTIPLE} (got {width})")
+    if height % VAE_MULTIPLE != 0:
+        errors.append(f"Height must be divisible by {VAE_MULTIPLE} (got {height})")
+    if width < MIN_RESOLUTION:
+        errors.append(f"Width must be at least {MIN_RESOLUTION} (got {width})")
+    if height < MIN_RESOLUTION:
+        errors.append(f"Height must be at least {MIN_RESOLUTION} (got {height})")
+    if width > MAX_RESOLUTION:
+        errors.append(f"Width exceeds max {MAX_RESOLUTION} (got {width})")
+    if height > MAX_RESOLUTION:
+        errors.append(f"Height exceeds max {MAX_RESOLUTION} (got {height})")
+
+    if errors:
+        return False, "; ".join(errors)
+    return True, ""
+
+
+def calculate_latent_size(width: int, height: int) -> tuple[int, int]:
+    """Calculate latent dimensions for given image size.
+
+    Args:
+        width: Image width in pixels
+        height: Image height in pixels
+
+    Returns:
+        Tuple of (latent_width, latent_height)
+    """
+    # Z-Image uses: latent_dim = 2 * (image_dim // 16)
+    # Which simplifies to: latent_dim = image_dim // 8
+    return width // VAE_SCALE_FACTOR, height // VAE_SCALE_FACTOR
+
 
 # =============================================================================
 # HELPER FUNCTIONS

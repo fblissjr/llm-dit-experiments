@@ -517,6 +517,48 @@ async def get_generation_config():
     }
 
 
+@app.get("/api/resolution-config")
+async def get_resolution_config():
+    """Get resolution constraints for client-side validation.
+
+    Returns VAE multiple, min/max limits, and common presets.
+    """
+    from llm_dit.constants import (
+        VAE_MULTIPLE,
+        VAE_SCALE_FACTOR,
+        MIN_RESOLUTION,
+        MAX_RESOLUTION,
+        DEFAULT_RESOLUTION,
+        ASPECT_RATIOS,
+    )
+
+    # Common preset resolutions (all divisible by VAE_MULTIPLE=16)
+    presets = [
+        {"value": "512x512", "label": "512 x 512 (Square)", "width": 512, "height": 512},
+        {"value": "768x768", "label": "768 x 768 (Square)", "width": 768, "height": 768},
+        {"value": "1024x1024", "label": "1024 x 1024 (Square)", "width": 1024, "height": 1024},
+        {"value": "1280x1280", "label": "1280 x 1280 (Square)", "width": 1280, "height": 1280},
+        {"value": "1024x768", "label": "1024 x 768 (4:3 Landscape)", "width": 1024, "height": 768},
+        {"value": "768x1024", "label": "768 x 1024 (3:4 Portrait)", "width": 768, "height": 1024},
+        {"value": "1280x720", "label": "1280 x 720 (16:9 Landscape)", "width": 1280, "height": 720},
+        {"value": "720x1280", "label": "720 x 1280 (9:16 Portrait)", "width": 720, "height": 1280},
+        {"value": "1536x1024", "label": "1536 x 1024 (3:2 Landscape)", "width": 1536, "height": 1024},
+        {"value": "1024x1536", "label": "1024 x 1536 (2:3 Portrait)", "width": 1024, "height": 1536},
+        {"value": "1920x1080", "label": "1920 x 1080 (Full HD)", "width": 1920, "height": 1080},
+        {"value": "2048x2048", "label": "2048 x 2048 (2K Square)", "width": 2048, "height": 2048},
+    ]
+
+    return {
+        "vae_multiple": VAE_MULTIPLE,
+        "vae_scale_factor": VAE_SCALE_FACTOR,
+        "min_resolution": MIN_RESOLUTION,
+        "max_resolution": MAX_RESOLUTION,
+        "default_resolution": DEFAULT_RESOLUTION,
+        "aspect_ratios": ASPECT_RATIOS,
+        "presets": presets,
+    }
+
+
 @app.get("/api/rewriter-config")
 async def get_rewriter_config():
     """Get rewriter configuration defaults from server config.
