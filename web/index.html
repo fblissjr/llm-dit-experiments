@@ -430,21 +430,36 @@
                     <div>
                         <label class="block text-sm font-medium text-gray-300 mb-2">Resolution</label>
                         <select id="resolution" class="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-white focus:ring-2 focus:ring-blue-500">
-                            <option value="512x512">512 x 512 (Square)</option>
-                            <option value="768x768">768 x 768 (Square)</option>
-                            <option value="1024x1024" selected>1024 x 1024 (Square)</option>
-                            <option value="1280x1280">1280 x 1280 (Square)</option>
-                            <option value="1024x768">1024 x 768 (4:3 Landscape)</option>
-                            <option value="768x1024">768 x 1024 (3:4 Portrait)</option>
-                            <option value="1280x720">1280 x 720 (16:9 Landscape)</option>
-                            <option value="720x1280">720 x 1280 (9:16 Portrait)</option>
-                            <option value="1024x576">1024 x 576 (16:9 Wide)</option>
-                            <option value="576x1024">576 x 1024 (9:16 Tall)</option>
-                            <option value="1152x896">1152 x 896 (9:7)</option>
-                            <option value="896x1152">896 x 1152 (7:9)</option>
-                            <option value="1216x832">1216 x 832 (3:2)</option>
-                            <option value="832x1216">832 x 1216 (2:3)</option>
-                            <option value="custom">Custom...</option>
+                            <optgroup label="Square">
+                                <option value="512x512">512 x 512</option>
+                                <option value="768x768">768 x 768</option>
+                                <option value="1024x1024" selected>1024 x 1024</option>
+                                <option value="1280x1280">1280 x 1280</option>
+                                <option value="1536x1536">1536 x 1536</option>
+                                <option value="1920x1920">1920 x 1920</option>
+                            </optgroup>
+                            <optgroup label="Landscape (16:9)">
+                                <option value="1280x720">1280 x 720 (HD)</option>
+                                <option value="1920x1088">1920 x 1088 (Full HD)</option>
+                            </optgroup>
+                            <optgroup label="Portrait (9:16)">
+                                <option value="720x1280">720 x 1280 (HD)</option>
+                                <option value="1088x1920">1088 x 1920 (Full HD)</option>
+                            </optgroup>
+                            <optgroup label="Mobile Landscape">
+                                <option value="1024x576">1024 x 576</option>
+                                <option value="1280x576">1280 x 576 (Wide)</option>
+                            </optgroup>
+                            <optgroup label="Mobile Portrait">
+                                <option value="576x1024">576 x 1024</option>
+                                <option value="576x1280">576 x 1280 (Tall)</option>
+                            </optgroup>
+                            <optgroup label="Classic (4:3 / 3:4)">
+                                <option value="1024x768">1024 x 768 (Landscape)</option>
+                                <option value="768x1024">768 x 1024 (Portrait)</option>
+                                <option value="1280x960">1280 x 960 (Landscape)</option>
+                                <option value="960x1280">960 x 1280 (Portrait)</option>
+                            </optgroup>
                         </select>
                     </div>
 
@@ -465,52 +480,6 @@
                             <span>1 (Fast)</span>
                             <span>50 (Quality)</span>
                         </div>
-                    </div>
-                </div>
-
-                <!-- Custom Resolution (hidden by default) -->
-                <div id="customResolution" class="hidden space-y-3">
-                    <div class="grid grid-cols-2 gap-3">
-                        <div>
-                            <label class="block text-sm font-medium text-gray-300 mb-2">Width</label>
-                            <input
-                                type="number"
-                                id="width"
-                                min="256"
-                                max="4096"
-                                step="16"
-                                value="1024"
-                                class="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-white focus:ring-2 focus:ring-blue-500"
-                            >
-                        </div>
-                        <div>
-                            <label class="block text-sm font-medium text-gray-300 mb-2">Height</label>
-                            <input
-                                type="number"
-                                id="height"
-                                min="256"
-                                max="4096"
-                                step="16"
-                                value="1024"
-                                class="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-white focus:ring-2 focus:ring-blue-500"
-                            >
-                        </div>
-                    </div>
-                    <!-- Validation feedback -->
-                    <div id="resolutionValidation" class="hidden">
-                        <p id="resolutionError" class="text-red-400 text-sm"></p>
-                        <button
-                            type="button"
-                            id="snapResolutionBtn"
-                            class="mt-1 px-3 py-1 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
-                        >
-                            Snap to valid
-                        </button>
-                    </div>
-                    <!-- Resolution info -->
-                    <div class="flex justify-between items-center text-xs text-gray-500">
-                        <span>Must be divisible by <span id="vaeMultiple">16</span></span>
-                        <span id="latentInfo">Latent: 128 x 128</span>
                     </div>
                 </div>
 
@@ -832,8 +801,6 @@
         const historyHandle = document.getElementById('historyHandle');
         const clearHistoryBtn = document.getElementById('clearHistoryBtn');
         const resolutionSelect = document.getElementById('resolution');
-        const customResolution = document.getElementById('customResolution');
-        // widthInput and heightInput are declared later with validation logic
         const stepsSlider = document.getElementById('steps');
         const stepsValue = document.getElementById('stepsValue');
         const guidanceScaleSlider = document.getElementById('guidanceScale');
@@ -919,140 +886,6 @@
         }
 
         enableThinkingCheckbox.addEventListener('change', updateThinkingContentVisibility);
-
-        // Resolution validation
-        let resolutionConfig = {
-            vae_multiple: 16,
-            vae_scale_factor: 8,
-            min_resolution: 256,
-            max_resolution: 4096
-        };
-
-        // Load resolution config from server
-        async function loadResolutionConfig() {
-            try {
-                const response = await fetch(`${API_BASE}/api/resolution-config`);
-                if (response.ok) {
-                    resolutionConfig = await response.json();
-                    document.getElementById('vaeMultiple').textContent = resolutionConfig.vae_multiple;
-                    widthInput.min = resolutionConfig.min_resolution;
-                    widthInput.max = resolutionConfig.max_resolution;
-                    widthInput.step = resolutionConfig.vae_multiple;
-                    heightInput.min = resolutionConfig.min_resolution;
-                    heightInput.max = resolutionConfig.max_resolution;
-                    heightInput.step = resolutionConfig.vae_multiple;
-                }
-            } catch (e) {
-                console.warn('Failed to load resolution config:', e);
-            }
-        }
-
-        // Validate resolution and show feedback
-        function validateResolution() {
-            const width = parseInt(widthInput.value) || 0;
-            const height = parseInt(heightInput.value) || 0;
-            const multiple = resolutionConfig.vae_multiple;
-            const minRes = resolutionConfig.min_resolution;
-            const maxRes = resolutionConfig.max_resolution;
-
-            const errors = [];
-            if (width % multiple !== 0) {
-                errors.push(`Width must be divisible by ${multiple}`);
-            }
-            if (height % multiple !== 0) {
-                errors.push(`Height must be divisible by ${multiple}`);
-            }
-            if (width < minRes || width > maxRes) {
-                errors.push(`Width must be ${minRes}-${maxRes}`);
-            }
-            if (height < minRes || height > maxRes) {
-                errors.push(`Height must be ${minRes}-${maxRes}`);
-            }
-
-            const validationDiv = document.getElementById('resolutionValidation');
-            const errorP = document.getElementById('resolutionError');
-            const latentInfo = document.getElementById('latentInfo');
-
-            if (errors.length > 0) {
-                validationDiv.classList.remove('hidden');
-                errorP.textContent = errors.join('; ');
-                widthInput.classList.add('border-red-500');
-                heightInput.classList.add('border-red-500');
-            } else {
-                validationDiv.classList.add('hidden');
-                errorP.textContent = '';
-                widthInput.classList.remove('border-red-500');
-                heightInput.classList.remove('border-red-500');
-            }
-
-            // Update latent info
-            const latentW = Math.floor(width / resolutionConfig.vae_scale_factor);
-            const latentH = Math.floor(height / resolutionConfig.vae_scale_factor);
-            latentInfo.textContent = `Latent: ${latentW} x ${latentH}`;
-
-            return errors.length === 0;
-        }
-
-        // Snap resolution to valid values
-        function snapToValidResolution() {
-            const multiple = resolutionConfig.vae_multiple;
-            const minRes = resolutionConfig.min_resolution;
-            const maxRes = resolutionConfig.max_resolution;
-
-            let width = parseInt(widthInput.value) || 1024;
-            let height = parseInt(heightInput.value) || 1024;
-
-            // Round to nearest multiple
-            width = Math.round(width / multiple) * multiple;
-            height = Math.round(height / multiple) * multiple;
-
-            // Clamp to valid range
-            width = Math.max(minRes, Math.min(maxRes, width));
-            height = Math.max(minRes, Math.min(maxRes, height));
-
-            widthInput.value = width;
-            heightInput.value = height;
-            validateResolution();
-        }
-
-        // Get input elements (now using input instead of select)
-        const widthInput = document.getElementById('width');
-        const heightInput = document.getElementById('height');
-
-        // Add event listeners for validation
-        widthInput.addEventListener('input', validateResolution);
-        heightInput.addEventListener('input', validateResolution);
-        widthInput.addEventListener('blur', () => {
-            if (!validateResolution()) {
-                // Auto-snap on blur if invalid
-                snapToValidResolution();
-            }
-        });
-        heightInput.addEventListener('blur', () => {
-            if (!validateResolution()) {
-                // Auto-snap on blur if invalid
-                snapToValidResolution();
-            }
-        });
-
-        // Snap button
-        document.getElementById('snapResolutionBtn').addEventListener('click', snapToValidResolution);
-
-        // Load resolution config on startup
-        loadResolutionConfig();
-
-        // Resolution preset handling
-        resolutionSelect.addEventListener('change', () => {
-            if (resolutionSelect.value === 'custom') {
-                customResolution.classList.remove('hidden');
-                validateResolution();
-            } else {
-                customResolution.classList.add('hidden');
-                const [w, h] = resolutionSelect.value.split('x').map(Number);
-                widthInput.value = w;
-                heightInput.value = h;
-            }
-        });
 
         // History panel toggle (mobile)
         function toggleHistoryPanel() {
@@ -1193,7 +1026,7 @@
                 document.getElementById('steps').value = config.steps ?? 9;
                 document.getElementById('stepsValue').textContent = config.steps ?? 9;
                 document.getElementById('guidanceScale').value = config.guidance_scale ?? 0.0;
-                document.getElementById('guidanceValue').textContent = (config.guidance_scale ?? 0.0).toFixed(1);
+                document.getElementById('guidanceScaleValue').textContent = (config.guidance_scale ?? 0.0).toFixed(1);
                 console.log(`[Generation Config] Loaded: long_prompt_mode=${config.long_prompt_mode}, hidden_layer=${config.hidden_layer}`);
             } catch (err) {
                 console.error('Failed to load generation config:', err);
@@ -1618,19 +1451,13 @@
                 updateHiddenLayerUI(item.hidden_layer);
             }
 
-            // Set resolution
+            // Set resolution (select matching preset or keep current)
             const resValue = `${item.width}x${item.height}`;
             const resOption = [...resolutionSelect.options].find(o => o.value === resValue);
             if (resOption) {
                 resolutionSelect.value = resValue;
-                customResolution.classList.add('hidden');
-            } else {
-                resolutionSelect.value = 'custom';
-                customResolution.classList.remove('hidden');
-                widthInput.value = item.width;
-                heightInput.value = item.height;
-                validateResolution();
             }
+            // If no matching preset, keep current selection (presets only now)
 
             // Close history panel on mobile
             if (window.innerWidth < 768) {
@@ -1702,14 +1529,8 @@
             }
         });
 
-        // Get current resolution
+        // Get current resolution from dropdown
         function getResolution() {
-            if (resolutionSelect.value === 'custom') {
-                return {
-                    width: parseInt(widthInput.value),
-                    height: parseInt(heightInput.value)
-                };
-            }
             const [w, h] = resolutionSelect.value.split('x').map(Number);
             return { width: w, height: h };
         }

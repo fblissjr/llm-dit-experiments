@@ -166,6 +166,79 @@ The default embedding extraction layer is **-2** (penultimate, layer 35 of 36). 
 
 See `internal/research/hidden_layer_selection.md` for detailed analysis and experimental plans.
 
+## Resolution Constraints
+
+Z-Image requires image dimensions divisible by 16 (VAE constraint). The pipeline validates and auto-snaps invalid resolutions.
+
+### Constants
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `VAE_SCALE_FACTOR` | 8 | Latent to pixel ratio (`latent_dim = image_dim / 8`) |
+| `VAE_MULTIPLE` | 16 | Required divisibility for image dimensions |
+| `MIN_RESOLUTION` | 256 | Minimum recommended resolution |
+| `MAX_RESOLUTION` | 4096 | Maximum recommended resolution |
+| `DEFAULT_RESOLUTION` | 1024 | Default width/height |
+
+### Helper Functions
+
+Available in `llm_dit.constants`:
+
+```python
+from llm_dit.constants import (
+    VAE_MULTIPLE,
+    snap_to_multiple,
+    validate_resolution,
+    calculate_latent_size,
+)
+
+# Snap to nearest valid resolution
+snap_to_multiple(1000)  # -> 1008 (nearest multiple of 16)
+snap_to_multiple(1010)  # -> 1008
+
+# Validate resolution
+is_valid, error = validate_resolution(1024, 768)  # -> (True, "")
+is_valid, error = validate_resolution(1000, 768)  # -> (False, "Width must be...")
+
+# Calculate latent dimensions
+latent_w, latent_h = calculate_latent_size(1024, 1024)  # -> (128, 128)
+```
+
+### CLI Validation
+
+The CLI (`scripts/generate.py`) automatically:
+1. Validates dimensions are divisible by 16
+2. Snaps invalid values to nearest valid resolution with a warning
+3. Warns if resolution is below minimum or above maximum
+
+### Web UI
+
+The web UI provides:
+- Number inputs for custom width/height (not dropdowns)
+- Real-time validation feedback (red border for invalid)
+- "Snap to Valid" button for quick correction
+- Latent size display showing the actual latent dimensions
+- Common aspect ratio presets for convenience
+
+### API Endpoint
+
+`GET /api/resolution-config` returns validation constants:
+
+```json
+{
+  "vae_multiple": 16,
+  "vae_scale_factor": 8,
+  "min_resolution": 256,
+  "max_resolution": 4096,
+  "default_resolution": 1024,
+  "presets": [
+    {"name": "Square (1:1)", "width": 1024, "height": 1024},
+    {"name": "Landscape (16:9)", "width": 1280, "height": 720},
+    ...
+  ]
+}
+```
+
 ## Text Sequence Length Limits
 
 The DiT transformer has a **maximum text sequence length of 1504 tokens**. The config specifies `axes_lens=[1536, 512, 512]` but the actual working limit is 1504 (47 * 32, where 32 is `axes_dims[0]`). This appears to be an off-by-one in RoPE frequency table indexing. Exceeding 1504 causes CUDA kernel crashes.
@@ -751,8 +824,8 @@ uv run scripts/profiler.py --show-info
 ### Generation
 | Flag | Description |
 |------|-------------|
-| `--width` | Image width (default: 1024) |
-| `--height` | Image height (default: 1024) |
+| `--width` | Image width in pixels, must be divisible by 16 (default: 1024, auto-snaps invalid values) |
+| `--height` | Image height in pixels, must be divisible by 16 (default: 1024, auto-snaps invalid values) |
 | `--steps` | Inference steps (default: 9) |
 | `--guidance-scale` | CFG scale (default: 0.0) |
 | `--shift` | Scheduler shift/mu (default: 3.0) |
@@ -810,6 +883,7 @@ uv run scripts/profiler.py --show-info
 | `/api/encode` | POST | Encode prompt to embeddings |
 | `/api/format-prompt` | POST | Preview formatted prompt (no encoding) |
 | `/api/templates` | GET | List available templates |
+| `/api/resolution-config` | GET | Get resolution validation constants and presets |
 | `/api/rewriters` | GET | List available rewriter templates |
 | `/api/rewriter-models` | GET | List available rewriter models (text/VL) |
 | `/api/rewriter-config` | GET | Get rewriter default parameters |
