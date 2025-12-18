@@ -259,11 +259,12 @@ class TransformersBackend:
         input_ids = inputs.input_ids.to(self.device)
         attention_mask = inputs.attention_mask.to(self.device).bool()
 
-        # Debug: log tokenization details
-        seq_length = input_ids.shape[1]
-        valid_tokens = attention_mask[0].sum().item()
-        logger.debug(f"[TransformersBackend] Tokenized: {valid_tokens} valid tokens, seq_length={seq_length}")
-        logger.debug(f"[TransformersBackend] Token IDs (first 20): {input_ids[0][:20].tolist()}")
+        # Debug: log tokenization details (only compute when debug enabled)
+        if logger.isEnabledFor(logging.DEBUG):
+            seq_length = input_ids.shape[1]
+            valid_tokens = attention_mask[0].sum().item()
+            logger.debug(f"[TransformersBackend] Tokenized: {valid_tokens} valid tokens, seq_length={seq_length}")
+            logger.debug(f"[TransformersBackend] Token IDs (first 20): {input_ids[0][:20].tolist()}")
 
         # Encode
         with torch.no_grad():
@@ -291,10 +292,12 @@ class TransformersBackend:
             token_counts.append(valid_embeds.shape[0])
 
             # Debug: log embedding stats for comparison with other backends
-            logger.debug(f"[TransformersBackend] Embedding [{i}]: shape={valid_embeds.shape}, dtype={valid_embeds.dtype}")
-            logger.debug(f"[TransformersBackend] Embedding [{i}] stats: min={valid_embeds.min().item():.4f}, max={valid_embeds.max().item():.4f}, mean={valid_embeds.mean().item():.4f}, std={valid_embeds.std().item():.4f}")
-            logger.debug(f"[TransformersBackend] Embedding [{i}] first 5 values: {valid_embeds[0, :5].tolist()}")
-            logger.debug(f"[TransformersBackend] Embedding [{i}] last 5 values: {valid_embeds[-1, -5:].tolist()}")
+            # Only compute expensive tensor stats when debug logging is enabled
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(f"[TransformersBackend] Embedding [{i}]: shape={valid_embeds.shape}, dtype={valid_embeds.dtype}")
+                logger.debug(f"[TransformersBackend] Embedding [{i}] stats: min={valid_embeds.min().item():.4f}, max={valid_embeds.max().item():.4f}, mean={valid_embeds.mean().item():.4f}, std={valid_embeds.std().item():.4f}")
+                logger.debug(f"[TransformersBackend] Embedding [{i}] first 5 values: {valid_embeds[0, :5].tolist()}")
+                logger.debug(f"[TransformersBackend] Embedding [{i}] last 5 values: {valid_embeds[-1, -5:].tolist()}")
 
         result = EncodingOutput(
             embeddings=embeddings_list,

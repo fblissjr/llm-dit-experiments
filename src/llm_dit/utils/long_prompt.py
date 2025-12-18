@@ -174,59 +174,76 @@ def _attention_pool_embeddings(embeddings: torch.Tensor, target_len: int) -> tor
     # Normalize embeddings for cosine similarity
     embeddings_normalized = F.normalize(embeddings, p=2, dim=-1)  # [seq_len, hidden_dim]
 
-    # Compute pairwise cosine similarity with neighbors
-    # We use a window of +/- 2 tokens for context
-    importance_scores = torch.zeros(seq_len, device=embeddings.device, dtype=embeddings.dtype)
+    # Vectorized computation of neighbor similarities using convolution-like approach
+    # Compute full similarity matrix for a window of +/- 2 tokens
+    # Instead of loops, use matrix multiplication and masking
 
-    for i in range(seq_len):
-        # Get neighbor indices (within window, excluding self)
-        start = max(0, i - 2)
-        end = min(seq_len, i + 3)
-        neighbor_indices = [j for j in range(start, end) if j != i]
+    # Compute all pairwise cosine similarities
+    # For efficiency, only compute similarities within a band (window of 5)
+    window_size = 2
 
-        if not neighbor_indices:
-            # No neighbors (shouldn't happen in practice)
-            importance_scores[i] = 1.0
-            continue
+    # Create shifted versions of normalized embeddings for neighbor comparison
+    # Pad the sequence to handle boundaries
+    padded = F.pad(embeddings_normalized, (0, 0, window_size, window_size), mode='constant', value=0)
 
-        # Compute cosine similarity to neighbors
-        token_vec = embeddings_normalized[i]  # [hidden_dim]
-        neighbor_vecs = embeddings_normalized[neighbor_indices]  # [num_neighbors, hidden_dim]
-        similarities = torch.mv(neighbor_vecs, token_vec)  # [num_neighbors]
+    # Compute similarities with each offset position
+    neighbor_sims = []
+    for offset in range(-window_size, window_size + 1):
+        if offset == 0:
+            continue  # Skip self
+        shifted = padded[window_size + offset:window_size + offset + seq_len]  # [seq_len, hidden_dim]
+        # Cosine similarity (embeddings are already normalized)
+        sim = (embeddings_normalized * shifted).sum(dim=-1)  # [seq_len]
+        neighbor_sims.append(sim)
 
-        # Importance = 1 - average similarity (more unique = more important)
-        avg_similarity = similarities.mean()
-        importance_scores[i] = 1.0 - avg_similarity
+    # Stack and average similarities
+    neighbor_sims = torch.stack(neighbor_sims, dim=0)  # [4, seq_len]
+
+    # Handle boundary tokens (they have fewer neighbors due to padding with zeros)
+    # Create a mask for valid neighbors at each position
+    valid_counts = torch.ones(seq_len, device=embeddings.device)
+    for i in range(window_size):
+        valid_counts[i] = window_size + 1 + i  # Tokens at start have fewer left neighbors
+        valid_counts[-(i + 1)] = window_size + 1 + i  # Tokens at end have fewer right neighbors
+
+    # Average similarity (importance = 1 - avg_similarity)
+    avg_similarity = neighbor_sims.sum(dim=0) / valid_counts.clamp(min=1)
+    importance_scores = 1.0 - avg_similarity
 
     # Shift to ensure all scores are positive for softmax stability
     importance_scores = importance_scores - importance_scores.min() + 0.1
 
-    # Determine pool regions
+    # Vectorized pooling: assign each source token to a target region
+    # and compute weighted averages per region
     pool_size = seq_len / target_len
-    output = []
 
-    for i in range(target_len):
-        # Compute region boundaries (can be fractional)
-        start_idx = int(i * pool_size)
-        end_idx = min(int((i + 1) * pool_size) + 1, seq_len)
+    # Create region assignments for each token
+    token_indices = torch.arange(seq_len, device=embeddings.device, dtype=torch.float32)
+    region_assignments = (token_indices / pool_size).long().clamp(max=target_len - 1)
 
-        if start_idx >= seq_len:
-            # Edge case: use last token
-            output.append(embeddings[-1])
-            continue
+    # Compute softmax weights within each region using scatter operations
+    # First, compute per-region max for numerical stability
+    region_max = torch.zeros(target_len, device=embeddings.device, dtype=embeddings.dtype)
+    region_max.scatter_reduce_(0, region_assignments, importance_scores, reduce='amax', include_self=False)
 
-        # Get tokens and importance scores in this region
-        region_embeddings = embeddings[start_idx:end_idx]  # [region_len, hidden_dim]
-        region_importance = importance_scores[start_idx:end_idx]  # [region_len]
+    # Compute exp(score - max) for softmax
+    exp_scores = torch.exp(importance_scores - region_max[region_assignments])
 
-        # Softmax weights based on importance
-        weights = F.softmax(region_importance, dim=0)  # [region_len]
+    # Sum exp scores per region
+    region_exp_sum = torch.zeros(target_len, device=embeddings.device, dtype=embeddings.dtype)
+    region_exp_sum.scatter_add_(0, region_assignments, exp_scores)
 
-        # Weighted average
-        pooled = (region_embeddings * weights.unsqueeze(-1)).sum(dim=0)  # [hidden_dim]
-        output.append(pooled)
+    # Normalize to get softmax weights
+    weights = exp_scores / region_exp_sum[region_assignments].clamp(min=1e-8)
 
-    return torch.stack(output, dim=0)  # [target_len, hidden_dim]
+    # Weighted sum of embeddings per region
+    weighted_embeddings = embeddings * weights.unsqueeze(-1)  # [seq_len, hidden_dim]
+
+    # Sum weighted embeddings per region
+    output = torch.zeros(target_len, hidden_dim, device=embeddings.device, dtype=embeddings.dtype)
+    output.scatter_add_(0, region_assignments.unsqueeze(-1).expand(-1, hidden_dim), weighted_embeddings)
+
+    return output
 
 
 def estimate_quality_loss(original_len: int, target_len: int, mode: str) -> str:

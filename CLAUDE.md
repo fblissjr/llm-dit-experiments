@@ -906,7 +906,12 @@ setup_attention_backend("flash_attn_2")
 
 ### FlowMatchScheduler (Pure PyTorch)
 
-**IMPORTANT:** The custom scheduler is required for the `shift` parameter to work. Diffusers' `FlowMatchEulerDiscreteScheduler` ignores the `mu`/`shift` parameter entirely. Always use `use_custom_scheduler = true` in config or `--use-custom-scheduler` on CLI.
+**Note:** As of diffusers 0.32+, `FlowMatchEulerDiscreteScheduler` properly implements the shift parameter. However, we maintain our custom `FlowMatchScheduler` for:
+- Consistent behavior across diffusers versions
+- Direct control over the shift formula: `sigma' = shift * sigma / (1 + (shift - 1) * sigma)`
+- A fixed shift value of 3.0 (optimal for Z-Image-Turbo)
+
+Using `use_custom_scheduler = true` (config) or `--use-custom-scheduler` (CLI) is still recommended for reproducibility.
 
 ```python
 from llm_dit import FlowMatchScheduler

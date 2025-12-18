@@ -1346,13 +1346,20 @@ class ZImagePipeline:
 
         # Prepare timesteps
         image_seq_len = (latent_height // 2) * (latent_width // 2)
-        mu = calculate_shift(
-            image_seq_len,
-            self.scheduler.config.get("base_image_seq_len", 256),
-            self.scheduler.config.get("max_image_seq_len", 4096),
-            self.scheduler.config.get("base_shift", 0.5),
-            self.scheduler.config.get("max_shift", 1.15),
-        )
+        if shift is not None:
+            # Use user-provided shift value
+            mu = shift
+            logger.info(f"[Pipeline] Using user-provided shift/mu: {mu}")
+        else:
+            # Calculate shift based on resolution (dynamic shift)
+            mu = calculate_shift(
+                image_seq_len,
+                self.scheduler.config.get("base_image_seq_len", 256),
+                self.scheduler.config.get("max_image_seq_len", 4096),
+                self.scheduler.config.get("base_shift", 0.5),
+                self.scheduler.config.get("max_shift", 1.15),
+            )
+            logger.info(f"[Pipeline] Calculated shift/mu for resolution: {mu:.4f}")
         self.scheduler.sigma_min = 0.0
         self.scheduler.set_timesteps(num_inference_steps, device=device, mu=mu)
         timesteps = self.scheduler.timesteps
