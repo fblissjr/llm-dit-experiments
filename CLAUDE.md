@@ -150,6 +150,20 @@ Image Output
 | VAE | 16-channel | Wan-family |
 | Context refiner | 2 layers | No timestep modulation |
 
+## Key Technical Details (Qwen-Image-Layered)
+
+| Parameter | Value | Notes |
+|-----------|-------|-------|
+| Text encoder | Qwen2.5-VL-7B-Instruct | 3584 hidden dim vision-language model |
+| Embedding extraction | hidden_states[-2] | Penultimate layer from text model |
+| DiT architecture | 60-layer dual-stream | Text and visual conditioning streams |
+| CFG scale | 4.0 (default) | Required for quality (not baked in) |
+| Steps | 50 (default) | Non-distilled model |
+| Input | Image + text prompt | Image decomposition task |
+| Output | Multiple RGBA layers | Decomposed scene elements |
+| Resolution | 640x640 or 1024x1024 | Fixed resolution constraint |
+| Use case | Image decomposition | Extract layers/elements from images |
+
 ## Hidden Layer Selection
 
 The default embedding extraction layer is **-2** (penultimate, layer 35 of 36). This is configurable via `--hidden-layer` (-35 to -1).
@@ -529,6 +543,7 @@ src/llm_dit/
         config.py       # BackendConfig dataclass
         transformers.py # HuggingFace transformers backend
         api.py          # API backend (heylookitsanllm)
+        qwen_image.py   # QwenImageTextEncoderBackend (Qwen2.5-VL-7B)
     constants/          # Qwen3 token IDs and model configs
         __init__.py     # Token IDs, generation defaults, model configs
     conversation/       # Chat formatting
@@ -541,14 +556,20 @@ src/llm_dit/
         z_image.py      # ZImageTextEncoder
     pipelines/          # Diffusion pipeline wrappers
         z_image.py      # ZImagePipeline (txt2img, img2img)
+        qwen_image.py   # QwenImagePipeline (image decomposition)
     schedulers/         # Pure PyTorch schedulers
         flow_match.py   # FlowMatchScheduler (shifted sigma schedule)
     models/             # Pure PyTorch model components
         context_refiner.py  # ContextRefiner (2-layer text processor)
+        qwen_image_vae.py   # QwenImageVAE (3D causal VAE wrapper)
+        qwen_image_dit.py   # QwenImageDiT (60-layer dual-stream transformer)
+        _qwen_image_vae_components.py  # 3D VAE internal components
+        _qwen_image_dit_components.py  # DiT layer implementations
     utils/              # Utility modules
         lora.py         # LoRA loading and fusion
         attention.py    # Priority-based attention backend selector
         tiled_vae.py    # TiledVAEDecoder for 2K+ images
+        latent_packing.py  # Latent packing utilities (2x2, multi-layer)
     vl/                 # Vision conditioning (Qwen3-VL)
         __init__.py     # Module exports
         qwen3_vl.py     # VLEmbeddingExtractor class
@@ -762,7 +783,9 @@ uv run scripts/profiler.py --show-info
 ### Model & Config
 | Flag | Description |
 |------|-------------|
+| `--model-type` | Model type: zimage (default) or qwenimage |
 | `--model-path` | Path to Z-Image model |
+| `--qwen-image-model-path` | Path to Qwen-Image-Layered model |
 | `--config` | Path to TOML config file |
 | `--profile` | Config profile to use (default: "default") |
 | `--templates-dir` | Path to templates directory |
@@ -856,6 +879,13 @@ uv run scripts/profiler.py --show-info
 | `--vl-outlier-masking` | Outlier masking mode: none/zero/clamp/scale (default: none) |
 | `--vl-outlier-threshold` | Std ratio threshold for outlier masking (default: 10.0) |
 
+### Qwen-Image-Layered
+| Flag | Description |
+|------|-------------|
+| `--qwen-image-layers` | Number of layers to decompose (1-7, default: 7) |
+| `--qwen-image-cfg-scale` | CFG scale for Qwen-Image (default: 4.0) |
+| `--qwen-image-resolution` | Resolution: 640 or 1024 (default: 1024) |
+
 ## REST API Endpoints
 
 | Endpoint | Method | Description |
@@ -879,6 +909,8 @@ uv run scripts/profiler.py --show-info
 | `/api/vl/generate` | POST | Generate with VL conditioning |
 | `/api/vl/cache/{id}` | DELETE | Clear specific VL cache entry |
 | `/api/vl/cache` | DELETE | Clear all VL cache |
+| `/api/qwen-image/decompose` | POST | Decompose image into layers (Qwen-Image-Layered) |
+| `/api/qwen-image/config` | GET | Get Qwen-Image configuration |
 | `/health` | GET | Health check |
 
 ## API Request Fields

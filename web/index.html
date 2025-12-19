@@ -105,8 +105,8 @@
             <header class="mb-6">
                 <div class="flex items-center justify-between">
                     <div>
-                        <h1 class="text-2xl md:text-3xl font-bold text-white">Z-Image</h1>
-                        <p class="text-sm text-gray-400">Text-to-image with Qwen3-4B</p>
+                        <h1 class="text-2xl md:text-3xl font-bold text-white" id="headerTitle">Z-Image</h1>
+                        <p class="text-sm text-gray-400" id="headerSubtitle">Text-to-image with Qwen3-4B</p>
                     </div>
                     <button
                         id="historyToggle"
@@ -120,6 +120,167 @@
                 </div>
             </header>
 
+            <!-- Model Type Selector -->
+            <div class="mb-6 p-4 bg-gray-800/50 rounded-xl border border-gray-700">
+                <label class="block text-sm font-medium text-gray-300 mb-3">Model</label>
+                <div class="flex gap-2">
+                    <button type="button" id="modelTypeZImage" class="flex-1 px-4 py-2.5 rounded-lg bg-blue-600 text-white font-medium transition-colors">
+                        Z-Image
+                        <span class="block text-xs font-normal opacity-75">Text-to-Image</span>
+                    </button>
+                    <button type="button" id="modelTypeQwenImage" class="flex-1 px-4 py-2.5 rounded-lg bg-gray-700 text-gray-300 hover:bg-gray-600 font-medium transition-colors">
+                        Qwen-Image
+                        <span class="block text-xs font-normal opacity-75">Image Decomposition</span>
+                    </button>
+                </div>
+                <p id="qwenImageStatus" class="hidden text-xs text-yellow-400 mt-2">Qwen-Image not configured. Set qwen_image.model_path in config.</p>
+            </div>
+
+            <!-- Qwen-Image Controls (hidden by default, shown when Qwen-Image selected) -->
+            <div id="qwenImageControls" class="hidden mb-6 space-y-4">
+                <!-- Input Image (required for Qwen-Image) -->
+                <div class="p-4 bg-gray-800/50 rounded-xl border border-gray-700">
+                    <label class="block text-sm font-medium text-gray-300 mb-2">Input Image *</label>
+                    <div id="qiDropzone" class="relative border-2 border-dashed border-gray-600 rounded-lg p-4 text-center cursor-pointer hover:border-purple-500 hover:bg-gray-800/50 transition-colors">
+                        <input type="file" id="qiImageInput" accept="image/*" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer">
+                        <div id="qiDropzoneContent">
+                            <svg class="w-8 h-8 mx-auto text-gray-500 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+                            </svg>
+                            <p class="text-sm text-gray-400">Drop image here or click to upload</p>
+                            <p class="text-xs text-gray-500 mt-1">Image will be resized to 640x640 or 1024x1024</p>
+                        </div>
+                        <!-- Image Preview -->
+                        <div id="qiImagePreview" class="hidden">
+                            <img id="qiPreviewImg" class="max-h-32 mx-auto rounded-lg" alt="Input image">
+                            <p id="qiImageInfo" class="text-xs text-gray-400 mt-2"></p>
+                        </div>
+                    </div>
+                    <button type="button" id="qiClearImage" class="hidden mt-2 text-xs text-red-400 hover:text-red-300">Clear image</button>
+                </div>
+
+                <!-- Prompt for Qwen-Image -->
+                <div class="p-4 bg-gray-800/50 rounded-xl border border-gray-700">
+                    <label for="qiPrompt" class="block text-sm font-medium text-gray-300 mb-2">Scene Description *</label>
+                    <textarea
+                        id="qiPrompt"
+                        rows="3"
+                        class="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-white placeholder-gray-500 focus:ring-2 focus:ring-purple-500 focus:border-transparent resize-none"
+                        placeholder="Describe the scene to decompose (e.g., 'A cheerful child waving under a blue sky')"
+                    ></textarea>
+                </div>
+
+                <!-- Qwen-Image Parameters -->
+                <div class="grid grid-cols-2 gap-3">
+                    <!-- Resolution -->
+                    <div class="p-4 bg-gray-800/50 rounded-xl border border-gray-700">
+                        <label class="block text-sm font-medium text-gray-300 mb-2">Resolution</label>
+                        <select id="qiResolution" class="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:ring-2 focus:ring-purple-500 text-sm">
+                            <option value="1024">1024 x 1024</option>
+                            <option value="640">640 x 640</option>
+                        </select>
+                        <p class="text-xs text-gray-500 mt-1">Fixed resolutions only</p>
+                    </div>
+
+                    <!-- Layers -->
+                    <div class="p-4 bg-gray-800/50 rounded-xl border border-gray-700">
+                        <label class="block text-sm font-medium text-gray-300 mb-2">
+                            Layers: <span id="qiLayersValue" class="text-purple-400">3</span>
+                        </label>
+                        <input type="range" id="qiLayers" min="1" max="7" value="3" class="w-full">
+                        <div class="flex justify-between text-xs text-gray-500 mt-1">
+                            <span>1</span>
+                            <span>7</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Advanced Parameters -->
+                <details class="group">
+                    <summary class="cursor-pointer text-sm font-medium text-gray-400 hover:text-gray-300 flex items-center gap-2 select-none">
+                        <svg class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                        </svg>
+                        Advanced Parameters
+                    </summary>
+                    <div class="mt-3 grid grid-cols-2 gap-3 p-4 bg-gray-800/50 rounded-xl border border-gray-700">
+                        <!-- CFG Scale -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-2">
+                                CFG Scale: <span id="qiCfgValue" class="text-purple-400">4.0</span>
+                            </label>
+                            <input type="range" id="qiCfgScale" min="1" max="10" step="0.5" value="4.0" class="w-full">
+                        </div>
+
+                        <!-- Steps -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-2">
+                                Steps: <span id="qiStepsValue" class="text-purple-400">30</span>
+                            </label>
+                            <input type="range" id="qiSteps" min="10" max="50" value="30" class="w-full">
+                        </div>
+
+                        <!-- Seed -->
+                        <div class="col-span-2">
+                            <label class="block text-sm font-medium text-gray-300 mb-2">Seed (optional)</label>
+                            <input type="number" id="qiSeed" placeholder="Random" class="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:ring-2 focus:ring-purple-500 text-sm">
+                        </div>
+                    </div>
+                </details>
+
+                <!-- Decompose Button -->
+                <button
+                    type="button"
+                    id="decomposeBtn"
+                    class="w-full py-4 px-4 bg-purple-600 hover:bg-purple-700 active:bg-purple-800 disabled:bg-gray-700 disabled:cursor-not-allowed text-white font-semibold rounded-xl transition-colors text-lg shadow-lg shadow-purple-500/20"
+                >
+                    Decompose Image
+                </button>
+
+                <!-- Decompose Status -->
+                <div id="qiStatus" class="hidden">
+                    <div class="bg-gray-800 rounded-xl p-4">
+                        <div class="flex items-center gap-3">
+                            <div class="w-5 h-5 border-2 border-purple-500 border-t-transparent rounded-full animate-spin"></div>
+                            <span id="qiStatusText" class="text-gray-300">Decomposing...</span>
+                        </div>
+                        <div class="mt-3 h-2 bg-gray-700 rounded-full overflow-hidden">
+                            <div id="qiProgressFill" class="h-full bg-gradient-to-r from-purple-500 to-pink-500 transition-all duration-300" style="width: 0%"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Decompose Error -->
+                <div id="qiError" class="hidden">
+                    <div class="bg-red-900/30 border border-red-700/50 rounded-xl p-4">
+                        <div class="flex items-start gap-3">
+                            <svg class="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                            </svg>
+                            <p class="text-red-300 text-sm" id="qiErrorText"></p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Decompose Result -->
+                <div id="qiResult" class="hidden">
+                    <div class="bg-gray-800 rounded-xl overflow-hidden p-4">
+                        <h3 class="text-sm font-medium text-gray-300 mb-3">Decomposed Layers</h3>
+                        <div id="qiLayerGrid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                            <!-- Layers will be added dynamically -->
+                        </div>
+                        <div class="mt-4 flex justify-between items-center">
+                            <p id="qiResultInfo" class="text-xs text-gray-400"></p>
+                            <button type="button" id="qiDownloadZip" class="px-4 py-2 bg-green-600 hover:bg-green-700 text-white text-sm font-medium rounded-lg transition-colors">
+                                Download ZIP
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Z-Image Controls (shown by default) -->
+            <div id="zImageControls">
             <!-- Main Form -->
             <form id="generateForm" class="space-y-4" novalidate>
                 <!-- Prompt -->
@@ -752,6 +913,7 @@
                     </div>
                 </div>
             </div>
+            </div> <!-- End zImageControls -->
         </div>
 
         <!-- History Panel -->
@@ -2003,6 +2165,304 @@
         // End Vision Conditioning Logic
         // =====================================================================
 
+        // =====================================================================
+        // Model Type Toggle Logic
+        // =====================================================================
+
+        let currentModelType = 'zimage';
+        let qwenImageAvailable = false;
+        let qiImageBase64 = null;
+        let qiLastZipBlob = null;
+
+        // DOM Elements for model toggle
+        const modelTypeZImageBtn = document.getElementById('modelTypeZImage');
+        const modelTypeQwenImageBtn = document.getElementById('modelTypeQwenImage');
+        const qwenImageStatus = document.getElementById('qwenImageStatus');
+        const qwenImageControls = document.getElementById('qwenImageControls');
+        const zImageControls = document.getElementById('zImageControls');
+        const headerTitle = document.getElementById('headerTitle');
+        const headerSubtitle = document.getElementById('headerSubtitle');
+
+        // Qwen-Image DOM elements
+        const qiDropzone = document.getElementById('qiDropzone');
+        const qiImageInput = document.getElementById('qiImageInput');
+        const qiDropzoneContent = document.getElementById('qiDropzoneContent');
+        const qiImagePreview = document.getElementById('qiImagePreview');
+        const qiPreviewImg = document.getElementById('qiPreviewImg');
+        const qiImageInfo = document.getElementById('qiImageInfo');
+        const qiClearImageBtn = document.getElementById('qiClearImage');
+        const qiPrompt = document.getElementById('qiPrompt');
+        const qiResolution = document.getElementById('qiResolution');
+        const qiLayersSlider = document.getElementById('qiLayers');
+        const qiLayersValue = document.getElementById('qiLayersValue');
+        const qiCfgSlider = document.getElementById('qiCfgScale');
+        const qiCfgValue = document.getElementById('qiCfgValue');
+        const qiStepsSlider = document.getElementById('qiSteps');
+        const qiStepsValue = document.getElementById('qiStepsValue');
+        const qiSeed = document.getElementById('qiSeed');
+        const decomposeBtn = document.getElementById('decomposeBtn');
+        const qiStatus = document.getElementById('qiStatus');
+        const qiStatusText = document.getElementById('qiStatusText');
+        const qiProgressFill = document.getElementById('qiProgressFill');
+        const qiError = document.getElementById('qiError');
+        const qiErrorText = document.getElementById('qiErrorText');
+        const qiResult = document.getElementById('qiResult');
+        const qiLayerGrid = document.getElementById('qiLayerGrid');
+        const qiResultInfo = document.getElementById('qiResultInfo');
+        const qiDownloadZip = document.getElementById('qiDownloadZip');
+
+        // Update slider displays
+        qiLayersSlider?.addEventListener('input', () => {
+            qiLayersValue.textContent = qiLayersSlider.value;
+        });
+
+        qiCfgSlider?.addEventListener('input', () => {
+            qiCfgValue.textContent = parseFloat(qiCfgSlider.value).toFixed(1);
+        });
+
+        qiStepsSlider?.addEventListener('input', () => {
+            qiStepsValue.textContent = qiStepsSlider.value;
+        });
+
+        // Check Qwen-Image status
+        async function checkQwenImageStatus() {
+            try {
+                const response = await fetch(`${API_BASE}/api/qwen-image/status`);
+                const data = await response.json();
+                qwenImageAvailable = data.available;
+
+                if (!qwenImageAvailable) {
+                    qwenImageStatus.classList.remove('hidden');
+                    modelTypeQwenImageBtn.disabled = true;
+                    modelTypeQwenImageBtn.classList.add('opacity-50', 'cursor-not-allowed');
+                }
+            } catch (err) {
+                console.error('Failed to check Qwen-Image status:', err);
+                qwenImageAvailable = false;
+            }
+        }
+
+        // Switch model type
+        function switchModelType(type) {
+            currentModelType = type;
+
+            if (type === 'zimage') {
+                // Update button styles
+                modelTypeZImageBtn.classList.remove('bg-gray-700', 'text-gray-300', 'hover:bg-gray-600');
+                modelTypeZImageBtn.classList.add('bg-blue-600', 'text-white');
+                modelTypeQwenImageBtn.classList.remove('bg-purple-600', 'text-white');
+                modelTypeQwenImageBtn.classList.add('bg-gray-700', 'text-gray-300', 'hover:bg-gray-600');
+
+                // Show/hide controls
+                zImageControls.classList.remove('hidden');
+                qwenImageControls.classList.add('hidden');
+
+                // Update header
+                headerTitle.textContent = 'Z-Image';
+                headerSubtitle.textContent = 'Text-to-image with Qwen3-4B';
+            } else {
+                // Update button styles
+                modelTypeQwenImageBtn.classList.remove('bg-gray-700', 'text-gray-300', 'hover:bg-gray-600');
+                modelTypeQwenImageBtn.classList.add('bg-purple-600', 'text-white');
+                modelTypeZImageBtn.classList.remove('bg-blue-600', 'text-white');
+                modelTypeZImageBtn.classList.add('bg-gray-700', 'text-gray-300', 'hover:bg-gray-600');
+
+                // Show/hide controls
+                zImageControls.classList.add('hidden');
+                qwenImageControls.classList.remove('hidden');
+
+                // Update header
+                headerTitle.textContent = 'Qwen-Image';
+                headerSubtitle.textContent = 'Image decomposition into layers';
+            }
+        }
+
+        // Model type button listeners
+        modelTypeZImageBtn?.addEventListener('click', () => switchModelType('zimage'));
+        modelTypeQwenImageBtn?.addEventListener('click', () => {
+            if (qwenImageAvailable) {
+                switchModelType('qwenimage');
+            }
+        });
+
+        // Qwen-Image image upload handling
+        qiImageInput?.addEventListener('change', handleQiImageUpload);
+        qiDropzone?.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            qiDropzone.classList.add('border-purple-500', 'bg-gray-800/50');
+        });
+        qiDropzone?.addEventListener('dragleave', () => {
+            qiDropzone.classList.remove('border-purple-500', 'bg-gray-800/50');
+        });
+        qiDropzone?.addEventListener('drop', (e) => {
+            e.preventDefault();
+            qiDropzone.classList.remove('border-purple-500', 'bg-gray-800/50');
+            if (e.dataTransfer.files.length > 0) {
+                qiImageInput.files = e.dataTransfer.files;
+                handleQiImageUpload({ target: qiImageInput });
+            }
+        });
+
+        async function handleQiImageUpload(e) {
+            const file = e.target.files?.[0];
+            if (!file) return;
+
+            if (!file.type.startsWith('image/')) {
+                alert('Please select an image file');
+                return;
+            }
+
+            const reader = new FileReader();
+            reader.onload = async (ev) => {
+                qiImageBase64 = ev.target.result;  // Keep full data URL
+
+                // Show preview
+                qiPreviewImg.src = ev.target.result;
+                qiDropzoneContent.classList.add('hidden');
+                qiImagePreview.classList.remove('hidden');
+                qiClearImageBtn.classList.remove('hidden');
+
+                // Get image dimensions
+                const img = new Image();
+                img.onload = () => {
+                    qiImageInfo.textContent = `${img.width}x${img.height} - ${(file.size / 1024).toFixed(1)} KB`;
+                };
+                img.src = ev.target.result;
+            };
+            reader.readAsDataURL(file);
+        }
+
+        // Clear image
+        qiClearImageBtn?.addEventListener('click', () => {
+            qiImageBase64 = null;
+            qiImageInput.value = '';
+            qiDropzoneContent.classList.remove('hidden');
+            qiImagePreview.classList.add('hidden');
+            qiClearImageBtn.classList.add('hidden');
+        });
+
+        // Decompose button handler
+        decomposeBtn?.addEventListener('click', async () => {
+            // Validate inputs
+            if (!qiImageBase64) {
+                qiError.classList.remove('hidden');
+                qiErrorText.textContent = 'Please upload an input image';
+                return;
+            }
+
+            const prompt = qiPrompt.value.trim();
+            if (!prompt) {
+                qiError.classList.remove('hidden');
+                qiErrorText.textContent = 'Please enter a scene description';
+                return;
+            }
+
+            // Reset UI
+            qiStatus.classList.remove('hidden');
+            qiError.classList.add('hidden');
+            qiResult.classList.add('hidden');
+            decomposeBtn.disabled = true;
+            qiProgressFill.style.width = '10%';
+            qiStatusText.textContent = 'Starting decomposition...';
+
+            const params = {
+                image: qiImageBase64,
+                prompt: prompt,
+                layer_num: parseInt(qiLayersSlider.value),
+                resolution: parseInt(qiResolution.value),
+                steps: parseInt(qiStepsSlider.value),
+                cfg_scale: parseFloat(qiCfgSlider.value),
+                seed: qiSeed.value ? parseInt(qiSeed.value) : null,
+            };
+
+            try {
+                qiProgressFill.style.width = '20%';
+                qiStatusText.textContent = 'Encoding text...';
+
+                const response = await fetch(`${API_BASE}/api/qwen-image/decompose`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(params),
+                });
+
+                qiProgressFill.style.width = '60%';
+                qiStatusText.textContent = 'Processing layers...';
+
+                if (!response.ok) {
+                    const data = await response.json();
+                    throw new Error(data.detail || 'Decomposition failed');
+                }
+
+                qiProgressFill.style.width = '80%';
+                qiStatusText.textContent = 'Rendering results...';
+
+                const data = await response.json();
+
+                // Clear previous results
+                qiLayerGrid.innerHTML = '';
+
+                // Add each layer to the grid
+                data.layers.forEach((layer, index) => {
+                    const layerDiv = document.createElement('div');
+                    layerDiv.className = 'relative group';
+                    layerDiv.innerHTML = `
+                        <img src="${layer.image}" alt="${layer.name}" class="w-full rounded-lg border border-gray-700 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAiIGhlaWdodD0iMjAiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PGRlZnM+PHBhdHRlcm4gaWQ9ImNoZWNrIiB3aWR0aD0iMjAiIGhlaWdodD0iMjAiIHBhdHRlcm5Vbml0cz0idXNlclNwYWNlT25Vc2UiPjxyZWN0IHdpZHRoPSIxMCIgaGVpZ2h0PSIxMCIgZmlsbD0iIzMzMyIvPjxyZWN0IHg9IjEwIiB5PSIxMCIgd2lkdGg9IjEwIiBoZWlnaHQ9IjEwIiBmaWxsPSIjMzMzIi8+PC9wYXR0ZXJuPjwvZGVmcz48cmVjdCBmaWxsPSJ1cmwoI2NoZWNrKSIgd2lkdGg9IjEwMCUiIGhlaWdodD0iMTAwJSIvPjwvc3ZnPg==')]">
+                        <p class="text-xs text-gray-400 mt-1 text-center">${layer.name}</p>
+                    `;
+                    qiLayerGrid.appendChild(layerDiv);
+                });
+
+                // Store zip data for download
+                qiLastZipBlob = data.zip_data;
+
+                // Show result info
+                const genTime = data.generation_time ? `${data.generation_time.toFixed(1)}s` : '';
+                qiResultInfo.textContent = `${data.layers.length} layers, ${params.resolution}x${params.resolution}${genTime ? `, ${genTime}` : ''}`;
+
+                qiProgressFill.style.width = '100%';
+                qiStatus.classList.add('hidden');
+                qiResult.classList.remove('hidden');
+
+                // Reload history
+                loadHistory();
+
+            } catch (err) {
+                qiStatus.classList.add('hidden');
+                qiError.classList.remove('hidden');
+                qiErrorText.textContent = err.message;
+            } finally {
+                decomposeBtn.disabled = false;
+            }
+        });
+
+        // Download ZIP button
+        qiDownloadZip?.addEventListener('click', () => {
+            if (!qiLastZipBlob) return;
+
+            // Convert base64 to blob
+            const byteCharacters = atob(qiLastZipBlob);
+            const byteNumbers = new Array(byteCharacters.length);
+            for (let i = 0; i < byteCharacters.length; i++) {
+                byteNumbers[i] = byteCharacters.charCodeAt(i);
+            }
+            const byteArray = new Uint8Array(byteNumbers);
+            const blob = new Blob([byteArray], { type: 'application/zip' });
+
+            // Create download link
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'qwen-image-layers.zip';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        });
+
+        // =====================================================================
+        // End Model Type Toggle Logic
+        // =====================================================================
+
         // Initialize
         loadTemplates();
         loadRewriters();
@@ -2010,6 +2470,7 @@
         loadGenerationConfig();
         loadHistory();
         checkVLStatus();
+        checkQwenImageStatus();
     </script>
 </body>
 </html>

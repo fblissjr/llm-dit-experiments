@@ -648,6 +648,7 @@ async def vl_generate(request: VLGenerateRequest):
         history_entry = {
             "id": len(generation_history),
             "timestamp": time.time(),
+            "model_type": "zimage",  # Z-Image with VL conditioning
             "prompt": request.prompt,
             "vl_alpha": request.vl_alpha,
             "vl_blend_mode": request.vl_blend_mode,
@@ -996,6 +997,7 @@ async def generate(request: GenerateRequest):
         history_entry = {
             "id": len(generation_history),
             "timestamp": time.time(),
+            "model_type": "zimage",  # Z-Image text-to-image
             "prompt": request.prompt,
             "system_prompt": request.system_prompt,
             "thinking_content": request.thinking_content,

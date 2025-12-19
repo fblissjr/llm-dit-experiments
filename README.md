@@ -4,6 +4,7 @@ Standalone diffusers-based platform for experimenting with LLM-DiT image generat
 
 ## Features
 
+- Multiple model support: Z-Image (txt2img/img2img) and Qwen-Image-Layered (image decomposition)
 - Pluggable LLM backends (transformers local, heylookitsanllm API)
 - Distributed inference (encode on Mac MPS, generate on CUDA)
 - Web UI for generation and prompt testing
@@ -11,7 +12,7 @@ Standalone diffusers-based platform for experimenting with LLM-DiT image generat
 - TOML configuration file support
 - 100+ prompt templates with system prompt + thinking tokens
 - Prompt rewriting/expansion via Qwen3 model (local or API)
-- LoRA support with automatic weight fusion
+- LoRA support with automatic weight fusion (Z-Image)
 - Granular device placement (encoder/DiT/VAE independently)
 
 ## Quick Start
@@ -66,31 +67,32 @@ Access at http://localhost:7860
 ### CLI Generation
 
 ```bash
-# Basic generation
+# Z-Image: Basic generation
 uv run scripts/generate.py \
   --model-path /path/to/z-image-turbo \
   --output image.png \
   "A sunset over mountains"
 
-# With template
+# Z-Image: With template
 uv run scripts/generate.py \
   --model-path /path/to/z-image-turbo \
   --template photorealistic \
   "A portrait"
 
-# With config file
-uv run scripts/generate.py \
-  --config config.toml \
-  --profile default \
-  "A landscape"
-
-# Granular device control
+# Z-Image: Granular device control
 uv run scripts/generate.py \
   --model-path /path/to/z-image-turbo \
   --text-encoder-device cpu \
   --dit-device cuda \
   --vae-device cuda \
   "A scene"
+
+# Qwen-Image-Layered: Image decomposition
+uv run scripts/generate.py \
+  --model-type qwenimage \
+  --qwen-image-model-path /path/to/Qwen-Image-Layered \
+  --img2img input.jpg \
+  "A cheerful child waving under a blue sky"
 ```
 
 ### Configuration
