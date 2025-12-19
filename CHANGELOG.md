@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Qwen-Image-Layered model support for image decomposition
+  - New pipeline: `QwenImagePipeline` for decomposing images into RGBA layers
+  - New backend: `QwenImageTextEncoderBackend` using Qwen2.5-VL-7B-Instruct (3584 dim)
+  - New models: `QwenImageVAE` (3D causal VAE), `QwenImageDiT` (60-layer dual-stream transformer)
+  - Latent packing utilities for 1-7 layer output (`pack_multi_layer_latents`, `unpack_multi_layer_latents`)
+  - CLI support: `--model-type qwenimage`, `--qwen-image-model-path`, `--qwen-image-layers`, `--qwen-image-cfg-scale`, `--qwen-image-resolution`
+  - Web UI: Model type selector (Z-Image / Qwen-Image), input image upload, layer grid display, ZIP download
+  - REST API: `/api/qwen-image/status`, `/api/qwen-image/config`, `/api/qwen-image/decompose`
+  - Config section: `[*.qwen_image]` with model_path, layer_num, cfg_scale, resolution
+  - Fixed resolutions only: 640x640 or 1024x1024
+  - History entries tagged with `model_type` for filtering
+  - Documentation: `docs/models/qwen_image_layered.md`
 - Caption length study experiment scripts
   - `sweep_caption_fill_modes.sh` - Compare padding strategies (pad_both, pad_left, pad_right) at fixed length 600
   - `sweep_caption_lengths.sh` - Test embedding lengths from 50 to 1504 tokens in steps of 50
