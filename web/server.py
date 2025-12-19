@@ -41,7 +41,7 @@ app.add_middleware(
 )
 
 # Global pipeline/encoder (loaded on startup)
-pipeline = None
+pipeline = None  # Z-Image pipeline
 encoder = None  # For encoder-only mode
 rewriter_backend = None  # API backend for rewriting (if configured)
 vl_extractor = None  # Qwen3-VL embedding extractor (if configured)
@@ -49,6 +49,9 @@ vl_rewriter = None  # Qwen3-VL instance for vision rewriting (may share with vl_
 vl_embeddings_cache = {}  # Cache for extracted VL embeddings (keyed by hash)
 runtime_config = None  # RuntimeConfig from CLI/TOML
 encoder_only_mode = False
+
+# Qwen-Image pipeline (separate from Z-Image)
+qwen_image_pipeline = None
 
 # In-memory history (cleared on server restart)
 generation_history = []
@@ -134,6 +137,18 @@ class VLGenerateRequest(BaseModel):
     hidden_layer: int = -2  # For text encoder
 
 
+class QwenImageDecomposeRequest(BaseModel):
+    """Request for Qwen-Image-Layered decomposition."""
+    image: str  # Base64-encoded input image
+    prompt: str  # Text description of the image
+    layer_num: int = 3  # Number of decomposition layers
+    resolution: int = 1024  # 640 or 1024 only
+    steps: int = 30  # Number of inference steps
+    cfg_scale: float = 4.0  # Classifier-free guidance scale
+    seed: Optional[int] = None  # Random seed
+    shift: Optional[float] = None  # Scheduler shift (auto if None)
+
+
 @app.get("/")
 async def index():
     """Serve the main page."""
@@ -149,7 +164,200 @@ async def health():
         "encoder_loaded": encoder is not None,
         "encoder_only_mode": encoder_only_mode,
         "vl_available": vl_extractor is not None,
+        "qwen_image_available": qwen_image_pipeline is not None,
     }
+
+
+# =============================================================================
+# Qwen-Image-Layered Endpoints
+# =============================================================================
+
+
+@app.get("/api/qwen-image/status")
+async def qwen_image_status():
+    """Check Qwen-Image-Layered model status and configuration."""
+    if runtime_config is None:
+        return {
+            "available": False,
+            "reason": "Runtime config not loaded",
+        }
+
+    configured = bool(runtime_config.qwen_image_model_path)
+    loaded = qwen_image_pipeline is not None
+
+    return {
+        "available": loaded,
+        "configured": configured,
+        "model_path": runtime_config.qwen_image_model_path if configured else None,
+        "default_layer_num": runtime_config.qwen_image_layer_num if configured else 3,
+        "default_cfg_scale": runtime_config.qwen_image_cfg_scale if configured else 4.0,
+        "default_resolution": runtime_config.qwen_image_resolution if configured else 1024,
+        "supported_resolutions": [640, 1024],
+    }
+
+
+@app.get("/api/qwen-image/config")
+async def qwen_image_config():
+    """Get Qwen-Image default parameters from server config."""
+    if runtime_config is None:
+        return {
+            "layer_num": 3,
+            "cfg_scale": 4.0,
+            "resolution": 1024,
+            "steps": 30,
+        }
+    return {
+        "layer_num": runtime_config.qwen_image_layer_num,
+        "cfg_scale": runtime_config.qwen_image_cfg_scale,
+        "resolution": runtime_config.qwen_image_resolution,
+        "steps": runtime_config.steps,  # Shared step count
+    }
+
+
+@app.post("/api/qwen-image/decompose")
+async def qwen_image_decompose(request: QwenImageDecomposeRequest):
+    """Decompose an image into multiple RGBA layers.
+
+    Returns a ZIP file containing:
+    - composite.png: The original/reconstructed composite
+    - layer_1.png through layer_N.png: Decomposed RGBA layers
+
+    The layers can be composited back together to recreate the original image.
+    """
+    global qwen_image_pipeline
+
+    # Check if pipeline is loaded
+    if qwen_image_pipeline is None:
+        # Try to load on-demand if configured
+        if runtime_config and runtime_config.qwen_image_model_path:
+            logger.info("[Qwen-Image] Loading pipeline on-demand...")
+            try:
+                from llm_dit.pipelines.qwen_image import QwenImagePipeline
+
+                qwen_image_pipeline = QwenImagePipeline.from_pretrained(
+                    runtime_config.qwen_image_model_path,
+                    device=runtime_config.dit_device_resolved,
+                    text_encoder_device=runtime_config.encoder_device_resolved,
+                    torch_dtype=runtime_config.get_torch_dtype(),
+                )
+                logger.info("[Qwen-Image] Pipeline loaded successfully")
+            except Exception as e:
+                logger.error(f"[Qwen-Image] Failed to load pipeline: {e}")
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"Failed to load Qwen-Image pipeline: {e}"
+                )
+        else:
+            raise HTTPException(
+                status_code=503,
+                detail="Qwen-Image pipeline not loaded. Configure qwen_image.model_path in config."
+            )
+
+    # Validate resolution
+    if request.resolution not in (640, 1024):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Resolution must be 640 or 1024. Got: {request.resolution}"
+        )
+
+    try:
+        import base64
+        import zipfile
+        from PIL import Image
+
+        # Decode base64 image
+        image_data = request.image
+        if image_data.startswith("data:"):
+            image_data = image_data.split(",", 1)[1]
+        image_bytes = base64.b64decode(image_data)
+        input_image = Image.open(io.BytesIO(image_bytes)).convert("RGBA")
+
+        logger.info("=" * 60)
+        logger.info("QWEN-IMAGE DECOMPOSITION REQUEST")
+        logger.info("=" * 60)
+        logger.info(f"  Input size: {input_image.size}")
+        logger.info(f"  Prompt: {request.prompt[:80]}...")
+        logger.info(f"  Resolution: {request.resolution}x{request.resolution}")
+        logger.info(f"  Layers: {request.layer_num}")
+        logger.info(f"  CFG Scale: {request.cfg_scale}")
+        logger.info(f"  Steps: {request.steps}")
+        logger.info(f"  Seed: {request.seed}")
+
+        start = time.time()
+
+        # Run decomposition
+        layers = qwen_image_pipeline.decompose(
+            image=input_image,
+            prompt=request.prompt,
+            layer_num=request.layer_num,
+            height=request.resolution,
+            width=request.resolution,
+            num_inference_steps=request.steps,
+            cfg_scale=request.cfg_scale,
+            seed=request.seed,
+            shift=request.shift,
+        )
+
+        gen_time = time.time() - start
+        logger.info(f"[Qwen-Image] Generated {len(layers)} layers in {gen_time:.1f}s")
+        logger.info("=" * 60)
+
+        # Create ZIP file with all layers
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
+            for i, layer_img in enumerate(layers):
+                layer_bytes = io.BytesIO()
+                layer_img.save(layer_bytes, format="PNG")
+                layer_bytes.seek(0)
+
+                if i == 0:
+                    layer_name = "composite.png"
+                else:
+                    layer_name = f"layer_{i}.png"
+
+                zf.writestr(layer_name, layer_bytes.getvalue())
+
+        zip_buffer.seek(0)
+
+        # Store in history
+        # Convert first layer (composite) to base64 for thumbnail
+        composite_bytes = io.BytesIO()
+        layers[0].save(composite_bytes, format="PNG")
+        composite_b64 = base64.b64encode(composite_bytes.getvalue()).decode("ascii")
+
+        history_entry = {
+            "id": len(generation_history),
+            "timestamp": time.time(),
+            "model_type": "qwenimage",
+            "prompt": request.prompt,
+            "resolution": request.resolution,
+            "layer_num": request.layer_num,
+            "cfg_scale": request.cfg_scale,
+            "steps": request.steps,
+            "seed": request.seed,
+            "gen_time": gen_time,
+            "image_b64": composite_b64,  # Thumbnail is the composite
+        }
+        generation_history.insert(0, history_entry)
+        if len(generation_history) > MAX_HISTORY:
+            generation_history.pop()
+
+        return StreamingResponse(
+            zip_buffer,
+            media_type="application/zip",
+            headers={
+                "Content-Disposition": f"attachment; filename=qwen_image_layers_{int(time.time())}.zip",
+                "X-Generation-Time": str(gen_time),
+                "X-Layer-Count": str(len(layers)),
+                "X-Seed": str(request.seed) if request.seed else "random",
+            },
+        )
+
+    except Exception as e:
+        logger.error(f"[Qwen-Image] Decomposition failed: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # =============================================================================
