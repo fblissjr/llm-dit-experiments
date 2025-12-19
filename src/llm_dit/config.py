@@ -267,6 +267,71 @@ class VLConfig:
 
 
 @dataclass
+class QwenImageConfig:
+    """Configuration for Qwen-Image-Layered model.
+
+    This enables image-to-layers decomposition using the Qwen-Image-Layered model,
+    which is separate from the Z-Image text-to-image pipeline.
+
+    Key differences from Z-Image:
+    - Uses Qwen2.5-VL-7B-Instruct as text encoder (3584 dim vs 2560)
+    - 60-layer DiT (vs 28+2 context refiner)
+    - 2x2 latent packing (16 channels -> 64 packed)
+    - Outputs multiple RGBA layers for decomposition
+    - Only supports 640 or 1024 base resolutions
+
+    The model takes an input image and decomposes it into N+1 layers:
+    - Layer 0: Composite (input) layer
+    - Layers 1-N: Decomposed RGBA layers
+    """
+
+    model_path: str = ""  # Path to Qwen-Image-Layered model directory
+    device: str = "cuda"  # Device for DiT and VAE
+    text_encoder_device: str = "cuda"  # Device for text encoder (7B model)
+    torch_dtype: str = "bfloat16"  # Model dtype
+
+    # Generation settings
+    num_inference_steps: int = 30  # Denoising steps (default for Qwen-Image)
+    cfg_scale: float = 4.0  # Classifier-free guidance scale
+    layer_num: int = 3  # Number of decomposition layers (outputs layer_num+1 images)
+
+    # Resolution (only 640 or 1024 supported)
+    resolution: int = 1024  # Base resolution (enforced to 640 or 1024)
+
+    # Flow matching scheduler
+    shift: float | None = None  # Dynamic shift computed from latent size if None
+
+    def get_torch_dtype(self) -> torch.dtype:
+        """Convert string dtype to torch.dtype."""
+        dtype_map = {
+            "bfloat16": torch.bfloat16,
+            "float16": torch.float16,
+            "float32": torch.float32,
+        }
+        return dtype_map.get(self.torch_dtype, torch.bfloat16)
+
+    def get_device(self) -> str:
+        """Get resolved device string."""
+        if self.device == "auto":
+            if torch.cuda.is_available():
+                return "cuda"
+            elif torch.backends.mps.is_available():
+                return "mps"
+            else:
+                return "cpu"
+        return self.device
+
+    def validate_resolution(self) -> None:
+        """Validate and enforce supported resolutions."""
+        if self.resolution not in (640, 1024):
+            raise ValueError(
+                f"Qwen-Image-Layered only supports resolutions 640 or 1024, "
+                f"got {self.resolution}. The model was trained on these specific "
+                f"resolutions and other values may produce poor results."
+            )
+
+
+@dataclass
 class RewriterConfig:
     """Configuration for prompt rewriting using LLM generation.
 
@@ -309,7 +374,7 @@ class RewriterConfig:
 
 @dataclass
 class Config:
-    """Complete configuration for Z-Image generation."""
+    """Complete configuration for Z-Image and Qwen-Image generation."""
 
     model_path: str = ""
     templates_dir: str | None = None
@@ -323,6 +388,7 @@ class Config:
     pytorch: PyTorchConfig = field(default_factory=PyTorchConfig)
     rewriter: RewriterConfig = field(default_factory=RewriterConfig)
     vl: VLConfig = field(default_factory=VLConfig)
+    qwen_image: QwenImageConfig = field(default_factory=QwenImageConfig)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Config":
@@ -336,6 +402,7 @@ class Config:
         pytorch_data = data.pop("pytorch", {})
         rewriter_data = data.pop("rewriter", {})
         vl_data = data.pop("vl", {})
+        qwen_image_data = data.pop("qwen_image", {})
 
         return cls(
             model_path=data.get("model_path", ""),
@@ -349,6 +416,7 @@ class Config:
             pytorch=PyTorchConfig(**pytorch_data),
             rewriter=RewriterConfig(**rewriter_data),
             vl=VLConfig(**vl_data),
+            qwen_image=QwenImageConfig(**qwen_image_data),
         )
 
     @classmethod
@@ -471,6 +539,17 @@ class Config:
                 "default_hidden_layer": self.vl.default_hidden_layer,
                 "auto_unload": self.vl.auto_unload,
                 "target_std": self.vl.target_std,
+            },
+            "qwen_image": {
+                "model_path": self.qwen_image.model_path,
+                "device": self.qwen_image.device,
+                "text_encoder_device": self.qwen_image.text_encoder_device,
+                "torch_dtype": self.qwen_image.torch_dtype,
+                "num_inference_steps": self.qwen_image.num_inference_steps,
+                "cfg_scale": self.qwen_image.cfg_scale,
+                "layer_num": self.qwen_image.layer_num,
+                "resolution": self.qwen_image.resolution,
+                "shift": self.qwen_image.shift,
             },
         }
 

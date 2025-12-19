@@ -1,16 +1,26 @@
 #!/usr/bin/env python3
 """
-End-to-end Z-Image generation script.
+End-to-end image generation script.
+
+Supports two model types:
+  - Z-Image (zimage): Text-to-image generation
+  - Qwen-Image-Layered (qwenimage): Image-to-layers decomposition
 
 Usage:
+    # Z-Image (default)
+    uv run scripts/generate.py --model-path /path/to/z-image "A cat sleeping in sunlight"
+
+    # Qwen-Image-Layered (image decomposition)
+    uv run scripts/generate.py --model-type qwenimage \\
+        --qwen-image-model-path /path/to/Qwen_Qwen-Image-Layered \\
+        --img2img input.jpg \\
+        "A cheerful child waving under a blue sky"
+
     # With config file (recommended)
     uv run scripts/generate.py --config config.toml "A cat sleeping in sunlight"
 
     # With config profile
     uv run scripts/generate.py --config config.toml --profile low_vram "A cat"
-
-    # Basic generation (no config)
-    uv run scripts/generate.py --model-path /path/to/z-image "A cat sleeping in sunlight"
 
     # With template
     uv run scripts/generate.py --model-path /path/to/z-image --template photorealistic "A cat"
@@ -44,10 +54,142 @@ import torch
 from llm_dit.cli import create_base_parser, load_runtime_config, setup_logging
 
 
+def run_qwen_image_generation(args, config, logger) -> int:
+    """
+    Run Qwen-Image-Layered image decomposition.
+
+    Args:
+        args: Parsed CLI arguments
+        config: RuntimeConfig with all settings
+        logger: Logger instance
+
+    Returns:
+        Exit code (0 for success)
+    """
+    from PIL import Image
+
+    # Validate model path
+    if not config.qwen_image_model_path:
+        logger.error(
+            "No Qwen-Image model path specified. "
+            "Use --qwen-image-model-path or set qwen_image.model_path in config."
+        )
+        return 1
+
+    # Qwen-Image requires an input image
+    if not args.img2img:
+        logger.error(
+            "Qwen-Image-Layered requires an input image. "
+            "Use --img2img /path/to/image.jpg"
+        )
+        return 1
+
+    # Validate resolution
+    resolution = config.qwen_image_resolution
+    if resolution not in (640, 1024):
+        logger.error(
+            f"Qwen-Image only supports 640 or 1024 resolution. Got: {resolution}"
+        )
+        return 1
+
+    logger.info("=" * 60)
+    logger.info("Qwen-Image-Layered Image Decomposition")
+    logger.info("=" * 60)
+    logger.info(f"Model: {config.qwen_image_model_path}")
+    logger.info(f"Input: {args.img2img}")
+    logger.info(f"Prompt: {args.prompt}")
+    logger.info(f"Resolution: {resolution}x{resolution}")
+    logger.info(f"Layers: {config.qwen_image_layer_num}")
+    logger.info(f"CFG Scale: {config.qwen_image_cfg_scale}")
+    logger.info(f"Steps: {config.steps}")
+
+    # Load input image
+    input_image = Image.open(args.img2img)
+    logger.info(f"Input image size: {input_image.size}")
+
+    # Load pipeline
+    logger.info("Loading Qwen-Image-Layered pipeline...")
+    start_load = time.time()
+
+    from llm_dit.pipelines.qwen_image import QwenImagePipeline
+
+    try:
+        pipe = QwenImagePipeline.from_pretrained(
+            config.qwen_image_model_path,
+            device=config.dit_device_resolved,
+            text_encoder_device=config.encoder_device_resolved,
+            torch_dtype=config.get_torch_dtype(),
+        )
+    except Exception as e:
+        logger.error(f"Failed to load Qwen-Image pipeline: {e}")
+        return 1
+
+    load_time = time.time() - start_load
+    logger.info(f"Pipeline loaded in {load_time:.1f}s")
+
+    # Set up seed
+    seed = getattr(args, 'seed', None)
+
+    # Progress callback
+    def progress_callback(step: int, total: int):
+        logger.info(f"Step {step}/{total}")
+
+    # Run decomposition
+    logger.info("Running image decomposition...")
+    start_gen = time.time()
+
+    try:
+        layers = pipe.decompose(
+            image=input_image,
+            prompt=args.prompt,
+            layer_num=config.qwen_image_layer_num,
+            height=resolution,
+            width=resolution,
+            num_inference_steps=config.steps,
+            cfg_scale=config.qwen_image_cfg_scale,
+            seed=seed,
+            shift=config.shift if config.shift != 3.0 else None,  # Use dynamic if default
+            progress_callback=progress_callback if config.verbose else None,
+        )
+    except Exception as e:
+        logger.error(f"Decomposition failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return 1
+
+    gen_time = time.time() - start_gen
+    logger.info(f"Decomposition complete in {gen_time:.1f}s")
+    logger.info(f"Generated {len(layers)} layers")
+
+    # Save layers
+    output_base = Path(args.output)
+    output_dir = output_base.parent
+    output_stem = output_base.stem
+    output_suffix = output_base.suffix or ".png"
+
+    saved_paths = []
+    for i, layer_img in enumerate(layers):
+        if i == 0:
+            layer_name = "composite"
+        else:
+            layer_name = f"layer_{i}"
+
+        layer_path = output_dir / f"{output_stem}_{layer_name}{output_suffix}"
+        layer_img.save(layer_path)
+        saved_paths.append(layer_path)
+        logger.info(f"  Saved: {layer_path}")
+
+    logger.info("=" * 60)
+    logger.info(f"Total time: load={load_time:.1f}s + generate={gen_time:.1f}s")
+    logger.info(f"Output files: {len(saved_paths)}")
+
+    return 0
+
+
 def main():
     # Create parser with generation args
     parser = create_base_parser(
-        description="Generate images with Z-Image",
+        description="Generate images with Z-Image or Qwen-Image-Layered",
         include_generation_args=True,
         include_server_args=False,
     )
@@ -104,6 +246,11 @@ def main():
 
     logger = logging.getLogger(__name__)
 
+    # Handle Qwen-Image model type
+    if config.model_type == "qwenimage":
+        return run_qwen_image_generation(args, config, logger)
+
+    # Z-Image flow continues below
     # Validate model path
     if config.model_path == "" and not args.load_embeddings:
         logger.error("No model path specified. Use --model-path or --config.")

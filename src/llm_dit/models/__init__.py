@@ -20,3 +20,14 @@ __all__ = [
     "RotaryEmbedding",
     "GatedFeedForward",
 ]
+
+
+# Lazy imports for heavy models (avoid loading torch unless needed)
+def __getattr__(name: str):
+    if name == "QwenImageVAE":
+        from llm_dit.models.qwen_image_vae import QwenImageVAE
+        return QwenImageVAE
+    if name == "QwenImageDiT":
+        from llm_dit.models.qwen_image_dit import QwenImageDiT
+        return QwenImageDiT
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

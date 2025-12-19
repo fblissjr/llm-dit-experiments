@@ -58,6 +58,15 @@ from llm_dit.utils.long_prompt import (
     estimate_quality_loss,
 )
 
+from llm_dit.utils.latent_packing import (
+    pack_latents_2x2,
+    unpack_latents_2x2,
+    pack_multi_layer_latents,
+    unpack_multi_layer_latents,
+    compute_packed_sequence_length,
+    get_img_shapes_for_rope,
+)
+
 __all__ = [
     # LoRA
     "LoRALoader",
@@ -103,4 +112,11 @@ __all__ = [
     "LongPromptMode",
     "compress_embeddings",
     "estimate_quality_loss",
+    # Latent packing (Qwen-Image)
+    "pack_latents_2x2",
+    "unpack_latents_2x2",
+    "pack_multi_layer_latents",
+    "unpack_multi_layer_latents",
+    "compute_packed_sequence_length",
+    "get_img_shapes_for_rope",
 ]

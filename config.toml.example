@@ -365,6 +365,42 @@ auto_unload = true
 target_std = 58.75
 
 # =============================================================================
+# Qwen-Image-Layered Configuration
+# =============================================================================
+# Qwen-Image-Layered is a separate model for image-to-layers decomposition.
+# Use --model-type qwenimage to select this model type.
+#
+# Usage:
+#   uv run scripts/generate.py --model-type qwenimage \
+#       --qwen-image-model-path /path/to/Qwen_Qwen-Image-Layered \
+#       --img2img input.jpg \
+#       "A cheerful child waving under a blue sky"
+
+[default.qwen_image]
+model_path = ""              # Path to Qwen_Qwen-Image-Layered model directory
+layer_num = 3                # Number of decomposition layers (output: composite + N layers)
+cfg_scale = 4.0              # Classifier-free guidance scale (Qwen-Image uses CFG)
+resolution = 1024            # Output resolution: 640 or 1024 ONLY (training data constraint)
+
+[rtx4090.qwen_image]
+model_path = ""              # /path/to/Qwen_Qwen-Image-Layered
+layer_num = 3
+cfg_scale = 4.0
+resolution = 1024
+
+[low_vram.qwen_image]
+model_path = ""
+layer_num = 3
+cfg_scale = 4.0
+resolution = 640             # Use 640 for lower VRAM usage
+
+[distributed.qwen_image]
+model_path = ""              # Qwen-Image runs fully locally (no distributed support yet)
+layer_num = 3
+cfg_scale = 4.0
+resolution = 1024
+
+# =============================================================================
 # Web Server Configuration (shared across profiles)
 # =============================================================================
 [server]
