@@ -24,6 +24,7 @@ dependencies = [
     "fastapi>=0.123.4",
     "python-multipart>=0.0.20",
     "image-reward>=1.5",
+    "matplotlib>=3.10.7",
 ]
 
 [project.optional-dependencies]
