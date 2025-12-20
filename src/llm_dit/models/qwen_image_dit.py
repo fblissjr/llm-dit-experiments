@@ -101,17 +101,7 @@ class QwenImageDiT(nn.Module):
         model_path = Path(model_path)
         device = torch.device(device)
 
-        # Import model components
-        from llm_dit.models._qwen_image_dit_components import QwenImageDiTModel
-
-        # Create model
-        logger.info(f"Creating QwenImageDiT (num_layers={cls.NUM_LAYERS}, use_layer3d_rope={use_layer3d_rope})")
-        model = QwenImageDiTModel(
-            num_layers=cls.NUM_LAYERS,
-            use_layer3d_rope=use_layer3d_rope,
-        )
-
-        # Load weights
+        # Load weights first to detect model configuration
         transformer_path = model_path / transformer_subfolder
         weight_files = list(transformer_path.glob("*.safetensors"))
         if not weight_files:
@@ -125,6 +115,23 @@ class QwenImageDiT(nn.Module):
             logger.debug(f"Loading {weight_file.name}")
             file_state_dict = load_file(weight_file, device="cpu")
             state_dict.update(file_state_dict)
+
+        # Auto-detect use_additional_t_cond from weights
+        # If time_text_embed.addition_t_embedding.weight exists, the model uses it
+        use_additional_t_cond = "time_text_embed.addition_t_embedding.weight" in state_dict
+        if use_additional_t_cond:
+            logger.info("Detected use_additional_t_cond=True from model weights")
+
+        # Import model components
+        from llm_dit.models._qwen_image_dit_components import QwenImageDiTModel
+
+        # Create model with detected configuration
+        logger.info(f"Creating QwenImageDiT (num_layers={cls.NUM_LAYERS}, use_layer3d_rope={use_layer3d_rope}, use_additional_t_cond={use_additional_t_cond})")
+        model = QwenImageDiTModel(
+            num_layers=cls.NUM_LAYERS,
+            use_layer3d_rope=use_layer3d_rope,
+            use_additional_t_cond=use_additional_t_cond,
+        )
 
         # Load state dict
         missing, unexpected = model.load_state_dict(state_dict, strict=False)

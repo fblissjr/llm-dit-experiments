@@ -1,4 +1,4 @@
-last updated: 2025-12-19
+last updated: 2025-12-19 (Bagel investigation + training requirements analysis)
 
 # Z-Image Omni Research Findings
 
@@ -319,13 +319,350 @@ To train siglip components ourselves, we would need:
 
 ---
 
+## Alternative Approach: Qwen3-VL
+
+An important insight from our previous VL research: **Qwen3-VL may be a better path than waiting for SigLIP2 weights**.
+
+### Dimension Comparison
+
+| Vision Encoder | Output Dim | Projection Needed | Status |
+|----------------|-----------|-------------------|--------|
+| SigLIP2-so400m | 1152 | Yes (1152 → 3840) | **Missing trained weights** |
+| Qwen3-VL-4B | 2560 | **No** - matches text encoder | **Working code exists** |
+
+### Why Qwen3-VL May Be Better
+
+1. **Direct compatibility**: 2560 dim matches Qwen3-4B text embeddings exactly
+2. **No projection layer**: Eliminates the siglip_embedder problem entirely
+3. **Working implementation**: Already proven in `experiments/qwen3_vl/`
+4. **Known-good settings**: Layer -6, `text_tokens_only=False`, alpha 0.3-0.5
+
+### Previous Qwen3-VL Results
+
+From `internal/research/qwen3_vl_integration.md`:
+- Layer -6 produces cleaner results than default -2
+- `text_tokens_only=False` is critical (preserves image tokens)
+- Alpha 0.3-0.5 provides good style transfer without corrupting content
+- Higher alpha (0.7-1.0) reconstructs reference scene
+
+### The Irony
+
+We dismissed Qwen3-VL because Z-Image Omni uses SigLIP2. But:
+- SigLIP2 requires trained siglip_embedder weights we don't have
+- Qwen3-VL already works with existing code
+- Qwen3-VL has better dimension matching (no projection needed)
+
+See: `experiments/qwen3_vl/README.md` for full documentation.
+
+---
+
+## Bagel Connector Investigation (The Hail Mary)
+
+### Background
+
+The Z-Image developer starred ByteDance's Bagel repo. Bagel uses the same SigLIP2 vision encoder (1152 hidden dim). We investigated whether Bagel's trained connector weights could be adapted for Z-Image Omni.
+
+### Dimension Analysis
+
+| Component | Bagel | Z-Image | Gap |
+|-----------|-------|---------|-----|
+| SigLIP input | 1152 | 1152 | Match |
+| Connector output | 3584 | 3840 | +256 dims |
+| LLM hidden | 3584 (Qwen2.5-7B) | 2560 (Qwen3-4B) | Different |
+
+### Adaptation Strategy
+
+```python
+# Load Bagel's connector fc1 weights
+fc1_weight = f.get_tensor('connector.fc1.weight')  # (3584, 1152)
+fc1_bias = f.get_tensor('connector.fc1.bias')      # (3584,)
+
+# Pad to Z-Image dimensions
+pad_size = 3840 - 3584  # 256
+pad_weight = torch.randn(pad_size, 1152) * (std * 0.1)  # Small noise
+adapted_weight = torch.cat([fc1_weight, pad_weight], dim=0)  # (3840, 1152)
+```
+
+### Results
+
+**Good news**: Coherent images generated (not noise!)
+- Text-only baseline: Perfect red apple, realistic portraits
+- With reference image: Produces valid images
+
+**Bad news**: **Style transfer doesn't work**
+- Reference style is completely ignored
+- Output is always photorealistic regardless of anime/oil painting/pixel art reference
+- See: `experiments/results/bagel_connector_v2/`
+
+### Root Cause Analysis
+
+**Bagel's connector was trained for UNDERSTANDING, not GENERATION:**
+
+1. **Architecture mismatch**: Bagel's MLPconnector projects SigLIP features into an LLM space for VL understanding tasks (image captioning, VQA)
+
+2. **Training objective**: Bagel uses joint CE (next token prediction) + MSE (velocity prediction) loss. The connector is trained so the LLM can "understand" images, not to extract stylistic features.
+
+3. **Information encoded**: The connector learns "what's in the image" (semantic content) not "how it looks" (style/appearance)
+
+4. **Generation path is separate**: Bagel's actual image generation uses VAE latent tokens through MoE experts, not SigLIP directly:
+   ```python
+   # Understanding: SigLIP -> connector -> LLM hidden states
+   # Generation: VAE latents -> vae2llm -> MoE experts -> llm2vae -> velocity
+   ```
+
+### Bagel Architecture Deep Dive
+
+From `coderef/Bagel/modeling/bagel/bagel.py`:
+
+```python
+# Vision understanding path (connector)
+packed_vit_token_embed = self.vit_model(...)  # SigLIP forward
+packed_vit_token_embed = self.connector(packed_vit_token_embed)  # Project to LLM
+# -> These go into KV cache for the LLM to attend to
+
+# Image generation path (separate)
+x_t = self.vae2llm(packed_latent) + timestep_embeds + pos_embed
+output = self.language_model.forward_inference(mode="gen", ...)  # MoE routes to gen experts
+v_t = self.llm2vae(output)  # Predict velocity for flow matching
+```
+
+### Key Insight
+
+The connector is a "translator" that helps the LLM understand images. It does NOT preserve style/appearance information needed for generation. Z-Image's siglip_embedder needs to do something fundamentally different - preserve visual style features that influence the diffusion process.
+
+### Why Coherent Images But No Style?
+
+The adapted Bagel weights:
+1. Project SigLIP features to a valid embedding space
+2. siglip_refiner (initialized from context_refiner) processes them
+3. DiT receives valid conditioning but ignores the "style" because:
+   - The features encode semantic content ("woman with hair") not style ("anime style")
+   - The DiT wasn't trained to extract style from these features
+   - siglip_refiner wasn't trained to preserve style through refinement
+
+### Files Created
+
+| File | Description |
+|------|-------------|
+| `test_bagel_connector.py` | Initial weight adaptation and testing |
+| `test_bagel_generation.py` | Full generation pipeline with Bagel weights |
+| `sweep_bagel_connector.py` | Parameter sweeps (scale factors, styles) |
+| `sweep_bagel_v2.py` | Improved version with scaling and init fixes |
+| `bagel_adapted_siglip_embedder.pt` | Saved adapted weights |
+
+### Results Directory
+
+- `experiments/results/bagel_connector/` - v1 sweep results
+- `experiments/results/bagel_connector_v2/` - v2 sweep results (with fixes)
+
+---
+
 ## Conclusions
 
 1. **Architecture**: Z-Image Omni's architecture is fully understood and documented
 2. **Implementation**: Pipeline runs end-to-end, basic mode works correctly
 3. **Blocker**: siglip_embedder/siglip_refiner require trained weights not yet released
 4. **No Workaround**: Random/heuristic initialization produces noise - proper training required
-5. **Next Steps**: Wait for official weight release, or attempt training if resources available
+5. **Bagel Investigation**: Adapter weights produce coherent images but no style transfer (wrong training objective)
+6. **Alternative**: Qwen3-VL provides working vision conditioning without missing weights
+7. **Next Steps**: Consider Qwen3-VL path, train custom adapter, or wait for official omni weight release
+
+### Paths Forward
+
+| Approach | Effort | Likelihood | Notes |
+|----------|--------|------------|-------|
+| Wait for official weights | Low | Unknown | May never release |
+| Train custom adapter | High | Medium | Need paired data + compute |
+| Use Qwen3-VL | Low | **High** | Already working in experiments |
+| Extract from Bagel MoE | Medium | Low | Complex architecture |
+
+---
+
+## Parallel to Qwen3-VL Experiments
+
+### The Core Problem is the Same
+
+Both SigLIP/Bagel and Qwen3-VL were trained for **understanding**, not **generation**:
+
+| Model | Training Objective | What it Learned |
+|-------|-------------------|-----------------|
+| Qwen3-VL | VL understanding (captioning, VQA) | Content + style entangled |
+| Bagel connector | VL understanding (captioning, VQA) | Content only, style lost |
+| Z-Image Omni (official) | Style conditioning (presumed) | Style disentangled (unavailable) |
+
+### Different Symptoms, Same Root Cause
+
+**Qwen3-VL:**
+- Style info IS present in embeddings
+- But it's **entangled** with content
+- Blending transfers style BUT ALSO corrupts content
+- Higher alpha = more style = more corruption
+- Best results: layer -6, alpha 0.3-0.5, but content still degrades
+
+**Bagel connector:**
+- Style info is **NOT preserved**
+- Connector was trained to encode "what's in the image" (semantic)
+- Blending has no effect on style at all
+- Output ignores reference completely
+- Coherent images, zero style transfer
+
+### Visual Comparison
+
+```
+Qwen3-VL (alpha=0.5):
+  Reference: Anime girl
+  Prompt: "Homer Simpson"
+  Output: Homer with anime-ish style BUT face corrupted
+
+Bagel connector (any scale):
+  Reference: Anime girl
+  Prompt: "Portrait of woman"
+  Output: Photorealistic woman (reference completely ignored)
+```
+
+### The Fundamental Insight
+
+Neither approach answers the question: **"Extract visual style features that can condition a diffusion model without affecting semantic content"**
+
+This is exactly what:
+- IP-Adapter was trained to do
+- Z-Image Omni's siglip components were (presumably) trained to do
+- We cannot do without training data + compute
+
+### Why Qwen3-VL Works Better Than Bagel
+
+Qwen3-VL gives *some* style transfer because the style info is at least **present** (even if entangled with content). Bagel's connector strips style info out entirely during training - it only learned to encode semantic content for VL understanding tasks.
+
+| Aspect | Qwen3-VL | Bagel Connector |
+|--------|----------|-----------------|
+| Style info present | Yes (entangled) | No (lost) |
+| Content info present | Yes | Yes |
+| Style transfer possible | Partial (with corruption) | None |
+| Best use case | Low-alpha blending | None for style |
+
+---
+
+## What We Need to Succeed
+
+### 1. Training Data
+
+The key dataset structure - triplets of:
+```
+(style_reference, content_prompt, target_image)
+```
+
+Where `target_image` has the **style** of `style_reference` but the **content** of `content_prompt`.
+
+**Potential sources:**
+
+| Source | Pros | Cons |
+|--------|------|------|
+| Artist portfolios | Real style consistency | Limited scale, copyright |
+| Synthetic pairs | Unlimited scale | Style transfer quality varies |
+| Same-scene different-style | Clear style difference | Hard to find at scale |
+| Video frames + style | Consistent content | Temporal artifacts |
+
+**Minimum viable dataset:** ~10-50k triplets with diverse styles
+
+### 2. Training Objective
+
+```python
+# Frozen: SigLIP encoder, most of DiT
+# Trainable: siglip_embedder, siglip_refiner (maybe DiT LoRA)
+
+def training_step(style_ref, prompt, target):
+    # Extract style features
+    siglip_feats = siglip_encoder(style_ref)
+    siglip_feats = siglip_embedder(siglip_feats)
+    siglip_feats = siglip_refiner(siglip_feats)
+
+    # Encode prompt
+    text_feats = text_encoder(prompt)
+
+    # Standard diffusion loss on target
+    noise = torch.randn_like(target_latent)
+    noisy = scheduler.add_noise(target_latent, noise, t)
+    pred = dit(noisy, t, text_feats, siglip_feats)
+
+    loss = F.mse_loss(pred, noise)  # or velocity
+    return loss
+```
+
+### 3. What to Train
+
+| Option | Params | Compute | Risk |
+|--------|--------|---------|------|
+| siglip_embedder only | ~4.4M | Low | May not be enough capacity |
+| embedder + refiner | ~25M | Medium | Good balance |
+| + DiT LoRA | ~50M | Higher | Best quality, harder to tune |
+
+**Missing weights breakdown:**
+
+| Component | Shape | Params |
+|-----------|-------|--------|
+| `siglip_embedder[0]` (RMSNorm) | (1152,) | ~1K |
+| `siglip_embedder[1]` (Linear) | (3840, 1152) + (3840,) | ~4.4M |
+| `siglip_refiner[0]` | Full transformer layer | ~12M |
+| `siglip_refiner[1]` | Full transformer layer | ~12M |
+| `siglip_pad_token` | (1, 3840) | ~4K |
+| **Total** | | **~25-30M** |
+
+### 4. Compute Requirements
+
+**Rough estimates:**
+- 1x A100 (80GB): ~1-2 days for minimal adapter
+- 4x A100: ~1 day for full siglip components
+- 8x A100: Hours, or include DiT LoRA
+
+**RTX 4090 (24GB) feasibility:**
+- siglip_embedder with gradient checkpointing: Feasible
+- Full siglip_refiner: Needs CPU offload or smaller batch
+- DiT LoRA: Probably not feasible
+
+### 5. Evaluation Metrics
+
+| Metric | What it Measures |
+|--------|------------------|
+| Style similarity (CLIP/DINO) | Output vs reference style match |
+| Content preservation (CLIP) | Output vs prompt content match |
+| FID | Overall image quality |
+| ImageReward | Aesthetic quality |
+| Human eval | Subjective style transfer success |
+
+### 6. The Bootstrapping Problem
+
+To generate training data, we need a style transfer model. To train a style transfer model, we need training data.
+
+**Workarounds:**
+1. Use existing neural style transfer to generate pairs
+2. Use artist datasets where style is consistent across works
+3. Use ControlNet + style LoRAs to generate synthetic pairs
+4. Fine-tune on small manually curated set first, then scale
+
+### 7. Minimum Viable Training Path
+
+```
+1. Curate ~10k style triplets (synthetic or artist-based)
+2. Freeze: SigLIP, text encoder, DiT
+3. Train: siglip_embedder + siglip_refiner (~25M params)
+4. Loss: Standard diffusion MSE/velocity loss
+5. Compute: 1-2 days on single A100 (or longer on 4090)
+6. Evaluate: Style similarity vs content preservation tradeoff
+```
+
+### 8. Is Training Worth It?
+
+**Pros of training custom adapter:**
+- Full control over style conditioning behavior
+- Could achieve clean style transfer without content corruption
+- Reusable for any style reference
+
+**Cons:**
+- Significant data curation effort
+- Compute cost (A100 time or days on 4090)
+- Risk of not matching official quality
+
+**Alternative:** Qwen3-VL already gives *some* style transfer at alpha 0.3-0.5 with layer -6, just with the entanglement tradeoff. For many use cases, this may be sufficient without any training.
 
 ---
 

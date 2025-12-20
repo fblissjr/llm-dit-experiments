@@ -1,252 +1,144 @@
 # llm-dit-experiments
 
-Standalone diffusers-based platform for experimenting with LLM-DiT image generation models. Currently supports Z-Image (Alibaba/Tongyi) with Qwen3-4B text encoder, either locally via `transformers` or distributed via [`heylookitsanllm`](https://github.com/fblissjr/heylookitsanllm), an LLM API server (with hidden state output support) that can run Apple MLX models or llama.cpp GGUF models.
+Diffusers-based platform for LLM-DiT image generation models. Supports multiple model types with pluggable backends.
 
-## Features
+## Supported Models
 
-- Multiple model support: Z-Image (txt2img/img2img) and Qwen-Image-Layered (image decomposition)
-- Pluggable LLM backends (transformers local, heylookitsanllm API)
-- Distributed inference (encode on Mac MPS, generate on CUDA)
-- Web UI for generation and prompt testing
-- CLI script for image generation
-- TOML configuration file support
-- 100+ prompt templates with system prompt + thinking tokens
-- Prompt rewriting/expansion via Qwen3 model (local or API)
-- LoRA support with automatic weight fusion (Z-Image)
-- Granular device placement (encoder/DiT/VAE independently)
+| Model | Task | Input | Output |
+|-------|------|-------|--------|
+| **Z-Image** (Tongyi) | Text-to-image, img2img | Text prompt | Single RGB image |
+| **Qwen-Image-Layered** (Qwen) | Image decomposition | Image + text | Multiple RGBA layers |
 
 ## Quick Start
 
 ```bash
-# Install dependencies (use --inexact to preserve any existing torch)
 uv sync --inexact
+```
 
-# Install PyTorch separately (choose one):
-# Stable CUDA 13.0
-uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu130
-# Nightly CUDA 13.0
-uv pip install --pre torch torchvision --index-url https://download.pytorch.org/whl/nightly/cu130
-# CPU only
-uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+### Z-Image (Text-to-Image)
 
-# Run web server with local model
+```bash
+# Web UI
 uv run web/server.py --model-path /path/to/z-image-turbo
 
-# Generate via CLI
+# CLI
 uv run scripts/generate.py \
   --model-path /path/to/z-image-turbo \
   --output image.png \
   "A cat sleeping in sunlight"
 ```
 
-## Usage
-
-### Web Server
+### Qwen-Image-Layered (Image Decomposition)
 
 ```bash
-# Local generation (requires CUDA/MPS)
-uv run web/server.py --model-path /path/to/z-image-turbo
-
-# Distributed: API encoder + local generation
-uv run web/server.py \
-  --api-url http://mac-host:8080 \
-  --api-model Qwen3-4B \
-  --model-path /path/to/z-image-turbo
-
-# With config file
-uv run web/server.py --config config.toml --profile default
-
-# With LoRA
-uv run web/server.py \
-  --model-path /path/to/z-image-turbo \
-  --lora style.safetensors:0.8
-```
-
-Access at http://localhost:7860
-
-### CLI Generation
-
-```bash
-# Z-Image: Basic generation
-uv run scripts/generate.py \
-  --model-path /path/to/z-image-turbo \
-  --output image.png \
-  "A sunset over mountains"
-
-# Z-Image: With template
-uv run scripts/generate.py \
-  --model-path /path/to/z-image-turbo \
-  --template photorealistic \
-  "A portrait"
-
-# Z-Image: Granular device control
-uv run scripts/generate.py \
-  --model-path /path/to/z-image-turbo \
-  --text-encoder-device cpu \
-  --dit-device cuda \
-  --vae-device cuda \
-  "A scene"
-
-# Qwen-Image-Layered: Image decomposition
+# CLI
 uv run scripts/generate.py \
   --model-type qwenimage \
   --qwen-image-model-path /path/to/Qwen-Image-Layered \
   --img2img input.jpg \
   "A cheerful child waving under a blue sky"
+
+# Web UI (model selector in header)
+uv run web/server.py \
+  --model-path /path/to/z-image-turbo \
+  --config config.toml
 ```
 
-### Configuration
+Configure `qwen_image.model_path` in config.toml to enable Qwen-Image in web UI.
 
-Create a config.toml file:
-
-```toml
-[default]
-model_path = "/path/to/z-image-turbo"
-templates_dir = "templates/z_image"
-
-[default.devices]
-text_encoder = "cpu"
-dit = "cuda"
-vae = "cuda"
-
-[default.generation]
-width = 1024
-height = 1024
-steps = 9
-guidance_scale = 0.0
-
-[default.scheduler]
-shift = 3.0
-
-[default.lora]
-paths = ["style.safetensors"]
-scales = [0.8]
-
-[default.rewriter]
-use_api = false              # Use API backend for prompt rewriting
-api_url = ""                 # API URL (defaults to main api.url)
-api_model = "Qwen3-4B"       # Model ID for rewriter API
-temperature = 1.0            # Sampling temperature
-top_p = 0.95                 # Nucleus sampling
-max_tokens = 512             # Max tokens to generate
-```
-
-CLI flags override config values. See [config.toml.example](config.toml.example) for full options.
-
-## Running Tests
+## Configuration
 
 ```bash
-# All tests
-uv run pytest tests/ -v
-
-# Specific test file
-uv run pytest tests/test_web_server.py -v
+cp config.toml.example config.toml
+# Edit paths, then:
+uv run web/server.py --config config.toml --profile rtx4090
 ```
 
-## Profiling
+Key sections in config.toml:
+- `[profile.encoder]` - Text encoder device/dtype
+- `[profile.generation]` - Resolution, steps, CFG
+- `[profile.qwen_image]` - Qwen-Image-Layered settings
+- `[profile.vl]` - Vision conditioning (Qwen3-VL)
+- `[profile.rewriter]` - Prompt rewriting settings
+
+See [config.toml.example](config.toml.example) for all options.
+
+## Key Differences
+
+| | Z-Image | Qwen-Image-Layered |
+|-|---------|-------------------|
+| Text encoder | Qwen3-4B (2560 dim) | Qwen2.5-VL-7B (3584 dim) |
+| CFG scale | 0.0 (baked in) | 4.0 (required) |
+| Steps | 8-9 (distilled) | 30-50 |
+| Resolution | Flexible (16 multiple) | Fixed (640/1024) |
+| LoRA | Supported | Not supported |
+
+## CLI Reference
 
 ```bash
-# Run stability tests
-uv run scripts/profiler.py --model-path /path/to/z-image-turbo
+# Z-Image with device control
+uv run scripts/generate.py \
+  --model-path /path/to/z-image-turbo \
+  --text-encoder-device cpu \
+  --dit-device cuda \
+  --vae-device cuda \
+  "A mountain landscape"
 
-# Show system info
-uv run scripts/profiler.py --show-info
+# Z-Image with LoRA
+uv run scripts/generate.py \
+  --model-path /path/to/z-image-turbo \
+  --lora style.safetensors:0.8 \
+  "An anime character"
 
-# Test different configurations
-uv run scripts/profiler.py --model-path /path/to/z-image-turbo --sweep
+# Qwen-Image with custom parameters
+uv run scripts/generate.py \
+  --model-type qwenimage \
+  --qwen-image-model-path /path/to/Qwen-Image-Layered \
+  --qwen-image-layers 5 \
+  --qwen-image-resolution 1024 \
+  --qwen-image-cfg-scale 4.0 \
+  --img2img input.jpg \
+  "Scene description"
+
+# Distributed: encoder on Mac, DiT on CUDA
+uv run web/server.py \
+  --api-url http://mac-host:8080 \
+  --api-model Qwen3-4B \
+  --model-path /path/to/z-image-turbo
 ```
 
-See [docs/profiler.md](docs/profiler.md) for detailed documentation.
+## API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/generate` | POST | Z-Image generation |
+| `/api/qwen-image/decompose` | POST | Qwen-Image decomposition |
+| `/api/rewrite` | POST | Prompt rewriting |
+| `/api/vl/generate` | POST | Z-Image with vision conditioning |
+
+See [docs/web_server_api.md](docs/web_server_api.md) for full API reference.
 
 ## Experiments
 
-Run ablation studies and compare results:
-
 ```bash
-# Run experiment sweeps
+# Run ablation sweeps
 ./experiments/sweep_hidden_layer.sh --quick
-./experiments/sweep_shift_steps.sh --quick
 
-# List experiment results
+# Compare results
 uv run experiments/compare.py --list
-
-# Generate comparison grid
 uv run experiments/compare.py -e shift_sweep --mode grid -o grid.png
 
-# Start interactive viewer (port 7861)
+# Interactive viewer (port 7861)
 uv run experiments/viewer/server.py
 ```
 
-See [experiments/README.md](experiments/README.md) for detailed documentation.
-
-## Project Structure
-
-```
-src/llm_dit/
-    backends/           # LLM backend abstraction (Protocol-based)
-    conversation/       # Chat template formatting (Qwen3)
-    templates/          # Template loading system
-    encoders/           # Text encoding pipeline
-    pipelines/          # Diffusion pipeline wrappers
-    utils/              # Utilities (LoRA, etc)
-    cli.py              # Shared CLI argument parser
-    config.py           # Configuration dataclasses
-
-web/
-    server.py           # FastAPI web server
-    index.html          # Web UI
-
-templates/z_image/      # 144 prompt templates
-scripts/                # CLI tools (generate.py, profiler.py)
-experiments/            # Ablation studies, comparison tools, viewer
-tests/                  # Test suite
-```
-
-## Architecture
-
-```
-Text Prompt
-    |
-    v
-Qwen3Formatter (chat template with thinking blocks)
-    |
-    v
-TextEncoderBackend (transformers/API)
-    |
-    v
-hidden_states[-2] -> embeddings (2560 dim)
-    |
-    v
-diffusers (DiT + VAE)
-    |
-    v
-Image Output
-```
-
-## Key Technical Details
-
-| Parameter | Value | Notes |
-|-----------|-------|-------|
-| Text encoder | Qwen3-4B | 2560 hidden dim, 36 layers |
-| Embedding extraction | hidden_states[-2] | Penultimate layer (configurable via --hidden-layer) |
-| CFG scale | 0.0 | Baked in via Decoupled-DMD |
-| Steps | 8-9 | Turbo distilled |
-| Scheduler | FlowMatchEuler | shift=3.0 (requires custom scheduler) |
-| VAE | 16-channel | Wan-family |
-
-**Important:** The `shift` parameter requires `use_custom_scheduler = true` in config (or `--use-custom-scheduler` on CLI). Diffusers' `FlowMatchEulerDiscreteScheduler` ignores the `mu`/`shift` parameter entirely - all shift values produce identical results without the custom scheduler.
+See [experiments/README.md](experiments/README.md) for documentation.
 
 ## Documentation
 
-- [docs/distributed_inference.md](docs/distributed_inference.md) - Running text encoder on Mac, DiT on CUDA
-- [docs/web_server_api.md](docs/web_server_api.md) - REST API reference (includes prompt rewriting)
-- [docs/profiler.md](docs/profiler.md) - Profiling and stability testing
-- [config.toml.example](config.toml.example) - Full configuration example
+- [CLAUDE.md](CLAUDE.md) - Technical reference
+- [docs/models/qwen_image_layered.md](docs/models/qwen_image_layered.md) - Qwen-Image-Layered details
+- [docs/distributed_inference.md](docs/distributed_inference.md) - Distributed setup
+- [docs/web_server_api.md](docs/web_server_api.md) - REST API reference
+- [config.toml.example](config.toml.example) - Full configuration
 - [CHANGELOG.md](CHANGELOG.md) - Version history
-- [CLAUDE.md](CLAUDE.md) - Comprehensive technical reference
-
-## Related Projects
-
-- [ComfyUI-QwenImageWanBridge](https://github.com/fblissjr/ComfyUI-QwenImageWanBridge) - Original implementation for ComfyUI
-- [DiffSynth-Studio](https://github.com/modelscope/DiffSynth-Studio) - Reference architecture
-- [heylookitsanllm](https://github.com/fredbliss/heylookitsanllm) - Custom MLX & llama.cpp LLM server

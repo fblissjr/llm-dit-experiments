@@ -53,22 +53,42 @@ class AdaLayerNorm(nn.Module):
 
 
 class TimestepEmbeddings(nn.Module):
-    """Sinusoidal timestep embeddings."""
+    """Sinusoidal timestep embeddings with optional additional conditioning.
+
+    Matches DiffSynth's TimestepEmbeddings from general_modules.py.
+
+    Args:
+        embedding_dim: Dimension for sinusoidal embedding
+        out_dim: Output dimension after projection
+        scale: Scale factor for timestep (default 1000.0)
+        use_additional_t_cond: If True, add an embedding for conditioning type (0 or 1)
+    """
 
     def __init__(
         self,
         embedding_dim: int,
         out_dim: int,
         scale: float = 1000.0,
+        use_additional_t_cond: bool = False,
     ):
         super().__init__()
         self.embedding_dim = embedding_dim
         self.scale = scale
+        self.use_additional_t_cond = use_additional_t_cond
         self.linear_1 = nn.Linear(embedding_dim, out_dim)
         self.act = nn.SiLU()
         self.linear_2 = nn.Linear(out_dim, out_dim)
 
-    def forward(self, timestep: torch.Tensor, dtype: torch.dtype) -> torch.Tensor:
+        # Optional additional conditioning embedding (matches DiffSynth)
+        if use_additional_t_cond:
+            self.addition_t_embedding = nn.Embedding(2, out_dim)
+
+    def forward(
+        self,
+        timestep: torch.Tensor,
+        dtype: torch.dtype,
+        addition_t_cond: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
         # Sinusoidal embedding
         half_dim = self.embedding_dim // 2
         exponent = -math.log(10000) * torch.arange(half_dim, dtype=dtype, device=timestep.device) / half_dim
@@ -79,6 +99,12 @@ class TimestepEmbeddings(nn.Module):
         emb = self.linear_1(emb)
         emb = self.act(emb)
         emb = self.linear_2(emb)
+
+        # Add optional conditioning embedding
+        if addition_t_cond is not None and self.use_additional_t_cond:
+            addition_emb = self.addition_t_embedding(addition_t_cond)
+            emb = emb + addition_emb.to(dtype=emb.dtype)
+
         return emb
 
 
@@ -238,7 +264,7 @@ class QwenEmbedLayer3DRope(nn.Module):
             freqs.append(torch.polar(torch.ones_like(axis_freqs), axis_freqs))
         return torch.cat(freqs, dim=1)
 
-    @functools.lru_cache(maxsize=128)
+    @functools.lru_cache(maxsize=None)  # Unlimited cache (matches DiffSynth)
     def _compute_video_freqs(self, frame: int, height: int, width: int, idx: int = 0) -> torch.Tensor:
         seq_len = frame * height * width
         freqs_pos = self.pos_freqs.split([d // 2 for d in self.axes_dim], dim=1)
@@ -261,7 +287,7 @@ class QwenEmbedLayer3DRope(nn.Module):
 
         return torch.cat([freqs_frame, freqs_height, freqs_width], dim=-1).reshape(seq_len, -1).clone().contiguous()
 
-    @functools.lru_cache(maxsize=128)
+    @functools.lru_cache(maxsize=None)  # Unlimited cache (matches DiffSynth)
     def _compute_condition_freqs(self, frame: int, height: int, width: int) -> torch.Tensor:
         """Compute freqs for condition image (uses negative index)."""
         seq_len = frame * height * width
@@ -479,8 +505,14 @@ class QwenImageTransformerBlock(nn.Module):
 class QwenImageDiTModel(nn.Module):
     """Full Qwen-Image DiT model."""
 
-    def __init__(self, num_layers: int = 60, use_layer3d_rope: bool = False):
+    def __init__(
+        self,
+        num_layers: int = 60,
+        use_layer3d_rope: bool = False,
+        use_additional_t_cond: bool = False,
+    ):
         super().__init__()
+        self._use_additional_t_cond = use_additional_t_cond
 
         # RoPE embeddings
         if use_layer3d_rope:
@@ -488,8 +520,10 @@ class QwenImageDiTModel(nn.Module):
         else:
             self.pos_embed = QwenEmbedRope(theta=10000, axes_dim=[16, 56, 56], scale_rope=True)
 
-        # Timestep embedding
-        self.time_text_embed = TimestepEmbeddings(256, 3072, scale=1000)
+        # Timestep embedding (with optional additional conditioning)
+        self.time_text_embed = TimestepEmbeddings(
+            256, 3072, scale=1000, use_additional_t_cond=use_additional_t_cond
+        )
 
         # Input projections
         self.txt_norm = RMSNorm(3584, eps=1e-6)
@@ -519,6 +553,7 @@ class QwenImageDiTModel(nn.Module):
         height: int,
         width: int,
         img_shapes: Optional[List[Tuple[int, int, int]]] = None,
+        addition_t_cond: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         # Compute img_shapes if not provided
         if img_shapes is None:
@@ -543,8 +578,11 @@ class QwenImageDiTModel(nn.Module):
         image = self.img_in(image)
         text = self.txt_in(self.txt_norm(prompt_emb))
 
-        # Timestep conditioning
-        conditioning = self.time_text_embed(timestep, image.dtype)
+        # Timestep conditioning (with optional additional conditioning)
+        # If model has use_additional_t_cond but no value provided, default to 0 (generation mode)
+        if self._use_additional_t_cond and addition_t_cond is None:
+            addition_t_cond = torch.zeros(1, dtype=torch.long, device=latents.device)
+        conditioning = self.time_text_embed(timestep, image.dtype, addition_t_cond=addition_t_cond)
 
         # Compute RoPE
         image_rotary_emb = self.pos_embed(img_shapes, txt_seq_lens, device=latents.device)
