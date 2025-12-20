@@ -23,6 +23,7 @@ dependencies = [
     "uvicorn>=0.38.0",
     "fastapi>=0.123.4",
     "python-multipart>=0.0.20",
+    "einops",  # Tensor reshaping for Qwen-Image models
     "image-reward>=1.5",
     "matplotlib>=3.10.7",
 ]

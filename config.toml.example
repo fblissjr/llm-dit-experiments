@@ -378,27 +378,39 @@ target_std = 58.75
 
 [default.qwen_image]
 model_path = ""              # Path to Qwen_Qwen-Image-Layered model directory
-layer_num = 3                # Number of decomposition layers (output: composite + N layers)
+edit_model_path = ""         # Path to Qwen-Image-Edit model (or "" for HuggingFace auto-download)
+cpu_offload = true           # Enable sequential CPU offload (recommended for RTX 4090)
+layer_num = 4                # Number of decomposition layers (output: composite + N layers)
+num_inference_steps = 50     # Diffusion steps
 cfg_scale = 4.0              # Classifier-free guidance scale (Qwen-Image uses CFG)
-resolution = 1024            # Output resolution: 640 or 1024 ONLY (training data constraint)
+resolution = 640             # Output resolution: 640 or 1024 ONLY (640 recommended)
 
 [rtx4090.qwen_image]
 model_path = ""              # /path/to/Qwen_Qwen-Image-Layered
-layer_num = 3
+edit_model_path = ""         # /path/to/Qwen-Image-Edit-2509 (or empty for HuggingFace)
+cpu_offload = true           # Recommended even for RTX 4090
+layer_num = 4
+num_inference_steps = 50
 cfg_scale = 4.0
-resolution = 1024
+resolution = 640             # 640 produces better quality per technical report
 
 [low_vram.qwen_image]
 model_path = ""
-layer_num = 3
+edit_model_path = ""
+cpu_offload = true           # Required for low VRAM
+layer_num = 4
+num_inference_steps = 50
 cfg_scale = 4.0
 resolution = 640             # Use 640 for lower VRAM usage
 
 [distributed.qwen_image]
 model_path = ""              # Qwen-Image runs fully locally (no distributed support yet)
-layer_num = 3
+edit_model_path = ""
+cpu_offload = true
+layer_num = 4
+num_inference_steps = 50
 cfg_scale = 4.0
-resolution = 1024
+resolution = 640
 
 # =============================================================================
 # Web Server Configuration (shared across profiles)

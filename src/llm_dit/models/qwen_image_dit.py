@@ -61,6 +61,7 @@ class QwenImageDiT(nn.Module):
         model: nn.Module,
         device: torch.device,
         dtype: torch.dtype,
+        uses_accelerate_dispatch: bool = False,
     ):
         """
         Initialize the DiT wrapper.
@@ -69,11 +70,13 @@ class QwenImageDiT(nn.Module):
             model: The underlying QwenImageDiT model
             device: Device for computation
             dtype: Data type
+            uses_accelerate_dispatch: If True, model uses accelerate's device dispatch
         """
         super().__init__()
         self.model = model
         self._device = device
         self._dtype = dtype
+        self._uses_accelerate_dispatch = uses_accelerate_dispatch
 
     @classmethod
     def from_pretrained(
@@ -83,6 +86,9 @@ class QwenImageDiT(nn.Module):
         device: str | torch.device = "cuda",
         torch_dtype: torch.dtype = torch.bfloat16,
         use_layer3d_rope: bool = True,
+        compile_model: bool = False,
+        compile_mode: str = "reduce-overhead",
+        quantization: str = "none",
         **kwargs,
     ) -> "QwenImageDiT":
         """
@@ -94,9 +100,29 @@ class QwenImageDiT(nn.Module):
             device: Device to load model on
             torch_dtype: Model dtype
             use_layer3d_rope: Use layer-aware 3D RoPE for multi-layer decomposition
+            compile_model: If True, compile model with torch.compile for speedup
+            compile_mode: Mode for torch.compile: "reduce-overhead", "max-autotune", or "default"
+            quantization: Quantization mode: "none", "4bit", or "8bit"
 
         Returns:
             Initialized QwenImageDiT
+
+        Example:
+            # Standard loading
+            dit = QwenImageDiT.from_pretrained("/path/to/model")
+
+            # With 4-bit quantization for RTX 4090 (reduces ~38GB to ~10GB)
+            dit = QwenImageDiT.from_pretrained(
+                "/path/to/model",
+                quantization="4bit",
+            )
+
+            # With torch.compile for faster inference (slower first run)
+            dit = QwenImageDiT.from_pretrained(
+                "/path/to/model",
+                compile_model=True,
+                compile_mode="reduce-overhead",
+            )
         """
         model_path = Path(model_path)
         device = torch.device(device)
@@ -140,17 +166,72 @@ class QwenImageDiT(nn.Module):
         if unexpected:
             logger.debug(f"Unexpected keys: {unexpected[:5]}...")
 
-        # Move to device and dtype
-        model = model.to(device=device, dtype=torch_dtype)
-        model.eval()
+        # Track if accelerate dispatch is used
+        uses_accelerate_dispatch = False
+
+        # Handle device placement - for 20B model, use accelerate sharding
+        if quantization in ("4bit", "8bit", "shard"):
+            # Use accelerate for device sharding (model is too large for single GPU)
+            try:
+                from accelerate import infer_auto_device_map, dispatch_model, init_empty_weights
+
+                logger.info(f"Using accelerate device sharding for DiT...")
+
+                # Convert to target dtype first (on CPU)
+                model = model.to(dtype=torch_dtype)
+
+                # Compute device map to split across GPU/CPU
+                # Reserve some GPU memory for inference activations
+                max_memory = {0: "18GiB", "cpu": "80GiB"}
+                device_map = infer_auto_device_map(
+                    model,
+                    max_memory=max_memory,
+                    no_split_module_classes=["MMDiTBlock"],
+                )
+
+                # Count modules on each device
+                gpu_modules = len([k for k, v in device_map.items() if v == 0])
+                cpu_modules = len([k for k, v in device_map.items() if v == "cpu"])
+                logger.info(f"Device map: {gpu_modules} modules on GPU, {cpu_modules} on CPU")
+
+                model = dispatch_model(model, device_map=device_map)
+                model.eval()
+                uses_accelerate_dispatch = True
+                logger.info("DiT loaded with accelerate device sharding")
+
+            except ImportError as e:
+                logger.warning(
+                    f"accelerate not available for device sharding: {e}. "
+                    "Falling back to standard loading (may OOM). "
+                    "Install with: pip install accelerate"
+                )
+                model = model.to(device=device, dtype=torch_dtype)
+                model.eval()
+            except Exception as e:
+                logger.warning(f"Device sharding failed: {e}. Falling back to standard loading.")
+                model = model.to(device=device, dtype=torch_dtype)
+                model.eval()
+        else:
+            # Standard loading without sharding
+            model = model.to(device=device, dtype=torch_dtype)
+            model.eval()
+
+        # Apply torch.compile if requested
+        if compile_model:
+            logger.info(f"Compiling DiT with torch.compile (mode={compile_mode})...")
+            try:
+                model = torch.compile(model, mode=compile_mode)
+                logger.info("DiT compilation successful (first inference will be slower)")
+            except Exception as e:
+                logger.warning(f"torch.compile failed, using eager mode: {e}")
 
         logger.info(
             f"Loaded QwenImageDiT: {cls.NUM_LAYERS} layers, "
             f"dim={cls.INNER_DIM}, heads={cls.NUM_HEADS}, "
-            f"device={device}, dtype={torch_dtype}"
+            f"device={device}, dtype={torch_dtype}, compiled={compile_model}"
         )
 
-        return cls(model, device, torch_dtype)
+        return cls(model, device, torch_dtype, uses_accelerate_dispatch)
 
     @property
     def device(self) -> torch.device:
@@ -226,7 +307,14 @@ class QwenImageDiT(nn.Module):
         return output
 
     def to(self, device: torch.device) -> "QwenImageDiT":
-        """Move model to device."""
+        """Move model to device.
+
+        Note: If model uses accelerate dispatch, this is a no-op since
+        accelerate manages device placement automatically.
+        """
+        if self._uses_accelerate_dispatch:
+            # Can't move model when accelerate manages devices
+            return self
         self.model = self.model.to(device)
         self._device = device
         return self

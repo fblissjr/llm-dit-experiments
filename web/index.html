@@ -266,6 +266,7 @@
                 <div id="qiResult" class="hidden">
                     <div class="bg-gray-800 rounded-xl overflow-hidden p-4">
                         <h3 class="text-sm font-medium text-gray-300 mb-3">Decomposed Layers</h3>
+                        <p class="text-xs text-gray-500 mb-3">Click "Edit" on any layer to modify it with text instructions</p>
                         <div id="qiLayerGrid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
                             <!-- Layers will be added dynamically -->
                         </div>
@@ -274,6 +275,111 @@
                             <button type="button" id="qiDownloadZip" class="px-4 py-2 bg-green-600 hover:bg-green-700 text-white text-sm font-medium rounded-lg transition-colors">
                                 Download ZIP
                             </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Layer Edit Modal -->
+                <div id="qiEditModal" class="hidden fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4">
+                    <div class="bg-gray-900 rounded-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto border border-gray-700">
+                        <div class="p-6">
+                            <div class="flex justify-between items-center mb-4">
+                                <h3 class="text-lg font-semibold text-white">Edit Layer</h3>
+                                <button type="button" id="qiEditClose" class="text-gray-400 hover:text-white">
+                                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                                    </svg>
+                                </button>
+                            </div>
+
+                            <!-- Original Layer Preview -->
+                            <div class="mb-4">
+                                <p class="text-sm text-gray-400 mb-2">Original Layer: <span id="qiEditLayerName" class="text-purple-400"></span></p>
+                                <div class="bg-gray-800 rounded-lg p-2 inline-block">
+                                    <img id="qiEditOriginalImg" class="max-h-40 rounded bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAiIGhlaWdodD0iMjAiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PGRlZnM+PHBhdHRlcm4gaWQ9ImNoZWNrIiB3aWR0aD0iMjAiIGhlaWdodD0iMjAiIHBhdHRlcm5Vbml0cz0idXNlclNwYWNlT25Vc2UiPjxyZWN0IHdpZHRoPSIxMCIgaGVpZ2h0PSIxMCIgZmlsbD0iIzMzMyIvPjxyZWN0IHg9IjEwIiB5PSIxMCIgd2lkdGg9IjEwIiBoZWlnaHQ9IjEwIiBmaWxsPSIjMzMzIi8+PC9wYXR0ZXJuPjwvZGVmcz48cmVjdCBmaWxsPSJ1cmwoI2NoZWNrKSIgd2lkdGg9IjEwMCUiIGhlaWdodD0iMTAwJSIvPjwvc3ZnPg==')]" alt="Original layer">
+                                </div>
+                            </div>
+
+                            <!-- Edit Instruction -->
+                            <div class="mb-4">
+                                <label for="qiEditInstruction" class="block text-sm font-medium text-gray-300 mb-2">Edit Instruction</label>
+                                <textarea
+                                    id="qiEditInstruction"
+                                    rows="2"
+                                    class="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-white placeholder-gray-500 focus:ring-2 focus:ring-purple-500 focus:border-transparent resize-none"
+                                    placeholder="Describe how to modify this layer (e.g., 'Change the color to blue', 'Add a pattern')"
+                                ></textarea>
+                            </div>
+
+                            <!-- Edit Parameters (collapsible) -->
+                            <details class="mb-4 group">
+                                <summary class="cursor-pointer text-sm font-medium text-gray-400 hover:text-gray-300 flex items-center gap-2 select-none">
+                                    <svg class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                                    </svg>
+                                    Advanced Parameters
+                                </summary>
+                                <div class="mt-3 grid grid-cols-2 gap-3 p-4 bg-gray-800/50 rounded-xl border border-gray-700">
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-300 mb-2">
+                                            CFG Scale: <span id="qiEditCfgValue" class="text-purple-400">4.0</span>
+                                        </label>
+                                        <input type="range" id="qiEditCfgScale" min="1" max="10" step="0.5" value="4.0" class="w-full">
+                                    </div>
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-300 mb-2">
+                                            Steps: <span id="qiEditStepsValue" class="text-purple-400">50</span>
+                                        </label>
+                                        <input type="range" id="qiEditSteps" min="20" max="100" value="50" class="w-full">
+                                    </div>
+                                    <div class="col-span-2">
+                                        <label class="block text-sm font-medium text-gray-300 mb-2">Seed (optional)</label>
+                                        <input type="number" id="qiEditSeed" placeholder="Random" class="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:ring-2 focus:ring-purple-500 text-sm">
+                                    </div>
+                                </div>
+                            </details>
+
+                            <!-- Edit Button -->
+                            <button
+                                type="button"
+                                id="qiEditBtn"
+                                class="w-full py-3 px-4 bg-purple-600 hover:bg-purple-700 active:bg-purple-800 disabled:bg-gray-700 disabled:cursor-not-allowed text-white font-semibold rounded-xl transition-colors shadow-lg shadow-purple-500/20"
+                            >
+                                Apply Edit
+                            </button>
+
+                            <!-- Edit Status -->
+                            <div id="qiEditStatus" class="hidden mt-4">
+                                <div class="bg-gray-800 rounded-xl p-4">
+                                    <div class="flex items-center gap-3">
+                                        <div class="w-5 h-5 border-2 border-purple-500 border-t-transparent rounded-full animate-spin"></div>
+                                        <span id="qiEditStatusText" class="text-gray-300">Editing layer...</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Edit Error -->
+                            <div id="qiEditError" class="hidden mt-4">
+                                <div class="bg-red-900/30 border border-red-700/50 rounded-xl p-4">
+                                    <p class="text-red-300 text-sm" id="qiEditErrorText"></p>
+                                </div>
+                            </div>
+
+                            <!-- Edit Result -->
+                            <div id="qiEditResult" class="hidden mt-4">
+                                <p class="text-sm text-gray-400 mb-2">Edited Result:</p>
+                                <div class="bg-gray-800 rounded-lg p-2 inline-block mb-4">
+                                    <img id="qiEditResultImg" class="max-h-48 rounded bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAiIGhlaWdodD0iMjAiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PGRlZnM+PHBhdHRlcm4gaWQ9ImNoZWNrIiB3aWR0aD0iMjAiIGhlaWdodD0iMjAiIHBhdHRlcm5Vbml0cz0idXNlclNwYWNlT25Vc2UiPjxyZWN0IHdpZHRoPSIxMCIgaGVpZ2h0PSIxMCIgZmlsbD0iIzMzMyIvPjxyZWN0IHg9IjEwIiB5PSIxMCIgd2lkdGg9IjEwIiBoZWlnaHQ9IjEwIiBmaWxsPSIjMzMzIi8+PC9wYXR0ZXJuPjwvZGVmcz48cmVjdCBmaWxsPSJ1cmwoI2NoZWNrKSIgd2lkdGg9IjEwMCUiIGhlaWdodD0iMTAwJSIvPjwvc3ZnPg==')]" alt="Edited layer">
+                                </div>
+                                <div class="flex gap-3">
+                                    <button type="button" id="qiEditReplace" class="flex-1 py-2 px-4 bg-green-600 hover:bg-green-700 text-white font-medium rounded-lg transition-colors">
+                                        Replace Original
+                                    </button>
+                                    <button type="button" id="qiEditDownload" class="py-2 px-4 bg-gray-700 hover:bg-gray-600 text-white font-medium rounded-lg transition-colors">
+                                        Download
+                                    </button>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -2401,13 +2507,22 @@
                 // Clear previous results
                 qiLayerGrid.innerHTML = '';
 
+                // Store layers globally for editing
+                window.qiLayersData = data.layers;
+
                 // Add each layer to the grid
                 data.layers.forEach((layer, index) => {
                     const layerDiv = document.createElement('div');
                     layerDiv.className = 'relative group';
+                    layerDiv.id = `qiLayer-${index}`;
                     layerDiv.innerHTML = `
-                        <img src="${layer.image}" alt="${layer.name}" class="w-full rounded-lg border border-gray-700 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAiIGhlaWdodD0iMjAiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PGRlZnM+PHBhdHRlcm4gaWQ9ImNoZWNrIiB3aWR0aD0iMjAiIGhlaWdodD0iMjAiIHBhdHRlcm5Vbml0cz0idXNlclNwYWNlT25Vc2UiPjxyZWN0IHdpZHRoPSIxMCIgaGVpZ2h0PSIxMCIgZmlsbD0iIzMzMyIvPjxyZWN0IHg9IjEwIiB5PSIxMCIgd2lkdGg9IjEwIiBoZWlnaHQ9IjEwIiBmaWxsPSIjMzMzIi8+PC9wYXR0ZXJuPjwvZGVmcz48cmVjdCBmaWxsPSJ1cmwoI2NoZWNrKSIgd2lkdGg9IjEwMCUiIGhlaWdodD0iMTAwJSIvPjwvc3ZnPg==')]">
-                        <p class="text-xs text-gray-400 mt-1 text-center">${layer.name}</p>
+                        <img src="${layer.image}" alt="${layer.name}" class="w-full rounded-lg border border-gray-700 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAiIGhlaWdodD0iMjAiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PGRlZnM+PHBhdHRlcm4gaWQ9ImNoZWNrIiB3aWR0aD0iMjAiIGhlaWdodD0iMjAiIHBhdHRlcm5Vbml0cz0idXNlclNwYWNlT25Vc2UiPjxyZWN0IHdpZHRoPSIxMCIgaGVpZ2h0PSIxMCIgZmlsbD0iIzMzMyIvPjxyZWN0IHg9IjEwIiB5PSIxMCIgd2lkdGg9IjEwIiBoZWlnaHQ9IjEwIiBmaWxsPSIjMzMzIi8+PC9wYXR0ZXJuPjwvZGVmcz48cmVjdCBmaWxsPSJ1cmwoI2NoZWNrKSIgd2lkdGg9IjEwMCUiIGhlaWdodD0iMTAwJSIvPjwvc3ZnPg==')]" data-layer-index="${index}">
+                        <div class="flex justify-between items-center mt-1">
+                            <p class="text-xs text-gray-400">${layer.name}</p>
+                            <button type="button" class="qiEditLayerBtn text-xs px-2 py-1 bg-purple-600 hover:bg-purple-700 text-white rounded transition-colors opacity-0 group-hover:opacity-100" data-layer-index="${index}">
+                                Edit
+                            </button>
+                        </div>
                     `;
                     qiLayerGrid.appendChild(layerDiv);
                 });
@@ -2457,6 +2572,210 @@
             a.click();
             document.body.removeChild(a);
             URL.revokeObjectURL(url);
+        });
+
+        // =====================================================================
+        // Layer Edit Modal Handling
+        // =====================================================================
+
+        // Edit modal DOM elements
+        const qiEditModal = document.getElementById('qiEditModal');
+        const qiEditClose = document.getElementById('qiEditClose');
+        const qiEditLayerName = document.getElementById('qiEditLayerName');
+        const qiEditOriginalImg = document.getElementById('qiEditOriginalImg');
+        const qiEditInstruction = document.getElementById('qiEditInstruction');
+        const qiEditCfgScale = document.getElementById('qiEditCfgScale');
+        const qiEditCfgValue = document.getElementById('qiEditCfgValue');
+        const qiEditSteps = document.getElementById('qiEditSteps');
+        const qiEditStepsValue = document.getElementById('qiEditStepsValue');
+        const qiEditSeed = document.getElementById('qiEditSeed');
+        const qiEditBtn = document.getElementById('qiEditBtn');
+        const qiEditStatus = document.getElementById('qiEditStatus');
+        const qiEditStatusText = document.getElementById('qiEditStatusText');
+        const qiEditError = document.getElementById('qiEditError');
+        const qiEditErrorText = document.getElementById('qiEditErrorText');
+        const qiEditResult = document.getElementById('qiEditResult');
+        const qiEditResultImg = document.getElementById('qiEditResultImg');
+        const qiEditReplace = document.getElementById('qiEditReplace');
+        const qiEditDownload = document.getElementById('qiEditDownload');
+
+        // Current editing state
+        let currentEditLayerIndex = null;
+        let currentEditResultImage = null;
+
+        // Update CFG value display
+        qiEditCfgScale?.addEventListener('input', () => {
+            if (qiEditCfgValue) qiEditCfgValue.textContent = qiEditCfgScale.value;
+        });
+
+        // Update Steps value display
+        qiEditSteps?.addEventListener('input', () => {
+            if (qiEditStepsValue) qiEditStepsValue.textContent = qiEditSteps.value;
+        });
+
+        // Event delegation for edit buttons (since they're dynamically created)
+        qiLayerGrid?.addEventListener('click', (e) => {
+            const editBtn = e.target.closest('.qiEditLayerBtn');
+            if (!editBtn) return;
+
+            const layerIndex = parseInt(editBtn.dataset.layerIndex);
+            openEditModal(layerIndex);
+        });
+
+        function openEditModal(layerIndex) {
+            if (!window.qiLayersData || !window.qiLayersData[layerIndex]) return;
+
+            const layer = window.qiLayersData[layerIndex];
+            currentEditLayerIndex = layerIndex;
+            currentEditResultImage = null;
+
+            // Set modal content
+            qiEditLayerName.textContent = layer.name;
+            qiEditOriginalImg.src = layer.image;
+            qiEditInstruction.value = '';
+
+            // Reset modal state
+            qiEditStatus.classList.add('hidden');
+            qiEditError.classList.add('hidden');
+            qiEditResult.classList.add('hidden');
+            qiEditBtn.disabled = false;
+
+            // Show modal
+            qiEditModal.classList.remove('hidden');
+            qiEditInstruction.focus();
+        }
+
+        // Close modal
+        qiEditClose?.addEventListener('click', () => {
+            qiEditModal.classList.add('hidden');
+            currentEditLayerIndex = null;
+            currentEditResultImage = null;
+        });
+
+        // Close on backdrop click
+        qiEditModal?.addEventListener('click', (e) => {
+            if (e.target === qiEditModal) {
+                qiEditModal.classList.add('hidden');
+                currentEditLayerIndex = null;
+                currentEditResultImage = null;
+            }
+        });
+
+        // Close on Escape key
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && !qiEditModal.classList.contains('hidden')) {
+                qiEditModal.classList.add('hidden');
+                currentEditLayerIndex = null;
+                currentEditResultImage = null;
+            }
+        });
+
+        // Apply edit button
+        qiEditBtn?.addEventListener('click', async () => {
+            const instruction = qiEditInstruction.value.trim();
+            if (!instruction) {
+                qiEditError.classList.remove('hidden');
+                qiEditErrorText.textContent = 'Please enter an edit instruction';
+                return;
+            }
+
+            if (currentEditLayerIndex === null || !window.qiLayersData) return;
+
+            const layer = window.qiLayersData[currentEditLayerIndex];
+
+            // Reset UI
+            qiEditStatus.classList.remove('hidden');
+            qiEditError.classList.add('hidden');
+            qiEditResult.classList.add('hidden');
+            qiEditBtn.disabled = true;
+            qiEditStatusText.textContent = 'Loading edit model...';
+
+            const params = {
+                layer_image: layer.image,
+                instruction: instruction,
+                steps: parseInt(qiEditSteps.value),
+                cfg_scale: parseFloat(qiEditCfgScale.value),
+                seed: qiEditSeed.value ? parseInt(qiEditSeed.value) : null,
+            };
+
+            try {
+                qiEditStatusText.textContent = 'Editing layer...';
+
+                const response = await fetch(`${API_BASE}/api/qwen-image/edit-layer`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(params),
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({}));
+                    throw new Error(errorData.detail || 'Edit failed');
+                }
+
+                // Get the edited image
+                const blob = await response.blob();
+                const imageUrl = URL.createObjectURL(blob);
+
+                // Store for replace action
+                currentEditResultImage = imageUrl;
+
+                // Show result
+                qiEditResultImg.src = imageUrl;
+                qiEditStatus.classList.add('hidden');
+                qiEditResult.classList.remove('hidden');
+
+            } catch (err) {
+                qiEditStatus.classList.add('hidden');
+                qiEditError.classList.remove('hidden');
+                qiEditErrorText.textContent = err.message;
+            } finally {
+                qiEditBtn.disabled = false;
+            }
+        });
+
+        // Replace original layer
+        qiEditReplace?.addEventListener('click', () => {
+            if (currentEditLayerIndex === null || !currentEditResultImage || !window.qiLayersData) return;
+
+            // Update the layer data
+            // Convert object URL back to data URL for consistency
+            const canvas = document.createElement('canvas');
+            const img = new Image();
+            img.onload = () => {
+                canvas.width = img.width;
+                canvas.height = img.height;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(img, 0, 0);
+                const dataUrl = canvas.toDataURL('image/png');
+
+                // Update stored layer data
+                window.qiLayersData[currentEditLayerIndex].image = dataUrl;
+
+                // Update the grid image
+                const layerDiv = document.getElementById(`qiLayer-${currentEditLayerIndex}`);
+                if (layerDiv) {
+                    const imgEl = layerDiv.querySelector('img');
+                    if (imgEl) imgEl.src = dataUrl;
+                }
+
+                // Close modal
+                qiEditModal.classList.add('hidden');
+                currentEditLayerIndex = null;
+                currentEditResultImage = null;
+            };
+            img.src = currentEditResultImage;
+        });
+
+        // Download edited layer
+        qiEditDownload?.addEventListener('click', () => {
+            if (!currentEditResultImage) return;
+
+            const a = document.createElement('a');
+            a.href = currentEditResultImage;
+            a.download = `edited_layer_${currentEditLayerIndex}.png`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
         });
 
         // =====================================================================

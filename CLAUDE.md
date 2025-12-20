@@ -155,14 +155,18 @@ Image Output
 | Parameter | Value | Notes |
 |-----------|-------|-------|
 | Text encoder | Qwen2.5-VL-7B-Instruct | 3584 hidden dim vision-language model |
-| Embedding extraction | hidden_states[-2] | Penultimate layer from text model |
+| Embedding extraction | hidden_states[-1] | Last layer from text model |
 | DiT architecture | 60-layer dual-stream | Text and visual conditioning streams |
 | CFG scale | 4.0 (default) | Required for quality (not baked in) |
 | Steps | 50 (default) | Non-distilled model |
 | Input | Image + text prompt | Image decomposition task |
-| Output | Multiple RGBA layers | Decomposed scene elements |
-| Resolution | 640x640 or 1024x1024 | Fixed resolution constraint |
-| Use case | Image decomposition | Extract layers/elements from images |
+| Output | Multiple RGBA layers | Decomposed scene elements (2-10 layers) |
+| Resolution | 640 (recommended) or 1024 | Fixed resolution constraint |
+| VRAM | ~5 GB with CPU offload | Recommended for RTX 4090 |
+| Edit model | Qwen-Image-Edit-2509 | Lazy-loaded for layer editing |
+| Use case | Image decomposition + layer editing | Extract and modify individual layers |
+
+See `docs/qwen_image_guide.md` for detailed usage instructions.
 
 ## Hidden Layer Selection
 
@@ -557,6 +561,7 @@ src/llm_dit/
     pipelines/          # Diffusion pipeline wrappers
         z_image.py      # ZImagePipeline (txt2img, img2img)
         qwen_image.py   # QwenImagePipeline (image decomposition)
+        qwen_image_diffusers.py  # QwenImageDiffusersPipeline (wraps official diffusers)
     schedulers/         # Pure PyTorch schedulers
         flow_match.py   # FlowMatchScheduler (shifted sigma schedule)
     models/             # Pure PyTorch model components
@@ -612,9 +617,16 @@ experiments/            # Ablation studies and evaluation tools
         CONDITIONING_GUIDE.md   # Usage guide
         RESEARCH_FINDINGS.md    # Technical discoveries
 
+tests/                  # Test suites
+    unit/               # Unit tests (fast, no GPU required)
+        test_qwen_image.py  # 59 tests for Qwen-Image components
+    integration/        # Integration tests (require model weights)
+        test_qwen_diffusers_wrapper.py  # Full pipeline tests with decomposition/editing
+
 docs/                   # User-facing documentation
     distributed_inference.md  # Running encoder on Mac, DiT on CUDA
     web_server_api.md   # REST API reference
+    qwen_image_guide.md # Qwen-Image-Layered user guide
     models/             # Model-specific documentation
 
 internal/               # Development and maintainer documentation
@@ -882,9 +894,13 @@ uv run scripts/profiler.py --show-info
 ### Qwen-Image-Layered
 | Flag | Description |
 |------|-------------|
-| `--qwen-image-layers` | Number of layers to decompose (1-7, default: 7) |
+| `--qwen-image-model-path` | Path to Qwen-Image-Layered model |
+| `--qwen-image-edit-model-path` | Path to Qwen-Image-Edit model (auto-downloads if empty) |
+| `--qwen-image-cpu-offload` | Enable CPU offload (recommended, ~5 GB VRAM) |
+| `--qwen-image-layers` | Number of layers to decompose (1-10, default: 4) |
+| `--qwen-image-steps` | Diffusion steps (default: 50) |
 | `--qwen-image-cfg-scale` | CFG scale for Qwen-Image (default: 4.0) |
-| `--qwen-image-resolution` | Resolution: 640 or 1024 (default: 1024) |
+| `--qwen-image-resolution` | Resolution: 640 (recommended) or 1024 |
 
 ## REST API Endpoints
 
@@ -910,6 +926,8 @@ uv run scripts/profiler.py --show-info
 | `/api/vl/cache/{id}` | DELETE | Clear specific VL cache entry |
 | `/api/vl/cache` | DELETE | Clear all VL cache |
 | `/api/qwen-image/decompose` | POST | Decompose image into layers (Qwen-Image-Layered) |
+| `/api/qwen-image/edit-layer` | POST | Edit a decomposed layer with text instructions |
+| `/api/qwen-image/edit-status` | GET | Check if edit model is loaded |
 | `/api/qwen-image/config` | GET | Get Qwen-Image configuration |
 | `/health` | GET | Health check |
 

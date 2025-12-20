@@ -149,6 +149,15 @@ class QwenImageDecomposeRequest(BaseModel):
     shift: Optional[float] = None  # Scheduler shift (auto if None)
 
 
+class QwenImageEditLayerRequest(BaseModel):
+    """Request for Qwen-Image layer editing."""
+    layer_image: str  # Base64-encoded RGBA layer image
+    instruction: str  # Text instruction for editing (e.g., "Change color to blue")
+    steps: int = 50  # Number of inference steps
+    cfg_scale: float = 4.0  # Classifier-free guidance scale
+    seed: Optional[int] = None  # Random seed
+
+
 @app.get("/")
 async def index():
     """Serve the main page."""
@@ -230,17 +239,16 @@ async def qwen_image_decompose(request: QwenImageDecomposeRequest):
     if qwen_image_pipeline is None:
         # Try to load on-demand if configured
         if runtime_config and runtime_config.qwen_image_model_path:
-            logger.info("[Qwen-Image] Loading pipeline on-demand...")
+            logger.info("[Qwen-Image] Loading diffusers pipeline on-demand...")
             try:
-                from llm_dit.pipelines.qwen_image import QwenImagePipeline
+                from llm_dit.pipelines.qwen_image_diffusers import QwenImageDiffusersPipeline
 
-                qwen_image_pipeline = QwenImagePipeline.from_pretrained(
+                qwen_image_pipeline = QwenImageDiffusersPipeline.from_pretrained(
                     runtime_config.qwen_image_model_path,
-                    device=runtime_config.dit_device_resolved,
-                    text_encoder_device=runtime_config.encoder_device_resolved,
-                    torch_dtype=runtime_config.get_torch_dtype(),
+                    cpu_offload=True,
+                    load_edit_model=False,  # Lazy load on first edit
                 )
-                logger.info("[Qwen-Image] Pipeline loaded successfully")
+                logger.info("[Qwen-Image] Diffusers pipeline loaded successfully")
             except Exception as e:
                 logger.error(f"[Qwen-Image] Failed to load pipeline: {e}")
                 raise HTTPException(
@@ -285,24 +293,40 @@ async def qwen_image_decompose(request: QwenImageDecomposeRequest):
 
         start = time.time()
 
-        # Run decomposition
+        # Run decomposition (QwenImageDiffusersPipeline uses resolution param)
         layers = qwen_image_pipeline.decompose(
             image=input_image,
             prompt=request.prompt,
             layer_num=request.layer_num,
-            height=request.resolution,
-            width=request.resolution,
+            resolution=request.resolution,
             num_inference_steps=request.steps,
             cfg_scale=request.cfg_scale,
             seed=request.seed,
-            shift=request.shift,
         )
 
         gen_time = time.time() - start
         logger.info(f"[Qwen-Image] Generated {len(layers)} layers in {gen_time:.1f}s")
         logger.info("=" * 60)
 
-        # Create ZIP file with all layers
+        # Convert layers to base64 for JSON response
+        layer_data = []
+        for i, layer_img in enumerate(layers):
+            layer_bytes = io.BytesIO()
+            layer_img.save(layer_bytes, format="PNG")
+            layer_b64 = base64.b64encode(layer_bytes.getvalue()).decode("ascii")
+
+            if i == 0:
+                layer_name = "Composite"
+            else:
+                layer_name = f"Layer {i}"
+
+            layer_data.append({
+                "name": layer_name,
+                "image": f"data:image/png;base64,{layer_b64}",
+                "index": i,
+            })
+
+        # Create ZIP file for download
         zip_buffer = io.BytesIO()
         with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
             for i, layer_img in enumerate(layers):
@@ -311,20 +335,16 @@ async def qwen_image_decompose(request: QwenImageDecomposeRequest):
                 layer_bytes.seek(0)
 
                 if i == 0:
-                    layer_name = "composite.png"
+                    zip_name = "composite.png"
                 else:
-                    layer_name = f"layer_{i}.png"
+                    zip_name = f"layer_{i}.png"
 
-                zf.writestr(layer_name, layer_bytes.getvalue())
+                zf.writestr(zip_name, layer_bytes.getvalue())
 
         zip_buffer.seek(0)
+        zip_b64 = base64.b64encode(zip_buffer.getvalue()).decode("ascii")
 
         # Store in history
-        # Convert first layer (composite) to base64 for thumbnail
-        composite_bytes = io.BytesIO()
-        layers[0].save(composite_bytes, format="PNG")
-        composite_b64 = base64.b64encode(composite_bytes.getvalue()).decode("ascii")
-
         history_entry = {
             "id": len(generation_history),
             "timestamp": time.time(),
@@ -336,28 +356,146 @@ async def qwen_image_decompose(request: QwenImageDecomposeRequest):
             "steps": request.steps,
             "seed": request.seed,
             "gen_time": gen_time,
-            "image_b64": composite_b64,  # Thumbnail is the composite
+            "image_b64": layer_data[0]["image"].split(",")[1] if layer_data else "",
         }
         generation_history.insert(0, history_entry)
         if len(generation_history) > MAX_HISTORY:
             generation_history.pop()
 
-        return StreamingResponse(
-            zip_buffer,
-            media_type="application/zip",
-            headers={
-                "Content-Disposition": f"attachment; filename=qwen_image_layers_{int(time.time())}.zip",
-                "X-Generation-Time": str(gen_time),
-                "X-Layer-Count": str(len(layers)),
-                "X-Seed": str(request.seed) if request.seed else "random",
-            },
-        )
+        return {
+            "layers": layer_data,
+            "zip_data": zip_b64,
+            "generation_time": gen_time,
+            "layer_count": len(layers),
+            "seed": request.seed,
+            "resolution": request.resolution,
+        }
 
     except Exception as e:
         logger.error(f"[Qwen-Image] Decomposition failed: {e}")
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/qwen-image/edit-layer")
+async def qwen_image_edit_layer(request: QwenImageEditLayerRequest):
+    """Edit a decomposed layer using text instructions.
+
+    Uses the Qwen-Image-Edit-2509 model to modify a layer based on natural language
+    instructions. The edit model is loaded lazily on first use.
+
+    Returns the edited RGBA layer as a PNG image.
+    """
+    global qwen_image_pipeline
+
+    # Check if pipeline is loaded (we need the diffusers wrapper for editing)
+    if qwen_image_pipeline is None:
+        # Try to load on-demand if configured
+        if runtime_config and runtime_config.qwen_image_model_path:
+            logger.info("[Qwen-Image] Loading pipeline on-demand for layer editing...")
+            try:
+                from llm_dit.pipelines.qwen_image_diffusers import QwenImageDiffusersPipeline
+
+                qwen_image_pipeline = QwenImageDiffusersPipeline.from_pretrained(
+                    runtime_config.qwen_image_model_path,
+                    cpu_offload=True,
+                    load_edit_model=False,  # Lazy load on first edit
+                )
+                logger.info("[Qwen-Image] Diffusers pipeline loaded successfully")
+            except Exception as e:
+                logger.error(f"[Qwen-Image] Failed to load pipeline: {e}")
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"Failed to load Qwen-Image pipeline: {e}"
+                )
+        else:
+            raise HTTPException(
+                status_code=503,
+                detail="Qwen-Image pipeline not loaded. Configure qwen_image.model_path in config."
+            )
+
+    # Check if pipeline has edit capability
+    if not hasattr(qwen_image_pipeline, 'edit_layer'):
+        raise HTTPException(
+            status_code=400,
+            detail="Pipeline does not support layer editing. Use QwenImageDiffusersPipeline."
+        )
+
+    try:
+        import base64
+        from PIL import Image
+
+        # Decode base64 layer image
+        image_data = request.layer_image
+        if image_data.startswith("data:"):
+            image_data = image_data.split(",", 1)[1]
+        image_bytes = base64.b64decode(image_data)
+        layer_image = Image.open(io.BytesIO(image_bytes)).convert("RGBA")
+
+        logger.info("=" * 60)
+        logger.info("QWEN-IMAGE LAYER EDIT REQUEST")
+        logger.info("=" * 60)
+        logger.info(f"  Layer size: {layer_image.size}")
+        logger.info(f"  Instruction: {request.instruction[:80]}...")
+        logger.info(f"  CFG Scale: {request.cfg_scale}")
+        logger.info(f"  Steps: {request.steps}")
+        logger.info(f"  Seed: {request.seed}")
+
+        start = time.time()
+
+        # Run layer edit
+        edited_layer = qwen_image_pipeline.edit_layer(
+            layer_image=layer_image,
+            instruction=request.instruction,
+            num_inference_steps=request.steps,
+            cfg_scale=request.cfg_scale,
+            seed=request.seed,
+        )
+
+        edit_time = time.time() - start
+        logger.info(f"[Qwen-Image] Edited layer in {edit_time:.1f}s")
+        logger.info("=" * 60)
+
+        # Convert to PNG bytes
+        img_bytes = io.BytesIO()
+        edited_layer.save(img_bytes, format="PNG")
+        img_bytes.seek(0)
+
+        return StreamingResponse(
+            img_bytes,
+            media_type="image/png",
+            headers={
+                "Content-Disposition": f"attachment; filename=edited_layer_{int(time.time())}.png",
+                "X-Edit-Time": str(edit_time),
+                "X-Seed": str(request.seed) if request.seed else "random",
+            },
+        )
+
+    except Exception as e:
+        logger.error(f"[Qwen-Image] Layer edit failed: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/qwen-image/edit-status")
+async def qwen_image_edit_status():
+    """Check if the edit model is loaded and ready."""
+    if qwen_image_pipeline is None:
+        return {
+            "available": False,
+            "reason": "Pipeline not loaded",
+        }
+
+    has_edit_method = hasattr(qwen_image_pipeline, 'edit_layer')
+    has_edit_pipe = hasattr(qwen_image_pipeline, 'has_edit_model') and qwen_image_pipeline.has_edit_model
+
+    return {
+        "available": has_edit_method,
+        "edit_model_loaded": has_edit_pipe,
+        "edit_model_path": getattr(qwen_image_pipeline, '_edit_model_path', None),
+    }
 
 
 # =============================================================================

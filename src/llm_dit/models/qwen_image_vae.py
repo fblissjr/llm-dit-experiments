@@ -145,7 +145,7 @@ class QwenImageVAE(nn.Module):
             attn_scales=[],
             temperal_downsample=[False, True, True],
             dropout=0.0,
-            image_channels=3,
+            image_channels=4,  # RGBA for layer decomposition
         )
 
         decoder = QwenImageDecoder3d(
@@ -156,7 +156,7 @@ class QwenImageVAE(nn.Module):
             attn_scales=[],
             temperal_upsample=[True, True, False],
             dropout=0.0,
-            image_channels=3,
+            image_channels=4,  # RGBA for layer decomposition
         )
 
         quant_conv = QwenImageCausalConv3d(cls.Z_DIM * 2, cls.Z_DIM * 2, 1)

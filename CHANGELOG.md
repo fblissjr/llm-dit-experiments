@@ -8,18 +8,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Qwen-Image-Layered model support for image decomposition
-  - New pipeline: `QwenImagePipeline` for decomposing images into RGBA layers
-  - New backend: `QwenImageTextEncoderBackend` using Qwen2.5-VL-7B-Instruct (3584 dim)
-  - New models: `QwenImageVAE` (3D causal VAE), `QwenImageDiT` (60-layer dual-stream transformer)
-  - Latent packing utilities for 1-7 layer output (`pack_multi_layer_latents`, `unpack_multi_layer_latents`)
-  - CLI support: `--model-type qwenimage`, `--qwen-image-model-path`, `--qwen-image-layers`, `--qwen-image-cfg-scale`, `--qwen-image-resolution`
-  - Web UI: Model type selector (Z-Image / Qwen-Image), input image upload, layer grid display, ZIP download
-  - REST API: `/api/qwen-image/status`, `/api/qwen-image/config`, `/api/qwen-image/decompose`
-  - Config section: `[*.qwen_image]` with model_path, layer_num, cfg_scale, resolution
-  - Fixed resolutions only: 640x640 or 1024x1024
+- Qwen-Image-Layered feature complete with decomposition and layer editing
+  - New pipeline: `QwenImageDiffusersPipeline` wrapping official diffusers implementation
+  - Image decomposition: Split images into 2-10 RGBA layers
+  - Layer editing: Modify individual layers with text instructions using Qwen-Image-Edit-2509
+  - Edit model lazy-loads on first use (auto-downloads from HuggingFace)
+  - CLI support: `--qwen-image-model-path`, `--qwen-image-edit-model-path`, `--qwen-image-cpu-offload`, `--qwen-image-layers`, `--qwen-image-steps`, `--qwen-image-cfg-scale`, `--qwen-image-resolution`
+  - Web UI: Decomposition with layer grid, edit modal for each layer, replace original functionality
+  - REST API: `/api/qwen-image/decompose`, `/api/qwen-image/edit-layer`, `/api/qwen-image/edit-status`
+  - Config section: `[*.qwen_image]` with model_path, edit_model_path, cpu_offload, layer_num, num_inference_steps, cfg_scale, resolution
+  - Fixed resolutions only: 640x640 (recommended) or 1024x1024
+  - CPU offload enabled by default (~5 GB VRAM usage)
   - History entries tagged with `model_type` for filtering
-  - Documentation: `docs/models/qwen_image_layered.md`
+  - User guide: `docs/qwen_image_guide.md`
+  - Technical reference: `internal/research/qwen_image_technical_report.md`
+- Legacy custom implementation preserved: `QwenImagePipeline`, `QwenImageTextEncoderBackend`, `QwenImageVAE`, `QwenImageDiT`
 - Caption length study experiment scripts
   - `sweep_caption_fill_modes.sh` - Compare padding strategies (pad_both, pad_left, pad_right) at fixed length 600
   - `sweep_caption_lengths.sh` - Test embedding lengths from 50 to 1504 tokens in steps of 50
@@ -29,6 +32,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - All scripts support `--quick`, `--dry-run`, `--config`, `--profile` flags
   - Master script includes `--skip-vl` option to skip VL experiments
   - Scripts use `=` syntax for negative number arguments (e.g., `--hidden-layers="-2,-6"`)
+- Comprehensive test suite for Qwen-Image
+  - Unit tests: 59 tests covering latent packing, DiT, VAE, pipeline, and backend
+  - Integration test: `tests/integration/test_qwen_diffusers_wrapper.py` for full pipeline validation
+
+### Fixed
+- RGBA to RGB conversion in `edit_layer()` - edit model VAE expects 3-channel input, now properly extracts alpha before editing and reapplies it after
+- Unit test parameter mismatch - fixed `quantization` to use correct `text_encoder_quantization` and `dit_quantization` parameter names
 
 ## [0.6.0]
 

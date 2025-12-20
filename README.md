@@ -137,6 +137,7 @@ See [experiments/README.md](experiments/README.md) for documentation.
 ## Documentation
 
 - [CLAUDE.md](CLAUDE.md) - Technical reference
+- [docs/qwen_image_guide.md](docs/qwen_image_guide.md) - Qwen-Image-Layered user guide
 - [docs/models/qwen_image_layered.md](docs/models/qwen_image_layered.md) - Qwen-Image-Layered details
 - [docs/distributed_inference.md](docs/distributed_inference.md) - Distributed setup
 - [docs/web_server_api.md](docs/web_server_api.md) - REST API reference

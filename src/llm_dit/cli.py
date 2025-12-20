@@ -81,9 +81,12 @@ class RuntimeConfig:
 
     # Qwen-Image-Layered paths and settings
     qwen_image_model_path: str = ""  # Path to Qwen-Image-Layered model
-    qwen_image_layer_num: int = 3  # Number of decomposition layers
+    qwen_image_edit_model_path: str = ""  # Path to Qwen-Image-Edit model (or HuggingFace ID)
+    qwen_image_cpu_offload: bool = True  # Enable CPU offload for Qwen-Image
+    qwen_image_layer_num: int = 4  # Number of decomposition layers
     qwen_image_cfg_scale: float = 4.0  # CFG scale for Qwen-Image
-    qwen_image_resolution: int = 1024  # Resolution (640 or 1024 only)
+    qwen_image_steps: int = 50  # Diffusion steps for Qwen-Image
+    qwen_image_resolution: int = 640  # Resolution (640 or 1024 only)
 
     # Device placement
     encoder_device: str = "auto"
@@ -280,10 +283,28 @@ def create_base_parser(
         help="Path to Qwen-Image-Layered model directory",
     )
     qwen_group.add_argument(
+        "--qwen-image-edit-model-path",
+        type=str,
+        default=None,
+        help="Path to Qwen-Image-Edit model (or empty for HuggingFace auto-download)",
+    )
+    qwen_group.add_argument(
+        "--qwen-image-cpu-offload",
+        action="store_true",
+        default=None,
+        help="Enable CPU offload for Qwen-Image (recommended for RTX 4090)",
+    )
+    qwen_group.add_argument(
         "--qwen-image-layers",
         type=int,
         default=None,
-        help="Number of decomposition layers for Qwen-Image (default: 3)",
+        help="Number of decomposition layers for Qwen-Image (default: 4)",
+    )
+    qwen_group.add_argument(
+        "--qwen-image-steps",
+        type=int,
+        default=None,
+        help="Diffusion steps for Qwen-Image (default: 50)",
     )
     qwen_group.add_argument(
         "--qwen-image-cfg-scale",
@@ -296,7 +317,7 @@ def create_base_parser(
         type=int,
         choices=[640, 1024],
         default=None,
-        help="Resolution for Qwen-Image (640 or 1024 only, default: 1024)",
+        help="Resolution for Qwen-Image (640 or 1024 only, default: 640)",
     )
 
     # Device placement
@@ -798,9 +819,12 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
             if hasattr(toml_config, 'qwen_image'):
                 qi = toml_config.qwen_image
                 config.qwen_image_model_path = getattr(qi, 'model_path', '')
-                config.qwen_image_layer_num = getattr(qi, 'layer_num', 3)
+                config.qwen_image_edit_model_path = getattr(qi, 'edit_model_path', '')
+                config.qwen_image_cpu_offload = getattr(qi, 'cpu_offload', True)
+                config.qwen_image_layer_num = getattr(qi, 'layer_num', 4)
+                config.qwen_image_steps = getattr(qi, 'num_inference_steps', 50)
                 config.qwen_image_cfg_scale = getattr(qi, 'cfg_scale', 4.0)
-                config.qwen_image_resolution = getattr(qi, 'resolution', 1024)
+                config.qwen_image_resolution = getattr(qi, 'resolution', 640)
 
         except Exception as e:
             logger.warning(f"Failed to load config: {e}")
@@ -832,8 +856,14 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
     # Qwen-Image overrides
     if getattr(args, 'qwen_image_model_path', None) is not None:
         config.qwen_image_model_path = args.qwen_image_model_path
+    if getattr(args, 'qwen_image_edit_model_path', None) is not None:
+        config.qwen_image_edit_model_path = args.qwen_image_edit_model_path
+    if getattr(args, 'qwen_image_cpu_offload', None) is not None:
+        config.qwen_image_cpu_offload = args.qwen_image_cpu_offload
     if getattr(args, 'qwen_image_layers', None) is not None:
         config.qwen_image_layer_num = args.qwen_image_layers
+    if getattr(args, 'qwen_image_steps', None) is not None:
+        config.qwen_image_steps = args.qwen_image_steps
     if getattr(args, 'qwen_image_cfg_scale', None) is not None:
         config.qwen_image_cfg_scale = args.qwen_image_cfg_scale
     if getattr(args, 'qwen_image_resolution', None) is not None:

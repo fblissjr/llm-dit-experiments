@@ -261,7 +261,7 @@ class QwenImageEncoder3d(nn.Module):
         temperal_downsample: List[bool] = [True, True, False],
         dropout: float = 0.0,
         non_linearity: str = "silu",
-        image_channels: int = 3,
+        image_channels: int = 4,  # RGBA for layer decomposition
     ):
         super().__init__()
         self.dim = dim
@@ -347,7 +347,7 @@ class QwenImageDecoder3d(nn.Module):
         temperal_upsample: List[bool] = [False, True, True],
         dropout: float = 0.0,
         non_linearity: str = "silu",
-        image_channels: int = 3,
+        image_channels: int = 4,  # RGBA for layer decomposition
     ):
         super().__init__()
         self.dim = dim

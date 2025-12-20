@@ -89,11 +89,14 @@ class TimestepEmbeddings(nn.Module):
         dtype: torch.dtype,
         addition_t_cond: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        # Sinusoidal embedding
+        # Sinusoidal embedding (compute in float for precision)
         half_dim = self.embedding_dim // 2
-        exponent = -math.log(10000) * torch.arange(half_dim, dtype=dtype, device=timestep.device) / half_dim
+        exponent = -math.log(10000) * torch.arange(half_dim, dtype=torch.float32, device=timestep.device) / half_dim
         emb = timestep.float() * self.scale * torch.exp(exponent)
         emb = torch.cat([torch.sin(emb), torch.cos(emb)], dim=-1)
+
+        # Cast to layer dtype before projection
+        emb = emb.to(dtype=self.linear_1.weight.dtype)
 
         # Project
         emb = self.linear_1(emb)

@@ -286,14 +286,16 @@ class QwenImageConfig:
     """
 
     model_path: str = ""  # Path to Qwen-Image-Layered model directory
+    edit_model_path: str = ""  # Path to Qwen-Image-Edit model (or HuggingFace ID)
     device: str = "cuda"  # Device for DiT and VAE
     text_encoder_device: str = "cuda"  # Device for text encoder (7B model)
     torch_dtype: str = "bfloat16"  # Model dtype
+    cpu_offload: bool = True  # Enable sequential CPU offload for memory efficiency
 
     # Generation settings
-    num_inference_steps: int = 30  # Denoising steps (default for Qwen-Image)
+    num_inference_steps: int = 50  # Denoising steps (default for Qwen-Image)
     cfg_scale: float = 4.0  # Classifier-free guidance scale
-    layer_num: int = 3  # Number of decomposition layers (outputs layer_num+1 images)
+    layer_num: int = 4  # Number of decomposition layers (outputs layer_num+1 images)
 
     # Resolution (only 640 or 1024 supported)
     resolution: int = 1024  # Base resolution (enforced to 640 or 1024)
@@ -542,9 +544,11 @@ class Config:
             },
             "qwen_image": {
                 "model_path": self.qwen_image.model_path,
+                "edit_model_path": self.qwen_image.edit_model_path,
                 "device": self.qwen_image.device,
                 "text_encoder_device": self.qwen_image.text_encoder_device,
                 "torch_dtype": self.qwen_image.torch_dtype,
+                "cpu_offload": self.qwen_image.cpu_offload,
                 "num_inference_steps": self.qwen_image.num_inference_steps,
                 "cfg_scale": self.qwen_image.cfg_scale,
                 "layer_num": self.qwen_image.layer_num,

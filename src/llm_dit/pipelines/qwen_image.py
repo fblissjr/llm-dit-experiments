@@ -97,13 +97,24 @@ class QwenImagePipeline:
         # VAE scale factor (8 for Qwen-Image)
         self.vae_scale_factor = 8
 
+        # CPU offload state
+        self._cpu_offload_enabled = False
+        self._primary_device = dit.device
+        self._cpu_device = torch.device("cpu")
+
     @classmethod
     def from_pretrained(
         cls,
         model_path: str,
         device: str = "cuda",
         text_encoder_device: str | None = None,
+        vae_device: str | None = None,
         torch_dtype: torch.dtype = torch.bfloat16,
+        text_encoder_quantization: str = "none",
+        dit_quantization: str = "none",
+        compile_model: bool = False,
+        compile_mode: str = "reduce-overhead",
+        cpu_offload: bool = False,
         **kwargs,
     ) -> "QwenImagePipeline":
         """
@@ -111,53 +122,81 @@ class QwenImagePipeline:
 
         Args:
             model_path: Path to Qwen-Image-Layered model directory
-            device: Device for DiT and VAE
+            device: Device for DiT (primary compute device)
             text_encoder_device: Device for text encoder (defaults to device)
+            vae_device: Device for VAE (defaults to device)
             torch_dtype: Model dtype (default: bfloat16)
+            text_encoder_quantization: Quantization for text encoder: "none", "4bit", "8bit"
+            dit_quantization: Quantization for DiT: "none", "4bit", "8bit"
+            compile_model: If True, compile DiT with torch.compile
+            compile_mode: torch.compile mode: "reduce-overhead", "max-autotune", "default"
+            cpu_offload: If True, enable CPU offload for memory-constrained setups
             **kwargs: Additional arguments
 
         Returns:
             Initialized QwenImagePipeline
 
         Example:
+            # Standard loading (needs 40GB+ VRAM)
             pipe = QwenImagePipeline.from_pretrained(
                 "/path/to/Qwen_Qwen-Image-Layered",
                 device="cuda",
                 torch_dtype=torch.bfloat16,
             )
+
+            # RTX 4090 optimized (24GB VRAM)
+            pipe = QwenImagePipeline.from_pretrained(
+                "/path/to/Qwen_Qwen-Image-Layered",
+                device="cuda",
+                text_encoder_device="cpu",  # 7B encoder on CPU
+                dit_quantization="4bit",    # 20B DiT quantized to ~10GB
+                cpu_offload=True,           # Offload VAE/DiT between steps
+            )
         """
         model_path = Path(model_path)
         text_encoder_device = text_encoder_device or device
+        vae_device = vae_device or device
 
         logger.info(f"Loading Qwen-Image-Layered from {model_path}")
 
-        # Load text encoder
-        logger.info(f"Loading text encoder on {text_encoder_device}")
+        # Load text encoder (optionally quantized)
+        logger.info(f"Loading text encoder on {text_encoder_device} (quantization={text_encoder_quantization})")
         text_encoder = QwenImageTextEncoderBackend.from_pretrained(
             model_path,
             device=text_encoder_device,
             torch_dtype=torch_dtype,
+            quantization=text_encoder_quantization,
         )
 
         # Load VAE
-        logger.info(f"Loading VAE on {device}")
+        logger.info(f"Loading VAE on {vae_device}")
         vae = QwenImageVAE.from_pretrained(
             model_path,
-            device=device,
+            device=vae_device,
             torch_dtype=torch_dtype,
         )
 
-        # Load DiT
-        logger.info(f"Loading DiT on {device}")
+        # Load DiT (optionally compiled and quantized)
+        logger.info(f"Loading DiT on {device} (quantization={dit_quantization}, compile={compile_model})")
         dit = QwenImageDiT.from_pretrained(
             model_path,
             device=device,
             torch_dtype=torch_dtype,
             use_layer3d_rope=True,  # Enable layer-aware RoPE for decomposition
+            quantization=dit_quantization,
+            compile_model=compile_model,
+            compile_mode=compile_mode,
         )
 
+        pipeline = cls(text_encoder, dit, vae)
+
+        # Configure CPU offload if requested
+        if cpu_offload:
+            pipeline.enable_cpu_offload()
+            logger.info("CPU offload enabled")
+
         logger.info("Qwen-Image-Layered pipeline loaded successfully")
-        return cls(text_encoder, dit, vae)
+        return pipeline
 
     @property
     def device(self) -> torch.device:
@@ -300,6 +339,9 @@ class QwenImagePipeline:
             f"layers={layer_num}, steps={num_inference_steps}"
         )
 
+        # Prepare VAE for encoding
+        self._prepare_vae()
+
         # Encode input image
         input_latents = self._encode_image(image)
         latent_h = height // self.vae_scale_factor
@@ -312,6 +354,9 @@ class QwenImagePipeline:
         )
         prompt_embeds = encode_output.padded_embeddings.to(self.device, self.dtype)
         prompt_mask = encode_output.padded_mask.to(self.device)
+
+        # Offload text encoder after use
+        self._offload_text_encoder()
 
         # Generate noise for decomposition layers
         total_layers = layer_num + 1  # Decomposition layers + composite
@@ -349,6 +394,9 @@ class QwenImagePipeline:
         # Apply shift transformation
         shifted_sigmas = shift * sigmas / (1 + (shift - 1) * sigmas)
         timesteps = shifted_sigmas.to(self.device, self.dtype)
+
+        # Prepare DiT for denoising (offload VAE if needed)
+        self._prepare_dit()
 
         # Denoising loop
         latents = packed_noise
@@ -413,6 +461,9 @@ class QwenImagePipeline:
             latents, height, width, layer_num
         )
 
+        # Prepare VAE for decoding (offload DiT if needed)
+        self._prepare_vae()
+
         # Decode to images
         images = self._decode_latents(unpacked_latents, layer_num=layer_num)
 
@@ -424,4 +475,70 @@ class QwenImagePipeline:
         self.text_encoder.to(device)
         self.dit.to(device)
         self.vae.to(device)
+        self._primary_device = device
         return self
+
+    def enable_cpu_offload(self) -> "QwenImagePipeline":
+        """
+        Enable CPU offload to reduce VRAM usage.
+
+        When enabled, the pipeline will:
+        1. Move text encoder to CPU after encoding (if not already there)
+        2. Move VAE to CPU while DiT is running
+        3. Move DiT to CPU while VAE is decoding
+
+        This trades speed for memory efficiency, allowing the pipeline to run
+        on GPUs with limited VRAM (e.g., RTX 4090 with 24GB).
+
+        Returns:
+            Self for method chaining
+        """
+        self._cpu_offload_enabled = True
+        logger.info("CPU offload enabled - components will be moved dynamically")
+        return self
+
+    def disable_cpu_offload(self) -> "QwenImagePipeline":
+        """
+        Disable CPU offload.
+
+        Returns:
+            Self for method chaining
+        """
+        self._cpu_offload_enabled = False
+        return self
+
+    def _offload_text_encoder(self) -> None:
+        """Move text encoder to CPU if offload is enabled."""
+        if self._cpu_offload_enabled and self.text_encoder.device != self._cpu_device:
+            self.text_encoder.to(self._cpu_device)
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            logger.debug("Text encoder offloaded to CPU")
+
+    def _prepare_dit(self) -> None:
+        """Ensure DiT is on primary device, offload VAE if needed."""
+        if self._cpu_offload_enabled:
+            # Move DiT to GPU
+            if self.dit.device != self._primary_device:
+                self.dit.to(self._primary_device)
+                logger.debug(f"DiT moved to {self._primary_device}")
+            # Move VAE to CPU
+            if self.vae.device != self._cpu_device:
+                self.vae.to(self._cpu_device)
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                logger.debug("VAE offloaded to CPU")
+
+    def _prepare_vae(self) -> None:
+        """Ensure VAE is on primary device, offload DiT if needed."""
+        if self._cpu_offload_enabled:
+            # Move VAE to GPU
+            if self.vae.device != self._primary_device:
+                self.vae.to(self._primary_device)
+                logger.debug(f"VAE moved to {self._primary_device}")
+            # Move DiT to CPU
+            if self.dit.device != self._cpu_device:
+                self.dit.to(self._cpu_device)
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                logger.debug("DiT offloaded to CPU")
