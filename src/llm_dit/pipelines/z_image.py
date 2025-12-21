@@ -34,6 +34,7 @@ from llm_dit.utils.long_prompt import compress_embeddings, LongPromptMode
 
 if TYPE_CHECKING:
     from llm_dit.utils.dype import DyPEConfig
+    from llm_dit.guidance import SkipLayerGuidance, LayerSkipConfig
 
 logger = logging.getLogger(__name__)
 
@@ -865,6 +866,10 @@ class ZImagePipeline:
         hidden_layer: int = -2,
         layer_weights: dict[int, float] | None = None,
         prompt_embeds: Optional[torch.Tensor] = None,
+        skip_layer_guidance_scale: float = 0.0,
+        skip_layer_indices: Optional[List[int]] = None,
+        skip_layer_start: float = 0.01,
+        skip_layer_stop: float = 0.2,
     ) -> Union[Image.Image, List[Image.Image], torch.Tensor]:
         """
         Generate an image from a text prompt.
@@ -905,6 +910,14 @@ class ZImagePipeline:
                    - Vision-conditioned generation with Qwen3-VL embeddings
                    - Distributed inference with pre-computed embeddings
                    - Caching embeddings across multiple generations
+            skip_layer_guidance_scale: Scale for Skip Layer Guidance (default: 0.0 = disabled).
+                   Typical values: 2.0-4.0. Higher values improve structure/anatomy but may
+                   cause artifacts. Only applied when skip_layer_indices is provided.
+            skip_layer_indices: List of transformer layer indices to skip for SLG.
+                   For Z-Image (40 layers), recommended: [15, 16, 17, 18, 19] (middle layers)
+                   or [7, 8, 9] (SD3.5-style). If None, SLG is disabled.
+            skip_layer_start: Start SLG at this fraction of total steps (default: 0.01).
+            skip_layer_stop: Stop SLG at this fraction of total steps (default: 0.2).
 
         Returns:
             Generated image(s) in specified format
@@ -1097,6 +1110,23 @@ class ZImagePipeline:
             except Exception as e:
                 logger.warning(f"[Pipeline] Failed to patch DyPE: {e}. Continuing without DyPE.")
 
+        # Initialize Skip Layer Guidance if enabled
+        slg = None
+        if skip_layer_guidance_scale > 0 and skip_layer_indices is not None:
+            from llm_dit.guidance import SkipLayerGuidance
+            slg = SkipLayerGuidance(
+                skip_layers=skip_layer_indices,
+                guidance_scale=skip_layer_guidance_scale,
+                guidance_start=skip_layer_start,
+                guidance_stop=skip_layer_stop,
+                fqn="blocks",  # Z-Image uses "blocks" for transformer layers
+            )
+            logger.info(
+                f"[Pipeline] Skip Layer Guidance enabled: "
+                f"scale={skip_layer_guidance_scale}, layers={skip_layer_indices}, "
+                f"range=[{skip_layer_start:.0%}, {skip_layer_stop:.0%}]"
+            )
+
         # Run denoising loop with no_grad to prevent gradient accumulation
         with torch.no_grad():
             for i, t in enumerate(timesteps):
@@ -1135,12 +1165,24 @@ class ZImagePipeline:
                 latent_input = latent_input.unsqueeze(2)
                 latent_list = list(latent_input.unbind(dim=0))
 
-                # Run transformer
+                # Check if SLG is active at this step
+                use_slg = slg is not None and slg.is_active(i, num_inference_steps)
+
+                # Run transformer (normal forward pass)
                 model_output = self.transformer(
                     latent_list,
                     timestep_input,
                     embeds_input,
                 )[0]
+
+                # Run skip-layer forward pass if SLG is active
+                if use_slg:
+                    with slg.skip_layers_context(self.transformer):
+                        model_output_skip = self.transformer(
+                            latent_list,
+                            timestep_input,
+                            embeds_input,
+                        )[0]
 
                 # Move transformer back to CPU after forward pass if using CPU offload
                 if cpu_offload:
@@ -1159,6 +1201,12 @@ class ZImagePipeline:
                     noise_pred = torch.stack(noise_pred, dim=0)
                 else:
                     noise_pred = torch.stack([o.float() for o in model_output], dim=0)
+
+                # Apply Skip Layer Guidance if active
+                if use_slg:
+                    noise_pred_skip = torch.stack([o.float() for o in model_output_skip], dim=0)
+                    # For Z-Image (no CFG), SLG formula: pred = pred_cond + scale * (pred_cond - pred_skip)
+                    noise_pred = slg.guide(noise_pred, noise_pred_skip, cfg_scale=guidance_scale)
 
                 noise_pred = noise_pred.squeeze(2)
                 noise_pred = -noise_pred  # Negate output for Z-Image

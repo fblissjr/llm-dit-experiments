@@ -18,7 +18,7 @@ import argparse
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal, get_args
+from typing import List, Literal, Optional, get_args
 
 import torch
 
@@ -183,6 +183,12 @@ class RuntimeConfig:
     dype_max_shift: float = 1.15  # Noise schedule shift at max resolution
     dype_base_resolution: int = 1024  # Training resolution
     dype_anisotropic: bool = False  # Per-axis scaling for extreme aspect ratios
+
+    # Skip Layer Guidance (SLG) for improved structure/anatomy
+    slg_scale: float = 0.0  # Guidance scale (0 = disabled, 2-4 typical)
+    slg_layers: Optional[List[int]] = None  # Layers to skip (e.g., [15, 16, 17, 18, 19])
+    slg_start: float = 0.01  # Start SLG at this fraction
+    slg_stop: float = 0.2  # Stop SLG at this fraction
 
     # Debug
     debug: bool = False
@@ -704,6 +710,36 @@ def create_base_parser(
         help="Use per-axis scaling for extreme aspect ratios (16:9, 9:16)",
     )
 
+    # Skip Layer Guidance (SLG)
+    slg_group = parser.add_argument_group("Skip Layer Guidance (SLG)")
+    slg_group.add_argument(
+        "--slg-scale",
+        type=float,
+        default=None,
+        help="SLG scale (0 = disabled, 2-4 typical for improved anatomy/structure)",
+    )
+    slg_group.add_argument(
+        "--slg-layers",
+        type=str,
+        default=None,
+        help=(
+            "Comma-separated layer indices to skip (e.g., '15,16,17,18,19'). "
+            "Z-Image has 40 layers (0-39). Middle layers recommended."
+        ),
+    )
+    slg_group.add_argument(
+        "--slg-start",
+        type=float,
+        default=None,
+        help="Start SLG at this fraction of steps (default: 0.01)",
+    )
+    slg_group.add_argument(
+        "--slg-stop",
+        type=float,
+        default=None,
+        help="Stop SLG at this fraction of steps (default: 0.2)",
+    )
+
     # Generation parameters (optional)
     if include_generation_args:
         gen_group = parser.add_argument_group("Generation")
@@ -906,6 +942,15 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
                 config.dype_base_resolution = getattr(dype, 'base_resolution', 1024)
                 config.dype_anisotropic = getattr(dype, 'anisotropic', False)
 
+            # Check for SLG (Skip Layer Guidance) section
+            if hasattr(toml_config, 'slg'):
+                slg = toml_config.slg
+                if getattr(slg, 'enabled', False):
+                    config.slg_scale = getattr(slg, 'scale', 2.8)
+                    config.slg_layers = getattr(slg, 'layers', [15, 16, 17, 18, 19])
+                    config.slg_start = getattr(slg, 'start', 0.01)
+                    config.slg_stop = getattr(slg, 'stop', 0.2)
+
         except Exception as e:
             logger.warning(f"Failed to load config: {e}")
 
@@ -1081,6 +1126,17 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
         config.dype_base_resolution = args.dype_base_resolution
     if getattr(args, 'dype_anisotropic', False):
         config.dype_anisotropic = True
+
+    # Skip Layer Guidance overrides
+    if getattr(args, 'slg_scale', None) is not None:
+        config.slg_scale = args.slg_scale
+    if getattr(args, 'slg_layers', None) is not None:
+        # Parse comma-separated layer indices
+        config.slg_layers = [int(x.strip()) for x in args.slg_layers.split(',')]
+    if getattr(args, 'slg_start', None) is not None:
+        config.slg_start = args.slg_start
+    if getattr(args, 'slg_stop', None) is not None:
+        config.slg_stop = args.slg_stop
 
     # Generation overrides
     if getattr(args, 'height', None) is not None:

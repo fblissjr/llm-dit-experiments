@@ -471,6 +471,10 @@ def main():
             guidance_scale=config.guidance_scale,
             generator=generator,
             long_prompt_mode=config.long_prompt_mode,
+            skip_layer_guidance_scale=config.slg_scale,
+            skip_layer_indices=config.slg_layers,
+            skip_layer_start=config.slg_start,
+            skip_layer_stop=config.slg_stop,
             callback=progress_callback if config.verbose else None,
         )
         gen_time = time.time() - start
@@ -576,6 +580,10 @@ def main():
             force_think_block=config.enable_thinking,  # enable_thinking maps to force_think_block
             long_prompt_mode=config.long_prompt_mode,
             hidden_layer=config.hidden_layer,
+            skip_layer_guidance_scale=config.slg_scale,
+            skip_layer_indices=config.slg_layers,
+            skip_layer_start=config.slg_start,
+            skip_layer_stop=config.slg_stop,
             callback=progress_callback if config.verbose else None,
         )
         gen_time = time.time() - start

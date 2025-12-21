@@ -16,7 +16,7 @@ import logging
 import re
 import time
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 import httpx
 import torch
@@ -88,6 +88,11 @@ class GenerateRequest(BaseModel):
     hidden_layer: int = -2  # Which hidden layer to extract (-1 to -35, Qwen3-4B has 36 layers)
     # DyPE (high-resolution) options
     dype: Optional[DyPEConfigRequest] = None
+    # Skip Layer Guidance (SLG) options
+    slg_scale: float = 0.0  # SLG scale (0 = disabled, 2-4 typical)
+    slg_layers: Optional[List[int]] = None  # Layer indices to skip (e.g., [15, 16, 17, 18, 19])
+    slg_start: float = 0.01  # Start SLG at this fraction
+    slg_stop: float = 0.2  # Stop SLG at this fraction
 
 
 class EncodeRequest(BaseModel):
@@ -1193,6 +1198,10 @@ async def generate(request: GenerateRequest):
             remove_quotes=request.strip_quotes,
             long_prompt_mode=request.long_prompt_mode,
             hidden_layer=request.hidden_layer,
+            skip_layer_guidance_scale=request.slg_scale,
+            skip_layer_indices=request.slg_layers,
+            skip_layer_start=request.slg_start,
+            skip_layer_stop=request.slg_stop,
         )
 
         gen_time = time.time() - start
