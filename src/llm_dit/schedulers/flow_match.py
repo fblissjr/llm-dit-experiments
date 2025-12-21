@@ -263,6 +263,88 @@ class FlowMatchScheduler:
         """
         return noise - sample
 
+    def training_target(
+        self,
+        sample: torch.Tensor,
+        noise: torch.Tensor,
+        timestep: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Get training target (velocity).
+
+        For flow matching: v = noise - sample
+
+        This is an alias for get_velocity() for API compatibility with
+        DiffSynth-Studio training code.
+
+        Args:
+            sample: Clean samples (x_0)
+            noise: Target noise (x_1)
+            timestep: Not used, included for API compatibility
+
+        Returns:
+            Velocity targets for training
+        """
+        return self.get_velocity(sample, noise, timestep)
+
+    def training_weight(
+        self,
+        timestep: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Get training weight for timestep.
+
+        Uses Gaussian distribution centered at t=500:
+            w(t) = exp(-2 * ((t - 500) / 1000)^2)
+
+        Normalized so weights sum to num_train_timesteps.
+
+        Based on DiffSynth-Studio implementation.
+
+        Args:
+            timestep: Current timestep value (in [0, 1000] range)
+
+        Returns:
+            Training weight for the timestep
+        """
+        if not hasattr(self, '_timestep_weights') or self._timestep_weights is None:
+            self._compute_timestep_weights(timestep.device)
+
+        # Find closest timestep index
+        step_index = self._get_step_index(timestep)
+        return self._timestep_weights[step_index]
+
+    def _compute_timestep_weights(self, device: torch.device) -> None:
+        """
+        Compute timestep weights based on Gaussian distribution.
+
+        Creates a weight for each timestep that favors middle timesteps
+        (around t=500) where the model learns most effectively.
+        """
+        if self.timesteps is None:
+            # Create default timesteps if not set
+            self.set_timesteps(self.num_train_timesteps, device=device)
+
+        steps = len(self.timesteps)
+        x = self.timesteps.cpu().float()
+
+        # Gaussian centered at middle (500 for 1000 timesteps)
+        center = self.num_train_timesteps / 2
+        scale = self.num_train_timesteps
+        y = torch.exp(-2 * ((x - center) / scale) ** 2)
+
+        # Normalize so weights sum to num_timesteps
+        y_shifted = y - y.min()
+        weights = y_shifted * (steps / (y_shifted.sum() + 1e-8))
+
+        # Empirical adjustment for non-1000 timesteps
+        if steps != self.num_train_timesteps:
+            weights = weights * (steps / self.num_train_timesteps)
+            if len(weights) > 1:
+                weights = weights + weights[1]
+
+        self._timestep_weights = weights.to(device)
+
 
 class FlowMatchSchedulerConfig:
     """

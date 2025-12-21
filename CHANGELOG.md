@@ -8,6 +8,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Training infrastructure for LoRA and full model fine-tuning
+  - New `src/llm_dit/training/` module with complete training pipeline
+  - `ZImageTrainingModule` for supervised fine-tuning (SFT) and distillation
+  - `FlowMatchSFTLoss` with Gaussian timestep weighting
+  - `TrainingDataset` supporting JSON/JSONL/CSV metadata formats
+  - Gradient checkpointing with optional CPU offload
+  - PEFT-based LoRA injection for efficient fine-tuning
+  - Training runner using HuggingFace Accelerate (distributed, mixed precision)
+  - `ModelLogger` for checkpoint saving with trainable-only export
+  - Training script: `scripts/train.py` with full CLI interface
+  - FlowMatchScheduler extended with `training_target()` and `training_weight()` methods
+  - Optional dependencies: `peft`, `pandas`, `tqdm`, `tensorboard` (install via `uv pip install -e ".[training]"`)
+- DyPE (Dynamic Position Extrapolation) for high-resolution generation beyond training dimensions
+  - Vision YaRN implementation for position embedding extrapolation
+  - Per-axis scaling with timestep-dependent modulation
+  - Parameter sweep script: `experiments/scripts/sweep_dype_params.sh`
 - Qwen-Image-Layered feature complete with decomposition and layer editing
   - New pipeline: `QwenImageDiffusersPipeline` wrapping official diffusers implementation
   - Image decomposition: Split images into 2-10 RGBA layers
