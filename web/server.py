@@ -58,6 +58,18 @@ generation_history = []
 MAX_HISTORY = 50
 
 
+class DyPEConfigRequest(BaseModel):
+    """DyPE configuration for high-resolution generation."""
+    enabled: bool = False
+    method: str = "vision_yarn"  # vision_yarn, yarn, ntk
+    multipass: str = "twopass"  # single, twopass, threepass
+    dype_scale: float = 2.0  # Magnitude of DyPE effect
+    dype_exponent: float = 2.0  # Decay speed (2.0 = quadratic)
+    base_shift: float = 0.5  # Shift at base resolution
+    max_shift: float = 1.15  # Shift at max resolution
+    pass2_strength: float = 0.5  # img2img strength for pass 2
+
+
 class GenerateRequest(BaseModel):
     prompt: str  # User prompt
     system_prompt: Optional[str] = None  # System prompt (optional)
@@ -74,6 +86,8 @@ class GenerateRequest(BaseModel):
     shift: float = 3.0  # Scheduler shift parameter
     long_prompt_mode: str = "interpolate"  # truncate/interpolate/pool/attention_pool
     hidden_layer: int = -2  # Which hidden layer to extract (-1 to -35, Qwen3-4B has 36 layers)
+    # DyPE (high-resolution) options
+    dype: Optional[DyPEConfigRequest] = None
 
 
 class EncodeRequest(BaseModel):
@@ -834,6 +848,90 @@ async def vl_clear_cache():
     count = len(vl_embeddings_cache)
     vl_embeddings_cache = {}
     return {"cleared": count}
+
+
+# =====================================================================
+# DyPE (High-Resolution) Endpoints
+# =====================================================================
+
+@app.get("/api/dype/config")
+async def dype_config():
+    """Get DyPE configuration defaults from server config.
+
+    Returns default DyPE settings for high-resolution generation.
+    """
+    if runtime_config is None:
+        return {
+            "enabled": False,
+            "method": "vision_yarn",
+            "dype_scale": 2.0,
+            "dype_exponent": 2.0,
+            "dype_start_sigma": 1.0,
+            "base_shift": 0.5,
+            "max_shift": 1.15,
+            "base_resolution": 1024,
+            "anisotropic": False,
+            "multipass_recommended_threshold": 2048,
+        }
+
+    # Get DyPE config from runtime config if available
+    dype = getattr(runtime_config, 'dype', None)
+    if dype is not None:
+        return {
+            "enabled": dype.enabled,
+            "method": dype.method,
+            "dype_scale": dype.dype_scale,
+            "dype_exponent": dype.dype_exponent,
+            "dype_start_sigma": dype.dype_start_sigma,
+            "base_shift": dype.base_shift,
+            "max_shift": dype.max_shift,
+            "base_resolution": dype.base_resolution,
+            "anisotropic": dype.anisotropic,
+            "multipass_recommended_threshold": 2048,
+        }
+
+    return {
+        "enabled": False,
+        "method": "vision_yarn",
+        "dype_scale": 2.0,
+        "dype_exponent": 2.0,
+        "dype_start_sigma": 1.0,
+        "base_shift": 0.5,
+        "max_shift": 1.15,
+        "base_resolution": 1024,
+        "anisotropic": False,
+        "multipass_recommended_threshold": 2048,
+    }
+
+
+@app.get("/api/dype/status")
+async def dype_status():
+    """Get DyPE feature status and recommendations.
+
+    Returns whether DyPE is recommended for the current pipeline
+    and suggested settings based on target resolution.
+    """
+    pipeline_supports_dype = pipeline is not None
+
+    return {
+        "available": pipeline_supports_dype,
+        "supported_methods": ["vision_yarn", "yarn", "ntk"],
+        "recommended_for_resolutions": {
+            "2K": {"method": "vision_yarn", "multipass": "single"},
+            "4K": {"method": "vision_yarn", "multipass": "twopass"},
+            "higher": {"method": "vision_yarn", "multipass": "threepass"},
+        },
+        "notes": [
+            "Two-pass is recommended for 4K+ resolutions for better stability",
+            "Vision YaRN uses dual-mask frequency blending for best quality",
+            "Lower pass2_strength (0.3-0.5) preserves more detail from first pass",
+        ],
+    }
+
+
+# =====================================================================
+# End DyPE Endpoints
+# =====================================================================
 
 
 @app.get("/api/generation-config")

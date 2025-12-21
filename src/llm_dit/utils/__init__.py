@@ -67,6 +67,27 @@ from llm_dit.utils.latent_packing import (
     get_img_shapes_for_rope,
 )
 
+from llm_dit.utils.dype import (
+    DyPEConfig,
+    DyPEPosEmbed,
+    ZImageDyPERoPE,
+    compute_dype_shift,
+    compute_k_t,
+    compute_mscale,
+    axis_token_span,
+    patch_zimage_rope,
+    set_zimage_timestep,
+)
+
+from llm_dit.utils.vision_yarn import (
+    get_1d_vision_yarn_pos_embed,
+    get_1d_yarn_pos_embed,
+    get_1d_ntk_pos_embed,
+    find_correction_range,
+    linear_ramp_mask,
+    find_newbase_ntk,
+)
+
 __all__ = [
     # LoRA
     "LoRALoader",
@@ -119,4 +140,18 @@ __all__ = [
     "unpack_multi_layer_latents",
     "compute_packed_sequence_length",
     "get_img_shapes_for_rope",
+    # DyPE (Dynamic Position Extrapolation)
+    "DyPEConfig",
+    "DyPEPosEmbed",
+    "compute_dype_shift",
+    "compute_k_t",
+    "compute_mscale",
+    "axis_token_span",
+    # Vision YaRN
+    "get_1d_vision_yarn_pos_embed",
+    "get_1d_yarn_pos_embed",
+    "get_1d_ntk_pos_embed",
+    "find_correction_range",
+    "linear_ramp_mask",
+    "find_newbase_ntk",
 ]

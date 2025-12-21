@@ -23,7 +23,7 @@ Example:
 import logging
 import math
 from pathlib import Path
-from typing import List, Optional, Union
+from typing import TYPE_CHECKING, List, Optional, Union
 
 import torch
 from PIL import Image
@@ -39,6 +39,9 @@ from llm_dit.utils.latent_packing import (
     unpack_multi_layer_latents,
     get_img_shapes_for_rope,
 )
+
+if TYPE_CHECKING:
+    from llm_dit.utils.dype import DyPEConfig
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +84,7 @@ class QwenImagePipeline:
         text_encoder: QwenImageTextEncoderBackend,
         dit: QwenImageDiT,
         vae: QwenImageVAE,
+        dype_config: Optional["DyPEConfig"] = None,
     ):
         """
         Initialize the pipeline.
@@ -89,10 +93,12 @@ class QwenImagePipeline:
             text_encoder: Qwen2.5-VL text encoder backend
             dit: QwenImageDiT transformer
             vae: QwenImageVAE encoder/decoder
+            dype_config: Optional DyPE configuration for high-resolution generation
         """
         self.text_encoder = text_encoder
         self.dit = dit
         self.vae = vae
+        self.dype_config = dype_config
 
         # VAE scale factor (8 for Qwen-Image)
         self.vae_scale_factor = 8
@@ -404,6 +410,9 @@ class QwenImagePipeline:
             # Prepare timestep
             t_batch = t.unsqueeze(0).expand(latents.shape[0])
 
+            # Get sigma for DyPE (t is already the shifted sigma)
+            sigma = t.item()
+
             # Classifier-free guidance
             if cfg_scale > 1.0:
                 # Unconditional pass
@@ -419,6 +428,8 @@ class QwenImagePipeline:
                     width=width,
                     img_shapes=img_shapes,
                     layer_num=layer_num,
+                    sigma=sigma,
+                    dype_config=self.dype_config,
                 )
 
                 # Conditional pass
@@ -431,6 +442,8 @@ class QwenImagePipeline:
                     width=width,
                     img_shapes=img_shapes,
                     layer_num=layer_num,
+                    sigma=sigma,
+                    dype_config=self.dype_config,
                 )
 
                 # Apply CFG
@@ -446,6 +459,8 @@ class QwenImagePipeline:
                     width=width,
                     img_shapes=img_shapes,
                     layer_num=layer_num,
+                    sigma=sigma,
+                    dype_config=self.dype_config,
                 )
 
             # Euler step

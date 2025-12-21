@@ -14,11 +14,14 @@ processed jointly but with separate projections.
 
 import logging
 from pathlib import Path
-from typing import List, Tuple, Optional
+from typing import TYPE_CHECKING, List, Tuple, Optional
 
 import torch
 import torch.nn as nn
 from einops import rearrange
+
+if TYPE_CHECKING:
+    from llm_dit.utils.dype import DyPEConfig
 
 logger = logging.getLogger(__name__)
 
@@ -253,6 +256,8 @@ class QwenImageDiT(nn.Module):
         width: int,
         img_shapes: Optional[List[Tuple[int, int, int]]] = None,
         layer_num: Optional[int] = None,
+        sigma: Optional[float] = None,
+        dype_config: Optional["DyPEConfig"] = None,
     ) -> torch.Tensor:
         """
         Run DiT forward pass.
@@ -267,6 +272,8 @@ class QwenImageDiT(nn.Module):
             img_shapes: Optional list of (frame, height, width) for RoPE.
                        If None, computed from height/width.
             layer_num: Number of decomposition layers (for multi-layer output)
+            sigma: Current diffusion timestep (0-1) for DyPE modulation
+            dype_config: DyPE configuration (enables DyPE when provided and enabled)
 
         Returns:
             Noise prediction of shape (B, seq_len, 64)
@@ -302,6 +309,8 @@ class QwenImageDiT(nn.Module):
             height=height,
             width=width,
             img_shapes=img_shapes,
+            sigma=sigma,
+            dype_config=dype_config,
         )
 
         return output

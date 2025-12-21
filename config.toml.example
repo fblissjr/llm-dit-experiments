@@ -107,6 +107,22 @@ default_hidden_layer = -2    # -2=penultimate layer (matches Z-Image default)
 auto_unload = true           # Unload Qwen3-VL after extraction to free memory
 target_std = 58.75           # Scale VL embeddings to match text embedding statistics
 
+[default.dype]
+# DYPE (Dynamic Position Extrapolation) for high-resolution generation (2K-4K+)
+# This is a training-free technique that dynamically adjusts RoPE frequencies
+# based on the diffusion timestep. Enables generating at higher resolutions
+# than the model was trained on without quality loss.
+# Based on ComfyUI-DyPE implementation.
+enabled = false              # Enable DyPE
+method = "vision_yarn"       # vision_yarn (best), yarn, ntk
+dype_scale = 2.0             # Magnitude (lambda_s)
+dype_exponent = 2.0          # Decay speed (lambda_t, 2.0=quadratic)
+dype_start_sigma = 1.0       # When to start (0-1, 1.0=from start)
+base_shift = 0.5             # Noise schedule shift at base resolution
+max_shift = 1.15             # Noise schedule shift at max resolution
+base_resolution = 1024       # Training resolution (Z-Image: 1024, Qwen: 1328)
+anisotropic = false          # Per-axis scaling for extreme aspect ratios (16:9, etc.)
+
 # =============================================================================
 # RTX 4090 Profile - Optimized for 24GB VRAM
 # =============================================================================
@@ -191,6 +207,20 @@ default_hidden_layer = -2
 auto_unload = true           # Unload after extraction
 target_std = 58.75
 
+[rtx4090.dype]
+# DYPE for high-resolution generation - RTX 4090 can handle 2K-4K with DyPE
+# User reports: 3048x2048 "looks awful without DyPE, good with DyPE"
+# 4K takes ~3min on RTX 4090, fills VRAM - use tiled_vae=true for 4K+
+enabled = false              # Enable for high-res (2K+), disable for 1K
+method = "vision_yarn"       # vision_yarn provides best quality
+dype_scale = 2.0             # Proven values from ComfyUI-DyPE community
+dype_exponent = 2.0
+dype_start_sigma = 1.0
+base_shift = 0.5
+max_shift = 1.15
+base_resolution = 1024       # Z-Image training resolution
+anisotropic = false          # Enable for extreme aspect ratios (21:9, etc.)
+
 # =============================================================================
 # Low VRAM Profile - For 8-16GB GPUs
 # =============================================================================
@@ -274,6 +304,20 @@ default_alpha = 0.3
 default_hidden_layer = -2
 auto_unload = true           # Critical: unload before loading DiT
 target_std = 58.75
+
+[low_vram.dype]
+# DYPE - DISABLED for low VRAM (high-res generation requires more VRAM)
+# High-res (2K+) is not recommended on 8-16GB cards regardless of DyPE
+# Stick to 1024x1024 or smaller with this profile
+enabled = false
+method = "vision_yarn"
+dype_scale = 2.0
+dype_exponent = 2.0
+dype_start_sigma = 1.0
+base_shift = 0.5
+max_shift = 1.15
+base_resolution = 1024
+anisotropic = false
 
 # =============================================================================
 # Distributed Profile - Encoder on Mac (MLX), DiT on CUDA
@@ -363,6 +407,19 @@ default_alpha = 0.3
 default_hidden_layer = -2
 auto_unload = true
 target_std = 58.75
+
+[distributed.dype]
+# DYPE for distributed setup - DyPE calculation happens on the CUDA server
+# High-res generation benefits from DyPE when you have a powerful remote GPU
+enabled = false              # Enable for high-res distributed generation
+method = "vision_yarn"
+dype_scale = 2.0
+dype_exponent = 2.0
+dype_start_sigma = 1.0
+base_shift = 0.5
+max_shift = 1.15
+base_resolution = 1024
+anisotropic = false
 
 # =============================================================================
 # Qwen-Image-Layered Configuration

@@ -22,9 +22,12 @@ import logging
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
 import torch
+
+if TYPE_CHECKING:
+    from llm_dit.config import DyPEConfig as DyPEConfigType
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +42,34 @@ class LoadResult:
     encoder_device: Optional[str] = None
     dit_device: Optional[str] = None
     vae_device: Optional[str] = None
+
+
+def build_dype_config(config: "RuntimeConfig") -> Optional["DyPEConfigType"]:
+    """Build DyPEConfig from RuntimeConfig.
+
+    Args:
+        config: RuntimeConfig with dype_* parameters
+
+    Returns:
+        DyPEConfig if dype is configured, None otherwise
+    """
+    from llm_dit.config import DyPEConfig
+
+    # Check if DyPE is enabled
+    if not getattr(config, 'dype_enabled', False):
+        return None
+
+    return DyPEConfig(
+        enabled=True,
+        method=getattr(config, 'dype_method', 'vision_yarn'),
+        dype_scale=getattr(config, 'dype_scale', 2.0),
+        dype_exponent=getattr(config, 'dype_exponent', 2.0),
+        dype_start_sigma=getattr(config, 'dype_start_sigma', 1.0),
+        base_shift=getattr(config, 'dype_base_shift', 0.5),
+        max_shift=getattr(config, 'dype_max_shift', 1.15),
+        base_resolution=getattr(config, 'dype_base_resolution', 1024),
+        anisotropic=getattr(config, 'dype_anisotropic', False),
+    )
 
 
 class PipelineLoader:
@@ -238,6 +269,13 @@ class PipelineLoader:
         logger.info(f"  Scheduler shift: {self.config.shift}")
         if self.config.lora_paths:
             logger.info(f"  LoRAs: {len(self.config.lora_paths)}")
+
+        # Build DyPE config if enabled
+        dype_config = build_dype_config(self.config)
+        if dype_config is not None:
+            logger.info(f"  DyPE: enabled (method={dype_config.method}, scale={dype_config.dype_scale})")
+        else:
+            logger.info("  DyPE: disabled")
         logger.info("-" * 60)
 
         start = time.time()
@@ -252,6 +290,7 @@ class PipelineLoader:
             vae_device=self.config.vae_device_resolved,
             enable_cache=self.config.embedding_cache,
             cache_size=self.config.cache_size,
+            dype_config=dype_config,
         )
 
         load_time = time.time() - start
@@ -393,6 +432,11 @@ class PipelineLoader:
             templates=templates,
         )
 
+        # Build DyPE config if enabled
+        dype_config = build_dype_config(self.config)
+        if dype_config is not None:
+            logger.info(f"  DyPE: enabled (method={dype_config.method})")
+
         # Load generator-only pipeline
         self._pipeline = ZImagePipeline.from_pretrained_generator_only(
             self.config.model_path,
@@ -400,6 +444,7 @@ class PipelineLoader:
             enable_cpu_offload=self.config.cpu_offload,
             dit_device=self.config.dit_device_resolved,
             vae_device=self.config.vae_device_resolved,
+            dype_config=dype_config,
         )
 
         # Apply optimizations

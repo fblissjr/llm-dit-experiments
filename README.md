@@ -90,6 +90,14 @@ uv run scripts/generate.py \
   --lora style.safetensors:0.8 \
   "An anime character"
 
+# High-resolution with DyPE (2K)
+uv run scripts/generate.py \
+  --model-path /path/to/z-image-turbo \
+  --dype \
+  --dype-scale 2.0 \
+  --width 2048 --height 2048 \
+  "A detailed landscape"
+
 # Qwen-Image with custom parameters
 uv run scripts/generate.py \
   --model-type qwenimage \

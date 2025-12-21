@@ -238,6 +238,163 @@ is_valid, error = validate_resolution(1024, 768)  # -> (True, "")
 latent_w, latent_h = calculate_latent_size(1024, 1024)  # -> (128, 128)
 ```
 
+## DyPE (Dynamic Position Extrapolation)
+
+DyPE enables generation at resolutions beyond the model's training resolution (1024x1024) by dynamically scaling the RoPE position encodings. This is essential for high-resolution generation (2K, 4K) without retraining.
+
+### Why DyPE is Needed
+
+Z-Image uses multi-axis RoPE (Rotary Position Embedding) with three axes:
+- Axis 0 (text/time): 1504 positions
+- Axis 1 (height): 512 positions (maps to 4096 pixels at 8x VAE scaling)
+- Axis 2 (width): 512 positions (maps to 4096 pixels at 8x VAE scaling)
+
+When generating at 2048x2048 or higher, the image axes exceed their trained position range. Without DyPE, the model has never seen those position indices and produces degraded quality or artifacts.
+
+### Available Methods
+
+| Method | Class | Use Case | Recommendation |
+|--------|-------|----------|----------------|
+| `vision_yarn` | `VisionYaRNDyPE` | Multi-axis RoPE extrapolation | **Recommended** for Z-Image |
+| `yarn` | `YaRNDyPE` | Text-only RoPE extrapolation | Fallback for debugging |
+| `ntk` | `NTKDyPE` | Alternative frequency scaling | Experimental comparison |
+
+**Vision-YaRN** is the recommended method as it properly handles the multi-axis RoPE structure in Z-Image's DiT, scaling text and image position encodings independently.
+
+### Configuration
+
+**Via TOML config (recommended):**
+```toml
+[default.dype]
+enabled = true
+method = "vision_yarn"  # "vision_yarn", "yarn", or "ntk"
+scale = 2.0             # 2.0 for 2K, 4.0 for 4K
+alpha = 1.0             # Vision-YaRN alpha parameter
+beta = 32.0             # Vision-YaRN beta parameter
+```
+
+**Via CLI flags:**
+```bash
+uv run scripts/generate.py \
+  --model-path /path/to/z-image \
+  --dype \
+  --dype-method vision_yarn \
+  --dype-scale 2.0 \
+  --dype-alpha 1.0 \
+  --dype-beta 32.0 \
+  --width 2048 --height 2048 \
+  "Your prompt"
+```
+
+### CLI Flags
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--dype` | Enable DyPE position extrapolation | false |
+| `--dype-method` | Method: vision_yarn/yarn/ntk | vision_yarn |
+| `--dype-scale` | Scaling factor (2.0 for 2K, 4.0 for 4K) | 2.0 |
+| `--dype-alpha` | Vision-YaRN alpha parameter | 1.0 |
+| `--dype-beta` | Vision-YaRN beta parameter | 32.0 |
+
+### Usage Examples
+
+**2K Generation (2048x2048):**
+```bash
+uv run scripts/generate.py \
+  --model-path /path/to/z-image \
+  --dype \
+  --dype-scale 2.0 \
+  --width 2048 --height 2048 \
+  "A detailed mountain landscape"
+```
+
+**4K Generation (4096x4096):**
+```bash
+uv run scripts/generate.py \
+  --model-path /path/to/z-image \
+  --dype \
+  --dype-scale 4.0 \
+  --width 4096 --height 4096 \
+  --tiled-vae \
+  --tile-size 512 \
+  "An ultra-detailed cityscape"
+```
+
+**With config file:**
+```toml
+[high_res]
+width = 2048
+height = 2048
+
+[high_res.dype]
+enabled = true
+method = "vision_yarn"
+scale = 2.0
+```
+
+```bash
+uv run scripts/generate.py --config config.toml --profile high_res "Your prompt"
+```
+
+### Implementation Details
+
+DyPE is implemented in `src/llm_dit/utils/dype.py` (765+ lines) with three classes:
+
+1. **VisionYaRNDyPE**: Multi-axis RoPE scaling for vision transformers
+   - Scales text and image axes independently
+   - Preserves low-frequency information
+   - Optimized for Z-Image's dual-axis structure
+
+2. **YaRNDyPE**: Text-only RoPE extrapolation
+   - Original YaRN implementation
+   - Fallback for debugging position encoding issues
+
+3. **NTKDyPE**: Neural Tangent Kernel scaling
+   - Alternative frequency scaling approach
+   - Available for experimental comparison
+
+### Quality Considerations
+
+**DyPE can only extrapolate what the model learned:**
+- If high-res quality is poor, investigate VAE decoder limitations
+- Check if training data included similar resolutions
+- Consider the DiT's learned positional understanding
+
+**Recommendations:**
+- 2K (2048x2048): Usually works well with scale=2.0
+- 4K (4096x4096): May show quality degradation, use with tiled VAE
+- 8K+: Consider multi-pass rendering in addition to DyPE
+
+### Complementary Techniques
+
+DyPE works well with:
+- **Tiled VAE** (`--tiled-vae`): Decode large latents in tiles to save VRAM
+- **Multi-pass rendering**: Generate ultra-high-res in overlapping passes
+- **CPU offload** (`--cpu-offload`): Save VRAM for large DiT models
+
+### Python API
+
+```python
+from llm_dit.utils.dype import VisionYaRNDyPE
+
+# Apply DyPE to model
+dype = VisionYaRNDyPE(
+    model=text_encoder.model,
+    scale=2.0,
+    alpha=1.0,
+    beta=32.0
+)
+dype.apply()
+
+# Generate at 2K
+result = pipeline(
+    prompt="Your prompt",
+    width=2048,
+    height=2048,
+    num_inference_steps=9
+)
+```
+
 ## Text Sequence Length Limits
 
 The DiT transformer has a **maximum text sequence length of 1504 tokens**. The config specifies `axes_lens=[1536, 512, 512]` but the actual working limit is 1504 (47 * 32, where 32 is `axes_dims[0]`). This appears to be an off-by-one in RoPE frequency table indexing. Exceeding 1504 causes CUDA kernel crashes.
@@ -836,6 +993,15 @@ uv run scripts/profiler.py --show-info
 | `--cache-size` | Max cached embeddings (default: 100) |
 | `--long-prompt-mode` | How to handle prompts >1504 tokens: truncate/interpolate/pool/attention_pool |
 | `--hidden-layer` | Which hidden layer to extract embeddings from (default: -2, penultimate) |
+
+### DyPE (High-Resolution)
+| Flag | Description |
+|------|-------------|
+| `--dype` | Enable DyPE position extrapolation for high-res generation |
+| `--dype-method` | Method: vision_yarn/yarn/ntk (default: vision_yarn) |
+| `--dype-scale` | Scaling factor: 2.0 for 2K, 4.0 for 4K (default: 2.0) |
+| `--dype-alpha` | Vision-YaRN alpha parameter (default: 1.0) |
+| `--dype-beta` | Vision-YaRN beta parameter (default: 32.0) |
 
 ### Generation
 | Flag | Description |

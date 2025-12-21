@@ -173,6 +173,17 @@ class RuntimeConfig:
     vl_auto_unload: bool = True  # Unload after extraction to save VRAM
     vl_blend_mode: str = "interpolate"  # interpolate (recommended), adain_per_dim, adain, linear
 
+    # DyPE (Dynamic Position Extrapolation) for high-resolution generation
+    dype_enabled: bool = False  # Enable DyPE
+    dype_method: str = "vision_yarn"  # vision_yarn, yarn, ntk
+    dype_scale: float = 2.0  # Magnitude (lambda_s)
+    dype_exponent: float = 2.0  # Decay speed (lambda_t)
+    dype_start_sigma: float = 1.0  # When to start (0-1)
+    dype_base_shift: float = 0.5  # Noise schedule shift at base resolution
+    dype_max_shift: float = 1.15  # Noise schedule shift at max resolution
+    dype_base_resolution: int = 1024  # Training resolution
+    dype_anisotropic: bool = False  # Per-axis scaling for extreme aspect ratios
+
     # Debug
     debug: bool = False
     verbose: bool = False
@@ -637,6 +648,62 @@ def create_base_parser(
         help="API request timeout in seconds (default: 120, VL models may need longer)",
     )
 
+    # DyPE (Dynamic Position Extrapolation) for high-resolution generation
+    dype_group = parser.add_argument_group("DyPE (High-Resolution)")
+    dype_group.add_argument(
+        "--dype",
+        action="store_true",
+        help="Enable DyPE for high-resolution generation (2K-4K+)",
+    )
+    dype_group.add_argument(
+        "--dype-method",
+        type=str,
+        choices=["vision_yarn", "yarn", "ntk"],
+        default=None,
+        help="RoPE extrapolation method (default: vision_yarn)",
+    )
+    dype_group.add_argument(
+        "--dype-scale",
+        type=float,
+        default=None,
+        help="DyPE magnitude (lambda_s, default: 2.0)",
+    )
+    dype_group.add_argument(
+        "--dype-exponent",
+        type=float,
+        default=None,
+        help="DyPE decay speed (lambda_t, default: 2.0 = quadratic)",
+    )
+    dype_group.add_argument(
+        "--dype-start-sigma",
+        type=float,
+        default=None,
+        help="When to start DyPE decay (0-1, 1.0 = from start, default: 1.0)",
+    )
+    dype_group.add_argument(
+        "--dype-base-shift",
+        type=float,
+        default=None,
+        help="Noise schedule shift at base resolution (default: 0.5)",
+    )
+    dype_group.add_argument(
+        "--dype-max-shift",
+        type=float,
+        default=None,
+        help="Noise schedule shift at max resolution (default: 1.15)",
+    )
+    dype_group.add_argument(
+        "--dype-base-resolution",
+        type=int,
+        default=None,
+        help="Training resolution (Z-Image: 1024, Qwen: 1328, default: 1024)",
+    )
+    dype_group.add_argument(
+        "--dype-anisotropic",
+        action="store_true",
+        help="Use per-axis scaling for extreme aspect ratios (16:9, 9:16)",
+    )
+
     # Generation parameters (optional)
     if include_generation_args:
         gen_group = parser.add_argument_group("Generation")
@@ -826,6 +893,19 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
                 config.qwen_image_cfg_scale = getattr(qi, 'cfg_scale', 4.0)
                 config.qwen_image_resolution = getattr(qi, 'resolution', 640)
 
+            # Check for DyPE section
+            if hasattr(toml_config, 'dype'):
+                dype = toml_config.dype
+                config.dype_enabled = getattr(dype, 'enabled', False)
+                config.dype_method = getattr(dype, 'method', 'vision_yarn')
+                config.dype_scale = getattr(dype, 'dype_scale', 2.0)
+                config.dype_exponent = getattr(dype, 'dype_exponent', 2.0)
+                config.dype_start_sigma = getattr(dype, 'dype_start_sigma', 1.0)
+                config.dype_base_shift = getattr(dype, 'base_shift', 0.5)
+                config.dype_max_shift = getattr(dype, 'max_shift', 1.15)
+                config.dype_base_resolution = getattr(dype, 'base_resolution', 1024)
+                config.dype_anisotropic = getattr(dype, 'anisotropic', False)
+
         except Exception as e:
             logger.warning(f"Failed to load config: {e}")
 
@@ -981,6 +1061,26 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
         config.vl_auto_unload = False
     if getattr(args, 'vl_blend_mode', None) is not None:
         config.vl_blend_mode = args.vl_blend_mode
+
+    # DyPE (Dynamic Position Extrapolation) overrides
+    if getattr(args, 'dype', False):
+        config.dype_enabled = True
+    if getattr(args, 'dype_method', None) is not None:
+        config.dype_method = args.dype_method
+    if getattr(args, 'dype_scale', None) is not None:
+        config.dype_scale = args.dype_scale
+    if getattr(args, 'dype_exponent', None) is not None:
+        config.dype_exponent = args.dype_exponent
+    if getattr(args, 'dype_start_sigma', None) is not None:
+        config.dype_start_sigma = args.dype_start_sigma
+    if getattr(args, 'dype_base_shift', None) is not None:
+        config.dype_base_shift = args.dype_base_shift
+    if getattr(args, 'dype_max_shift', None) is not None:
+        config.dype_max_shift = args.dype_max_shift
+    if getattr(args, 'dype_base_resolution', None) is not None:
+        config.dype_base_resolution = args.dype_base_resolution
+    if getattr(args, 'dype_anisotropic', False):
+        config.dype_anisotropic = True
 
     # Generation overrides
     if getattr(args, 'height', None) is not None:

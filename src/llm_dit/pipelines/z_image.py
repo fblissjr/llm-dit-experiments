@@ -18,11 +18,12 @@ Key differences from diffusers ZImagePipeline:
 5. Optional pure-PyTorch scheduler (use_custom_scheduler=True)
 6. Optional tiled VAE decode for large images (tiled_vae=True)
 7. Selectable attention backend (flash_attn_2, sdpa, etc.)
+8. DyPE (Dynamic Position Extrapolation) for high-resolution generation
 """
 
 import logging
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Union, TYPE_CHECKING
 
 import torch
 from PIL import Image
@@ -30,6 +31,9 @@ from PIL import Image
 from llm_dit.conversation import Conversation
 from llm_dit.encoders import ZImageTextEncoder
 from llm_dit.utils.long_prompt import compress_embeddings, LongPromptMode
+
+if TYPE_CHECKING:
+    from llm_dit.utils.dype import DyPEConfig
 
 logger = logging.getLogger(__name__)
 
@@ -111,6 +115,7 @@ class ZImagePipeline:
         tiled_vae: bool = False,
         tile_size: int = 512,
         tile_overlap: int = 64,
+        dype_config: Optional["DyPEConfig"] = None,
     ):
         """
         Initialize the pipeline.
@@ -123,10 +128,12 @@ class ZImagePipeline:
             tiled_vae: Enable tiled VAE decode for large images
             tile_size: Tile size in pixels (default: 512)
             tile_overlap: Overlap between tiles in pixels (default: 64)
+            dype_config: Optional DyPE configuration for high-resolution generation
         """
         self.encoder = encoder
         self.transformer = transformer
         self.scheduler = scheduler
+        self.dype_config = dype_config
 
         # VAE scale factor (8 for Z-Image)
         self.vae_scale_factor = 2 ** (len(vae.config.block_out_channels) - 1)
@@ -289,6 +296,7 @@ class ZImagePipeline:
             tiled_vae=tiled_vae,
             tile_size=tile_size,
             tile_overlap=tile_overlap,
+            dype_config=kwargs.get("dype_config"),
         )
 
     @classmethod
@@ -1077,9 +1085,26 @@ class ZImagePipeline:
         if cpu_offload:
             logger.info("[Pipeline] CPU offload mode - moving transformer to GPU for forward pass")
 
+        # Patch transformer with DyPE if enabled
+        dype_patched = False
+        if self.dype_config is not None and self.dype_config.enabled:
+            from llm_dit.utils.dype import patch_zimage_rope, set_zimage_timestep
+            logger.info(f"[Pipeline] DyPE enabled: method={self.dype_config.method}, scale={self.dype_config.dype_scale}")
+            try:
+                patch_zimage_rope(self.transformer, self.dype_config, width, height)
+                dype_patched = True
+                logger.info(f"[Pipeline] DyPE patched transformer for {width}x{height}")
+            except Exception as e:
+                logger.warning(f"[Pipeline] Failed to patch DyPE: {e}. Continuing without DyPE.")
+
         # Run denoising loop with no_grad to prevent gradient accumulation
         with torch.no_grad():
             for i, t in enumerate(timesteps):
+                # Update DyPE timestep if patched
+                if dype_patched:
+                    # Get sigma from scheduler
+                    sigma = self.scheduler.sigmas[i].item() if hasattr(self.scheduler, 'sigmas') else t.item() / 1000.0
+                    set_zimage_timestep(self.transformer, sigma)
                 # Clear cache before each step to minimize peak memory
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
@@ -1617,3 +1642,197 @@ class ZImagePipeline:
             logger.info(f"  Final GPU memory: {used_mem:.1f}GB used, {free_mem:.1f}GB free")
         logger.info("=" * 60)
         return pipeline
+
+    def generate_multipass(
+        self,
+        prompt: Union[str, Conversation, None] = None,
+        final_width: int = 2048,
+        final_height: int = 2048,
+        passes: Optional[List[Dict[str, Any]]] = None,
+        generator: Optional[torch.Generator] = None,
+        template: Optional[str] = None,
+        system_prompt: Optional[str] = None,
+        thinking_content: Optional[str] = None,
+        assistant_content: Optional[str] = None,
+        force_think_block: bool = False,
+        remove_quotes: bool = False,
+        output_type: str = "pil",
+        callback: Optional[Callable[[int, int, torch.Tensor], None]] = None,
+        long_prompt_mode: str = "truncate",
+        hidden_layer: int = -2,
+        prompt_embeds: Optional[torch.Tensor] = None,
+        **kwargs,
+    ) -> Union[Image.Image, List[Image.Image], torch.Tensor]:
+        """
+        Generate a high-resolution image using multi-pass workflow.
+
+        Multi-pass generation produces higher quality results at high resolutions
+        (2K-4K+) by first generating at a lower resolution, then upscaling through
+        img2img passes. Each pass can independently apply DyPE position extrapolation.
+
+        Why multi-pass works better:
+        - First pass: Establishes global composition and structure at lower res
+        - Second pass: Refines details at target resolution with DyPE support
+        - Each pass benefits from DyPE's timestep-aware frequency modulation
+
+        Args:
+            prompt: Text prompt or Conversation object
+            final_width: Target output width in pixels (default: 2048)
+            final_height: Target output height in pixels (default: 2048)
+            passes: List of pass configurations. Each dict can contain:
+                - scale: Resolution scale relative to final (0.5 = half res)
+                - steps: Number of inference steps for this pass
+                - strength: img2img strength (for passes after the first)
+                - shift: Optional scheduler shift override
+                Default: [{"scale": 0.5, "steps": 9}, {"scale": 1.0, "steps": 9, "strength": 0.5}]
+            generator: Random generator for reproducibility
+            template: Template name for encoding
+            system_prompt: System prompt (optional)
+            thinking_content: Content inside <think>...</think>
+            assistant_content: Content after </think>
+            force_think_block: Add empty think block even without content
+            remove_quotes: Strip " characters
+            output_type: Output format ("pil", "latent", or "pt")
+            callback: Progress callback (called for each pass)
+            long_prompt_mode: How to handle prompts > 1504 tokens
+            hidden_layer: Which LLM hidden layer to extract embeddings from
+            prompt_embeds: Pre-computed embeddings (skip text encoding)
+            **kwargs: Additional arguments passed to each pass
+
+        Returns:
+            Generated image in specified format
+
+        Example:
+            # Two-pass 4K generation (recommended)
+            image = pipe.generate_multipass(
+                "A detailed cityscape",
+                final_width=4096,
+                final_height=4096,
+                passes=[
+                    {"scale": 0.5, "steps": 9},      # 2K first pass
+                    {"scale": 1.0, "steps": 9, "strength": 0.5},  # 4K refinement
+                ],
+            )
+
+            # Three-pass for maximum quality
+            image = pipe.generate_multipass(
+                "A portrait",
+                final_width=4096,
+                final_height=4096,
+                passes=[
+                    {"scale": 0.25, "steps": 9},     # 1K base
+                    {"scale": 0.5, "steps": 9, "strength": 0.6},  # 2K
+                    {"scale": 1.0, "steps": 9, "strength": 0.4},  # 4K
+                ],
+            )
+        """
+        # Default two-pass configuration
+        if passes is None:
+            passes = [
+                {"scale": 0.5, "steps": 9},  # First pass: half resolution
+                {"scale": 1.0, "steps": 9, "strength": 0.5},  # Second pass: full res img2img
+            ]
+
+        # Validate passes
+        if len(passes) < 1:
+            raise ValueError("At least one pass is required")
+        if passes[0].get("strength") is not None:
+            logger.warning("First pass strength is ignored (txt2img)")
+
+        # Validate final dimensions
+        vae_scale = self.vae_scale_factor * 2  # 16 for Z-Image
+        if final_width % vae_scale != 0:
+            final_width = (final_width // vae_scale) * vae_scale
+            logger.info(f"Adjusted final_width to {final_width}")
+        if final_height % vae_scale != 0:
+            final_height = (final_height // vae_scale) * vae_scale
+            logger.info(f"Adjusted final_height to {final_height}")
+
+        logger.info(f"[Multipass] Starting {len(passes)}-pass generation: {final_width}x{final_height}")
+
+        result = None
+        for pass_idx, pass_config in enumerate(passes):
+            scale = pass_config.get("scale", 1.0)
+            steps = pass_config.get("steps", 9)
+            strength = pass_config.get("strength")
+            shift = pass_config.get("shift")
+            guidance_scale = pass_config.get("guidance_scale", 0.0)
+
+            # Compute dimensions for this pass
+            pass_width = int(final_width * scale)
+            pass_height = int(final_height * scale)
+
+            # Ensure divisible by VAE scale
+            pass_width = (pass_width // vae_scale) * vae_scale
+            pass_height = (pass_height // vae_scale) * vae_scale
+
+            logger.info(f"[Multipass] Pass {pass_idx + 1}/{len(passes)}: {pass_width}x{pass_height}, steps={steps}")
+
+            if result is None:
+                # First pass: txt2img
+                logger.info(f"[Multipass] Pass {pass_idx + 1}: txt2img at {pass_width}x{pass_height}")
+                result = self(
+                    prompt=prompt,
+                    width=pass_width,
+                    height=pass_height,
+                    num_inference_steps=steps,
+                    guidance_scale=guidance_scale,
+                    generator=generator,
+                    template=template,
+                    system_prompt=system_prompt,
+                    thinking_content=thinking_content,
+                    assistant_content=assistant_content,
+                    force_think_block=force_think_block,
+                    remove_quotes=remove_quotes,
+                    output_type="pil",  # Always PIL for intermediate passes
+                    callback=callback,
+                    shift=shift,
+                    long_prompt_mode=long_prompt_mode,
+                    hidden_layer=hidden_layer,
+                    prompt_embeds=prompt_embeds,
+                )
+            else:
+                # Subsequent passes: img2img
+                if strength is None:
+                    strength = 0.5  # Default strength for refinement
+
+                logger.info(f"[Multipass] Pass {pass_idx + 1}: img2img at {pass_width}x{pass_height}, strength={strength}")
+                result = self.img2img(
+                    prompt=prompt,
+                    image=result,
+                    strength=strength,
+                    width=pass_width,
+                    height=pass_height,
+                    num_inference_steps=steps,
+                    guidance_scale=guidance_scale,
+                    generator=generator,
+                    template=template,
+                    system_prompt=system_prompt,
+                    thinking_content=thinking_content,
+                    assistant_content=assistant_content,
+                    force_think_block=force_think_block,
+                    remove_quotes=remove_quotes,
+                    output_type="pil",  # Always PIL for intermediate passes
+                    callback=callback,
+                    shift=shift,
+                    long_prompt_mode=long_prompt_mode,
+                    hidden_layer=hidden_layer,
+                    prompt_embeds=prompt_embeds,
+                )
+
+            logger.info(f"[Multipass] Pass {pass_idx + 1} complete")
+
+        # Convert final result to requested output type
+        if output_type == "pil":
+            return result
+        elif output_type == "pt":
+            import numpy as np
+            if isinstance(result, Image.Image):
+                img_array = np.array(result).astype(np.float32) / 255.0
+                return torch.from_numpy(img_array).permute(2, 0, 1).unsqueeze(0)
+            return result
+        elif output_type == "latent":
+            # Re-encode to latent space
+            return self.encode_image(result)
+
+        return result

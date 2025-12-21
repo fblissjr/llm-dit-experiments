@@ -334,6 +334,58 @@ class QwenImageConfig:
 
 
 @dataclass
+class DyPEConfig:
+    """Configuration for DyPE (Dynamic Position Extrapolation).
+
+    DyPE is a training-free technique that enables high-resolution generation
+    (2K-4K+) by dynamically adjusting RoPE frequencies based on the diffusion
+    timestep. The core insight: early diffusion steps establish low-frequency
+    structure while late steps add high-frequency details.
+
+    Based on ComfyUI-DyPE implementation.
+
+    Attributes:
+        enabled: Whether DyPE is enabled (default: False)
+        method: RoPE extrapolation method (vision_yarn, yarn, ntk)
+        dype_scale: Magnitude of DyPE effect (lambda_s, default: 2.0)
+        dype_exponent: Decay speed of DyPE (lambda_t, default: 2.0 = quadratic)
+        dype_start_sigma: When to start DyPE decay (0-1, 1.0 = from start)
+        base_shift: Noise schedule shift at base resolution
+        max_shift: Noise schedule shift at max resolution
+        base_resolution: Training resolution (Z-Image: 1024, Qwen: 1328)
+        anisotropic: Use per-axis scaling for extreme aspect ratios
+    """
+
+    enabled: bool = False
+    method: Literal["vision_yarn", "yarn", "ntk"] = "vision_yarn"
+    dype_scale: float = 2.0
+    dype_exponent: float = 2.0
+    dype_start_sigma: float = 1.0
+    base_shift: float = 0.5
+    max_shift: float = 1.15
+    base_resolution: int = 1024
+    anisotropic: bool = False
+
+    def __post_init__(self):
+        """Validate and clamp parameters."""
+        self.dype_start_sigma = max(0.001, min(1.0, self.dype_start_sigma))
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary."""
+        return {
+            "enabled": self.enabled,
+            "method": self.method,
+            "dype_scale": self.dype_scale,
+            "dype_exponent": self.dype_exponent,
+            "dype_start_sigma": self.dype_start_sigma,
+            "base_shift": self.base_shift,
+            "max_shift": self.max_shift,
+            "base_resolution": self.base_resolution,
+            "anisotropic": self.anisotropic,
+        }
+
+
+@dataclass
 class RewriterConfig:
     """Configuration for prompt rewriting using LLM generation.
 
@@ -391,6 +443,7 @@ class Config:
     rewriter: RewriterConfig = field(default_factory=RewriterConfig)
     vl: VLConfig = field(default_factory=VLConfig)
     qwen_image: QwenImageConfig = field(default_factory=QwenImageConfig)
+    dype: DyPEConfig = field(default_factory=DyPEConfig)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Config":
@@ -405,6 +458,7 @@ class Config:
         rewriter_data = data.pop("rewriter", {})
         vl_data = data.pop("vl", {})
         qwen_image_data = data.pop("qwen_image", {})
+        dype_data = data.pop("dype", {})
 
         return cls(
             model_path=data.get("model_path", ""),
@@ -419,6 +473,7 @@ class Config:
             rewriter=RewriterConfig(**rewriter_data),
             vl=VLConfig(**vl_data),
             qwen_image=QwenImageConfig(**qwen_image_data),
+            dype=DyPEConfig(**dype_data),
         )
 
     @classmethod
@@ -555,6 +610,7 @@ class Config:
                 "resolution": self.qwen_image.resolution,
                 "shift": self.qwen_image.shift,
             },
+            "dype": self.dype.to_dict(),
         }
 
 
