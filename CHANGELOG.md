@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Skip Layer Guidance (SLG) for improved structure/anatomy in generated images
+  - New `src/llm_dit/guidance/` module with `SkipLayerGuidance` class
+  - Hook-based layer skipping with context manager pattern
+  - Integrated into Z-Image pipeline with `skip_layer_guidance_scale`, `skip_layer_indices` parameters
+  - CLI support: `--slg-scale`, `--slg-layers`, `--slg-start`, `--slg-stop`
+  - Config sections: `[*.slg]` with enabled, scale, layers, start, stop
+  - Recommended settings: scale=2.8, layers=[15,16,17,18,19], range 1-20% of steps
+  - Based on StabilityAI SD3.5 and Spatio-Temporal Guidance paper
 - Training infrastructure for LoRA and full model fine-tuning
   - New `src/llm_dit/training/` module with complete training pipeline
   - `ZImageTrainingModule` for supervised fine-tuning (SFT) and distillation
