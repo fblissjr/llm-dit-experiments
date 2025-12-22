@@ -1143,6 +1143,86 @@
                     </div>
                 </details>
 
+                <!-- FMTT (Flow Map Trajectory Tilting) Options (collapsible) -->
+                <details class="group" id="fmttSection">
+                    <summary class="flex items-center gap-2 text-sm font-medium text-gray-300 cursor-pointer py-2 select-none">
+                        <svg class="w-3 h-3 transition-transform group-open:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                        </svg>
+                        FMTT (Reward Guidance)
+                        <span id="fmttStatusBadge" class="ml-auto text-xs px-2 py-0.5 rounded-full bg-gray-700 text-gray-400">Off</span>
+                    </summary>
+                    <div class="pt-2 pb-1 space-y-4 pl-5 border-l-2 border-gray-700/50 ml-1.5">
+                        <p class="text-xs text-gray-500">Uses SigLIP to guide generation toward text-aligned images. Loads ~4GB VRAM.</p>
+
+                        <!-- Enable FMTT -->
+                        <div>
+                            <label for="fmttEnabled" class="flex items-center gap-2 cursor-pointer">
+                                <input type="checkbox" id="fmttEnabled" class="w-5 h-5 text-blue-600 bg-gray-700 border-gray-600 rounded focus:ring-blue-500">
+                                <span class="text-sm font-medium text-gray-300">Enable FMTT</span>
+                            </label>
+                        </div>
+
+                        <!-- FMTT Scale -->
+                        <div id="fmttScaleContainer" class="hidden">
+                            <label class="block text-sm font-medium text-gray-300 mb-2">
+                                Scale: <span id="fmttScaleValue" class="text-blue-400">1.0</span>
+                            </label>
+                            <input type="range" id="fmttScale" min="0.1" max="3.0" step="0.1" value="1.0" class="w-full">
+                            <div class="flex justify-between text-xs text-gray-500 mt-1">
+                                <span>0.1 (Subtle)</span>
+                                <span>3.0 (Strong)</span>
+                            </div>
+                            <p class="text-xs text-gray-500 mt-1">Guidance strength. 0.5-2.0 typical. Higher may cause artifacts.</p>
+                        </div>
+
+                        <!-- FMTT Normalize Mode -->
+                        <div id="fmttNormalizeContainer" class="hidden">
+                            <label class="block text-sm font-medium text-gray-300 mb-2">
+                                Normalize: <span id="fmttNormalizeValue" class="text-blue-400">unit</span>
+                            </label>
+                            <select id="fmttNormalize" class="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-white focus:ring-2 focus:ring-blue-500">
+                                <option value="unit">Unit Norm (Recommended)</option>
+                                <option value="clip">Clip</option>
+                                <option value="none">None</option>
+                            </select>
+                            <p class="text-xs text-gray-500 mt-1">How to normalize gradients. Unit is most stable.</p>
+                        </div>
+
+                        <!-- FMTT Timing -->
+                        <div id="fmttTimingContainer" class="hidden">
+                            <div class="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-300 mb-2">
+                                        Start: <span id="fmttStartValue" class="text-blue-400">0%</span>
+                                    </label>
+                                    <input type="range" id="fmttStart" min="0" max="0.5" step="0.01" value="0" class="w-full">
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-300 mb-2">
+                                        Stop: <span id="fmttStopValue" class="text-blue-400">50%</span>
+                                    </label>
+                                    <input type="range" id="fmttStop" min="0.1" max="0.8" step="0.01" value="0.5" class="w-full">
+                                </div>
+                            </div>
+                            <p class="text-xs text-gray-500 mt-1">When to apply FMTT. Earlier steps affect structure more.</p>
+                        </div>
+
+                        <!-- FMTT Decode Scale -->
+                        <div id="fmttDecodeScaleContainer" class="hidden">
+                            <label class="block text-sm font-medium text-gray-300 mb-2">
+                                Decode Scale: <span id="fmttDecodeScaleValue" class="text-blue-400">0.5</span>
+                            </label>
+                            <input type="range" id="fmttDecodeScale" min="0.25" max="1.0" step="0.05" value="0.5" class="w-full">
+                            <div class="flex justify-between text-xs text-gray-500 mt-1">
+                                <span>0.25 (Less VRAM)</span>
+                                <span>1.0 (Full res)</span>
+                            </div>
+                            <p class="text-xs text-gray-500 mt-1">Resolution for intermediate VAE decode. Lower saves VRAM.</p>
+                        </div>
+                    </div>
+                </details>
+
                 <!-- Generate Button -->
                 <button
                     type="submit"
@@ -1580,6 +1660,134 @@
         loadSlgConfig();
         // =====================================================================
         // End SLG Logic
+        // =====================================================================
+
+        // =====================================================================
+        // FMTT (Flow Map Trajectory Tilting) Logic
+        // =====================================================================
+
+        // FMTT Elements
+        const fmttEnabled = document.getElementById('fmttEnabled');
+        const fmttScale = document.getElementById('fmttScale');
+        const fmttScaleValue = document.getElementById('fmttScaleValue');
+        const fmttNormalize = document.getElementById('fmttNormalize');
+        const fmttNormalizeValue = document.getElementById('fmttNormalizeValue');
+        const fmttStart = document.getElementById('fmttStart');
+        const fmttStartValue = document.getElementById('fmttStartValue');
+        const fmttStop = document.getElementById('fmttStop');
+        const fmttStopValue = document.getElementById('fmttStopValue');
+        const fmttDecodeScale = document.getElementById('fmttDecodeScale');
+        const fmttDecodeScaleValue = document.getElementById('fmttDecodeScaleValue');
+        const fmttScaleContainer = document.getElementById('fmttScaleContainer');
+        const fmttNormalizeContainer = document.getElementById('fmttNormalizeContainer');
+        const fmttTimingContainer = document.getElementById('fmttTimingContainer');
+        const fmttDecodeScaleContainer = document.getElementById('fmttDecodeScaleContainer');
+        const fmttStatusBadge = document.getElementById('fmttStatusBadge');
+
+        // Update FMTT status badge and visibility
+        function updateFmttStatus() {
+            if (fmttEnabled.checked) {
+                fmttStatusBadge.textContent = 'On';
+                fmttStatusBadge.classList.remove('bg-gray-700', 'text-gray-400');
+                fmttStatusBadge.classList.add('bg-green-700', 'text-green-300');
+                fmttScaleContainer.classList.remove('hidden');
+                fmttNormalizeContainer.classList.remove('hidden');
+                fmttTimingContainer.classList.remove('hidden');
+                fmttDecodeScaleContainer.classList.remove('hidden');
+            } else {
+                fmttStatusBadge.textContent = 'Off';
+                fmttStatusBadge.classList.remove('bg-green-700', 'text-green-300');
+                fmttStatusBadge.classList.add('bg-gray-700', 'text-gray-400');
+                fmttScaleContainer.classList.add('hidden');
+                fmttNormalizeContainer.classList.add('hidden');
+                fmttTimingContainer.classList.add('hidden');
+                fmttDecodeScaleContainer.classList.add('hidden');
+            }
+        }
+
+        // Update display values
+        fmttScale.addEventListener('input', () => {
+            fmttScaleValue.textContent = parseFloat(fmttScale.value).toFixed(1);
+        });
+        fmttNormalize.addEventListener('change', () => {
+            fmttNormalizeValue.textContent = fmttNormalize.value;
+        });
+        fmttStart.addEventListener('input', () => {
+            fmttStartValue.textContent = `${Math.round(parseFloat(fmttStart.value) * 100)}%`;
+        });
+        fmttStop.addEventListener('input', () => {
+            fmttStopValue.textContent = `${Math.round(parseFloat(fmttStop.value) * 100)}%`;
+        });
+        fmttDecodeScale.addEventListener('input', () => {
+            fmttDecodeScaleValue.textContent = parseFloat(fmttDecodeScale.value).toFixed(2);
+        });
+
+        fmttEnabled.addEventListener('change', updateFmttStatus);
+
+        // Initialize FMTT UI
+        updateFmttStatus();
+
+        // Get FMTT config for API calls
+        function getFmttConfig() {
+            if (!fmttEnabled.checked) {
+                return {
+                    fmtt_scale: 0.0,
+                    fmtt_start: null,
+                    fmtt_stop: null,
+                    fmtt_normalize: null,
+                    fmtt_decode_scale: null
+                };
+            }
+
+            return {
+                fmtt_scale: parseFloat(fmttScale.value),
+                fmtt_start: parseFloat(fmttStart.value),
+                fmtt_stop: parseFloat(fmttStop.value),
+                fmtt_normalize: fmttNormalize.value,
+                fmtt_decode_scale: parseFloat(fmttDecodeScale.value)
+            };
+        }
+
+        // Load FMTT config from server
+        async function loadFmttConfig() {
+            try {
+                const resp = await fetch('/api/generation-config');
+                if (resp.ok) {
+                    const config = await resp.json();
+                    if (config.fmtt_scale && config.fmtt_scale > 0) {
+                        fmttEnabled.checked = true;
+                        fmttScale.value = config.fmtt_scale;
+                        fmttScaleValue.textContent = config.fmtt_scale.toFixed(1);
+
+                        if (config.fmtt_normalize) {
+                            fmttNormalize.value = config.fmtt_normalize;
+                            fmttNormalizeValue.textContent = config.fmtt_normalize;
+                        }
+                        if (config.fmtt_start !== undefined) {
+                            fmttStart.value = config.fmtt_start;
+                            fmttStartValue.textContent = `${Math.round(config.fmtt_start * 100)}%`;
+                        }
+                        if (config.fmtt_stop !== undefined) {
+                            fmttStop.value = config.fmtt_stop;
+                            fmttStopValue.textContent = `${Math.round(config.fmtt_stop * 100)}%`;
+                        }
+                        if (config.fmtt_decode_scale !== undefined) {
+                            fmttDecodeScale.value = config.fmtt_decode_scale;
+                            fmttDecodeScaleValue.textContent = config.fmtt_decode_scale.toFixed(2);
+                        }
+
+                        updateFmttStatus();
+                    }
+                }
+            } catch (e) {
+                console.warn('Failed to load FMTT config:', e);
+            }
+        }
+
+        // Load FMTT config on page load
+        loadFmttConfig();
+        // =====================================================================
+        // End FMTT Logic
         // =====================================================================
 
         // Toggle thinking content visibility based on checkbox
@@ -2258,9 +2466,10 @@
             progressFill.style.width = '10%';
             statusText.textContent = 'Starting...';
 
-            // Get DyPE and SLG configs
+            // Get DyPE, SLG, and FMTT configs
             const dypeConfig = getDypeConfig();
             const slgConfig = getSlgConfig();
+            const fmttConfig = getFmttConfig();
 
             const params = {
                 prompt: document.getElementById('prompt').value,
@@ -2280,6 +2489,7 @@
                 hidden_layer: parseInt(hiddenLayerSlider.value),
                 dype: dypeConfig,
                 ...slgConfig,
+                ...fmttConfig,
             };
 
             currentParams = params;

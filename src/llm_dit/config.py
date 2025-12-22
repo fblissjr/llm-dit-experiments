@@ -436,6 +436,86 @@ class SLGConfig:
 
 
 @dataclass
+class FMTTConfig:
+    """Configuration for Flow Map Trajectory Tilting (FMTT).
+
+    FMTT is a test-time optimization technique that guides diffusion sampling
+    toward higher-reward regions using gradient-based trajectory modification.
+    At each step, it predicts where the trajectory will end (via flow map),
+    evaluates a reward, and nudges the velocity toward higher reward.
+
+    Memory considerations:
+        - Loads SigLIP2-Giant (~4GB VRAM)
+        - For 24GB cards, encoder must be on CPU when FMTT is enabled
+        - Adds ~3-4GB overhead during guided steps
+
+    Attributes:
+        enabled: Whether FMTT is enabled (default: False)
+        guidance_scale: Scale for reward gradients (0.5-2.0 typical, default: 1.0)
+        guidance_start: Start guidance at this fraction of steps (default: 0.0)
+        guidance_stop: Stop guidance at this fraction of steps (default: 0.5)
+        normalize_mode: Gradient normalization mode:
+            - "unit": Normalize to unit norm (default, most stable)
+            - "clip": Clip to max norm
+            - "none": No normalization
+        decode_scale: Scale factor for intermediate VAE decode (default: 0.5)
+            - 0.5 = 512px for 1024px input (saves VRAM)
+            - 1.0 = full resolution (more precise but uses more VRAM)
+        reward_model: Reward model to use (default: "siglip")
+            - "siglip": SigLIP2-Giant for text-image alignment
+        siglip_model: HuggingFace model ID for SigLIP (default: google/siglip2-giant-opt-patch16-384)
+        siglip_device: Device for SigLIP (default: "cuda")
+            - "cuda": Run on GPU (requires ~4GB VRAM)
+            - "cpu": Run on CPU (slower but saves VRAM)
+
+    Example config.toml:
+        [rtx4090.fmtt]
+        enabled = false
+        guidance_scale = 1.0
+        guidance_start = 0.0
+        guidance_stop = 0.5
+        normalize_mode = "unit"
+        decode_scale = 0.5
+        siglip_model = "google/siglip2-giant-opt-patch16-384"
+        siglip_device = "cuda"
+
+    Reference: arXiv:2511.22688 (Test-Time Scaling of Diffusion Models with Flow Maps)
+    """
+
+    enabled: bool = False
+    guidance_scale: float = 1.0
+    guidance_start: float = 0.0
+    guidance_stop: float = 0.5
+    normalize_mode: str = "unit"
+    decode_scale: float = 0.5
+    reward_model: str = "siglip"
+    siglip_model: str = "google/siglip2-giant-opt-patch16-384"
+    siglip_device: str = "cuda"
+
+    def __post_init__(self):
+        """Validate normalize_mode."""
+        valid_modes = ("unit", "clip", "none")
+        if self.normalize_mode not in valid_modes:
+            raise ValueError(
+                f"normalize_mode must be one of {valid_modes}, got {self.normalize_mode}"
+            )
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary."""
+        return {
+            "enabled": self.enabled,
+            "guidance_scale": self.guidance_scale,
+            "guidance_start": self.guidance_start,
+            "guidance_stop": self.guidance_stop,
+            "normalize_mode": self.normalize_mode,
+            "decode_scale": self.decode_scale,
+            "reward_model": self.reward_model,
+            "siglip_model": self.siglip_model,
+            "siglip_device": self.siglip_device,
+        }
+
+
+@dataclass
 class RewriterConfig:
     """Configuration for prompt rewriting using LLM generation.
 
@@ -495,6 +575,7 @@ class Config:
     qwen_image: QwenImageConfig = field(default_factory=QwenImageConfig)
     dype: DyPEConfig = field(default_factory=DyPEConfig)
     slg: SLGConfig = field(default_factory=SLGConfig)
+    fmtt: FMTTConfig = field(default_factory=FMTTConfig)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Config":
@@ -511,6 +592,7 @@ class Config:
         qwen_image_data = data.pop("qwen_image", {})
         dype_data = data.pop("dype", {})
         slg_data = data.pop("slg", {})
+        fmtt_data = data.pop("fmtt", {})
 
         return cls(
             model_path=data.get("model_path", ""),
@@ -527,6 +609,7 @@ class Config:
             qwen_image=QwenImageConfig(**qwen_image_data),
             dype=DyPEConfig(**dype_data),
             slg=SLGConfig(**slg_data),
+            fmtt=FMTTConfig(**fmtt_data),
         )
 
     @classmethod
@@ -664,6 +747,8 @@ class Config:
                 "shift": self.qwen_image.shift,
             },
             "dype": self.dype.to_dict(),
+            "slg": self.slg.to_dict(),
+            "fmtt": self.fmtt.to_dict(),
         }
 
 

@@ -94,6 +94,16 @@ Research and development - load for context on past decisions:
 5. Create/update `internal/log/log_YYYY-MM-DD.md` with session details
 6. Update `internal/SESSION_CONTINUITY.md` with current state
 
+## checklist for new experiments
+
+1. Output directory: `experiments/results/<experiment_name>/`
+2. Use shared utilities from `experiments/utils.py`:
+   - `save_image_grid()` for comparison grids
+   - `save_metadata()` for JSON metadata with timestamps
+   - `create_comparison_grid()` for grids without saving
+3. Do NOT create custom grid or metadata functions
+4. Add argparse `--output-dir` with default to `experiments/results/`
+
 ## for new configurable parameters
 
 Follow DRY Configuration Principles (see `docs/reference/configuration.md`):

@@ -94,6 +94,15 @@ class GenerateRequest(BaseModel):
     slg_layers: Optional[List[int]] = None  # Layer indices to skip (e.g., [7, 8, 9, 10, 11, 12])
     slg_start: Optional[float] = None  # Start SLG at this fraction
     slg_stop: Optional[float] = None  # Stop SLG at this fraction
+    # Flow Map Trajectory Tilting (FMTT) options
+    # None = use config defaults, explicit values override
+    fmtt_scale: Optional[float] = None  # FMTT scale (0 = disabled, 0.5-2.0 typical)
+    fmtt_start: Optional[float] = None  # Start FMTT at this fraction
+    fmtt_stop: Optional[float] = None  # Stop FMTT at this fraction
+    fmtt_normalize: Optional[str] = None  # Gradient normalization mode: unit, clip, none
+    fmtt_decode_scale: Optional[float] = None  # Scale for intermediate VAE decode
+    fmtt_siglip_model: Optional[str] = None  # SigLIP model for FMTT
+    fmtt_siglip_device: Optional[str] = None  # Device for SigLIP (cuda/cpu)
 
 
 class EncodeRequest(BaseModel):
@@ -944,7 +953,7 @@ async def dype_status():
 async def get_generation_config():
     """Get generation configuration defaults from server config.
 
-    Returns default values for width, height, steps, shift, long_prompt_mode, hidden_layer, and SLG.
+    Returns default values for width, height, steps, shift, long_prompt_mode, hidden_layer, SLG, and FMTT.
     The UI should call this on load to sync with server config.
     """
     if runtime_config is None:
@@ -960,6 +969,11 @@ async def get_generation_config():
             "slg_layers": None,
             "slg_start": 0.05,
             "slg_stop": 0.5,
+            "fmtt_scale": 0.0,
+            "fmtt_start": 0.0,
+            "fmtt_stop": 0.5,
+            "fmtt_normalize": "unit",
+            "fmtt_decode_scale": 0.5,
         }
     return {
         "width": runtime_config.width,
@@ -973,6 +987,13 @@ async def get_generation_config():
         "slg_layers": getattr(runtime_config, 'slg_layers', None),
         "slg_start": getattr(runtime_config, 'slg_start', 0.05),
         "slg_stop": getattr(runtime_config, 'slg_stop', 0.5),
+        "fmtt_scale": getattr(runtime_config, 'fmtt_scale', 0.0),
+        "fmtt_start": getattr(runtime_config, 'fmtt_start', 0.0),
+        "fmtt_stop": getattr(runtime_config, 'fmtt_stop', 0.5),
+        "fmtt_normalize": getattr(runtime_config, 'fmtt_normalize', 'unit'),
+        "fmtt_decode_scale": getattr(runtime_config, 'fmtt_decode_scale', 0.5),
+        "fmtt_siglip_model": getattr(runtime_config, 'fmtt_siglip_model', 'google/siglip2-giant-opt-patch16-384'),
+        "fmtt_siglip_device": getattr(runtime_config, 'fmtt_siglip_device', 'cuda'),
     }
 
 
@@ -1213,10 +1234,53 @@ async def generate(request: GenerateRequest):
             if slg_stop is None:
                 slg_stop = 0.5
 
+        # Apply FMTT config defaults (use config values when request doesn't specify)
+        fmtt_scale = request.fmtt_scale
+        fmtt_start = request.fmtt_start
+        fmtt_stop = request.fmtt_stop
+        fmtt_normalize = request.fmtt_normalize
+        fmtt_decode_scale = request.fmtt_decode_scale
+        fmtt_siglip_model = request.fmtt_siglip_model
+        fmtt_siglip_device = request.fmtt_siglip_device
+
+        if runtime_config is not None:
+            if fmtt_scale is None:
+                fmtt_scale = getattr(runtime_config, 'fmtt_scale', 0.0)
+            if fmtt_start is None:
+                fmtt_start = getattr(runtime_config, 'fmtt_start', 0.0)
+            if fmtt_stop is None:
+                fmtt_stop = getattr(runtime_config, 'fmtt_stop', 0.5)
+            if fmtt_normalize is None:
+                fmtt_normalize = getattr(runtime_config, 'fmtt_normalize', 'unit')
+            if fmtt_decode_scale is None:
+                fmtt_decode_scale = getattr(runtime_config, 'fmtt_decode_scale', 0.5)
+            if fmtt_siglip_model is None:
+                fmtt_siglip_model = getattr(runtime_config, 'fmtt_siglip_model', 'google/siglip2-giant-opt-patch16-384')
+            if fmtt_siglip_device is None:
+                fmtt_siglip_device = getattr(runtime_config, 'fmtt_siglip_device', 'cuda')
+        else:
+            # Fallback defaults
+            if fmtt_scale is None:
+                fmtt_scale = 0.0
+            if fmtt_start is None:
+                fmtt_start = 0.0
+            if fmtt_stop is None:
+                fmtt_stop = 0.5
+            if fmtt_normalize is None:
+                fmtt_normalize = "unit"
+            if fmtt_decode_scale is None:
+                fmtt_decode_scale = 0.5
+            if fmtt_siglip_model is None:
+                fmtt_siglip_model = "google/siglip2-giant-opt-patch16-384"
+            if fmtt_siglip_device is None:
+                fmtt_siglip_device = "cuda"
+
         # Generate image
         logger.info(f"Calling pipeline() with long_prompt_mode={request.long_prompt_mode}, hidden_layer={request.hidden_layer}...")
         if slg_scale > 0 and slg_layers:
             logger.info(f"  SLG: scale={slg_scale}, layers={slg_layers}, range=[{slg_start:.0%}, {slg_stop:.0%}]")
+        if fmtt_scale > 0:
+            logger.info(f"  FMTT: scale={fmtt_scale}, range=[{fmtt_start:.0%}, {fmtt_stop:.0%}]")
         image = pipeline(
             request.prompt,
             height=request.height,
@@ -1237,6 +1301,13 @@ async def generate(request: GenerateRequest):
             skip_layer_indices=slg_layers,
             skip_layer_start=slg_start,
             skip_layer_stop=slg_stop,
+            fmtt_guidance_scale=fmtt_scale,
+            fmtt_guidance_start=fmtt_start,
+            fmtt_guidance_stop=fmtt_stop,
+            fmtt_normalize_mode=fmtt_normalize,
+            fmtt_decode_scale=fmtt_decode_scale,
+            fmtt_siglip_model=fmtt_siglip_model,
+            fmtt_siglip_device=fmtt_siglip_device,
         )
 
         gen_time = time.time() - start

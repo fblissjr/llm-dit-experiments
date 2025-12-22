@@ -190,6 +190,15 @@ class RuntimeConfig:
     slg_start: float = 0.05  # Start SLG at this fraction
     slg_stop: float = 0.5  # Stop SLG at this fraction
 
+    # Flow Map Trajectory Tilting (FMTT) for test-time reward optimization
+    fmtt_scale: float = 0.0  # Guidance scale (0 = disabled, 0.5-2.0 typical)
+    fmtt_start: float = 0.0  # Start FMTT at this fraction
+    fmtt_stop: float = 0.5  # Stop FMTT at this fraction
+    fmtt_normalize: str = "unit"  # Gradient normalization mode: unit, clip, none
+    fmtt_decode_scale: float = 0.5  # Scale for intermediate VAE decode (0.5 saves VRAM)
+    fmtt_siglip_model: str = "google/siglip2-giant-opt-patch16-384"  # SigLIP model
+    fmtt_siglip_device: str = "cuda"  # Device for SigLIP (cuda/cpu)
+
     # Debug
     debug: bool = False
     verbose: bool = False
@@ -740,6 +749,60 @@ def create_base_parser(
         help="Stop SLG at this fraction of steps (default: 0.2)",
     )
 
+    # Flow Map Trajectory Tilting (FMTT)
+    fmtt_group = parser.add_argument_group("Flow Map Trajectory Tilting (FMTT)")
+    fmtt_group.add_argument(
+        "--fmtt-scale",
+        type=float,
+        default=None,
+        help=(
+            "FMTT guidance scale (0 = disabled, 0.5-2.0 typical). "
+            "Uses SigLIP2 reward to guide generation toward text-aligned images. "
+            "Note: Requires ~4GB extra VRAM for SigLIP model."
+        ),
+    )
+    fmtt_group.add_argument(
+        "--fmtt-start",
+        type=float,
+        default=None,
+        help="Start FMTT at this fraction of steps (default: 0.0)",
+    )
+    fmtt_group.add_argument(
+        "--fmtt-stop",
+        type=float,
+        default=None,
+        help="Stop FMTT at this fraction of steps (default: 0.5)",
+    )
+    fmtt_group.add_argument(
+        "--fmtt-normalize",
+        type=str,
+        choices=["unit", "clip", "none"],
+        default=None,
+        help="Gradient normalization mode (default: unit)",
+    )
+    fmtt_group.add_argument(
+        "--fmtt-decode-scale",
+        type=float,
+        default=None,
+        help=(
+            "Scale for intermediate VAE decode (default: 0.5 = 512px for 1024px input). "
+            "Lower values save VRAM but reduce gradient precision."
+        ),
+    )
+    fmtt_group.add_argument(
+        "--fmtt-siglip-model",
+        type=str,
+        default=None,
+        help="SigLIP model ID (default: google/siglip2-giant-opt-patch16-384)",
+    )
+    fmtt_group.add_argument(
+        "--fmtt-siglip-device",
+        type=str,
+        choices=["cuda", "cpu", "auto"],
+        default=None,
+        help="Device for SigLIP model (default: cuda). Use cpu to save VRAM.",
+    )
+
     # Generation parameters (optional)
     if include_generation_args:
         gen_group = parser.add_argument_group("Generation")
@@ -951,6 +1014,19 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
                     config.slg_start = getattr(slg, 'start', 0.05)
                     config.slg_stop = getattr(slg, 'stop', 0.5)
 
+            # Check for FMTT (Flow Map Trajectory Tilting) section
+            if hasattr(toml_config, 'fmtt'):
+                fmtt = toml_config.fmtt
+                # Always load siglip_model and siglip_device from config
+                config.fmtt_siglip_model = getattr(fmtt, 'siglip_model', 'google/siglip2-giant-opt-patch16-384')
+                config.fmtt_siglip_device = getattr(fmtt, 'siglip_device', 'cuda')
+                if getattr(fmtt, 'enabled', False):
+                    config.fmtt_scale = getattr(fmtt, 'guidance_scale', 1.0)
+                    config.fmtt_start = getattr(fmtt, 'guidance_start', 0.0)
+                    config.fmtt_stop = getattr(fmtt, 'guidance_stop', 0.5)
+                    config.fmtt_normalize = getattr(fmtt, 'normalize_mode', 'unit')
+                    config.fmtt_decode_scale = getattr(fmtt, 'decode_scale', 0.5)
+
         except Exception as e:
             logger.warning(f"Failed to load config: {e}")
 
@@ -1137,6 +1213,22 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
         config.slg_start = args.slg_start
     if getattr(args, 'slg_stop', None) is not None:
         config.slg_stop = args.slg_stop
+
+    # FMTT (Flow Map Trajectory Tilting) overrides
+    if getattr(args, 'fmtt_scale', None) is not None:
+        config.fmtt_scale = args.fmtt_scale
+    if getattr(args, 'fmtt_start', None) is not None:
+        config.fmtt_start = args.fmtt_start
+    if getattr(args, 'fmtt_stop', None) is not None:
+        config.fmtt_stop = args.fmtt_stop
+    if getattr(args, 'fmtt_normalize', None) is not None:
+        config.fmtt_normalize = args.fmtt_normalize
+    if getattr(args, 'fmtt_decode_scale', None) is not None:
+        config.fmtt_decode_scale = args.fmtt_decode_scale
+    if getattr(args, 'fmtt_siglip_model', None) is not None:
+        config.fmtt_siglip_model = args.fmtt_siglip_model
+    if getattr(args, 'fmtt_siglip_device', None) is not None:
+        config.fmtt_siglip_device = args.fmtt_siglip_device
 
     # Generation overrides
     if getattr(args, 'height', None) is not None:

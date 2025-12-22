@@ -135,6 +135,20 @@ layers = [7, 8, 9, 10, 11, 12]  # Middle layers for Z-Image (30 layers, 0-indexe
 start = 0.05                 # Start SLG at 5% of steps
 stop = 0.5                   # Stop SLG at 50% of steps (turbo model needs wider window)
 
+[default.fmtt]
+# FLOW MAP TRAJECTORY TILTING (FMTT) for test-time reward optimization
+# Uses SigLIP2 to guide generation toward text-aligned images.
+# Loads SigLIP model (~4GB VRAM). For 24GB cards, use encoder on CPU.
+# Reference: arXiv:2511.22688 (Test-Time Scaling of Diffusion Models with Flow Maps)
+enabled = false              # Enable FMTT (adds ~4GB VRAM for SigLIP)
+guidance_scale = 1.0         # Reward gradient scale (0.5-2.0 typical)
+guidance_start = 0.0         # Start FMTT at this fraction of steps
+guidance_stop = 0.5          # Stop FMTT at this fraction of steps
+normalize_mode = "unit"      # Gradient normalization: unit, clip, none
+decode_scale = 0.5           # Intermediate VAE decode resolution (0.5 saves VRAM)
+siglip_model = "google/siglip2-giant-opt-patch16-384"  # SigLIP model (~4GB VRAM)
+siglip_device = "cuda"       # Device for SigLIP (cuda/cpu)
+
 # =============================================================================
 # RTX 4090 Profile - Optimized for 24GB VRAM
 # =============================================================================
@@ -241,6 +255,19 @@ scale = 2.5                  # 2.0-3.0 range (lower due to wider step range)
 layers = [7, 8, 9, 10, 11, 12]  # Middle layers (Z-Image has 30 total)
 start = 0.05
 stop = 0.5
+
+[rtx4090.fmtt]
+# FLOW MAP TRAJECTORY TILTING - RTX 4090 can run FMTT with encoder on CPU
+# Guides generation toward text-aligned images using SigLIP2 reward
+# Memory: ~16GB with encoder on CPU, ~24GB with encoder on CUDA (tight)
+enabled = false              # Enable FMTT (use with --encoder-device cpu)
+guidance_scale = 1.0         # 0.5-2.0 typical
+guidance_start = 0.0
+guidance_stop = 0.5
+normalize_mode = "unit"
+decode_scale = 0.5
+siglip_model = "google/siglip2-giant-opt-patch16-384"  # SigLIP model (~4GB VRAM)
+siglip_device = "cuda"       # Device for SigLIP (cuda/cpu)
 
 # =============================================================================
 # Low VRAM Profile - For 8-16GB GPUs
@@ -349,6 +376,18 @@ scale = 2.5
 layers = [7, 8, 9, 10, 11, 12]  # Middle layers (Z-Image has 30 total)
 start = 0.05
 stop = 0.5
+
+[low_vram.fmtt]
+# FLOW MAP TRAJECTORY TILTING - NOT RECOMMENDED for low VRAM
+# FMTT loads SigLIP (~4GB) which is too much for <16GB cards
+enabled = false              # Keep disabled for low VRAM
+guidance_scale = 1.0
+guidance_start = 0.0
+guidance_stop = 0.5
+normalize_mode = "unit"
+decode_scale = 0.25          # Use smaller decode scale if enabling
+siglip_model = "google/siglip2-giant-opt-patch16-384"  # SigLIP model (~4GB VRAM)
+siglip_device = "cpu"        # Use CPU to save VRAM (slower)
 
 # =============================================================================
 # Distributed Profile - Encoder on Mac (MLX), DiT on CUDA
@@ -460,6 +499,18 @@ scale = 2.5
 layers = [7, 8, 9, 10, 11, 12]  # Middle layers (Z-Image has 30 total)
 start = 0.05
 stop = 0.5
+
+[distributed.fmtt]
+# FLOW MAP TRAJECTORY TILTING - Runs on CUDA server alongside DiT
+# Encoder already on remote Mac, so plenty of VRAM for SigLIP
+enabled = false              # Enable for text alignment optimization
+guidance_scale = 1.0         # 0.5-2.0 typical
+guidance_start = 0.0
+guidance_stop = 0.5
+normalize_mode = "unit"
+decode_scale = 0.5
+siglip_model = "google/siglip2-giant-opt-patch16-384"  # SigLIP model (~4GB VRAM)
+siglip_device = "cuda"       # Device for SigLIP (cuda/cpu)
 
 # =============================================================================
 # Qwen-Image-Layered Configuration

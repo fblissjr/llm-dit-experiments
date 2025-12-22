@@ -870,6 +870,15 @@ class ZImagePipeline:
         skip_layer_indices: Optional[List[int]] = None,
         skip_layer_start: float = 0.01,
         skip_layer_stop: float = 0.2,
+        # Flow Map Trajectory Tilting (FMTT) for test-time reward optimization
+        fmtt_guidance_scale: float = 0.0,
+        fmtt_guidance_start: float = 0.0,
+        fmtt_guidance_stop: float = 0.5,
+        fmtt_normalize_mode: str = "unit",
+        fmtt_decode_scale: float = 0.5,
+        fmtt_siglip_model: str = "google/siglip2-giant-opt-patch16-384",
+        fmtt_siglip_device: Optional[str] = None,  # None = use pipeline device
+        fmtt_reward_fn: Optional[Any] = None,
     ) -> Union[Image.Image, List[Image.Image], torch.Tensor]:
         """
         Generate an image from a text prompt.
@@ -919,6 +928,17 @@ class ZImagePipeline:
             skip_layer_start: Start SLG at this fraction of total steps (default: 0.05).
             skip_layer_stop: Stop SLG at this fraction of total steps (default: 0.5).
                    Wider range needed for turbo-distilled models (8-9 steps).
+            fmtt_guidance_scale: Scale for FMTT reward guidance (default: 0.0 = disabled).
+                   Typical values: 0.5-2.0. Uses SigLIP2 to guide generation toward text-aligned images.
+                   Note: Loads SigLIP (~4GB VRAM). Consider using encoder_device="cpu" if VRAM is limited.
+            fmtt_guidance_start: Start FMTT at this fraction of total steps (default: 0.0).
+            fmtt_guidance_stop: Stop FMTT at this fraction of total steps (default: 0.5).
+            fmtt_normalize_mode: Gradient normalization mode for FMTT (default: "unit").
+                   Options: "unit" (normalize to unit norm), "clip", "none".
+            fmtt_decode_scale: Scale for intermediate VAE decode during FMTT (default: 0.5).
+                   Lower values save VRAM but reduce gradient precision.
+            fmtt_reward_fn: Pre-loaded reward function (optional). If None, loads SigLIP on first use.
+                   Pass a DifferentiableSigLIP instance to avoid reloading between generations.
 
         Returns:
             Generated image(s) in specified format
@@ -1128,6 +1148,86 @@ class ZImagePipeline:
                 f"range=[{skip_layer_start:.0%}, {skip_layer_stop:.0%}]"
             )
 
+        # Initialize FMTT (Flow Map Trajectory Tilting) if enabled
+        fmtt = None
+        fmtt_prompt = None
+        if fmtt_guidance_scale > 0:
+            from llm_dit.guidance import FMTTGuidance
+            from llm_dit.rewards import DifferentiableSigLIP
+
+            # Load or reuse reward function
+            # FMTT needs ~4GB for SigLIP - check VRAM and manage encoder if needed
+            if fmtt_reward_fn is None:
+                # Check if we have a cached reward function on the pipeline
+                if hasattr(self, '_fmtt_reward_fn') and self._fmtt_reward_fn is not None:
+                    fmtt_reward_fn = self._fmtt_reward_fn
+                    logger.info("[Pipeline] Reusing cached SigLIP for FMTT")
+                else:
+                    # Check available VRAM before loading SigLIP
+                    if torch.cuda.is_available():
+                        free_mem = torch.cuda.mem_get_info()[0] / 1024**3
+                        logger.info(f"[Pipeline] FMTT requested, {free_mem:.1f}GB VRAM free")
+
+                        # SigLIP needs ~4GB, we want some headroom
+                        if free_mem < 5.0:
+                            # Check if encoder is on CUDA and can be moved
+                            if self.encoder is not None:
+                                encoder_device = getattr(self.encoder, 'device', None)
+                                if encoder_device is not None and 'cuda' in str(encoder_device):
+                                    logger.warning(
+                                        f"[Pipeline] Insufficient VRAM for FMTT ({free_mem:.1f}GB free, need ~5GB). "
+                                        f"Moving encoder to CPU to make room for SigLIP..."
+                                    )
+                                    self.encoder.to("cpu")
+                                    if torch.cuda.is_available():
+                                        torch.cuda.empty_cache()
+                                    free_mem = torch.cuda.mem_get_info()[0] / 1024**3
+                                    logger.info(f"[Pipeline] After encoder move: {free_mem:.1f}GB VRAM free")
+
+                        # If still not enough, error out with helpful message
+                        if free_mem < 4.0:
+                            raise RuntimeError(
+                                f"Insufficient VRAM for FMTT: {free_mem:.1f}GB free, need ~4GB for SigLIP. "
+                                f"Try: 1) Set encoder_device='cpu' in config, or "
+                                f"2) Disable FMTT (fmtt_scale=0)"
+                            )
+
+                    # Determine SigLIP device (use param, or fall back to pipeline device)
+                    siglip_device = fmtt_siglip_device if fmtt_siglip_device else device
+                    logger.info(f"[Pipeline] Loading SigLIP for FMTT: {fmtt_siglip_model} on {siglip_device}")
+                    fmtt_reward_fn = DifferentiableSigLIP(
+                        model_name=fmtt_siglip_model,
+                        device=siglip_device,
+                    )
+
+                    # Cache for reuse in future generations
+                    self._fmtt_reward_fn = fmtt_reward_fn
+                    logger.info("[Pipeline] SigLIP loaded and cached for FMTT")
+
+            fmtt = FMTTGuidance(
+                vae=self.vae.vae if hasattr(self.vae, 'vae') else self.vae,
+                reward_fn=fmtt_reward_fn,
+                guidance_scale=fmtt_guidance_scale,
+                guidance_start=fmtt_guidance_start,
+                guidance_stop=fmtt_guidance_stop,
+                normalize_mode=fmtt_normalize_mode,
+                decode_scale=fmtt_decode_scale,
+            )
+
+            # Get prompt text for reward computation
+            if isinstance(prompt, str):
+                fmtt_prompt = prompt
+            elif hasattr(prompt, 'messages') and prompt.messages:
+                # Extract user message from Conversation
+                fmtt_prompt = prompt.messages[-1].content if prompt.messages else ""
+            else:
+                fmtt_prompt = str(prompt) if prompt is not None else ""
+
+            logger.info(
+                f"[Pipeline] FMTT enabled: "
+                f"scale={fmtt_guidance_scale}, range=[{fmtt_guidance_start:.0%}, {fmtt_guidance_stop:.0%}]"
+            )
+
         # Run denoising loop with no_grad to prevent gradient accumulation
         with torch.no_grad():
             for i, t in enumerate(timesteps):
@@ -1210,6 +1310,32 @@ class ZImagePipeline:
                     noise_pred = slg.guide(noise_pred, noise_pred_skip, cfg_scale=guidance_scale)
 
                 noise_pred = noise_pred.squeeze(2)
+
+                # Apply FMTT guidance if active at this step
+                # FMTT modifies velocity to guide toward higher-reward regions
+                use_fmtt = fmtt is not None and fmtt.is_active(i, num_inference_steps)
+                if use_fmtt:
+                    # Get sigma for flow map prediction
+                    sigma = self.scheduler.sigmas[i].item() if hasattr(self.scheduler, 'sigmas') else t.item() / 1000.0
+
+                    # noise_pred is the raw velocity from DiT (before negation)
+                    velocity = noise_pred
+
+                    # Compute FMTT gradient (this enables gradients internally)
+                    fmtt_grad, reward = fmtt.compute_gradient(
+                        latents=latents,
+                        velocity=velocity.detach(),
+                        sigma=sigma,
+                        prompt=fmtt_prompt,
+                    )
+
+                    # Apply gradient to velocity
+                    velocity = fmtt.guide_velocity(velocity, fmtt_grad)
+                    noise_pred = velocity
+
+                    if i % 3 == 0:  # Log every few steps
+                        logger.info(f"[FMTT] Step {i}: reward={reward:.4f}, grad_norm={fmtt_grad.norm().item():.4f}")
+
                 noise_pred = -noise_pred  # Negate output for Z-Image
 
                 # Scheduler step
