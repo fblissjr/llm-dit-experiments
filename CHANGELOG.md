@@ -14,7 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Integrated into Z-Image pipeline with `skip_layer_guidance_scale`, `skip_layer_indices` parameters
   - CLI support: `--slg-scale`, `--slg-layers`, `--slg-start`, `--slg-stop`
   - Config sections: `[*.slg]` with enabled, scale, layers, start, stop
-  - Recommended settings: scale=2.8, layers=[15,16,17,18,19], range 1-20% of steps
+  - Web UI: Collapsible SLG section with scale slider, layer presets, timing controls
+  - `/api/generation-config` returns SLG defaults from server config
+  - Startup logging shows SLG status alongside DyPE
+  - Z-Image optimized settings: scale=2.5, layers=[7,8,9,10,11,12], range 5-50% of steps
+  - Wider range needed for turbo-distilled model (8-9 steps with shift 3.0-7.0)
   - Based on StabilityAI SD3.5 and Spatio-Temporal Guidance paper
 - Training infrastructure for LoRA and full model fine-tuning
   - New `src/llm_dit/training/` module with complete training pipeline
@@ -59,10 +63,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test suite for Qwen-Image
   - Unit tests: 59 tests covering latent packing, DiT, VAE, pipeline, and backend
   - Integration test: `tests/integration/test_qwen_diffusers_wrapper.py` for full pipeline validation
+- Hidden Layer vs CFG interaction experiments
+  - Tests whether CFG > 0 helps when using non-default hidden layers (OOD for distillation)
+  - Hypothesis: middle layers (-10 to -18) may benefit from small CFG (1.5-2.5) to compensate for distribution mismatch
+  - New experiments: `hidden_layer_cfg_grid`, `hidden_layer_cfg_quick`, `hidden_layer_cfg_shift_grid`
+  - Sweep script: `experiments/sweep_hidden_layer_cfg.sh` with `--quick`, `--with-shift` options
 
 ### Fixed
+- CUDA OOM from dtype parameter mismatch: diffusers uses `torch_dtype`, transformers uses `dtype`
+  - Diffusers silently ignores unknown kwargs, causing float32 loading (2x memory)
+  - Fixed all diffusers calls to use `torch_dtype`, transformers calls to use `dtype`
+- SLG config not loading from TOML: Added `SLGConfig` to main `Config` class
+  - `[profile.slg]` sections now properly parsed and applied
+  - Startup now logs SLG status: `SLG: enabled (scale=X, layers=[...], range=[X%, Y%])`
+- SLG "Could not find 'blocks'" error: Z-Image transformer uses `layers` attribute
+  - Fixed `fqn="blocks"` to `fqn="layers"` in pipeline initialization
 - RGBA to RGB conversion in `edit_layer()` - edit model VAE expects 3-channel input, now properly extracts alpha before editing and reapplies it after
 - Unit test parameter mismatch - fixed `quantization` to use correct `text_encoder_quantization` and `dit_quantization` parameter names
+- DyPE "cannot assign module before Module.__init__() call" error
+  - `ZImageDyPERoPE` assigned `self.original_embedder` before `super().__init__()`
+  - PyTorch's nn.Module requires parent init before attribute assignment
+  - Fixed initialization order: extract values to local vars, call super().__init__(), then assign attributes
 
 ## [0.6.0]
 

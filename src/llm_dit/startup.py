@@ -276,6 +276,16 @@ class PipelineLoader:
             logger.info(f"  DyPE: enabled (method={dype_config.method}, scale={dype_config.dype_scale})")
         else:
             logger.info("  DyPE: disabled")
+
+        # Log SLG (Skip Layer Guidance) config
+        slg_scale = getattr(self.config, 'slg_scale', 0.0)
+        slg_layers = getattr(self.config, 'slg_layers', None)
+        if slg_scale > 0 and slg_layers:
+            slg_start = getattr(self.config, 'slg_start', 0.01)
+            slg_stop = getattr(self.config, 'slg_stop', 0.2)
+            logger.info(f"  SLG: enabled (scale={slg_scale}, layers={slg_layers}, range=[{slg_start:.0%}, {slg_stop:.0%}])")
+        else:
+            logger.info("  SLG: disabled")
         logger.info("-" * 60)
 
         start = time.time()

@@ -903,11 +903,23 @@
                                 <button type="button" data-layer="-2" class="layer-preset px-2 py-2 text-xs font-medium rounded-lg bg-blue-600 text-white transition-colors">
                                     -2
                                 </button>
+                                <button type="button" data-layer="-4" class="layer-preset px-2 py-2 text-xs font-medium rounded-lg bg-gray-700 text-gray-300 hover:bg-gray-600 transition-colors">
+                                    -4
+                                </button>
                                 <button type="button" data-layer="-6" class="layer-preset px-2 py-2 text-xs font-medium rounded-lg bg-gray-700 text-gray-300 hover:bg-gray-600 transition-colors">
                                     -6
                                 </button>
+                                <button type="button" data-layer="-10" class="layer-preset px-2 py-2 text-xs font-medium rounded-lg bg-gray-700 text-gray-300 hover:bg-gray-600 transition-colors">
+                                    -10
+                                </button>
+                                <button type="button" data-layer="-14" class="layer-preset px-2 py-2 text-xs font-medium rounded-lg bg-gray-700 text-gray-300 hover:bg-gray-600 transition-colors">
+                                    -14
+                                </button>
                                 <button type="button" data-layer="-18" class="layer-preset px-2 py-2 text-xs font-medium rounded-lg bg-gray-700 text-gray-300 hover:bg-gray-600 transition-colors">
                                     -18
+                                </button>
+                                <button type="button" data-layer="-24" class="layer-preset px-2 py-2 text-xs font-medium rounded-lg bg-gray-700 text-gray-300 hover:bg-gray-600 transition-colors">
+                                    -24
                                 </button>
                                 <button type="button" data-layer="-30" class="layer-preset px-2 py-2 text-xs font-medium rounded-lg bg-gray-700 text-gray-300 hover:bg-gray-600 transition-colors">
                                     -30
@@ -1052,6 +1064,82 @@
                                 </div>
                             </div>
                         </details>
+                    </div>
+                </details>
+
+                <!-- SLG (Skip Layer Guidance) Options (collapsible) -->
+                <details class="group" id="slgSection">
+                    <summary class="flex items-center gap-2 text-sm font-medium text-gray-300 cursor-pointer py-2 select-none">
+                        <svg class="w-3 h-3 transition-transform group-open:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                        </svg>
+                        SLG (Skip Layer Guidance)
+                        <span id="slgStatusBadge" class="ml-auto text-xs px-2 py-0.5 rounded-full bg-gray-700 text-gray-400">Off</span>
+                    </summary>
+                    <div class="pt-2 pb-1 space-y-4 pl-5 border-l-2 border-gray-700/50 ml-1.5">
+                        <p class="text-xs text-gray-500">Improves structure and anatomy for humans/animals. Requires ~2x inference time.</p>
+
+                        <!-- Enable SLG -->
+                        <div>
+                            <label for="slgEnabled" class="flex items-center gap-2 cursor-pointer">
+                                <input type="checkbox" id="slgEnabled" class="w-5 h-5 text-blue-600 bg-gray-700 border-gray-600 rounded focus:ring-blue-500">
+                                <span class="text-sm font-medium text-gray-300">Enable SLG</span>
+                            </label>
+                        </div>
+
+                        <!-- SLG Scale -->
+                        <div id="slgScaleContainer" class="hidden">
+                            <label class="block text-sm font-medium text-gray-300 mb-2">
+                                Scale: <span id="slgScaleValue" class="text-blue-400">2.5</span>
+                            </label>
+                            <input type="range" id="slgScale" min="1.0" max="4.0" step="0.1" value="2.5" class="w-full">
+                            <div class="flex justify-between text-xs text-gray-500 mt-1">
+                                <span>1.0 (Subtle)</span>
+                                <span>4.0 (Strong)</span>
+                            </div>
+                            <p class="text-xs text-gray-500 mt-1">Guidance strength. 2.0-3.0 typical for turbo models. Higher may cause artifacts.</p>
+                        </div>
+
+                        <!-- SLG Layers -->
+                        <div id="slgLayersContainer" class="hidden">
+                            <label class="block text-sm font-medium text-gray-300 mb-2">
+                                Layers: <span id="slgLayersValue" class="text-blue-400">7-12</span>
+                            </label>
+                            <select id="slgLayers" class="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-white focus:ring-2 focus:ring-blue-500">
+                                <option value="7,8,9,10,11,12">Middle (7-12) - Recommended</option>
+                                <option value="5,6,7,8,9">Early-Middle (5-9)</option>
+                                <option value="10,11,12,13,14">Mid (10-14)</option>
+                                <option value="15,16,17,18,19">Late-Middle (15-19)</option>
+                                <option value="custom">Custom...</option>
+                            </select>
+                            <p class="text-xs text-gray-500 mt-1">Which transformer layers to skip. Z-Image has 30 layers (0-29).</p>
+                        </div>
+
+                        <!-- Custom Layers Input -->
+                        <div id="slgCustomLayersContainer" class="hidden">
+                            <label class="block text-sm font-medium text-gray-300 mb-2">Custom Layers</label>
+                            <input type="text" id="slgCustomLayers" placeholder="e.g., 7,8,9,10,11,12" class="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-white focus:ring-2 focus:ring-blue-500">
+                            <p class="text-xs text-gray-500 mt-1">Comma-separated layer indices (0-29)</p>
+                        </div>
+
+                        <!-- SLG Timing -->
+                        <div id="slgTimingContainer" class="hidden">
+                            <div class="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-300 mb-2">
+                                        Start: <span id="slgStartValue" class="text-blue-400">5%</span>
+                                    </label>
+                                    <input type="range" id="slgStart" min="0" max="0.5" step="0.01" value="0.05" class="w-full">
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-300 mb-2">
+                                        Stop: <span id="slgStopValue" class="text-blue-400">50%</span>
+                                    </label>
+                                    <input type="range" id="slgStop" min="0.1" max="0.8" step="0.01" value="0.5" class="w-full">
+                                </div>
+                            </div>
+                            <p class="text-xs text-gray-500 mt-1">When to apply SLG during denoising. Earlier steps affect structure more.</p>
+                        </div>
                     </div>
                 </details>
 
@@ -1339,6 +1427,159 @@
         }
         // =====================================================================
         // End DyPE Logic
+        // =====================================================================
+
+        // =====================================================================
+        // SLG (Skip Layer Guidance) Logic
+        // =====================================================================
+        const slgEnabled = document.getElementById('slgEnabled');
+        const slgScale = document.getElementById('slgScale');
+        const slgScaleValue = document.getElementById('slgScaleValue');
+        const slgScaleContainer = document.getElementById('slgScaleContainer');
+        const slgLayers = document.getElementById('slgLayers');
+        const slgLayersValue = document.getElementById('slgLayersValue');
+        const slgLayersContainer = document.getElementById('slgLayersContainer');
+        const slgCustomLayers = document.getElementById('slgCustomLayers');
+        const slgCustomLayersContainer = document.getElementById('slgCustomLayersContainer');
+        const slgStart = document.getElementById('slgStart');
+        const slgStartValue = document.getElementById('slgStartValue');
+        const slgStop = document.getElementById('slgStop');
+        const slgStopValue = document.getElementById('slgStopValue');
+        const slgTimingContainer = document.getElementById('slgTimingContainer');
+        const slgStatusBadge = document.getElementById('slgStatusBadge');
+
+        // Update SLG status badge and visibility
+        function updateSlgStatus() {
+            if (slgEnabled.checked) {
+                slgStatusBadge.textContent = 'On';
+                slgStatusBadge.classList.remove('bg-gray-700', 'text-gray-400');
+                slgStatusBadge.classList.add('bg-green-700', 'text-green-300');
+                slgScaleContainer.classList.remove('hidden');
+                slgLayersContainer.classList.remove('hidden');
+                slgTimingContainer.classList.remove('hidden');
+            } else {
+                slgStatusBadge.textContent = 'Off';
+                slgStatusBadge.classList.remove('bg-green-700', 'text-green-300');
+                slgStatusBadge.classList.add('bg-gray-700', 'text-gray-400');
+                slgScaleContainer.classList.add('hidden');
+                slgLayersContainer.classList.add('hidden');
+                slgTimingContainer.classList.add('hidden');
+                slgCustomLayersContainer.classList.add('hidden');
+            }
+        }
+
+        // Update layers dropdown display
+        function updateSlgLayersDisplay() {
+            const value = slgLayers.value;
+            if (value === 'custom') {
+                slgCustomLayersContainer.classList.remove('hidden');
+                slgLayersValue.textContent = 'Custom';
+            } else {
+                slgCustomLayersContainer.classList.add('hidden');
+                const layers = value.split(',').map(x => parseInt(x.trim()));
+                if (layers.length > 2) {
+                    slgLayersValue.textContent = `${layers[0]}-${layers[layers.length-1]}`;
+                } else {
+                    slgLayersValue.textContent = value;
+                }
+            }
+        }
+
+        // Update slider displays
+        slgScale.addEventListener('input', () => {
+            slgScaleValue.textContent = parseFloat(slgScale.value).toFixed(1);
+        });
+
+        slgStart.addEventListener('input', () => {
+            slgStartValue.textContent = `${Math.round(parseFloat(slgStart.value) * 100)}%`;
+        });
+
+        slgStop.addEventListener('input', () => {
+            slgStopValue.textContent = `${Math.round(parseFloat(slgStop.value) * 100)}%`;
+        });
+
+        slgEnabled.addEventListener('change', updateSlgStatus);
+        slgLayers.addEventListener('change', updateSlgLayersDisplay);
+
+        // Initialize SLG UI
+        updateSlgStatus();
+        updateSlgLayersDisplay();
+
+        // Get SLG config for API calls
+        function getSlgConfig() {
+            if (!slgEnabled.checked) {
+                return {
+                    slg_scale: 0.0,
+                    slg_layers: null,
+                    slg_start: null,
+                    slg_stop: null
+                };
+            }
+
+            // Parse layers
+            let layers;
+            if (slgLayers.value === 'custom') {
+                layers = slgCustomLayers.value.split(',').map(x => parseInt(x.trim())).filter(x => !isNaN(x));
+            } else {
+                layers = slgLayers.value.split(',').map(x => parseInt(x.trim()));
+            }
+
+            return {
+                slg_scale: parseFloat(slgScale.value),
+                slg_layers: layers,
+                slg_start: parseFloat(slgStart.value),
+                slg_stop: parseFloat(slgStop.value)
+            };
+        }
+
+        // Load SLG config from server
+        async function loadSlgConfig() {
+            try {
+                const resp = await fetch('/api/generation-config');
+                if (resp.ok) {
+                    const config = await resp.json();
+                    if (config.slg_scale && config.slg_scale > 0 && config.slg_layers) {
+                        slgEnabled.checked = true;
+                        slgScale.value = config.slg_scale;
+                        slgScaleValue.textContent = config.slg_scale.toFixed(1);
+
+                        // Match layers to dropdown option or set custom
+                        const layerStr = config.slg_layers.join(',');
+                        let matched = false;
+                        for (const option of slgLayers.options) {
+                            if (option.value === layerStr) {
+                                slgLayers.value = layerStr;
+                                matched = true;
+                                break;
+                            }
+                        }
+                        if (!matched) {
+                            slgLayers.value = 'custom';
+                            slgCustomLayers.value = layerStr;
+                        }
+
+                        if (config.slg_start !== undefined) {
+                            slgStart.value = config.slg_start;
+                            slgStartValue.textContent = `${Math.round(config.slg_start * 100)}%`;
+                        }
+                        if (config.slg_stop !== undefined) {
+                            slgStop.value = config.slg_stop;
+                            slgStopValue.textContent = `${Math.round(config.slg_stop * 100)}%`;
+                        }
+
+                        updateSlgStatus();
+                        updateSlgLayersDisplay();
+                    }
+                }
+            } catch (e) {
+                console.warn('Failed to load SLG config:', e);
+            }
+        }
+
+        // Load SLG config on page load
+        loadSlgConfig();
+        // =====================================================================
+        // End SLG Logic
         // =====================================================================
 
         // Toggle thinking content visibility based on checkbox
@@ -2017,6 +2258,10 @@
             progressFill.style.width = '10%';
             statusText.textContent = 'Starting...';
 
+            // Get DyPE and SLG configs
+            const dypeConfig = getDypeConfig();
+            const slgConfig = getSlgConfig();
+
             const params = {
                 prompt: document.getElementById('prompt').value,
                 system_prompt: document.getElementById('systemPrompt').value || null,
@@ -2033,6 +2278,8 @@
                 shift: parseFloat(shiftSlider.value),
                 long_prompt_mode: longPromptModeSelect.value,
                 hidden_layer: parseInt(hiddenLayerSlider.value),
+                dype: dypeConfig,
+                ...slgConfig,
             };
 
             currentParams = params;

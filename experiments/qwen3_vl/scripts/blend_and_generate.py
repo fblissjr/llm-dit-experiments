@@ -44,9 +44,11 @@ import torch
 
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "src"))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
 # Import blending functions from core module (avoid duplication)
 from llm_dit.vl.blending import blend_embeddings  # noqa: E402
+from experiments.utils import save_image_grid, save_metadata  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -280,6 +282,9 @@ def main():
         logger.info(f"Text embeddings: shape={text_emb.shape}, std={text_emb.std():.2f}")
 
     # Generate for each alpha
+    generated_images = []
+    generated_labels = []
+
     for alpha in alphas:
         logger.info(f"\n{'='*60}")
         logger.info(f"Processing alpha={alpha}")
@@ -295,17 +300,45 @@ def main():
 
         # Determine output path
         if len(alphas) > 1:
-            output_dir = Path(args.output_dir or "results/vl_sweep")
+            output_dir = Path(args.output_dir or "experiments/results/vl_sweep")
             output_path = output_dir / f"alpha_{alpha:.2f}.png"
         else:
             output_path = args.output
 
         # Generate
-        generate_from_embeddings(
+        image = generate_from_embeddings(
             embeddings=blended,
             config=config,
             output_path=str(output_path),
             seed=args.seed,
+        )
+
+        if len(alphas) > 1:
+            generated_images.append(output_path)
+            generated_labels.append(f"alpha={alpha:.2f}")
+
+    # Create comparison grid if sweeping
+    if len(alphas) > 1:
+        logger.info("\nCreating comparison grid...")
+        grid_path = save_image_grid(
+            generated_images,
+            output_dir / "alpha_sweep_grid.png",
+            cols=min(4, len(alphas)),
+            labels=generated_labels,
+            cell_size=256,
+        )
+        logger.info(f"Saved grid: {grid_path}")
+
+        # Save sweep metadata
+        save_metadata(
+            output_dir / "sweep_metadata.json",
+            vl_embeddings=args.vl_embeddings,
+            prompt=args.prompt,
+            alphas=alphas,
+            seed=args.seed,
+            steps=args.steps,
+            width=config.width,
+            height=config.height,
         )
 
     logger.info("\nDone!")

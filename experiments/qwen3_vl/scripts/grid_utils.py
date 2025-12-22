@@ -1,7 +1,19 @@
-"""grid generation utilities for vl experiments."""
+"""
+grid generation utilities for vl experiments.
 
+last updated: 2025-12-22
+
+note: this module now wraps the shared experiments.utils for consistency.
+specialized functions like make_alpha_grid are kept here for vl-specific workflows.
+"""
+
+import sys
 from pathlib import Path
-from PIL import Image, ImageDraw, ImageFont
+
+# Add experiments to path for shared utils
+sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
+
+from experiments.utils import save_image_grid
 
 
 def make_grid(
@@ -12,7 +24,11 @@ def make_grid(
     cell_size: int = 256,
     label_height: int = 25,
 ) -> Path:
-    """create a labeled grid from a list of images.
+    """
+    create a labeled grid from a list of images.
+
+    note: this is now a wrapper around experiments.utils.save_image_grid
+    for backward compatibility with existing vl scripts.
 
     args:
         images: list of image paths or PIL Image objects
@@ -25,43 +41,14 @@ def make_grid(
     returns:
         path to saved grid
     """
-    output_path = Path(output_path)
-
-    rows = (len(images) + cols - 1) // cols
-    grid_w = cols * cell_size
-    grid_h = rows * (cell_size + label_height)
-
-    grid = Image.new('RGB', (grid_w, grid_h), 'white')
-    draw = ImageDraw.Draw(grid)
-
-    try:
-        font = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf', 12)
-    except:
-        font = ImageFont.load_default()
-
-    for i, (img_item, label) in enumerate(zip(images, labels)):
-        row, col = i // cols, i % cols
-        x = col * cell_size
-        y = row * (cell_size + label_height)
-
-        # Handle both paths and PIL Image objects
-        if isinstance(img_item, Image.Image):
-            img = img_item.convert('RGB').resize((cell_size, cell_size))
-            grid.paste(img, (x, y + label_height))
-        else:
-            img_path = Path(img_item)
-            if img_path.exists():
-                img = Image.open(img_path).convert('RGB').resize((cell_size, cell_size))
-                grid.paste(img, (x, y + label_height))
-            else:
-                # draw placeholder for missing image
-                draw.rectangle([x, y + label_height, x + cell_size, y + label_height + cell_size], fill='gray')
-                draw.text((x + 10, y + label_height + cell_size // 2), 'missing', fill='white', font=font)
-
-        draw.text((x + 5, y + 5), label, fill='black', font=font)
-
-    grid.save(output_path)
-    return output_path
+    return save_image_grid(
+        images=images,
+        path=output_path,
+        cols=cols,
+        labels=labels,
+        cell_size=cell_size,
+        label_height=label_height,
+    )
 
 
 def make_alpha_grid(

@@ -157,7 +157,7 @@ class TransformersBackend:
 
         # Build model kwargs
         model_kwargs = {
-            "torch_dtype": torch_dtype,
+            "dtype": torch_dtype,
             "device_map": device_map,
             "trust_remote_code": trust_remote_code,
             **kwargs,

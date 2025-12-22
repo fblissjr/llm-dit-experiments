@@ -43,7 +43,7 @@ import os
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, List, Literal
 
 import torch
 
@@ -386,6 +386,56 @@ class DyPEConfig:
 
 
 @dataclass
+class SLGConfig:
+    """Configuration for Skip Layer Guidance (SLG).
+
+    SLG improves structure and anatomy, especially for human/animal subjects,
+    by selectively skipping layers during the denoising process and applying
+    guidance based on the difference. This requires approximately 2x inference
+    time since it runs two forward passes per step where SLG is active.
+
+    Attributes:
+        enabled: Whether SLG is enabled (default: False)
+        scale: Guidance scale, typical values 2.0-4.0 (default: 2.8)
+        layers: List of layer indices to skip, e.g., [15, 16, 17, 18, 19]
+        start: Start SLG at this fraction of total steps (default: 0.01 = 1%)
+        stop: Stop SLG at this fraction of total steps (default: 0.2 = 20%)
+
+    Example config.toml:
+        [rtx4090.slg]
+        enabled = true
+        scale = 2.5
+        layers = [7, 8, 9, 10, 11, 12]
+        start = 0.05
+        stop = 0.5
+
+    Note on Z-Image defaults:
+        - Z-Image DiT has 30 layers (middle = ~10-20)
+        - Turbo-distilled (8-9 steps) with shift 3.0-7.0
+        - Structure established in first ~4 steps
+        - Layers [7-12] target middle layers for structure
+        - Range 5%-50% catches steps 0-4 at 8 total steps
+        - Scale 2.5 (lower than SD3.5's 2.8 since more steps affected)
+    """
+
+    enabled: bool = False
+    scale: float = 2.5
+    layers: List[int] = field(default_factory=lambda: [7, 8, 9, 10, 11, 12])
+    start: float = 0.05
+    stop: float = 0.5
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary."""
+        return {
+            "enabled": self.enabled,
+            "scale": self.scale,
+            "layers": self.layers,
+            "start": self.start,
+            "stop": self.stop,
+        }
+
+
+@dataclass
 class RewriterConfig:
     """Configuration for prompt rewriting using LLM generation.
 
@@ -444,6 +494,7 @@ class Config:
     vl: VLConfig = field(default_factory=VLConfig)
     qwen_image: QwenImageConfig = field(default_factory=QwenImageConfig)
     dype: DyPEConfig = field(default_factory=DyPEConfig)
+    slg: SLGConfig = field(default_factory=SLGConfig)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Config":
@@ -459,6 +510,7 @@ class Config:
         vl_data = data.pop("vl", {})
         qwen_image_data = data.pop("qwen_image", {})
         dype_data = data.pop("dype", {})
+        slg_data = data.pop("slg", {})
 
         return cls(
             model_path=data.get("model_path", ""),
@@ -474,6 +526,7 @@ class Config:
             vl=VLConfig(**vl_data),
             qwen_image=QwenImageConfig(**qwen_image_data),
             dype=DyPEConfig(**dype_data),
+            slg=SLGConfig(**slg_data),
         )
 
     @classmethod

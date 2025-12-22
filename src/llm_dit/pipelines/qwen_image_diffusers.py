@@ -141,7 +141,7 @@ class QwenImageDiffusersPipeline:
         logger.info(f"Loading QwenImageLayeredPipeline from {model_path}")
         decompose_pipe = QwenImageLayeredPipeline.from_pretrained(
             str(model_path),
-            torch_dtype=torch_dtype,
+            torch_dtype=torch_dtype,  # diffusers uses torch_dtype
         )
 
         # Enable CPU offload for memory efficiency
@@ -161,7 +161,7 @@ class QwenImageDiffusersPipeline:
             from diffusers import QwenImageEditPlusPipeline
             edit_pipe = QwenImageEditPlusPipeline.from_pretrained(
                 str(edit_path),
-                torch_dtype=torch_dtype,
+                torch_dtype=torch_dtype,  # diffusers uses torch_dtype
             )
             if cpu_offload:
                 edit_pipe.enable_sequential_cpu_offload()

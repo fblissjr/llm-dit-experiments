@@ -36,7 +36,12 @@ from typing import Optional
 coderef_diffusers = Path(__file__).parent.parent.parent / "coderef" / "diffusers" / "src"
 sys.path.insert(0, str(coderef_diffusers))
 
+# Add experiments to path
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
 from PIL import Image
+
+from experiments.utils import save_metadata
 
 logging.basicConfig(
     level=logging.INFO,
@@ -124,17 +129,18 @@ def decompose_image(
         logger.info(f"  Saved: {layer_path.name} ({layer.size}, mode={layer.mode})")
 
     # Save metadata
-    metadata_path = layer_dir / "metadata.txt"
-    with open(metadata_path, "w") as f:
-        f.write(f"source: {image_path}\n")
-        f.write(f"prompt: {prompt}\n")
-        f.write(f"layer_num: {layer_num}\n")
-        f.write(f"resolution: {resolution}\n")
-        f.write(f"steps: {steps}\n")
-        f.write(f"cfg_scale: {cfg_scale}\n")
-        f.write(f"seed: {seed}\n")
-        f.write(f"decompose_time: {decompose_time:.1f}s\n")
-        f.write(f"num_layers: {len(layers)}\n")
+    save_metadata(
+        layer_dir / "metadata.json",
+        source=str(image_path),
+        prompt=prompt,
+        layer_num=layer_num,
+        resolution=resolution,
+        steps=steps,
+        cfg_scale=cfg_scale,
+        seed=seed,
+        decompose_time_seconds=round(decompose_time, 1),
+        num_layers=len(layers),
+    )
 
     return layers
 
@@ -389,8 +395,8 @@ def main():
     )
     decompose_parser.add_argument(
         "-o", "--output",
-        default="results/layer_remix",
-        help="Output directory (default: results/layer_remix)",
+        default="experiments/results/layer_remix",
+        help="Output directory (default: experiments/results/layer_remix)",
     )
     decompose_parser.add_argument(
         "--model-path",
@@ -443,8 +449,8 @@ def main():
     )
     batch_parser.add_argument(
         "-o", "--output",
-        default="results/layer_remix",
-        help="Output directory (default: results/layer_remix)",
+        default="experiments/results/layer_remix",
+        help="Output directory (default: experiments/results/layer_remix)",
     )
     batch_parser.add_argument(
         "--model-path",
@@ -489,8 +495,8 @@ def main():
     )
     list_parser.add_argument(
         "--base-dir",
-        default="results/layer_remix",
-        help="Base directory containing decompositions (default: results/layer_remix)",
+        default="experiments/results/layer_remix",
+        help="Base directory containing decompositions (default: experiments/results/layer_remix)",
     )
 
     # remix subcommand
@@ -506,12 +512,12 @@ def main():
     )
     remix_parser.add_argument(
         "--base-dir",
-        default="results/layer_remix",
-        help="Base directory containing decompositions (default: results/layer_remix)",
+        default="experiments/results/layer_remix",
+        help="Base directory containing decompositions (default: experiments/results/layer_remix)",
     )
     remix_parser.add_argument(
         "-o", "--output",
-        default="results/layer_remix/remixed.png",
+        default="experiments/results/layer_remix/remixed.png",
         help="Output path for remixed image",
     )
     remix_parser.add_argument(

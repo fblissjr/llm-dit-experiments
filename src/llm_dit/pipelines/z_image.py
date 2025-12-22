@@ -262,7 +262,7 @@ class ZImagePipeline:
         # Load the diffusers pipeline (auto-detect pipeline class)
         logger.info("Loading diffusers pipeline...")
         load_kwargs = {
-            "torch_dtype": torch_dtype,
+            "torch_dtype": torch_dtype,  # diffusers uses torch_dtype, not dtype
             **kwargs,
         }
         # Use device_map for initial loading if provided (legacy)
@@ -911,13 +911,14 @@ class ZImagePipeline:
                    - Distributed inference with pre-computed embeddings
                    - Caching embeddings across multiple generations
             skip_layer_guidance_scale: Scale for Skip Layer Guidance (default: 0.0 = disabled).
-                   Typical values: 2.0-4.0. Higher values improve structure/anatomy but may
+                   Typical values: 2.0-3.0. Higher values improve structure/anatomy but may
                    cause artifacts. Only applied when skip_layer_indices is provided.
             skip_layer_indices: List of transformer layer indices to skip for SLG.
-                   For Z-Image (40 layers), recommended: [15, 16, 17, 18, 19] (middle layers)
-                   or [7, 8, 9] (SD3.5-style). If None, SLG is disabled.
-            skip_layer_start: Start SLG at this fraction of total steps (default: 0.01).
-            skip_layer_stop: Stop SLG at this fraction of total steps (default: 0.2).
+                   For Z-Image (30 layers), recommended: [7, 8, 9, 10, 11, 12] (middle layers).
+                   If None, SLG is disabled.
+            skip_layer_start: Start SLG at this fraction of total steps (default: 0.05).
+            skip_layer_stop: Stop SLG at this fraction of total steps (default: 0.5).
+                   Wider range needed for turbo-distilled models (8-9 steps).
 
         Returns:
             Generated image(s) in specified format
@@ -1119,7 +1120,7 @@ class ZImagePipeline:
                 guidance_scale=skip_layer_guidance_scale,
                 guidance_start=skip_layer_start,
                 guidance_stop=skip_layer_stop,
-                fqn="blocks",  # Z-Image uses "blocks" for transformer layers
+                fqn="layers",  # Z-Image transformer uses "layers" for transformer blocks
             )
             logger.info(
                 f"[Pipeline] Skip Layer Guidance enabled: "
@@ -1612,7 +1613,7 @@ class ZImagePipeline:
         logger.info("Loading transformer (low_cpu_mem_usage=True)...")
         transformer = ZImageTransformer2DModel.from_pretrained(
             model_path / "transformer",
-            torch_dtype=torch_dtype,
+            torch_dtype=torch_dtype,  # diffusers uses torch_dtype
             low_cpu_mem_usage=True,
             **kwargs,
         )
@@ -1627,7 +1628,7 @@ class ZImagePipeline:
         logger.info("Loading VAE (low_cpu_mem_usage=True)...")
         vae = AutoencoderKL.from_pretrained(
             model_path / "vae",
-            torch_dtype=torch_dtype,
+            torch_dtype=torch_dtype,  # diffusers uses torch_dtype
             low_cpu_mem_usage=True,
             **kwargs,
         )

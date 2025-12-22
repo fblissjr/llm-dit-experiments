@@ -89,10 +89,11 @@ class GenerateRequest(BaseModel):
     # DyPE (high-resolution) options
     dype: Optional[DyPEConfigRequest] = None
     # Skip Layer Guidance (SLG) options
-    slg_scale: float = 0.0  # SLG scale (0 = disabled, 2-4 typical)
-    slg_layers: Optional[List[int]] = None  # Layer indices to skip (e.g., [15, 16, 17, 18, 19])
-    slg_start: float = 0.01  # Start SLG at this fraction
-    slg_stop: float = 0.2  # Stop SLG at this fraction
+    # None = use config defaults, explicit values override
+    slg_scale: Optional[float] = None  # SLG scale (0 = disabled, 2-4 typical)
+    slg_layers: Optional[List[int]] = None  # Layer indices to skip (e.g., [7, 8, 9, 10, 11, 12])
+    slg_start: Optional[float] = None  # Start SLG at this fraction
+    slg_stop: Optional[float] = None  # Stop SLG at this fraction
 
 
 class EncodeRequest(BaseModel):
@@ -943,7 +944,7 @@ async def dype_status():
 async def get_generation_config():
     """Get generation configuration defaults from server config.
 
-    Returns default values for width, height, steps, shift, long_prompt_mode, hidden_layer.
+    Returns default values for width, height, steps, shift, long_prompt_mode, hidden_layer, and SLG.
     The UI should call this on load to sync with server config.
     """
     if runtime_config is None:
@@ -955,6 +956,10 @@ async def get_generation_config():
             "shift": 3.0,
             "long_prompt_mode": "interpolate",
             "hidden_layer": -2,
+            "slg_scale": 0.0,
+            "slg_layers": None,
+            "slg_start": 0.05,
+            "slg_stop": 0.5,
         }
     return {
         "width": runtime_config.width,
@@ -964,6 +969,10 @@ async def get_generation_config():
         "shift": runtime_config.shift,
         "long_prompt_mode": runtime_config.long_prompt_mode,
         "hidden_layer": runtime_config.hidden_layer,
+        "slg_scale": getattr(runtime_config, 'slg_scale', 0.0),
+        "slg_layers": getattr(runtime_config, 'slg_layers', None),
+        "slg_start": getattr(runtime_config, 'slg_start', 0.05),
+        "slg_stop": getattr(runtime_config, 'slg_stop', 0.5),
     }
 
 
@@ -1180,8 +1189,34 @@ async def generate(request: GenerateRequest):
 
         start = time.time()
 
+        # Apply SLG config defaults (use config values when request doesn't specify)
+        slg_scale = request.slg_scale
+        slg_layers = request.slg_layers
+        slg_start = request.slg_start
+        slg_stop = request.slg_stop
+
+        if runtime_config is not None:
+            if slg_scale is None:
+                slg_scale = getattr(runtime_config, 'slg_scale', 0.0)
+            if slg_layers is None:
+                slg_layers = getattr(runtime_config, 'slg_layers', None)
+            if slg_start is None:
+                slg_start = getattr(runtime_config, 'slg_start', 0.05)
+            if slg_stop is None:
+                slg_stop = getattr(runtime_config, 'slg_stop', 0.5)
+        else:
+            # Fallback defaults (Z-Image optimized)
+            if slg_scale is None:
+                slg_scale = 0.0
+            if slg_start is None:
+                slg_start = 0.05
+            if slg_stop is None:
+                slg_stop = 0.5
+
         # Generate image
         logger.info(f"Calling pipeline() with long_prompt_mode={request.long_prompt_mode}, hidden_layer={request.hidden_layer}...")
+        if slg_scale > 0 and slg_layers:
+            logger.info(f"  SLG: scale={slg_scale}, layers={slg_layers}, range=[{slg_start:.0%}, {slg_stop:.0%}]")
         image = pipeline(
             request.prompt,
             height=request.height,
@@ -1198,10 +1233,10 @@ async def generate(request: GenerateRequest):
             remove_quotes=request.strip_quotes,
             long_prompt_mode=request.long_prompt_mode,
             hidden_layer=request.hidden_layer,
-            skip_layer_guidance_scale=request.slg_scale,
-            skip_layer_indices=request.slg_layers,
-            skip_layer_start=request.slg_start,
-            skip_layer_stop=request.slg_stop,
+            skip_layer_guidance_scale=slg_scale,
+            skip_layer_indices=slg_layers,
+            skip_layer_start=slg_start,
+            skip_layer_stop=slg_stop,
         )
 
         gen_time = time.time() - start

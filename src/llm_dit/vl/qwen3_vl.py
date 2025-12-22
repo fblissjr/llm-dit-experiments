@@ -170,7 +170,7 @@ class VLEmbeddingExtractor:
 
         model = Qwen3VLForConditionalGeneration.from_pretrained(
             model_path,
-            torch_dtype=torch_dtype,
+            dtype=torch_dtype,
             device_map=device,
         )
 

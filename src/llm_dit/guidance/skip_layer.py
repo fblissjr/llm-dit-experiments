@@ -33,9 +33,8 @@ class LayerSkipConfig:
     Configuration for which layers to skip in a transformer.
 
     Args:
-        indices: Layer indices to skip (0-indexed). For Z-Image with 40 layers,
-                 valid values are 0-39. Recommended: [7, 8, 9] for SD3.5-style,
-                 or middle layers like [15, 16, 17, 18, 19] for Z-Image.
+        indices: Layer indices to skip (0-indexed). For Z-Image with 30 layers,
+                 valid values are 0-29. Recommended middle layers: [7, 8, 9, 10, 11, 12].
         fqn: Fully qualified name of the transformer blocks attribute.
              Use "auto" for automatic detection. For Z-Image, this is "blocks".
         skip_attention: Whether to skip attention operations in the layers.
@@ -133,8 +132,8 @@ class SkipLayerGuidance:
 
     Usage:
         slg = SkipLayerGuidance(
-            skip_layers=[15, 16, 17, 18, 19],  # Middle layers for Z-Image
-            guidance_scale=2.8,
+            skip_layers=[7, 8, 9, 10, 11, 12],  # Middle layers for Z-Image (30 layers)
+            guidance_scale=2.5,
         )
 
         # In denoising loop:

@@ -1,6 +1,10 @@
-# Qwen3-VL Vision Conditioning for Z-Image
+# Qwen3-VL Vision Conditioning Experiments
 
-> **Last Updated:** 2025-12-12
+> **Last Updated:** 2025-12-22
+
+**See [docs/guides/vl_conditioning.md](../../docs/guides/vl_conditioning.md) for the main user guide.** This file contains experiment-specific details and deep research findings.
+
+---
 
 **EXPERIMENTAL** exploration of using Qwen3-VL hidden states to condition Z-Image generation. This approach requires no training but produces **visible artifacts** even with optimal settings. Results show that embeddings transfer partial information but quality is significantly lower than pure text generation.
 

@@ -10,28 +10,35 @@ PROMPTS_DIR = Path(__file__).parent
 STANDARD_PROMPTS_FILE = PROMPTS_DIR / "standard_prompts.yaml"
 
 
-def load_standard_prompts() -> dict[str, Any]:
+def load_standard_prompts(prompts_file: str | Path | None = None) -> dict[str, Any]:
     """Load the standard prompt set from YAML.
+
+    Args:
+        prompts_file: Path to prompts YAML file. If None, uses default.
 
     Returns:
         dict with 'version', 'prompts', and 'metadata' keys.
     """
-    with open(STANDARD_PROMPTS_FILE) as f:
+    path = Path(prompts_file) if prompts_file else STANDARD_PROMPTS_FILE
+    with open(path) as f:
         return yaml.safe_load(f)
 
 
-def get_prompts_by_category(category: str) -> list[dict[str, Any]]:
+def get_prompts_by_category(
+    category: str, prompts_file: str | Path | None = None
+) -> list[dict[str, Any]]:
     """Get all prompts in a specific category.
 
     Args:
         category: One of simple_objects, animals, humans, scenes,
                   landscapes, artistic_styles, lighting, abstract,
                   technical, text_rendering
+        prompts_file: Path to prompts YAML file. If None, uses default.
 
     Returns:
         List of prompt dicts with id, category, prompt, test_elements, difficulty
     """
-    data = load_standard_prompts()
+    data = load_standard_prompts(prompts_file)
     return [p for p in data["prompts"] if p["category"] == category]
 
 

@@ -128,11 +128,12 @@ anisotropic = false          # Per-axis scaling for extreme aspect ratios (16:9,
 # SLG works by comparing predictions with and without specific transformer layers,
 # then scaling the difference to improve coherence. Best for human/animal subjects.
 # Based on StabilityAI SD3.5 and Spatio-Temporal Guidance (STG) paper.
-enabled = false              # Enable SLG (requires ~2x inference time)
-scale = 2.8                  # Guidance scale (2.0-4.0 typical, higher = stronger effect)
-layers = [15, 16, 17, 18, 19]  # Middle layers work best for Z-Image (40 layers total)
-start = 0.01                 # Start SLG at this fraction of steps
-stop = 0.2                   # Stop SLG at this fraction of steps
+# Z-Image specific: 30 DiT layers, turbo-distilled (8-9 steps), shift 3.0-7.0
+enabled = false              # Enable SLG (requires ~2x inference time during active range)
+scale = 2.5                  # Guidance scale (2.0-3.0 typical, lower than SD3.5 due to wider range)
+layers = [7, 8, 9, 10, 11, 12]  # Middle layers for Z-Image (30 layers, 0-indexed)
+start = 0.05                 # Start SLG at 5% of steps
+stop = 0.5                   # Stop SLG at 50% of steps (turbo model needs wider window)
 
 # =============================================================================
 # RTX 4090 Profile - Optimized for 24GB VRAM
@@ -236,10 +237,10 @@ anisotropic = false          # Enable for extreme aspect ratios (21:9, etc.)
 # SKIP LAYER GUIDANCE - RTX 4090 has headroom for the extra forward pass
 # Recommended for human/animal subjects to improve anatomy
 enabled = false              # Enable when generating people/animals
-scale = 2.8                  # 2.0-4.0 range, start with 2.8
-layers = [15, 16, 17, 18, 19]  # Middle layers (Z-Image has 40 total)
-start = 0.01
-stop = 0.2
+scale = 2.5                  # 2.0-3.0 range (lower due to wider step range)
+layers = [7, 8, 9, 10, 11, 12]  # Middle layers (Z-Image has 30 total)
+start = 0.05
+stop = 0.5
 
 # =============================================================================
 # Low VRAM Profile - For 8-16GB GPUs
@@ -344,10 +345,10 @@ anisotropic = false
 # SLG requires ~2x inference time which increases peak VRAM usage
 # Only enable if you have margin and are generating people/animals
 enabled = false
-scale = 2.8
-layers = [15, 16, 17, 18, 19]
-start = 0.01
-stop = 0.2
+scale = 2.5
+layers = [7, 8, 9, 10, 11, 12]  # Middle layers (Z-Image has 30 total)
+start = 0.05
+stop = 0.5
 
 # =============================================================================
 # Distributed Profile - Encoder on Mac (MLX), DiT on CUDA
@@ -455,10 +456,10 @@ anisotropic = false
 # SKIP LAYER GUIDANCE - SLG runs entirely on the CUDA server
 # With a powerful remote GPU, the 2x inference overhead is minimal
 enabled = false              # Enable for anatomy-sensitive subjects
-scale = 2.8
-layers = [15, 16, 17, 18, 19]
-start = 0.01
-stop = 0.2
+scale = 2.5
+layers = [7, 8, 9, 10, 11, 12]  # Middle layers (Z-Image has 30 total)
+start = 0.05
+stop = 0.5
 
 # =============================================================================
 # Qwen-Image-Layered Configuration

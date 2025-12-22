@@ -50,6 +50,7 @@ from PIL import Image
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
+from experiments.utils import create_comparison_grid, save_metadata
 from llm_dit.cli import load_runtime_config
 from llm_dit.pipelines.z_image import ZImagePipeline
 from llm_dit.utils.dype import DyPEConfig
@@ -93,56 +94,6 @@ QUICK_RESOLUTIONS = [
 
 # DyPE methods to test
 METHODS = ["vision_yarn", "yarn", "ntk"]
-
-
-def create_comparison_grid(
-    images: list[Image.Image],
-    labels: list[str],
-    cols: int = 3,
-) -> Image.Image:
-    """Create a comparison grid with labels."""
-    if not images:
-        raise ValueError("No images to grid")
-
-    # Calculate grid dimensions
-    rows = (len(images) + cols - 1) // cols
-
-    # Get max dimensions
-    max_width = max(img.width for img in images)
-    max_height = max(img.height for img in images)
-
-    # Create grid canvas (add space for labels)
-    label_height = 40
-    grid_width = max_width * cols
-    grid_height = (max_height + label_height) * rows
-    grid = Image.new("RGB", (grid_width, grid_height), (255, 255, 255))
-
-    # Paste images and add labels
-    for idx, (img, label) in enumerate(zip(images, labels)):
-        row = idx // cols
-        col = idx % cols
-        x = col * max_width
-        y = row * (max_height + label_height)
-
-        # Paste image
-        grid.paste(img, (x, y))
-
-        # Draw label (simple text rendering)
-        from PIL import ImageDraw, ImageFont
-        draw = ImageDraw.Draw(grid)
-        try:
-            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 20)
-        except:
-            font = ImageFont.load_default()
-
-        text_bbox = draw.textbbox((0, 0), label, font=font)
-        text_width = text_bbox[2] - text_bbox[0]
-        text_x = x + (max_width - text_width) // 2
-        text_y = y + max_height + 10
-
-        draw.text((text_x, text_y), label, fill=(0, 0, 0), font=font)
-
-    return grid
 
 
 def run_generation(
@@ -426,8 +377,8 @@ def main():
     )
     parser.add_argument(
         "--output",
-        default="results/dype_test",
-        help="Output directory (default: results/dype_test)",
+        default="experiments/results/dype_test",
+        help="Output directory (default: experiments/results/dype_test)",
     )
     parser.add_argument(
         "--seed",

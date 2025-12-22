@@ -37,8 +37,13 @@ from typing import Optional, List
 coderef_diffusers = Path(__file__).parent.parent.parent / "coderef" / "diffusers" / "src"
 sys.path.insert(0, str(coderef_diffusers))
 
+# Add experiments to path
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
 import torch
 from PIL import Image
+
+from experiments.utils import save_image_grid, save_metadata
 
 logging.basicConfig(
     level=logging.INFO,
@@ -343,7 +348,7 @@ def main():
     parser.add_argument(
         "-o", "--output",
         type=Path,
-        default=Path("results/recompose"),
+        default=Path("experiments/results/recompose"),
         help="Output directory",
     )
     parser.add_argument(
@@ -446,6 +451,33 @@ def main():
     original_path = args.output / "original_composite.png"
     original_composite.save(original_path)
     logger.info(f"Saved: {original_path}")
+
+    # Create comparison grid
+    logger.info("Creating comparison grid...")
+    grid_path = save_image_grid(
+        [original_composite, final],
+        args.output / "comparison.png",
+        cols=2,
+        labels=["Original Composite", "Recomposed"],
+        cell_size=512,
+    )
+    logger.info(f"Saved comparison grid: {grid_path}")
+
+    # Save metadata
+    save_metadata(
+        args.output / "metadata.json",
+        input_image=str(args.input) if args.input else None,
+        decomposed_dir=str(args.decomposed_dir) if args.decomposed_dir else None,
+        decompose_prompt=args.decompose_prompt,
+        style_prompt=args.style_prompt,
+        layer_prompts=args.layer_prompts,
+        num_layers=len(layers),
+        vl_alpha=args.vl_alpha,
+        img2img_strength=args.img2img_strength,
+        decompose_steps=args.decompose_steps,
+        recompose_steps=args.recompose_steps,
+        seed=args.seed,
+    )
 
     logger.info(f"\nAll outputs saved to: {args.output}")
     return 0

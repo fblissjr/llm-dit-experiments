@@ -185,10 +185,10 @@ class RuntimeConfig:
     dype_anisotropic: bool = False  # Per-axis scaling for extreme aspect ratios
 
     # Skip Layer Guidance (SLG) for improved structure/anatomy
-    slg_scale: float = 0.0  # Guidance scale (0 = disabled, 2-4 typical)
-    slg_layers: Optional[List[int]] = None  # Layers to skip (e.g., [15, 16, 17, 18, 19])
-    slg_start: float = 0.01  # Start SLG at this fraction
-    slg_stop: float = 0.2  # Stop SLG at this fraction
+    slg_scale: float = 0.0  # Guidance scale (0 = disabled, 2-3 typical)
+    slg_layers: Optional[List[int]] = None  # Layers to skip (e.g., [7, 8, 9, 10, 11, 12])
+    slg_start: float = 0.05  # Start SLG at this fraction
+    slg_stop: float = 0.5  # Stop SLG at this fraction
 
     # Debug
     debug: bool = False
@@ -946,10 +946,10 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
             if hasattr(toml_config, 'slg'):
                 slg = toml_config.slg
                 if getattr(slg, 'enabled', False):
-                    config.slg_scale = getattr(slg, 'scale', 2.8)
-                    config.slg_layers = getattr(slg, 'layers', [15, 16, 17, 18, 19])
-                    config.slg_start = getattr(slg, 'start', 0.01)
-                    config.slg_stop = getattr(slg, 'stop', 0.2)
+                    config.slg_scale = getattr(slg, 'scale', 2.5)
+                    config.slg_layers = getattr(slg, 'layers', [7, 8, 9, 10, 11, 12])
+                    config.slg_start = getattr(slg, 'start', 0.05)
+                    config.slg_stop = getattr(slg, 'stop', 0.5)
 
         except Exception as e:
             logger.warning(f"Failed to load config: {e}")

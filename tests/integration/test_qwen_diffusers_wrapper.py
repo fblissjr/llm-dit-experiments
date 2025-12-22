@@ -19,8 +19,13 @@ from pathlib import Path
 coderef_diffusers = Path(__file__).parent.parent.parent / "coderef" / "diffusers" / "src"
 sys.path.insert(0, str(coderef_diffusers))
 
+# Add experiments to path
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
 import torch
 from PIL import Image
+
+from experiments.utils import save_image_grid, save_metadata
 
 logging.basicConfig(
     level=logging.INFO,
@@ -181,7 +186,7 @@ def main():
     parser.add_argument(
         "--output-dir",
         type=str,
-        default="results/qwen_layered_test/wrapper_test",
+        default="experiments/results/qwen_layered_test/wrapper_test",
         help="Output directory for test results",
     )
     parser.add_argument(
@@ -268,6 +273,17 @@ def main():
             all_passed = False
 
     logger.info("=" * 60)
+
+    # Save test results metadata
+    save_metadata(
+        output_dir / "test_results.json",
+        model_path=args.model_path,
+        input_image=str(args.input_image),
+        skip_edit=args.skip_edit,
+        test_results=results,
+        all_passed=all_passed,
+    )
+
     logger.info(f"Output saved to: {output_dir}")
 
     return 0 if all_passed else 1

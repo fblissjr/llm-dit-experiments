@@ -348,6 +348,40 @@ EXPERIMENTS = {
         "values": [-1, -2, -5, -10, -15, -19],
         "defaults": {"shift": 3.0, "steps": 9, "vl_alpha": 0.5, "vl_token_selection": "all"},
     },
+    # =========================================================================
+    # HIDDEN LAYER vs CFG INTERACTION EXPERIMENTS
+    # =========================================================================
+    # Z-Image was distilled with Decoupled-DMD which "bakes in" CFG.
+    # The distillation was done with layer -2 embeddings.
+    # When using OOD layers (e.g., -10 to -18), the baked-in CFG might not
+    # extrapolate correctly. Hypothesis: small CFG (1.5-2.5) might help
+    # compensate for distribution mismatch with middle layers.
+    # =========================================================================
+    "hidden_layer_cfg_grid": {
+        "description": "Grid search: hidden layer vs CFG to test if CFG helps OOD layers",
+        "variables": ["hidden_layer", "guidance_scale"],
+        "grid": {
+            "hidden_layer": [-2, -10, -14, -18, -22],  # Default + middle range
+            "guidance_scale": [0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0],
+        },
+    },
+    "hidden_layer_cfg_quick": {
+        "description": "Quick grid: layer vs CFG with fewer values",
+        "variables": ["hidden_layer", "guidance_scale"],
+        "grid": {
+            "hidden_layer": [-2, -14, -18],  # Default, middle, deep-middle
+            "guidance_scale": [0.0, 1.5, 2.5],
+        },
+    },
+    "hidden_layer_cfg_shift_grid": {
+        "description": "Full grid: layer vs CFG vs shift for comprehensive analysis",
+        "variables": ["hidden_layer", "guidance_scale", "shift"],
+        "grid": {
+            "hidden_layer": [-2, -14, -18],
+            "guidance_scale": [0.0, 1.5, 2.5],
+            "shift": [3.0, 5.0, 7.0],
+        },
+    },
 }
 
 
@@ -838,6 +872,7 @@ class ExperimentRunner:
         experiment_name: str,
         prompt_ids: list[str] | None = None,
         prompt_category: str | None = None,
+        prompts_file: str | None = None,
         seeds: list[int] | None = None,
         max_prompts: int | None = None,
     ) -> list[ExperimentResult]:
@@ -853,9 +888,9 @@ class ExperimentRunner:
             prompts = [get_prompt_by_id(pid) for pid in prompt_ids]
             prompts = [p for p in prompts if p is not None]
         elif prompt_category:
-            prompts = get_prompts_by_category(prompt_category)
+            prompts = get_prompts_by_category(prompt_category, prompts_file)
         else:
-            prompts = load_standard_prompts()["prompts"]
+            prompts = load_standard_prompts(prompts_file)["prompts"]
 
         if max_prompts:
             prompts = prompts[:max_prompts]
@@ -1111,18 +1146,17 @@ Available experiments:
     vl_blend_with_text_layers  VL + text layer combinations
 
 Examples:
-  # Run with config file
-  uv run experiments/run_ablation.py --config config.toml --experiment shift_sweep
-
   # Run shift sweep on animal prompts
-  uv run experiments/run_ablation.py --experiment shift_sweep --prompt-category animals
+  uv run experiments/run_ablation.py --config config.toml --experiment shift_sweep animals
+
+  # Run with custom prompts file
+  uv run experiments/run_ablation.py --experiment hidden_layer scenes --prompts my_prompts.yaml
 
   # Run VL alpha sweep with reference image
   uv run experiments/run_ablation.py \\
     --experiment vl_alpha_sweep \\
-    --model-path /path/to/z-image \\
     --vl-image /path/to/reference.jpg \\
-    --prompt-category simple_objects
+    simple_objects
 
   # Dry run to see what would be generated
   uv run experiments/run_ablation.py --experiment shift_sweep --dry-run
@@ -1163,22 +1197,16 @@ Examples:
         help="Comma-separated list of prompt IDs to use",
     )
     parser.add_argument(
-        "--prompt-category",
-        choices=[
-            "simple_objects",
-            "animals",
-            "humans",
-            "scenes",
-            "landscapes",
-            "artistic_styles",
-            "lighting",
-            "abstract",
-            "technical",
-            "text_rendering",
-            "long_prompts",
-            "bias_probing",
-        ],
-        help="Use prompts from specific category",
+        "category",
+        nargs="?",
+        default=None,
+        help="Prompt category to use (e.g., animals, scenes, artistic_styles)",
+    )
+    parser.add_argument(
+        "--prompts",
+        type=str,
+        default=None,
+        help="Path to prompts YAML file (default: experiments/prompts/standard_prompts.yaml)",
     )
     parser.add_argument(
         "--max-prompts",
@@ -1347,7 +1375,8 @@ Examples:
     results = runner.run_experiment(
         experiment_name=args.experiment,
         prompt_ids=prompt_ids,
-        prompt_category=args.prompt_category,
+        prompt_category=args.category,
+        prompts_file=args.prompts,
         seeds=seeds,
         max_prompts=args.max_prompts,
     )

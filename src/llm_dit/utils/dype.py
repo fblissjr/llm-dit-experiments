@@ -538,12 +538,12 @@ class ZImageDyPERoPE(DyPEPosEmbed):
             config: DyPE configuration
             scale_hint: Resolution scale hint from external source
         """
-        # Get parameters from original embedder
-        self.original_embedder = original_embedder
+        # Get parameters from original embedder BEFORE super().__init__()
+        # Must use local variables since we can't assign self.* before nn.Module init
         theta = getattr(original_embedder, "theta", 256)
         axes_dim = getattr(original_embedder, "axes_dim", [32, 48, 48])
 
-        # Initialize base class
+        # Initialize base class FIRST (required by nn.Module)
         super().__init__(
             theta=theta,
             axes_dim=axes_dim,
@@ -551,6 +551,8 @@ class ZImageDyPERoPE(DyPEPosEmbed):
             base_patch_grid=None,  # Will use config.base_resolution
         )
 
+        # Now safe to assign module attributes
+        self.original_embedder = original_embedder
         self.scale_hint = scale_hint
 
     def set_scale_hint(self, scale: float):
