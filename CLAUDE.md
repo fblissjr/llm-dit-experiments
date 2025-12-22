@@ -245,6 +245,30 @@ Experiment results go in `experiments/results/`. The comparison viewer runs on p
 uv run experiments/viewer/server.py
 ```
 
+### Experiment Conventions
+
+All experiment scripts **must** use the shared utilities in `experiments/utils.py`:
+
+```python
+from experiments.utils import save_image_grid, save_metadata, create_comparison_grid
+
+# Save comparison grids
+save_image_grid(images, output_dir / "comparison.png", cols=4, labels=["A", "B", "C", "D"])
+
+# Save metadata as JSON with automatic timestamp
+save_metadata(output_dir / "metadata.json", prompt=prompt, steps=steps, cfg=cfg)
+
+# Create grid without saving (for further processing)
+grid = create_comparison_grid(images, cols=3)
+```
+
+**Required for all experiments:**
+- Output directory: `experiments/results/<experiment_name>/`
+- Grid images: Use `save_image_grid()` or `create_comparison_grid()`
+- Metadata: Use `save_metadata()` (JSON format with timestamps)
+
+**Do not** create custom grid/metadata functions - use the shared utilities.
+
 ## Living Documentation
 
 - **Session logs**: Create `internal/log/log_YYYY-MM-DD.md` for each session

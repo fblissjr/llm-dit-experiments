@@ -10,7 +10,7 @@ __pycache__/
 
 # Configs
 config.toml
-experiments/results/
+experiments/results/*
 results
 
 # Distribution / packaging
