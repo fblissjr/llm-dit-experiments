@@ -1355,37 +1355,93 @@ async def generate(request: GenerateRequest):
             logger.info(f"  FMTT: scale={fmtt_scale}, range=[{fmtt_start:.0%}, {fmtt_stop:.0%}]")
         if dype_config is not None:
             logger.info(f"  DyPE: method={dype_config.method}, scale={dype_config.dype_scale}, exponent={dype_config.dype_exponent}")
-        image = pipeline(
-            request.prompt,
-            height=request.height,
-            width=request.width,
-            num_inference_steps=request.steps,
-            guidance_scale=request.guidance_scale,
-            cfg_normalization=request.cfg_normalization,
-            cfg_truncation=request.cfg_truncation,
-            shift=request.shift,
-            generator=generator,
-            template=request.template,
-            system_prompt=request.system_prompt,
-            thinking_content=request.thinking_content,
-            assistant_content=request.assistant_content,
-            force_think_block=request.force_think_block,
-            remove_quotes=request.strip_quotes,
-            long_prompt_mode=request.long_prompt_mode,
-            hidden_layer=request.hidden_layer,
-            skip_layer_guidance_scale=slg_scale,
-            skip_layer_indices=slg_layers,
-            skip_layer_start=slg_start,
-            skip_layer_stop=slg_stop,
-            fmtt_guidance_scale=fmtt_scale,
-            fmtt_guidance_start=fmtt_start,
-            fmtt_guidance_stop=fmtt_stop,
-            fmtt_normalize_mode=fmtt_normalize,
-            fmtt_decode_scale=fmtt_decode_scale,
-            fmtt_siglip_model=fmtt_siglip_model,
-            fmtt_siglip_device=fmtt_siglip_device,
-            dype_config=dype_config,
-        )
+
+        # Check for multipass generation (for high-res with DyPE)
+        multipass_mode = request.dype.multipass if request.dype else "single"
+        pass2_strength = request.dype.pass2_strength if request.dype else 0.5
+
+        if multipass_mode != "single" and request.dype and request.dype.enabled:
+            # Build passes configuration based on multipass mode
+            if multipass_mode == "twopass":
+                passes = [
+                    {"scale": 0.5, "steps": request.steps},
+                    {"scale": 1.0, "steps": request.steps, "strength": pass2_strength},
+                ]
+            elif multipass_mode == "threepass":
+                passes = [
+                    {"scale": 0.25, "steps": request.steps},
+                    {"scale": 0.5, "steps": request.steps, "strength": 0.6},
+                    {"scale": 1.0, "steps": request.steps, "strength": pass2_strength},
+                ]
+            else:
+                passes = None  # Use default
+
+            logger.info(f"  Multipass: {multipass_mode}, pass2_strength={pass2_strength}")
+            image = pipeline.generate_multipass(
+                request.prompt,
+                final_width=request.width,
+                final_height=request.height,
+                passes=passes,
+                generator=generator,
+                template=request.template,
+                system_prompt=request.system_prompt,
+                thinking_content=request.thinking_content,
+                assistant_content=request.assistant_content,
+                force_think_block=request.force_think_block,
+                remove_quotes=request.strip_quotes,
+                long_prompt_mode=request.long_prompt_mode,
+                hidden_layer=request.hidden_layer,
+                # Pass through additional kwargs for each pass
+                guidance_scale=request.guidance_scale,
+                cfg_normalization=request.cfg_normalization,
+                cfg_truncation=request.cfg_truncation,
+                shift=request.shift,
+                skip_layer_guidance_scale=slg_scale,
+                skip_layer_indices=slg_layers,
+                skip_layer_start=slg_start,
+                skip_layer_stop=slg_stop,
+                fmtt_guidance_scale=fmtt_scale,
+                fmtt_guidance_start=fmtt_start,
+                fmtt_guidance_stop=fmtt_stop,
+                fmtt_normalize_mode=fmtt_normalize,
+                fmtt_decode_scale=fmtt_decode_scale,
+                fmtt_siglip_model=fmtt_siglip_model,
+                fmtt_siglip_device=fmtt_siglip_device,
+                dype_config=dype_config,
+            )
+        else:
+            # Single pass generation
+            image = pipeline(
+                request.prompt,
+                height=request.height,
+                width=request.width,
+                num_inference_steps=request.steps,
+                guidance_scale=request.guidance_scale,
+                cfg_normalization=request.cfg_normalization,
+                cfg_truncation=request.cfg_truncation,
+                shift=request.shift,
+                generator=generator,
+                template=request.template,
+                system_prompt=request.system_prompt,
+                thinking_content=request.thinking_content,
+                assistant_content=request.assistant_content,
+                force_think_block=request.force_think_block,
+                remove_quotes=request.strip_quotes,
+                long_prompt_mode=request.long_prompt_mode,
+                hidden_layer=request.hidden_layer,
+                skip_layer_guidance_scale=slg_scale,
+                skip_layer_indices=slg_layers,
+                skip_layer_start=slg_start,
+                skip_layer_stop=slg_stop,
+                fmtt_guidance_scale=fmtt_scale,
+                fmtt_guidance_start=fmtt_start,
+                fmtt_guidance_stop=fmtt_stop,
+                fmtt_normalize_mode=fmtt_normalize,
+                fmtt_decode_scale=fmtt_decode_scale,
+                fmtt_siglip_model=fmtt_siglip_model,
+                fmtt_siglip_device=fmtt_siglip_device,
+                dype_config=dype_config,
+            )
 
         gen_time = time.time() - start
         logger.info(f"Generated in {gen_time:.1f}s")

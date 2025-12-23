@@ -2110,6 +2110,7 @@ class ZImagePipeline:
                     long_prompt_mode=long_prompt_mode,
                     hidden_layer=hidden_layer,
                     prompt_embeds=prompt_embeds,
+                    **kwargs,  # Pass through CFG, SLG, FMTT, DyPE, etc.
                 )
             else:
                 # Subsequent passes: img2img
@@ -2138,6 +2139,7 @@ class ZImagePipeline:
                     long_prompt_mode=long_prompt_mode,
                     hidden_layer=hidden_layer,
                     prompt_embeds=prompt_embeds,
+                    **kwargs,  # Pass through CFG, SLG, FMTT, DyPE, etc.
                 )
 
             logger.info(f"[Multipass] Pass {pass_idx + 1} complete")
