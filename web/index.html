@@ -108,15 +108,30 @@
                         <h1 class="text-2xl md:text-3xl font-bold text-white" id="headerTitle">Z-Image</h1>
                         <p class="text-sm text-gray-400" id="headerSubtitle">Text-to-image with Qwen3-4B</p>
                     </div>
-                    <button
-                        id="historyToggle"
-                        class="md:hidden p-2 rounded-lg bg-gray-800 text-gray-300 hover:bg-gray-700"
-                        aria-label="Toggle history"
-                    >
-                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
-                        </svg>
-                    </button>
+                    <div class="flex items-center gap-2">
+                        <!-- Settings Button -->
+                        <button
+                            id="settingsToggle"
+                            class="p-2 rounded-lg bg-gray-800 text-gray-300 hover:bg-gray-700"
+                            aria-label="System settings"
+                            title="System Settings"
+                        >
+                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+                            </svg>
+                        </button>
+                        <!-- History Button (mobile only) -->
+                        <button
+                            id="historyToggle"
+                            class="md:hidden p-2 rounded-lg bg-gray-800 text-gray-300 hover:bg-gray-700"
+                            aria-label="Toggle history"
+                        >
+                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                            </svg>
+                        </button>
+                    </div>
                 </div>
             </header>
 
@@ -696,38 +711,27 @@
                     <!-- Resolution Preset -->
                     <div>
                         <label class="block text-sm font-medium text-gray-300 mb-2">Resolution</label>
+                        <!-- Category Filter Tabs - responsive: scrollable on mobile -->
+                        <div class="flex gap-1 mb-2 overflow-x-auto pb-1 -mx-1 px-1 scrollbar-thin" id="resolutionTabs">
+                            <button type="button" data-category="all" class="res-tab flex-shrink-0 px-3 py-1.5 text-xs font-medium rounded-lg bg-blue-600 text-white transition-colors">All</button>
+                            <button type="button" data-category="square" class="res-tab flex-shrink-0 px-3 py-1.5 text-xs font-medium rounded-lg bg-gray-700 text-gray-300 hover:bg-gray-600 transition-colors">Square</button>
+                            <button type="button" data-category="landscape" class="res-tab flex-shrink-0 px-3 py-1.5 text-xs font-medium rounded-lg bg-gray-700 text-gray-300 hover:bg-gray-600 transition-colors">Landscape</button>
+                            <button type="button" data-category="portrait" class="res-tab flex-shrink-0 px-3 py-1.5 text-xs font-medium rounded-lg bg-gray-700 text-gray-300 hover:bg-gray-600 transition-colors">Portrait</button>
+                        </div>
                         <select id="resolution" class="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-white focus:ring-2 focus:ring-blue-500">
-                            <optgroup label="Square">
-                                <option value="512x512">512 x 512</option>
-                                <option value="768x768">768 x 768</option>
-                                <option value="1024x1024" selected>1024 x 1024</option>
-                                <option value="1280x1280">1280 x 1280</option>
-                                <option value="1536x1536">1536 x 1536</option>
-                                <option value="1920x1920">1920 x 1920</option>
-                            </optgroup>
-                            <optgroup label="Landscape (16:9)">
-                                <option value="1280x720">1280 x 720 (HD)</option>
-                                <option value="1920x1088">1920 x 1088 (Full HD)</option>
-                            </optgroup>
-                            <optgroup label="Portrait (9:16)">
-                                <option value="720x1280">720 x 1280 (HD)</option>
-                                <option value="1088x1920">1088 x 1920 (Full HD)</option>
-                            </optgroup>
-                            <optgroup label="Mobile Landscape">
-                                <option value="1024x576">1024 x 576</option>
-                                <option value="1280x576">1280 x 576 (Wide)</option>
-                            </optgroup>
-                            <optgroup label="Mobile Portrait">
-                                <option value="576x1024">576 x 1024</option>
-                                <option value="576x1280">576 x 1280 (Tall)</option>
-                            </optgroup>
-                            <optgroup label="Classic (4:3 / 3:4)">
-                                <option value="1024x768">1024 x 768 (Landscape)</option>
-                                <option value="768x1024">768 x 1024 (Portrait)</option>
-                                <option value="1280x960">1280 x 960 (Landscape)</option>
-                                <option value="960x1280">960 x 1280 (Portrait)</option>
-                            </optgroup>
+                            <!-- Populated dynamically from /api/resolution-config -->
+                            <option value="1024x1024" selected>1024 x 1024</option>
                         </select>
+                        <!-- DyPE recommendation indicator -->
+                        <div id="dypeRecommendation" class="hidden mt-1.5 flex items-center gap-1.5 text-xs">
+                            <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+                                </svg>
+                                DyPE recommended
+                            </span>
+                            <span class="text-gray-500">for best quality</span>
+                        </div>
                     </div>
 
                     <!-- Steps -->
@@ -1223,6 +1227,46 @@
                     </div>
                 </details>
 
+                <!-- CFG Enhancements (for non-distilled models) -->
+                <details class="group" id="cfgSection">
+                    <summary class="flex items-center gap-2 text-sm font-medium text-gray-300 cursor-pointer py-2 select-none">
+                        <svg class="w-3 h-3 transition-transform group-open:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                        </svg>
+                        CFG Enhancements
+                        <span id="cfgStatusBadge" class="ml-auto text-xs px-2 py-0.5 rounded-full bg-gray-700 text-gray-400">Off</span>
+                    </summary>
+                    <div class="pt-2 pb-1 space-y-4 pl-5 border-l-2 border-gray-700/50 ml-1.5">
+                        <p class="text-xs text-gray-500">For non-distilled models (Qwen-Image-Layered) with CFG > 0. Not needed for Z-Image-Turbo.</p>
+
+                        <!-- CFG Normalization -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-2">
+                                Normalization: <span id="cfgNormValue" class="text-blue-400">0.0</span>
+                            </label>
+                            <input type="range" id="cfgNormalization" min="0" max="3.0" step="0.1" value="0" class="w-full">
+                            <div class="flex justify-between text-xs text-gray-500 mt-1">
+                                <span>0 (Off)</span>
+                                <span>3.0</span>
+                            </div>
+                            <p class="text-xs text-gray-500 mt-1">Clamp CFG norm relative to positive prediction. 1.0-2.0 typical. Prevents over-amplification at high CFG.</p>
+                        </div>
+
+                        <!-- CFG Truncation -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-2">
+                                Truncation: <span id="cfgTruncValue" class="text-blue-400">1.0</span>
+                            </label>
+                            <input type="range" id="cfgTruncation" min="0.3" max="1.0" step="0.05" value="1.0" class="w-full">
+                            <div class="flex justify-between text-xs text-gray-500 mt-1">
+                                <span>0.3 (Early stop)</span>
+                                <span>1.0 (Never)</span>
+                            </div>
+                            <p class="text-xs text-gray-500 mt-1">Stop CFG after this fraction of steps. 0.7 = no CFG for final 30%. Reduces late-stage artifacts.</p>
+                        </div>
+                    </div>
+                </details>
+
                 <!-- Generate Button -->
                 <button
                     type="submit"
@@ -1325,6 +1369,61 @@
         </div>
     </div>
 
+    <!-- Settings Modal -->
+    <div id="settingsModal" class="fixed inset-0 bg-black/50 hidden z-50 flex items-center justify-center p-4">
+        <div class="bg-gray-800 rounded-xl max-w-md w-full max-h-[90vh] overflow-y-auto border border-gray-700">
+            <div class="p-4 border-b border-gray-700 flex items-center justify-between">
+                <h2 class="font-semibold text-white">System Settings</h2>
+                <button id="closeSettings" class="p-1 rounded hover:bg-gray-700 text-gray-400 hover:text-white">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                    </svg>
+                </button>
+            </div>
+            <div class="p-4 space-y-4">
+                <!-- System Status -->
+                <div class="p-3 bg-gray-900 rounded-lg">
+                    <h3 class="text-sm font-medium text-gray-300 mb-2">GPU Memory</h3>
+                    <div id="gpuMemoryInfo" class="text-sm text-gray-400">Loading...</div>
+                </div>
+
+                <!-- Cached Models -->
+                <div class="p-3 bg-gray-900 rounded-lg">
+                    <h3 class="text-sm font-medium text-gray-300 mb-2">Cached Models</h3>
+                    <div class="space-y-2">
+                        <div class="flex items-center justify-between">
+                            <span class="text-sm text-gray-400">FMTT (SigLIP)</span>
+                            <span id="fmttStatus" class="text-xs px-2 py-1 rounded bg-gray-700 text-gray-400">Not loaded</span>
+                        </div>
+                        <div class="flex items-center justify-between">
+                            <span class="text-sm text-gray-400">VL Cache</span>
+                            <span id="vlCacheStatus" class="text-xs px-2 py-1 rounded bg-gray-700 text-gray-400">0 items</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Actions -->
+                <div class="space-y-2">
+                    <button id="unloadFmttBtn" class="w-full px-4 py-2 bg-yellow-600/20 text-yellow-400 rounded-lg hover:bg-yellow-600/30 transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed">
+                        Unload FMTT (~4-6 GB)
+                    </button>
+                    <button id="clearCacheBtn" class="w-full px-4 py-2 bg-blue-600/20 text-blue-400 rounded-lg hover:bg-blue-600/30 transition-colors text-sm">
+                        Clear CUDA Cache
+                    </button>
+                    <button id="clearVlCacheBtn" class="w-full px-4 py-2 bg-purple-600/20 text-purple-400 rounded-lg hover:bg-purple-600/30 transition-colors text-sm">
+                        Clear VL Cache
+                    </button>
+                    <button id="clearHistoryBtn2" class="w-full px-4 py-2 bg-red-600/20 text-red-400 rounded-lg hover:bg-red-600/30 transition-colors text-sm">
+                        Clear History
+                    </button>
+                </div>
+
+                <!-- Status message -->
+                <div id="settingsMessage" class="hidden text-sm text-center py-2 px-3 rounded-lg"></div>
+            </div>
+        </div>
+    </div>
+
     <script>
         const API_BASE = window.location.origin;
 
@@ -1362,6 +1461,166 @@
 
         // Current generation params (for reuse)
         let currentParams = null;
+
+        // =====================================================================
+        // Resolution Management with Category Filters
+        // =====================================================================
+        let resolutionPresets = [];  // Loaded from API
+        let currentResCategory = 'all';
+        const resTabs = document.querySelectorAll('.res-tab');
+        const dypeRecommendation = document.getElementById('dypeRecommendation');
+        const DYPE_BASE_RESOLUTION = 1024;
+
+        // Load resolution presets from API
+        async function loadResolutionPresets() {
+            try {
+                const response = await fetch('/api/resolution-config');
+                const config = await response.json();
+                resolutionPresets = config.presets || [];
+                populateResolutionDropdown('all');
+            } catch (err) {
+                console.error('Failed to load resolution config:', err);
+                // Keep default option
+            }
+        }
+
+        // Populate dropdown based on category filter
+        function populateResolutionDropdown(category) {
+            const currentValue = resolutionSelect.value;
+            resolutionSelect.innerHTML = '';
+
+            const filtered = category === 'all'
+                ? resolutionPresets
+                : resolutionPresets.filter(p => p.category === category);
+
+            // Group by ratio within category
+            const byRatio = {};
+            filtered.forEach(preset => {
+                const ratio = preset.ratio || 'Other';
+                if (!byRatio[ratio]) byRatio[ratio] = [];
+                byRatio[ratio].push(preset);
+            });
+
+            // Create optgroups for each ratio
+            Object.entries(byRatio).forEach(([ratio, presets]) => {
+                const group = document.createElement('optgroup');
+                group.label = ratio;
+
+                presets.forEach(preset => {
+                    const opt = document.createElement('option');
+                    opt.value = preset.value;
+                    // Format: "WxH" for compact display, full dims in title
+                    const dyneIndicator = preset.dype?.recommended ? ' *' : '';
+                    opt.textContent = `${preset.width} x ${preset.height}${dyneIndicator}`;
+                    opt.title = `${preset.width}x${preset.height} (${preset.ratio})${preset.dype?.recommended ? ' - DyPE recommended' : ''}`;
+                    opt.dataset.width = preset.width;
+                    opt.dataset.height = preset.height;
+                    opt.dataset.dypeRecommended = preset.dype?.recommended || false;
+                    opt.dataset.dypeExponent = preset.dype?.exponent || '';
+                    if (preset.default) opt.dataset.default = 'true';
+                    group.appendChild(opt);
+                });
+
+                resolutionSelect.appendChild(group);
+            });
+
+            // Restore selection if it exists in new set, else pick default or first
+            const opts = [...resolutionSelect.options];
+            const match = opts.find(o => o.value === currentValue);
+            const defaultOpt = opts.find(o => o.dataset.default === 'true');
+
+            if (match) {
+                resolutionSelect.value = currentValue;
+            } else if (defaultOpt) {
+                resolutionSelect.value = defaultOpt.value;
+            } else if (opts.length > 0) {
+                resolutionSelect.selectedIndex = 0;
+            }
+
+            // Update DyPE recommendation display
+            updateDypeRecommendation();
+        }
+
+        // Update tab styling
+        function updateResTabStyles(activeCategory) {
+            resTabs.forEach(tab => {
+                const cat = tab.dataset.category;
+                if (cat === activeCategory) {
+                    tab.classList.remove('bg-gray-700', 'text-gray-300', 'hover:bg-gray-600');
+                    tab.classList.add('bg-blue-600', 'text-white');
+                } else {
+                    tab.classList.remove('bg-blue-600', 'text-white');
+                    tab.classList.add('bg-gray-700', 'text-gray-300', 'hover:bg-gray-600');
+                }
+            });
+        }
+
+        // Tab click handlers
+        resTabs.forEach(tab => {
+            tab.addEventListener('click', () => {
+                const category = tab.dataset.category;
+                currentResCategory = category;
+                updateResTabStyles(category);
+                populateResolutionDropdown(category);
+            });
+        });
+
+        // Update DyPE recommendation indicator based on current selection
+        function updateDypeRecommendation() {
+            const selected = resolutionSelect.options[resolutionSelect.selectedIndex];
+            if (!selected) return;
+
+            const w = parseInt(selected.dataset.width || selected.value.split('x')[0]);
+            const h = parseInt(selected.dataset.height || selected.value.split('x')[1]);
+            const maxDim = Math.max(w, h);
+            const needsDype = maxDim > DYPE_BASE_RESOLUTION;
+
+            if (needsDype) {
+                dypeRecommendation.classList.remove('hidden');
+            } else {
+                dypeRecommendation.classList.add('hidden');
+            }
+        }
+
+        // Auto-enable DyPE when high-res selected (with smart exponent)
+        function handleResolutionChange() {
+            updateDypeRecommendation();
+
+            const selected = resolutionSelect.options[resolutionSelect.selectedIndex];
+            if (!selected) return;
+
+            const w = parseInt(selected.dataset.width || selected.value.split('x')[0]);
+            const h = parseInt(selected.dataset.height || selected.value.split('x')[1]);
+            const maxDim = Math.max(w, h);
+            const scale = maxDim / DYPE_BASE_RESOLUTION;
+
+            const dypeEnabled = document.getElementById('dypeEnabled');
+            const dypeExponent = document.getElementById('dypeExponent');
+            const dypeExponentValue = document.getElementById('dypeExponentValue');
+
+            if (scale > 1.0) {
+                // Auto-enable DyPE for high-res
+                if (!dypeEnabled.checked) {
+                    dypeEnabled.checked = true;
+                    updateDypeStatus();
+                }
+
+                // Auto-set exponent based on scale
+                let exponent;
+                if (scale >= 3.0) exponent = 2.0;
+                else if (scale >= 1.5) exponent = 1.0;
+                else exponent = 0.5;
+
+                dypeExponent.value = exponent;
+                dypeExponentValue.textContent = exponent.toFixed(1);
+            }
+            // Note: Don't auto-disable DyPE when going back to low-res (user might want it)
+        }
+
+        resolutionSelect.addEventListener('change', handleResolutionChange);
+
+        // Initialize resolution presets
+        loadResolutionPresets();
 
         // Update slider value displays
         stepsSlider.addEventListener('input', () => {
@@ -1790,6 +2049,49 @@
         // End FMTT Logic
         // =====================================================================
 
+        // =====================================================================
+        // CFG Enhancements Logic (for non-distilled models like Qwen-Image-Layered)
+        // =====================================================================
+        const cfgNormSlider = document.getElementById('cfgNormalization');
+        const cfgTruncSlider = document.getElementById('cfgTruncation');
+        const cfgNormValueDisplay = document.getElementById('cfgNormValue');
+        const cfgTruncValueDisplay = document.getElementById('cfgTruncValue');
+        const cfgStatusBadge = document.getElementById('cfgStatusBadge');
+
+        // Update CFG status badge
+        function updateCfgStatus() {
+            const normValue = parseFloat(cfgNormSlider.value);
+            const truncValue = parseFloat(cfgTruncSlider.value);
+            const isActive = normValue > 0 || truncValue < 1.0;
+
+            if (isActive) {
+                cfgStatusBadge.textContent = 'On';
+                cfgStatusBadge.classList.remove('bg-gray-700', 'text-gray-400');
+                cfgStatusBadge.classList.add('bg-green-700', 'text-green-300');
+            } else {
+                cfgStatusBadge.textContent = 'Off';
+                cfgStatusBadge.classList.remove('bg-green-700', 'text-green-300');
+                cfgStatusBadge.classList.add('bg-gray-700', 'text-gray-400');
+            }
+        }
+
+        // Update slider display values
+        cfgNormSlider.addEventListener('input', () => {
+            cfgNormValueDisplay.textContent = parseFloat(cfgNormSlider.value).toFixed(1);
+            updateCfgStatus();
+        });
+
+        cfgTruncSlider.addEventListener('input', () => {
+            cfgTruncValueDisplay.textContent = parseFloat(cfgTruncSlider.value).toFixed(2);
+            updateCfgStatus();
+        });
+
+        // Initialize CFG UI
+        updateCfgStatus();
+        // =====================================================================
+        // End CFG Logic
+        // =====================================================================
+
         // Toggle thinking content visibility based on checkbox
         const enableThinkingCheckbox = document.getElementById('enableThinking');
         const thinkingContentWrapper = document.getElementById('thinkingContentWrapper');
@@ -1812,6 +2114,133 @@
         }
         historyToggle?.addEventListener('click', toggleHistoryPanel);
         historyHandle?.addEventListener('click', toggleHistoryPanel);
+
+        // Settings modal
+        const settingsToggle = document.getElementById('settingsToggle');
+        const settingsModal = document.getElementById('settingsModal');
+        const closeSettings = document.getElementById('closeSettings');
+        const unloadFmttBtn = document.getElementById('unloadFmttBtn');
+        const clearCacheBtn = document.getElementById('clearCacheBtn');
+        const clearVlCacheBtn = document.getElementById('clearVlCacheBtn');
+        const clearHistoryBtn2 = document.getElementById('clearHistoryBtn2');
+        const settingsMessage = document.getElementById('settingsMessage');
+
+        async function refreshSystemStatus() {
+            try {
+                const response = await fetch(`${API_BASE}/api/system/status`);
+                const data = await response.json();
+
+                // Update GPU memory info
+                const gpuInfo = document.getElementById('gpuMemoryInfo');
+                if (data.cuda) {
+                    gpuInfo.innerHTML = `
+                        <div class="flex justify-between"><span>Allocated:</span><span>${data.cuda.allocated_gb} GB</span></div>
+                        <div class="flex justify-between"><span>Reserved:</span><span>${data.cuda.reserved_gb} GB</span></div>
+                        <div class="flex justify-between"><span>Free:</span><span class="text-green-400">${data.cuda.free_gb} GB</span></div>
+                        <div class="flex justify-between"><span>Total:</span><span>${data.cuda.total_gb} GB</span></div>
+                    `;
+                } else {
+                    gpuInfo.textContent = 'CUDA not available';
+                }
+
+                // Update FMTT status
+                const fmttStatus = document.getElementById('fmttStatus');
+                if (data.fmtt_cached) {
+                    fmttStatus.textContent = 'Loaded (~4-6 GB)';
+                    fmttStatus.className = 'text-xs px-2 py-1 rounded bg-yellow-600/30 text-yellow-400';
+                    unloadFmttBtn.disabled = false;
+                } else {
+                    fmttStatus.textContent = 'Not loaded';
+                    fmttStatus.className = 'text-xs px-2 py-1 rounded bg-gray-700 text-gray-400';
+                    unloadFmttBtn.disabled = true;
+                }
+
+                // Update VL cache status
+                const vlStatus = document.getElementById('vlCacheStatus');
+                vlStatus.textContent = `${data.vl_cache_count} items`;
+
+            } catch (err) {
+                console.error('Failed to get system status:', err);
+            }
+        }
+
+        function showSettingsMessage(msg, type = 'success') {
+            settingsMessage.textContent = msg;
+            settingsMessage.classList.remove('hidden', 'bg-green-600/20', 'text-green-400', 'bg-red-600/20', 'text-red-400');
+            if (type === 'success') {
+                settingsMessage.classList.add('bg-green-600/20', 'text-green-400');
+            } else {
+                settingsMessage.classList.add('bg-red-600/20', 'text-red-400');
+            }
+            setTimeout(() => settingsMessage.classList.add('hidden'), 3000);
+        }
+
+        settingsToggle?.addEventListener('click', () => {
+            settingsModal.classList.remove('hidden');
+            refreshSystemStatus();
+        });
+
+        closeSettings?.addEventListener('click', () => {
+            settingsModal.classList.add('hidden');
+        });
+
+        // Close modal when clicking outside
+        settingsModal?.addEventListener('click', (e) => {
+            if (e.target === settingsModal) {
+                settingsModal.classList.add('hidden');
+            }
+        });
+
+        unloadFmttBtn?.addEventListener('click', async () => {
+            try {
+                unloadFmttBtn.disabled = true;
+                unloadFmttBtn.textContent = 'Unloading...';
+                const response = await fetch(`${API_BASE}/api/system/unload-fmtt`, { method: 'POST' });
+                const data = await response.json();
+                if (data.success) {
+                    showSettingsMessage(`FMTT unloaded. ${data.free_gb ? data.free_gb + ' GB free' : ''}`);
+                } else {
+                    showSettingsMessage(data.message, 'error');
+                }
+            } catch (err) {
+                showSettingsMessage('Failed to unload FMTT', 'error');
+            } finally {
+                unloadFmttBtn.textContent = 'Unload FMTT (~4-6 GB)';
+                refreshSystemStatus();
+            }
+        });
+
+        clearCacheBtn?.addEventListener('click', async () => {
+            try {
+                const response = await fetch(`${API_BASE}/api/system/clear-cache`, { method: 'POST' });
+                const data = await response.json();
+                showSettingsMessage(data.message);
+                refreshSystemStatus();
+            } catch (err) {
+                showSettingsMessage('Failed to clear cache', 'error');
+            }
+        });
+
+        clearVlCacheBtn?.addEventListener('click', async () => {
+            try {
+                const response = await fetch(`${API_BASE}/api/system/vl-cache`, { method: 'DELETE' });
+                const data = await response.json();
+                showSettingsMessage(`Cleared ${data.cleared} VL cache items`);
+                refreshSystemStatus();
+            } catch (err) {
+                showSettingsMessage('Failed to clear VL cache', 'error');
+            }
+        });
+
+        clearHistoryBtn2?.addEventListener('click', async () => {
+            try {
+                await fetch(`${API_BASE}/api/history`, { method: 'DELETE' });
+                loadHistory();
+                showSettingsMessage('History cleared');
+            } catch (err) {
+                showSettingsMessage('Failed to clear history', 'error');
+            }
+        });
 
         // Store template data for auto-population
         let templateData = {};
@@ -2368,13 +2797,32 @@
                 updateHiddenLayerUI(item.hidden_layer);
             }
 
-            // Set resolution (select matching preset or keep current)
+            // Set CFG enhancements
+            if (item.cfg_normalization !== undefined) {
+                cfgNormSlider.value = item.cfg_normalization;
+                cfgNormValueDisplay.textContent = parseFloat(item.cfg_normalization).toFixed(1);
+            }
+            if (item.cfg_truncation !== undefined) {
+                cfgTruncSlider.value = item.cfg_truncation;
+                cfgTruncValueDisplay.textContent = parseFloat(item.cfg_truncation).toFixed(2);
+            }
+            updateCfgStatus();
+
+            // Set resolution (select matching preset or switch to All category)
             const resValue = `${item.width}x${item.height}`;
-            const resOption = [...resolutionSelect.options].find(o => o.value === resValue);
+            let resOption = [...resolutionSelect.options].find(o => o.value === resValue);
+            if (!resOption && currentResCategory !== 'all') {
+                // Resolution not in current filter - switch to All
+                currentResCategory = 'all';
+                updateResTabStyles('all');
+                populateResolutionDropdown('all');
+                resOption = [...resolutionSelect.options].find(o => o.value === resValue);
+            }
             if (resOption) {
                 resolutionSelect.value = resValue;
+                handleResolutionChange();  // Update DyPE recommendation
             }
-            // If no matching preset, keep current selection (presets only now)
+            // If no matching preset, keep current selection
 
             // Close history panel on mobile
             if (window.innerWidth < 768) {
@@ -2403,6 +2851,12 @@
             }
             if (item.hidden_layer !== undefined && item.hidden_layer !== -2) {
                 infoText += `, layer ${item.hidden_layer}`;
+            }
+            if (item.cfg_normalization && item.cfg_normalization > 0) {
+                infoText += `, norm ${item.cfg_normalization}`;
+            }
+            if (item.cfg_truncation && item.cfg_truncation < 1.0) {
+                infoText += `, trunc ${item.cfg_truncation}`;
             }
 
             resultInfo.textContent = infoText;
@@ -2471,6 +2925,9 @@
             const slgConfig = getSlgConfig();
             const fmttConfig = getFmttConfig();
 
+            const cfgNormValue = parseFloat(document.getElementById('cfgNormalization').value);
+            const cfgTruncValue = parseFloat(document.getElementById('cfgTruncation').value);
+
             const params = {
                 prompt: document.getElementById('prompt').value,
                 system_prompt: document.getElementById('systemPrompt').value || null,
@@ -2484,6 +2941,8 @@
                 steps: parseInt(stepsSlider.value),
                 seed: document.getElementById('seed').value ? parseInt(document.getElementById('seed').value) : null,
                 guidance_scale: parseFloat(guidanceScaleSlider.value),
+                cfg_normalization: cfgNormValue,
+                cfg_truncation: cfgTruncValue,
                 shift: parseFloat(shiftSlider.value),
                 long_prompt_mode: longPromptModeSelect.value,
                 hidden_layer: parseInt(hiddenLayerSlider.value),

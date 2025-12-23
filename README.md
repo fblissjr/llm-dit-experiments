@@ -12,7 +12,8 @@ Diffusers-based platform for LLM-DiT image generation models. Supports multiple 
 ## Quick Start
 
 ```bash
-uv sync --inexact
+uv sync                                    # Install deps (includes PyTorch CUDA 13.0)
+./scripts/install_sageattention.sh         # Optional: SageAttention from source
 ```
 
 ### Z-Image (Text-to-Image)
@@ -55,11 +56,13 @@ uv run web/server.py --config config.toml --profile rtx4090
 ```
 
 Key sections in config.toml:
-- `[profile.encoder]` - Text encoder device/dtype
+- `[profile.encoder]` - Text encoder device/dtype/quantization
 - `[profile.generation]` - Resolution, steps, CFG
 - `[profile.qwen_image]` - Qwen-Image-Layered settings
 - `[profile.vl]` - Vision conditioning (Qwen3-VL)
 - `[profile.rewriter]` - Prompt rewriting settings
+
+Quantization options: `none` (default), `4bit`, `8bit` (bitsandbytes), `int8_dynamic` (torchao)
 
 See [config.toml.example](config.toml.example) for all options.
 
@@ -82,6 +85,12 @@ uv run scripts/generate.py \
   --text-encoder-device cpu \
   --dit-device cuda \
   --vae-device cuda \
+  "A mountain landscape"
+
+# Z-Image with int8 quantization (saves ~50% encoder VRAM)
+uv run scripts/generate.py \
+  --model-path /path/to/z-image-turbo \
+  --quantization int8_dynamic \
   "A mountain landscape"
 
 # Z-Image with LoRA
@@ -145,6 +154,7 @@ See [experiments/README.md](experiments/README.md) for documentation.
 ## Documentation
 
 - [CLAUDE.md](CLAUDE.md) - Technical reference
+- [docs/models/z_image.md](docs/models/z_image.md) - Z-Image details and performance optimization
 - [docs/qwen_image_guide.md](docs/qwen_image_guide.md) - Qwen-Image-Layered user guide
 - [docs/models/qwen_image_layered.md](docs/models/qwen_image_layered.md) - Qwen-Image-Layered details
 - [docs/distributed_inference.md](docs/distributed_inference.md) - Distributed setup

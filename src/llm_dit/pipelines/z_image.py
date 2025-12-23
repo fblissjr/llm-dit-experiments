@@ -160,6 +160,7 @@ class ZImagePipeline:
         encoder_device: str = "auto",
         dit_device: str = "auto",
         vae_device: str = "auto",
+        quantization: str = "none",
         # PyTorch-native component options
         use_custom_scheduler: bool = False,
         tiled_vae: bool = False,
@@ -181,6 +182,7 @@ class ZImagePipeline:
             encoder_device: Device for text encoder (cpu, cuda, mps, auto)
             dit_device: Device for DiT/transformer (cpu, cuda, mps, auto)
             vae_device: Device for VAE (cpu, cuda, mps, auto)
+            quantization: Text encoder quantization mode (none, 4bit, 8bit, int8_dynamic)
             use_custom_scheduler: Use our pure-PyTorch FlowMatchScheduler
             tiled_vae: Enable tiled VAE decode for large images (2K+)
             tile_size: Tile size in pixels for VAE decode (default: 512)
@@ -257,6 +259,7 @@ class ZImagePipeline:
             default_template=default_template,
             torch_dtype=torch_dtype,
             device_map=encoder_device_resolved,
+            quantization=quantization,
         )
 
         # Load the diffusers pipeline (auto-detect pipeline class)
@@ -486,6 +489,41 @@ class ZImagePipeline:
                 "This may be a model architecture limitation."
             )
 
+    def unload_fmtt(self) -> bool:
+        """
+        Unload cached FMTT reward function (SigLIP) to free GPU memory.
+
+        The FMTT reward function is cached on first use to avoid reloading
+        on subsequent generations. This method releases that memory (~4-6GB)
+        when FMTT is no longer needed.
+
+        Returns:
+            True if a cached reward function was unloaded, False if none was cached.
+
+        Example:
+            pipe("A cat", fmtt_guidance_scale=1.0)  # Loads SigLIP
+            pipe("A dog", fmtt_guidance_scale=0.0)  # SigLIP still in memory!
+            pipe.unload_fmtt()                       # Now SigLIP is freed
+            pipe("A bird")                           # Full VRAM available
+        """
+        if hasattr(self, '_fmtt_reward_fn') and self._fmtt_reward_fn is not None:
+            # Clear text cache if it exists
+            if hasattr(self._fmtt_reward_fn, 'clear_cache'):
+                self._fmtt_reward_fn.clear_cache()
+
+            # Delete the model
+            del self._fmtt_reward_fn
+            self._fmtt_reward_fn = None
+
+            # Clear CUDA cache
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+            logger.info("[Pipeline] FMTT reward function unloaded, VRAM freed")
+            return True
+
+        return False
+
     def encode_image(
         self,
         image: Union[Image.Image, torch.Tensor],
@@ -557,6 +595,8 @@ class ZImagePipeline:
         long_prompt_mode: str = "truncate",
         hidden_layer: int = -2,
         prompt_embeds: Optional[torch.Tensor] = None,
+        cfg_normalization: float = 0.0,
+        cfg_truncation: float = 1.0,
     ) -> Union[Image.Image, List[Image.Image], torch.Tensor]:
         """
         Generate an image from a text prompt and an input image.
@@ -699,6 +739,14 @@ class ZImagePipeline:
             )
 
         self.scheduler.sigma_min = 0.0
+        # IMPORTANT: For diffusers FlowMatchEulerDiscreteScheduler, when use_dynamic_shifting=False,
+        # set_timesteps() ignores the mu parameter and uses self.shift instead.
+        # Diffusers uses set_shift() method (shift property is read-only).
+        # Our FlowMatchScheduler uses direct attribute assignment.
+        if hasattr(self.scheduler, 'set_shift'):
+            self.scheduler.set_shift(mu)  # diffusers scheduler
+        elif hasattr(self.scheduler, 'shift'):
+            self.scheduler.shift = mu  # our FlowMatchScheduler
         self.scheduler.set_timesteps(num_inference_steps, device=device, mu=mu)
         timesteps = self.scheduler.timesteps[t_start:]
 
@@ -754,7 +802,15 @@ class ZImagePipeline:
                 timestep = t.expand(latents.shape[0])
                 timestep = (1000 - timestep) / 1000
 
-                apply_cfg = guidance_scale > 0
+                # Calculate denoising progress (0 to 1) for CFG truncation
+                progress = timestep[0].item()
+
+                # Handle CFG with optional truncation
+                current_cfg_scale = guidance_scale
+                if cfg_truncation < 1.0 and progress > cfg_truncation:
+                    current_cfg_scale = 0.0
+
+                apply_cfg = current_cfg_scale > 0
 
                 if apply_cfg:
                     latent_input = latents.to(dtype).repeat(2, 1, 1, 1)
@@ -784,7 +840,19 @@ class ZImagePipeline:
                     neg_out = model_output[1:]
                     noise_pred = []
                     for pos, neg in zip(pos_out, neg_out):
-                        pred = pos.float() + guidance_scale * (pos.float() - neg.float())
+                        pos_f = pos.float()
+                        neg_f = neg.float()
+                        pred = pos_f + current_cfg_scale * (pos_f - neg_f)
+
+                        # CFG normalization
+                        if cfg_normalization > 0:
+                            pos_norm = torch.linalg.vector_norm(pos_f)
+                            pred_norm = torch.linalg.vector_norm(pred)
+                            max_allowed_norm = pos_norm * cfg_normalization
+                            pred_norm = torch.where(pred_norm < 1e-6, torch.ones_like(pred_norm), pred_norm)
+                            scale_factor = torch.clamp(max_allowed_norm / pred_norm, max=1.0)
+                            pred = pred * scale_factor
+
                         noise_pred.append(pred)
                     noise_pred = torch.stack(noise_pred, dim=0)
                 else:
@@ -879,6 +947,11 @@ class ZImagePipeline:
         fmtt_siglip_model: str = "google/siglip2-giant-opt-patch16-384",
         fmtt_siglip_device: Optional[str] = None,  # None = use pipeline device
         fmtt_reward_fn: Optional[Any] = None,
+        # DyPE (Dynamic Position Extrapolation) for high-resolution generation
+        dype_config: Optional["DyPEConfig"] = None,  # Per-request DyPE config (overrides self.dype_config)
+        # CFG enhancements (useful for non-distilled models like Qwen-Image-Layered)
+        cfg_normalization: float = 0.0,  # 0.0 = disabled, >0 = clamp CFG norm relative to positive pred
+        cfg_truncation: float = 1.0,  # 1.0 = never truncate, <1.0 = stop CFG at that progress fraction
     ) -> Union[Image.Image, List[Image.Image], torch.Tensor]:
         """
         Generate an image from a text prompt.
@@ -939,6 +1012,14 @@ class ZImagePipeline:
                    Lower values save VRAM but reduce gradient precision.
             fmtt_reward_fn: Pre-loaded reward function (optional). If None, loads SigLIP on first use.
                    Pass a DifferentiableSigLIP instance to avoid reloading between generations.
+            cfg_normalization: CFG norm clamping factor (default: 0.0 = disabled).
+                   When >0, clamps the combined prediction norm to cfg_normalization times the
+                   positive prediction norm. Prevents CFG from over-amplifying, reducing artifacts
+                   at high CFG values. Typical values: 1.0-2.0. Useful for non-distilled models.
+            cfg_truncation: CFG truncation threshold (default: 1.0 = never truncate).
+                   When <1.0, stops applying CFG after this fraction of denoising progress.
+                   E.g., 0.7 means CFG is disabled for the final 30% of steps.
+                   Reduces late-stage artifacts. Typical values: 0.5-0.8.
 
         Returns:
             Generated image(s) in specified format
@@ -1102,6 +1183,14 @@ class ZImagePipeline:
             )
             logger.info(f"[Pipeline] Calculated shift/mu for resolution: {mu:.4f}")
         self.scheduler.sigma_min = 0.0
+        # IMPORTANT: For diffusers FlowMatchEulerDiscreteScheduler, when use_dynamic_shifting=False,
+        # set_timesteps() ignores the mu parameter and uses self.shift instead.
+        # Diffusers uses set_shift() method (shift property is read-only).
+        # Our FlowMatchScheduler uses direct attribute assignment.
+        if hasattr(self.scheduler, 'set_shift'):
+            self.scheduler.set_shift(mu)  # diffusers scheduler
+        elif hasattr(self.scheduler, 'shift'):
+            self.scheduler.shift = mu  # our FlowMatchScheduler
         self.scheduler.set_timesteps(num_inference_steps, device=device, mu=mu)
         timesteps = self.scheduler.timesteps
 
@@ -1120,12 +1209,14 @@ class ZImagePipeline:
             logger.info("[Pipeline] CPU offload mode - moving transformer to GPU for forward pass")
 
         # Patch transformer with DyPE if enabled
+        # Per-request dype_config overrides self.dype_config
+        active_dype_config = dype_config if dype_config is not None else self.dype_config
         dype_patched = False
-        if self.dype_config is not None and self.dype_config.enabled:
+        if active_dype_config is not None and active_dype_config.enabled:
             from llm_dit.utils.dype import patch_zimage_rope, set_zimage_timestep
-            logger.info(f"[Pipeline] DyPE enabled: method={self.dype_config.method}, scale={self.dype_config.dype_scale}")
+            logger.info(f"[Pipeline] DyPE enabled: method={active_dype_config.method}, scale={active_dype_config.dype_scale}")
             try:
-                patch_zimage_rope(self.transformer, self.dype_config, width, height)
+                patch_zimage_rope(self.transformer, active_dype_config, width, height)
                 dype_patched = True
                 logger.info(f"[Pipeline] DyPE patched transformer for {width}x{height}")
             except Exception as e:
@@ -1250,8 +1341,16 @@ class ZImagePipeline:
                 timestep = t.expand(latents.shape[0])
                 timestep = (1000 - timestep) / 1000
 
-                # Handle CFG
-                apply_cfg = guidance_scale > 0
+                # Calculate denoising progress (0 to 1) for CFG truncation
+                progress = timestep[0].item()
+
+                # Handle CFG with optional truncation
+                # CFG truncation: disable CFG after cfg_truncation fraction of progress
+                current_cfg_scale = guidance_scale
+                if cfg_truncation < 1.0 and progress > cfg_truncation:
+                    current_cfg_scale = 0.0
+
+                apply_cfg = current_cfg_scale > 0
 
                 if apply_cfg:
                     latent_input = latents.to(dtype).repeat(2, 1, 1, 1)
@@ -1291,13 +1390,27 @@ class ZImagePipeline:
                     if torch.cuda.is_available():
                         torch.cuda.empty_cache()
 
-                # Process output
+                # Process output with CFG
                 if apply_cfg:
                     pos_out = model_output[:1]
                     neg_out = model_output[1:]
                     noise_pred = []
                     for pos, neg in zip(pos_out, neg_out):
-                        pred = pos.float() + guidance_scale * (pos.float() - neg.float())
+                        pos_f = pos.float()
+                        neg_f = neg.float()
+                        # Apply CFG: positive + scale * (positive - negative)
+                        pred = pos_f + current_cfg_scale * (pos_f - neg_f)
+
+                        # CFG normalization: clamp combined norm relative to positive norm
+                        if cfg_normalization > 0:
+                            pos_norm = torch.linalg.vector_norm(pos_f)
+                            pred_norm = torch.linalg.vector_norm(pred)
+                            max_allowed_norm = pos_norm * cfg_normalization
+                            # Avoid division by zero
+                            pred_norm = torch.where(pred_norm < 1e-6, torch.ones_like(pred_norm), pred_norm)
+                            scale_factor = torch.clamp(max_allowed_norm / pred_norm, max=1.0)
+                            pred = pred * scale_factor
+
                         noise_pred.append(pred)
                     noise_pred = torch.stack(noise_pred, dim=0)
                 else:
@@ -1307,7 +1420,7 @@ class ZImagePipeline:
                 if use_slg:
                     noise_pred_skip = torch.stack([o.float() for o in model_output_skip], dim=0)
                     # For Z-Image (no CFG), SLG formula: pred = pred_cond + scale * (pred_cond - pred_skip)
-                    noise_pred = slg.guide(noise_pred, noise_pred_skip, cfg_scale=guidance_scale)
+                    noise_pred = slg.guide(noise_pred, noise_pred_skip, cfg_scale=current_cfg_scale)
 
                 noise_pred = noise_pred.squeeze(2)
 
@@ -1454,6 +1567,8 @@ class ZImagePipeline:
         callback: Optional[Callable[[int, int, torch.Tensor], None]] = None,
         shift: Optional[float] = None,
         long_prompt_mode: str = "truncate",
+        cfg_normalization: float = 0.0,
+        cfg_truncation: float = 1.0,
     ) -> Union[Image.Image, List[Image.Image], torch.Tensor]:
         """
         Generate an image from pre-computed embeddings.
@@ -1472,6 +1587,8 @@ class ZImagePipeline:
             latents: Pre-generated latents (optional)
             output_type: Output format ("pil", "latent", or "pt")
             callback: Optional callback for progress updates
+            cfg_normalization: CFG norm clamping (0.0 = disabled, typical: 1.0-2.0)
+            cfg_truncation: CFG truncation threshold (1.0 = never, typical: 0.5-0.8)
 
         Returns:
             Generated image(s) in specified format
@@ -1561,6 +1678,14 @@ class ZImagePipeline:
             )
             logger.info(f"[Pipeline] Calculated shift/mu for resolution: {mu:.4f}")
         self.scheduler.sigma_min = 0.0
+        # IMPORTANT: For diffusers FlowMatchEulerDiscreteScheduler, when use_dynamic_shifting=False,
+        # set_timesteps() ignores the mu parameter and uses self.shift instead.
+        # Diffusers uses set_shift() method (shift property is read-only).
+        # Our FlowMatchScheduler uses direct attribute assignment.
+        if hasattr(self.scheduler, 'set_shift'):
+            self.scheduler.set_shift(mu)  # diffusers scheduler
+        elif hasattr(self.scheduler, 'shift'):
+            self.scheduler.shift = mu  # our FlowMatchScheduler
         self.scheduler.set_timesteps(num_inference_steps, device=device, mu=mu)
         timesteps = self.scheduler.timesteps
 
@@ -1570,7 +1695,15 @@ class ZImagePipeline:
             timestep = t.expand(latents.shape[0])
             timestep = (1000 - timestep) / 1000
 
-            apply_cfg = guidance_scale > 0
+            # Calculate denoising progress (0 to 1) for CFG truncation
+            progress = timestep[0].item()
+
+            # Handle CFG with optional truncation
+            current_cfg_scale = guidance_scale
+            if cfg_truncation < 1.0 and progress > cfg_truncation:
+                current_cfg_scale = 0.0
+
+            apply_cfg = current_cfg_scale > 0
 
             if apply_cfg:
                 latent_input = latents.to(dtype).repeat(2, 1, 1, 1)
@@ -1595,7 +1728,19 @@ class ZImagePipeline:
                 neg_out = model_output[1:]
                 noise_pred = []
                 for pos, neg in zip(pos_out, neg_out):
-                    pred = pos.float() + guidance_scale * (pos.float() - neg.float())
+                    pos_f = pos.float()
+                    neg_f = neg.float()
+                    pred = pos_f + current_cfg_scale * (pos_f - neg_f)
+
+                    # CFG normalization
+                    if cfg_normalization > 0:
+                        pos_norm = torch.linalg.vector_norm(pos_f)
+                        pred_norm = torch.linalg.vector_norm(pred)
+                        max_allowed_norm = pos_norm * cfg_normalization
+                        pred_norm = torch.where(pred_norm < 1e-6, torch.ones_like(pred_norm), pred_norm)
+                        scale_factor = torch.clamp(max_allowed_norm / pred_norm, max=1.0)
+                        pred = pred * scale_factor
+
                     noise_pred.append(pred)
                 noise_pred = torch.stack(noise_pred, dim=0)
             else:

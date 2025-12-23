@@ -1,6 +1,6 @@
 # cli flags reference
 
-*last updated: 2025-12-22*
+*last updated: 2025-12-23*
 
 Shared between `web/server.py` and `scripts/generate.py`.
 
@@ -72,6 +72,8 @@ Shared between `web/server.py` and `scripts/generate.py`.
 | `--height` | Image height in pixels (default: 1024, must be divisible by 16) |
 | `--steps` | Inference steps (default: 9) |
 | `--guidance-scale` | CFG scale (default: 0.0) |
+| `--cfg-normalization` | CFG norm clamping (0.0 = disabled, 1.0-2.0 typical). Prevents over-amplification. |
+| `--cfg-truncation` | CFG truncation threshold (1.0 = never, 0.5-0.8 typical). Stops CFG at this progress. |
 | `--shift` | Scheduler shift/mu (default: 3.0) |
 | `--seed` | Random seed |
 | `--img2img` | Input image path for img2img generation |

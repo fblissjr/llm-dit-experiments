@@ -96,6 +96,9 @@ class RuntimeConfig:
     # Precision
     torch_dtype: str = "bfloat16"
 
+    # Quantization
+    quantization: str = "none"  # none, 4bit, 8bit, int8_dynamic
+
     # Optimization flags
     cpu_offload: bool = False
     flash_attn: bool = False
@@ -126,6 +129,8 @@ class RuntimeConfig:
     width: int = 1024
     steps: int = 9
     guidance_scale: float = 0.0
+    cfg_normalization: float = 0.0  # CFG norm clamping (0 = disabled)
+    cfg_truncation: float = 1.0  # CFG truncation threshold (1.0 = never)
     seed: int | None = None  # Random seed for reproducibility
     negative_prompt: str | None = None  # Negative prompt for CFG
     enable_thinking: bool = True  # DiffSynth always uses empty think block
@@ -393,6 +398,18 @@ def create_base_parser(
         choices=["bfloat16", "float16", "float32"],
         default=None,
         help="Model precision (default: bfloat16)",
+    )
+    opt_group.add_argument(
+        "--quantization",
+        type=str,
+        choices=["none", "4bit", "8bit", "int8_dynamic"],
+        default=None,
+        help=(
+            "Text encoder quantization: "
+            "none (default), "
+            "4bit/8bit (BitsAndBytes), "
+            "int8_dynamic (torchao, ~50%% VRAM reduction)"
+        ),
     )
 
     # PyTorch-native components
@@ -837,6 +854,22 @@ def create_base_parser(
             help="Negative prompt for CFG",
         )
         gen_group.add_argument(
+            "--cfg-normalization",
+            type=float,
+            default=None,
+            help="CFG norm clamping factor (0.0 = disabled, typical: 1.0-2.0). "
+            "Clamps combined prediction norm relative to positive prediction. "
+            "Prevents CFG from over-amplifying. Useful for non-distilled models.",
+        )
+        gen_group.add_argument(
+            "--cfg-truncation",
+            type=float,
+            default=None,
+            help="CFG truncation threshold (1.0 = never, typical: 0.5-0.8). "
+            "Stops applying CFG after this fraction of denoising progress. "
+            "E.g., 0.7 means no CFG for the final 30%%. Reduces late-stage artifacts.",
+        )
+        gen_group.add_argument(
             "--seed",
             type=int,
             default=None,
@@ -913,12 +946,15 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
             config.encoder_device = toml_config.encoder.device
             config.torch_dtype = toml_config.encoder.torch_dtype
             config.hidden_layer = toml_config.encoder.hidden_layer
+            config.quantization = toml_config.encoder.quantization
 
             # Generation defaults from config
             config.height = toml_config.generation.height
             config.width = toml_config.generation.width
             config.steps = toml_config.generation.num_inference_steps
             config.guidance_scale = toml_config.generation.guidance_scale
+            config.cfg_normalization = getattr(toml_config.generation, 'cfg_normalization', 0.0)
+            config.cfg_truncation = getattr(toml_config.generation, 'cfg_truncation', 1.0)
             config.enable_thinking = toml_config.generation.enable_thinking
             config.default_template = toml_config.generation.default_template
 
@@ -1087,6 +1123,8 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
         config.compile = True
     if getattr(args, 'torch_dtype', None) is not None:
         config.torch_dtype = args.torch_dtype
+    if getattr(args, 'quantization', None) is not None:
+        config.quantization = args.quantization
 
     # Scheduler overrides
     if getattr(args, 'shift', None) is not None:
@@ -1243,6 +1281,10 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
         config.seed = args.seed
     if getattr(args, 'negative_prompt', None) is not None:
         config.negative_prompt = args.negative_prompt
+    if getattr(args, 'cfg_normalization', None) is not None:
+        config.cfg_normalization = args.cfg_normalization
+    if getattr(args, 'cfg_truncation', None) is not None:
+        config.cfg_truncation = args.cfg_truncation
 
     # Server overrides
     if getattr(args, 'host', None) is not None:

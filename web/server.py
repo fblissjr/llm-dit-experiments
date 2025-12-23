@@ -83,6 +83,8 @@ class GenerateRequest(BaseModel):
     seed: Optional[int] = None
     template: Optional[str] = None
     guidance_scale: float = 0.0
+    cfg_normalization: float = 0.0  # CFG norm clamping (0 = disabled)
+    cfg_truncation: float = 1.0  # CFG truncation threshold (1.0 = never)
     shift: float = 3.0  # Scheduler shift parameter
     long_prompt_mode: str = "interpolate"  # truncate/interpolate/pool/attention_pool
     hidden_layer: int = -2  # Which hidden layer to extract (-1 to -35, Qwen3-4B has 36 layers)
@@ -793,6 +795,8 @@ async def vl_generate(request: VLGenerateRequest):
             width=request.width,
             num_inference_steps=request.steps,
             guidance_scale=request.guidance_scale,
+            cfg_normalization=request.cfg_normalization,
+            cfg_truncation=request.cfg_truncation,
             shift=request.shift,
             generator=generator,
         )
@@ -1001,7 +1005,8 @@ async def get_generation_config():
 async def get_resolution_config():
     """Get resolution constraints for client-side validation.
 
-    Returns VAE multiple, min/max limits, and common presets.
+    Returns VAE multiple, min/max limits, categorized presets, and DyPE config.
+    All resolutions are divisible by 16 (VAE constraint).
     """
     from llm_dit.constants import (
         VAE_MULTIPLE,
@@ -1012,21 +1017,72 @@ async def get_resolution_config():
         ASPECT_RATIOS,
     )
 
-    # Common preset resolutions (all divisible by VAE_MULTIPLE=16)
+    # DyPE configuration
+    DYPE_BASE_RESOLUTION = 1024  # Z-Image training resolution
+
+    def get_dype_recommendation(width: int, height: int) -> dict:
+        """Get DyPE recommendation based on resolution."""
+        max_dim = max(width, height)
+        scale = max_dim / DYPE_BASE_RESOLUTION
+        if scale <= 1.0:
+            return {"recommended": False, "exponent": None}
+        # Scale-based exponent: 0.5 for gentle, 1.0 for standard, 2.0 for aggressive
+        if scale >= 3.0:
+            exponent = 2.0
+        elif scale >= 1.5:
+            exponent = 1.0
+        else:
+            exponent = 0.5
+        return {"recommended": True, "exponent": exponent}
+
+    # Categorized preset resolutions (all divisible by VAE_MULTIPLE=16)
+    # Categories: square, landscape, portrait
     presets = [
-        {"value": "512x512", "label": "512 x 512 (Square)", "width": 512, "height": 512},
-        {"value": "768x768", "label": "768 x 768 (Square)", "width": 768, "height": 768},
-        {"value": "1024x1024", "label": "1024 x 1024 (Square)", "width": 1024, "height": 1024},
-        {"value": "1280x1280", "label": "1280 x 1280 (Square)", "width": 1280, "height": 1280},
-        {"value": "1024x768", "label": "1024 x 768 (4:3 Landscape)", "width": 1024, "height": 768},
-        {"value": "768x1024", "label": "768 x 1024 (3:4 Portrait)", "width": 768, "height": 1024},
-        {"value": "1280x720", "label": "1280 x 720 (16:9 Landscape)", "width": 1280, "height": 720},
-        {"value": "720x1280", "label": "720 x 1280 (9:16 Portrait)", "width": 720, "height": 1280},
-        {"value": "1536x1024", "label": "1536 x 1024 (3:2 Landscape)", "width": 1536, "height": 1024},
-        {"value": "1024x1536", "label": "1024 x 1536 (2:3 Portrait)", "width": 1024, "height": 1536},
-        {"value": "1920x1080", "label": "1920 x 1080 (Full HD)", "width": 1920, "height": 1080},
-        {"value": "2048x2048", "label": "2048 x 2048 (2K Square)", "width": 2048, "height": 2048},
+        # Square (1:1)
+        {"value": "512x512", "label": "512", "width": 512, "height": 512, "category": "square", "ratio": "1:1"},
+        {"value": "768x768", "label": "768", "width": 768, "height": 768, "category": "square", "ratio": "1:1"},
+        {"value": "1024x1024", "label": "1024", "width": 1024, "height": 1024, "category": "square", "ratio": "1:1", "default": True},
+        {"value": "1280x1280", "label": "1280", "width": 1280, "height": 1280, "category": "square", "ratio": "1:1"},
+        {"value": "1536x1536", "label": "1536", "width": 1536, "height": 1536, "category": "square", "ratio": "1:1"},
+        {"value": "1920x1920", "label": "1920", "width": 1920, "height": 1920, "category": "square", "ratio": "1:1"},
+        {"value": "2048x2048", "label": "2K", "width": 2048, "height": 2048, "category": "square", "ratio": "1:1"},
+
+        # Landscape - 16:9
+        {"value": "1280x720", "label": "720p", "width": 1280, "height": 720, "category": "landscape", "ratio": "16:9"},
+        {"value": "1920x1088", "label": "1080p", "width": 1920, "height": 1088, "category": "landscape", "ratio": "16:9"},
+        {"value": "2560x1440", "label": "1440p", "width": 2560, "height": 1440, "category": "landscape", "ratio": "16:9"},
+
+        # Landscape - 3:2
+        {"value": "1536x1024", "label": "1536x1024", "width": 1536, "height": 1024, "category": "landscape", "ratio": "3:2"},
+        {"value": "1920x1280", "label": "1920x1280", "width": 1920, "height": 1280, "category": "landscape", "ratio": "3:2"},
+
+        # Landscape - 4:3
+        {"value": "1024x768", "label": "1024x768", "width": 1024, "height": 768, "category": "landscape", "ratio": "4:3"},
+        {"value": "1280x960", "label": "1280x960", "width": 1280, "height": 960, "category": "landscape", "ratio": "4:3"},
+        {"value": "1600x1200", "label": "1600x1200", "width": 1600, "height": 1200, "category": "landscape", "ratio": "4:3"},
+
+        # Landscape - 21:9 Ultrawide
+        {"value": "1792x768", "label": "Ultrawide", "width": 1792, "height": 768, "category": "landscape", "ratio": "21:9"},
+        {"value": "2560x1088", "label": "UW 1080", "width": 2560, "height": 1088, "category": "landscape", "ratio": "21:9"},
+
+        # Portrait - 9:16
+        {"value": "720x1280", "label": "720p", "width": 720, "height": 1280, "category": "portrait", "ratio": "9:16"},
+        {"value": "1088x1920", "label": "1080p", "width": 1088, "height": 1920, "category": "portrait", "ratio": "9:16"},
+        {"value": "1440x2560", "label": "1440p", "width": 1440, "height": 2560, "category": "portrait", "ratio": "9:16"},
+
+        # Portrait - 2:3
+        {"value": "1024x1536", "label": "1024x1536", "width": 1024, "height": 1536, "category": "portrait", "ratio": "2:3"},
+        {"value": "1280x1920", "label": "1280x1920", "width": 1280, "height": 1920, "category": "portrait", "ratio": "2:3"},
+
+        # Portrait - 3:4
+        {"value": "768x1024", "label": "768x1024", "width": 768, "height": 1024, "category": "portrait", "ratio": "3:4"},
+        {"value": "960x1280", "label": "960x1280", "width": 960, "height": 1280, "category": "portrait", "ratio": "3:4"},
+        {"value": "1200x1600", "label": "1200x1600", "width": 1200, "height": 1600, "category": "portrait", "ratio": "3:4"},
     ]
+
+    # Add DyPE recommendations to each preset
+    for preset in presets:
+        preset["dype"] = get_dype_recommendation(preset["width"], preset["height"])
 
     return {
         "vae_multiple": VAE_MULTIPLE,
@@ -1034,8 +1090,10 @@ async def get_resolution_config():
         "min_resolution": MIN_RESOLUTION,
         "max_resolution": MAX_RESOLUTION,
         "default_resolution": DEFAULT_RESOLUTION,
+        "dype_base_resolution": DYPE_BASE_RESOLUTION,
         "aspect_ratios": ASPECT_RATIOS,
         "presets": presets,
+        "categories": ["square", "landscape", "portrait"],
     }
 
 
@@ -1275,18 +1333,36 @@ async def generate(request: GenerateRequest):
             if fmtt_siglip_device is None:
                 fmtt_siglip_device = "cuda"
 
+        # Convert DyPE request to DyPEConfig if provided
+        dype_config = None
+        if request.dype is not None and request.dype.enabled:
+            from llm_dit.utils.dype import DyPEConfig
+            dype_config = DyPEConfig(
+                enabled=request.dype.enabled,
+                method=request.dype.method,
+                dype_scale=request.dype.dype_scale,
+                dype_exponent=request.dype.dype_exponent,
+                base_shift=request.dype.base_shift,
+                max_shift=request.dype.max_shift,
+                base_resolution=1024,  # Z-Image base
+            )
+
         # Generate image
         logger.info(f"Calling pipeline() with long_prompt_mode={request.long_prompt_mode}, hidden_layer={request.hidden_layer}...")
         if slg_scale > 0 and slg_layers:
             logger.info(f"  SLG: scale={slg_scale}, layers={slg_layers}, range=[{slg_start:.0%}, {slg_stop:.0%}]")
         if fmtt_scale > 0:
             logger.info(f"  FMTT: scale={fmtt_scale}, range=[{fmtt_start:.0%}, {fmtt_stop:.0%}]")
+        if dype_config is not None:
+            logger.info(f"  DyPE: method={dype_config.method}, scale={dype_config.dype_scale}, exponent={dype_config.dype_exponent}")
         image = pipeline(
             request.prompt,
             height=request.height,
             width=request.width,
             num_inference_steps=request.steps,
             guidance_scale=request.guidance_scale,
+            cfg_normalization=request.cfg_normalization,
+            cfg_truncation=request.cfg_truncation,
             shift=request.shift,
             generator=generator,
             template=request.template,
@@ -1308,6 +1384,7 @@ async def generate(request: GenerateRequest):
             fmtt_decode_scale=fmtt_decode_scale,
             fmtt_siglip_model=fmtt_siglip_model,
             fmtt_siglip_device=fmtt_siglip_device,
+            dype_config=dype_config,
         )
 
         gen_time = time.time() - start
@@ -1364,6 +1441,8 @@ async def generate(request: GenerateRequest):
             "shift": request.shift,
             "long_prompt_mode": request.long_prompt_mode,
             "hidden_layer": request.hidden_layer,
+            "cfg_normalization": request.cfg_normalization,
+            "cfg_truncation": request.cfg_truncation,
             "gen_time": gen_time,
             "image_b64": img_b64,
             "formatted_prompt": formatted_prompt,
@@ -2128,6 +2207,7 @@ def load_pipeline(
     encoder_device: str = "auto",
     dit_device: str = "auto",
     vae_device: str = "auto",
+    quantization: str = "none",
     lora_paths: Optional[list] = None,
     lora_scales: Optional[list] = None,
 ):
@@ -2142,6 +2222,7 @@ def load_pipeline(
     logger.info(f"  Encoder device: {encoder_device}")
     logger.info(f"  DiT device: {dit_device}")
     logger.info(f"  VAE device: {vae_device}")
+    logger.info(f"  Quantization: {quantization}")
     start = time.time()
 
     pipeline = ZImagePipeline.from_pretrained(
@@ -2152,6 +2233,7 @@ def load_pipeline(
         encoder_device=encoder_device,
         dit_device=dit_device,
         vae_device=vae_device,
+        quantization=quantization,
     )
 
     load_time = time.time() - start
@@ -2173,6 +2255,7 @@ def load_encoder_only(
     model_path: str,
     templates_dir: Optional[str] = None,
     encoder_device: str = "auto",
+    quantization: str = "none",
 ):
     """Load only the encoder (fast mode for testing on Mac)."""
     global encoder, encoder_only_mode
@@ -2181,6 +2264,7 @@ def load_encoder_only(
 
     logger.info(f"Loading encoder only from {model_path}...")
     logger.info(f"  Encoder device: {encoder_device}")
+    logger.info(f"  Quantization: {quantization}")
     start = time.time()
 
     encoder = ZImageTextEncoder.from_pretrained(
@@ -2188,6 +2272,7 @@ def load_encoder_only(
         templates_dir=templates_dir,
         torch_dtype=torch.bfloat16,
         device_map=encoder_device,
+        quantization=quantization,
     )
 
     encoder_only_mode = True
@@ -2444,6 +2529,98 @@ def load_api_pipeline(
     logger.info(f"  pipeline.transformer: {pipeline.transformer}")
     logger.info(f"  pipeline.vae: {pipeline.vae}")
     logger.info("=" * 60)
+
+
+# =============================================================================
+# Model Management Endpoints
+# =============================================================================
+
+
+@app.get("/api/system/status")
+async def system_status():
+    """Get detailed system status including memory usage and cached models."""
+    import gc
+
+    status = {
+        "pipeline_loaded": pipeline is not None,
+        "encoder_loaded": encoder is not None,
+        "encoder_only_mode": encoder_only_mode,
+        "vl_available": vl_extractor is not None,
+        "qwen_image_available": qwen_image_pipeline is not None,
+        "fmtt_cached": False,
+        "vl_cache_count": len(vl_embeddings_cache),
+        "history_count": len(generation_history),
+    }
+
+    # Check FMTT cache
+    if pipeline is not None and hasattr(pipeline, '_fmtt_reward_fn'):
+        status["fmtt_cached"] = pipeline._fmtt_reward_fn is not None
+
+    # CUDA memory info
+    if torch.cuda.is_available():
+        allocated = torch.cuda.memory_allocated() / 1024**3
+        reserved = torch.cuda.memory_reserved() / 1024**3
+        total = torch.cuda.get_device_properties(0).total_memory / 1024**3
+        free = total - reserved
+        status["cuda"] = {
+            "allocated_gb": round(allocated, 2),
+            "reserved_gb": round(reserved, 2),
+            "total_gb": round(total, 2),
+            "free_gb": round(free, 2),
+        }
+
+    return status
+
+
+@app.post("/api/system/unload-fmtt")
+async def unload_fmtt():
+    """Unload cached FMTT reward function (SigLIP) to free GPU memory."""
+    if pipeline is None:
+        raise HTTPException(status_code=503, detail="Pipeline not loaded")
+
+    if not hasattr(pipeline, 'unload_fmtt'):
+        raise HTTPException(status_code=501, detail="Pipeline version does not support FMTT unloading")
+
+    was_loaded = pipeline.unload_fmtt()
+
+    if was_loaded:
+        # Get updated memory stats
+        if torch.cuda.is_available():
+            free = torch.cuda.mem_get_info()[0] / 1024**3
+            return {"success": True, "message": "FMTT unloaded", "free_gb": round(free, 2)}
+        return {"success": True, "message": "FMTT unloaded"}
+    else:
+        return {"success": False, "message": "No FMTT was cached"}
+
+
+@app.post("/api/system/clear-cache")
+async def clear_cache():
+    """Clear CUDA cache and Python garbage collection."""
+    import gc
+
+    gc.collect()
+
+    freed_gb = 0
+    if torch.cuda.is_available():
+        before = torch.cuda.memory_reserved() / 1024**3
+        torch.cuda.empty_cache()
+        after = torch.cuda.memory_reserved() / 1024**3
+        freed_gb = before - after
+
+    return {
+        "success": True,
+        "freed_gb": round(freed_gb, 2),
+        "message": f"Freed {freed_gb:.2f} GB of cached memory",
+    }
+
+
+@app.delete("/api/system/vl-cache")
+async def clear_vl_cache():
+    """Clear all cached VL embeddings."""
+    global vl_embeddings_cache
+    count = len(vl_embeddings_cache)
+    vl_embeddings_cache = {}
+    return {"cleared": count}
 
 
 def main():

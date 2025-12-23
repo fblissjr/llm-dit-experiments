@@ -201,6 +201,7 @@ class PipelineLoader:
         logger.info(f"  Model: {self.config.model_path}")
         logger.info(f"  Device: {self.config.encoder_device_resolved}")
         logger.info(f"  Dtype: {self.config.torch_dtype}")
+        logger.info(f"  Quantization: {self.config.quantization}")
         logger.info(f"  Templates: {templates_dir}")
         logger.info(f"  Hidden layer: {self.config.hidden_layer}")
         if self.config.embedding_cache:
@@ -214,6 +215,7 @@ class PipelineLoader:
             templates_dir=templates_dir,
             device_map=self.config.encoder_device_resolved,
             torch_dtype=self.config.get_torch_dtype(),
+            quantization=self.config.quantization,
             enable_cache=self.config.embedding_cache,
             cache_size=self.config.cache_size,
         )
@@ -250,6 +252,7 @@ class PipelineLoader:
         logger.info(f"  DiT device: {self.config.dit_device_resolved}")
         logger.info(f"  VAE device: {self.config.vae_device_resolved}")
         logger.info(f"  Dtype: {self.config.torch_dtype}")
+        logger.info(f"  Quantization: {self.config.quantization}")
         logger.info(f"  Templates: {templates_dir}")
         logger.info("-" * 60)
         logger.info("Optimizations:")
@@ -298,6 +301,7 @@ class PipelineLoader:
             encoder_device=self.config.encoder_device_resolved,
             dit_device=self.config.dit_device_resolved,
             vae_device=self.config.vae_device_resolved,
+            quantization=self.config.quantization,
             enable_cache=self.config.embedding_cache,
             cache_size=self.config.cache_size,
             dype_config=dype_config,

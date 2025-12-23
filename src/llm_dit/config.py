@@ -67,11 +67,20 @@ class EncoderConfig:
     - load_in_8bit/load_in_4bit are DEPRECATED
     - Use quantization="8bit" or quantization="4bit" instead
     - Config will auto-migrate legacy fields with a deprecation warning
+
+    Quantization Options:
+    - "none": No quantization (full precision)
+    - "4bit": BitsAndBytes 4-bit quantization (NF4)
+    - "8bit": BitsAndBytes 8-bit quantization (INT8)
+    - "int8_dynamic": PyTorch native int8 dynamic quantization (torchao)
+        - Uses torch.ao.quantization.quantize_dynamic()
+        - ~50% VRAM reduction, well-validated for LLMs
+        - Applied post-load, no BitsAndBytes dependency
     """
 
     device: str = "auto"  # auto, cuda, mps, cpu
     torch_dtype: str = "bfloat16"  # bfloat16, float16, float32
-    quantization: str = "none"  # none, 4bit, 8bit (v5 API)
+    quantization: str = "none"  # none, 4bit, 8bit, int8_dynamic
     cpu_offload: bool = False  # Offload to CPU after encoding
     trust_remote_code: bool = True
     max_length: int = 512
@@ -126,7 +135,8 @@ class EncoderConfig:
         """Get BitsAndBytesConfig for transformers v5.
 
         Returns:
-            BitsAndBytesConfig if quantization is enabled, None otherwise.
+            BitsAndBytesConfig if BitsAndBytes quantization is enabled, None otherwise.
+            Returns None for int8_dynamic (handled separately via post-load quantization).
 
         Note:
             This is the v5-compliant way to configure quantization.
@@ -136,8 +146,11 @@ class EncoderConfig:
                     model_path,
                     quantization_config=config.encoder.get_quantization_config(),
                 )
+
+            For int8_dynamic, use needs_post_load_quantization() and
+            apply_post_load_quantization() instead.
         """
-        if self.quantization == "none":
+        if self.quantization in ("none", "int8_dynamic"):
             return None
 
         try:
@@ -158,8 +171,52 @@ class EncoderConfig:
         else:
             raise ValueError(
                 f"Unknown quantization: {self.quantization}. "
-                f"Valid options: none, 4bit, 8bit"
+                f"Valid options: none, 4bit, 8bit, int8_dynamic"
             )
+
+    def needs_post_load_quantization(self) -> bool:
+        """Check if post-load quantization is needed.
+
+        Returns:
+            True if int8_dynamic quantization should be applied after model loading.
+        """
+        return self.quantization == "int8_dynamic"
+
+    def apply_post_load_quantization(self, model: "torch.nn.Module") -> "torch.nn.Module":
+        """Apply post-load quantization (int8_dynamic) to the model.
+
+        Uses torch.ao.quantization.quantize_dynamic() to apply int8 dynamic
+        quantization to all Linear layers. This provides ~50% VRAM reduction
+        with minimal quality impact for LLMs.
+
+        Args:
+            model: The loaded model to quantize
+
+        Returns:
+            Quantized model (in-place modification)
+
+        Raises:
+            ValueError: If quantization mode is not int8_dynamic
+        """
+        if self.quantization != "int8_dynamic":
+            raise ValueError(
+                f"apply_post_load_quantization() only valid for int8_dynamic, "
+                f"got {self.quantization}"
+            )
+
+        import torch.ao.quantization as tq
+
+        logger.info("Applying int8 dynamic quantization (torchao)...")
+
+        # Quantize all Linear layers to int8
+        model = tq.quantize_dynamic(
+            model,
+            {torch.nn.Linear},
+            dtype=torch.qint8,
+        )
+
+        logger.info("  int8 dynamic quantization applied successfully")
+        return model
 
 
 @dataclass
@@ -200,6 +257,8 @@ class GenerationConfig:
     width: int = 1024
     num_inference_steps: int = 9
     guidance_scale: float = 0.0
+    cfg_normalization: float = 0.0  # CFG norm clamping (0.0 = disabled)
+    cfg_truncation: float = 1.0  # CFG truncation threshold (1.0 = no truncation)
     enable_thinking: bool = True
     default_template: str | None = None
 

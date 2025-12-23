@@ -1,4 +1,4 @@
-last updated: 2025-12-22
+last updated: 2025-12-23
 
 # z-image
 
@@ -46,6 +46,28 @@ The text encoder extracts embeddings from a configurable hidden layer of Qwen3-4
 | Steps | 8-9 | Turbo distilled (non-distilled uses 28+) |
 | Scheduler shift | 3.0 | Flow matching shift parameter |
 | Resolution | 1024x1024 | Default, supports any multiple of 16 |
+
+### scheduler shift behavior
+
+The shift parameter compresses the noise schedule via: `sigma' = shift * sigma / (1 + (shift - 1) * sigma)`
+
+**Why shift changes appear imperceptible in Z-Image-Turbo:**
+
+1. **Turbo distillation**: The model was trained with Decoupled-DMD using shift=3.0 specifically. The distillation process made the model robust to schedule variations within a reasonable range.
+
+2. **Coarse step discretization**: With only 8-9 steps, each step covers ~11% of the trajectory. Small differences in where steps land on the noise curve are overshadowed by the large step size.
+
+3. **Flow matching robustness**: Flow matching predicts velocity directly (not noise), making the velocity field smoother and more tolerant of schedule changes than DDPM-style models.
+
+**Expected behavior at different shift values:**
+
+| Shift Range | Expected Quality |
+|-------------|------------------|
+| < 1.5 | Incomplete denoising, noise artifacts |
+| 2.5 - 4.0 | Sweet spot, minimal visible difference (by design) |
+| > 6.0 | Over-compressed schedule, potential blocky artifacts |
+
+**Bottom line:** Shift imperceptibility within the 2.5-4.0 range is a feature of turbo distillation, not a bug. The default shift=3.0 is optimal for 8-9 step generation.
 
 ### resolution constraints
 
@@ -351,6 +373,237 @@ image = pipe.generate_from_embeddings(embeddings)
 ```
 
 See [distributed.md](../guides/distributed.md) for details.
+
+## performance optimization
+
+### attention backends
+
+The attention backend has the largest impact on inference speed. Z-Image benefits significantly from optimized attention implementations, especially for the 30-layer DiT.
+
+**Priority order (best to worst):**
+
+1. **flash_attn_2** - Best for Ampere+ GPUs (RTX 3090, 4090, A100, etc.)
+   - ~2x speedup over SDPA baseline
+   - Requires manual installation: `pip install flash-attn --no-build-isolation`
+   - Auto-detected when installed and `attention_backend = "auto"`
+   - **Recommended for RTX 4090**
+
+2. **flash_attn_3** - Hopper architecture only (H100, H200)
+   - Further optimized for H100 tensor cores
+   - Requires Hopper GPU and latest flash-attn package
+   - Auto-detected on compatible hardware
+
+3. **sage** - SageAttention INT8 kernel
+   - 15% faster than SDPA (4.41s vs 5.08s per image, RTX 4090)
+   - SSIM 0.98 vs SDPA reference (very close to identical)
+   - Easier to install than Flash Attention
+   - Good fallback when FA2 not available
+   - Incompatible with torch.compile (use without compilation)
+
+4. **xformers** - Flexible attention implementation
+   - Cross-platform, good performance
+   - Well-tested with diffusion models
+   - Install: `pip install xformers`
+
+5. **sdpa** - PyTorch built-in fallback
+   - Always available (no installation needed)
+   - Reasonable performance, used as baseline
+   - Auto-selected when no optimized backend is available
+
+**Configuration:**
+
+```toml
+[default.pytorch]
+attention_backend = "auto"  # recommended - picks best available
+```
+
+**Check available backends:**
+
+```bash
+uv run scripts/profiler.py --show-info
+```
+
+**Run attention benchmark:**
+
+```bash
+uv run experiments/attention_backend_benchmark.py --config config.toml --profile rtx4090
+```
+
+This compares speed AND quality (SSIM, PSNR) for each backend against SDPA reference.
+
+### rtx 4090 optimal settings
+
+The RTX 4090 (Ada Lovelace, 24GB VRAM) is ideal for Z-Image with these settings:
+
+```toml
+[rtx4090]
+# Attention - Flash Attention 2 for best speed
+[rtx4090.pytorch]
+attention_backend = "auto"      # selects flash_attn_2 if installed
+compile = true                  # ~10% speedup after warmup
+embedding_cache = true          # faster repeated prompts in web server
+
+# Precision - RTX 4090 has native BF16 support
+[rtx4090.encoder]
+device = "cuda"
+torch_dtype = "bfloat16"
+
+[rtx4090.pipeline]
+device = "cuda"
+torch_dtype = "bfloat16"
+
+# No offloading needed with 24GB VRAM
+# All components (encoder, DiT, VAE) fit on GPU simultaneously
+```
+
+**Installation for maximum performance:**
+
+```bash
+# Install Flash Attention 2 (requires CUDA toolkit)
+pip install flash-attn --no-build-isolation
+
+# Verify it's detected
+uv run scripts/profiler.py --show-info
+# Should show: "flash_attn_2: available"
+```
+
+**Performance expectations (1024x1024, 9 steps):**
+
+| Configuration | Encode Time | Generate Time | Total | Speedup |
+|---------------|-------------|---------------|-------|---------|
+| SDPA (baseline) | ~2.0s | ~5.1s | ~7.1s | 1.0x |
+| SageAttention | ~2.0s | ~4.4s | ~6.4s | 1.15x |
+| Flash Attention 2 | ~1.0s | ~3.0s | ~4.0s | ~1.8x |
+| FA2 + compile | ~1.0s | ~2.7s | ~3.7s | ~1.9x |
+
+*Benchmark results from RTX 4090, no torch.compile*
+
+### device placement by vram budget
+
+| VRAM | Encoder | DiT | VAE | Notes |
+|------|---------|-----|-----|-------|
+| **24GB+ (RTX 4090, A100)** | CUDA | CUDA | CUDA | Optimal, no offloading |
+| **16GB (RTX 4080)** | CPU | CUDA | CUDA | Encode once, slower first inference |
+| **12GB (RTX 3060)** | CPU | CUDA | CUDA | Add `--quantization 8bit` for encoder |
+| **8GB** | CPU | CUDA | CPU | Requires sequential offload (`--cpu-offload`) |
+| **<8GB** | Not recommended | | | Use distributed inference or cloud GPU |
+
+**Example configurations:**
+
+```toml
+# 24GB - all on GPU (fastest)
+[rtx4090.encoder]
+device = "cuda"
+
+[rtx4090.pipeline]
+device = "cuda"
+
+# 16GB - encoder on CPU
+[rtx4080.encoder]
+device = "cpu"
+
+[rtx4080.pipeline]
+device = "cuda"
+
+# 12GB - encoder on CPU with quantization
+[rtx3060.encoder]
+device = "cpu"
+quantization = "8bit"
+
+[rtx3060.pipeline]
+device = "cuda"
+
+# 8GB - sequential CPU offload
+[rtx3060ti]
+# Use CLI flag: --cpu-offload
+```
+
+### torch.compile
+
+PyTorch 2.0+ compilation can provide ~10% speedup but has tradeoffs:
+
+**Benefits:**
+- ~10% faster generation after warmup
+- Good for web servers or batch processing
+- Works best with static shapes (same resolution repeatedly)
+
+**Drawbacks:**
+- First inference is slow (compilation overhead)
+- May increase memory usage slightly
+- Can cause issues with dynamic shapes
+
+**Configuration:**
+
+```toml
+[default.pytorch]
+compile = true                  # enable torch.compile
+compile_mode = "reduce-overhead"  # default mode
+```
+
+**When to use:**
+- Running a web server with repeated generations
+- Batch processing many images at same resolution
+- After warmup cost is acceptable
+
+**When to skip:**
+- One-off generations or quick tests
+- Constantly changing resolutions
+- Limited VRAM (compilation uses extra memory)
+
+### embedding cache
+
+For web servers handling repeated prompts, enable embedding cache to avoid re-encoding:
+
+```toml
+[default.pytorch]
+embedding_cache = true
+```
+
+This caches text embeddings by prompt hash. Second generation with same prompt skips encoding entirely.
+
+**Benefits:**
+- Near-instant encoding on cache hits
+- Useful for template-based workflows
+- Minimal memory overhead (caches embeddings only, not images)
+
+**Not useful for:**
+- CLI one-off generations
+- Unique prompts every time
+- Very limited RAM (cache is in-memory)
+
+### benchmarking your setup
+
+Use the profiler to find optimal settings for your hardware:
+
+```bash
+# Show available backends and current config
+uv run scripts/profiler.py --show-info
+
+# Test encoding and generation speed
+uv run scripts/profiler.py \
+  --model-path /path/to/z-image \
+  --tests encode,generate
+
+# Compare multiple configurations
+uv run scripts/profiler.py \
+  --model-path /path/to/z-image \
+  --sweep
+
+# Test specific backend
+uv run scripts/profiler.py \
+  --model-path /path/to/z-image \
+  --attention-backend flash_attn_2 \
+  --tests generate
+```
+
+The profiler will show:
+- Available attention backends
+- Encode time (text -> embeddings)
+- Generate time (embeddings -> image)
+- Peak VRAM usage
+- Comparison across configurations
+
+See [profiler.md](../guides/profiler.md) for detailed usage.
 
 ## memory requirements
 

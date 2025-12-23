@@ -84,6 +84,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `ZImageDyPERoPE` assigned `self.original_embedder` before `super().__init__()`
   - PyTorch's nn.Module requires parent init before attribute assignment
   - Fixed initialization order: extract values to local vars, call super().__init__(), then assign attributes
+- Scheduler shift parameter ignored: diffusers `FlowMatchEulerDiscreteScheduler` has read-only `shift` property
+  - `set_timesteps(mu=...)` was ignored when `use_dynamic_shifting=False`
+  - Fixed to use `set_shift()` method for diffusers scheduler, direct assignment for our FlowMatchScheduler
+  - Applied in `img2img()`, `__call__()`, and `generate_from_embeddings()` methods
+- Attention backend benchmark not using diffusers attention dispatch
+  - Benchmark only set our `attention_forward()` backend, not diffusers transformer attention
+  - Fixed by using `attention_backend()` context manager from `diffusers.models.attention_dispatch`
+  - Added config compile setting reading (previously hardcoded `--compile default`)
+  - Added SAGE/xFormers incompatibility check for torch.compile
+- Missing `cfg_normalization` and `cfg_truncation` in `GenerationConfig`
+  - Config file had these parameters but dataclass was missing them
+  - Fixed by adding both fields with defaults (0.0 and 1.0 respectively)
 
 ## [0.6.0]
 

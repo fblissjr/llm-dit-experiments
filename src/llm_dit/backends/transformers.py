@@ -71,6 +71,7 @@ class TransformersBackend:
         tokenizer_subfolder: str = "tokenizer",
         config: BackendConfig | None = None,
         quantization_config: "BitsAndBytesConfig | None" = None,
+        quantization: str | None = None,
         cache: Optional[EmbeddingCache] = None,
         enable_cache: bool = False,
         cache_size: int = 100,
@@ -88,6 +89,8 @@ class TransformersBackend:
             config: Optional BackendConfig, created from defaults if not provided
             quantization_config: Optional BitsAndBytesConfig for quantization (v5 API).
                 Use this instead of the deprecated load_in_8bit/load_in_4bit flags.
+            quantization: Quantization mode string (none, 4bit, 8bit, int8_dynamic).
+                int8_dynamic uses torch.ao for post-load quantization (~50% VRAM savings).
             cache: Optional pre-configured EmbeddingCache instance
             enable_cache: If True and cache is None, create a new cache (default: False)
             cache_size: Maximum number of cached embeddings (default: 100)
@@ -111,6 +114,12 @@ class TransformersBackend:
                 quantization_config=quantization_config,
             )
 
+            # With int8_dynamic quantization (torchao)
+            backend = TransformersBackend.from_pretrained(
+                "/path/to/model",
+                quantization="int8_dynamic",
+            )
+
             # Custom subfolder layout
             backend = TransformersBackend.from_pretrained(
                 "/path/to/model",
@@ -120,6 +129,10 @@ class TransformersBackend:
         """
         if config is None:
             config = BackendConfig.for_z_image(model_path, subfolder=model_subfolder)
+
+        # Override quantization if provided as argument
+        if quantization is not None:
+            config.quantization = quantization
 
         # Merge kwargs with config
         torch_dtype = kwargs.pop("torch_dtype", config.get_torch_dtype())
@@ -181,6 +194,10 @@ class TransformersBackend:
             f"hidden_size={model.config.hidden_size}, "
             f"num_layers={model.config.num_hidden_layers}"
         )
+
+        # Apply post-load quantization if needed (int8_dynamic)
+        if config.needs_post_load_quantization():
+            model = config.apply_post_load_quantization(model)
 
         # Set up embedding cache
         if cache is None and enable_cache:
