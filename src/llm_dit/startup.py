@@ -133,11 +133,20 @@ class PipelineLoader:
 
         # Attention backend (if specified)
         if self.config.attention_backend and self.config.attention_backend != "auto":
-            logger.info(f"Setting attention backend to {self.config.attention_backend}...")
+            # Map our config names to diffusers names
+            backend_map = {
+                "sdpa": "native",  # diffusers calls SDPA "native"
+                "flash_attn_2": "flash",
+                "flash_attn_3": "flash",  # diffusers may not distinguish
+                "xformers": "xformers",
+                "sage": "sage",
+            }
+            diffusers_backend = backend_map.get(self.config.attention_backend, self.config.attention_backend)
+            logger.info(f"Setting attention backend to {self.config.attention_backend} (diffusers: {diffusers_backend})...")
             try:
                 if hasattr(pipeline.transformer, 'set_attention_backend'):
-                    pipeline.transformer.set_attention_backend(self.config.attention_backend)
-                    logger.info(f"  Attention backend set to {self.config.attention_backend}")
+                    pipeline.transformer.set_attention_backend(diffusers_backend)
+                    logger.info(f"  Attention backend set to {diffusers_backend}")
             except Exception as e:
                 logger.warning(f"  Failed to set attention backend: {e}")
 

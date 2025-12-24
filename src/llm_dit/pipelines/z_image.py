@@ -1254,8 +1254,12 @@ class ZImagePipeline:
                     fmtt_reward_fn = self._fmtt_reward_fn
                     logger.info("[Pipeline] Reusing cached SigLIP for FMTT")
                 else:
-                    # Check available VRAM before loading SigLIP
-                    if torch.cuda.is_available():
+                    # Determine SigLIP device first (use param, or fall back to pipeline device)
+                    siglip_device = fmtt_siglip_device if fmtt_siglip_device else device
+
+                    # Only check VRAM if SigLIP will be loaded on CUDA
+                    siglip_on_cuda = 'cuda' in str(siglip_device)
+                    if siglip_on_cuda and torch.cuda.is_available():
                         free_mem = torch.cuda.mem_get_info()[0] / 1024**3
                         logger.info(f"[Pipeline] FMTT requested, {free_mem:.1f}GB VRAM free")
 
@@ -1279,12 +1283,12 @@ class ZImagePipeline:
                         if free_mem < 4.0:
                             raise RuntimeError(
                                 f"Insufficient VRAM for FMTT: {free_mem:.1f}GB free, need ~4GB for SigLIP. "
-                                f"Try: 1) Set encoder_device='cpu' in config, or "
+                                f"Try: 1) Set fmtt_siglip_device='cpu' in config, or "
                                 f"2) Disable FMTT (fmtt_scale=0)"
                             )
+                    elif not siglip_on_cuda:
+                        logger.info(f"[Pipeline] FMTT SigLIP will run on {siglip_device} (no VRAM needed)")
 
-                    # Determine SigLIP device (use param, or fall back to pipeline device)
-                    siglip_device = fmtt_siglip_device if fmtt_siglip_device else device
                     logger.info(f"[Pipeline] Loading SigLIP for FMTT: {fmtt_siglip_model} on {siglip_device}")
                     fmtt_reward_fn = DifferentiableSigLIP(
                         model_name=fmtt_siglip_model,
