@@ -653,39 +653,22 @@ class ZImageDyPERoPE(DyPEPosEmbed):
             ids: Position indices tensor of shape (B, seq_len, 3)
 
         Returns:
-            RoPE embeddings in Z-Image format
+            RoPE embeddings in Z-Image format (complex64)
+
+        Note:
+            The diffusers RopeEmbedder returns complex64 embeddings using torch.polar.
+            Currently, we delegate to the original embedder for all cases because
+            reimplementing the exact complex format with DyPE modulation requires
+            matching diffusers' internal apply_rotary_emb function.
+
+            TODO: Implement DyPE-modulated complex embeddings that match the
+            diffusers format: torch.polar(ones, angles) -> complex64
         """
-        # If DyPE disabled or scale is 1.0, use original embedder
-        if not self.config.enabled or self.scale_hint <= 1.0:
-            return self.original_embedder(ids)
-
-        # Rescale coordinates if needed
-        pos = self._resize_rope_grid(ids.float())
-        freqs_dtype = torch.bfloat16 if pos.device.type == "cuda" else torch.float32
-
-        # Compute components with Vision YaRN + DyPE modulation
-        components = self.get_components(pos, freqs_dtype)
-
-        # Format output for Z-Image (rotation matrix format)
-        emb_parts = []
-        for cos, sin in components:
-            # cos, sin: (..., D) interleaved [c0, c0, c1, c1...]
-            # Reshape to (..., D/2, 2)
-            cos_reshaped = cos.view(*cos.shape[:-1], -1, 2)[..., :1]
-            sin_reshaped = sin.view(*sin.shape[:-1], -1, 2)[..., :1]
-
-            # Build rotation matrix columns
-            # Row 1: [cos, -sin]
-            row1 = torch.cat([cos_reshaped, -sin_reshaped], dim=-1)
-            # Row 2: [sin, cos]
-            row2 = torch.cat([sin_reshaped, cos_reshaped], dim=-1)
-            # Stack to get 2x2 rotation matrix
-            matrix = torch.stack([row1, row2], dim=-2)
-            emb_parts.append(matrix)
-
-        # Concatenate along feature dimension
-        emb = torch.cat(emb_parts, dim=-3)
-        return emb.unsqueeze(1).to(ids.device)
+        # Always delegate to original embedder for now
+        # The DyPE timestep modulation needs to be applied differently
+        # (modifying how frequencies are computed in the original embedder)
+        # rather than replacing the embedder output format
+        return self.original_embedder(ids)
 
 
 def patch_zimage_rope(
@@ -764,3 +747,37 @@ def set_zimage_timestep(transformer: nn.Module, sigma: float) -> None:
         transformer.rope_embedder, ZImageDyPERoPE
     ):
         transformer.rope_embedder.set_timestep(sigma)
+
+
+def unpatch_zimage_rope(transformer: nn.Module) -> nn.Module:
+    """Restore original rope_embedder on Z-Image transformer.
+
+    If the transformer was patched with DyPE, this restores the original
+    rope_embedder. Safe to call even if not patched (no-op).
+
+    Args:
+        transformer: Z-Image transformer (possibly with DyPE patch)
+
+    Returns:
+        The transformer with original rope_embedder restored
+    """
+    if hasattr(transformer, "rope_embedder") and isinstance(
+        transformer.rope_embedder, ZImageDyPERoPE
+    ):
+        original = transformer.rope_embedder.original_embedder
+        transformer.rope_embedder = original
+    return transformer
+
+
+def is_zimage_patched(transformer: nn.Module) -> bool:
+    """Check if Z-Image transformer has DyPE patch applied.
+
+    Args:
+        transformer: Z-Image transformer
+
+    Returns:
+        True if DyPE patch is currently applied
+    """
+    return hasattr(transformer, "rope_embedder") and isinstance(
+        transformer.rope_embedder, ZImageDyPERoPE
+    )

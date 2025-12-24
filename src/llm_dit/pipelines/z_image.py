@@ -1210,11 +1210,19 @@ class ZImagePipeline:
 
         # Patch transformer with DyPE if enabled
         # Per-request dype_config overrides self.dype_config
+        # Always unpatch first to ensure clean state from previous generations
+        from llm_dit.utils.dype import patch_zimage_rope, set_zimage_timestep, unpatch_zimage_rope
+        unpatch_zimage_rope(self.transformer)
+
         active_dype_config = dype_config if dype_config is not None else self.dype_config
         dype_patched = False
         if active_dype_config is not None and active_dype_config.enabled:
-            from llm_dit.utils.dype import patch_zimage_rope, set_zimage_timestep
             logger.info(f"[Pipeline] DyPE enabled: method={active_dype_config.method}, scale={active_dype_config.dype_scale}")
+            # Note: DyPE frequency modulation is currently disabled due to output format
+            # incompatibility with diffusers' complex64 RoPE embeddings. The patch is
+            # applied but delegates to the original embedder. High-res generation still
+            # works via multipass (recommended) or the transformer's native PI support.
+            logger.warning("[Pipeline] DyPE frequency modulation not yet implemented for Z-Image (diffusers format)")
             try:
                 patch_zimage_rope(self.transformer, active_dype_config, width, height)
                 dype_patched = True
@@ -2073,6 +2081,11 @@ class ZImagePipeline:
             logger.info(f"Adjusted final_height to {final_height}")
 
         logger.info(f"[Multipass] Starting {len(passes)}-pass generation: {final_width}x{final_height}")
+
+        # Pop parameters that are explicitly passed to avoid duplicate argument errors
+        # These can be overridden per-pass via pass_config
+        kwargs.pop("guidance_scale", None)
+        kwargs.pop("shift", None)
 
         result = None
         for pass_idx, pass_config in enumerate(passes):
