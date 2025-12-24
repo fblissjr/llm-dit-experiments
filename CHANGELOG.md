@@ -70,6 +70,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Sweep script: `experiments/sweep_hidden_layer_cfg.sh` with `--quick`, `--with-shift` options
 
 ### Fixed
+- DyPE multipass "got multiple values for keyword argument 'guidance_scale'" error
+  - `generate_multipass()` passed `guidance_scale` both explicitly and via `**kwargs`
+  - Fixed by popping conflicting parameters from kwargs before the multipass loop
+- DyPE/FMTT tensor dimension mismatch error at high resolutions
+  - DyPE patch persisted across requests with stale state from previous high-res runs
+  - Added `unpatch_zimage_rope()` function to restore original embedder
+  - Pipeline now unpatches at start of each generation for clean state
+  - DyPE frequency modulation disabled (delegates to original embedder) until complex64 format implemented
+  - Warning logged when DyPE enabled: "DyPE frequency modulation not yet implemented for Z-Image"
 - CUDA OOM from dtype parameter mismatch: diffusers uses `torch_dtype`, transformers uses `dtype`
   - Diffusers silently ignores unknown kwargs, causing float32 loading (2x memory)
   - Fixed all diffusers calls to use `torch_dtype`, transformers calls to use `dtype`

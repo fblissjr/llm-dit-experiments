@@ -1,8 +1,18 @@
 # dype (dynamic position extrapolation)
 
-*last updated: 2025-12-22*
+*last updated: 2025-12-24*
 
 DyPE enables generation at resolutions beyond the model's training resolution (1024x1024) by dynamically scaling the RoPE position encodings. Essential for high-resolution generation (2K, 4K) without retraining.
+
+## current status
+
+**DyPE frequency modulation is not yet implemented for Z-Image.** The diffusers `ZImageTransformer2DModel` uses complex64 RoPE embeddings (via `torch.polar`) which requires matching the exact output format. The current implementation delegates to the original embedder.
+
+**Recommended approach for high-resolution generation:** Use **multipass** mode which works well without frequency modulation:
+- Two-pass: 512px first pass, then img2img upscale to target
+- Three-pass: 256px -> 512px -> target
+
+The multipass approach produces excellent results and avoids the need for DyPE frequency extrapolation.
 
 ## why dype is needed
 
@@ -91,23 +101,51 @@ DyPE works well with:
 - **Multi-pass rendering**: Generate ultra-high-res in overlapping passes
 - **CPU offload** (`--cpu-offload`): Save VRAM for large DiT models
 
+## multipass generation (recommended)
+
+For high-resolution generation, use multipass mode instead of single-pass DyPE:
+
+```bash
+# Two-pass 1080p generation
+uv run scripts/generate.py \
+  --model-path /path/to/z-image \
+  --dype \
+  --dype-multipass twopass \
+  --dype-pass2-strength 0.5 \
+  --width 1920 --height 1088 \
+  "A detailed landscape"
+
+# Three-pass 4K generation
+uv run scripts/generate.py \
+  --model-path /path/to/z-image \
+  --dype \
+  --dype-multipass threepass \
+  --dype-pass2-strength 0.5 \
+  --width 4096 --height 4096 \
+  --tiled-vae \
+  "An ultra-detailed cityscape"
+```
+
+**Multipass modes:**
+- `single`: Direct generation at target resolution (frequency modulation not yet working)
+- `twopass`: Half-res first pass, then img2img refinement
+- `threepass`: Quarter-res -> half-res -> full-res
+
+**pass2_strength:** Controls how much the refinement passes change the image (0.3-0.7 recommended).
+
 ## python api
 
 ```python
-from llm_dit.utils.dype import VisionYaRNDyPE
+from llm_dit.pipelines import ZImagePipeline
 
-dype = VisionYaRNDyPE(
-    model=text_encoder.model,
-    scale=2.0,
-    alpha=1.0,
-    beta=32.0
-)
-dype.apply()
-
-result = pipeline(
+# Multipass generation (recommended)
+image = pipeline.generate_multipass(
     prompt="Your prompt",
-    width=2048,
-    height=2048,
-    num_inference_steps=9
+    final_width=2048,
+    final_height=2048,
+    passes=[
+        {"scale": 0.5, "steps": 9},  # 1024x1024 first pass
+        {"scale": 1.0, "steps": 9, "strength": 0.5},  # 2048x2048 refinement
+    ],
 )
 ```
