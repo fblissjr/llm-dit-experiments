@@ -62,6 +62,11 @@ class DifferentiableSigLIP:
 
         logger.info(f"Loading SigLIP2 model: {model_name}")
 
+        # Force float32 on CPU - bfloat16 doesn't support all gradient ops on CPU
+        if device == "cpu" and dtype == torch.bfloat16:
+            logger.info("  Using float32 on CPU for gradient support")
+            dtype = torch.float32
+
         self.processor = AutoProcessor.from_pretrained(model_name)
         self.model = AutoModel.from_pretrained(model_name).to(device, dtype)
         self.model.eval()
