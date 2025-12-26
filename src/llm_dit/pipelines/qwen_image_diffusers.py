@@ -158,8 +158,11 @@ class QwenImageDiffusersPipeline:
                     device_map="cpu",  # Load to CPU first
                     low_cpu_mem_usage=True,
                 )
-                logger.info("Enabling sequential CPU offload for edit pipeline")
-                edit_pipe.enable_sequential_cpu_offload()
+                # Use model_cpu_offload (faster) instead of sequential_cpu_offload (very slow)
+                # model_cpu_offload: moves whole components (encoder/transformer/vae) between CPU/GPU
+                # sequential_cpu_offload: moves every layer - 10-100x slower
+                logger.info("Enabling model CPU offload for edit pipeline")
+                edit_pipe.enable_model_cpu_offload()
             else:
                 edit_pipe = QwenImageEditPlusPipeline.from_pretrained(
                     resolved_edit_path,
@@ -189,17 +192,22 @@ class QwenImageDiffusersPipeline:
         from diffusers import QwenImageLayeredPipeline
 
         logger.info(f"Loading QwenImageLayeredPipeline from {model_path}")
-        decompose_pipe = QwenImageLayeredPipeline.from_pretrained(
-            str(model_path),
-            torch_dtype=torch_dtype,  # diffusers uses torch_dtype
-        )
-
-        # Enable CPU offload for memory efficiency
         if cpu_offload:
-            logger.info("Enabling sequential CPU offload")
-            decompose_pipe.enable_sequential_cpu_offload()
+            # Load to CPU first to avoid VRAM spike
+            decompose_pipe = QwenImageLayeredPipeline.from_pretrained(
+                str(model_path),
+                torch_dtype=torch_dtype,
+                device_map="cpu",
+                low_cpu_mem_usage=True,
+            )
+            logger.info("Enabling model CPU offload")
+            decompose_pipe.enable_model_cpu_offload()
             cpu_offload_enabled = True
         else:
+            decompose_pipe = QwenImageLayeredPipeline.from_pretrained(
+                str(model_path),
+                torch_dtype=torch_dtype,
+            )
             decompose_pipe.to(device)
             cpu_offload_enabled = False
 
@@ -208,13 +216,19 @@ class QwenImageDiffusersPipeline:
         if load_edit_model:
             logger.info(f"Loading QwenImageEditPlusPipeline from {resolved_edit_path}")
             from diffusers import QwenImageEditPlusPipeline
-            edit_pipe = QwenImageEditPlusPipeline.from_pretrained(
-                resolved_edit_path,
-                torch_dtype=torch_dtype,  # diffusers uses torch_dtype
-            )
             if cpu_offload:
-                edit_pipe.enable_sequential_cpu_offload()
+                edit_pipe = QwenImageEditPlusPipeline.from_pretrained(
+                    resolved_edit_path,
+                    torch_dtype=torch_dtype,
+                    device_map="cpu",
+                    low_cpu_mem_usage=True,
+                )
+                edit_pipe.enable_model_cpu_offload()
             else:
+                edit_pipe = QwenImageEditPlusPipeline.from_pretrained(
+                    resolved_edit_path,
+                    torch_dtype=torch_dtype,
+                )
                 edit_pipe.to(device)
 
         instance = cls(
