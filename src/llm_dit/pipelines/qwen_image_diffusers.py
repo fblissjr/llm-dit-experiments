@@ -149,14 +149,22 @@ class QwenImageDiffusersPipeline:
             from diffusers import QwenImageEditPlusPipeline
 
             logger.info(f"Loading QwenImageEditPlusPipeline from {resolved_edit_path}")
-            edit_pipe = QwenImageEditPlusPipeline.from_pretrained(
-                resolved_edit_path,
-                torch_dtype=torch_dtype,
-            )
             if cpu_offload:
+                # Load to CPU first to avoid VRAM spike, then enable offload
+                logger.info("Loading to CPU first (cpu_offload=True)")
+                edit_pipe = QwenImageEditPlusPipeline.from_pretrained(
+                    resolved_edit_path,
+                    torch_dtype=torch_dtype,
+                    device_map="cpu",  # Load to CPU first
+                    low_cpu_mem_usage=True,
+                )
                 logger.info("Enabling sequential CPU offload for edit pipeline")
                 edit_pipe.enable_sequential_cpu_offload()
             else:
+                edit_pipe = QwenImageEditPlusPipeline.from_pretrained(
+                    resolved_edit_path,
+                    torch_dtype=torch_dtype,
+                )
                 edit_pipe.to(device)
 
             instance = cls(
