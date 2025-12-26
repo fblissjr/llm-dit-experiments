@@ -515,7 +515,7 @@ async def qwen_image_edit_layer(request: QwenImageEditLayerRequest):
                 logger.info("[VRAM] Auto-unloading Z-Image to make room for Qwen-Image-Edit...")
                 unload_zimage_pipeline()
 
-            logger.info("[Qwen-Image] Loading pipeline on-demand for layer editing...")
+            logger.info("[Qwen-Image] Loading pipeline in edit-only mode (skipping decompose model)...")
             try:
                 from llm_dit.pipelines.qwen_image_diffusers import QwenImageDiffusersPipeline
 
@@ -523,9 +523,9 @@ async def qwen_image_edit_layer(request: QwenImageEditLayerRequest):
                     runtime_config.qwen_image_model_path,
                     edit_model_path=runtime_config.qwen_image_edit_model_path or None,
                     cpu_offload=True,
-                    load_edit_model=False,  # Lazy load on first edit
+                    edit_only=True,  # Skip decompose model, load edit model directly (~12GB saved)
                 )
-                logger.info("[Qwen-Image] Diffusers pipeline loaded successfully")
+                logger.info("[Qwen-Image] Edit pipeline loaded successfully")
             except Exception as e:
                 logger.error(f"[Qwen-Image] Failed to load pipeline: {e}")
                 raise HTTPException(
@@ -649,7 +649,7 @@ async def qwen_image_edit_multi(request: QwenImageEditMultiRequest):
                 logger.info("[VRAM] Auto-unloading Z-Image to make room for Qwen-Image-Edit...")
                 unload_zimage_pipeline()
 
-            logger.info("[Qwen-Image] Loading pipeline on-demand for multi-image editing...")
+            logger.info("[Qwen-Image] Loading pipeline in edit-only mode for multi-image editing...")
             try:
                 from llm_dit.pipelines.qwen_image_diffusers import QwenImageDiffusersPipeline
 
@@ -657,7 +657,7 @@ async def qwen_image_edit_multi(request: QwenImageEditMultiRequest):
                     runtime_config.qwen_image_model_path,
                     edit_model_path=runtime_config.qwen_image_edit_model_path or None,
                     cpu_offload=True,
-                    load_edit_model=False,
+                    edit_only=True,  # Skip decompose model, load edit model directly
                 )
             except Exception as e:
                 logger.error(f"[Qwen-Image] Failed to load pipeline: {e}")

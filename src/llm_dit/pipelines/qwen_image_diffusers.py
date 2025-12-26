@@ -100,6 +100,7 @@ class QwenImageDiffusersPipeline:
         torch_dtype: torch.dtype = torch.bfloat16,
         cpu_offload: bool = True,
         load_edit_model: bool = False,
+        edit_only: bool = False,
     ) -> "QwenImageDiffusersPipeline":
         """
         Load the pipeline from pretrained weights.
@@ -112,6 +113,8 @@ class QwenImageDiffusersPipeline:
             torch_dtype: Model dtype (bfloat16 recommended)
             cpu_offload: Enable sequential CPU offload for memory efficiency
             load_edit_model: If True, also load the edit model
+            edit_only: If True, skip loading decompose model (for edit-only workflows)
+                This saves ~12GB VRAM on 24GB cards.
 
         Returns:
             Initialized QwenImageDiffusersPipeline
@@ -123,19 +126,58 @@ class QwenImageDiffusersPipeline:
                 cpu_offload=True,
             )
 
-            # Also load edit model at startup
+            # Edit-only mode (saves ~12GB VRAM)
             pipe = QwenImageDiffusersPipeline.from_pretrained(
                 "/path/to/Qwen_Qwen-Image-Layered",
-                load_edit_model=True,
+                edit_only=True,
+                edit_model_path="/path/to/Qwen-Image-Edit-2511",
             )
         """
         model_path = Path(model_path)
         device = torch.device(device)
 
+        # Resolve edit model path early (needed for edit_only mode)
+        resolved_edit_path = None
+        if edit_model_path:
+            resolved_edit_path = str(Path(edit_model_path).expanduser())
+        else:
+            resolved_edit_path = "Qwen/Qwen-Image-Edit-2511"
+
+        # Edit-only mode: skip decompose model entirely
+        if edit_only:
+            logger.info(f"Edit-only mode: skipping decompose model, loading edit model directly")
+            from diffusers import QwenImageEditPlusPipeline
+
+            logger.info(f"Loading QwenImageEditPlusPipeline from {resolved_edit_path}")
+            edit_pipe = QwenImageEditPlusPipeline.from_pretrained(
+                resolved_edit_path,
+                torch_dtype=torch_dtype,
+            )
+            if cpu_offload:
+                logger.info("Enabling sequential CPU offload for edit pipeline")
+                edit_pipe.enable_sequential_cpu_offload()
+            else:
+                edit_pipe.to(device)
+
+            instance = cls(
+                decompose_pipe=None,  # No decompose in edit-only mode
+                edit_pipe=edit_pipe,
+                device=device,
+                dtype=torch_dtype,
+            )
+            instance._cpu_offload_enabled = cpu_offload
+            instance._edit_model_path = resolved_edit_path
+
+            logger.info(
+                f"QwenImageDiffusersPipeline loaded (edit-only): "
+                f"decompose=False, edit=True, cpu_offload={cpu_offload}"
+            )
+            return instance
+
+        # Normal mode: load decompose model
         if not model_path.exists():
             raise ValueError(f"Model not found at {model_path}")
 
-        # Import from diffusers (using coderef)
         from diffusers import QwenImageLayeredPipeline
 
         logger.info(f"Loading QwenImageLayeredPipeline from {model_path}")
@@ -153,14 +195,7 @@ class QwenImageDiffusersPipeline:
             decompose_pipe.to(device)
             cpu_offload_enabled = False
 
-        # Resolve edit model path (expand ~ and convert to string)
-        resolved_edit_path = None
-        if edit_model_path:
-            resolved_edit_path = str(Path(edit_model_path).expanduser())
-        else:
-            resolved_edit_path = "Qwen/Qwen-Image-Edit-2511"
-
-        # Optionally load edit model
+        # Optionally load edit model (resolved_edit_path already set above)
         edit_pipe = None
         if load_edit_model:
             logger.info(f"Loading QwenImageEditPlusPipeline from {resolved_edit_path}")
