@@ -352,7 +352,7 @@ class QwenImageConfig:
     cpu_offload: bool = True  # Enable sequential CPU offload for memory efficiency
 
     # Generation settings
-    num_inference_steps: int = 50  # Denoising steps (default for Qwen-Image)
+    num_inference_steps: int = 40  # Denoising steps (40 for Edit-2511, was 50 for 2509)
     cfg_scale: float = 4.0  # Classifier-free guidance scale
     layer_num: int = 4  # Number of decomposition layers (outputs layer_num+1 images)
 

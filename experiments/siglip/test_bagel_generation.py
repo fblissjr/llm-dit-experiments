@@ -62,7 +62,7 @@ def load_pipeline_with_bagel():
 
     # Load text encoder
     print("  Text encoder...")
-    text_encoder = AutoModel.from_pretrained(QWEN3_PATH, torch_dtype=torch.bfloat16, trust_remote_code=True)
+    text_encoder = AutoModel.from_pretrained(QWEN3_PATH, dtype=torch.bfloat16, trust_remote_code=True)
     tokenizer = AutoTokenizer.from_pretrained(QWEN3_PATH, trust_remote_code=True)
 
     # Load scheduler

@@ -85,7 +85,7 @@ class RuntimeConfig:
     qwen_image_cpu_offload: bool = True  # Enable CPU offload for Qwen-Image
     qwen_image_layer_num: int = 4  # Number of decomposition layers
     qwen_image_cfg_scale: float = 4.0  # CFG scale for Qwen-Image
-    qwen_image_steps: int = 50  # Diffusion steps for Qwen-Image
+    qwen_image_steps: int = 40  # Diffusion steps for Qwen-Image (40 for Edit-2511)
     qwen_image_resolution: int = 640  # Resolution (640 or 1024 only)
 
     # Device placement
@@ -317,7 +317,7 @@ def create_base_parser(
         "--qwen-image-edit-model-path",
         type=str,
         default=None,
-        help="Path to Qwen-Image-Edit model (or empty for HuggingFace auto-download)",
+        help="Path to Qwen-Image-Edit-2511 model (or empty for HuggingFace auto-download)",
     )
     qwen_group.add_argument(
         "--qwen-image-cpu-offload",
@@ -335,7 +335,7 @@ def create_base_parser(
         "--qwen-image-steps",
         type=int,
         default=None,
-        help="Diffusion steps for Qwen-Image (default: 50)",
+        help="Diffusion steps for Qwen-Image (default: 40 for Edit-2511)",
     )
     qwen_group.add_argument(
         "--qwen-image-cfg-scale",
@@ -1024,7 +1024,7 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
                 config.qwen_image_edit_model_path = getattr(qi, 'edit_model_path', '')
                 config.qwen_image_cpu_offload = getattr(qi, 'cpu_offload', True)
                 config.qwen_image_layer_num = getattr(qi, 'layer_num', 4)
-                config.qwen_image_steps = getattr(qi, 'num_inference_steps', 50)
+                config.qwen_image_steps = getattr(qi, 'num_inference_steps', 40)
                 config.qwen_image_cfg_scale = getattr(qi, 'cfg_scale', 4.0)
                 config.qwen_image_resolution = getattr(qi, 'resolution', 640)
 

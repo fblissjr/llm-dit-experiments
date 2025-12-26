@@ -49,7 +49,7 @@ SUPPORTED_RESOLUTIONS = (640, 1024)
 
 # Default parameters from technical report
 DEFAULT_CFG_SCALE = 4.0
-DEFAULT_STEPS = 50
+DEFAULT_STEPS = 40  # Updated for Qwen-Image-Edit-2511 (was 50 for 2509)
 DEFAULT_LAYER_NUM = 4
 DEFAULT_RESOLUTION = 640
 
@@ -107,7 +107,7 @@ class QwenImageDiffusersPipeline:
         Args:
             model_path: Path to Qwen-Image-Layered model
             edit_model_path: Optional path to Qwen-Image-Edit model
-                (defaults to "Qwen/Qwen-Image-Edit-2509" from HuggingFace)
+                (defaults to "Qwen/Qwen-Image-Edit-2511" from HuggingFace)
             device: Device for inference
             torch_dtype: Model dtype (bfloat16 recommended)
             cpu_offload: Enable sequential CPU offload for memory efficiency
@@ -153,14 +153,20 @@ class QwenImageDiffusersPipeline:
             decompose_pipe.to(device)
             cpu_offload_enabled = False
 
+        # Resolve edit model path (expand ~ and convert to string)
+        resolved_edit_path = None
+        if edit_model_path:
+            resolved_edit_path = str(Path(edit_model_path).expanduser())
+        else:
+            resolved_edit_path = "Qwen/Qwen-Image-Edit-2511"
+
         # Optionally load edit model
         edit_pipe = None
         if load_edit_model:
-            edit_path = edit_model_path or "Qwen/Qwen-Image-Edit-2509"
-            logger.info(f"Loading QwenImageEditPlusPipeline from {edit_path}")
+            logger.info(f"Loading QwenImageEditPlusPipeline from {resolved_edit_path}")
             from diffusers import QwenImageEditPlusPipeline
             edit_pipe = QwenImageEditPlusPipeline.from_pretrained(
-                str(edit_path),
+                resolved_edit_path,
                 torch_dtype=torch_dtype,  # diffusers uses torch_dtype
             )
             if cpu_offload:
@@ -175,7 +181,7 @@ class QwenImageDiffusersPipeline:
             dtype=torch_dtype,
         )
         instance._cpu_offload_enabled = cpu_offload_enabled
-        instance._edit_model_path = edit_model_path or "Qwen/Qwen-Image-Edit-2509"
+        instance._edit_model_path = resolved_edit_path
 
         logger.info(
             f"QwenImageDiffusersPipeline loaded: "
@@ -300,13 +306,18 @@ class QwenImageDiffusersPipeline:
             logger.info("Edit model already loaded")
             return
 
-        edit_path = model_path or self._edit_model_path or "Qwen/Qwen-Image-Edit-2509"
+        # Resolve path (expand ~ if present)
+        raw_path = model_path or self._edit_model_path or "Qwen/Qwen-Image-Edit-2511"
+        if raw_path and not raw_path.startswith("Qwen/"):
+            edit_path = str(Path(raw_path).expanduser())
+        else:
+            edit_path = raw_path
 
         logger.info(f"Loading QwenImageEditPlusPipeline from {edit_path}")
         from diffusers import QwenImageEditPlusPipeline
 
         self.edit_pipe = QwenImageEditPlusPipeline.from_pretrained(
-            str(edit_path),
+            edit_path,
             torch_dtype=self._dtype,
         )
 
@@ -393,6 +404,90 @@ class QwenImageDiffusersPipeline:
         logger.info("Layer edit complete")
 
         return edited
+
+    def edit_multi(
+        self,
+        images: List[Image.Image],
+        instruction: str,
+        num_inference_steps: int = DEFAULT_STEPS,
+        cfg_scale: float = DEFAULT_CFG_SCALE,
+        seed: Optional[int] = None,
+    ) -> Image.Image:
+        """
+        Combine multiple images based on text instructions.
+
+        New capability in Qwen-Image-Edit-2511 for multi-person consistency
+        and creative image merging. Supports combining 2+ images into a
+        single coherent output.
+
+        Args:
+            images: List of 2+ PIL images to combine
+            instruction: Text describing how to combine them
+                (e.g., "Place both subjects side by side in a park")
+            num_inference_steps: Diffusion steps (default 40)
+            cfg_scale: Classifier-free guidance scale (default 4.0)
+            seed: Random seed for reproducibility
+
+        Returns:
+            Combined output image
+
+        Example:
+            combined = pipe.edit_multi(
+                images=[Image.open("person1.jpg"), Image.open("person2.jpg")],
+                instruction="The two people standing together at a beach",
+                seed=42,
+            )
+            combined.save("combined.png")
+        """
+        # Validate input
+        if len(images) < 2:
+            raise ValueError(
+                f"edit_multi requires at least 2 images, got {len(images)}. "
+                "For single-image editing, use edit_layer() instead."
+            )
+
+        # Lazy load edit model if needed
+        if self.edit_pipe is None:
+            self.load_edit_model()
+
+        # Convert all images to RGB (edit pipeline requires RGB input)
+        rgb_images = []
+        for img in images:
+            if img.mode == "RGBA":
+                # Convert RGBA to RGB (composite onto white background)
+                background = Image.new("RGB", img.size, (255, 255, 255))
+                background.paste(img, mask=img.split()[3])
+                rgb_images.append(background)
+            elif img.mode == "RGB":
+                rgb_images.append(img)
+            else:
+                rgb_images.append(img.convert("RGB"))
+
+        # Setup generator
+        generator = None
+        if seed is not None:
+            generator = torch.Generator(device="cuda").manual_seed(seed)
+
+        logger.info(
+            f"Multi-image edit: {len(rgb_images)} images, "
+            f"instruction='{instruction[:80]}...', steps={num_inference_steps}"
+        )
+
+        # Run multi-image edit
+        # QwenImageEditPlusPipeline accepts image as a list for multi-image mode
+        result = self.edit_pipe(
+            image=rgb_images,
+            prompt=instruction,
+            num_inference_steps=num_inference_steps,
+            true_cfg_scale=cfg_scale,
+            generator=generator,
+        )
+
+        output_image = result.images[0]
+
+        logger.info("Multi-image edit complete")
+
+        return output_image
 
     def enable_cpu_offload(self) -> None:
         """Enable sequential CPU offload for memory efficiency."""

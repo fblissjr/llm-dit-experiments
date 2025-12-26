@@ -186,10 +186,10 @@ siglip_device = "cpu"            # Device for SigLIP (cuda/cpu) - CPU recommende
 # Qwen-Image-Layered: separate model for image-to-layers decomposition
 # Use --model-type qwenimage to select this model
 model_path = ""                  # Path to Qwen_Qwen-Image-Layered model
-edit_model_path = ""             # Path to Qwen-Image-Edit model (empty = HuggingFace auto-download)
+edit_model_path = ""             # Path to Qwen-Image-Edit-2511 (empty = HuggingFace auto-download)
 cpu_offload = true               # Enable CPU offload (recommended even for RTX 4090)
 layer_num = 4                    # Number of decomposition layers (output: composite + N layers)
-num_inference_steps = 50         # Diffusion steps (non-distilled model)
+num_inference_steps = 40         # Diffusion steps (40 for Edit-2511, was 50 for 2509)
 cfg_scale = 4.0                  # CFG scale (required, not baked in like Z-Image)
 resolution = 640                 # Output resolution: 640 or 1024 ONLY (640 recommended)
 
@@ -320,10 +320,10 @@ siglip_device = "cuda"           # cuda/cpu
 [default.qwen_image]
 # Qwen-Image-Layered configuration
 model_path = ""                  # Path to model
-edit_model_path = ""             # Path to edit model
+edit_model_path = ""             # Path to Edit-2511 model
 cpu_offload = true               # Enable CPU offload
 layer_num = 4                    # Number of layers
-num_inference_steps = 50         # Diffusion steps
+num_inference_steps = 40         # Diffusion steps (40 for Edit-2511)
 cfg_scale = 4.0                  # CFG scale
 resolution = 640                 # 640 or 1024
 

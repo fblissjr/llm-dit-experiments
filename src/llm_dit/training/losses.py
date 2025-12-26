@@ -60,7 +60,7 @@ def FlowMatchSFTLoss(
     Example:
         >>> # Encode training image
         >>> latents = pipe.vae.encode(image).latent_dist.sample()
-        >>> latents = latents * pipe.vae.config.scaling_factor
+        >>> latents = (latents - pipe.vae.config.shift_factor) * pipe.vae.config.scaling_factor
         >>>
         >>> # Encode prompt
         >>> prompt_embeds = pipe.encode_prompt("A cat sleeping")

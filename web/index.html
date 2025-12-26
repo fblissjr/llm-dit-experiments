@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Z-Image Generator</title>
+    <title>LLM DiT Experiments UI</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         /* Custom scrollbar */
@@ -105,8 +105,8 @@
             <header class="mb-6">
                 <div class="flex items-center justify-between">
                     <div>
-                        <h1 class="text-2xl md:text-3xl font-bold text-white" id="headerTitle">Z-Image</h1>
-                        <p class="text-sm text-gray-400" id="headerSubtitle">Text-to-image with Qwen3-4B</p>
+                        <h1 class="text-2xl md:text-3xl font-bold text-white" id="headerTitle">LLM DiT Experiments UI</h1>
+                        <p class="text-sm text-gray-400" id="headerSubtitle"></p>
                     </div>
                     <div class="flex items-center gap-2">
                         <!-- Settings Button -->
@@ -3479,9 +3479,9 @@
                 zImageControls.classList.remove('hidden');
                 qwenImageControls.classList.add('hidden');
 
-                // Update header
-                headerTitle.textContent = 'Z-Image';
-                headerSubtitle.textContent = 'Text-to-image with Qwen3-4B';
+                // Update header (keep title fixed, clear subtitle)
+                headerTitle.textContent = 'LLM DiT Experiments UI';
+                headerSubtitle.textContent = '';
             } else {
                 // Update button styles
                 modelTypeQwenImageBtn.classList.remove('bg-gray-700', 'text-gray-300', 'hover:bg-gray-600');
@@ -3493,9 +3493,9 @@
                 zImageControls.classList.add('hidden');
                 qwenImageControls.classList.remove('hidden');
 
-                // Update header
-                headerTitle.textContent = 'Qwen-Image';
-                headerSubtitle.textContent = 'Image decomposition into layers';
+                // Update header (keep title fixed, clear subtitle)
+                headerTitle.textContent = 'LLM DiT Experiments UI';
+                headerSubtitle.textContent = '';
             }
         }
 

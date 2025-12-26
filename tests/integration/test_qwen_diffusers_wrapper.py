@@ -5,8 +5,9 @@ Integration test for QwenImageDiffusersPipeline wrapper.
 Tests:
 1. Pipeline loading with CPU offload
 2. Image decomposition
-3. Layer editing (requires edit model download)
-4. Device management
+3. Layer editing (requires edit model download - uses Qwen-Image-Edit-2511)
+4. Multi-image editing (2511 feature)
+5. Device management
 """
 
 import argparse
@@ -122,7 +123,7 @@ def test_layer_editing(pipe, layer: Image.Image, output_dir: Path):
     logger.info("=" * 60)
 
     logger.info("This test will download the edit model if not already present...")
-    logger.info("Edit model: Qwen/Qwen-Image-Edit-2509 (~20 GB)")
+    logger.info("Edit model: Qwen/Qwen-Image-Edit-2511 (~20 GB)")
 
     start = time.time()
     edited = pipe.edit_layer(
@@ -167,6 +168,52 @@ def test_edit_status(pipe):
     return has_edit
 
 
+def test_multi_image_editing(pipe, images: list, output_dir: Path):
+    """Test multi-image editing (Qwen-Image-Edit-2511 feature).
+
+    Combines multiple images based on text instruction.
+    """
+    logger.info("=" * 60)
+    logger.info("TEST: Multi-Image Editing (2511 Feature)")
+    logger.info("=" * 60)
+
+    if len(images) < 2:
+        logger.warning("Need at least 2 images for multi-edit test. Skipping.")
+        return None
+
+    logger.info(f"Combining {len(images)} images...")
+    logger.info("This test will download the edit model if not already present...")
+    logger.info("Edit model: Qwen/Qwen-Image-Edit-2511 (~20 GB)")
+
+    start = time.time()
+    combined = pipe.edit_multi(
+        images=images,
+        instruction="Place both subjects side by side in a natural setting",
+        num_inference_steps=40,
+        cfg_scale=4.0,
+        seed=42,
+    )
+    edit_time = time.time() - start
+
+    logger.info(f"Multi-edit completed in {edit_time:.1f}s")
+    logger.info(f"Combined image: {combined.size}, mode={combined.mode}")
+
+    # Save result
+    multi_dir = output_dir / "multi_edit"
+    multi_dir.mkdir(parents=True, exist_ok=True)
+
+    for i, img in enumerate(images):
+        input_path = multi_dir / f"input_{i:02d}.png"
+        img.save(input_path)
+        logger.info(f"  Saved input {i}: {input_path}")
+
+    combined_path = multi_dir / "combined.png"
+    combined.save(combined_path)
+    logger.info(f"  Saved combined: {combined_path}")
+
+    return combined
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Integration test for QwenImageDiffusersPipeline"
@@ -193,6 +240,17 @@ def main():
         "--skip-edit",
         action="store_true",
         help="Skip layer editing test (avoids downloading edit model)",
+    )
+    parser.add_argument(
+        "--skip-multi-edit",
+        action="store_true",
+        help="Skip multi-image editing test (2511 feature)",
+    )
+    parser.add_argument(
+        "--second-image",
+        type=str,
+        default=None,
+        help="Second input image for multi-edit test (optional, creates dummy if not provided)",
     )
     args = parser.parse_args()
 
@@ -259,6 +317,34 @@ def main():
     except Exception as e:
         logger.error(f"Edit status test failed: {e}")
         results["edit_status"] = False
+
+    # Test 6: Multi-Image Editing (2511 feature, optional)
+    if not args.skip_edit and not args.skip_multi_edit:
+        try:
+            # Prepare images for multi-edit test
+            multi_images = [input_image.convert("RGB")]
+
+            # Load or create second image
+            if args.second_image and Path(args.second_image).exists():
+                second_img = Image.open(args.second_image).convert("RGB")
+                logger.info(f"Loaded second image: {args.second_image}")
+            else:
+                # Create a dummy second image with different color
+                second_img = Image.new("RGB", (640, 640), (200, 100, 50))
+                logger.info("Created dummy second image for multi-edit test")
+
+            multi_images.append(second_img)
+
+            test_multi_image_editing(pipe, multi_images, output_dir)
+            results["multi_edit"] = True
+        except Exception as e:
+            logger.error(f"Multi-edit test failed: {e}")
+            import traceback
+            traceback.print_exc()
+            results["multi_edit"] = False
+    else:
+        logger.info("Skipping multi-edit test (--skip-edit or --skip-multi-edit)")
+        results["multi_edit"] = "skipped"
 
     # Summary
     logger.info("=" * 60)

@@ -181,10 +181,19 @@ class QwenImageDecomposeRequest(BaseModel):
 
 
 class QwenImageEditLayerRequest(BaseModel):
-    """Request for Qwen-Image layer editing."""
+    """Request for Qwen-Image layer editing (single image)."""
     layer_image: str  # Base64-encoded RGBA layer image
     instruction: str  # Text instruction for editing (e.g., "Change color to blue")
-    steps: int = 50  # Number of inference steps
+    steps: int = 40  # Number of inference steps (40 for Edit-2511)
+    cfg_scale: float = 4.0  # Classifier-free guidance scale
+    seed: Optional[int] = None  # Random seed
+
+
+class QwenImageEditMultiRequest(BaseModel):
+    """Request for Qwen-Image multi-image editing (2511 feature)."""
+    images: List[str]  # Base64-encoded images (2-4 images to combine)
+    instruction: str  # Text instruction for combining (e.g., "Place both subjects together")
+    steps: int = 40  # Number of inference steps (40 for Edit-2511)
     cfg_scale: float = 4.0  # Classifier-free guidance scale
     seed: Optional[int] = None  # Random seed
 
@@ -276,6 +285,7 @@ async def qwen_image_decompose(request: QwenImageDecomposeRequest):
 
                 qwen_image_pipeline = QwenImageDiffusersPipeline.from_pretrained(
                     runtime_config.qwen_image_model_path,
+                    edit_model_path=runtime_config.qwen_image_edit_model_path or None,
                     cpu_offload=True,
                     load_edit_model=False,  # Lazy load on first edit
                 )
@@ -413,7 +423,7 @@ async def qwen_image_decompose(request: QwenImageDecomposeRequest):
 async def qwen_image_edit_layer(request: QwenImageEditLayerRequest):
     """Edit a decomposed layer using text instructions.
 
-    Uses the Qwen-Image-Edit-2509 model to modify a layer based on natural language
+    Uses the Qwen-Image-Edit-2511 model to modify a layer based on natural language
     instructions. The edit model is loaded lazily on first use.
 
     Returns the edited RGBA layer as a PNG image.
@@ -430,6 +440,7 @@ async def qwen_image_edit_layer(request: QwenImageEditLayerRequest):
 
                 qwen_image_pipeline = QwenImageDiffusersPipeline.from_pretrained(
                     runtime_config.qwen_image_model_path,
+                    edit_model_path=runtime_config.qwen_image_edit_model_path or None,
                     cpu_offload=True,
                     load_edit_model=False,  # Lazy load on first edit
                 )
@@ -526,7 +537,128 @@ async def qwen_image_edit_status():
         "available": has_edit_method,
         "edit_model_loaded": has_edit_pipe,
         "edit_model_path": getattr(qwen_image_pipeline, '_edit_model_path', None),
+        "supports_multi_image": hasattr(qwen_image_pipeline, 'edit_multi'),
     }
+
+
+@app.post("/api/qwen-image/edit-multi")
+async def qwen_image_edit_multi(request: QwenImageEditMultiRequest):
+    """Combine multiple images using Qwen-Image-Edit-2511.
+
+    New capability in Edit-2511 for multi-person consistency and creative
+    image merging. Supports combining 2+ images into a single coherent output.
+
+    Returns the combined output as a PNG image.
+    """
+    global qwen_image_pipeline
+
+    # Validate input
+    if len(request.images) < 2:
+        raise HTTPException(
+            status_code=400,
+            detail=f"edit-multi requires at least 2 images, got {len(request.images)}. "
+                   "For single-image editing, use /api/qwen-image/edit-layer instead."
+        )
+
+    # Check if pipeline is loaded
+    if qwen_image_pipeline is None:
+        if runtime_config and runtime_config.qwen_image_model_path:
+            logger.info("[Qwen-Image] Loading pipeline on-demand for multi-image editing...")
+            try:
+                from llm_dit.pipelines.qwen_image_diffusers import QwenImageDiffusersPipeline
+
+                qwen_image_pipeline = QwenImageDiffusersPipeline.from_pretrained(
+                    runtime_config.qwen_image_model_path,
+                    edit_model_path=runtime_config.qwen_image_edit_model_path or None,
+                    cpu_offload=True,
+                    load_edit_model=False,
+                )
+            except Exception as e:
+                logger.error(f"[Qwen-Image] Failed to load pipeline: {e}")
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Failed to load Qwen-Image pipeline: {e}"
+                )
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="Qwen-Image pipeline not loaded and no model path configured. "
+                       "Set qwen_image.model_path in config.toml."
+            )
+
+    # Check if pipeline supports multi-image editing
+    if not hasattr(qwen_image_pipeline, 'edit_multi'):
+        raise HTTPException(
+            status_code=400,
+            detail="Pipeline does not support multi-image editing. "
+                   "Use QwenImageDiffusersPipeline with Edit-2511 model."
+        )
+
+    try:
+        # Decode base64 images
+        pil_images = []
+        for i, img_data in enumerate(request.images):
+            try:
+                if img_data.startswith('data:'):
+                    img_data = img_data.split(',', 1)[1]
+                img_bytes = base64.b64decode(img_data)
+                img = Image.open(io.BytesIO(img_bytes))
+                pil_images.append(img)
+            except Exception as e:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Failed to decode image {i}: {e}"
+                )
+
+        logger.info("=" * 60)
+        logger.info("QWEN-IMAGE MULTI-EDIT REQUEST")
+        logger.info("=" * 60)
+        logger.info(f"  Number of images: {len(pil_images)}")
+        for i, img in enumerate(pil_images):
+            logger.info(f"  Image {i}: {img.size}, mode={img.mode}")
+        logger.info(f"  Instruction: {request.instruction[:80]}...")
+        logger.info(f"  CFG Scale: {request.cfg_scale}")
+        logger.info(f"  Steps: {request.steps}")
+        logger.info(f"  Seed: {request.seed}")
+        logger.info("=" * 60)
+
+        start = time.time()
+
+        # Run multi-image edit
+        combined_image = qwen_image_pipeline.edit_multi(
+            images=pil_images,
+            instruction=request.instruction,
+            num_inference_steps=request.steps,
+            cfg_scale=request.cfg_scale,
+            seed=request.seed,
+        )
+
+        edit_time = time.time() - start
+        logger.info(f"[Qwen-Image] Multi-edit completed in {edit_time:.1f}s")
+        logger.info(f"  Output size: {combined_image.size}")
+        logger.info("=" * 60)
+
+        # Convert to PNG bytes
+        img_bytes = io.BytesIO()
+        combined_image.save(img_bytes, format="PNG")
+        img_bytes.seek(0)
+
+        return StreamingResponse(
+            img_bytes,
+            media_type="image/png",
+            headers={
+                "X-Inference-Time": f"{edit_time:.2f}",
+                "X-Image-Count": str(len(pil_images)),
+            }
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[Qwen-Image] Multi-edit failed: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # =============================================================================

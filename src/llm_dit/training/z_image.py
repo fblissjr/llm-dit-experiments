@@ -224,7 +224,7 @@ class ZImageTrainingModule(BaseTrainingModule):
 
             # Encode to latents
             latents = self.pipe.vae.encode(pixel_values).latent_dist.sample()
-            latents = latents * self.pipe.vae.config.scaling_factor
+            latents = (latents - self.pipe.vae.config.shift_factor) * self.pipe.vae.config.scaling_factor
 
         return latents
 

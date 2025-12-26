@@ -9,6 +9,10 @@ This file provides guidance to Claude Code when working with this repository.
 - **Never commit** without explicit user approval
 - **Semantic versioning** in CHANGELOG.md (no dates)
 - **Update documentation** after any feature (see `docs/reference/documentation_checklist.md`)
+- **dtype parameter conventions** - different libraries use different parameter names:
+  - **transformers** (AutoModel, AutoModelForCausalLM, Qwen3VLForConditionalGeneration): use `dtype=`
+  - **diffusers** (DiffusionPipeline, AutoencoderKL, FluxTransformer2DModel): use `torch_dtype=`
+  - Using `torch_dtype=` with transformers causes deprecation warnings
 
 ## Project Overview
 
