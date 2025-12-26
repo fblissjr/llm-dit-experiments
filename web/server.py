@@ -64,24 +64,46 @@ def unload_zimage_pipeline() -> bool:
     Returns True if unloaded, False if not loaded.
     """
     global pipeline, encoder
+    import gc
     import torch
 
     unloaded = False
     if pipeline is not None:
         logger.info("[VRAM] Unloading Z-Image pipeline to free VRAM...")
+        # Move components to CPU before deletion to release CUDA memory
+        try:
+            if hasattr(pipeline, 'transformer') and pipeline.transformer is not None:
+                pipeline.transformer.to('cpu')
+            if hasattr(pipeline, 'vae') and pipeline.vae is not None:
+                pipeline.vae.to('cpu')
+        except Exception as e:
+            logger.warning(f"[VRAM] Error moving pipeline to CPU: {e}")
         del pipeline
         pipeline = None
         unloaded = True
 
     if encoder is not None:
         logger.info("[VRAM] Unloading Z-Image encoder...")
+        # Move encoder model to CPU before deletion
+        try:
+            if hasattr(encoder, 'backend') and encoder.backend is not None:
+                if hasattr(encoder.backend, 'model') and encoder.backend.model is not None:
+                    encoder.backend.model.to('cpu')
+        except Exception as e:
+            logger.warning(f"[VRAM] Error moving encoder to CPU: {e}")
         del encoder
         encoder = None
         unloaded = True
 
     if unloaded:
+        # Force garbage collection before CUDA cache clear
+        gc.collect()
         torch.cuda.empty_cache()
-        logger.info("[VRAM] Z-Image pipeline unloaded, CUDA cache cleared")
+        gc.collect()
+        # Log VRAM after cleanup
+        if torch.cuda.is_available():
+            allocated = torch.cuda.memory_allocated() / 1024**3
+            logger.info(f"[VRAM] Z-Image unloaded. CUDA allocated: {allocated:.2f} GB")
 
     return unloaded
 
