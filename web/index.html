@@ -1523,6 +1523,34 @@
                     <div id="gpuMemoryInfo" class="text-sm text-gray-400">Loading...</div>
                 </div>
 
+                <!-- Loaded Pipelines (for model switching) -->
+                <div class="p-3 bg-gray-900 rounded-lg">
+                    <h3 class="text-sm font-medium text-gray-300 mb-2">Loaded Pipelines</h3>
+                    <p class="text-xs text-gray-500 mb-2">Only one pipeline can run at a time on 24GB VRAM. Unload one to use the other.</p>
+                    <div class="space-y-2">
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <span class="text-sm text-gray-400">Z-Image</span>
+                                <span class="text-xs text-gray-500 ml-1">(~18GB)</span>
+                            </div>
+                            <div class="flex items-center gap-2">
+                                <span id="zimageStatus" class="text-xs px-2 py-1 rounded bg-gray-700 text-gray-400">Unknown</span>
+                                <button id="unloadZimageBtn" class="text-xs px-2 py-1 rounded bg-red-600/20 text-red-400 hover:bg-red-600/30 hidden">Unload</button>
+                            </div>
+                        </div>
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <span class="text-sm text-gray-400">Qwen-Image</span>
+                                <span class="text-xs text-gray-500 ml-1">(~12GB)</span>
+                            </div>
+                            <div class="flex items-center gap-2">
+                                <span id="qwenImageStatus" class="text-xs px-2 py-1 rounded bg-gray-700 text-gray-400">Unknown</span>
+                                <button id="unloadQwenImageBtn" class="text-xs px-2 py-1 rounded bg-red-600/20 text-red-400 hover:bg-red-600/30 hidden">Unload</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Cached Models -->
                 <div class="p-3 bg-gray-900 rounded-lg">
                     <h3 class="text-sm font-medium text-gray-300 mb-2">Cached Models</h3>
@@ -2279,6 +2307,32 @@
                     gpuInfo.textContent = 'CUDA not available';
                 }
 
+                // Update Z-Image pipeline status
+                const zimageStatus = document.getElementById('zimageStatus');
+                const unloadZimageBtn = document.getElementById('unloadZimageBtn');
+                if (data.pipeline_loaded || data.encoder_loaded) {
+                    zimageStatus.textContent = 'Loaded';
+                    zimageStatus.className = 'text-xs px-2 py-1 rounded bg-green-600/30 text-green-400';
+                    unloadZimageBtn?.classList.remove('hidden');
+                } else {
+                    zimageStatus.textContent = 'Not loaded';
+                    zimageStatus.className = 'text-xs px-2 py-1 rounded bg-gray-700 text-gray-400';
+                    unloadZimageBtn?.classList.add('hidden');
+                }
+
+                // Update Qwen-Image pipeline status
+                const qwenImageStatus = document.getElementById('qwenImageStatus');
+                const unloadQwenImageBtn = document.getElementById('unloadQwenImageBtn');
+                if (data.qwen_image_available) {
+                    qwenImageStatus.textContent = 'Loaded';
+                    qwenImageStatus.className = 'text-xs px-2 py-1 rounded bg-green-600/30 text-green-400';
+                    unloadQwenImageBtn?.classList.remove('hidden');
+                } else {
+                    qwenImageStatus.textContent = 'Not loaded';
+                    qwenImageStatus.className = 'text-xs px-2 py-1 rounded bg-gray-700 text-gray-400';
+                    unloadQwenImageBtn?.classList.add('hidden');
+                }
+
                 // Update FMTT status
                 const fmttStatus = document.getElementById('fmttStatus');
                 if (data.fmtt_cached) {
@@ -2375,6 +2429,51 @@
                 showSettingsMessage('History cleared');
             } catch (err) {
                 showSettingsMessage('Failed to clear history', 'error');
+            }
+        });
+
+        // Pipeline unload handlers
+        document.getElementById('unloadZimageBtn')?.addEventListener('click', async () => {
+            const btn = document.getElementById('unloadZimageBtn');
+            try {
+                btn.textContent = 'Unloading...';
+                btn.disabled = true;
+                const response = await fetch(`${API_BASE}/api/vram/unload-zimage`, { method: 'POST' });
+                const data = await response.json();
+                if (data.success) {
+                    const freeGb = data.vram?.free_gb ? ` (${data.vram.free_gb} GB free)` : '';
+                    showSettingsMessage(`Z-Image unloaded${freeGb}`);
+                } else {
+                    showSettingsMessage(data.message, 'error');
+                }
+            } catch (err) {
+                showSettingsMessage('Failed to unload Z-Image', 'error');
+            } finally {
+                btn.textContent = 'Unload';
+                btn.disabled = false;
+                refreshSystemStatus();
+            }
+        });
+
+        document.getElementById('unloadQwenImageBtn')?.addEventListener('click', async () => {
+            const btn = document.getElementById('unloadQwenImageBtn');
+            try {
+                btn.textContent = 'Unloading...';
+                btn.disabled = true;
+                const response = await fetch(`${API_BASE}/api/vram/unload-qwen-image`, { method: 'POST' });
+                const data = await response.json();
+                if (data.success) {
+                    const freeGb = data.vram?.free_gb ? ` (${data.vram.free_gb} GB free)` : '';
+                    showSettingsMessage(`Qwen-Image unloaded${freeGb}`);
+                } else {
+                    showSettingsMessage(data.message, 'error');
+                }
+            } catch (err) {
+                showSettingsMessage('Failed to unload Qwen-Image', 'error');
+            } finally {
+                btn.textContent = 'Unload';
+                btn.disabled = false;
+                refreshSystemStatus();
             }
         });
 

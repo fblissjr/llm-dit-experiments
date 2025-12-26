@@ -328,6 +328,14 @@ class QwenImageDiffusersPipeline:
 
         logger.info("Edit model loaded successfully")
 
+    def unload_decompose_model(self) -> None:
+        """Unload decompose model to free VRAM for editing."""
+        if self.decompose_pipe is not None:
+            logger.info("Unloading decompose model to free VRAM")
+            del self.decompose_pipe
+            self.decompose_pipe = None
+            torch.cuda.empty_cache()
+
     def edit_layer(
         self,
         layer_image: Image.Image,
@@ -335,6 +343,8 @@ class QwenImageDiffusersPipeline:
         num_inference_steps: int = DEFAULT_STEPS,
         cfg_scale: float = DEFAULT_CFG_SCALE,
         seed: Optional[int] = None,
+        max_size: int = 1024,
+        unload_decompose: bool = True,
     ) -> Image.Image:
         """
         Edit a layer using text instructions.
@@ -342,9 +352,11 @@ class QwenImageDiffusersPipeline:
         Args:
             layer_image: RGBA layer image to edit
             instruction: Text instruction for editing (e.g., "Change color to blue")
-            num_inference_steps: Diffusion steps (default 50)
+            num_inference_steps: Diffusion steps (default 40)
             cfg_scale: Classifier-free guidance scale (default 4.0)
             seed: Random seed for reproducibility
+            max_size: Maximum dimension for input image (default 1024, resized if larger)
+            unload_decompose: Unload decompose model before editing to save VRAM (default True)
 
         Returns:
             Edited RGBA image
@@ -356,12 +368,17 @@ class QwenImageDiffusersPipeline:
             )
             edited.save("edited_layer.png")
         """
+        # Unload decompose model to free VRAM if requested
+        if unload_decompose and self.decompose_pipe is not None:
+            self.unload_decompose_model()
+
         # Lazy load edit model if needed
         if self.edit_pipe is None:
             self.load_edit_model()
 
         # Handle RGBA -> RGB conversion for edit pipeline (VAE expects 3 channels)
         # Store alpha channel to reapply after editing
+        original_size = layer_image.size
         alpha_channel = None
         if layer_image.mode == "RGBA":
             # Split channels and store alpha
@@ -372,6 +389,16 @@ class QwenImageDiffusersPipeline:
             rgb_image = layer_image
         else:
             rgb_image = layer_image.convert("RGB")
+
+        # Resize if too large (saves VRAM, model works best at 640-1024)
+        w, h = rgb_image.size
+        if max(w, h) > max_size:
+            scale = max_size / max(w, h)
+            new_w, new_h = int(w * scale), int(h * scale)
+            logger.info(f"Resizing input from {w}x{h} to {new_w}x{new_h} for VRAM efficiency")
+            rgb_image = rgb_image.resize((new_w, new_h), Image.Resampling.LANCZOS)
+            if alpha_channel is not None:
+                alpha_channel = alpha_channel.resize((new_w, new_h), Image.Resampling.LANCZOS)
 
         # Setup generator
         generator = None
@@ -412,6 +439,8 @@ class QwenImageDiffusersPipeline:
         num_inference_steps: int = DEFAULT_STEPS,
         cfg_scale: float = DEFAULT_CFG_SCALE,
         seed: Optional[int] = None,
+        max_size: int = 1024,
+        unload_decompose: bool = True,
     ) -> Image.Image:
         """
         Combine multiple images based on text instructions.
@@ -427,6 +456,8 @@ class QwenImageDiffusersPipeline:
             num_inference_steps: Diffusion steps (default 40)
             cfg_scale: Classifier-free guidance scale (default 4.0)
             seed: Random seed for reproducibility
+            max_size: Maximum dimension for input images (default 1024)
+            unload_decompose: Unload decompose model before editing to save VRAM (default True)
 
         Returns:
             Combined output image
@@ -446,22 +477,37 @@ class QwenImageDiffusersPipeline:
                 "For single-image editing, use edit_layer() instead."
             )
 
+        # Unload decompose model to free VRAM if requested
+        if unload_decompose and self.decompose_pipe is not None:
+            self.unload_decompose_model()
+
         # Lazy load edit model if needed
         if self.edit_pipe is None:
             self.load_edit_model()
 
-        # Convert all images to RGB (edit pipeline requires RGB input)
+        # Convert all images to RGB and resize if needed
         rgb_images = []
         for img in images:
+            # Convert to RGB
             if img.mode == "RGBA":
                 # Convert RGBA to RGB (composite onto white background)
                 background = Image.new("RGB", img.size, (255, 255, 255))
                 background.paste(img, mask=img.split()[3])
-                rgb_images.append(background)
+                rgb_img = background
             elif img.mode == "RGB":
-                rgb_images.append(img)
+                rgb_img = img
             else:
-                rgb_images.append(img.convert("RGB"))
+                rgb_img = img.convert("RGB")
+
+            # Resize if too large
+            w, h = rgb_img.size
+            if max(w, h) > max_size:
+                scale = max_size / max(w, h)
+                new_w, new_h = int(w * scale), int(h * scale)
+                logger.info(f"Resizing image from {w}x{h} to {new_w}x{new_h}")
+                rgb_img = rgb_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+
+            rgb_images.append(rgb_img)
 
         # Setup generator
         generator = None

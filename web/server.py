@@ -58,6 +58,82 @@ generation_history = []
 MAX_HISTORY = 50
 
 
+def unload_zimage_pipeline() -> bool:
+    """Unload Z-Image pipeline (encoder + DiT + VAE) to free VRAM.
+
+    Returns True if unloaded, False if not loaded.
+    """
+    global pipeline, encoder
+    import torch
+
+    unloaded = False
+    if pipeline is not None:
+        logger.info("[VRAM] Unloading Z-Image pipeline to free VRAM...")
+        del pipeline
+        pipeline = None
+        unloaded = True
+
+    if encoder is not None:
+        logger.info("[VRAM] Unloading Z-Image encoder...")
+        del encoder
+        encoder = None
+        unloaded = True
+
+    if unloaded:
+        torch.cuda.empty_cache()
+        logger.info("[VRAM] Z-Image pipeline unloaded, CUDA cache cleared")
+
+    return unloaded
+
+
+def unload_qwen_image_pipeline() -> bool:
+    """Unload Qwen-Image pipeline to free VRAM.
+
+    Returns True if unloaded, False if not loaded.
+    """
+    global qwen_image_pipeline
+    import torch
+
+    if qwen_image_pipeline is not None:
+        logger.info("[VRAM] Unloading Qwen-Image pipeline to free VRAM...")
+        del qwen_image_pipeline
+        qwen_image_pipeline = None
+        torch.cuda.empty_cache()
+        logger.info("[VRAM] Qwen-Image pipeline unloaded, CUDA cache cleared")
+        return True
+    return False
+
+
+def get_vram_status() -> dict:
+    """Get current VRAM usage and loaded models status."""
+    import torch
+
+    status = {
+        "cuda_available": torch.cuda.is_available(),
+        "models_loaded": {
+            "zimage_pipeline": pipeline is not None,
+            "zimage_encoder": encoder is not None,
+            "qwen_image_pipeline": qwen_image_pipeline is not None,
+            "qwen_image_edit": qwen_image_pipeline is not None and getattr(qwen_image_pipeline, 'edit_pipe', None) is not None,
+            "qwen_image_decompose": qwen_image_pipeline is not None and getattr(qwen_image_pipeline, 'decompose_pipe', None) is not None,
+        },
+        "vram": None,
+    }
+
+    if torch.cuda.is_available():
+        allocated = torch.cuda.memory_allocated() / 1024**3
+        reserved = torch.cuda.memory_reserved() / 1024**3
+        total = torch.cuda.get_device_properties(0).total_memory / 1024**3
+        status["vram"] = {
+            "allocated_gb": round(allocated, 2),
+            "reserved_gb": round(reserved, 2),
+            "total_gb": round(total, 2),
+            "free_gb": round(total - allocated, 2),
+        }
+
+    return status
+
+
 class DyPEConfigRequest(BaseModel):
     """DyPE configuration for high-resolution generation."""
     enabled: bool = False
@@ -434,6 +510,11 @@ async def qwen_image_edit_layer(request: QwenImageEditLayerRequest):
     if qwen_image_pipeline is None:
         # Try to load on-demand if configured
         if runtime_config and runtime_config.qwen_image_model_path:
+            # Unload Z-Image first to free VRAM for Qwen-Image-Edit
+            if pipeline is not None or encoder is not None:
+                logger.info("[VRAM] Auto-unloading Z-Image to make room for Qwen-Image-Edit...")
+                unload_zimage_pipeline()
+
             logger.info("[Qwen-Image] Loading pipeline on-demand for layer editing...")
             try:
                 from llm_dit.pipelines.qwen_image_diffusers import QwenImageDiffusersPipeline
@@ -563,6 +644,11 @@ async def qwen_image_edit_multi(request: QwenImageEditMultiRequest):
     # Check if pipeline is loaded
     if qwen_image_pipeline is None:
         if runtime_config and runtime_config.qwen_image_model_path:
+            # Unload Z-Image first to free VRAM for Qwen-Image-Edit
+            if pipeline is not None or encoder is not None:
+                logger.info("[VRAM] Auto-unloading Z-Image to make room for Qwen-Image-Edit...")
+                unload_zimage_pipeline()
+
             logger.info("[Qwen-Image] Loading pipeline on-demand for multi-image editing...")
             try:
                 from llm_dit.pipelines.qwen_image_diffusers import QwenImageDiffusersPipeline
@@ -1365,6 +1451,13 @@ async def generate(request: GenerateRequest):
             detail="Server running in encoder-only mode. Use /api/encode instead."
         )
     if pipeline is None:
+        # Check if it was unloaded for Qwen-Image
+        if qwen_image_pipeline is not None:
+            raise HTTPException(
+                status_code=503,
+                detail="Z-Image pipeline was unloaded for Qwen-Image. "
+                       "Use the VRAM settings panel to reload Z-Image, or restart the server."
+            )
         raise HTTPException(status_code=503, detail="Pipeline not loaded")
 
     try:
@@ -2809,6 +2902,55 @@ async def clear_vl_cache():
     count = len(vl_embeddings_cache)
     vl_embeddings_cache = {}
     return {"cleared": count}
+
+
+# =============================================================================
+# VRAM / Model Management API
+# =============================================================================
+
+
+@app.get("/api/vram/status")
+async def vram_status():
+    """Get current VRAM usage and loaded models status.
+
+    Returns detailed info about which models are loaded and VRAM consumption.
+    Useful for understanding memory pressure before loading additional models.
+    """
+    return get_vram_status()
+
+
+@app.post("/api/vram/unload-zimage")
+async def vram_unload_zimage():
+    """Unload Z-Image pipeline (encoder + DiT + VAE) to free VRAM.
+
+    Use this before loading Qwen-Image models if running low on VRAM.
+    The pipeline will be reloaded automatically on next Z-Image generation.
+    """
+    unloaded = unload_zimage_pipeline()
+
+    status = get_vram_status()
+    return {
+        "success": unloaded,
+        "message": "Z-Image pipeline unloaded" if unloaded else "Z-Image pipeline was not loaded",
+        "vram": status.get("vram"),
+    }
+
+
+@app.post("/api/vram/unload-qwen-image")
+async def vram_unload_qwen_image():
+    """Unload Qwen-Image pipeline (decompose + edit models) to free VRAM.
+
+    Use this before Z-Image generation if running low on VRAM.
+    The pipeline will be reloaded automatically on next Qwen-Image operation.
+    """
+    unloaded = unload_qwen_image_pipeline()
+
+    status = get_vram_status()
+    return {
+        "success": unloaded,
+        "message": "Qwen-Image pipeline unloaded" if unloaded else "Qwen-Image pipeline was not loaded",
+        "vram": status.get("vram"),
+    }
 
 
 def main():
