@@ -59,9 +59,13 @@ def main():
     reference.save(output_dir / "reference.png")
 
     # Load VL extractor
+    import os
+    vl_model_path = os.environ.get("QWEN3_VL_PATH")
+    if not vl_model_path:
+        raise ValueError("Set QWEN3_VL_PATH environment variable")
     print("Loading Qwen3-VL...")
     vl_extractor = VLEmbeddingExtractor.from_pretrained(
-        "/home/fbliss/Storage/Qwen3-VL-4B-Instruct",
+        vl_model_path,
         device="cuda",
         torch_dtype=torch.bfloat16,
     )

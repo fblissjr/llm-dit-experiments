@@ -153,6 +153,13 @@
 
             <!-- Qwen-Image Controls (hidden by default, shown when Qwen-Image selected) -->
             <div id="qwenImageControls" class="hidden mb-6 space-y-4">
+
+                <!-- Section: Decomposition (Layered) -->
+                <div class="border-b border-gray-700 pb-2 mb-4">
+                    <h3 class="text-sm font-semibold text-purple-400 uppercase tracking-wide">Decomposition (Qwen-Image-Layered)</h3>
+                    <p class="text-xs text-gray-500">Split an image into separate RGBA layers</p>
+                </div>
+
                 <!-- Input Image (required for Qwen-Image) -->
                 <div class="p-4 bg-gray-800/50 rounded-xl border border-gray-700">
                     <label class="block text-sm font-medium text-gray-300 mb-2">Input Image *</label>
@@ -230,9 +237,9 @@
                         <!-- Steps -->
                         <div>
                             <label class="block text-sm font-medium text-gray-300 mb-2">
-                                Steps: <span id="qiStepsValue" class="text-purple-400">30</span>
+                                Steps: <span id="qiStepsValue" class="text-purple-400">40</span>
                             </label>
-                            <input type="range" id="qiSteps" min="10" max="50" value="30" class="w-full">
+                            <input type="range" id="qiSteps" min="10" max="50" value="40" class="w-full">
                         </div>
 
                         <!-- Seed -->
@@ -395,6 +402,118 @@
                                     </button>
                                 </div>
                             </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Section: Editing (Edit-2511) -->
+                <div class="border-b border-gray-700 pb-2 mb-4 mt-6">
+                    <h3 class="text-sm font-semibold text-purple-400 uppercase tracking-wide">Editing (Qwen-Image-Edit-2511)</h3>
+                    <p class="text-xs text-gray-500">Edit images with text instructions - works with any image source</p>
+                </div>
+
+                <!-- Single Image Edit -->
+                <div class="p-4 bg-gray-800/50 rounded-xl border border-gray-700 mb-4">
+                    <h4 class="text-sm font-medium text-gray-300 mb-2">Single Image Edit</h4>
+                    <p class="text-xs text-gray-500 mb-3">Edit one image with text instructions</p>
+
+                    <div class="grid grid-cols-2 gap-4">
+                        <!-- Image input -->
+                        <div>
+                            <div id="qiSingleDropzone" class="border-2 border-dashed border-gray-600 rounded-lg p-3 text-center cursor-pointer hover:border-purple-500 transition-colors min-h-[100px] flex items-center justify-center">
+                                <input type="file" id="qiSingleInput" accept="image/*" class="hidden">
+                                <div id="qiSinglePlaceholder">
+                                    <p class="text-xs text-gray-500">Drop image or click</p>
+                                </div>
+                                <img id="qiSinglePreview" class="hidden max-h-24 rounded" alt="Input">
+                            </div>
+                            <button type="button" id="qiSingleClear" class="hidden text-xs text-gray-400 hover:text-white mt-1">Clear</button>
+                        </div>
+
+                        <!-- Instruction + button -->
+                        <div class="flex flex-col">
+                            <textarea id="qiSingleInstruction" rows="2" placeholder="Edit instruction, e.g., 'Make the sky more dramatic'" class="flex-1 px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:ring-2 focus:ring-purple-500 text-sm mb-2"></textarea>
+                            <button type="button" id="qiSingleEdit" disabled class="py-2 px-4 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-700 disabled:cursor-not-allowed text-white font-medium rounded-lg transition-colors text-sm">
+                                Edit Image
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Single edit result -->
+                    <div id="qiSingleResult" class="hidden mt-3">
+                        <div class="flex items-center gap-2 mb-2">
+                            <div id="qiSingleSpinner" class="hidden w-4 h-4 border-2 border-purple-500 border-t-transparent rounded-full animate-spin"></div>
+                            <span id="qiSingleStatusText" class="text-sm text-gray-400"></span>
+                        </div>
+                        <img id="qiSingleResultImg" class="max-h-48 rounded-lg" alt="Result">
+                        <button type="button" id="qiSingleDownload" class="mt-2 py-1 px-3 bg-green-600 hover:bg-green-700 text-white text-sm rounded-lg">Download</button>
+                    </div>
+                </div>
+
+                <!-- Multi-Image Combine -->
+                <div class="p-4 bg-gray-800/50 rounded-xl border border-gray-700">
+                    <h4 class="text-sm font-medium text-gray-300 mb-2">Multi-Image Combine</h4>
+                    <p class="text-xs text-gray-500 mb-3">Combine 2-4 images using text instructions</p>
+
+                    <!-- Multi-image dropzone -->
+                    <div id="qiMultiDropzone" class="border-2 border-dashed border-gray-600 rounded-lg p-4 mb-3 min-h-[120px]">
+                        <input type="file" id="qiMultiInput" accept="image/*" multiple class="hidden">
+                        <div id="qiMultiPreview" class="grid grid-cols-4 gap-2">
+                            <!-- Preview images will be added here -->
+                        </div>
+                        <p id="qiMultiPlaceholder" class="text-center text-gray-500 text-sm py-4">
+                            Drop 2-4 images here or click to select
+                        </p>
+                    </div>
+
+                    <!-- Clear button -->
+                    <div class="flex justify-end mb-3">
+                        <button type="button" id="qiMultiClear" class="text-xs text-gray-400 hover:text-white">Clear all images</button>
+                    </div>
+
+                    <!-- Instruction input -->
+                    <div class="mb-3">
+                        <label class="block text-sm font-medium text-gray-300 mb-2">Combine Instruction</label>
+                        <textarea id="qiMultiInstruction" rows="2" placeholder="How to combine the images, e.g., 'Place both people standing together in a park'" class="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:ring-2 focus:ring-purple-500 text-sm"></textarea>
+                    </div>
+
+                    <!-- Parameters row -->
+                    <div class="grid grid-cols-3 gap-3 mb-3">
+                        <div>
+                            <label class="block text-xs text-gray-400 mb-1">Steps: <span id="qiMultiStepsValue">40</span></label>
+                            <input type="range" id="qiMultiSteps" min="20" max="50" value="40" class="w-full">
+                        </div>
+                        <div>
+                            <label class="block text-xs text-gray-400 mb-1">CFG: <span id="qiMultiCfgValue">4.0</span></label>
+                            <input type="range" id="qiMultiCfg" min="1" max="10" step="0.5" value="4.0" class="w-full">
+                        </div>
+                        <div>
+                            <label class="block text-xs text-gray-400 mb-1">Seed</label>
+                            <input type="number" id="qiMultiSeed" placeholder="Random" class="w-full px-2 py-1 bg-gray-800 border border-gray-700 rounded text-white text-xs">
+                        </div>
+                    </div>
+
+                    <!-- Combine button -->
+                    <button type="button" id="qiMultiCombine" disabled class="w-full py-2 px-4 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-700 disabled:cursor-not-allowed text-white font-medium rounded-lg transition-colors">
+                        Combine Images
+                    </button>
+
+                    <!-- Status -->
+                    <div id="qiMultiStatus" class="hidden mt-3">
+                        <div class="flex items-center gap-2">
+                            <div class="w-4 h-4 border-2 border-purple-500 border-t-transparent rounded-full animate-spin"></div>
+                            <span id="qiMultiStatusText" class="text-gray-300 text-sm">Combining images...</span>
+                        </div>
+                    </div>
+
+                    <!-- Result -->
+                    <div id="qiMultiResult" class="hidden mt-4">
+                        <h4 class="text-sm font-medium text-gray-300 mb-2">Combined Result</h4>
+                        <img id="qiMultiResultImg" class="w-full rounded-lg" alt="Combined result">
+                        <div class="flex gap-2 mt-2">
+                            <button type="button" id="qiMultiDownload" class="flex-1 py-2 px-4 bg-green-600 hover:bg-green-700 text-white font-medium rounded-lg transition-colors text-sm">
+                                Download
+                            </button>
                         </div>
                     </div>
                 </div>
@@ -3451,12 +3570,18 @@
             try {
                 const response = await fetch(`${API_BASE}/api/qwen-image/status`);
                 const data = await response.json();
-                qwenImageAvailable = data.available;
+                // Use 'configured' (path set) not just 'available' (pipeline loaded)
+                // Pipeline lazy-loads on first use
+                qwenImageAvailable = data.configured || data.available;
 
                 if (!qwenImageAvailable) {
                     qwenImageStatus.classList.remove('hidden');
                     modelTypeQwenImageBtn.disabled = true;
                     modelTypeQwenImageBtn.classList.add('opacity-50', 'cursor-not-allowed');
+                } else {
+                    qwenImageStatus.classList.add('hidden');
+                    modelTypeQwenImageBtn.disabled = false;
+                    modelTypeQwenImageBtn.classList.remove('opacity-50', 'cursor-not-allowed');
                 }
             } catch (err) {
                 console.error('Failed to check Qwen-Image status:', err);
@@ -3889,6 +4014,317 @@
             const a = document.createElement('a');
             a.href = currentEditResultImage;
             a.download = `edited_layer_${currentEditLayerIndex}.png`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+        });
+
+        // =====================================================================
+        // Single Image Edit (Edit-2511)
+        // =====================================================================
+
+        const qiSingleDropzone = document.getElementById('qiSingleDropzone');
+        const qiSingleInput = document.getElementById('qiSingleInput');
+        const qiSinglePlaceholder = document.getElementById('qiSinglePlaceholder');
+        const qiSinglePreview = document.getElementById('qiSinglePreview');
+        const qiSingleClear = document.getElementById('qiSingleClear');
+        const qiSingleInstruction = document.getElementById('qiSingleInstruction');
+        const qiSingleEdit = document.getElementById('qiSingleEdit');
+        const qiSingleResult = document.getElementById('qiSingleResult');
+        const qiSingleSpinner = document.getElementById('qiSingleSpinner');
+        const qiSingleStatusText = document.getElementById('qiSingleStatusText');
+        const qiSingleResultImg = document.getElementById('qiSingleResultImg');
+        const qiSingleDownload = document.getElementById('qiSingleDownload');
+
+        let singleEditImage = null; // dataUrl
+
+        function updateSingleEditState() {
+            const hasImage = singleEditImage !== null;
+            const hasInstruction = qiSingleInstruction?.value.trim().length > 0;
+            if (qiSingleEdit) qiSingleEdit.disabled = !(hasImage && hasInstruction);
+        }
+
+        qiSingleInstruction?.addEventListener('input', updateSingleEditState);
+
+        // Handle single image selection
+        function handleSingleImage(file) {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                singleEditImage = e.target.result;
+                qiSinglePreview.src = singleEditImage;
+                qiSinglePreview.classList.remove('hidden');
+                qiSinglePlaceholder.classList.add('hidden');
+                qiSingleClear.classList.remove('hidden');
+                updateSingleEditState();
+            };
+            reader.readAsDataURL(file);
+        }
+
+        qiSingleDropzone?.addEventListener('click', () => qiSingleInput?.click());
+        qiSingleInput?.addEventListener('change', (e) => {
+            if (e.target.files[0]) handleSingleImage(e.target.files[0]);
+        });
+
+        qiSingleDropzone?.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            qiSingleDropzone.classList.add('border-purple-500');
+        });
+        qiSingleDropzone?.addEventListener('dragleave', () => {
+            qiSingleDropzone.classList.remove('border-purple-500');
+        });
+        qiSingleDropzone?.addEventListener('drop', (e) => {
+            e.preventDefault();
+            qiSingleDropzone.classList.remove('border-purple-500');
+            const file = e.dataTransfer.files[0];
+            if (file?.type.startsWith('image/')) handleSingleImage(file);
+        });
+
+        qiSingleClear?.addEventListener('click', () => {
+            singleEditImage = null;
+            qiSinglePreview.classList.add('hidden');
+            qiSinglePlaceholder.classList.remove('hidden');
+            qiSingleClear.classList.add('hidden');
+            qiSingleResult.classList.add('hidden');
+            updateSingleEditState();
+        });
+
+        // Edit single image
+        qiSingleEdit?.addEventListener('click', async () => {
+            if (!singleEditImage) return;
+            const instruction = qiSingleInstruction.value.trim();
+            if (!instruction) return;
+
+            qiSingleEdit.disabled = true;
+            qiSingleSpinner.classList.remove('hidden');
+            qiSingleStatusText.textContent = 'Editing...';
+            qiSingleResult.classList.remove('hidden');
+            qiSingleResultImg.classList.add('hidden');
+
+            try {
+                const response = await fetch(`${API_BASE}/api/qwen-image/edit-layer`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        layer_image: singleEditImage,
+                        instruction: instruction,
+                        steps: 40,
+                        cfg_scale: 4.0,
+                    }),
+                });
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.detail || 'Edit failed');
+                }
+
+                const blob = await response.blob();
+                const url = URL.createObjectURL(blob);
+                qiSingleResultImg.src = url;
+                qiSingleResultImg.classList.remove('hidden');
+                qiSingleStatusText.textContent = 'Done';
+
+            } catch (err) {
+                qiSingleStatusText.textContent = `Error: ${err.message}`;
+            } finally {
+                qiSingleSpinner.classList.add('hidden');
+                qiSingleEdit.disabled = false;
+            }
+        });
+
+        qiSingleDownload?.addEventListener('click', () => {
+            const src = qiSingleResultImg.src;
+            if (!src) return;
+            const a = document.createElement('a');
+            a.href = src;
+            a.download = `edited_${Date.now()}.png`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+        });
+
+        // =====================================================================
+        // Multi-Image Combine (Edit-2511)
+        // =====================================================================
+
+        const qiMultiDropzone = document.getElementById('qiMultiDropzone');
+        const qiMultiInput = document.getElementById('qiMultiInput');
+        const qiMultiPreview = document.getElementById('qiMultiPreview');
+        const qiMultiPlaceholder = document.getElementById('qiMultiPlaceholder');
+        const qiMultiClear = document.getElementById('qiMultiClear');
+        const qiMultiInstruction = document.getElementById('qiMultiInstruction');
+        const qiMultiSteps = document.getElementById('qiMultiSteps');
+        const qiMultiStepsValue = document.getElementById('qiMultiStepsValue');
+        const qiMultiCfg = document.getElementById('qiMultiCfg');
+        const qiMultiCfgValue = document.getElementById('qiMultiCfgValue');
+        const qiMultiSeed = document.getElementById('qiMultiSeed');
+        const qiMultiCombine = document.getElementById('qiMultiCombine');
+        const qiMultiStatus = document.getElementById('qiMultiStatus');
+        const qiMultiStatusText = document.getElementById('qiMultiStatusText');
+        const qiMultiResult = document.getElementById('qiMultiResult');
+        const qiMultiResultImg = document.getElementById('qiMultiResultImg');
+        const qiMultiDownload = document.getElementById('qiMultiDownload');
+
+        let multiImages = []; // Array of {file, dataUrl}
+
+        // Update slider displays
+        qiMultiSteps?.addEventListener('input', () => {
+            qiMultiStepsValue.textContent = qiMultiSteps.value;
+        });
+        qiMultiCfg?.addEventListener('input', () => {
+            qiMultiCfgValue.textContent = parseFloat(qiMultiCfg.value).toFixed(1);
+        });
+
+        // Update combine button state
+        function updateMultiCombineState() {
+            const hasEnoughImages = multiImages.length >= 2;
+            const hasInstruction = qiMultiInstruction.value.trim().length > 0;
+            qiMultiCombine.disabled = !(hasEnoughImages && hasInstruction);
+        }
+
+        qiMultiInstruction?.addEventListener('input', updateMultiCombineState);
+
+        // Handle file selection
+        function handleMultiFiles(files) {
+            const imageFiles = Array.from(files).filter(f => f.type.startsWith('image/'));
+
+            // Limit to 4 images total
+            const remaining = 4 - multiImages.length;
+            const toAdd = imageFiles.slice(0, remaining);
+
+            toAdd.forEach(file => {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    multiImages.push({ file, dataUrl: e.target.result });
+                    renderMultiPreview();
+                    updateMultiCombineState();
+                };
+                reader.readAsDataURL(file);
+            });
+        }
+
+        function renderMultiPreview() {
+            qiMultiPreview.innerHTML = '';
+
+            if (multiImages.length === 0) {
+                qiMultiPlaceholder.classList.remove('hidden');
+                return;
+            }
+
+            qiMultiPlaceholder.classList.add('hidden');
+
+            multiImages.forEach((img, idx) => {
+                const div = document.createElement('div');
+                div.className = 'relative group';
+                div.innerHTML = `
+                    <img src="${img.dataUrl}" class="w-full h-20 object-cover rounded" alt="Image ${idx + 1}">
+                    <button type="button" class="qiMultiRemove absolute top-1 right-1 w-5 h-5 bg-red-600 hover:bg-red-700 text-white rounded-full text-xs opacity-0 group-hover:opacity-100 transition-opacity" data-idx="${idx}">x</button>
+                    <span class="absolute bottom-1 left-1 text-xs bg-black/60 px-1 rounded">${idx + 1}</span>
+                `;
+                qiMultiPreview.appendChild(div);
+            });
+        }
+
+        // Remove individual image
+        qiMultiPreview?.addEventListener('click', (e) => {
+            const removeBtn = e.target.closest('.qiMultiRemove');
+            if (removeBtn) {
+                const idx = parseInt(removeBtn.dataset.idx);
+                multiImages.splice(idx, 1);
+                renderMultiPreview();
+                updateMultiCombineState();
+            }
+        });
+
+        // Click to open file picker
+        qiMultiDropzone?.addEventListener('click', (e) => {
+            if (!e.target.closest('button')) {
+                qiMultiInput.click();
+            }
+        });
+
+        qiMultiInput?.addEventListener('change', (e) => {
+            handleMultiFiles(e.target.files);
+            e.target.value = ''; // Reset for same file selection
+        });
+
+        // Drag and drop
+        qiMultiDropzone?.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            qiMultiDropzone.classList.add('border-purple-500', 'bg-gray-800/50');
+        });
+        qiMultiDropzone?.addEventListener('dragleave', () => {
+            qiMultiDropzone.classList.remove('border-purple-500', 'bg-gray-800/50');
+        });
+        qiMultiDropzone?.addEventListener('drop', (e) => {
+            e.preventDefault();
+            qiMultiDropzone.classList.remove('border-purple-500', 'bg-gray-800/50');
+            handleMultiFiles(e.dataTransfer.files);
+        });
+
+        // Clear all
+        qiMultiClear?.addEventListener('click', () => {
+            multiImages = [];
+            renderMultiPreview();
+            updateMultiCombineState();
+        });
+
+        // Combine images
+        qiMultiCombine?.addEventListener('click', async () => {
+            if (multiImages.length < 2) return;
+
+            const instruction = qiMultiInstruction.value.trim();
+            if (!instruction) return;
+
+            // Show status
+            qiMultiStatus.classList.remove('hidden');
+            qiMultiResult.classList.add('hidden');
+            qiMultiCombine.disabled = true;
+            qiMultiStatusText.textContent = 'Combining images...';
+
+            try {
+                const response = await fetch(`${API_BASE}/api/qwen-image/edit-multi`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        images: multiImages.map(img => img.dataUrl),
+                        instruction: instruction,
+                        steps: parseInt(qiMultiSteps.value),
+                        cfg_scale: parseFloat(qiMultiCfg.value),
+                        seed: qiMultiSeed.value ? parseInt(qiMultiSeed.value) : null,
+                    }),
+                });
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.detail || 'Failed to combine images');
+                }
+
+                const data = await response.json();
+
+                // Show result
+                qiMultiResultImg.src = `data:image/png;base64,${data.image}`;
+                qiMultiResult.classList.remove('hidden');
+                qiMultiStatusText.textContent = `Combined in ${data.generation_time?.toFixed(1) || '?'}s`;
+
+            } catch (err) {
+                console.error('Multi-image combine error:', err);
+                qiMultiStatusText.textContent = `Error: ${err.message}`;
+            } finally {
+                qiMultiCombine.disabled = false;
+                setTimeout(() => {
+                    qiMultiStatus.classList.add('hidden');
+                }, 3000);
+            }
+        });
+
+        // Download combined result
+        qiMultiDownload?.addEventListener('click', () => {
+            const src = qiMultiResultImg.src;
+            if (!src) return;
+
+            const a = document.createElement('a');
+            a.href = src;
+            a.download = `combined_${Date.now()}.png`;
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);

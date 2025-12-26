@@ -35,8 +35,8 @@ echo "  QWEN3-EMBEDDING-4B COMPARISON SWEEPS"
 echo "=============================================="
 echo ""
 echo "Environment:"
-echo "  QWEN3_PATH: ${QWEN3_PATH:-/home/fbliss/Storage/Qwen3-4B}"
-echo "  EMBEDDING_PATH: ${EMBEDDING_PATH:-/home/fbliss/Storage/Qwen3-Embedding-4B}"
+echo "  QWEN3_PATH: ${QWEN3_PATH:?Error: Set QWEN3_PATH environment variable}"
+echo "  EMBEDDING_PATH: ${EMBEDDING_PATH:?Error: Set EMBEDDING_PATH environment variable}"
 echo ""
 
 # Make scripts executable

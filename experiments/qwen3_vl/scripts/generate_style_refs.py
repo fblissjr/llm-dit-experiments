@@ -14,7 +14,9 @@ sys.path.insert(0, str(Path(__file__).parents[3]))
 
 from src.llm_dit import ZImagePipeline
 
-OUTPUT_DIR = Path("/home/fbliss/workspace/llm-dit-experiments/experiments/inputs")
+# Paths relative to experiments/ directory
+EXPERIMENTS_DIR = Path(__file__).parent.parent.parent
+OUTPUT_DIR = EXPERIMENTS_DIR / "inputs"
 
 # Style reference prompts - scenes/subjects that have very distinct visual styles
 STYLE_REFS = {
@@ -32,9 +34,14 @@ STYLE_REFS = {
 def main():
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
+    import os
+    model_path = os.environ.get("ZIMAGE_PATH")
+    if not model_path:
+        raise ValueError("Set ZIMAGE_PATH environment variable")
+
     print("Loading Z-Image pipeline...")
     pipe = ZImagePipeline.from_pretrained(
-        "/home/fbliss/Storage/Tongyi-MAI_Z-Image-Turbo",
+        model_path,
         torch_dtype=torch.bfloat16,
         device="cuda",
     )

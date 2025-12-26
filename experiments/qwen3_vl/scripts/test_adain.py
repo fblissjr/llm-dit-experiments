@@ -38,7 +38,7 @@ def main():
     parser.add_argument("--alphas", type=float, nargs="+", default=[0.3, 0.5, 0.7, 1.0])
     parser.add_argument("--output-dir", "-o", type=str, default="experiments/results/adain_test")
     parser.add_argument("--config", type=str, default="config.toml")
-    parser.add_argument("--vl-model-path", type=str, default="/home/fbliss/Storage/Qwen3-VL-4B-Instruct")
+    parser.add_argument("--vl-model-path", type=str, required=True, help="Path to Qwen3-VL model")
     parser.add_argument("--hidden-layer", type=int, default=-6)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--modes", nargs="+", default=["per_token", "per_dim", "global"],

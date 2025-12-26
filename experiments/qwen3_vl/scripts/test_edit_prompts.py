@@ -24,28 +24,30 @@ from experiments.qwen3_vl.scripts.grid_utils import make_grid
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Test edit-style prompts with VL")
+    # Paths relative to experiments/ directory
+    experiments_dir = Path(__file__).parent.parent.parent
     parser.add_argument(
         "--model-path",
         type=str,
-        default="/home/fbliss/Storage/Tongyi-MAI_Z-Image-Turbo",
+        required=True,
         help="Path to Z-Image model",
     )
     parser.add_argument(
         "--vl-model-path",
         type=str,
-        default="/home/fbliss/Storage/Qwen3-VL-4B-Instruct",
+        required=True,
         help="Path to Qwen3-VL model",
     )
     parser.add_argument(
         "--reference",
         type=str,
-        default="/home/fbliss/workspace/llm-dit-experiments/experiments/inputs/sunset.png",
+        default=str(experiments_dir / "inputs/sunset.png"),
         help="Reference image path",
     )
     parser.add_argument(
         "--output-dir",
         type=str,
-        default="/home/fbliss/workspace/llm-dit-experiments/experiments/results/vl_edit_prompts",
+        default=str(experiments_dir / "results/vl_edit_prompts"),
         help="Output directory",
     )
     parser.add_argument(

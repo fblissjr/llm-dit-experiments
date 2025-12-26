@@ -79,7 +79,7 @@ def analyze_prompt(model, tokenizer, prompt: str, layer: int = -2) -> dict:
 def main():
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model-path", default="/home/fbliss/Storage/Qwen3-4B")
+    parser.add_argument("--model-path", required=True, help="Path to Qwen3 model")
     parser.add_argument("--device", default="cuda")
     args = parser.parse_args()
 

@@ -41,9 +41,14 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-# Model paths from config.toml
-QWEN3_4B_PATH = "/home/fbliss/Storage/Qwen3-4B"
-QWEN3_EMBEDDING_PATH = "/home/fbliss/Storage/Qwen3-Embedding-4B"
+# Model paths from environment variables
+QWEN3_4B_PATH = os.environ.get("QWEN3_PATH")
+QWEN3_EMBEDDING_PATH = os.environ.get("QWEN3_EMBEDDING_PATH")
+
+if not all([QWEN3_4B_PATH, QWEN3_EMBEDDING_PATH]):
+    raise ValueError(
+        "Set environment variables: QWEN3_PATH, QWEN3_EMBEDDING_PATH"
+    )
 
 # Test prompts - diverse set to capture various semantic patterns
 DEFAULT_PROMPTS = [

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Quick test of per-dimension analysis logic."""
 
+import os
 import sys
 from pathlib import Path
 
@@ -12,8 +13,14 @@ import torch.nn.functional as F
 import numpy as np
 import json
 
-QWEN3_4B_PATH = "/home/fbliss/Storage/Qwen3-4B"
-QWEN3_EMBEDDING_PATH = "/home/fbliss/Storage/Qwen3-Embedding-4B"
+# Model paths from environment variables
+QWEN3_4B_PATH = os.environ.get("QWEN3_PATH")
+QWEN3_EMBEDDING_PATH = os.environ.get("QWEN3_EMBEDDING_PATH")
+
+if not all([QWEN3_4B_PATH, QWEN3_EMBEDDING_PATH]):
+    raise ValueError(
+        "Set environment variables: QWEN3_PATH, QWEN3_EMBEDDING_PATH"
+    )
 
 print("Loading models...")
 

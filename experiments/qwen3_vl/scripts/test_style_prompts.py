@@ -21,24 +21,28 @@ from src.llm_dit import ZImagePipeline
 from experiments.qwen3_vl.scripts.grid_utils import make_grid
 
 
+# Paths relative to experiments/ directory
+EXPERIMENTS_DIR = Path(__file__).parent.parent.parent
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description="Test style prompts with VL")
     parser.add_argument(
         "--model-path",
         type=str,
-        default="/home/fbliss/Storage/Tongyi-MAI_Z-Image-Turbo",
+        required=True,
         help="Path to Z-Image model",
     )
     parser.add_argument(
         "--vl-model-path",
         type=str,
-        default="/home/fbliss/Storage/Qwen3-VL-4B-Instruct",
+        required=True,
         help="Path to Qwen3-VL model",
     )
     parser.add_argument(
         "--output-dir",
         type=str,
-        default="/home/fbliss/workspace/llm-dit-experiments/experiments/results/vl_style_prompts",
+        default=str(EXPERIMENTS_DIR / "results/vl_style_prompts"),
         help="Output directory",
     )
     parser.add_argument(
@@ -52,14 +56,14 @@ def parse_args():
 
 # Reference images for style transfer
 REFERENCE_IMAGES = {
-    "anime": "/home/fbliss/workspace/llm-dit-experiments/experiments/inputs/style_anime_girl.png",
-    "noir": "/home/fbliss/workspace/llm-dit-experiments/experiments/inputs/style_noir_detective.png",
-    "oil": "/home/fbliss/workspace/llm-dit-experiments/experiments/inputs/style_oil_painting.png",
-    "cyberpunk": "/home/fbliss/workspace/llm-dit-experiments/experiments/inputs/style_cyberpunk_city.png",
-    "watercolor": "/home/fbliss/workspace/llm-dit-experiments/experiments/inputs/style_watercolor_forest.png",
-    "pixel": "/home/fbliss/workspace/llm-dit-experiments/experiments/inputs/style_pixel_art.png",
-    "ukiyo": "/home/fbliss/workspace/llm-dit-experiments/experiments/inputs/style_ukiyo_wave.png",
-    "deco": "/home/fbliss/workspace/llm-dit-experiments/experiments/inputs/style_art_deco.png",
+    "anime": str(EXPERIMENTS_DIR / "inputs/style_anime_girl.png"),
+    "noir": str(EXPERIMENTS_DIR / "inputs/style_noir_detective.png"),
+    "oil": str(EXPERIMENTS_DIR / "inputs/style_oil_painting.png"),
+    "cyberpunk": str(EXPERIMENTS_DIR / "inputs/style_cyberpunk_city.png"),
+    "watercolor": str(EXPERIMENTS_DIR / "inputs/style_watercolor_forest.png"),
+    "pixel": str(EXPERIMENTS_DIR / "inputs/style_pixel_art.png"),
+    "ukiyo": str(EXPERIMENTS_DIR / "inputs/style_ukiyo_wave.png"),
+    "deco": str(EXPERIMENTS_DIR / "inputs/style_art_deco.png"),
 }
 
 # Style transfer prompts (explicitly ask for style from the image)

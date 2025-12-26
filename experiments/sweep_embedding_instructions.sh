@@ -20,8 +20,11 @@
 
 set -e
 
-QWEN3_PATH="${QWEN3_PATH:-/home/fbliss/Storage/Qwen3-4B}"
-EMBEDDING_PATH="${EMBEDDING_PATH:-/home/fbliss/Storage/Qwen3-Embedding-4B}"
+# Required environment variables
+if [ -z "$QWEN3_PATH" ] || [ -z "$EMBEDDING_PATH" ]; then
+    echo "Error: Set QWEN3_PATH and EMBEDDING_PATH environment variables"
+    exit 1
+fi
 OUTPUT_DIR="experiments/results/embedding_instruction_sweep"
 
 # Parse arguments

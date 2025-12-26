@@ -46,9 +46,15 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-QWEN3_4B_PATH = "/home/fbliss/Storage/Qwen3-4B"
-QWEN3_EMBEDDING_PATH = "/home/fbliss/Storage/Qwen3-Embedding-4B"
-ZIMAGE_PATH = "/home/fbliss/Storage/Tongyi-MAI_Z-Image-Turbo"
+# Model paths from environment variables
+QWEN3_4B_PATH = os.environ.get("QWEN3_PATH")
+QWEN3_EMBEDDING_PATH = os.environ.get("QWEN3_EMBEDDING_PATH")
+ZIMAGE_PATH = os.environ.get("ZIMAGE_PATH")
+
+if not all([QWEN3_4B_PATH, QWEN3_EMBEDDING_PATH, ZIMAGE_PATH]):
+    raise ValueError(
+        "Set environment variables: QWEN3_PATH, QWEN3_EMBEDDING_PATH, ZIMAGE_PATH"
+    )
 
 
 def compute_dimension_stats(embeddings: torch.Tensor) -> dict:

@@ -21,20 +21,24 @@ from src.llm_dit import ZImagePipeline
 from experiments.qwen3_vl.scripts.grid_utils import make_grid
 
 
+# Paths relative to experiments/ directory
+EXPERIMENTS_DIR = Path(__file__).parent.parent.parent
+
+
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model-path", default="/home/fbliss/Storage/Tongyi-MAI_Z-Image-Turbo")
-    parser.add_argument("--vl-model-path", default="/home/fbliss/Storage/Qwen3-VL-4B-Instruct")
-    parser.add_argument("--output-dir", default="/home/fbliss/workspace/llm-dit-experiments/experiments/results/vl_style_transfer_correct")
+    parser.add_argument("--model-path", required=True)
+    parser.add_argument("--vl-model-path", required=True)
+    parser.add_argument("--output-dir", default=str(EXPERIMENTS_DIR / "results/vl_style_transfer_correct"))
     parser.add_argument("--seed", type=int, default=42)
     return parser.parse_args()
 
 
 STYLES = {
-    "anime": "/home/fbliss/workspace/llm-dit-experiments/experiments/inputs/style_anime_girl.png",
-    "noir": "/home/fbliss/workspace/llm-dit-experiments/experiments/inputs/style_noir_detective.png",
-    "oil": "/home/fbliss/workspace/llm-dit-experiments/experiments/inputs/style_oil_painting.png",
-    "cyberpunk": "/home/fbliss/workspace/llm-dit-experiments/experiments/inputs/style_cyberpunk_city.png",
+    "anime": str(EXPERIMENTS_DIR / "inputs/style_anime_girl.png"),
+    "noir": str(EXPERIMENTS_DIR / "inputs/style_noir_detective.png"),
+    "oil": str(EXPERIMENTS_DIR / "inputs/style_oil_painting.png"),
+    "cyberpunk": str(EXPERIMENTS_DIR / "inputs/style_cyberpunk_city.png"),
 }
 
 PROMPT = "Homer Simpson"

@@ -37,10 +37,15 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-# Model paths from config.toml
-ZIMAGE_PATH = "/home/fbliss/Storage/Tongyi-MAI_Z-Image-Turbo"
-QWEN3_4B_PATH = "/home/fbliss/Storage/Qwen3-4B"
-QWEN3_EMBEDDING_PATH = "/home/fbliss/Storage/Qwen3-Embedding-4B"
+# Model paths from environment variables
+ZIMAGE_PATH = os.environ.get("ZIMAGE_PATH")
+QWEN3_4B_PATH = os.environ.get("QWEN3_PATH")
+QWEN3_EMBEDDING_PATH = os.environ.get("QWEN3_EMBEDDING_PATH")
+
+if not all([ZIMAGE_PATH, QWEN3_4B_PATH, QWEN3_EMBEDDING_PATH]):
+    raise ValueError(
+        "Set environment variables: ZIMAGE_PATH, QWEN3_PATH, QWEN3_EMBEDDING_PATH"
+    )
 
 # Test prompts
 DEFAULT_PROMPTS = [

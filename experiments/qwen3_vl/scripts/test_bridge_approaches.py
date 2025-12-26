@@ -39,10 +39,15 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Model paths
-ZIMAGE_PATH = "/home/fbliss/Storage/Tongyi-MAI_Z-Image-Turbo"
-QWEN3_4B_PATH = "/home/fbliss/Storage/Qwen3-4B"
-QWEN3_VL_PATH = "/home/fbliss/Storage/Qwen3-VL-4B-Instruct"
+# Model paths from environment variables
+ZIMAGE_PATH = os.environ.get("ZIMAGE_PATH")
+QWEN3_4B_PATH = os.environ.get("QWEN3_PATH")
+QWEN3_VL_PATH = os.environ.get("QWEN3_VL_PATH")
+
+if not all([ZIMAGE_PATH, QWEN3_4B_PATH, QWEN3_VL_PATH]):
+    raise ValueError(
+        "Set environment variables: ZIMAGE_PATH, QWEN3_PATH, QWEN3_VL_PATH"
+    )
 
 # Outlier dimensions identified from per-dimension analysis
 # High std ratio (VL has MORE variance than expected)

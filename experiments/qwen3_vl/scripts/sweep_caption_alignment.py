@@ -392,7 +392,7 @@ def main():
     parser.add_argument("-i", "--input", required=True, help="Input image path")
     parser.add_argument("-o", "--output", default="experiments/results/caption_alignment_sweep",
                         help="Output directory")
-    parser.add_argument("--vl-model-path", default="/home/fbliss/Storage/Qwen3-VL-4B-Thinking",
+    parser.add_argument("--vl-model-path", required=True,
                         help="Path to Qwen3-VL model")
     parser.add_argument("--hidden-layers", type=str, default="-2,-3,-4,-5,-6",
                         help="Hidden layers to test (comma-separated, e.g., -2,-3,-4,-5,-6)")

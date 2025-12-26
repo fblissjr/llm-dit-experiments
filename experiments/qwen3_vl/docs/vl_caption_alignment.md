@@ -128,7 +128,7 @@ With aligned captions:
 
 ### Script: `vl_caption_embedding_test.py`
 
-Location: `/home/fbliss/workspace/llm-dit-experiments/experiments/qwen3_vl/scripts/vl_caption_embedding_test.py`
+Location: `experiments/qwen3_vl/scripts/vl_caption_embedding_test.py`
 
 **Workflow:**
 
@@ -636,11 +636,11 @@ caption_embedding_test/
 
 ## References
 
-- **VL Conditioning Research:** `/home/fbliss/workspace/llm-dit-experiments/experiments/qwen3_vl/README.md`
-- **Research Findings:** `/home/fbliss/workspace/llm-dit-experiments/experiments/qwen3_vl/docs/research/findings.md`
-- **Caption Studies:** `/home/fbliss/workspace/llm-dit-experiments/experiments/qwen3_vl/docs/caption_studies.md`
-- **VL Blending:** `/home/fbliss/workspace/llm-dit-experiments/src/llm_dit/vl/blending.py`
-- **VL Extractor:** `/home/fbliss/workspace/llm-dit-experiments/src/llm_dit/vl/qwen3_vl.py`
+- **VL Conditioning Research:** `experiments/qwen3_vl/README.md`
+- **Research Findings:** `experiments/qwen3_vl/docs/research/findings.md`
+- **Caption Studies:** `experiments/qwen3_vl/docs/caption_studies.md`
+- **VL Blending:** `src/llm_dit/vl/blending.py`
+- **VL Extractor:** `src/llm_dit/vl/qwen3_vl.py`
 
 ## Conclusion
 

@@ -209,7 +209,7 @@ cat experiments/results/perdim_visualizations/analysis_report.md
 ### "Module not found" errors
 ```bash
 # Make sure you're in project root
-cd /home/fbliss/workspace/llm-dit-experiments
+cd /path/to/llm-dit-experiments
 
 # Sync dependencies
 uv sync
