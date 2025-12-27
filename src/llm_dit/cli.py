@@ -87,6 +87,8 @@ class RuntimeConfig:
     qwen_image_cfg_scale: float = 4.0  # CFG scale for Qwen-Image
     qwen_image_steps: int = 40  # Diffusion steps for Qwen-Image (40 for Edit-2511)
     qwen_image_resolution: int = 640  # Resolution (640 or 1024 only)
+    qwen_image_quantize_text_encoder: str = "none"  # none/4bit/8bit - quantize Qwen2.5-VL-7B
+    qwen_image_quantize_transformer: str = "none"  # none/4bit/8bit - quantize DiT
 
     # Device placement
     encoder_device: str = "auto"
@@ -1027,6 +1029,8 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
                 config.qwen_image_steps = getattr(qi, 'num_inference_steps', 40)
                 config.qwen_image_cfg_scale = getattr(qi, 'cfg_scale', 4.0)
                 config.qwen_image_resolution = getattr(qi, 'resolution', 640)
+                config.qwen_image_quantize_text_encoder = getattr(qi, 'quantize_text_encoder', 'none')
+                config.qwen_image_quantize_transformer = getattr(qi, 'quantize_transformer', 'none')
 
             # Check for DyPE section
             if hasattr(toml_config, 'dype'):

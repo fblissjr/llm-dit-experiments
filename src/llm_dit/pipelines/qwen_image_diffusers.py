@@ -101,6 +101,8 @@ class QwenImageDiffusersPipeline:
         cpu_offload: bool = True,
         load_edit_model: bool = False,
         edit_only: bool = False,
+        quantize_text_encoder: Optional[str] = None,
+        quantize_transformer: Optional[str] = None,
     ) -> "QwenImageDiffusersPipeline":
         """
         Load the pipeline from pretrained weights.
@@ -115,6 +117,14 @@ class QwenImageDiffusersPipeline:
             load_edit_model: If True, also load the edit model
             edit_only: If True, skip loading decompose model (for edit-only workflows)
                 This saves ~12GB VRAM on 24GB cards.
+            quantize_text_encoder: Quantization for text encoder (Qwen2.5-VL-7B):
+                None = no quantization (~14GB)
+                "4bit" = 4-bit nf4 (~3.5GB, 75% reduction)
+                "8bit" = 8-bit (~7GB, 50% reduction)
+            quantize_transformer: Quantization for transformer (DiT):
+                None = no quantization (~8GB)
+                "4bit" = 4-bit nf4 (~2GB, 75% reduction)
+                "8bit" = 8-bit (~4GB, 50% reduction)
 
         Returns:
             Initialized QwenImageDiffusersPipeline
@@ -131,6 +141,15 @@ class QwenImageDiffusersPipeline:
                 "/path/to/Qwen_Qwen-Image-Layered",
                 edit_only=True,
                 edit_model_path="/path/to/Qwen-Image-Edit-2511",
+            )
+
+            # Quantized mode for RTX 4090 (edit_only + 4bit text encoder)
+            # ~12GB total VRAM: 3.5GB text encoder + 8GB DiT + 0.5GB VAE
+            pipe = QwenImageDiffusersPipeline.from_pretrained(
+                "/path/to/Qwen_Qwen-Image-Layered",
+                edit_only=True,
+                quantize_text_encoder="4bit",
+                cpu_offload=True,
             )
         """
         model_path = Path(model_path)
@@ -149,20 +168,26 @@ class QwenImageDiffusersPipeline:
             from diffusers import QwenImageEditPlusPipeline
 
             logger.info(f"Loading QwenImageEditPlusPipeline from {resolved_edit_path}")
-            if cpu_offload:
-                # Load to CPU first to avoid VRAM spike, then enable offload
-                logger.info("Loading to CPU first (cpu_offload=True)")
+
+            # Check if quantization is requested
+            if quantize_text_encoder or quantize_transformer:
+                # Use quantized loading - load components separately then assemble pipeline
+                edit_pipe = cls._load_edit_pipeline_quantized(
+                    resolved_edit_path,
+                    torch_dtype=torch_dtype,
+                    quantize_text_encoder=quantize_text_encoder,
+                    quantize_transformer=quantize_transformer,
+                    cpu_offload=cpu_offload,
+                )
+            elif cpu_offload:
+                # Use model_cpu_offload - moves whole components to GPU one at a time
+                logger.info("Loading with model CPU offload")
                 edit_pipe = QwenImageEditPlusPipeline.from_pretrained(
                     resolved_edit_path,
                     torch_dtype=torch_dtype,
-                    device_map="cpu",  # Load to CPU first
-                    low_cpu_mem_usage=True,
                 )
-                # Use model_cpu_offload (faster) instead of sequential_cpu_offload (very slow)
-                # model_cpu_offload: moves whole components (encoder/transformer/vae) between CPU/GPU
-                # sequential_cpu_offload: moves every layer - 10-100x slower
-                logger.info("Enabling model CPU offload for edit pipeline")
                 edit_pipe.enable_model_cpu_offload()
+                logger.info("Model CPU offload enabled")
             else:
                 edit_pipe = QwenImageEditPlusPipeline.from_pretrained(
                     resolved_edit_path,
@@ -193,14 +218,12 @@ class QwenImageDiffusersPipeline:
 
         logger.info(f"Loading QwenImageLayeredPipeline from {model_path}")
         if cpu_offload:
-            # Load to CPU first to avoid VRAM spike
+            # Diffusers loads to CPU by default, then enable_model_cpu_offload
             decompose_pipe = QwenImageLayeredPipeline.from_pretrained(
                 str(model_path),
                 torch_dtype=torch_dtype,
-                device_map="cpu",
-                low_cpu_mem_usage=True,
             )
-            logger.info("Enabling model CPU offload")
+            logger.info("Enabling model CPU offload for decompose pipeline")
             decompose_pipe.enable_model_cpu_offload()
             cpu_offload_enabled = True
         else:
@@ -220,8 +243,6 @@ class QwenImageDiffusersPipeline:
                 edit_pipe = QwenImageEditPlusPipeline.from_pretrained(
                     resolved_edit_path,
                     torch_dtype=torch_dtype,
-                    device_map="cpu",
-                    low_cpu_mem_usage=True,
                 )
                 edit_pipe.enable_model_cpu_offload()
             else:
@@ -247,6 +268,137 @@ class QwenImageDiffusersPipeline:
         )
 
         return instance
+
+    @classmethod
+    def _load_edit_pipeline_quantized(
+        cls,
+        model_path: str,
+        torch_dtype: torch.dtype,
+        quantize_text_encoder: Optional[str],
+        quantize_transformer: Optional[str],
+        cpu_offload: bool,
+    ):
+        """
+        Load the edit pipeline with quantized components.
+
+        This method loads the text encoder (Qwen2.5-VL-7B) and transformer (DiT)
+        separately with quantization configs, then assembles them into the pipeline.
+
+        Memory savings:
+        - Text encoder 4bit: ~14GB -> ~3.5GB (75% reduction)
+        - Text encoder 8bit: ~14GB -> ~7GB (50% reduction)
+        - Transformer 4bit: ~8GB -> ~2GB (75% reduction)
+        - Transformer 8bit: ~8GB -> ~4GB (50% reduction)
+
+        For RTX 4090 (24GB), recommended: quantize_text_encoder="4bit"
+        Total: ~3.5GB + ~8GB + ~0.5GB VAE = ~12GB VRAM
+        """
+        from diffusers import (
+            AutoencoderKLQwenImage,
+            FlowMatchEulerDiscreteScheduler,
+            QwenImageEditPlusPipeline,
+            QwenImageTransformer2DModel,
+        )
+        from transformers import (
+            Qwen2_5_VLForConditionalGeneration,
+            Qwen2Tokenizer,
+            Qwen2VLProcessor,
+        )
+
+        logger.info(f"Loading pipeline with quantization: text_encoder={quantize_text_encoder}, transformer={quantize_transformer}")
+
+        # Load text encoder with quantization
+        text_encoder = None
+        if quantize_text_encoder:
+            try:
+                from transformers import BitsAndBytesConfig as TransformersBitsAndBytesConfig
+            except ImportError:
+                raise ImportError(
+                    "bitsandbytes is required for quantization. "
+                    "Install with: pip install bitsandbytes"
+                )
+
+            if quantize_text_encoder == "4bit":
+                quant_config = TransformersBitsAndBytesConfig(
+                    load_in_4bit=True,
+                    bnb_4bit_quant_type="nf4",
+                    bnb_4bit_compute_dtype=torch_dtype,
+                )
+                logger.info("Loading text encoder with 4-bit quantization (~3.5GB)")
+            elif quantize_text_encoder == "8bit":
+                quant_config = TransformersBitsAndBytesConfig(
+                    load_in_8bit=True,
+                )
+                logger.info("Loading text encoder with 8-bit quantization (~7GB)")
+            else:
+                raise ValueError(f"Unknown quantization: {quantize_text_encoder}. Use '4bit' or '8bit'")
+
+            text_encoder = Qwen2_5_VLForConditionalGeneration.from_pretrained(
+                model_path,
+                subfolder="text_encoder",
+                quantization_config=quant_config,
+                torch_dtype=torch_dtype,
+                low_cpu_mem_usage=True,
+            )
+            logger.info("Text encoder loaded with quantization")
+
+        # Load transformer with quantization
+        transformer = None
+        if quantize_transformer:
+            try:
+                from diffusers import BitsAndBytesConfig as DiffusersBitsAndBytesConfig
+            except ImportError:
+                raise ImportError(
+                    "bitsandbytes is required for quantization. "
+                    "Install with: pip install bitsandbytes"
+                )
+
+            if quantize_transformer == "4bit":
+                quant_config = DiffusersBitsAndBytesConfig(
+                    load_in_4bit=True,
+                    bnb_4bit_quant_type="nf4",
+                    bnb_4bit_compute_dtype=torch_dtype,
+                )
+                logger.info("Loading transformer with 4-bit quantization (~2GB)")
+            elif quantize_transformer == "8bit":
+                quant_config = DiffusersBitsAndBytesConfig(
+                    load_in_8bit=True,
+                )
+                logger.info("Loading transformer with 8-bit quantization (~4GB)")
+            else:
+                raise ValueError(f"Unknown quantization: {quantize_transformer}. Use '4bit' or '8bit'")
+
+            transformer = QwenImageTransformer2DModel.from_pretrained(
+                model_path,
+                subfolder="transformer",
+                quantization_config=quant_config,
+                torch_dtype=torch_dtype,
+            )
+            logger.info("Transformer loaded with quantization")
+
+        # Build the pipeline with quantized components
+        # Load remaining components normally
+        pipeline_kwargs = {
+            "torch_dtype": torch_dtype,
+        }
+
+        # Pass pre-loaded quantized components
+        if text_encoder is not None:
+            pipeline_kwargs["text_encoder"] = text_encoder
+        if transformer is not None:
+            pipeline_kwargs["transformer"] = transformer
+
+        logger.info("Assembling pipeline with quantized components...")
+        edit_pipe = QwenImageEditPlusPipeline.from_pretrained(
+            model_path,
+            **pipeline_kwargs,
+        )
+
+        if cpu_offload:
+            edit_pipe.enable_model_cpu_offload()
+            logger.info("Model CPU offload enabled")
+
+        return edit_pipe
 
     @property
     def device(self) -> torch.device:

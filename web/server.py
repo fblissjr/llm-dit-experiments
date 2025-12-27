@@ -96,6 +96,14 @@ def unload_zimage_pipeline() -> bool:
         unloaded = True
 
     if unloaded:
+        # Clear torch.compile cache (frees ~3-4GB from compiled kernels)
+        try:
+            import torch._dynamo
+            torch._dynamo.reset()
+            logger.info("[VRAM] Cleared torch.compile cache")
+        except Exception as e:
+            logger.warning(f"[VRAM] Could not clear compile cache: {e}")
+
         # Force garbage collection before CUDA cache clear
         gc.collect()
         torch.cuda.empty_cache()
@@ -537,7 +545,13 @@ async def qwen_image_edit_layer(request: QwenImageEditLayerRequest):
                 logger.info("[VRAM] Auto-unloading Z-Image to make room for Qwen-Image-Edit...")
                 unload_zimage_pipeline()
 
-            logger.info("[Qwen-Image] Loading pipeline in edit-only mode (skipping decompose model)...")
+            # Get quantization settings from config
+            quant_te = getattr(runtime_config, 'qwen_image_quantize_text_encoder', 'none')
+            quant_tf = getattr(runtime_config, 'qwen_image_quantize_transformer', 'none')
+            quant_te = quant_te if quant_te != 'none' else None
+            quant_tf = quant_tf if quant_tf != 'none' else None
+
+            logger.info(f"[Qwen-Image] Loading pipeline in edit-only mode (quantize_text_encoder={quant_te})...")
             try:
                 from llm_dit.pipelines.qwen_image_diffusers import QwenImageDiffusersPipeline
 
@@ -545,7 +559,9 @@ async def qwen_image_edit_layer(request: QwenImageEditLayerRequest):
                     runtime_config.qwen_image_model_path,
                     edit_model_path=runtime_config.qwen_image_edit_model_path or None,
                     cpu_offload=True,
-                    edit_only=True,  # Skip decompose model, load edit model directly (~12GB saved)
+                    edit_only=True,  # Skip decompose model (~12GB saved)
+                    quantize_text_encoder=quant_te,
+                    quantize_transformer=quant_tf,
                 )
                 logger.info("[Qwen-Image] Edit pipeline loaded successfully")
             except Exception as e:
@@ -671,7 +687,13 @@ async def qwen_image_edit_multi(request: QwenImageEditMultiRequest):
                 logger.info("[VRAM] Auto-unloading Z-Image to make room for Qwen-Image-Edit...")
                 unload_zimage_pipeline()
 
-            logger.info("[Qwen-Image] Loading pipeline in edit-only mode for multi-image editing...")
+            # Get quantization settings from config
+            quant_te = getattr(runtime_config, 'qwen_image_quantize_text_encoder', 'none')
+            quant_tf = getattr(runtime_config, 'qwen_image_quantize_transformer', 'none')
+            quant_te = quant_te if quant_te != 'none' else None
+            quant_tf = quant_tf if quant_tf != 'none' else None
+
+            logger.info(f"[Qwen-Image] Loading pipeline in edit-only mode (quantize_text_encoder={quant_te})...")
             try:
                 from llm_dit.pipelines.qwen_image_diffusers import QwenImageDiffusersPipeline
 
@@ -679,7 +701,9 @@ async def qwen_image_edit_multi(request: QwenImageEditMultiRequest):
                     runtime_config.qwen_image_model_path,
                     edit_model_path=runtime_config.qwen_image_edit_model_path or None,
                     cpu_offload=True,
-                    edit_only=True,  # Skip decompose model, load edit model directly
+                    edit_only=True,  # Skip decompose model (~12GB saved)
+                    quantize_text_encoder=quant_te,
+                    quantize_transformer=quant_tf,
                 )
             except Exception as e:
                 logger.error(f"[Qwen-Image] Failed to load pipeline: {e}")

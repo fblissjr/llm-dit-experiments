@@ -351,6 +351,10 @@ class QwenImageConfig:
     torch_dtype: str = "bfloat16"  # Model dtype
     cpu_offload: bool = True  # Enable sequential CPU offload for memory efficiency
 
+    # Quantization (for VRAM-constrained GPUs like RTX 4090)
+    quantize_text_encoder: str = "none"  # none/4bit/8bit - Qwen2.5-VL-7B: 14GB -> 3.5GB (4bit)
+    quantize_transformer: str = "none"  # none/4bit/8bit - DiT: 8GB -> 2GB (4bit)
+
     # Generation settings
     num_inference_steps: int = 40  # Denoising steps (40 for Edit-2511, was 50 for 2509)
     cfg_scale: float = 4.0  # Classifier-free guidance scale
