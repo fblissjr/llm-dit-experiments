@@ -1,4 +1,4 @@
-# Z-Image Configuration Example
+# Z-Image Configuration Example (Legacy Profile Format)
 #
 # Copy this file to config.toml and modify paths for your setup.
 # CLI flags override config values. Run `uv run scripts/generate.py --help` for all options.
@@ -9,6 +9,12 @@
 #   uv run scripts/generate.py --config config.toml "A cat"
 #   uv run scripts/generate.py --config config.toml --profile rtx4090 "A cat"
 #   uv run web/server.py --config config.toml --profile rtx4090
+#
+# NOTE: A modular config format is also available that reduces duplication
+# through component-based configuration with inheritance. See:
+#   - config_modular.toml.example - Full modular config example
+#   - Use --config-name instead of --profile for modular configs
+#   - Example: --config config_modular.toml --config-name rtx4090_zimage
 
 # =============================================================================
 # RTX 4090 Profile - Optimized for 24GB VRAM

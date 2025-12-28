@@ -1,6 +1,6 @@
 # cli flags reference
 
-*last updated: 2025-12-23*
+*last updated: 2025-12-27*
 
 Shared between `web/server.py` and `scripts/generate.py`.
 
@@ -12,8 +12,25 @@ Shared between `web/server.py` and `scripts/generate.py`.
 | `--model-path` | Path to Z-Image model |
 | `--qwen-image-model-path` | Path to Qwen-Image-Layered model |
 | `--config` | Path to TOML config file |
-| `--profile` | Config profile to use (default: "default") |
+| `--profile` | Config profile to use for legacy configs (default: "default") |
+| `--config-name` | Combined config name for modular configs (e.g., "rtx4090_zimage"). Uses modular format instead of legacy profile. |
 | `--templates-dir` | Path to templates directory |
+
+### config format selection
+
+Two config formats are supported:
+
+**Legacy format** (uses `--profile`):
+```bash
+uv run scripts/generate.py --config config.toml --profile rtx4090 "A cat"
+```
+
+**Modular format** (uses `--config-name`):
+```bash
+uv run scripts/generate.py --config config_modular.toml --config-name rtx4090_zimage "A cat"
+```
+
+The modular format reduces duplication through component-based configuration with inheritance. See `config_modular.toml.example` for the full format.
 
 ## device placement
 
@@ -142,6 +159,24 @@ Shared between `web/server.py` and `scripts/generate.py`.
 | `--qwen-image-edit-model-path` | Path to Qwen-Image-Edit model (auto-downloads if empty) |
 | `--qwen-image-cpu-offload` | Enable CPU offload (recommended, ~5 GB VRAM) |
 | `--qwen-image-layers` | Number of layers to decompose (1-10, default: 4) |
-| `--qwen-image-steps` | Diffusion steps (default: 50) |
+| `--qwen-image-steps` | Diffusion steps (default: 40 for Edit-2511) |
 | `--qwen-image-cfg-scale` | CFG scale for Qwen-Image (default: 4.0) |
 | `--qwen-image-resolution` | Resolution: 640 (recommended) or 1024 |
+
+### qwen-image quantization (vram optimization)
+
+For RTX 4090 (24GB VRAM), quantization is important:
+
+| Pipeline | Recommended Quantization | VRAM Usage |
+|----------|-------------------------|------------|
+| edit_only mode | text_encoder=4bit | ~12GB |
+| decompose mode | text_encoder=4bit + transformer=4bit | ~8GB |
+
+The decompose pipeline (QwenImageLayeredPipeline) requires BOTH text encoder AND transformer quantization to fit in 24GB. The edit-only pipeline works with just text encoder quantization.
+
+Set quantization in modular config:
+```toml
+[quantization.qwen_decompose]
+text_encoder = "4bit"
+transformer = "4bit"
+```

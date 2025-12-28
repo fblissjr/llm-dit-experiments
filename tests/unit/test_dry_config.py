@@ -215,6 +215,7 @@ class TestCLIToRuntimeConfig:
         # These CLI args don't need RuntimeConfig fields (action-only or script-specific)
         excluded = {
             "config",      # Used to load config, not stored
+            "config_name", # Used to select modular config, not stored
             "profile",     # Used to select profile, not stored
             "lora",        # Parsed specially into lora_paths/lora_scales
             "loras",       # Alias for lora, same special handling
@@ -230,6 +231,8 @@ class TestCLIToRuntimeConfig:
             "template": "default_template",
             "vl_no_auto_unload": "vl_auto_unload",  # Inverted flag
             "rewriter_no_vl": "rewriter_vl_enabled",  # Inverted flag
+            "qwen_image_layers": "qwen_image_layer_num",  # Different naming
+            "dype": "dype_enabled",  # Boolean flag maps to enabled field
         }
 
         cli_dests_filtered = cli_dests - excluded

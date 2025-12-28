@@ -212,6 +212,8 @@ def _attention_pool_embeddings(embeddings: torch.Tensor, target_len: int) -> tor
 
     # Shift to ensure all scores are positive for softmax stability
     importance_scores = importance_scores - importance_scores.min() + 0.1
+    # Ensure importance_scores has same dtype as embeddings for scatter operations
+    importance_scores = importance_scores.to(embeddings.dtype)
 
     # Vectorized pooling: assign each source token to a target region
     # and compute weighted averages per region

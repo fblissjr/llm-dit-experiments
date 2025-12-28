@@ -1,0 +1,327 @@
+# Modular Configuration for llm-dit-experiments
+#
+# last updated: 2025-12-27
+#
+# This config format eliminates redundancy by:
+# 1. Defining components once in a library
+# 2. Referencing components by ID in model definitions
+# 3. Supporting inheritance between model types
+# 4. Separating hardware profiles from model configs
+#
+# Usage:
+#   uv run scripts/generate.py --config config.toml --config-name rtx4090_zimage "A cat"
+#   uv run web/server.py --config config.toml --config-name rtx4090_qwenimageedit
+
+# =============================================================================
+# HARDWARE PROFILES
+# Define device placement and hardware-specific optimizations
+# =============================================================================
+
+[profiles.default]
+description = "Default profile - auto-detect GPU"
+dtype = "bfloat16"
+attention_backend = "auto"
+compile = false
+use_custom_scheduler = true
+
+[profiles.default.devices]
+encoder = "auto"
+dit = "auto"
+vae = "auto"
+siglip = "cpu"
+
+[profiles.rtx4090]
+description = "RTX 4090 24GB - optimized settings"
+dtype = "bfloat16"
+attention_backend = "flash_attn_2"
+compile = false
+tiled_vae = false
+tile_size = 512
+tile_overlap = 64
+embedding_cache = true
+cache_size = 100
+long_prompt_mode = "interpolate"
+use_custom_scheduler = true
+
+[profiles.rtx4090.devices]
+encoder = "cuda"
+dit = "cuda"
+vae = "cuda"
+siglip = "cpu"
+
+[profiles.rtx3090]
+description = "RTX 3090 24GB - conservative settings"
+dtype = "float16"  # 3090 has slower bfloat16
+attention_backend = "sdpa"
+compile = false
+tiled_vae = true  # More conservative memory
+tile_size = 256
+tile_overlap = 32
+
+[profiles.rtx3090.devices]
+encoder = "cuda"
+dit = "cuda"
+vae = "cuda"
+
+[profiles.cpu_only]
+description = "CPU-only inference (slow but universal)"
+dtype = "float32"
+attention_backend = "sdpa"
+compile = false
+
+[profiles.cpu_only.devices]
+encoder = "cpu"
+dit = "cpu"
+vae = "cpu"
+
+# =============================================================================
+# COMPONENT LIBRARY
+# Define reusable components referenced by model types
+# =============================================================================
+
+[encoders.qwen3_4b]
+description = "Qwen3-4B for Z-Image text encoding"
+model_id = "Qwen/Qwen3-4B"
+hidden_dim = 2560
+num_layers = 36
+default_hidden_layer = -2
+max_tokens = 1504
+quantization_options = ["none", "4bit", "8bit"]
+
+[encoders.qwen2_5_vl_7b]
+description = "Qwen2.5-VL-7B for Qwen-Image pipelines"
+model_id = "Qwen/Qwen2.5-VL-7B-Instruct"
+hidden_dim = 3584
+num_layers = 28
+default_hidden_layer = -2
+max_tokens = 2048
+quantization_options = ["none", "4bit", "8bit", "fp8", "int8"]
+
+[transformers.zimage_dit]
+description = "Z-Image DiT transformer (turbo distilled)"
+num_layers = 40
+latent_channels = 16
+quantization_options = ["none"]  # No quantization for Z-Image DiT
+
+[transformers.qwenimage_dit]
+description = "Qwen-Image DiT transformer"
+num_layers = 30
+latent_channels = 16
+quantization_options = ["none", "4bit", "8bit", "fp8", "int8"]
+
+[vaes.zimage_vae]
+description = "Z-Image VAE (16 channel latents)"
+latent_scaling = 0.13025
+latent_channels = 16
+
+[vaes.qwenimage_vae]
+description = "Qwen-Image VAE"
+latent_scaling = 0.13025
+latent_channels = 16
+
+[schedulers.flow_turbo]
+description = "Flow matching scheduler for turbo models"
+type = "flow_matching"
+shift = 3.0
+shift_mode = "fixed"
+
+[schedulers.flow_standard]
+description = "Flow matching scheduler for non-turbo models"
+type = "flow_matching"
+shift = 3.0
+shift_mode = "dynamic"
+
+# =============================================================================
+# MODEL TYPES
+# Define pipelines with component references and defaults
+# =============================================================================
+
+[models.zimage]
+description = "Z-Image (Alibaba/Tongyi) - turbo distilled text-to-image"
+pipeline_class = "ZImagePipeline"
+text_encoder = "qwen3_4b"
+dit = "zimage_dit"
+vae = "zimage_vae"
+scheduler = "flow_turbo"
+model_path = "/path/to/Z-Image"
+templates_dir = "templates/z_image"
+default_steps = 9
+default_cfg_scale = 0.0
+default_resolution = 1024
+
+[models.qwenlayered]
+description = "Qwen-Image-Layered - multi-layer decomposition generation"
+pipeline_class = "QwenImageDiffusersPipeline"
+text_encoder = "qwen2_5_vl_7b"
+dit = "qwenimage_dit"
+vae = "qwenimage_vae"
+scheduler = "flow_standard"
+model_path = "Qwen-Image-Layered-DiT-3B"
+default_steps = 50
+default_cfg_scale = 4.0
+default_resolution = 1024
+layer_num = 4
+cpu_offload = true
+
+[models.qwenimageedit]
+description = "Qwen-Image-Edit-2511 - instruction-based image editing"
+inherits = "qwenlayered"  # Inherit from qwenlayered
+pipeline_class = "QwenImageEditPipeline"
+model_path = "Qwen-Image-Edit-2511"
+default_steps = 40
+default_resolution = 640
+
+# =============================================================================
+# QUANTIZATION PRESETS
+# Named combinations of component quantization settings
+# =============================================================================
+
+[quantization.none]
+description = "No quantization - full precision"
+text_encoder = "none"
+transformer = "none"
+
+[quantization.balanced]
+description = "Balanced VRAM reduction - 8bit encoder, no transformer quant"
+text_encoder = "8bit"
+transformer = "none"
+
+[quantization.aggressive]
+# NOTE: For decompose pipeline (QwenImageLayeredPipeline), you MUST quantize
+# BOTH text encoder AND transformer to fit in 24GB VRAM. The edit-only pipeline
+# (QwenImageEditPlusPipeline) works with just text encoder quantization.
+description = "Aggressive VRAM reduction - 4bit encoder, 8bit transformer (required for decompose on 24GB)"
+text_encoder = "4bit"
+transformer = "8bit"
+
+[quantization.torchao_fp8]
+description = "TorchAO FP8 quantization (RTX 4090+ only)"
+text_encoder = "fp8"
+transformer = "fp8"
+
+[quantization.torchao_int8]
+description = "TorchAO INT8 weight-only quantization"
+text_encoder = "int8"
+transformer = "int8"
+
+# =============================================================================
+# FEATURE CONFIGURATIONS
+# Optional features that can be enabled per-config
+# =============================================================================
+
+[features.dype]
+enabled = false
+method = "vision_yarn"
+dype_scale = 2.0
+dype_exponent = 2.0
+dype_start_sigma = 1.0
+base_shift = 0.5
+max_shift = 1.15
+base_resolution = 1024
+anisotropic = false
+
+[features.slg]
+enabled = false
+scale = 2.5
+layers = [7, 8, 9, 10, 11, 12]
+start = 0.05
+stop = 0.5
+
+[features.fmtt]
+enabled = false
+guidance_scale = 1.0
+guidance_start = 0.0
+guidance_stop = 0.5
+normalize_mode = "unit"
+decode_scale = 0.5
+siglip_model = "google/siglip2-giant-opt-patch16-384"
+siglip_device = "cpu"
+
+# =============================================================================
+# COMBINED CONFIGURATIONS
+# Pre-built combinations of profile + model + quantization + features
+# =============================================================================
+
+[configs.rtx4090_zimage]
+description = "Z-Image on RTX 4090 - optimal performance"
+profile = "rtx4090"
+model = "zimage"
+quantization = "balanced"
+features = []
+
+[configs.rtx4090_zimage_dype]
+description = "Z-Image on RTX 4090 with DyPE for high-res"
+profile = "rtx4090"
+model = "zimage"
+quantization = "balanced"
+features = ["dype"]
+
+[configs.rtx4090_zimage_slg]
+description = "Z-Image on RTX 4090 with Skip Layer Guidance"
+profile = "rtx4090"
+model = "zimage"
+quantization = "balanced"
+features = ["slg"]
+
+[configs.rtx4090_qwenlayered]
+description = "Qwen-Image-Layered on RTX 4090"
+profile = "rtx4090"
+model = "qwenlayered"
+quantization = "balanced"
+features = []
+
+[configs.rtx4090_qwenimageedit]
+description = "Qwen-Image-Edit on RTX 4090 with 8bit quantization"
+profile = "rtx4090"
+model = "qwenimageedit"
+quantization = "balanced"
+features = []
+
+[configs.rtx4090_qwenimageedit_fp8]
+description = "Qwen-Image-Edit on RTX 4090 with TorchAO FP8"
+profile = "rtx4090"
+model = "qwenimageedit"
+quantization = "torchao_fp8"
+features = []
+
+[configs.rtx4090_qwenimageedit_aggressive]
+description = "Qwen-Image-Edit aggressive quantization for low VRAM"
+profile = "rtx4090"
+model = "qwenimageedit"
+quantization = "aggressive"
+features = []
+
+[configs.default_zimage]
+description = "Z-Image with auto device detection"
+profile = "default"
+model = "zimage"
+quantization = "none"
+features = []
+
+[configs.cpu_zimage]
+description = "Z-Image on CPU only (slow)"
+profile = "cpu_only"
+model = "zimage"
+quantization = "none"
+features = []
+
+# Example with overrides
+[configs.custom_example]
+description = "Example with custom overrides"
+profile = "rtx4090"
+model = "zimage"
+quantization = "balanced"
+features = ["dype"]
+
+[configs.custom_example.overrides]
+steps = 12
+width = 2048
+height = 2048
+
+# =============================================================================
+# SERVER SETTINGS
+# =============================================================================
+
+[server]
+host = "127.0.0.1"
+port = 7860

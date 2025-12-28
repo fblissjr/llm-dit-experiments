@@ -209,7 +209,9 @@ scheduler = FlowMatchScheduler(shift=3.0)
 
 ## Adding New Parameters
 
-Follow DRY principles - parameters must flow through a single chain:
+### DRY Configuration Principles
+
+Parameters must flow through a single chain:
 
 ```
 config.toml → Config dataclass → RuntimeConfig → startup.py → Backend configs
