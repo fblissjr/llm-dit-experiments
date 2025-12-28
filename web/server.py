@@ -330,20 +330,31 @@ async def health():
 
 @app.get("/api/qwen-image/status")
 async def qwen_image_status():
-    """Check Qwen-Image-Layered model status and configuration."""
+    """Check Qwen-Image model status and configuration."""
     if runtime_config is None:
         return {
             "available": False,
             "reason": "Runtime config not loaded",
         }
 
-    configured = bool(runtime_config.qwen_image_model_path)
+    # Check for either layered model or edit-only model
+    edit_only = getattr(runtime_config, 'qwen_image_edit_only', False)
+    has_layered = bool(runtime_config.qwen_image_model_path)
+    has_edit = bool(getattr(runtime_config, 'qwen_image_edit_model_path', ''))
+    configured = has_layered or (edit_only and has_edit)
     loaded = qwen_image_pipeline is not None
+
+    # Determine which model path to show
+    if edit_only and has_edit:
+        model_path = runtime_config.qwen_image_edit_model_path
+    else:
+        model_path = runtime_config.qwen_image_model_path
 
     return {
         "available": loaded,
         "configured": configured,
-        "model_path": runtime_config.qwen_image_model_path if configured else None,
+        "edit_only": edit_only,
+        "model_path": model_path if configured else None,
         "default_layer_num": runtime_config.qwen_image_layer_num if configured else 3,
         "default_cfg_scale": runtime_config.qwen_image_cfg_scale if configured else 4.0,
         "default_resolution": runtime_config.qwen_image_resolution if configured else 1024,
@@ -1841,11 +1852,23 @@ async def format_prompt_endpoint(request: EncodeRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def _get_zimage_encoder():
+    """Get Z-Image encoder from standalone encoder or Z-Image pipeline.
+
+    Returns None for Qwen-Image pipelines (they don't have a separate encoder).
+    """
+    if encoder is not None:
+        return encoder
+    if pipeline is not None and hasattr(pipeline, 'encoder'):
+        return pipeline.encoder
+    return None
+
+
 @app.get("/api/templates")
 async def list_templates():
     """List available templates with full data for UI population."""
     # Use encoder from pipeline or standalone encoder
-    enc = encoder if encoder is not None else (pipeline.encoder if pipeline else None)
+    enc = _get_zimage_encoder()
     if enc is None or enc.templates is None:
         return {"templates": []}
 
@@ -1872,7 +1895,7 @@ async def list_templates():
 async def list_rewriters():
     """List available rewriter templates."""
     # Use encoder from pipeline or standalone encoder
-    enc = encoder if encoder is not None else (pipeline.encoder if pipeline else None)
+    enc = _get_zimage_encoder()
     if enc is None or enc.templates is None:
         return {"rewriters": []}
 
@@ -3029,8 +3052,10 @@ def main():
     runtime_config = load_runtime_config(args)
     setup_logging(runtime_config)
 
-    # Validate model path (unless using API-only mode)
-    if not runtime_config.model_path and not runtime_config.api_url:
+    # Validate model path (unless using API-only mode or edit_only mode)
+    has_model = runtime_config.model_path or runtime_config.api_url
+    has_edit_only = getattr(runtime_config, 'qwen_image_edit_only', False) and getattr(runtime_config, 'qwen_image_edit_model_path', '')
+    if not has_model and not has_edit_only:
         logger.error("No model path specified. Use --model-path or --config.")
         return 1
 
@@ -3049,6 +3074,14 @@ def main():
     encoder = result.encoder
     encoder_only_mode = result.mode in ("encoder_only", "api_encoder")
     mode = result.mode
+
+    # If loaded pipeline is QwenImageDiffusersPipeline, also set qwen_image_pipeline
+    global qwen_image_pipeline
+    if pipeline is not None:
+        from llm_dit.pipelines.qwen_image_diffusers import QwenImageDiffusersPipeline
+        if isinstance(pipeline, QwenImageDiffusersPipeline):
+            qwen_image_pipeline = pipeline
+            logger.info("[Qwen-Image] Pipeline loaded via PipelineLoader")
 
     # Initialize rewriter API backend if configured
     if runtime_config.rewriter_use_api:

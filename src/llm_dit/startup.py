@@ -367,15 +367,23 @@ class PipelineLoader:
         """
         from llm_dit.pipelines.qwen_image_diffusers import QwenImageDiffusersPipeline
 
+        # Check if edit_only mode (standalone edit model, no decompose)
+        edit_only = getattr(self.config, 'qwen_image_edit_only', False)
+
         logger.info("=" * 60)
-        logger.info("LOADING QWEN-IMAGE PIPELINE")
+        if edit_only:
+            logger.info("LOADING QWEN-IMAGE-EDIT PIPELINE (standalone)")
+        else:
+            logger.info("LOADING QWEN-IMAGE PIPELINE")
         logger.info("=" * 60)
-        logger.info(f"  Model: {self.config.model_path}")
+        if not edit_only:
+            logger.info(f"  Model: {self.config.model_path}")
         logger.info(f"  Edit model: {self.config.qwen_image_edit_model_path or 'None'}")
+        logger.info(f"  Edit only: {edit_only}")
         logger.info(f"  Dtype: {self.config.torch_dtype}")
         logger.info(f"  Text encoder quantization: {self.config.qwen_image_quantize_text_encoder}")
         logger.info(f"  Transformer quantization: {self.config.qwen_image_quantize_transformer}")
-        logger.info(f"  CPU offload: {self.config.cpu_offload}")
+        logger.info(f"  CPU offload: {self.config.qwen_image_cpu_offload}")
         logger.info("-" * 60)
 
         start = time.time()
@@ -390,8 +398,9 @@ class PipelineLoader:
         self._pipeline = QwenImageDiffusersPipeline.from_pretrained(
             self.config.model_path,
             edit_model_path=self.config.qwen_image_edit_model_path or None,
+            edit_only=edit_only,
             torch_dtype=self.config.get_torch_dtype(),
-            cpu_offload=self.config.cpu_offload,
+            cpu_offload=self.config.qwen_image_cpu_offload,
             quantize_text_encoder=quant_te,
             quantize_transformer=quant_tf,
         )
@@ -560,8 +569,12 @@ class PipelineLoader:
         Returns:
             LoadResult with loaded components
         """
-        # API encoder only (no local model)
-        if self.config.api_url and not self.config.model_path:
+        # Check for edit_only mode (Qwen-Image-Edit standalone)
+        edit_only = getattr(self.config, 'qwen_image_edit_only', False)
+        has_edit_model = bool(getattr(self.config, 'qwen_image_edit_model_path', ''))
+
+        # API encoder only (no local model, and not edit_only mode)
+        if self.config.api_url and not self.config.model_path and not (edit_only and has_edit_model):
             return self.load_api_encoder()
 
         # Distributed mode (API encoder + local DiT/VAE)
@@ -572,5 +585,5 @@ class PipelineLoader:
         if encoder_only:
             return self.load_encoder()
 
-        # Full pipeline
+        # Full pipeline (including edit_only mode)
         return self.load_pipeline()
