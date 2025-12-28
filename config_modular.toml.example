@@ -165,9 +165,10 @@ cpu_offload = true
 
 [models.qwenimageedit]
 description = "Qwen-Image-Edit-2511 - instruction-based image editing"
-inherits = "qwenlayered"  # Inherit from qwenlayered
+inherits = "qwenlayered"  # Inherit from qwenlayered (keeps model_path = Layered)
 pipeline_class = "QwenImageEditPipeline"
-model_path = "Qwen-Image-Edit-2511"
+# model_path inherited from qwenlayered = Qwen-Image-Layered (for decompose)
+edit_model_path = "Qwen/Qwen-Image-Edit-2511"  # HuggingFace ID or local path
 default_steps = 40
 default_resolution = 640
 

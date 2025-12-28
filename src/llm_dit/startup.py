@@ -249,6 +249,11 @@ class PipelineLoader:
         Returns:
             LoadResult with pipeline set
         """
+        # Route to correct pipeline based on model_type
+        model_type = getattr(self.config, 'model_type', 'zimage')
+        if model_type == "qwenimage":
+            return self._load_qwen_image_pipeline()
+
         from llm_dit.pipelines import ZImagePipeline
 
         templates_dir = self._resolve_templates_dir()
@@ -349,6 +354,56 @@ class PipelineLoader:
             encoder_device=str(self._pipeline.encoder.device) if self._pipeline.encoder is not None else None,
             dit_device=str(next(self._pipeline.transformer.parameters()).device) if self._pipeline.transformer is not None else None,
             vae_device=str(next(self._pipeline.vae.parameters()).device) if self._pipeline.vae is not None else None,
+        )
+
+    def _load_qwen_image_pipeline(self) -> LoadResult:
+        """
+        Load Qwen-Image pipeline (QwenImageDiffusersPipeline).
+
+        Used for Qwen-Image-Layered and Qwen-Image-Edit models.
+
+        Returns:
+            LoadResult with pipeline set
+        """
+        from llm_dit.pipelines.qwen_image_diffusers import QwenImageDiffusersPipeline
+
+        logger.info("=" * 60)
+        logger.info("LOADING QWEN-IMAGE PIPELINE")
+        logger.info("=" * 60)
+        logger.info(f"  Model: {self.config.model_path}")
+        logger.info(f"  Edit model: {self.config.qwen_image_edit_model_path or 'None'}")
+        logger.info(f"  Dtype: {self.config.torch_dtype}")
+        logger.info(f"  Text encoder quantization: {self.config.qwen_image_quantize_text_encoder}")
+        logger.info(f"  Transformer quantization: {self.config.qwen_image_quantize_transformer}")
+        logger.info(f"  CPU offload: {self.config.cpu_offload}")
+        logger.info("-" * 60)
+
+        start = time.time()
+
+        # Get quantization settings (convert 'none' to None)
+        quant_te = self.config.qwen_image_quantize_text_encoder
+        quant_tf = self.config.qwen_image_quantize_transformer
+        quant_te = quant_te if quant_te != 'none' else None
+        quant_tf = quant_tf if quant_tf != 'none' else None
+
+        # Load pipeline
+        self._pipeline = QwenImageDiffusersPipeline.from_pretrained(
+            self.config.model_path,
+            edit_model_path=self.config.qwen_image_edit_model_path or None,
+            torch_dtype=self.config.get_torch_dtype(),
+            cpu_offload=self.config.cpu_offload,
+            quantize_text_encoder=quant_te,
+            quantize_transformer=quant_tf,
+        )
+
+        load_time = time.time() - start
+        logger.info(f"Qwen-Image pipeline loaded in {load_time:.1f}s")
+        logger.info("=" * 60)
+
+        return LoadResult(
+            pipeline=self._pipeline,
+            load_time=load_time,
+            mode="full",
         )
 
     def load_api_encoder(self) -> LoadResult:

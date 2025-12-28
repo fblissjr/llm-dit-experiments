@@ -174,6 +174,7 @@ class ModelTypeConfig:
 
     # Model-specific paths
     model_path: str = ""
+    edit_model_path: str = ""  # For Qwen-Image-Edit models
     templates_dir: str = ""
 
     # Generation defaults
@@ -469,6 +470,7 @@ class ModularConfig:
             vae=model_data.get("vae", ""),
             scheduler=model_data.get("scheduler", ""),
             model_path=model_data.get("model_path", ""),
+            edit_model_path=model_data.get("edit_model_path", ""),
             templates_dir=model_data.get("templates_dir", ""),
             default_steps=model_data.get("default_steps", 9),
             default_cfg_scale=model_data.get("default_cfg_scale", 0.0),
@@ -722,6 +724,7 @@ class ModularConfig:
             fmtt_siglip_device=self.fmtt.siglip_device,
             # Qwen-Image specific
             qwen_image_model_path=self.model.model_path if model_type == "qwenimage" else "",
+            qwen_image_edit_model_path=self.model.edit_model_path if model_type == "qwenimage" else "",
             qwen_image_cpu_offload=self.model.cpu_offload,
             qwen_image_layer_num=self.model.layer_num or 4,
             qwen_image_cfg_scale=self.model.default_cfg_scale,
