@@ -88,6 +88,14 @@ from llm_dit.utils.vision_yarn import (
     find_newbase_ntk,
 )
 
+from llm_dit.utils.logging_config import (
+    setup_logging,
+    get_context_logger,
+    log_generation,
+    JSONFormatter,
+    ContextLogger,
+)
+
 __all__ = [
     # LoRA
     "LoRALoader",
@@ -154,4 +162,10 @@ __all__ = [
     "find_correction_range",
     "linear_ramp_mask",
     "find_newbase_ntk",
+    # Logging
+    "setup_logging",
+    "get_context_logger",
+    "log_generation",
+    "JSONFormatter",
+    "ContextLogger",
 ]

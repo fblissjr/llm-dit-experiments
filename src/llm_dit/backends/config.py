@@ -54,7 +54,28 @@ class BackendConfig:
     trust_remote_code: bool = True
     use_flash_attention: bool = True
     tensor_parallel_size: int = 1  # For vLLM/SGLang
-    quantization: str = "none"  # none, 4bit, 8bit, int8_dynamic
+    quantization: str = "none"  # none, 4bit, 8bit, fp8, int8 (TorchAO), int8_dynamic (deprecated)
+
+    def __post_init__(self):
+        """Validate and migrate deprecated settings."""
+        self._validate_quantization()
+
+    def _validate_quantization(self):
+        """Check for deprecated or incompatible quantization settings."""
+        import logging
+        logger = logging.getLogger(__name__)
+
+        # Check for deprecated int8_dynamic with bfloat16
+        if self.quantization == "int8_dynamic":
+            dtype = self.get_torch_dtype()
+            if dtype != torch.float32:
+                logger.warning(
+                    f"quantization='int8_dynamic' is incompatible with {self.torch_dtype}. "
+                    "PyTorch dynamic quantization requires float32. "
+                    "Auto-migrating to '8bit' (bitsandbytes). "
+                    "Update your config to use 'fp8', 'int8', or '8bit' instead."
+                )
+                self.quantization = "8bit"
 
     def get_torch_dtype(self) -> torch.dtype:
         """Convert string dtype to torch.dtype."""

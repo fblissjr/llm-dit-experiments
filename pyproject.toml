@@ -27,6 +27,7 @@ dependencies = [
     "einops",  # Tensor reshaping for Qwen-Image models
     "image-reward>=1.5",
     "matplotlib>=3.10.7",
+    "torchao>=0.15.0",
 ]
 
 [project.optional-dependencies]

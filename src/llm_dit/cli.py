@@ -206,9 +206,10 @@ class RuntimeConfig:
     fmtt_siglip_model: str = "google/siglip2-giant-opt-patch16-384"  # SigLIP model
     fmtt_siglip_device: str = "cuda"  # Device for SigLIP (cuda/cpu)
 
-    # Debug
+    # Debug and logging
     debug: bool = False
     verbose: bool = False
+    log_dir: str | None = None  # Directory for JSON log files with rotation
 
     def get_torch_dtype(self) -> torch.dtype:
         """Convert string dtype to torch.dtype."""
@@ -276,7 +277,14 @@ def create_base_parser(
         "--profile",
         type=str,
         default="default",
-        help="Config profile to use (default: default)",
+        help="Config profile to use for legacy configs (default: default)",
+    )
+    config_group.add_argument(
+        "--config-name",
+        type=str,
+        default=None,
+        help="Combined config name for modular configs (e.g., 'rtx4090_zimage'). "
+             "When set, uses modular config format instead of legacy profile.",
     )
 
     # Model selection
@@ -913,13 +921,177 @@ def create_base_parser(
         action="store_true",
         help="Verbose output",
     )
+    debug_group.add_argument(
+        "--log-dir",
+        type=str,
+        default=None,
+        help="Directory for JSON log files with rotation (enables file logging)",
+    )
 
     return parser
+
+
+def _apply_cli_overrides(args: argparse.Namespace, config: RuntimeConfig) -> RuntimeConfig:
+    """
+    Apply CLI argument overrides to a RuntimeConfig.
+
+    This is called after loading config from TOML (either modular or legacy format).
+    CLI arguments take precedence over config file values.
+
+    Args:
+        args: Parsed CLI arguments
+        config: RuntimeConfig to modify
+
+    Returns:
+        Modified RuntimeConfig with CLI overrides applied
+    """
+    # Model overrides
+    if getattr(args, 'model_type', None) is not None:
+        config.model_type = args.model_type
+    if getattr(args, 'model_path', None) is not None:
+        config.model_path = args.model_path
+    if getattr(args, 'text_encoder_path', None) is not None:
+        config.text_encoder_path = args.text_encoder_path
+    if getattr(args, 'templates_dir', None) is not None:
+        config.templates_dir = args.templates_dir
+
+    # Qwen-Image overrides
+    if getattr(args, 'qwen_image_model_path', None) is not None:
+        config.qwen_image_model_path = args.qwen_image_model_path
+    if getattr(args, 'qwen_image_edit_model_path', None) is not None:
+        config.qwen_image_edit_model_path = args.qwen_image_edit_model_path
+    if getattr(args, 'qwen_image_cpu_offload', None) is not None:
+        config.qwen_image_cpu_offload = args.qwen_image_cpu_offload
+    if getattr(args, 'qwen_image_layers', None) is not None:
+        config.qwen_image_layer_num = args.qwen_image_layers
+    if getattr(args, 'qwen_image_steps', None) is not None:
+        config.qwen_image_steps = args.qwen_image_steps
+    if getattr(args, 'qwen_image_cfg_scale', None) is not None:
+        config.qwen_image_cfg_scale = args.qwen_image_cfg_scale
+    if getattr(args, 'qwen_image_resolution', None) is not None:
+        config.qwen_image_resolution = args.qwen_image_resolution
+
+    # Device overrides
+    if getattr(args, 'text_encoder_device', None) is not None:
+        config.encoder_device = args.text_encoder_device
+    if getattr(args, 'dit_device', None) is not None:
+        config.dit_device = args.dit_device
+    if getattr(args, 'vae_device', None) is not None:
+        config.vae_device = args.vae_device
+
+    # Optimization overrides
+    if getattr(args, 'cpu_offload', False):
+        config.cpu_offload = True
+    if getattr(args, 'flash_attn', False):
+        config.flash_attn = True
+    if getattr(args, 'compile', False):
+        config.compile = True
+    if getattr(args, 'torch_dtype', None) is not None:
+        config.torch_dtype = args.torch_dtype
+    if getattr(args, 'quantization', None) is not None:
+        config.quantization = args.quantization
+
+    # Scheduler overrides
+    if getattr(args, 'shift', None) is not None:
+        config.shift = args.shift
+
+    # PyTorch-native component overrides
+    if getattr(args, 'attention_backend', None) is not None:
+        config.attention_backend = args.attention_backend
+    if getattr(args, 'use_custom_scheduler', False):
+        config.use_custom_scheduler = True
+    if getattr(args, 'tiled_vae', False):
+        config.tiled_vae = True
+    if getattr(args, 'tile_size', None) is not None:
+        config.tile_size = args.tile_size
+    if getattr(args, 'tile_overlap', None) is not None:
+        config.tile_overlap = args.tile_overlap
+    if getattr(args, 'embedding_cache', False):
+        config.embedding_cache = True
+    if getattr(args, 'cache_size', None) is not None:
+        config.cache_size = args.cache_size
+    if getattr(args, 'long_prompt_mode', None) is not None:
+        config.long_prompt_mode = args.long_prompt_mode
+    if getattr(args, 'hidden_layer', None) is not None:
+        config.hidden_layer = args.hidden_layer
+
+    # LoRA overrides
+    if getattr(args, 'loras', None):
+        config.lora_paths = []
+        config.lora_scales = []
+        for lora_str in args.loras:
+            path, scale = parse_lora_arg(lora_str)
+            config.lora_paths.append(path)
+            config.lora_scales.append(scale)
+
+    # Prompt control overrides
+    if getattr(args, 'template', None) is not None:
+        config.default_template = args.template
+    if getattr(args, 'system_prompt', None) is not None:
+        config.system_prompt = args.system_prompt
+    if getattr(args, 'thinking_content', None) is not None:
+        config.thinking_content = args.thinking_content
+    if getattr(args, 'assistant_content', None) is not None:
+        config.assistant_content = args.assistant_content
+    if getattr(args, 'enable_thinking', False):
+        config.enable_thinking = True
+
+    # Generation overrides
+    if getattr(args, 'height', None) is not None:
+        config.height = args.height
+    if getattr(args, 'width', None) is not None:
+        config.width = args.width
+    if getattr(args, 'steps', None) is not None:
+        config.steps = args.steps
+    if getattr(args, 'guidance_scale', None) is not None:
+        config.guidance_scale = args.guidance_scale
+    if getattr(args, 'seed', None) is not None:
+        config.seed = args.seed
+    if getattr(args, 'negative_prompt', None) is not None:
+        config.negative_prompt = args.negative_prompt
+    if getattr(args, 'cfg_normalization', None) is not None:
+        config.cfg_normalization = args.cfg_normalization
+    if getattr(args, 'cfg_truncation', None) is not None:
+        config.cfg_truncation = args.cfg_truncation
+
+    # DyPE overrides
+    if getattr(args, 'dype', False):
+        config.dype_enabled = True
+    if getattr(args, 'dype_method', None) is not None:
+        config.dype_method = args.dype_method
+    if getattr(args, 'dype_scale', None) is not None:
+        config.dype_scale = args.dype_scale
+
+    # SLG overrides
+    if getattr(args, 'slg_scale', None) is not None:
+        config.slg_scale = args.slg_scale
+    if getattr(args, 'slg_layers', None) is not None:
+        config.slg_layers = [int(x.strip()) for x in args.slg_layers.split(',')]
+
+    # Server overrides
+    if getattr(args, 'host', None) is not None:
+        config.host = args.host
+    if getattr(args, 'port', None) is not None:
+        config.port = args.port
+
+    # Debug overrides
+    if getattr(args, 'debug', False):
+        config.debug = True
+    if getattr(args, 'verbose', False):
+        config.verbose = True
+    if getattr(args, 'log_dir', None) is not None:
+        config.log_dir = args.log_dir
+
+    return config
 
 
 def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
     """
     Load runtime configuration from TOML file + CLI overrides.
+
+    Supports two config formats:
+    1. Modular config (when --config-name is set): Uses [configs] section
+    2. Legacy config (when --profile is set): Uses [profile.section] format
 
     Priority (highest to lowest):
     1. CLI arguments
@@ -932,7 +1104,35 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
     Returns:
         RuntimeConfig with all settings resolved
     """
-    # Start with defaults
+    # Check for modular config format
+    config_name = getattr(args, 'config_name', None)
+    if config_name and args.config:
+        from llm_dit.config_modular import ModularConfig, is_modular_config
+
+        if not is_modular_config(args.config):
+            raise ValueError(
+                f"--config-name requires modular config format (with [configs] section). "
+                f"File {args.config} uses legacy format. Use --profile instead."
+            )
+
+        logger.info(f"Loading modular config: {config_name}")
+        modular_config = ModularConfig.from_toml(args.config, config_name)
+
+        # Validate configuration
+        errors = modular_config.validate()
+        if errors:
+            for error in errors:
+                logger.warning(f"Config validation: {error}")
+
+        # Convert to RuntimeConfig
+        config = modular_config.to_runtime_config()
+        logger.info(f"Loaded modular config '{config_name}' successfully")
+
+        # Apply CLI overrides (same as legacy path below)
+        config = _apply_cli_overrides(args, config)
+        return config
+
+    # Start with defaults (legacy path)
     config = RuntimeConfig()
 
     # Load TOML config if provided
@@ -1301,17 +1501,30 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
         config.debug = True
     if getattr(args, 'verbose', False):
         config.verbose = True
+    if getattr(args, 'log_dir', None) is not None:
+        config.log_dir = args.log_dir
 
     return config
 
 
 def setup_logging(config: RuntimeConfig) -> None:
-    """Configure logging based on runtime config."""
+    """Configure logging based on runtime config.
+
+    Uses structured JSON file logging with rotation when log_dir is set.
+    Console output remains human-readable.
+    """
+    from llm_dit.utils.logging_config import setup_logging as configure_logging
+
     level = logging.DEBUG if config.debug or config.verbose else logging.INFO
-    logging.basicConfig(
+
+    # Check if JSON file logging is requested
+    log_dir = getattr(config, 'log_dir', None)
+    enable_json = log_dir is not None
+
+    configure_logging(
         level=level,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        datefmt="%H:%M:%S",
+        log_dir=Path(log_dir) if log_dir else None,
+        enable_json_file=enable_json,
     )
 
     if config.debug:
