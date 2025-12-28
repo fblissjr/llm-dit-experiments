@@ -20,8 +20,8 @@
         .panel-transition { transition: transform 0.3s ease, opacity 0.3s ease; }
 
         /* History thumbnail hover */
-        .history-item:hover .history-overlay { opacity: 1; }
-        .history-overlay { transition: opacity 0.2s ease; }
+        .history-item:hover .history-overlay { opacity: 1; pointer-events: auto; }
+        .history-overlay { transition: opacity 0.2s ease; pointer-events: none; }
 
         /* Mobile bottom sheet */
         @media (max-width: 768px) {
@@ -1746,39 +1746,10 @@
             }
         }
 
-        // Auto-enable DyPE when high-res selected (with smart exponent)
+        // Update DyPE recommendation when resolution changes (but don't auto-enable)
         function handleResolutionChange() {
             updateDypeRecommendation();
-
-            const selected = resolutionSelect.options[resolutionSelect.selectedIndex];
-            if (!selected) return;
-
-            const w = parseInt(selected.dataset.width || selected.value.split('x')[0]);
-            const h = parseInt(selected.dataset.height || selected.value.split('x')[1]);
-            const maxDim = Math.max(w, h);
-            const scale = maxDim / DYPE_BASE_RESOLUTION;
-
-            const dypeEnabled = document.getElementById('dypeEnabled');
-            const dypeExponent = document.getElementById('dypeExponent');
-            const dypeExponentValue = document.getElementById('dypeExponentValue');
-
-            if (scale > 1.0) {
-                // Auto-enable DyPE for high-res
-                if (!dypeEnabled.checked) {
-                    dypeEnabled.checked = true;
-                    updateDypeStatus();
-                }
-
-                // Auto-set exponent based on scale
-                let exponent;
-                if (scale >= 3.0) exponent = 2.0;
-                else if (scale >= 1.5) exponent = 1.0;
-                else exponent = 0.5;
-
-                dypeExponent.value = exponent;
-                dypeExponentValue.textContent = exponent.toFixed(1);
-            }
-            // Note: Don't auto-disable DyPE when going back to low-res (user might want it)
+            // Note: DyPE is NOT auto-enabled - user must explicitly enable it
         }
 
         resolutionSelect.addEventListener('change', handleResolutionChange);
@@ -3109,8 +3080,12 @@
         // Delete history item
         async function deleteHistoryItem(index) {
             try {
-                await fetch(`${API_BASE}/api/history/${index}`, { method: 'DELETE' });
-                loadHistory();
+                const response = await fetch(`${API_BASE}/api/history/${index}`, { method: 'DELETE' });
+                if (!response.ok) {
+                    console.error('Delete failed:', response.status, response.statusText);
+                    return;
+                }
+                await loadHistory();
             } catch (err) {
                 console.error('Failed to delete:', err);
             }

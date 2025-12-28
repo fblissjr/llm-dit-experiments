@@ -82,6 +82,7 @@ class RuntimeConfig:
     # Qwen-Image-Layered paths and settings
     qwen_image_model_path: str = ""  # Path to Qwen-Image-Layered model
     qwen_image_edit_model_path: str = ""  # Path to Qwen-Image-Edit model (or HuggingFace ID)
+    qwen_image_edit_only: bool = False  # If True, load edit model directly (skip decompose)
     qwen_image_cpu_offload: bool = True  # Enable CPU offload for Qwen-Image
     qwen_image_layer_num: int = 4  # Number of decomposition layers
     qwen_image_cfg_scale: float = 4.0  # CFG scale for Qwen-Image

@@ -48,14 +48,13 @@ The web UI provides categorized presets with filter tabs (All / Square / Landsca
 | 2:3 | 1024x1536, 1280x1920 |
 | 3:4 | 768x1024, 960x1280, 1200x1600 |
 
-## dype auto-detection
+## dype recommendation
 
-DyPE (Dynamic Position Extrapolation) is automatically recommended when `max(width, height) > 1024`.
+DyPE (Dynamic Position Extrapolation) is recommended when `max(width, height) > 1024`.
 
-The web UI:
-- Shows a "DyPE recommended" indicator below the resolution dropdown
-- Auto-enables DyPE checkbox when high-res is selected
-- Auto-sets optimal exponent based on scale factor:
+The web UI shows a "DyPE recommended" indicator below the resolution dropdown when a high-resolution preset is selected. Users must explicitly enable DyPE in the settings panel.
+
+Suggested exponent values based on scale factor:
 
 | Scale Factor | Resolution Range | Exponent | Description |
 |--------------|------------------|----------|-------------|
