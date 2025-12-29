@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>LLM DiT Experiments UI</title>
+    <link rel="icon" type="image/png" href="/favicon.png">
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         /* Custom scrollbar */
@@ -151,6 +152,54 @@
                 <p id="qwenImageStatus" class="hidden text-xs text-yellow-400 mt-2">Qwen-Image not configured. Set qwen_image.model_path in config.</p>
             </div>
 
+            <!-- Shared Generation Parameters -->
+            <div id="sharedParams" class="mb-6 p-4 bg-gray-800/50 rounded-xl border border-gray-700">
+                <h3 class="text-sm font-medium text-gray-300 mb-4">Generation Parameters</h3>
+                <div class="grid grid-cols-2 gap-4">
+                    <!-- Steps -->
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-2">
+                            Steps: <span id="stepsValue" class="text-blue-400">9</span>
+                        </label>
+                        <input type="range" id="steps" min="1" max="50" value="9" class="w-full">
+                        <div class="flex justify-between text-xs text-gray-500 mt-1">
+                            <span id="stepsMinLabel">1</span>
+                            <span id="stepsMaxLabel">50</span>
+                        </div>
+                    </div>
+
+                    <!-- CFG / Guidance Scale -->
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-2">
+                            CFG: <span id="guidanceScaleValue" class="text-blue-400">0.0</span>
+                        </label>
+                        <input type="range" id="guidanceScale" min="0" max="10" step="0.1" value="0.0" class="w-full">
+                        <div class="flex justify-between text-xs text-gray-500 mt-1">
+                            <span>0</span>
+                            <span>10</span>
+                        </div>
+                    </div>
+
+                    <!-- Shift (Z-Image only) -->
+                    <div id="shiftContainer">
+                        <label class="block text-sm font-medium text-gray-300 mb-2">
+                            Shift: <span id="shiftValue" class="text-blue-400">3.0</span>
+                        </label>
+                        <input type="range" id="shift" min="0.5" max="10.0" step="0.1" value="3.0" class="w-full">
+                        <div class="flex justify-between text-xs text-gray-500 mt-1">
+                            <span>0.5</span>
+                            <span>10</span>
+                        </div>
+                    </div>
+
+                    <!-- Seed -->
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-2">Seed</label>
+                        <input type="number" id="seed" placeholder="Random" class="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500 text-sm">
+                    </div>
+                </div>
+            </div>
+
             <!-- Qwen-Image Controls (hidden by default, shown when Qwen-Image selected) -->
             <div id="qwenImageControls" class="hidden mb-6 space-y-4">
 
@@ -229,39 +278,6 @@
                         </div>
                     </div>
                 </div>
-
-                <!-- Advanced Parameters -->
-                <details class="group">
-                    <summary class="cursor-pointer text-sm font-medium text-gray-400 hover:text-gray-300 flex items-center gap-2 select-none">
-                        <svg class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
-                        </svg>
-                        Advanced Parameters
-                    </summary>
-                    <div class="mt-3 grid grid-cols-2 gap-3 p-4 bg-gray-800/50 rounded-xl border border-gray-700">
-                        <!-- CFG Scale -->
-                        <div>
-                            <label class="block text-sm font-medium text-gray-300 mb-2">
-                                CFG Scale: <span id="qiCfgValue" class="text-purple-400">4.0</span>
-                            </label>
-                            <input type="range" id="qiCfgScale" min="1" max="10" step="0.5" value="4.0" class="w-full">
-                        </div>
-
-                        <!-- Steps -->
-                        <div>
-                            <label class="block text-sm font-medium text-gray-300 mb-2">
-                                Steps: <span id="qiStepsValue" class="text-purple-400">40</span>
-                            </label>
-                            <input type="range" id="qiSteps" min="10" max="50" value="40" class="w-full">
-                        </div>
-
-                        <!-- Seed -->
-                        <div class="col-span-2">
-                            <label class="block text-sm font-medium text-gray-300 mb-2">Seed (optional)</label>
-                            <input type="number" id="qiSeed" placeholder="Random" class="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:ring-2 focus:ring-purple-500 text-sm">
-                        </div>
-                    </div>
-                </details>
 
                 <!-- Decompose Button -->
                 <button
@@ -345,34 +361,6 @@
                                     placeholder="Describe how to modify this layer (e.g., 'Change the color to blue', 'Add a pattern')"
                                 ></textarea>
                             </div>
-
-                            <!-- Edit Parameters (collapsible) -->
-                            <details class="mb-4 group">
-                                <summary class="cursor-pointer text-sm font-medium text-gray-400 hover:text-gray-300 flex items-center gap-2 select-none">
-                                    <svg class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
-                                    </svg>
-                                    Advanced Parameters
-                                </summary>
-                                <div class="mt-3 grid grid-cols-2 gap-3 p-4 bg-gray-800/50 rounded-xl border border-gray-700">
-                                    <div>
-                                        <label class="block text-sm font-medium text-gray-300 mb-2">
-                                            CFG Scale: <span id="qiEditCfgValue" class="text-purple-400">4.0</span>
-                                        </label>
-                                        <input type="range" id="qiEditCfgScale" min="1" max="10" step="0.5" value="4.0" class="w-full">
-                                    </div>
-                                    <div>
-                                        <label class="block text-sm font-medium text-gray-300 mb-2">
-                                            Steps: <span id="qiEditStepsValue" class="text-purple-400">50</span>
-                                        </label>
-                                        <input type="range" id="qiEditSteps" min="20" max="100" value="50" class="w-full">
-                                    </div>
-                                    <div class="col-span-2">
-                                        <label class="block text-sm font-medium text-gray-300 mb-2">Seed (optional)</label>
-                                        <input type="number" id="qiEditSeed" placeholder="Random" class="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:ring-2 focus:ring-purple-500 text-sm">
-                                    </div>
-                                </div>
-                            </details>
 
                             <!-- Edit Button -->
                             <button
@@ -461,7 +449,7 @@
                             <div id="qiSingleSpinner" class="hidden w-4 h-4 border-2 border-purple-500 border-t-transparent rounded-full animate-spin"></div>
                             <span id="qiSingleStatusText" class="text-sm text-gray-400"></span>
                         </div>
-                        <img id="qiSingleResultImg" class="max-h-48 rounded-lg" alt="Result">
+                        <img id="qiSingleResultImg" class="w-full max-h-[60vh] object-contain rounded-lg cursor-zoom-in" alt="Result" onclick="openImageModal(this.src)">
                         <button type="button" id="qiSingleDownload" class="mt-2 py-1 px-3 bg-green-600 hover:bg-green-700 text-white text-sm rounded-lg">Download</button>
                     </div>
                 </div>
@@ -493,22 +481,6 @@
                         <textarea id="qiMultiInstruction" rows="2" placeholder="How to combine the images, e.g., 'Place both people standing together in a park'" class="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:ring-2 focus:ring-purple-500 text-sm"></textarea>
                     </div>
 
-                    <!-- Parameters row -->
-                    <div class="grid grid-cols-3 gap-3 mb-3">
-                        <div>
-                            <label class="block text-xs text-gray-400 mb-1">Steps: <span id="qiMultiStepsValue">40</span></label>
-                            <input type="range" id="qiMultiSteps" min="20" max="50" value="40" class="w-full">
-                        </div>
-                        <div>
-                            <label class="block text-xs text-gray-400 mb-1">CFG: <span id="qiMultiCfgValue">4.0</span></label>
-                            <input type="range" id="qiMultiCfg" min="1" max="10" step="0.5" value="4.0" class="w-full">
-                        </div>
-                        <div>
-                            <label class="block text-xs text-gray-400 mb-1">Seed</label>
-                            <input type="number" id="qiMultiSeed" placeholder="Random" class="w-full px-2 py-1 bg-gray-800 border border-gray-700 rounded text-white text-xs">
-                        </div>
-                    </div>
-
                     <!-- Combine button -->
                     <button type="button" id="qiMultiCombine" disabled class="w-full py-2 px-4 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-700 disabled:cursor-not-allowed text-white font-medium rounded-lg transition-colors">
                         Combine Images
@@ -525,7 +497,7 @@
                     <!-- Result -->
                     <div id="qiMultiResult" class="hidden mt-4">
                         <h4 class="text-sm font-medium text-gray-300 mb-2">Combined Result</h4>
-                        <img id="qiMultiResultImg" class="w-full rounded-lg" alt="Combined result">
+                        <img id="qiMultiResultImg" class="w-full max-h-[60vh] object-contain rounded-lg cursor-zoom-in" alt="Combined result" onclick="openImageModal(this.src)">
                         <div class="flex gap-2 mt-2">
                             <button type="button" id="qiMultiDownload" class="flex-1 py-2 px-4 bg-green-600 hover:bg-green-700 text-white font-medium rounded-lg transition-colors text-sm">
                                 Download
@@ -870,36 +842,6 @@
                         </div>
                     </div>
 
-                    <!-- Steps -->
-                    <div>
-                        <label class="block text-sm font-medium text-gray-300 mb-2">
-                            Steps: <span id="stepsValue" class="text-blue-400">9</span>
-                        </label>
-                        <input
-                            type="range"
-                            id="steps"
-                            min="1"
-                            max="50"
-                            value="9"
-                            class="w-full mt-1"
-                        >
-                        <div class="flex justify-between text-xs text-gray-500 mt-1">
-                            <span>1 (Fast)</span>
-                            <span>50 (Quality)</span>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Seed -->
-                <div>
-                    <label class="block text-sm font-medium text-gray-300 mb-2">Seed (optional)</label>
-                    <input
-                        type="number"
-                        id="seed"
-                        placeholder="Random"
-                        class="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500"
-                    >
-                    <p class="text-xs text-gray-500 mt-1">Leave empty for random seed</p>
                 </div>
 
                 <!-- Advanced Options (collapsible) -->
@@ -968,57 +910,15 @@
                     </div>
                 </details>
 
-                <!-- Scheduler Options (collapsible) -->
+                <!-- Z-Image Advanced Options (collapsible) -->
                 <details class="group" open>
                     <summary class="cursor-pointer text-sm font-medium text-gray-400 hover:text-gray-300 flex items-center gap-2 select-none">
                         <svg class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
                         </svg>
-                        Scheduler Options
+                        Z-Image Options
                     </summary>
                     <div class="mt-3 space-y-4 p-4 bg-gray-800/50 rounded-xl border border-gray-700">
-                        <!-- Guidance Scale -->
-                        <div>
-                            <label class="block text-sm font-medium text-gray-300 mb-2">
-                                Guidance Scale: <span id="guidanceScaleValue" class="text-blue-400">0.0</span>
-                            </label>
-                            <input
-                                type="range"
-                                id="guidanceScale"
-                                min="0"
-                                max="10"
-                                step="0.1"
-                                value="0.0"
-                                class="w-full"
-                            >
-                            <div class="flex justify-between text-xs text-gray-500 mt-1">
-                                <span>0.0 (Default for Z-Image Turbo)</span>
-                                <span>10.0</span>
-                            </div>
-                            <p class="text-xs text-gray-500 mt-1">Z-Image Turbo uses 0.0 (CFG baked in via Decoupled-DMD)</p>
-                        </div>
-
-                        <!-- Shift -->
-                        <div>
-                            <label class="block text-sm font-medium text-gray-300 mb-2">
-                                Scheduler Shift: <span id="shiftValue" class="text-blue-400">3.0</span>
-                            </label>
-                            <input
-                                type="range"
-                                id="shift"
-                                min="0.5"
-                                max="10.0"
-                                step="0.1"
-                                value="3.0"
-                                class="w-full"
-                            >
-                            <div class="flex justify-between text-xs text-gray-500 mt-1">
-                                <span>0.5</span>
-                                <span>10.0</span>
-                            </div>
-                            <p class="text-xs text-gray-500 mt-1">FlowMatchEuler scheduler shift parameter (default: 3.0)</p>
-                        </div>
-
                         <!-- Long Prompt Mode -->
                         <div>
                             <label class="block text-sm font-medium text-gray-300 mb-2">Long Prompt Mode</label>
@@ -1441,7 +1341,7 @@
             <!-- Result -->
             <div id="result" class="hidden mt-4">
                 <div class="bg-gray-800 rounded-xl overflow-hidden">
-                    <img id="resultImage" class="w-full" alt="Generated image">
+                    <img id="resultImage" class="w-full max-h-[60vh] object-contain cursor-zoom-in" alt="Generated image" onclick="openImageModal(this.src)">
                     <div class="p-4">
                         <div class="flex items-center justify-between gap-4 mb-3">
                             <div class="text-sm text-gray-400 truncate flex-1" id="resultInfo"></div>
@@ -1478,6 +1378,12 @@
                 </div>
             </div>
             </div> <!-- End zImageControls -->
+        </div>
+
+        <!-- Image Lightbox Modal -->
+        <div id="imageModal" class="fixed inset-0 bg-black/90 z-50 hidden flex items-center justify-center cursor-zoom-out" onclick="closeImageModal(event)">
+            <img id="modalImage" class="max-w-[95vw] max-h-[95vh] object-contain" alt="Full size image">
+            <button class="absolute top-4 right-4 text-white text-3xl hover:text-gray-300 leading-none" onclick="closeImageModal(event)">&times;</button>
         </div>
 
         <!-- History Panel -->
@@ -1616,6 +1522,9 @@
         const guidanceScaleValue = document.getElementById('guidanceScaleValue');
         const shiftSlider = document.getElementById('shift');
         const shiftValue = document.getElementById('shiftValue');
+        const shiftContainer = document.getElementById('shiftContainer');
+        const stepsMinLabel = document.getElementById('stepsMinLabel');
+        const stepsMaxLabel = document.getElementById('stepsMaxLabel');
         const longPromptModeSelect = document.getElementById('longPromptMode');
         const hiddenLayerSlider = document.getElementById('hiddenLayer');
         const hiddenLayerValue = document.getElementById('hiddenLayerValue');
@@ -1625,6 +1534,68 @@
 
         // Current generation params (for reuse)
         let currentParams = null;
+
+        // =====================================================================
+        // Image Lightbox Modal
+        // =====================================================================
+        function openImageModal(imgSrc) {
+            const modal = document.getElementById('imageModal');
+            const modalImage = document.getElementById('modalImage');
+            modalImage.src = imgSrc;
+            modal.classList.remove('hidden');
+            document.body.style.overflow = 'hidden';
+        }
+
+        function closeImageModal(event) {
+            // Only close if clicking the backdrop or close button, not the image itself
+            if (event && event.target.id === 'modalImage') return;
+            const modal = document.getElementById('imageModal');
+            modal.classList.add('hidden');
+            document.body.style.overflow = '';
+        }
+
+        // Close on Escape key
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') closeImageModal();
+        });
+
+        // =====================================================================
+        // Model-Specific Parameter Defaults
+        // =====================================================================
+        function updateSliderDisplays() {
+            if (stepsValue) stepsValue.textContent = stepsSlider.value;
+            if (guidanceScaleValue) guidanceScaleValue.textContent = parseFloat(guidanceScaleSlider.value).toFixed(1);
+            if (shiftValue) shiftValue.textContent = parseFloat(shiftSlider.value).toFixed(1);
+        }
+
+        function setModelDefaults(model) {
+            if (model === 'zimage') {
+                // Z-Image defaults: turbo model with 9 steps, CFG baked in (0.0)
+                stepsSlider.min = 1;
+                stepsSlider.max = 50;
+                stepsSlider.value = 9;
+                if (stepsMinLabel) stepsMinLabel.textContent = '1';
+                if (stepsMaxLabel) stepsMaxLabel.textContent = '50';
+
+                guidanceScaleSlider.value = 0.0;
+
+                // Show shift slider (Z-Image uses FlowMatch shift)
+                if (shiftContainer) shiftContainer.classList.remove('hidden');
+            } else if (model === 'qwenimage') {
+                // Qwen-Image-Edit defaults: non-turbo with 25 steps, CFG 4.0
+                stepsSlider.min = 10;
+                stepsSlider.max = 100;
+                stepsSlider.value = 25;
+                if (stepsMinLabel) stepsMinLabel.textContent = '10';
+                if (stepsMaxLabel) stepsMaxLabel.textContent = '100';
+
+                guidanceScaleSlider.value = 4.0;
+
+                // Hide shift slider (Qwen doesn't use it)
+                if (shiftContainer) shiftContainer.classList.add('hidden');
+            }
+            updateSliderDisplays();
+        }
 
         // =====================================================================
         // Resolution Management with Category Filters
@@ -3627,11 +3598,6 @@
         const qiResolution = document.getElementById('qiResolution');
         const qiLayersSlider = document.getElementById('qiLayers');
         const qiLayersValue = document.getElementById('qiLayersValue');
-        const qiCfgSlider = document.getElementById('qiCfgScale');
-        const qiCfgValue = document.getElementById('qiCfgValue');
-        const qiStepsSlider = document.getElementById('qiSteps');
-        const qiStepsValue = document.getElementById('qiStepsValue');
-        const qiSeed = document.getElementById('qiSeed');
         const decomposeBtn = document.getElementById('decomposeBtn');
         const qiStatus = document.getElementById('qiStatus');
         const qiStatusText = document.getElementById('qiStatusText');
@@ -3667,14 +3633,6 @@
         // Update slider displays
         qiLayersSlider?.addEventListener('input', () => {
             qiLayersValue.textContent = qiLayersSlider.value;
-        });
-
-        qiCfgSlider?.addEventListener('input', () => {
-            qiCfgValue.textContent = parseFloat(qiCfgSlider.value).toFixed(1);
-        });
-
-        qiStepsSlider?.addEventListener('input', () => {
-            qiStepsValue.textContent = qiStepsSlider.value;
         });
 
         // Check Qwen-Image status
@@ -3734,6 +3692,9 @@
                 headerTitle.textContent = 'LLM DiT Experiments UI';
                 headerSubtitle.textContent = '';
             }
+
+            // Update shared parameter defaults for the selected model
+            setModelDefaults(type);
         }
 
         // Model type button listeners
@@ -3829,9 +3790,9 @@
                 prompt: prompt,
                 layer_num: parseInt(qiLayersSlider.value),
                 resolution: parseInt(qiResolution.value),
-                steps: parseInt(qiStepsSlider.value),
-                cfg_scale: parseFloat(qiCfgSlider.value),
-                seed: qiSeed.value ? parseInt(qiSeed.value) : null,
+                steps: parseInt(stepsSlider.value),
+                cfg_scale: parseFloat(guidanceScaleSlider.value),
+                seed: document.getElementById('seed').value ? parseInt(document.getElementById('seed').value) : null,
             };
 
             try {
@@ -3937,11 +3898,6 @@
         const qiEditLayerName = document.getElementById('qiEditLayerName');
         const qiEditOriginalImg = document.getElementById('qiEditOriginalImg');
         const qiEditInstruction = document.getElementById('qiEditInstruction');
-        const qiEditCfgScale = document.getElementById('qiEditCfgScale');
-        const qiEditCfgValue = document.getElementById('qiEditCfgValue');
-        const qiEditSteps = document.getElementById('qiEditSteps');
-        const qiEditStepsValue = document.getElementById('qiEditStepsValue');
-        const qiEditSeed = document.getElementById('qiEditSeed');
         const qiEditBtn = document.getElementById('qiEditBtn');
         const qiEditStatus = document.getElementById('qiEditStatus');
         const qiEditStatusText = document.getElementById('qiEditStatusText');
@@ -3955,16 +3911,6 @@
         // Current editing state
         let currentEditLayerIndex = null;
         let currentEditResultImage = null;
-
-        // Update CFG value display
-        qiEditCfgScale?.addEventListener('input', () => {
-            if (qiEditCfgValue) qiEditCfgValue.textContent = qiEditCfgScale.value;
-        });
-
-        // Update Steps value display
-        qiEditSteps?.addEventListener('input', () => {
-            if (qiEditStepsValue) qiEditStepsValue.textContent = qiEditSteps.value;
-        });
 
         // Event delegation for edit buttons (since they're dynamically created)
         qiLayerGrid?.addEventListener('click', (e) => {
@@ -4046,9 +3992,9 @@
             const params = {
                 layer_image: layer.image,
                 instruction: instruction,
-                steps: parseInt(qiEditSteps.value),
-                cfg_scale: parseFloat(qiEditCfgScale.value),
-                seed: qiEditSeed.value ? parseInt(qiEditSeed.value) : null,
+                steps: parseInt(stepsSlider.value),
+                cfg_scale: parseFloat(guidanceScaleSlider.value),
+                seed: document.getElementById('seed').value ? parseInt(document.getElementById('seed').value) : null,
             };
 
             try {
@@ -4219,8 +4165,9 @@
                     body: JSON.stringify({
                         layer_image: singleEditImage,
                         instruction: instruction,
-                        steps: 40,
-                        cfg_scale: 4.0,
+                        steps: parseInt(stepsSlider.value),
+                        cfg_scale: parseFloat(guidanceScaleSlider.value),
+                        seed: document.getElementById('seed').value ? parseInt(document.getElementById('seed').value) : null,
                     }),
                 });
 
@@ -4264,11 +4211,6 @@
         const qiMultiPlaceholder = document.getElementById('qiMultiPlaceholder');
         const qiMultiClear = document.getElementById('qiMultiClear');
         const qiMultiInstruction = document.getElementById('qiMultiInstruction');
-        const qiMultiSteps = document.getElementById('qiMultiSteps');
-        const qiMultiStepsValue = document.getElementById('qiMultiStepsValue');
-        const qiMultiCfg = document.getElementById('qiMultiCfg');
-        const qiMultiCfgValue = document.getElementById('qiMultiCfgValue');
-        const qiMultiSeed = document.getElementById('qiMultiSeed');
         const qiMultiCombine = document.getElementById('qiMultiCombine');
         const qiMultiStatus = document.getElementById('qiMultiStatus');
         const qiMultiStatusText = document.getElementById('qiMultiStatusText');
@@ -4277,14 +4219,6 @@
         const qiMultiDownload = document.getElementById('qiMultiDownload');
 
         let multiImages = []; // Array of {file, dataUrl}
-
-        // Update slider displays
-        qiMultiSteps?.addEventListener('input', () => {
-            qiMultiStepsValue.textContent = qiMultiSteps.value;
-        });
-        qiMultiCfg?.addEventListener('input', () => {
-            qiMultiCfgValue.textContent = parseFloat(qiMultiCfg.value).toFixed(1);
-        });
 
         // Update combine button state
         function updateMultiCombineState() {
@@ -4400,9 +4334,9 @@
                     body: JSON.stringify({
                         images: multiImages.map(img => img.dataUrl),
                         instruction: instruction,
-                        steps: parseInt(qiMultiSteps.value),
-                        cfg_scale: parseFloat(qiMultiCfg.value),
-                        seed: qiMultiSeed.value ? parseInt(qiMultiSeed.value) : null,
+                        steps: parseInt(stepsSlider.value),
+                        cfg_scale: parseFloat(guidanceScaleSlider.value),
+                        seed: document.getElementById('seed').value ? parseInt(document.getElementById('seed').value) : null,
                     }),
                 });
 

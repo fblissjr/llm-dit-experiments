@@ -132,6 +132,7 @@ class HardwareProfile:
     # Optimization flags
     attention_backend: str = "auto"
     compile: bool = False
+    compile_mode: str = "default"  # torch.compile mode (default is CPU-offload safe)
     tiled_vae: bool = False
     tile_size: int = 512
     tile_overlap: int = 64
@@ -438,6 +439,7 @@ class ModularConfig:
             dtype=profile_data.get("dtype", "bfloat16"),
             attention_backend=profile_data.get("attention_backend", "auto"),
             compile=profile_data.get("compile", False),
+            compile_mode=profile_data.get("compile_mode", "default"),
             tiled_vae=profile_data.get("tiled_vae", False),
             tile_size=profile_data.get("tile_size", 512),
             tile_overlap=profile_data.get("tile_overlap", 64),
@@ -695,6 +697,7 @@ class ModularConfig:
             # Optimizations
             attention_backend=self.profile.attention_backend,
             compile=self.profile.compile,
+            compile_mode=self.profile.compile_mode,
             tiled_vae=self.profile.tiled_vae,
             tile_size=self.profile.tile_size,
             tile_overlap=self.profile.tile_overlap,

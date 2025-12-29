@@ -1,7 +1,7 @@
 """
 Quantization configuration and method definitions.
 
-last updated: 2025-12-27
+last updated: 2025-12-29
 """
 
 import logging
@@ -25,6 +25,7 @@ class QuantizationMethod(Enum):
 
     # TorchAO (recommended for RTX 4090+)
     TORCHAO_FP8 = "fp8"  # FP8 dynamic, ~50% VRAM reduction, minimal quality loss
+    TORCHAO_FP8_FILTERED = "fp8-filtered"  # FP8 with auto-skip of non-16-aligned layers
     TORCHAO_INT8 = "int8"  # INT8 weight-only, ~50% VRAM reduction
 
     # Deprecated
@@ -38,6 +39,8 @@ class QuantizationMethod(Enum):
         # Handle aliases
         aliases = {
             "fp8": cls.TORCHAO_FP8,
+            "fp8-filtered": cls.TORCHAO_FP8_FILTERED,
+            "fp8_filtered": cls.TORCHAO_FP8_FILTERED,  # Allow underscore variant
             "int8": cls.TORCHAO_INT8,
             "4bit": cls.BNB_4BIT,
             "8bit": cls.BNB_8BIT,
@@ -55,7 +58,11 @@ class QuantizationMethod(Enum):
 
     def is_torchao(self) -> bool:
         """Check if this method uses TorchAO."""
-        return self in (self.TORCHAO_FP8, self.TORCHAO_INT8)
+        return self in (self.TORCHAO_FP8, self.TORCHAO_FP8_FILTERED, self.TORCHAO_INT8)
+
+    def is_fp8(self) -> bool:
+        """Check if this method uses FP8 quantization."""
+        return self in (self.TORCHAO_FP8, self.TORCHAO_FP8_FILTERED)
 
     def is_bitsandbytes(self) -> bool:
         """Check if this method uses BitsAndBytes."""
@@ -112,9 +119,17 @@ def get_quantization_config(
                 "Install with: uv add diffusers>=0.32.0"
             )
 
-        if method == QuantizationMethod.TORCHAO_FP8:
+        if method in (QuantizationMethod.TORCHAO_FP8, QuantizationMethod.TORCHAO_FP8_FILTERED):
             # FP8 dynamic quantization - best for RTX 4090+ (compute capability 8.9+)
-            logger.info("Using TorchAO FP8 dynamic quantization (~50% VRAM reduction)")
+            # Note: fp8-filtered uses the same config, but quantize_model_torchao_filtered()
+            # should be used for post-load quantization to skip incompatible layers
+            if method == QuantizationMethod.TORCHAO_FP8_FILTERED:
+                logger.info(
+                    "Using TorchAO FP8 (filtered) - incompatible layers will be skipped. "
+                    "Use quantize_model_torchao_filtered() for post-load quantization."
+                )
+            else:
+                logger.info("Using TorchAO FP8 dynamic quantization (~50% VRAM reduction)")
             return TorchAoConfig("float8dq")
         elif method == QuantizationMethod.TORCHAO_INT8:
             # INT8 weight-only - works with any GPU

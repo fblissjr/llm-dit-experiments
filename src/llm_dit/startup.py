@@ -384,6 +384,7 @@ class PipelineLoader:
         logger.info(f"  Text encoder quantization: {self.config.qwen_image_quantize_text_encoder}")
         logger.info(f"  Transformer quantization: {self.config.qwen_image_quantize_transformer}")
         logger.info(f"  CPU offload: {self.config.qwen_image_cpu_offload}")
+        logger.info(f"  torch.compile: {self.config.compile} (mode: {self.config.compile_mode})")
         logger.info("-" * 60)
 
         start = time.time()
@@ -403,6 +404,8 @@ class PipelineLoader:
             cpu_offload=self.config.qwen_image_cpu_offload,
             quantize_text_encoder=quant_te,
             quantize_transformer=quant_tf,
+            compile_transformer=self.config.compile,
+            compile_mode=self.config.compile_mode,
         )
 
         load_time = time.time() - start

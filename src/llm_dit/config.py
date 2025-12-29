@@ -269,6 +269,7 @@ class OptimizationConfig:
 
     flash_attn: bool = False  # Enable Flash Attention
     compile: bool = False  # Enable torch.compile
+    compile_mode: str = "default"  # torch.compile mode (default is CPU-offload safe)
     cpu_offload: bool = False  # Enable CPU offload for transformer
 
 
@@ -356,7 +357,7 @@ class QwenImageConfig:
     quantize_transformer: str = "none"  # none/4bit/8bit - DiT: 8GB -> 2GB (4bit)
 
     # Generation settings
-    num_inference_steps: int = 40  # Denoising steps (40 for Edit-2511, was 50 for 2509)
+    num_inference_steps: int = 25  # Denoising steps for Edit-2511
     cfg_scale: float = 4.0  # Classifier-free guidance scale
     layer_num: int = 4  # Number of decomposition layers (outputs layer_num+1 images)
 

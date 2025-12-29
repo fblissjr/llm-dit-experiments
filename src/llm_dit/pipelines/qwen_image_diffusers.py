@@ -103,6 +103,8 @@ class QwenImageDiffusersPipeline:
         edit_only: bool = False,
         quantize_text_encoder: Optional[str] = None,
         quantize_transformer: Optional[str] = None,
+        compile_transformer: bool = False,
+        compile_mode: str = "default",
     ) -> "QwenImageDiffusersPipeline":
         """
         Load the pipeline from pretrained weights.
@@ -129,6 +131,15 @@ class QwenImageDiffusersPipeline:
                 "8bit" = BitsAndBytes INT8 (~4GB, 50% reduction)
                 "fp8" = TorchAO FP8 dynamic (~4GB, RTX 4090+ only)
                 "int8" = TorchAO INT8 weight-only (~4GB)
+            compile_transformer: If True, compile DiT with torch.compile for ~1.5-2x speedup.
+                First inference will be slower due to compilation.
+                NOTE: torch.compile is INCOMPATIBLE with cpu_offload=True. If both are
+                specified, compilation will be skipped with a warning.
+            compile_mode: torch.compile mode (only used when cpu_offload=False):
+                "default" - Minimal optimization, fast compile
+                "reduce-overhead" - CUDA graphs, lower latency
+                "max-autotune" - CUDA graphs + GEMM autotuning, best performance (slow first compile)
+                "max-autotune-no-cudagraphs" - GEMM autotuning only (slow first compile)
 
         Returns:
             Initialized QwenImageDiffusersPipeline
@@ -182,6 +193,8 @@ class QwenImageDiffusersPipeline:
                     quantize_text_encoder=quantize_text_encoder,
                     quantize_transformer=quantize_transformer,
                     cpu_offload=cpu_offload,
+                    compile_transformer=compile_transformer,
+                    compile_mode=compile_mode,
                 )
             elif cpu_offload:
                 # Use model_cpu_offload - moves whole components to GPU one at a time
@@ -190,6 +203,12 @@ class QwenImageDiffusersPipeline:
                     resolved_edit_path,
                     torch_dtype=torch_dtype,
                 )
+                # NOTE: torch.compile is INCOMPATIBLE with enable_model_cpu_offload()
+                if compile_transformer:
+                    logger.warning(
+                        "torch.compile is incompatible with CPU offload (accelerate's tensor swapping "
+                        "fails with compiled models). Skipping compilation."
+                    )
                 edit_pipe.enable_model_cpu_offload()
                 logger.info("Model CPU offload enabled")
             else:
@@ -197,6 +216,13 @@ class QwenImageDiffusersPipeline:
                     resolved_edit_path,
                     torch_dtype=torch_dtype,
                 )
+                if compile_transformer:
+                    logger.info(f"Compiling transformer with torch.compile (mode={compile_mode})...")
+                    edit_pipe.transformer = torch.compile(
+                        edit_pipe.transformer,
+                        mode=compile_mode,
+                        fullgraph=True,
+                    )
                 edit_pipe.to(device)
 
             instance = cls(
@@ -230,6 +256,8 @@ class QwenImageDiffusersPipeline:
                 quantize_text_encoder=quantize_text_encoder,
                 quantize_transformer=quantize_transformer,
                 cpu_offload=cpu_offload,
+                compile_transformer=compile_transformer,
+                compile_mode=compile_mode,
             )
             cpu_offload_enabled = cpu_offload
         elif cpu_offload:
@@ -238,6 +266,12 @@ class QwenImageDiffusersPipeline:
                 str(model_path),
                 torch_dtype=torch_dtype,
             )
+            # NOTE: torch.compile is INCOMPATIBLE with enable_model_cpu_offload()
+            if compile_transformer:
+                logger.warning(
+                    "torch.compile is incompatible with CPU offload (accelerate's tensor swapping "
+                    "fails with compiled models). Skipping compilation."
+                )
             logger.info("Enabling model CPU offload for decompose pipeline")
             decompose_pipe.enable_model_cpu_offload()
             cpu_offload_enabled = True
@@ -246,6 +280,13 @@ class QwenImageDiffusersPipeline:
                 str(model_path),
                 torch_dtype=torch_dtype,
             )
+            if compile_transformer:
+                logger.info(f"Compiling transformer with torch.compile (mode={compile_mode})...")
+                decompose_pipe.transformer = torch.compile(
+                    decompose_pipe.transformer,
+                    mode=compile_mode,
+                    fullgraph=True,
+                )
             decompose_pipe.to(device)
             cpu_offload_enabled = False
 
@@ -292,6 +333,8 @@ class QwenImageDiffusersPipeline:
         quantize_text_encoder: Optional[str],
         quantize_transformer: Optional[str],
         cpu_offload: bool,
+        compile_transformer: bool = False,
+        compile_mode: str = "default",
     ):
         """
         Load the edit pipeline with quantized components.
@@ -327,10 +370,15 @@ class QwenImageDiffusersPipeline:
         if quantize_text_encoder:
             quant_config = None
 
-            # TorchAO quantization (fp8, int8)
-            if quantize_text_encoder in ("fp8", "int8"):
+            # TorchAO quantization (fp8, fp8-filtered, int8)
+            if quantize_text_encoder in ("fp8", "fp8-filtered", "int8"):
                 try:
-                    from llm_dit.quantization import is_torchao_available, check_fp8_support
+                    from llm_dit.quantization import (
+                        is_torchao_available,
+                        check_fp8_support,
+                        quantize_model_torchao,
+                        quantize_model_torchao_filtered,
+                    )
                 except ImportError:
                     raise ImportError(
                         "llm_dit.quantization module required. Check installation."
@@ -342,13 +390,18 @@ class QwenImageDiffusersPipeline:
                         "Install with: uv add torchao"
                     )
 
-                if quantize_text_encoder == "fp8":
+                is_fp8 = quantize_text_encoder in ("fp8", "fp8-filtered")
+                if is_fp8:
                     if not check_fp8_support():
                         raise RuntimeError(
                             "FP8 requires compute capability 8.9+ (RTX 4090/H100). "
                             "Use 'int8' or '8bit' instead."
                         )
-                    logger.info("Loading text encoder with TorchAO FP8 quantization (~7GB)")
+                    if quantize_text_encoder == "fp8-filtered":
+                        logger.info("Loading text encoder with TorchAO FP8 (filtered) quantization")
+                        logger.info("  Note: Incompatible layers will be skipped automatically")
+                    else:
+                        logger.info("Loading text encoder with TorchAO FP8 quantization (~7GB)")
                 else:
                     logger.info("Loading text encoder with TorchAO INT8 quantization (~7GB)")
 
@@ -362,9 +415,18 @@ class QwenImageDiffusersPipeline:
                 )
 
                 # Apply TorchAO quantization
-                from llm_dit.quantization import quantize_model_torchao
-                quantize_model_torchao(text_encoder, quantize_text_encoder)
-                logger.info("Text encoder quantized with TorchAO")
+                if quantize_text_encoder == "fp8-filtered":
+                    # Use filtered quantization that skips incompatible layers
+                    text_encoder, stats = quantize_model_torchao_filtered(
+                        text_encoder, "fp8", skip_incompatible=True
+                    )
+                    logger.info(
+                        f"Text encoder quantized: {stats['quantized_layers']}/{stats['total_linear_layers']} layers, "
+                        f"{stats['skipped_layers']} skipped"
+                    )
+                else:
+                    quantize_model_torchao(text_encoder, quantize_text_encoder)
+                    logger.info("Text encoder quantized with TorchAO")
 
             # BitsAndBytes quantization (4bit, 8bit)
             elif quantize_text_encoder in ("4bit", "8bit"):
@@ -401,14 +463,14 @@ class QwenImageDiffusersPipeline:
             else:
                 raise ValueError(
                     f"Unknown quantization: {quantize_text_encoder}. "
-                    "Use '4bit', '8bit' (BitsAndBytes) or 'fp8', 'int8' (TorchAO)"
+                    "Use '4bit', '8bit' (BitsAndBytes) or 'fp8', 'fp8-filtered', 'int8' (TorchAO)"
                 )
 
         # Load transformer with quantization
         transformer = None
         if quantize_transformer:
-            # TorchAO quantization (fp8, int8) - uses diffusers TorchAoConfig
-            if quantize_transformer in ("fp8", "int8"):
+            # TorchAO quantization (fp8, fp8-filtered, int8) - uses diffusers TorchAoConfig
+            if quantize_transformer in ("fp8", "fp8-filtered", "int8"):
                 try:
                     from diffusers import TorchAoConfig
                 except ImportError:
@@ -424,13 +486,15 @@ class QwenImageDiffusersPipeline:
                         "llm_dit.quantization module required. Check installation."
                     )
 
-                if quantize_transformer == "fp8":
+                if quantize_transformer in ("fp8", "fp8-filtered"):
                     if not check_fp8_support():
                         raise RuntimeError(
                             "FP8 requires compute capability 8.9+ (RTX 4090/H100). "
                             "Use 'int8' or '8bit' instead."
                         )
                     quant_config = TorchAoConfig("float8dq")
+                    # Note: DiT transformer is fully FP8 compatible (all dims multiples of 16)
+                    # so fp8-filtered behaves same as fp8 for transformer
                     logger.info("Loading transformer with TorchAO FP8 quantization (~4GB)")
                 else:
                     quant_config = TorchAoConfig("int8wo")
@@ -478,7 +542,7 @@ class QwenImageDiffusersPipeline:
             else:
                 raise ValueError(
                     f"Unknown quantization: {quantize_transformer}. "
-                    "Use '4bit', '8bit' (BitsAndBytes) or 'fp8', 'int8' (TorchAO)"
+                    "Use '4bit', '8bit' (BitsAndBytes) or 'fp8', 'fp8-filtered', 'int8' (TorchAO)"
                 )
 
         # Build the pipeline with quantized components
@@ -499,6 +563,31 @@ class QwenImageDiffusersPipeline:
             **pipeline_kwargs,
         )
 
+        # Apply torch.compile BEFORE CPU offload (compile works on GPU)
+        # NOTE: torch.compile is INCOMPATIBLE with enable_model_cpu_offload()
+        # The compiled model has weakrefs that prevent accelerate's tensor swapping
+        if compile_transformer:
+            if cpu_offload:
+                logger.warning(
+                    "torch.compile is incompatible with CPU offload (accelerate's tensor swapping "
+                    "fails with compiled models). Skipping compilation. To use torch.compile, "
+                    "disable cpu_offload."
+                )
+            else:
+                effective_mode = compile_mode
+                # CUDA graphs don't work without CPU offload either if model is too large
+                if compile_mode in ("max-autotune", "reduce-overhead"):
+                    logger.info(f"Using compile mode: {compile_mode}")
+
+                logger.info(f"Compiling transformer with torch.compile (mode={effective_mode})...")
+                logger.info("  Note: First inference will be slower due to compilation")
+                edit_pipe.transformer = torch.compile(
+                    edit_pipe.transformer,
+                    mode=effective_mode,
+                    fullgraph=True,
+                )
+                logger.info("Transformer compiled successfully")
+
         if cpu_offload:
             edit_pipe.enable_model_cpu_offload()
             logger.info("Model CPU offload enabled")
@@ -513,6 +602,8 @@ class QwenImageDiffusersPipeline:
         quantize_text_encoder: Optional[str] = None,
         quantize_transformer: Optional[str] = None,
         cpu_offload: bool = True,
+        compile_transformer: bool = False,
+        compile_mode: str = "default",
     ):
         """
         Load QwenImageLayeredPipeline with quantized components.
@@ -613,8 +704,8 @@ class QwenImageDiffusersPipeline:
                     "Check coderef/diffusers installation."
                 )
 
-            # TorchAO quantization (fp8, int8)
-            if quantize_transformer in ("fp8", "int8"):
+            # TorchAO quantization (fp8, fp8-filtered, int8)
+            if quantize_transformer in ("fp8", "fp8-filtered", "int8"):
                 try:
                     from diffusers import TorchAoConfig
                 except ImportError:
@@ -629,13 +720,14 @@ class QwenImageDiffusersPipeline:
                         "llm_dit.quantization module required. Check installation."
                     )
 
-                if quantize_transformer == "fp8":
+                if quantize_transformer in ("fp8", "fp8-filtered"):
                     if not check_fp8_support():
                         raise RuntimeError(
                             "FP8 requires compute capability 8.9+ (RTX 4090/H100). "
                             "Use 'int8' or '8bit' instead."
                         )
                     quant_config = TorchAoConfig("float8dq")
+                    # Note: DiT transformer is fully FP8 compatible (all dims multiples of 16)
                     logger.info("Loading transformer with TorchAO FP8 quantization")
                 else:
                     quant_config = TorchAoConfig("int8wo")
@@ -683,7 +775,7 @@ class QwenImageDiffusersPipeline:
             else:
                 raise ValueError(
                     f"Unknown quantization: {quantize_transformer}. "
-                    "Use '4bit', '8bit' (BitsAndBytes) or 'fp8', 'int8' (TorchAO)"
+                    "Use '4bit', '8bit' (BitsAndBytes) or 'fp8', 'fp8-filtered', 'int8' (TorchAO)"
                 )
 
         # Build the pipeline with quantized components
@@ -702,6 +794,23 @@ class QwenImageDiffusersPipeline:
             model_path,
             **pipeline_kwargs,
         )
+
+        # Apply torch.compile BEFORE CPU offload
+        # NOTE: torch.compile is INCOMPATIBLE with enable_model_cpu_offload()
+        if compile_transformer:
+            if cpu_offload:
+                logger.warning(
+                    "torch.compile is incompatible with CPU offload (accelerate's tensor swapping "
+                    "fails with compiled models). Skipping compilation."
+                )
+            else:
+                logger.info(f"Compiling transformer with torch.compile (mode={compile_mode})...")
+                decompose_pipe.transformer = torch.compile(
+                    decompose_pipe.transformer,
+                    mode=compile_mode,
+                    fullgraph=True,
+                )
+                logger.info("Transformer compiled successfully")
 
         if cpu_offload:
             decompose_pipe.enable_model_cpu_offload()

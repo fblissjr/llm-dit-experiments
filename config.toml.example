@@ -31,9 +31,15 @@ templates_dir = "templates/z_image"
 # Extracts hidden states from text prompts for DiT conditioning
 device = "cuda"                  # cpu/cuda/mps/auto - GPU for speed
 torch_dtype = "bfloat16"         # bfloat16/float16/float32 - RTX 4090 has native BF16
-quantization = "none"            # none/4bit/8bit (bitsandbytes), int8_dynamic (torchao ~50% VRAM)
-                                 # int8_dynamic: post-load quantization via torch.ao, negligible quality loss
-                                 # 4bit/8bit: load-time quantization via bitsandbytes, requires bitsandbytes package
+quantization = "none"            # Quantization options:
+                                 # none: No quantization (default, ~14GB for text encoder)
+                                 # fp8: TorchAO FP8 dynamic (RTX 4090+, ~50% VRAM, may skip non-16-aligned layers)
+                                 # fp8-filtered: Same as fp8 but explicitly skips incompatible layers with logging
+                                 # int8: TorchAO INT8 weight-only (~50% VRAM, works on any GPU)
+                                 # 4bit: BitsAndBytes NF4 (~75% VRAM reduction, slight quality loss)
+                                 # 8bit: BitsAndBytes INT8 (~50% VRAM reduction)
+                                 # Note: FP8 requires dimensions divisible by 16. For models with incompatible
+                                 # layers (e.g., Qwen2.5-VL vision encoder), use fp8-filtered or 4bit instead.
 cpu_offload = false              # Move encoder to CPU after encoding to free VRAM
 max_length = 4096                # Tokenizer max length (DiT limit is 1504, see long_prompt_mode)
 hidden_layer = -2                # Layer for embeddings: -1=last, -2=penultimate (default), -3, etc.
@@ -213,7 +219,15 @@ templates_dir = "templates/z_image"
 # Text encoder (Qwen3-4B) configuration
 device = "auto"                  # cpu/cuda/mps/auto - auto for flexibility
 torch_dtype = "bfloat16"         # bfloat16/float16/float32
-quantization = "none"            # none/4bit/8bit (bitsandbytes), int8_dynamic (torchao ~50% VRAM)
+quantization = "none"            # Quantization options:
+                                 # none: No quantization (default, ~14GB for text encoder)
+                                 # fp8: TorchAO FP8 dynamic (RTX 4090+, ~50% VRAM, may skip non-16-aligned layers)
+                                 # fp8-filtered: Same as fp8 but explicitly skips incompatible layers with logging
+                                 # int8: TorchAO INT8 weight-only (~50% VRAM, works on any GPU)
+                                 # 4bit: BitsAndBytes NF4 (~75% VRAM reduction, slight quality loss)
+                                 # 8bit: BitsAndBytes INT8 (~50% VRAM reduction)
+                                 # Note: FP8 requires dimensions divisible by 16. For models with incompatible
+                                 # layers (e.g., Qwen2.5-VL vision encoder), use fp8-filtered or 4bit instead.
 cpu_offload = false              # Move encoder to CPU after encoding
 max_length = 512                 # Tokenizer max length
 hidden_layer = -2                # Layer for embeddings: -2=penultimate (default)

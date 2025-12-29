@@ -1,163 +1,114 @@
 # llm-dit-experiments
 
-Diffusers-based platform for LLM-DiT image generation models. Supports multiple model types with pluggable backends.
+Diffusers-based experimentation platform for LLM-DiT image generation. Pluggable backends, quantization, and advanced features for research.
 
-## Supported Models
+## Pipelines
 
-| Model | Task | Input | Output |
-|-------|------|-------|--------|
-| **Z-Image** (Tongyi) | Text-to-image, img2img | Text prompt | Single RGB image |
-| **Qwen-Image-Layered** (Qwen) | Image decomposition | Image + text | Multiple RGBA layers |
+| Pipeline | Task | Encoder | Steps | Notes |
+|----------|------|---------|-------|-------|
+| Z-Image | text-to-image, img2img | Qwen3-4B (2560 dim) | 8-9 | CFG=0 baked, 1504 token limit |
+| Qwen-Image-Layered | image decomposition | Qwen2.5-VL-7B (3584 dim) | 50 | Fixed 640/1024 res, outputs RGBA layers |
+| Qwen-Image-Edit-2511 | instruction editing | Qwen2.5-VL-7B (3584 dim) | 40 | Multi-image composition support |
+
+## Architecture
+
+```
+Prompt -> Qwen3Formatter -> TextEncoder -> hidden_states[layer] -> DiT -> VAE -> Image
+```
+
+Text encoder extracts embeddings from LLM hidden states (default layer -2). DiT uses flow matching to generate latents. VAE decodes to RGB/RGBA.
 
 ## Quick Start
 
 ```bash
-uv sync                                    # Install deps (includes PyTorch CUDA 13.0)
-./scripts/install_sageattention.sh         # Optional: SageAttention from source
+uv sync
 ```
 
-### Z-Image (Text-to-Image)
-
 ```bash
-# Web UI
-uv run web/server.py --model-path /path/to/z-image-turbo
+# Z-Image (text-to-image)
+uv run scripts/generate.py --model-path /path/to/z-image-turbo "A cat sleeping"
 
-# CLI
-uv run scripts/generate.py \
-  --model-path /path/to/z-image-turbo \
-  --output image.png \
-  "A cat sleeping in sunlight"
-```
-
-### Qwen-Image-Layered (Image Decomposition)
-
-```bash
-# CLI
-uv run scripts/generate.py \
-  --model-type qwenimage \
+# Qwen-Image-Layered (decomposition)
+uv run scripts/generate.py --model-type qwenimage \
   --qwen-image-model-path /path/to/Qwen-Image-Layered \
-  --img2img input.jpg \
-  "A cheerful child waving under a blue sky"
+  --img2img input.jpg "Scene description"
 
-# Web UI (model selector in header)
-uv run web/server.py \
-  --model-path /path/to/z-image-turbo \
-  --config config.toml
+# Web UI
+uv run web/server.py --config config.toml
 ```
 
-Configure `qwen_image.model_path` in config.toml to enable Qwen-Image in web UI.
+See [docs/reference/cli_flags.md](docs/reference/cli_flags.md) for full CLI reference.
+
+## Features
+
+**Quantization** (VRAM reduction):
+- BitsAndBytes: `4bit` NF4 (~75%), `8bit` INT8 (~50%)
+- TorchAO: `fp8` dynamic (~50%, RTX 4090+), `int8` weight-only (~50%)
+
+**Generation**:
+- Vision Conditioning via Qwen3-VL (zero-shot style transfer)
+- Skip Layer Guidance for improved anatomy
+- DyPE for high-resolution (2K-4K)
+- Long prompt compression (4 modes for >1504 tokens)
+- LoRA with multi-stack support
+
+**Backends**:
+- Attention: Flash Attention 2/3, SageAttention, xFormers, SDPA (auto-detect)
+- Text Encoder: local (transformers), remote API, vLLM
+- Distributed: encode on Mac, generate on CUDA
+
+**Configuration**:
+- TOML-based with hardware profiles
+- Modular component system
+- CLI overrides
 
 ## Configuration
 
 ```bash
 cp config.toml.example config.toml
-# Edit paths, then:
 uv run web/server.py --config config.toml --profile rtx4090
 ```
 
-Key sections in config.toml:
-- `[profile.encoder]` - Text encoder device/dtype/quantization
-- `[profile.generation]` - Resolution, steps, CFG
-- `[profile.qwen_image]` - Qwen-Image-Layered settings
-- `[profile.vl]` - Vision conditioning (Qwen3-VL)
-- `[profile.rewriter]` - Prompt rewriting settings
-
-Quantization options: `none` (default), `4bit`, `8bit` (bitsandbytes), `int8_dynamic` (torchao)
+Key sections: `[encoder]`, `[generation]`, `[qwen_image]`, `[vl]`, `[rewriter]`
 
 See [config.toml.example](config.toml.example) for all options.
 
-## Key Differences
-
-| | Z-Image | Qwen-Image-Layered |
-|-|---------|-------------------|
-| Text encoder | Qwen3-4B (2560 dim) | Qwen2.5-VL-7B (3584 dim) |
-| CFG scale | 0.0 (baked in) | 4.0 (required) |
-| Steps | 8-9 (distilled) | 30-50 |
-| Resolution | Flexible (16 multiple) | Fixed (640/1024) |
-| LoRA | Supported | Not supported |
-
-## CLI Reference
-
-```bash
-# Z-Image with device control
-uv run scripts/generate.py \
-  --model-path /path/to/z-image-turbo \
-  --text-encoder-device cpu \
-  --dit-device cuda \
-  --vae-device cuda \
-  "A mountain landscape"
-
-# Z-Image with int8 quantization (saves ~50% encoder VRAM)
-uv run scripts/generate.py \
-  --model-path /path/to/z-image-turbo \
-  --quantization int8_dynamic \
-  "A mountain landscape"
-
-# Z-Image with LoRA
-uv run scripts/generate.py \
-  --model-path /path/to/z-image-turbo \
-  --lora style.safetensors:0.8 \
-  "An anime character"
-
-# High-resolution with DyPE (2K)
-uv run scripts/generate.py \
-  --model-path /path/to/z-image-turbo \
-  --dype \
-  --dype-scale 2.0 \
-  --width 2048 --height 2048 \
-  "A detailed landscape"
-
-# Qwen-Image with custom parameters
-uv run scripts/generate.py \
-  --model-type qwenimage \
-  --qwen-image-model-path /path/to/Qwen-Image-Layered \
-  --qwen-image-layers 5 \
-  --qwen-image-resolution 1024 \
-  --qwen-image-cfg-scale 4.0 \
-  --img2img input.jpg \
-  "Scene description"
-
-# Distributed: encoder on Mac, DiT on CUDA
-uv run web/server.py \
-  --api-url http://mac-host:8080 \
-  --api-model Qwen3-4B \
-  --model-path /path/to/z-image-turbo
-```
-
-## API Endpoints
+## API
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/api/generate` | POST | Z-Image generation |
-| `/api/qwen-image/decompose` | POST | Qwen-Image decomposition |
-| `/api/rewrite` | POST | Prompt rewriting |
-| `/api/vl/generate` | POST | Z-Image with vision conditioning |
+| `/api/qwen-image/decompose` | POST | Image decomposition |
+| `/api/qwen-image/edit` | POST | Instruction editing |
+| `/api/vl/generate` | POST | Vision-conditioned generation |
+| `/api/rewrite` | POST | Prompt expansion |
 
-See [docs/web_server_api.md](docs/web_server_api.md) for full API reference.
+See [docs/reference/api_endpoints.md](docs/reference/api_endpoints.md) for full reference.
 
 ## Experiments
 
-```bash
-# Run ablation sweeps
-./experiments/sweep_hidden_layer.sh --quick
+Ablation sweeps and comparison tools in `experiments/`. Interactive viewer on port 7861.
 
-# Compare results
-uv run experiments/compare.py --list
-uv run experiments/compare.py -e shift_sweep --mode grid -o grid.png
-
-# Interactive viewer (port 7861)
-uv run experiments/viewer/server.py
-```
-
-See [experiments/README.md](experiments/README.md) for documentation.
+See [experiments/README.md](experiments/README.md).
 
 ## Documentation
 
-- [CLAUDE.md](CLAUDE.md) - Technical reference
-- [docs/models/z_image.md](docs/models/z_image.md) - Z-Image details and performance optimization
-- [docs/qwen_image_guide.md](docs/qwen_image_guide.md) - Qwen-Image-Layered user guide
-- [docs/models/qwen_image_layered.md](docs/models/qwen_image_layered.md) - Qwen-Image-Layered details
-- [docs/distributed_inference.md](docs/distributed_inference.md) - Distributed setup
-- [docs/web_server_api.md](docs/web_server_api.md) - REST API reference
-- [config.toml.example](config.toml.example) - Full configuration
-- [CHANGELOG.md](CHANGELOG.md) - Version history
+**Models**:
+- [Z-Image](docs/models/z_image.md) - performance tuning, device placement
+- [Qwen-Image-Layered](docs/models/qwen_image_layered.md) - decomposition details
+- [Qwen-Image-Edit-2511](docs/models/qwen_image_edit_2511.md) - instruction editing
+
+**Guides**:
+- [VL Conditioning](docs/guides/vl_conditioning.md) - vision-based style transfer
+- [LoRA](docs/guides/lora.md) - loading and fusing
+- [Distributed](docs/guides/distributed.md) - multi-machine setup
+- [Profiler](docs/guides/profiler.md) - performance testing
+
+**Reference**:
+- [CLI Flags](docs/reference/cli_flags.md) - all command-line options
+- [API Endpoints](docs/reference/api_endpoints.md) - REST API
+- [Configuration](docs/reference/configuration.md) - TOML structure
+- [DyPE](docs/reference/dype.md) - high-resolution generation
+- [Long Prompts](docs/reference/long_prompts.md) - token compression
+
+**Internal**: [CLAUDE.md](CLAUDE.md) for development reference.

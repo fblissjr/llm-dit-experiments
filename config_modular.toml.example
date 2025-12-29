@@ -1,6 +1,6 @@
 # Modular Configuration for llm-dit-experiments
 #
-# last updated: 2025-12-27
+# last updated: 2025-12-29
 #
 # This config format eliminates redundancy by:
 # 1. Defining components once in a library
@@ -10,7 +10,7 @@
 #
 # Usage:
 #   uv run scripts/generate.py --config config.toml --config-name rtx4090_zimage "A cat"
-#   uv run web/server.py --config config.toml --config-name rtx4090_qwenimageedit
+#   uv run web/server.py --config config.toml --config-name rtx4090_qwenimageedit_compiled
 
 # =============================================================================
 # HARDWARE PROFILES
@@ -22,6 +22,7 @@ description = "Default profile - auto-detect GPU"
 dtype = "bfloat16"
 attention_backend = "auto"
 compile = false
+compile_mode = "default"  # CPU-offload safe (no CUDA graphs)
 use_custom_scheduler = true
 
 [profiles.default.devices]
@@ -33,8 +34,9 @@ siglip = "cpu"
 [profiles.rtx4090]
 description = "RTX 4090 24GB - optimized settings"
 dtype = "bfloat16"
-attention_backend = "flash_attn_2"
+attention_backend = "auto"  # Let diffusers auto-detect best backend
 compile = false
+compile_mode = "default"  # CPU-offload safe (no CUDA graphs)
 tiled_vae = false
 tile_size = 512
 tile_overlap = 64
@@ -54,6 +56,7 @@ description = "RTX 3090 24GB - conservative settings"
 dtype = "float16"  # 3090 has slower bfloat16
 attention_backend = "sdpa"
 compile = false
+compile_mode = "reduce-overhead"
 tiled_vae = true  # More conservative memory
 tile_size = 256
 tile_overlap = 32
@@ -104,7 +107,7 @@ latent_channels = 16
 quantization_options = ["none"]  # No quantization for Z-Image DiT
 
 [transformers.qwenimage_dit]
-description = "Qwen-Image DiT transformer"
+description = "Qwen-Image DiT transformer (20.43B parameters)"
 num_layers = 30
 latent_channels = 16
 quantization_options = ["none", "4bit", "8bit", "fp8", "int8"]
@@ -156,7 +159,7 @@ text_encoder = "qwen2_5_vl_7b"
 dit = "qwenimage_dit"
 vae = "qwenimage_vae"
 scheduler = "flow_standard"
-model_path = "Qwen-Image-Layered-DiT-3B"
+model_path = "/path/to/Qwen-Image-Layered"
 default_steps = 50
 default_cfg_scale = 4.0
 default_resolution = 1024
@@ -164,17 +167,30 @@ layer_num = 4
 cpu_offload = true
 
 [models.qwenimageedit]
-description = "Qwen-Image-Edit-2511 - instruction-based image editing"
-inherits = "qwenlayered"  # Inherit from qwenlayered (keeps model_path = Layered)
+description = "Qwen-Image-Edit-2511 - instruction-based image editing (standalone)"
 pipeline_class = "QwenImageEditPipeline"
-# model_path inherited from qwenlayered = Qwen-Image-Layered (for decompose)
-edit_model_path = "Qwen/Qwen-Image-Edit-2511"  # HuggingFace ID or local path
-default_steps = 40
+text_encoder = "qwen2_5_vl_7b"
+dit = "qwenimage_dit"
+vae = "qwenimage_vae"
+scheduler = "flow_standard"
+# Qwen-Image-Edit is a standalone model, NOT related to Qwen-Image-Layered
+model_path = ""  # Not used - edit_only mode loads directly from edit_model_path
+edit_model_path = "/path/to/Qwen-Image-Edit-2511"
+edit_only = true  # Load edit model directly, skip decompose pipeline
+default_steps = 25
+default_cfg_scale = 4.0
 default_resolution = 640
+cpu_offload = true
 
 # =============================================================================
 # QUANTIZATION PRESETS
 # Named combinations of component quantization settings
+#
+# VRAM Reference for Qwen-Image-Edit (20.43B DiT + 7B text encoder):
+#   - DiT BF16: ~40GB | DiT FP8: ~20GB
+#   - Text encoder BF16: ~14GB | 4bit: ~3.5GB
+#
+# With CPU offload, only DiT needs GPU VRAM. Text encoder runs on CPU.
 # =============================================================================
 
 [quantization.none]
@@ -188,15 +204,30 @@ text_encoder = "8bit"
 transformer = "none"
 
 [quantization.aggressive]
-# NOTE: For decompose pipeline (QwenImageLayeredPipeline), you MUST quantize
-# BOTH text encoder AND transformer to fit in 24GB VRAM. The edit-only pipeline
-# (QwenImageEditPlusPipeline) works with just text encoder quantization.
-description = "Aggressive VRAM reduction - 4bit encoder, 8bit transformer (required for decompose on 24GB)"
+# For decompose pipeline (QwenImageLayeredPipeline), you MUST quantize
+# BOTH text encoder AND transformer to fit in 24GB VRAM.
+description = "Aggressive - 4bit encoder, 8bit transformer (required for decompose on 24GB)"
 text_encoder = "4bit"
 transformer = "8bit"
 
+[quantization.dit_fp8_offload]
+# RECOMMENDED for RTX 4090 with CPU offload:
+# - DiT: FP8 on GPU (~20GB)
+# - Text encoder: full precision on CPU (0 GPU VRAM)
+# - VAE: full precision on CPU (0 GPU VRAM)
+# Total GPU: ~20GB - plenty of headroom on 24GB!
+description = "FP8 DiT on GPU, text encoder + VAE on CPU (recommended)"
+text_encoder = "none"
+transformer = "fp8"
+
+[quantization.hybrid_fp8_4bit]
+# Legacy: FP8 DiT + 4bit text encoder (for GPU-only inference without offload)
+description = "Hybrid FP8 DiT + 4bit text encoder (GPU-only, no offload)"
+text_encoder = "4bit"
+transformer = "fp8"
+
 [quantization.torchao_fp8]
-description = "TorchAO FP8 quantization (RTX 4090+ only)"
+description = "TorchAO FP8 quantization for both (RTX 4090+ only)"
 text_encoder = "fp8"
 transformer = "fp8"
 
@@ -243,6 +274,8 @@ siglip_device = "cpu"
 # Pre-built combinations of profile + model + quantization + features
 # =============================================================================
 
+# --- Z-Image Configs ---
+
 [configs.rtx4090_zimage]
 description = "Z-Image on RTX 4090 - optimal performance"
 profile = "rtx4090"
@@ -264,33 +297,49 @@ model = "zimage"
 quantization = "balanced"
 features = ["slg"]
 
+# --- Qwen-Image-Edit Configs ---
+
+[configs.rtx4090_qwenimageedit_offload]
+# RECOMMENDED for RTX 4090: FP8 DiT on GPU, text encoder on CPU
+# Total GPU VRAM: ~20GB (DiT only)
+description = "Qwen-Image-Edit with FP8 DiT + CPU offload (recommended)"
+profile = "rtx4090"
+model = "qwenimageedit"
+quantization = "dit_fp8_offload"
+features = []
+
+[configs.rtx4090_qwenimageedit_compiled]
+# BEST: FP8 DiT + CPU offload + torch.compile for ~2x speedup
+# Total GPU VRAM: ~20GB
+# First inference slower due to compilation (~10s cold start)
+description = "Qwen-Image-Edit with FP8 DiT + CPU offload + torch.compile"
+profile = "rtx4090"
+model = "qwenimageedit"
+quantization = "dit_fp8_offload"
+features = []
+
+[configs.rtx4090_qwenimageedit_compiled.overrides]
+compile = true
+compile_mode = "default"  # Only CPU-offload compatible mode (no CUDA graphs)
+
+[configs.rtx4090_qwenimageedit_hybrid]
+# Legacy: FP8 DiT + 4bit text encoder (GPU-only, no CPU offload)
+description = "Qwen-Image-Edit with hybrid FP8+4bit (GPU-only)"
+profile = "rtx4090"
+model = "qwenimageedit"
+quantization = "hybrid_fp8_4bit"
+features = []
+
+# --- Qwen-Image-Layered Configs ---
+
 [configs.rtx4090_qwenlayered]
 description = "Qwen-Image-Layered on RTX 4090"
 profile = "rtx4090"
 model = "qwenlayered"
-quantization = "balanced"
+quantization = "aggressive"  # Both components need quant for decompose
 features = []
 
-[configs.rtx4090_qwenimageedit]
-description = "Qwen-Image-Edit on RTX 4090 with 8bit quantization"
-profile = "rtx4090"
-model = "qwenimageedit"
-quantization = "balanced"
-features = []
-
-[configs.rtx4090_qwenimageedit_fp8]
-description = "Qwen-Image-Edit on RTX 4090 with TorchAO FP8"
-profile = "rtx4090"
-model = "qwenimageedit"
-quantization = "torchao_fp8"
-features = []
-
-[configs.rtx4090_qwenimageedit_aggressive]
-description = "Qwen-Image-Edit aggressive quantization for low VRAM"
-profile = "rtx4090"
-model = "qwenimageedit"
-quantization = "aggressive"
-features = []
+# --- Default/Fallback Configs ---
 
 [configs.default_zimage]
 description = "Z-Image with auto device detection"
@@ -306,7 +355,8 @@ model = "zimage"
 quantization = "none"
 features = []
 
-# Example with overrides
+# --- Example with overrides ---
+
 [configs.custom_example]
 description = "Example with custom overrides"
 profile = "rtx4090"
@@ -318,6 +368,7 @@ features = ["dype"]
 steps = 12
 width = 2048
 height = 2048
+compile = true
 
 # =============================================================================
 # SERVER SETTINGS
