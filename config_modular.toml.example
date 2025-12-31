@@ -1,6 +1,6 @@
 # Modular Configuration for llm-dit-experiments
 #
-# last updated: 2025-12-29
+# last updated: 2025-12-31
 #
 # This config format eliminates redundancy by:
 # 1. Defining components once in a library
@@ -112,6 +112,14 @@ num_layers = 30
 latent_channels = 16
 quantization_options = ["none", "4bit", "8bit", "fp8", "int8"]
 
+[transformers.qwenimage2512_dit]
+description = "Qwen-Image-2512 DiT transformer (60 layers, 39GB)"
+num_layers = 60
+latent_channels = 16
+hidden_dim = 3840
+num_heads = 24
+quantization_options = ["fp8", "int8", "4bit", "8bit"]  # FP8 required for 24GB GPUs
+
 [vaes.zimage_vae]
 description = "Z-Image VAE (16 channel latents)"
 latent_scaling = 0.13025
@@ -181,6 +189,22 @@ default_steps = 25
 default_cfg_scale = 4.0
 default_resolution = 640
 cpu_offload = true
+
+[models.qwenimage2512]
+description = "Qwen-Image-2512 - text-to-image generation (pure t2i, no edit)"
+pipeline_class = "QwenImage2512Pipeline"
+text_encoder = "qwen2_5_vl_7b"
+dit = "qwenimage2512_dit"
+vae = "qwenimage_vae"
+scheduler = "flow_standard"
+model_path = "/path/to/Qwen-Image-2512"
+default_steps = 40
+default_cfg_scale = 4.0
+default_resolution = 1024
+cpu_offload = true
+# FP8 required for 24GB GPUs - transformer is 39GB in bf16
+quantize_transformer = "fp8"
+quantize_text_encoder = "4bit"
 
 # =============================================================================
 # QUANTIZATION PRESETS

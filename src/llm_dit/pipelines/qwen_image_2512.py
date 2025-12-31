@@ -90,6 +90,7 @@ class QwenImage2512Pipeline:
         torch_dtype: torch.dtype = torch.bfloat16,
         cpu_offload: bool = True,
         quantize_transformer: str = "fp8",  # Default FP8 for RTX 4090
+        quantize_text_encoder: Optional[str] = "4bit",  # Default 4bit for RTX 4090
     ) -> "QwenImage2512Pipeline":
         """
         Load the pipeline from pretrained weights.
@@ -99,12 +100,16 @@ class QwenImage2512Pipeline:
             device: Device for inference
             torch_dtype: Model dtype (bfloat16 recommended)
             cpu_offload: Enable sequential CPU offload for memory efficiency
-            quantize_transformer: Quantization for transformer (60-layer DiT):
+            quantize_transformer: Quantization for transformer (60-layer DiT, 39GB):
                 "fp8" = TorchAO FP8 dynamic (~20GB, default for RTX 4090)
                 "int8" = TorchAO INT8 weight-only (~20GB)
                 "4bit" = BitsAndBytes NF4 (~10GB, more quality loss)
                 "8bit" = BitsAndBytes INT8 (~20GB)
                 None = no quantization (~39GB, requires 48GB+ VRAM)
+            quantize_text_encoder: Quantization for text encoder (Qwen2.5-VL-7B, 16GB):
+                "4bit" = BitsAndBytes NF4 (~4GB, default for RTX 4090)
+                "8bit" = BitsAndBytes INT8 (~8GB)
+                None = no quantization (~16GB)
 
         Returns:
             Initialized QwenImage2512Pipeline
@@ -113,9 +118,11 @@ class QwenImage2512Pipeline:
             # RTX 4090 (24GB) - recommended settings
             pipe = QwenImage2512Pipeline.from_pretrained(
                 "/path/to/Qwen-Image-2512",
-                quantize_transformer="fp8",
+                quantize_transformer="fp8",       # ~20GB
+                quantize_text_encoder="4bit",     # ~4GB
                 cpu_offload=True,
             )
+            # Total: ~20GB transformer + ~4GB text encoder (sequential offload)
         """
         model_path = Path(model_path).expanduser()
         device = torch.device(device)
@@ -128,13 +135,17 @@ class QwenImage2512Pipeline:
         from diffusers import QwenImagePipeline
 
         # Build quantization config if needed
-        pipe_quant_config = None
-        if quantize_transformer:
-            pipe_quant_config = cls._build_quantization_config(quantize_transformer)
+        pipe_quant_config = cls._build_quantization_config(
+            quantize_transformer=quantize_transformer,
+            quantize_text_encoder=quantize_text_encoder,
+        )
 
         # Load pipeline with quantization
         if pipe_quant_config:
-            logger.info(f"Loading with transformer quantization: {quantize_transformer}")
+            logger.info(
+                f"Loading with quantization: transformer={quantize_transformer}, "
+                f"text_encoder={quantize_text_encoder}"
+            )
             pipe = QwenImagePipeline.from_pretrained(
                 str(model_path),
                 torch_dtype=torch_dtype,
@@ -143,7 +154,7 @@ class QwenImage2512Pipeline:
         else:
             logger.warning(
                 "Loading without quantization - requires 48GB+ VRAM. "
-                "Use quantize_transformer='fp8' for RTX 4090."
+                "Use quantize_transformer='fp8' and quantize_text_encoder='4bit' for RTX 4090."
             )
             pipe = QwenImagePipeline.from_pretrained(
                 str(model_path),
@@ -160,67 +171,98 @@ class QwenImage2512Pipeline:
 
         logger.info(
             f"QwenImage2512Pipeline loaded: "
-            f"quantize={quantize_transformer}, cpu_offload={cpu_offload}"
+            f"quantize_transformer={quantize_transformer}, "
+            f"quantize_text_encoder={quantize_text_encoder}, "
+            f"cpu_offload={cpu_offload}"
         )
 
         return instance
 
     @staticmethod
-    def _build_quantization_config(quantize_transformer: str):
-        """Build PipelineQuantizationConfig for transformer quantization."""
-        from diffusers import TorchAoConfig
+    def _build_quantization_config(
+        quantize_transformer: Optional[str],
+        quantize_text_encoder: Optional[str] = None,
+    ):
+        """Build PipelineQuantizationConfig for component quantization."""
         from diffusers.quantizers import PipelineQuantizationConfig
 
-        # TorchAO quantization (fp8, int8)
-        if quantize_transformer in ("fp8", "int8"):
-            from llm_dit.quantization import check_fp8_support
+        if not quantize_transformer and not quantize_text_encoder:
+            return None
 
-            if quantize_transformer == "fp8":
-                if not check_fp8_support():
-                    raise RuntimeError(
-                        "FP8 requires compute capability 8.9+ (RTX 4090/H100). "
-                        "Use 'int8' or '8bit' instead."
+        quant_mapping = {}
+
+        # Transformer quantization
+        if quantize_transformer:
+            if quantize_transformer in ("fp8", "int8"):
+                from diffusers import TorchAoConfig
+                from llm_dit.quantization import check_fp8_support
+
+                if quantize_transformer == "fp8":
+                    if not check_fp8_support():
+                        raise RuntimeError(
+                            "FP8 requires compute capability 8.9+ (RTX 4090/H100). "
+                            "Use 'int8' or '8bit' instead."
+                        )
+                    quant_mapping["transformer"] = TorchAoConfig("float8dq")
+                    logger.info("Transformer: TorchAO FP8 dynamic quantization")
+                else:
+                    quant_mapping["transformer"] = TorchAoConfig("int8wo")
+                    logger.info("Transformer: TorchAO INT8 weight-only quantization")
+
+            elif quantize_transformer in ("4bit", "8bit"):
+                try:
+                    from diffusers import BitsAndBytesConfig
+                except ImportError:
+                    raise ImportError(
+                        "bitsandbytes required for 4bit/8bit. Install with: uv add bitsandbytes"
                     )
-                quant_config = TorchAoConfig("float8dq")
-                logger.info("Using TorchAO FP8 dynamic quantization for transformer")
+
+                if quantize_transformer == "4bit":
+                    quant_mapping["transformer"] = BitsAndBytesConfig(
+                        load_in_4bit=True,
+                        bnb_4bit_quant_type="nf4",
+                        bnb_4bit_compute_dtype=torch.bfloat16,
+                    )
+                    logger.info("Transformer: BitsAndBytes 4-bit quantization")
+                else:
+                    quant_mapping["transformer"] = BitsAndBytesConfig(load_in_8bit=True)
+                    logger.info("Transformer: BitsAndBytes 8-bit quantization")
             else:
-                quant_config = TorchAoConfig("int8wo")
-                logger.info("Using TorchAO INT8 weight-only quantization for transformer")
-
-            # Only quantize transformer, not text_encoder or vae
-            return PipelineQuantizationConfig(
-                quant_mapping={"transformer": quant_config}
-            )
-
-        # BitsAndBytes quantization (4bit, 8bit)
-        elif quantize_transformer in ("4bit", "8bit"):
-            try:
-                from diffusers import BitsAndBytesConfig
-            except ImportError:
-                raise ImportError(
-                    "bitsandbytes required for 4bit/8bit. Install with: uv add bitsandbytes"
+                raise ValueError(
+                    f"Unknown transformer quantization: {quantize_transformer}. "
+                    "Use 'fp8', 'int8' (TorchAO) or '4bit', '8bit' (BitsAndBytes)"
                 )
 
-            if quantize_transformer == "4bit":
-                quant_config = BitsAndBytesConfig(
-                    load_in_4bit=True,
-                    bnb_4bit_quant_type="nf4",
-                    bnb_4bit_compute_dtype=torch.bfloat16,
-                )
-                logger.info("Using BitsAndBytes 4-bit quantization for transformer")
+        # Text encoder quantization
+        if quantize_text_encoder:
+            if quantize_text_encoder in ("4bit", "8bit"):
+                try:
+                    from transformers import BitsAndBytesConfig as TransformersBnbConfig
+                except ImportError:
+                    raise ImportError(
+                        "bitsandbytes required for 4bit/8bit. Install with: uv add bitsandbytes"
+                    )
+
+                if quantize_text_encoder == "4bit":
+                    quant_mapping["text_encoder"] = TransformersBnbConfig(
+                        load_in_4bit=True,
+                        bnb_4bit_quant_type="nf4",
+                        bnb_4bit_compute_dtype=torch.bfloat16,
+                    )
+                    logger.info("Text encoder: BitsAndBytes 4-bit quantization (~4GB)")
+                else:
+                    quant_mapping["text_encoder"] = TransformersBnbConfig(load_in_8bit=True)
+                    logger.info("Text encoder: BitsAndBytes 8-bit quantization (~8GB)")
             else:
-                quant_config = BitsAndBytesConfig(load_in_8bit=True)
-                logger.info("Using BitsAndBytes 8-bit quantization for transformer")
+                raise ValueError(
+                    f"Unknown text encoder quantization: {quantize_text_encoder}. "
+                    "Use '4bit' or '8bit' (BitsAndBytes)"
+                )
 
-            return PipelineQuantizationConfig(
-                quant_mapping={"transformer": quant_config}
-            )
+        if not quant_mapping:
+            return None
 
-        else:
-            raise ValueError(
-                f"Unknown quantization: {quantize_transformer}. "
-                "Use 'fp8', 'int8' (TorchAO) or '4bit', '8bit' (BitsAndBytes)"
-            )
+        return PipelineQuantizationConfig(quant_mapping=quant_mapping)
 
     @property
     def device(self) -> torch.device:

@@ -398,6 +398,7 @@ def main():
             num_inference_steps=config.steps,
             guidance_scale=config.guidance_scale,
             generator=generator,
+            shift=config.shift,
             callback=progress_callback if config.verbose else None,
         )
         gen_time = time.time() - start
@@ -475,6 +476,7 @@ def main():
             skip_layer_indices=config.slg_layers,
             skip_layer_start=config.slg_start,
             skip_layer_stop=config.slg_stop,
+            shift=config.shift,
             callback=progress_callback if config.verbose else None,
         )
         gen_time = time.time() - start
@@ -548,6 +550,7 @@ def main():
             force_think_block=config.enable_thinking,
             long_prompt_mode=config.long_prompt_mode,
             hidden_layer=config.hidden_layer,
+            shift=config.shift,
             callback=progress_callback if config.verbose else None,
         )
         gen_time = time.time() - start
@@ -584,6 +587,7 @@ def main():
             skip_layer_indices=config.slg_layers,
             skip_layer_start=config.slg_start,
             skip_layer_stop=config.slg_stop,
+            shift=config.shift,
             callback=progress_callback if config.verbose else None,
         )
         gen_time = time.time() - start
