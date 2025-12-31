@@ -139,17 +139,22 @@
             <!-- Model Type Selector -->
             <div class="mb-6 p-4 bg-gray-800/50 rounded-xl border border-gray-700">
                 <label class="block text-sm font-medium text-gray-300 mb-3">Model</label>
-                <div class="flex gap-2">
-                    <button type="button" id="modelTypeZImage" class="flex-1 px-4 py-2.5 rounded-lg bg-blue-600 text-white font-medium transition-colors">
+                <div class="flex gap-2 flex-wrap">
+                    <button type="button" id="modelTypeZImage" class="flex-1 min-w-[120px] px-4 py-2.5 rounded-lg bg-blue-600 text-white font-medium transition-colors">
                         Z-Image
                         <span class="block text-xs font-normal opacity-75">Text-to-Image</span>
                     </button>
-                    <button type="button" id="modelTypeQwenImage" class="flex-1 px-4 py-2.5 rounded-lg bg-gray-700 text-gray-300 hover:bg-gray-600 font-medium transition-colors">
+                    <button type="button" id="modelTypeQwenImage" class="flex-1 min-w-[120px] px-4 py-2.5 rounded-lg bg-gray-700 text-gray-300 hover:bg-gray-600 font-medium transition-colors">
                         Qwen-Image
-                        <span class="block text-xs font-normal opacity-75">Image Decomposition</span>
+                        <span class="block text-xs font-normal opacity-75">Decomposition</span>
+                    </button>
+                    <button type="button" id="modelTypeQwenImage2512" class="flex-1 min-w-[120px] px-4 py-2.5 rounded-lg bg-gray-700 text-gray-300 hover:bg-gray-600 font-medium transition-colors">
+                        Qwen-2512
+                        <span class="block text-xs font-normal opacity-75">Text-to-Image</span>
                     </button>
                 </div>
                 <p id="qwenImageStatus" class="hidden text-xs text-yellow-400 mt-2">Qwen-Image not configured. Set qwen_image.model_path in config.</p>
+                <p id="qwenImage2512Status" class="hidden text-xs text-yellow-400 mt-2">Qwen-Image-2512 not configured. Set qwen_image_2512.model_path in config.</p>
             </div>
 
             <!-- Shared Generation Parameters -->
@@ -1586,6 +1591,18 @@
                 stepsSlider.min = 10;
                 stepsSlider.max = 100;
                 stepsSlider.value = 25;
+                if (stepsMinLabel) stepsMinLabel.textContent = '10';
+                if (stepsMaxLabel) stepsMaxLabel.textContent = '100';
+
+                guidanceScaleSlider.value = 4.0;
+
+                // Hide shift slider (Qwen doesn't use it)
+                if (shiftContainer) shiftContainer.classList.add('hidden');
+            } else if (model === 'qwenimage2512') {
+                // Qwen-Image-2512 defaults: 40 steps, CFG 4.0
+                stepsSlider.min = 10;
+                stepsSlider.max = 100;
+                stepsSlider.value = 40;
                 if (stepsMinLabel) stepsMinLabel.textContent = '10';
                 if (stepsMaxLabel) stepsMaxLabel.textContent = '100';
 
@@ -3157,9 +3174,30 @@
                 progressFill.style.width = '30%';
                 statusText.textContent = useVL ? 'Generating with VL conditioning...' : 'Generating...';
 
-                // Use VL endpoint if VL conditioning is active
-                const endpoint = useVL ? `${API_BASE}/api/vl/generate` : `${API_BASE}/api/generate`;
-                const requestBody = useVL ? { ...params, ...vlParams } : params;
+                // Choose endpoint based on model type
+                let endpoint;
+                let requestBody;
+                if (currentModelType === 'qwenimage2512') {
+                    // Qwen-Image-2512 uses its own endpoint with different parameter names
+                    endpoint = `${API_BASE}/api/qwen-image-2512/generate`;
+                    requestBody = {
+                        prompt: params.prompt,
+                        negative_prompt: params.system_prompt || null,
+                        width: params.width,
+                        height: params.height,
+                        steps: params.steps,
+                        cfg_scale: params.guidance_scale || 4.0,
+                        seed: params.seed,
+                        max_sequence_length: 512,
+                    };
+                    statusText.textContent = 'Generating with Qwen-Image-2512...';
+                } else if (useVL) {
+                    endpoint = `${API_BASE}/api/vl/generate`;
+                    requestBody = { ...params, ...vlParams };
+                } else {
+                    endpoint = `${API_BASE}/api/generate`;
+                    requestBody = params;
+                }
 
                 const response = await fetch(endpoint, {
                     method: 'POST',
@@ -3574,14 +3612,18 @@
 
         let currentModelType = 'zimage';
         let qwenImageAvailable = false;
+        let qwenImage2512Available = false;
         let qiImageBase64 = null;
         let qiLastZipBlob = null;
 
         // DOM Elements for model toggle
         const modelTypeZImageBtn = document.getElementById('modelTypeZImage');
         const modelTypeQwenImageBtn = document.getElementById('modelTypeQwenImage');
+        const modelTypeQwenImage2512Btn = document.getElementById('modelTypeQwenImage2512');
         const qwenImageStatus = document.getElementById('qwenImageStatus');
+        const qwenImage2512Status = document.getElementById('qwenImage2512Status');
         const qwenImageControls = document.getElementById('qwenImageControls');
+        const qwenImage2512Controls = document.getElementById('qwenImage2512Controls');
         const zImageControls = document.getElementById('zImageControls');
         const headerTitle = document.getElementById('headerTitle');
         const headerSubtitle = document.getElementById('headerSubtitle');
@@ -3659,38 +3701,88 @@
             }
         }
 
+        // Check Qwen-Image-2512 status
+        async function checkQwenImage2512Status() {
+            try {
+                const response = await fetch(`${API_BASE}/api/qwen-image-2512/status`);
+                const data = await response.json();
+                // Use 'configured' (path set) not just 'available' (pipeline loaded)
+                // Pipeline lazy-loads on first use
+                qwenImage2512Available = data.configured || data.available;
+
+                if (!qwenImage2512Available) {
+                    qwenImage2512Status?.classList.remove('hidden');
+                    if (modelTypeQwenImage2512Btn) {
+                        modelTypeQwenImage2512Btn.disabled = true;
+                        modelTypeQwenImage2512Btn.classList.add('opacity-50', 'cursor-not-allowed');
+                    }
+                } else {
+                    qwenImage2512Status?.classList.add('hidden');
+                    if (modelTypeQwenImage2512Btn) {
+                        modelTypeQwenImage2512Btn.disabled = false;
+                        modelTypeQwenImage2512Btn.classList.remove('opacity-50', 'cursor-not-allowed');
+                    }
+                }
+            } catch (err) {
+                console.error('Failed to check Qwen-Image-2512 status:', err);
+                qwenImage2512Available = false;
+            }
+        }
+
         // Switch model type
         function switchModelType(type) {
             currentModelType = type;
+
+            // Reset all buttons to inactive state
+            const allButtons = [modelTypeZImageBtn, modelTypeQwenImageBtn, modelTypeQwenImage2512Btn];
+            allButtons.forEach(btn => {
+                if (btn) {
+                    btn.classList.remove('bg-blue-600', 'bg-purple-600', 'bg-green-600', 'text-white');
+                    btn.classList.add('bg-gray-700', 'text-gray-300', 'hover:bg-gray-600');
+                }
+            });
+
+            // Hide all control sections
+            zImageControls?.classList.add('hidden');
+            qwenImageControls?.classList.add('hidden');
+            qwenImage2512Controls?.classList.add('hidden');
 
             if (type === 'zimage') {
                 // Update button styles
                 modelTypeZImageBtn.classList.remove('bg-gray-700', 'text-gray-300', 'hover:bg-gray-600');
                 modelTypeZImageBtn.classList.add('bg-blue-600', 'text-white');
-                modelTypeQwenImageBtn.classList.remove('bg-purple-600', 'text-white');
-                modelTypeQwenImageBtn.classList.add('bg-gray-700', 'text-gray-300', 'hover:bg-gray-600');
 
-                // Show/hide controls
-                zImageControls.classList.remove('hidden');
-                qwenImageControls.classList.add('hidden');
+                // Show Z-Image controls
+                zImageControls?.classList.remove('hidden');
 
-                // Update header (keep title fixed, clear subtitle)
+                // Update header
                 headerTitle.textContent = 'LLM DiT Experiments UI';
                 headerSubtitle.textContent = '';
-            } else {
+            } else if (type === 'qwenimage') {
                 // Update button styles
                 modelTypeQwenImageBtn.classList.remove('bg-gray-700', 'text-gray-300', 'hover:bg-gray-600');
                 modelTypeQwenImageBtn.classList.add('bg-purple-600', 'text-white');
-                modelTypeZImageBtn.classList.remove('bg-blue-600', 'text-white');
-                modelTypeZImageBtn.classList.add('bg-gray-700', 'text-gray-300', 'hover:bg-gray-600');
 
-                // Show/hide controls
-                zImageControls.classList.add('hidden');
-                qwenImageControls.classList.remove('hidden');
+                // Show Qwen-Image controls
+                qwenImageControls?.classList.remove('hidden');
 
-                // Update header (keep title fixed, clear subtitle)
+                // Update header
                 headerTitle.textContent = 'LLM DiT Experiments UI';
                 headerSubtitle.textContent = '';
+            } else if (type === 'qwenimage2512') {
+                // Update button styles
+                if (modelTypeQwenImage2512Btn) {
+                    modelTypeQwenImage2512Btn.classList.remove('bg-gray-700', 'text-gray-300', 'hover:bg-gray-600');
+                    modelTypeQwenImage2512Btn.classList.add('bg-green-600', 'text-white');
+                }
+
+                // Qwen-Image-2512 is text-to-image, so reuse Z-Image controls
+                // but the form submission will use a different API endpoint
+                zImageControls?.classList.remove('hidden');
+
+                // Update header
+                headerTitle.textContent = 'LLM DiT Experiments UI';
+                headerSubtitle.textContent = 'Qwen-Image-2512 (Text-to-Image)';
             }
 
             // Update shared parameter defaults for the selected model
@@ -3702,6 +3794,11 @@
         modelTypeQwenImageBtn?.addEventListener('click', () => {
             if (qwenImageAvailable) {
                 switchModelType('qwenimage');
+            }
+        });
+        modelTypeQwenImage2512Btn?.addEventListener('click', () => {
+            if (qwenImage2512Available) {
+                switchModelType('qwenimage2512');
             }
         });
 
@@ -4388,6 +4485,7 @@
         loadHistory();
         checkVLStatus();
         checkQwenImageStatus();
+        checkQwenImage2512Status();
     </script>
 </body>
 </html>

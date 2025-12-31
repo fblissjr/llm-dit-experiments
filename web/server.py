@@ -53,6 +53,9 @@ encoder_only_mode = False
 # Qwen-Image pipeline (separate from Z-Image)
 qwen_image_pipeline = None
 
+# Qwen-Image-2512 pipeline (pure text-to-image, separate from Qwen-Image-Layered)
+qwen_image_2512_pipeline = None
+
 # In-memory history (cleared on server restart)
 generation_history = []
 MAX_HISTORY = 50
@@ -134,6 +137,28 @@ def unload_qwen_image_pipeline() -> bool:
     return False
 
 
+def unload_qwen_image_2512_pipeline() -> bool:
+    """Unload Qwen-Image-2512 pipeline to free VRAM.
+
+    Returns True if unloaded, False if not loaded.
+    """
+    global qwen_image_2512_pipeline
+    import gc
+    import torch
+
+    if qwen_image_2512_pipeline is not None:
+        logger.info("[VRAM] Unloading Qwen-Image-2512 pipeline to free VRAM...")
+        del qwen_image_2512_pipeline
+        qwen_image_2512_pipeline = None
+        gc.collect()
+        torch.cuda.empty_cache()
+        if torch.cuda.is_available():
+            allocated = torch.cuda.memory_allocated() / 1024**3
+            logger.info(f"[VRAM] Qwen-Image-2512 unloaded. CUDA allocated: {allocated:.2f} GB")
+        return True
+    return False
+
+
 def get_vram_status() -> dict:
     """Get current VRAM usage and loaded models status."""
     import torch
@@ -146,6 +171,7 @@ def get_vram_status() -> dict:
             "qwen_image_pipeline": qwen_image_pipeline is not None,
             "qwen_image_edit": qwen_image_pipeline is not None and getattr(qwen_image_pipeline, 'edit_pipe', None) is not None,
             "qwen_image_decompose": qwen_image_pipeline is not None and getattr(qwen_image_pipeline, 'decompose_pipe', None) is not None,
+            "qwen_image_2512_pipeline": qwen_image_2512_pipeline is not None,
         },
         "vram": None,
     }
@@ -302,6 +328,18 @@ class QwenImageEditMultiRequest(BaseModel):
     steps: int = 40  # Number of inference steps (40 for Edit-2511)
     cfg_scale: float = 4.0  # Classifier-free guidance scale
     seed: Optional[int] = None  # Random seed
+
+
+class QwenImage2512GenerateRequest(BaseModel):
+    """Request for Qwen-Image-2512 text-to-image generation."""
+    prompt: str  # Text prompt
+    negative_prompt: Optional[str] = None  # Negative prompt (optional)
+    width: int = 1024
+    height: int = 1024
+    steps: int = 40  # Diffusion steps
+    cfg_scale: float = 4.0  # Classifier-free guidance scale
+    seed: Optional[int] = None  # Random seed
+    max_sequence_length: int = 512  # Max prompt tokens
 
 
 @app.get("/")
@@ -799,6 +837,163 @@ async def qwen_image_edit_multi(request: QwenImageEditMultiRequest):
         raise
     except Exception as e:
         logger.error(f"[Qwen-Image] Multi-edit failed: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
+# Qwen-Image-2512 (Pure Text-to-Image) Endpoints
+# =============================================================================
+
+
+@app.get("/api/qwen-image-2512/status")
+async def qwen_image_2512_status():
+    """Check Qwen-Image-2512 pipeline status."""
+    configured = runtime_config is not None and bool(runtime_config.qwen_image_2512_model_path)
+    loaded = qwen_image_2512_pipeline is not None
+
+    return {
+        "available": loaded,
+        "configured": configured,
+        "model_path": runtime_config.qwen_image_2512_model_path if runtime_config else None,
+        "quantize_transformer": runtime_config.qwen_image_2512_quantize_transformer if runtime_config else "fp8",
+        "quantize_text_encoder": runtime_config.qwen_image_2512_quantize_text_encoder if runtime_config else "4bit",
+    }
+
+
+@app.get("/api/qwen-image-2512/config")
+async def qwen_image_2512_config():
+    """Get Qwen-Image-2512 configuration and defaults."""
+    return {
+        "model_path": runtime_config.qwen_image_2512_model_path if runtime_config else "",
+        "steps": runtime_config.qwen_image_2512_steps if runtime_config else 40,
+        "cfg_scale": runtime_config.qwen_image_2512_cfg_scale if runtime_config else 4.0,
+        "quantize_transformer": runtime_config.qwen_image_2512_quantize_transformer if runtime_config else "fp8",
+        "quantize_text_encoder": runtime_config.qwen_image_2512_quantize_text_encoder if runtime_config else "4bit",
+        "default_width": 1024,
+        "default_height": 1024,
+        "max_sequence_length": 512,
+    }
+
+
+@app.post("/api/qwen-image-2512/generate")
+async def qwen_image_2512_generate(request: QwenImage2512GenerateRequest):
+    """Generate an image using Qwen-Image-2512 (pure text-to-image).
+
+    This model is separate from Qwen-Image-Layered - it generates images from
+    text prompts without requiring an input image.
+    """
+    global qwen_image_2512_pipeline
+
+    # Check if pipeline is loaded, load on-demand if needed
+    if qwen_image_2512_pipeline is None:
+        if runtime_config and runtime_config.qwen_image_2512_model_path:
+            logger.info("[Qwen-Image-2512] Loading pipeline on-demand...")
+            try:
+                from llm_dit.pipelines import QwenImage2512Pipeline
+
+                # Get quantization settings
+                quant_transformer = runtime_config.qwen_image_2512_quantize_transformer
+                if quant_transformer == "none":
+                    quant_transformer = None
+
+                quant_text_encoder = runtime_config.qwen_image_2512_quantize_text_encoder
+                if quant_text_encoder == "none":
+                    quant_text_encoder = None
+
+                qwen_image_2512_pipeline = QwenImage2512Pipeline.from_pretrained(
+                    runtime_config.qwen_image_2512_model_path,
+                    quantize_transformer=quant_transformer,
+                    quantize_text_encoder=quant_text_encoder,
+                    cpu_offload=True,
+                )
+                logger.info("[Qwen-Image-2512] Pipeline loaded successfully")
+            except Exception as e:
+                logger.error(f"[Qwen-Image-2512] Failed to load pipeline: {e}")
+                import traceback
+                traceback.print_exc()
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"Failed to load Qwen-Image-2512 pipeline: {e}"
+                )
+        else:
+            raise HTTPException(
+                status_code=503,
+                detail="Qwen-Image-2512 not configured. Set qwen_image_2512.model_path in config."
+            )
+
+    try:
+        logger.info("=" * 60)
+        logger.info("QWEN-IMAGE-2512 GENERATION REQUEST")
+        logger.info("=" * 60)
+        logger.info(f"  Prompt: {request.prompt[:80]}...")
+        logger.info(f"  Size: {request.width}x{request.height}")
+        logger.info(f"  Steps: {request.steps}")
+        logger.info(f"  CFG Scale: {request.cfg_scale}")
+        logger.info(f"  Seed: {request.seed}")
+        logger.info("=" * 60)
+
+        start = time.time()
+
+        # Generate image
+        image = qwen_image_2512_pipeline(
+            prompt=request.prompt,
+            negative_prompt=request.negative_prompt or " ",
+            height=request.height,
+            width=request.width,
+            num_inference_steps=request.steps,
+            cfg_scale=request.cfg_scale,
+            seed=request.seed,
+            max_sequence_length=request.max_sequence_length,
+        )
+
+        gen_time = time.time() - start
+        logger.info(f"[Qwen-Image-2512] Generated in {gen_time:.1f}s")
+        logger.info(f"  Output size: {image.size}")
+        logger.info("=" * 60)
+
+        # Convert to PNG bytes
+        img_bytes = io.BytesIO()
+        image.save(img_bytes, format="PNG")
+        img_bytes.seek(0)
+
+        # Add to history
+        import base64
+        img_b64 = base64.b64encode(img_bytes.getvalue()).decode("ascii")
+        history_entry = {
+            "id": len(generation_history),
+            "timestamp": time.time(),
+            "model_type": "qwenimage2512",
+            "prompt": request.prompt,
+            "width": request.width,
+            "height": request.height,
+            "steps": request.steps,
+            "cfg_scale": request.cfg_scale,
+            "seed": request.seed,
+            "generation_time": gen_time,
+            "image": f"data:image/png;base64,{img_b64}",
+        }
+        generation_history.append(history_entry)
+        if len(generation_history) > MAX_HISTORY:
+            generation_history.pop(0)
+
+        # Reset stream position for response
+        img_bytes.seek(0)
+
+        return StreamingResponse(
+            img_bytes,
+            media_type="image/png",
+            headers={
+                "X-Inference-Time": f"{gen_time:.2f}",
+                "X-Model": "qwen-image-2512",
+            }
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[Qwen-Image-2512] Generation failed: {e}")
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
@@ -3018,6 +3213,23 @@ async def vram_unload_qwen_image():
     return {
         "success": unloaded,
         "message": "Qwen-Image pipeline unloaded" if unloaded else "Qwen-Image pipeline was not loaded",
+        "vram": status.get("vram"),
+    }
+
+
+@app.post("/api/vram/unload-qwen-image-2512")
+async def vram_unload_qwen_image_2512():
+    """Unload Qwen-Image-2512 pipeline to free VRAM.
+
+    Use this before loading other models if running low on VRAM.
+    The pipeline will be reloaded automatically on next generation request.
+    """
+    unloaded = unload_qwen_image_2512_pipeline()
+
+    status = get_vram_status()
+    return {
+        "success": unloaded,
+        "message": "Qwen-Image-2512 pipeline unloaded" if unloaded else "Qwen-Image-2512 pipeline was not loaded",
         "vram": status.get("vram"),
     }
 
