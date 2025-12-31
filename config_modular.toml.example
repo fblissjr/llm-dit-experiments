@@ -363,6 +363,28 @@ model = "qwenlayered"
 quantization = "aggressive"  # Both components need quant for decompose
 features = []
 
+# --- Qwen-Image-2512 Configs ---
+# Pure text-to-image generation (no edit functionality)
+# Transformer is 39GB - requires FP8 quantization for 24GB GPUs
+
+[configs.rtx4090_qwenimage2512]
+# RECOMMENDED: FP8 transformer + 4bit text encoder + CPU offload
+# Peak VRAM: ~20GB (transformer only on GPU at any time)
+description = "Qwen-Image-2512 on RTX 4090 with FP8 + 4bit (recommended)"
+profile = "rtx4090"
+model = "qwenimage2512"
+quantization = "hybrid_fp8_4bit"
+features = []
+
+[configs.rtx4090_qwenimage2512_offload]
+# FP8 transformer on GPU, text encoder on CPU
+# Use this if 4bit text encoder quality is not acceptable
+description = "Qwen-Image-2512 with FP8 DiT + CPU offload for text encoder"
+profile = "rtx4090"
+model = "qwenimage2512"
+quantization = "dit_fp8_offload"
+features = []
+
 # --- Default/Fallback Configs ---
 
 [configs.default_zimage]

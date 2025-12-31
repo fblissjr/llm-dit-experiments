@@ -25,7 +25,7 @@ import torch
 from .config import Config
 
 # Supported model types
-ModelType = Literal["zimage", "qwenimage"]
+ModelType = Literal["zimage", "qwenimage", "qwenimage2512"]
 SUPPORTED_MODEL_TYPES: tuple[str, ...] = get_args(ModelType)
 
 logger = logging.getLogger(__name__)
@@ -90,6 +90,13 @@ class RuntimeConfig:
     qwen_image_resolution: int = 640  # Resolution (640 or 1024 only)
     qwen_image_quantize_text_encoder: str = "none"  # none/4bit/8bit - quantize Qwen2.5-VL-7B
     qwen_image_quantize_transformer: str = "none"  # none/4bit/8bit - quantize DiT
+
+    # Qwen-Image-2512 paths and settings (pure text-to-image)
+    qwen_image_2512_model_path: str = ""  # Path to Qwen-Image-2512 model
+    qwen_image_2512_steps: int = 40  # Diffusion steps
+    qwen_image_2512_cfg_scale: float = 4.0  # CFG scale
+    qwen_image_2512_quantize_transformer: str = "fp8"  # fp8/int8/4bit/8bit - FP8 default for 24GB
+    qwen_image_2512_quantize_text_encoder: str = "4bit"  # 4bit/8bit/none - 4bit default for 24GB
 
     # Device placement
     encoder_device: str = "auto"
@@ -296,7 +303,7 @@ def create_base_parser(
         type=str,
         choices=list(SUPPORTED_MODEL_TYPES),
         default=None,
-        help="Model type: zimage (Z-Image-Turbo) or qwenimage (Qwen-Image-Layered). Default: zimage",
+        help="Model type: zimage, qwenimage (Layered), or qwenimage2512 (T2I). Default: zimage",
     )
     model_group.add_argument(
         "--model-path",
@@ -361,6 +368,41 @@ def create_base_parser(
         choices=[640, 1024],
         default=None,
         help="Resolution for Qwen-Image (640 or 1024 only, default: 640)",
+    )
+
+    # Qwen-Image-2512 specific (pure text-to-image)
+    qwen2512_group = parser.add_argument_group("Qwen-Image-2512")
+    qwen2512_group.add_argument(
+        "--qwen-image-2512-model-path",
+        type=str,
+        default=None,
+        help="Path to Qwen-Image-2512 model directory",
+    )
+    qwen2512_group.add_argument(
+        "--qwen-image-2512-steps",
+        type=int,
+        default=None,
+        help="Diffusion steps for Qwen-Image-2512 (default: 40)",
+    )
+    qwen2512_group.add_argument(
+        "--qwen-image-2512-cfg-scale",
+        type=float,
+        default=None,
+        help="CFG scale for Qwen-Image-2512 (default: 4.0)",
+    )
+    qwen2512_group.add_argument(
+        "--qwen-image-2512-quantize-transformer",
+        type=str,
+        choices=["none", "fp8", "int8", "4bit", "8bit"],
+        default=None,
+        help="Quantization for DiT transformer (default: fp8 for 24GB GPUs)",
+    )
+    qwen2512_group.add_argument(
+        "--qwen-image-2512-quantize-text-encoder",
+        type=str,
+        choices=["none", "4bit", "8bit"],
+        default=None,
+        help="Quantization for text encoder (default: 4bit for 24GB GPUs)",
     )
 
     # Device placement
@@ -973,6 +1015,18 @@ def _apply_cli_overrides(args: argparse.Namespace, config: RuntimeConfig) -> Run
     if getattr(args, 'qwen_image_resolution', None) is not None:
         config.qwen_image_resolution = args.qwen_image_resolution
 
+    # Qwen-Image-2512 overrides
+    if getattr(args, 'qwen_image_2512_model_path', None) is not None:
+        config.qwen_image_2512_model_path = args.qwen_image_2512_model_path
+    if getattr(args, 'qwen_image_2512_steps', None) is not None:
+        config.qwen_image_2512_steps = args.qwen_image_2512_steps
+    if getattr(args, 'qwen_image_2512_cfg_scale', None) is not None:
+        config.qwen_image_2512_cfg_scale = args.qwen_image_2512_cfg_scale
+    if getattr(args, 'qwen_image_2512_quantize_transformer', None) is not None:
+        config.qwen_image_2512_quantize_transformer = args.qwen_image_2512_quantize_transformer
+    if getattr(args, 'qwen_image_2512_quantize_text_encoder', None) is not None:
+        config.qwen_image_2512_quantize_text_encoder = args.qwen_image_2512_quantize_text_encoder
+
     # Device overrides
     if getattr(args, 'text_encoder_device', None) is not None:
         config.encoder_device = args.text_encoder_device
@@ -1312,6 +1366,18 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
         config.qwen_image_cfg_scale = args.qwen_image_cfg_scale
     if getattr(args, 'qwen_image_resolution', None) is not None:
         config.qwen_image_resolution = args.qwen_image_resolution
+
+    # Qwen-Image-2512 overrides
+    if getattr(args, 'qwen_image_2512_model_path', None) is not None:
+        config.qwen_image_2512_model_path = args.qwen_image_2512_model_path
+    if getattr(args, 'qwen_image_2512_steps', None) is not None:
+        config.qwen_image_2512_steps = args.qwen_image_2512_steps
+    if getattr(args, 'qwen_image_2512_cfg_scale', None) is not None:
+        config.qwen_image_2512_cfg_scale = args.qwen_image_2512_cfg_scale
+    if getattr(args, 'qwen_image_2512_quantize_transformer', None) is not None:
+        config.qwen_image_2512_quantize_transformer = args.qwen_image_2512_quantize_transformer
+    if getattr(args, 'qwen_image_2512_quantize_text_encoder', None) is not None:
+        config.qwen_image_2512_quantize_text_encoder = args.qwen_image_2512_quantize_text_encoder
 
     # Device overrides
     if getattr(args, 'text_encoder_device', None) is not None:
