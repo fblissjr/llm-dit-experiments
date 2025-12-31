@@ -186,6 +186,108 @@ def run_qwen_image_generation(args, config, logger) -> int:
     return 0
 
 
+def run_qwen_image_2512_generation(args, config, logger) -> int:
+    """
+    Run Qwen-Image-2512 text-to-image generation.
+
+    Args:
+        args: Parsed CLI arguments
+        config: RuntimeConfig with all settings
+        logger: Logger instance
+
+    Returns:
+        Exit code (0 for success)
+    """
+    from pathlib import Path
+
+    # Validate model path
+    model_path = config.qwen_image_2512_model_path
+    if not model_path:
+        logger.error(
+            "No Qwen-Image-2512 model path specified. "
+            "Use --qwen-image-2512-model-path or set qwen_image_2512.model_path in config."
+        )
+        return 1
+
+    logger.info("=" * 60)
+    logger.info("Qwen-Image-2512 Text-to-Image Generation")
+    logger.info("=" * 60)
+    logger.info(f"Model: {model_path}")
+    logger.info(f"Prompt: {args.prompt}")
+    logger.info(f"Resolution: {config.width}x{config.height}")
+    logger.info(f"CFG Scale: {config.qwen_image_2512_cfg_scale}")
+    logger.info(f"Steps: {config.qwen_image_2512_steps}")
+    logger.info(f"Transformer quant: {config.qwen_image_2512_quantize_transformer}")
+    logger.info(f"Text encoder quant: {config.qwen_image_2512_quantize_text_encoder}")
+
+    # Load pipeline
+    logger.info("Loading Qwen-Image-2512 pipeline...")
+    start_load = time.time()
+
+    from llm_dit.pipelines import QwenImage2512Pipeline
+
+    try:
+        # Map quantization strings
+        quant_transformer = config.qwen_image_2512_quantize_transformer
+        if quant_transformer == "none":
+            quant_transformer = None
+
+        quant_text_encoder = config.qwen_image_2512_quantize_text_encoder
+        if quant_text_encoder == "none":
+            quant_text_encoder = None
+
+        pipe = QwenImage2512Pipeline.from_pretrained(
+            model_path,
+            quantize_transformer=quant_transformer,
+            quantize_text_encoder=quant_text_encoder,
+            cpu_offload=True,  # Always use CPU offload for this large model
+        )
+    except Exception as e:
+        logger.error(f"Failed to load Qwen-Image-2512 pipeline: {e}")
+        import traceback
+        traceback.print_exc()
+        return 1
+
+    load_time = time.time() - start_load
+    logger.info(f"Pipeline loaded in {load_time:.1f}s")
+
+    # Set up seed
+    seed = getattr(args, 'seed', None)
+
+    # Generate image
+    logger.info("Generating image...")
+    start_gen = time.time()
+
+    try:
+        image = pipe(
+            prompt=args.prompt,
+            negative_prompt=config.negative_prompt or " ",
+            height=config.height,
+            width=config.width,
+            num_inference_steps=config.qwen_image_2512_steps,
+            cfg_scale=config.qwen_image_2512_cfg_scale,
+            seed=seed,
+        )
+    except Exception as e:
+        logger.error(f"Generation failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return 1
+
+    gen_time = time.time() - start_gen
+    logger.info(f"Generation complete in {gen_time:.1f}s")
+
+    # Save output
+    output_path = Path(args.output)
+    image.save(output_path)
+    logger.info(f"Saved: {output_path}")
+
+    logger.info("=" * 60)
+    logger.info(f"Total time: load={load_time:.1f}s + generate={gen_time:.1f}s")
+
+    return 0
+
+
 def main():
     # Create parser with generation args
     parser = create_base_parser(
@@ -246,9 +348,12 @@ def main():
 
     logger = logging.getLogger(__name__)
 
-    # Handle Qwen-Image model type
+    # Handle Qwen-Image model types
     if config.model_type == "qwenimage":
         return run_qwen_image_generation(args, config, logger)
+
+    if config.model_type == "qwenimage2512":
+        return run_qwen_image_2512_generation(args, config, logger)
 
     # Z-Image flow continues below
     # Validate model path
