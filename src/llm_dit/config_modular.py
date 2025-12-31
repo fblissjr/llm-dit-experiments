@@ -188,6 +188,10 @@ class ModelTypeConfig:
     layer_num: Optional[int] = None  # For Qwen-Image decomposition
     cpu_offload: bool = True
 
+    # Per-model quantization overrides (used by Qwen-Image-2512)
+    quantize_transformer: Optional[str] = None  # fp8, int8, 4bit, 8bit
+    quantize_text_encoder: Optional[str] = None  # 4bit, 8bit
+
     # Inheritance
     inherits: Optional[str] = None
 
@@ -659,9 +663,12 @@ class ModularConfig:
         """
         from llm_dit.cli import RuntimeConfig
 
-        # Determine model type string
+        # Determine model type string based on pipeline class
         model_type = "zimage"
-        if "qwen" in self.model.pipeline_class.lower():
+        pipeline_class_lower = self.model.pipeline_class.lower()
+        if "qwenimage2512" in pipeline_class_lower:
+            model_type = "qwenimage2512"
+        elif "qwen" in pipeline_class_lower:
             model_type = "qwenimage"
 
         # Get scheduler shift
@@ -727,7 +734,7 @@ class ModularConfig:
             fmtt_decode_scale=self.fmtt.decode_scale,
             fmtt_siglip_model=self.fmtt.siglip_model,
             fmtt_siglip_device=self.fmtt.siglip_device,
-            # Qwen-Image specific
+            # Qwen-Image-Layered specific
             qwen_image_model_path=self.model.model_path if model_type == "qwenimage" else "",
             qwen_image_edit_model_path=self.model.edit_model_path if model_type == "qwenimage" else "",
             qwen_image_edit_only=self.model.edit_only if model_type == "qwenimage" else False,
@@ -738,6 +745,16 @@ class ModularConfig:
             qwen_image_resolution=self.model.default_resolution,
             qwen_image_quantize_text_encoder=self.quantization.text_encoder,
             qwen_image_quantize_transformer=self.quantization.transformer,
+            # Qwen-Image-2512 specific
+            qwen_image_2512_model_path=self.model.model_path if model_type == "qwenimage2512" else "",
+            qwen_image_2512_steps=self.model.default_steps if model_type == "qwenimage2512" else 40,
+            qwen_image_2512_cfg_scale=self.model.default_cfg_scale if model_type == "qwenimage2512" else 4.0,
+            qwen_image_2512_quantize_transformer=(
+                self.model.quantize_transformer or self.quantization.transformer or "fp8"
+            ) if model_type == "qwenimage2512" else "fp8",
+            qwen_image_2512_quantize_text_encoder=(
+                self.model.quantize_text_encoder or self.quantization.text_encoder or "4bit"
+            ) if model_type == "qwenimage2512" else "4bit",
             # Server
             host=self.server_host,
             port=self.server_port,
