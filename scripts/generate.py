@@ -2,9 +2,10 @@
 """
 End-to-end image generation script.
 
-Supports two model types:
-  - Z-Image (zimage): Text-to-image generation
+Supports three model types:
+  - Z-Image (zimage): Text-to-image generation (turbo, 8-9 steps)
   - Qwen-Image-Layered (qwenimage): Image-to-layers decomposition
+  - Qwen-Image-2512 (qwenimage2512): Text-to-image generation (40 steps, FP8)
 
 Usage:
     # Z-Image (default)
@@ -15,6 +16,11 @@ Usage:
         --qwen-image-model-path /path/to/Qwen_Qwen-Image-Layered \\
         --img2img input.jpg \\
         "A cheerful child waving under a blue sky"
+
+    # Qwen-Image-2512 (text-to-image)
+    uv run scripts/generate.py --model-type qwenimage2512 \\
+        --qwen-image-2512-model-path /path/to/Qwen-Image-2512 \\
+        "A majestic mountain peak at golden hour"
 
     # With config file (recommended)
     uv run scripts/generate.py --config config.toml "A cat sleeping in sunlight"
@@ -291,7 +297,7 @@ def run_qwen_image_2512_generation(args, config, logger) -> int:
 def main():
     # Create parser with generation args
     parser = create_base_parser(
-        description="Generate images with Z-Image or Qwen-Image-Layered",
+        description="Generate images with Z-Image, Qwen-Image-Layered, or Qwen-Image-2512",
         include_generation_args=True,
         include_server_args=False,
     )
