@@ -3264,10 +3264,11 @@ def main():
     runtime_config = load_runtime_config(args)
     setup_logging(runtime_config)
 
-    # Validate model path (unless using API-only mode or edit_only mode)
+    # Validate model path (unless using API-only mode, edit_only mode, or qwenimage2512 mode)
     has_model = runtime_config.model_path or runtime_config.api_url
     has_edit_only = getattr(runtime_config, 'qwen_image_edit_only', False) and getattr(runtime_config, 'qwen_image_edit_model_path', '')
-    if not has_model and not has_edit_only:
+    has_qwen2512 = getattr(runtime_config, 'qwen_image_2512_model_path', '')
+    if not has_model and not has_edit_only and not has_qwen2512:
         logger.error("No model path specified. Use --model-path or --config.")
         return 1
 
@@ -3294,6 +3295,11 @@ def main():
         if isinstance(pipeline, QwenImageDiffusersPipeline):
             qwen_image_pipeline = pipeline
             logger.info("[Qwen-Image] Pipeline loaded via PipelineLoader")
+
+    # Log Qwen-Image-2512 on-demand mode
+    if mode == "qwenimage2512_ondemand":
+        logger.info("[Qwen-Image-2512] Server started in on-demand mode")
+        logger.info("[Qwen-Image-2512] Pipeline will load on first generation request")
 
     # Initialize rewriter API backend if configured
     if runtime_config.rewriter_use_api:

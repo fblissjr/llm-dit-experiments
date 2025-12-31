@@ -253,6 +253,18 @@ class PipelineLoader:
         model_type = getattr(self.config, 'model_type', 'zimage')
         if model_type == "qwenimage":
             return self._load_qwen_image_pipeline()
+        elif model_type == "qwenimage2512":
+            # Qwen-Image-2512 uses on-demand loading via web API
+            # Skip startup loading - pipeline will be loaded on first request
+            logger.info("=" * 60)
+            logger.info("QWEN-IMAGE-2512 MODE")
+            logger.info("=" * 60)
+            logger.info("Qwen-Image-2512 uses on-demand loading via /api/qwen-image-2512/generate")
+            logger.info(f"  Model path: {self.config.qwen_image_2512_model_path}")
+            logger.info(f"  Transformer quant: {self.config.qwen_image_2512_quantize_transformer}")
+            logger.info(f"  Text encoder quant: {self.config.qwen_image_2512_quantize_text_encoder}")
+            logger.info("=" * 60)
+            return LoadResult(pipeline=None, encoder=None, mode="qwenimage2512_ondemand")
 
         from llm_dit.pipelines import ZImagePipeline
 
