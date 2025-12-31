@@ -90,7 +90,7 @@ class QwenImage2512Pipeline:
         torch_dtype: torch.dtype = torch.bfloat16,
         cpu_offload: bool = True,
         quantize_transformer: str = "fp8",  # Default FP8 for RTX 4090
-        quantize_text_encoder: Optional[str] = "4bit",  # Default 4bit for RTX 4090
+        quantize_text_encoder: Optional[str] = None,  # None = CPU offload (best quality)
     ) -> "QwenImage2512Pipeline":
         """
         Load the pipeline from pretrained weights.
@@ -107,22 +107,22 @@ class QwenImage2512Pipeline:
                 "8bit" = BitsAndBytes INT8 (~20GB)
                 None = no quantization (~39GB, requires 48GB+ VRAM)
             quantize_text_encoder: Quantization for text encoder (Qwen2.5-VL-7B, 16GB):
-                "4bit" = BitsAndBytes NF4 (~4GB, default for RTX 4090)
+                None = no quantization (~16GB, best quality, CPU offload recommended)
                 "8bit" = BitsAndBytes INT8 (~8GB)
-                None = no quantization (~16GB)
+                "4bit" = BitsAndBytes NF4 (~4GB, significant quality loss)
 
         Returns:
             Initialized QwenImage2512Pipeline
 
         Example:
-            # RTX 4090 (24GB) - recommended settings
+            # RTX 4090 (24GB) - recommended settings (best quality)
             pipe = QwenImage2512Pipeline.from_pretrained(
                 "/path/to/Qwen-Image-2512",
-                quantize_transformer="fp8",       # ~20GB
-                quantize_text_encoder="4bit",     # ~4GB
+                quantize_transformer="fp8",         # ~20GB on GPU
+                quantize_text_encoder=None,         # CPU offload (best quality)
                 cpu_offload=True,
             )
-            # Total: ~20GB transformer + ~4GB text encoder (sequential offload)
+            # With CPU offload: only one component on GPU at a time (~20GB peak)
         """
         model_path = Path(model_path).expanduser()
         device = torch.device(device)

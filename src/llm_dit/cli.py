@@ -96,7 +96,7 @@ class RuntimeConfig:
     qwen_image_2512_steps: int = 40  # Diffusion steps
     qwen_image_2512_cfg_scale: float = 4.0  # CFG scale
     qwen_image_2512_quantize_transformer: str = "fp8"  # fp8/int8/4bit/8bit - FP8 default for 24GB
-    qwen_image_2512_quantize_text_encoder: str = "4bit"  # 4bit/8bit/none - 4bit default for 24GB
+    qwen_image_2512_quantize_text_encoder: str = "none"  # none/8bit/4bit - none = CPU offload (best quality)
 
     # Device placement
     encoder_device: str = "auto"
