@@ -45,6 +45,19 @@ max_length = 4096                # Tokenizer max length (DiT limit is 1504, see 
 hidden_layer = -2                # Layer for embeddings: -1=last, -2=penultimate (default), -3, etc.
                                  # Z-Image was trained with -2. Middle layers (-10 to -18) are experimental.
 
+# Multi-layer blending (experimental) - blend embeddings from multiple layers
+# Format: {layer: weight, ...} - weights are normalized to sum to 1.0
+# Example presets (also available in Web UI):
+#   Semantic:  {-2: 0.7, -6: 0.3}   - penultimate + deeper semantic
+#   Balanced:  {-2: 0.6, -5: 0.4}   - subtle blend of adjacent layers
+#   Deep:      {-2: 0.7, -10: 0.3}  - add deeper conceptual features
+#   Middle:    {-2: 0.5, -19: 0.5}  - middle layers + output
+#   Structure: {-3: 0.5, -8: 0.5}   - focus on structural layers
+#   Top 3:     {-1: 0.33, -2: 0.34, -3: 0.33} - blend top 3 output layers
+# CLI usage: --layer-weights "-2:0.7,-6:0.3"
+# When set, overrides hidden_layer. Leave commented to use single layer mode.
+# layer_weights = {-2: 0.7, -6: 0.3}
+
 [rtx4090.pipeline]
 # DiT and VAE pipeline configuration
 device = "auto"                  # cpu/cuda/mps/auto - auto selects cuda if available
@@ -231,6 +244,7 @@ quantization = "none"            # Quantization options:
 cpu_offload = false              # Move encoder to CPU after encoding
 max_length = 512                 # Tokenizer max length
 hidden_layer = -2                # Layer for embeddings: -2=penultimate (default)
+# layer_weights = {-2: 0.7, -6: 0.3}  # Multi-layer blending (see rtx4090 section for presets)
 
 [default.pipeline]
 # DiT and VAE pipeline configuration

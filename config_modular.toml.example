@@ -90,6 +90,8 @@ num_layers = 36
 default_hidden_layer = -2
 max_tokens = 1504
 quantization_options = ["none", "4bit", "8bit"]
+# Layer blending supported - see [layer_blend_presets] section below
+# CLI: --layer-weights "-2:0.7,-6:0.3"
 
 [encoders.qwen2_5_vl_7b]
 description = "Qwen2.5-VL-7B for Qwen-Image pipelines"
@@ -259,6 +261,37 @@ transformer = "fp8"
 description = "TorchAO INT8 weight-only quantization"
 text_encoder = "int8"
 transformer = "int8"
+
+# =============================================================================
+# LAYER BLEND PRESETS (Experimental)
+# Multi-layer blending combines embeddings from multiple hidden layers.
+# Weights are normalized to sum to 1.0. Overrides default_hidden_layer when used.
+# CLI usage: --layer-weights "-2:0.7,-6:0.3"
+# =============================================================================
+
+[layer_blend_presets.semantic]
+description = "Penultimate + deeper semantic layer"
+weights = {-2 = 0.7, -6 = 0.3}
+
+[layer_blend_presets.balanced]
+description = "Subtle blend of adjacent layers"
+weights = {-2 = 0.6, -5 = 0.4}
+
+[layer_blend_presets.deep]
+description = "Add deeper conceptual features"
+weights = {-2 = 0.7, -10 = 0.3}
+
+[layer_blend_presets.middle]
+description = "Middle layers + output"
+weights = {-2 = 0.5, -19 = 0.5}
+
+[layer_blend_presets.structure]
+description = "Focus on structural layers"
+weights = {-3 = 0.5, -8 = 0.5}
+
+[layer_blend_presets.top3]
+description = "Blend top 3 output layers"
+weights = {-1 = 0.33, -2 = 0.34, -3 = 0.33}
 
 # =============================================================================
 # FEATURE CONFIGURATIONS
