@@ -1024,24 +1024,14 @@
                                     <div class="flex gap-4">
                                         <div class="flex-1">
                                             <label class="block text-xs text-gray-400 mb-1">Primary Layer</label>
-                                            <select id="blendLayer1" class="w-full px-2 py-1.5 text-sm bg-gray-800 border border-gray-700 rounded text-white">
-                                                <option value="-2" selected>-2 (Default)</option>
-                                                <option value="-1">-1 (Last)</option>
-                                                <option value="-3">-3</option>
-                                                <option value="-4">-4</option>
-                                                <option value="-5">-5</option>
-                                                <option value="-6">-6 (VL optimal)</option>
+                                            <select id="blendLayer1" class="blend-layer-select w-full px-2 py-1.5 text-sm bg-gray-800 border border-gray-700 rounded text-white">
+                                                <!-- Populated by JavaScript -->
                                             </select>
                                         </div>
                                         <div class="flex-1">
                                             <label class="block text-xs text-gray-400 mb-1">Secondary Layer</label>
-                                            <select id="blendLayer2" class="w-full px-2 py-1.5 text-sm bg-gray-800 border border-gray-700 rounded text-white">
-                                                <option value="-6" selected>-6 (VL optimal)</option>
-                                                <option value="-5">-5</option>
-                                                <option value="-8">-8</option>
-                                                <option value="-10">-10</option>
-                                                <option value="-15">-15</option>
-                                                <option value="-19">-19 (Middle)</option>
+                                            <select id="blendLayer2" class="blend-layer-select w-full px-2 py-1.5 text-sm bg-gray-800 border border-gray-700 rounded text-white">
+                                                <!-- Populated by JavaScript -->
                                             </select>
                                         </div>
                                     </div>
@@ -1058,27 +1048,20 @@
                                     <div class="grid grid-cols-3 gap-2">
                                         <div>
                                             <label class="block text-xs text-gray-400 mb-1">Layer 1</label>
-                                            <select id="blendLayer3a" class="w-full px-2 py-1.5 text-sm bg-gray-800 border border-gray-700 rounded text-white">
-                                                <option value="-2" selected>-2</option>
-                                                <option value="-1">-1</option>
-                                                <option value="-3">-3</option>
+                                            <select id="blendLayer3a" class="blend-layer-select w-full px-2 py-1.5 text-sm bg-gray-800 border border-gray-700 rounded text-white">
+                                                <!-- Populated by JavaScript -->
                                             </select>
                                         </div>
                                         <div>
                                             <label class="block text-xs text-gray-400 mb-1">Layer 2</label>
-                                            <select id="blendLayer3b" class="w-full px-2 py-1.5 text-sm bg-gray-800 border border-gray-700 rounded text-white">
-                                                <option value="-5" selected>-5</option>
-                                                <option value="-6">-6</option>
-                                                <option value="-8">-8</option>
+                                            <select id="blendLayer3b" class="blend-layer-select w-full px-2 py-1.5 text-sm bg-gray-800 border border-gray-700 rounded text-white">
+                                                <!-- Populated by JavaScript -->
                                             </select>
                                         </div>
                                         <div>
                                             <label class="block text-xs text-gray-400 mb-1">Layer 3</label>
-                                            <select id="blendLayer3c" class="w-full px-2 py-1.5 text-sm bg-gray-800 border border-gray-700 rounded text-white">
-                                                <option value="-8" selected>-8</option>
-                                                <option value="-10">-10</option>
-                                                <option value="-15">-15</option>
-                                                <option value="-19">-19</option>
+                                            <select id="blendLayer3c" class="blend-layer-select w-full px-2 py-1.5 text-sm bg-gray-800 border border-gray-700 rounded text-white">
+                                                <!-- Populated by JavaScript -->
                                             </select>
                                         </div>
                                     </div>
@@ -1657,6 +1640,42 @@
         const blendLayer3b = document.getElementById('blendLayer3b');
         const blendLayer3c = document.getElementById('blendLayer3c');
         const blendPresetButtons = document.querySelectorAll('.blend-preset');
+
+        // Populate layer blend dropdowns with all 35 layers
+        function populateLayerDropdowns() {
+            const layerLabels = {
+                '-1': '-1 (Last)',
+                '-2': '-2 (Default)',
+                '-6': '-6 (VL optimal)',
+                '-18': '-18 (Middle)',
+                '-19': '-19 (Middle)',
+                '-35': '-35 (First)'
+            };
+
+            const defaultValues = {
+                'blendLayer1': '-2',
+                'blendLayer2': '-6',
+                'blendLayer3a': '-1',
+                'blendLayer3b': '-2',
+                'blendLayer3c': '-3'
+            };
+
+            document.querySelectorAll('.blend-layer-select').forEach(select => {
+                select.innerHTML = '';
+                for (let i = -1; i >= -35; i--) {
+                    const option = document.createElement('option');
+                    option.value = i;
+                    option.textContent = layerLabels[String(i)] || String(i);
+                    if (String(i) === defaultValues[select.id]) {
+                        option.selected = true;
+                    }
+                    select.appendChild(option);
+                }
+            });
+        }
+
+        // Initialize layer dropdowns
+        populateLayerDropdowns();
 
         // Current generation params (for reuse)
         let currentParams = null;
