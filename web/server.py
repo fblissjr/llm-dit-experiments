@@ -16,7 +16,7 @@ import logging
 import re
 import time
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 import httpx
 import torch
@@ -220,6 +220,7 @@ class GenerateRequest(BaseModel):
     shift: float = 3.0  # Scheduler shift parameter
     long_prompt_mode: str = "interpolate"  # truncate/interpolate/pool/attention_pool
     hidden_layer: int = -2  # Which hidden layer to extract (-1 to -35, Qwen3-4B has 36 layers)
+    layer_weights: Optional[Dict[int, float]] = None  # Multi-layer blending weights (overrides hidden_layer)
     # DyPE (high-resolution) options
     dype: Optional[DyPEConfigRequest] = None
     # Skip Layer Guidance (SLG) options
@@ -1439,6 +1440,7 @@ async def get_generation_config():
             "shift": 3.0,
             "long_prompt_mode": "interpolate",
             "hidden_layer": -2,
+            "layer_weights": None,
             "slg_scale": 0.0,
             "slg_layers": None,
             "slg_start": 0.05,
@@ -1457,6 +1459,7 @@ async def get_generation_config():
         "shift": runtime_config.shift,
         "long_prompt_mode": runtime_config.long_prompt_mode,
         "hidden_layer": runtime_config.hidden_layer,
+        "layer_weights": getattr(runtime_config, 'layer_weights', None),
         "slg_scale": getattr(runtime_config, 'slg_scale', 0.0),
         "slg_layers": getattr(runtime_config, 'slg_layers', None),
         "slg_start": getattr(runtime_config, 'slg_start', 0.05),
@@ -1726,6 +1729,8 @@ async def generate(request: GenerateRequest):
         logger.info(f"  Guidance: {request.guidance_scale}")
         logger.info(f"  Long prompt mode: {request.long_prompt_mode}")
         logger.info(f"  Hidden layer: {request.hidden_layer}")
+        if request.layer_weights:
+            logger.info(f"  Layer weights: {request.layer_weights}")
         logger.info("-" * 60)
         logger.info("Pipeline state:")
         logger.info(f"  pipeline.device: {pipeline.device}")
@@ -1869,6 +1874,7 @@ async def generate(request: GenerateRequest):
                 remove_quotes=request.strip_quotes,
                 long_prompt_mode=request.long_prompt_mode,
                 hidden_layer=request.hidden_layer,
+                layer_weights=request.layer_weights,
                 # Pass through additional kwargs for each pass
                 guidance_scale=request.guidance_scale,
                 cfg_normalization=request.cfg_normalization,
@@ -1907,6 +1913,7 @@ async def generate(request: GenerateRequest):
                 remove_quotes=request.strip_quotes,
                 long_prompt_mode=request.long_prompt_mode,
                 hidden_layer=request.hidden_layer,
+                layer_weights=request.layer_weights,
                 skip_layer_guidance_scale=slg_scale,
                 skip_layer_indices=slg_layers,
                 skip_layer_start=slg_start,
@@ -1975,6 +1982,7 @@ async def generate(request: GenerateRequest):
             "shift": request.shift,
             "long_prompt_mode": request.long_prompt_mode,
             "hidden_layer": request.hidden_layer,
+            "layer_weights": request.layer_weights,
             "cfg_normalization": request.cfg_normalization,
             "cfg_truncation": request.cfg_truncation,
             "gen_time": gen_time,

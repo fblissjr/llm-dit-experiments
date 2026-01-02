@@ -661,6 +661,7 @@ def main():
             force_think_block=config.enable_thinking,
             long_prompt_mode=config.long_prompt_mode,
             hidden_layer=config.hidden_layer,
+            layer_weights=config.layer_weights,
             shift=config.shift,
             callback=progress_callback if config.verbose else None,
         )
@@ -694,6 +695,7 @@ def main():
             force_think_block=config.enable_thinking,  # enable_thinking maps to force_think_block
             long_prompt_mode=config.long_prompt_mode,
             hidden_layer=config.hidden_layer,
+            layer_weights=config.layer_weights,
             skip_layer_guidance_scale=config.slg_scale,
             skip_layer_indices=config.slg_layers,
             skip_layer_start=config.slg_start,

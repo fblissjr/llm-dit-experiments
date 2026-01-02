@@ -63,6 +63,37 @@ def parse_lora_arg(lora_str: str) -> tuple[str, float]:
     return path, scale
 
 
+def parse_layer_weights(weights_str: str) -> dict[int, float]:
+    """
+    Parse a layer weights string into a dict.
+
+    Args:
+        weights_str: Layer weights like '-2:0.7,-6:0.3'
+
+    Returns:
+        Dict mapping layer indices to weights
+
+    Examples:
+        >>> parse_layer_weights('-2:0.7,-6:0.3')
+        {-2: 0.7, -6: 0.3}
+        >>> parse_layer_weights('-1:0.33,-2:0.34,-3:0.33')
+        {-1: 0.33, -2: 0.34, -3: 0.33}
+    """
+    weights = {}
+    for part in weights_str.split(','):
+        part = part.strip()
+        if ':' not in part:
+            raise ValueError(f"Invalid layer weight format: '{part}'. Expected 'layer:weight'")
+        layer_str, weight_str = part.rsplit(':', 1)
+        try:
+            layer = int(layer_str)
+            weight = float(weight_str)
+        except ValueError as e:
+            raise ValueError(f"Invalid layer weight: '{part}'. Layer must be int, weight must be float") from e
+        weights[layer] = weight
+    return weights
+
+
 @dataclass
 class RuntimeConfig:
     """
@@ -131,6 +162,7 @@ class RuntimeConfig:
 
     # Encoder settings
     hidden_layer: int = -2  # Which layer to extract embeddings from (-1=last, -2=penultimate)
+    layer_weights: dict[int, float] | None = None  # Multi-layer blending weights (overrides hidden_layer)
 
     # Scheduler
     shift: float = 3.0
@@ -529,6 +561,16 @@ def create_base_parser(
             "Which hidden layer to extract embeddings from (default: -2). "
             "-1=last layer, -2=penultimate (default for Z-Image), -3, etc. "
             "Useful for ablation studies comparing different layer outputs."
+        ),
+    )
+    pytorch_group.add_argument(
+        "--layer-weights",
+        type=str,
+        default=None,
+        help=(
+            "Multi-layer blending weights (overrides --hidden-layer). "
+            "Format: 'layer:weight,layer:weight,...' e.g. '-2:0.7,-6:0.3' "
+            "Weights are normalized to sum to 1.0."
         ),
     )
 
@@ -1070,6 +1112,8 @@ def _apply_cli_overrides(args: argparse.Namespace, config: RuntimeConfig) -> Run
         config.long_prompt_mode = args.long_prompt_mode
     if getattr(args, 'hidden_layer', None) is not None:
         config.hidden_layer = args.hidden_layer
+    if getattr(args, 'layer_weights', None) is not None:
+        config.layer_weights = parse_layer_weights(args.layer_weights)
 
     # LoRA overrides
     if getattr(args, 'loras', None):
@@ -1422,6 +1466,8 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
         config.long_prompt_mode = args.long_prompt_mode
     if getattr(args, 'hidden_layer', None) is not None:
         config.hidden_layer = args.hidden_layer
+    if getattr(args, 'layer_weights', None) is not None:
+        config.layer_weights = parse_layer_weights(args.layer_weights)
 
     # LoRA overrides
     if getattr(args, 'loras', None):

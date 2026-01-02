@@ -91,12 +91,12 @@ uv run experiments/run_ablation.py \
     --config "$CONFIG" \
     --profile "$PROFILE" \
     --experiment hidden_layer_blend \
-    --prompt-category "$PROMPT_CATEGORY" \
     --seeds "$SEEDS" \
     --output-dir "$OUTPUT_DIR" \
     $MAX_PROMPTS \
     $DRY_RUN \
-    $COMPUTE_METRICS
+    $COMPUTE_METRICS \
+    "$PROMPT_CATEGORY"
 
 if [[ -z "$DRY_RUN" ]]; then
     echo ""

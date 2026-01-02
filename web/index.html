@@ -999,6 +999,111 @@
                             </p>
                         </div>
 
+                        <!-- Layer Blending -->
+                        <div class="mt-4 pt-4 border-t border-gray-700">
+                            <div class="flex items-center gap-3 mb-3">
+                                <label for="layerBlendEnabled" class="flex items-center gap-2 cursor-pointer">
+                                    <input type="checkbox" id="layerBlendEnabled" class="w-5 h-5 text-blue-600 bg-gray-700 border-gray-600 rounded focus:ring-blue-500">
+                                    <span class="text-sm font-medium text-gray-300">Layer Blending</span>
+                                </label>
+                                <span class="text-xs text-gray-500">(Experimental)</span>
+                            </div>
+
+                            <div id="layerBlendControls" class="hidden space-y-3 pl-4 border-l border-gray-700">
+                                <!-- Blend Mode -->
+                                <div>
+                                    <label class="block text-xs font-medium text-gray-400 mb-1">Blend Mode</label>
+                                    <select id="layerBlendMode" class="w-full px-3 py-2 text-sm bg-gray-800 border border-gray-700 rounded-lg text-white focus:ring-2 focus:ring-blue-500">
+                                        <option value="two-layer">Two-Layer Blend</option>
+                                        <option value="three-layer">Three-Layer Blend</option>
+                                    </select>
+                                </div>
+
+                                <!-- Two-Layer Controls -->
+                                <div id="twoLayerControls" class="space-y-2">
+                                    <div class="flex gap-4">
+                                        <div class="flex-1">
+                                            <label class="block text-xs text-gray-400 mb-1">Primary Layer</label>
+                                            <select id="blendLayer1" class="w-full px-2 py-1.5 text-sm bg-gray-800 border border-gray-700 rounded text-white">
+                                                <option value="-2" selected>-2 (Default)</option>
+                                                <option value="-1">-1 (Last)</option>
+                                                <option value="-3">-3</option>
+                                                <option value="-4">-4</option>
+                                                <option value="-5">-5</option>
+                                                <option value="-6">-6 (VL optimal)</option>
+                                            </select>
+                                        </div>
+                                        <div class="flex-1">
+                                            <label class="block text-xs text-gray-400 mb-1">Secondary Layer</label>
+                                            <select id="blendLayer2" class="w-full px-2 py-1.5 text-sm bg-gray-800 border border-gray-700 rounded text-white">
+                                                <option value="-6" selected>-6 (VL optimal)</option>
+                                                <option value="-5">-5</option>
+                                                <option value="-8">-8</option>
+                                                <option value="-10">-10</option>
+                                                <option value="-15">-15</option>
+                                                <option value="-19">-19 (Middle)</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <label class="block text-xs text-gray-400 mb-1">
+                                            Weight: <span id="blendWeight1Value" class="text-blue-400">0.7</span> / <span id="blendWeight2Value" class="text-blue-400">0.3</span>
+                                        </label>
+                                        <input type="range" id="blendWeight1" min="0" max="100" value="70" class="w-full">
+                                    </div>
+                                </div>
+
+                                <!-- Three-Layer Controls (hidden by default) -->
+                                <div id="threeLayerControls" class="hidden space-y-2">
+                                    <div class="grid grid-cols-3 gap-2">
+                                        <div>
+                                            <label class="block text-xs text-gray-400 mb-1">Layer 1</label>
+                                            <select id="blendLayer3a" class="w-full px-2 py-1.5 text-sm bg-gray-800 border border-gray-700 rounded text-white">
+                                                <option value="-2" selected>-2</option>
+                                                <option value="-1">-1</option>
+                                                <option value="-3">-3</option>
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label class="block text-xs text-gray-400 mb-1">Layer 2</label>
+                                            <select id="blendLayer3b" class="w-full px-2 py-1.5 text-sm bg-gray-800 border border-gray-700 rounded text-white">
+                                                <option value="-5" selected>-5</option>
+                                                <option value="-6">-6</option>
+                                                <option value="-8">-8</option>
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label class="block text-xs text-gray-400 mb-1">Layer 3</label>
+                                            <select id="blendLayer3c" class="w-full px-2 py-1.5 text-sm bg-gray-800 border border-gray-700 rounded text-white">
+                                                <option value="-8" selected>-8</option>
+                                                <option value="-10">-10</option>
+                                                <option value="-15">-15</option>
+                                                <option value="-19">-19</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                    <p class="text-xs text-gray-500">Equal weights (33% each)</p>
+                                </div>
+
+                                <!-- Blend Presets -->
+                                <div>
+                                    <label class="block text-xs text-gray-400 mb-1">Presets</label>
+                                    <div class="flex flex-wrap gap-1.5">
+                                        <button type="button" class="blend-preset px-2 py-1 text-xs rounded bg-gray-700 text-gray-300 hover:bg-blue-600 hover:text-white" data-preset="semantic" title="Penultimate + deeper semantic layer">Semantic (-2/-6)</button>
+                                        <button type="button" class="blend-preset px-2 py-1 text-xs rounded bg-gray-700 text-gray-300 hover:bg-blue-600 hover:text-white" data-preset="balanced" title="Subtle blend of adjacent layers">Balanced (-2/-5)</button>
+                                        <button type="button" class="blend-preset px-2 py-1 text-xs rounded bg-gray-700 text-gray-300 hover:bg-blue-600 hover:text-white" data-preset="deep" title="Add deeper conceptual features">Deep (-2/-10)</button>
+                                        <button type="button" class="blend-preset px-2 py-1 text-xs rounded bg-gray-700 text-gray-300 hover:bg-blue-600 hover:text-white" data-preset="middle" title="Middle layers + output">Middle (-19/-2)</button>
+                                        <button type="button" class="blend-preset px-2 py-1 text-xs rounded bg-gray-700 text-gray-300 hover:bg-blue-600 hover:text-white" data-preset="structure" title="Focus on structural layers">Structure (-3/-8)</button>
+                                        <button type="button" class="blend-preset px-2 py-1 text-xs rounded bg-gray-700 text-gray-300 hover:bg-blue-600 hover:text-white" data-preset="top3" title="Blend top 3 output layers">Top 3 (-1/-2/-3)</button>
+                                    </div>
+                                </div>
+
+                                <p class="text-xs text-gray-500">
+                                    Blend embeddings from multiple hidden layers. Overrides single layer selection above.
+                                </p>
+                            </div>
+                        </div>
+
                     </div>
                 </details>
 
@@ -1537,6 +1642,22 @@
         const layerPositionIndicator = document.getElementById('layerPositionIndicator');
         const layerPresetButtons = document.querySelectorAll('.layer-preset');
 
+        // Layer blending elements
+        const layerBlendEnabled = document.getElementById('layerBlendEnabled');
+        const layerBlendControls = document.getElementById('layerBlendControls');
+        const layerBlendMode = document.getElementById('layerBlendMode');
+        const twoLayerControls = document.getElementById('twoLayerControls');
+        const threeLayerControls = document.getElementById('threeLayerControls');
+        const blendLayer1 = document.getElementById('blendLayer1');
+        const blendLayer2 = document.getElementById('blendLayer2');
+        const blendWeight1 = document.getElementById('blendWeight1');
+        const blendWeight1Value = document.getElementById('blendWeight1Value');
+        const blendWeight2Value = document.getElementById('blendWeight2Value');
+        const blendLayer3a = document.getElementById('blendLayer3a');
+        const blendLayer3b = document.getElementById('blendLayer3b');
+        const blendLayer3c = document.getElementById('blendLayer3c');
+        const blendPresetButtons = document.querySelectorAll('.blend-preset');
+
         // Current generation params (for reuse)
         let currentParams = null;
 
@@ -1800,6 +1921,109 @@
 
         // Initialize hidden layer UI
         updateHiddenLayerUI(hiddenLayerSlider.value);
+
+        // =====================================================================
+        // Layer Blending Logic
+        // =====================================================================
+
+        // Toggle blend controls visibility
+        layerBlendEnabled?.addEventListener('change', () => {
+            if (layerBlendEnabled.checked) {
+                layerBlendControls.classList.remove('hidden');
+            } else {
+                layerBlendControls.classList.add('hidden');
+            }
+        });
+
+        // Toggle between two-layer and three-layer modes
+        layerBlendMode?.addEventListener('change', () => {
+            if (layerBlendMode.value === 'two-layer') {
+                twoLayerControls.classList.remove('hidden');
+                threeLayerControls.classList.add('hidden');
+            } else {
+                twoLayerControls.classList.add('hidden');
+                threeLayerControls.classList.remove('hidden');
+            }
+        });
+
+        // Update weight display for two-layer blend
+        blendWeight1?.addEventListener('input', () => {
+            const w1 = parseInt(blendWeight1.value) / 100;
+            const w2 = 1 - w1;
+            blendWeight1Value.textContent = w1.toFixed(2);
+            blendWeight2Value.textContent = w2.toFixed(2);
+        });
+
+        // Blend preset handlers
+        blendPresetButtons.forEach(btn => {
+            btn.addEventListener('click', () => {
+                const preset = btn.dataset.preset;
+                // All two-layer presets share this setup
+                const setupTwoLayer = (l1, l2, w1) => {
+                    layerBlendMode.value = 'two-layer';
+                    twoLayerControls.classList.remove('hidden');
+                    threeLayerControls.classList.add('hidden');
+                    blendLayer1.value = l1;
+                    blendLayer2.value = l2;
+                    blendWeight1.value = w1;
+                    blendWeight1Value.textContent = (w1 / 100).toFixed(2);
+                    blendWeight2Value.textContent = ((100 - w1) / 100).toFixed(2);
+                };
+
+                if (preset === 'semantic') {
+                    // Semantic blend: -2 (70%) / -6 (30%)
+                    setupTwoLayer('-2', '-6', 70);
+                } else if (preset === 'balanced') {
+                    // Balanced blend: -2 (60%) / -5 (40%) - subtle, adjacent layers
+                    setupTwoLayer('-2', '-5', 60);
+                } else if (preset === 'deep') {
+                    // Deep blend: -2 (70%) / -10 (30%) - deeper conceptual features
+                    setupTwoLayer('-2', '-10', 70);
+                } else if (preset === 'middle') {
+                    // Middle+Late blend: -2 (50%) / -19 (50%)
+                    setupTwoLayer('-2', '-19', 50);
+                } else if (preset === 'structure') {
+                    // Structure blend: -3 (50%) / -8 (50%) - structural layers
+                    setupTwoLayer('-3', '-8', 50);
+                } else if (preset === 'top3') {
+                    // Top 3 layers equal blend
+                    layerBlendMode.value = 'three-layer';
+                    twoLayerControls.classList.add('hidden');
+                    threeLayerControls.classList.remove('hidden');
+                    blendLayer3a.value = '-1';
+                    blendLayer3b.value = '-2';
+                    blendLayer3c.value = '-3';
+                }
+            });
+        });
+
+        // Helper function to get current layer_weights config
+        function getLayerWeights() {
+            if (!layerBlendEnabled?.checked) {
+                return null;  // Use single layer mode
+            }
+
+            if (layerBlendMode.value === 'two-layer') {
+                const layer1 = parseInt(blendLayer1.value);
+                const layer2 = parseInt(blendLayer2.value);
+                const w1 = parseInt(blendWeight1.value) / 100;
+                const w2 = 1 - w1;
+                const weights = {};
+                weights[layer1] = w1;
+                weights[layer2] = w2;
+                return weights;
+            } else {
+                // Three-layer with equal weights
+                const layer1 = parseInt(blendLayer3a.value);
+                const layer2 = parseInt(blendLayer3b.value);
+                const layer3 = parseInt(blendLayer3c.value);
+                const weights = {};
+                weights[layer1] = 0.33;
+                weights[layer2] = 0.34;
+                weights[layer3] = 0.33;
+                return weights;
+            }
+        }
 
         // =====================================================================
         // DyPE (High-Resolution) Logic
@@ -3043,7 +3267,10 @@
             if (item.long_prompt_mode && item.long_prompt_mode !== 'truncate') {
                 infoText += `, ${item.long_prompt_mode}`;
             }
-            if (item.hidden_layer !== undefined && item.hidden_layer !== -2) {
+            if (item.layer_weights) {
+                const layers = Object.keys(item.layer_weights).join('/');
+                infoText += `, blend ${layers}`;
+            } else if (item.hidden_layer !== undefined && item.hidden_layer !== -2) {
                 infoText += `, layer ${item.hidden_layer}`;
             }
             if (item.cfg_normalization && item.cfg_normalization > 0) {
@@ -3144,6 +3371,7 @@
                 shift: parseFloat(shiftSlider.value),
                 long_prompt_mode: longPromptModeSelect.value,
                 hidden_layer: parseInt(hiddenLayerSlider.value),
+                layer_weights: getLayerWeights(),
                 dype: dypeConfig,
                 ...slgConfig,
                 ...fmttConfig,
@@ -3232,7 +3460,10 @@
                 if (params.long_prompt_mode && params.long_prompt_mode !== 'truncate') {
                     infoText += `, ${params.long_prompt_mode}`;
                 }
-                if (params.hidden_layer !== undefined && params.hidden_layer !== -2) {
+                if (params.layer_weights) {
+                    const layers = Object.keys(params.layer_weights).join('/');
+                    infoText += `, blend ${layers}`;
+                } else if (params.hidden_layer !== undefined && params.hidden_layer !== -2) {
                     infoText += `, layer ${params.hidden_layer}`;
                 }
                 // Add VL info if used

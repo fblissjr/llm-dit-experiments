@@ -711,6 +711,12 @@ class ModularConfig:
             embedding_cache=self.profile.embedding_cache,
             cache_size=self.profile.cache_size,
             long_prompt_mode=self.profile.long_prompt_mode,
+            # Hidden layer from encoder definition
+            hidden_layer=(
+                self.components.encoders[self.model.text_encoder].default_hidden_layer
+                if self.model.text_encoder and self.model.text_encoder in self.components.encoders
+                else -2
+            ),
             # DyPE
             dype_enabled=self.dype.enabled,
             dype_method=self.dype.method,
