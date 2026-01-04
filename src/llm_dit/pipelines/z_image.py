@@ -89,6 +89,45 @@ def calculate_shift(
     return mu
 
 
+def apply_cfg_normalization(
+    pred: torch.Tensor,
+    pos: torch.Tensor,
+    cfg_normalization: float,
+    cfg_norm_mode: str = "clamp",
+) -> torch.Tensor:
+    """Apply CFG normalization to combined prediction.
+
+    Args:
+        pred: Combined prediction (pos + scale * (pos - neg))
+        pos: Positive (conditional) prediction
+        cfg_normalization: Normalization strength/factor
+        cfg_norm_mode: Normalization mode:
+            - "clamp": Clamp pred norm to cfg_normalization * pos_norm (original)
+            - "match": Scale pred to match pos_norm (DiffSynth-style)
+
+    Returns:
+        Normalized prediction tensor
+    """
+    if cfg_normalization <= 0:
+        return pred
+
+    pos_norm = torch.linalg.vector_norm(pos)
+    pred_norm = torch.linalg.vector_norm(pred)
+
+    # Avoid division by zero
+    pred_norm = torch.where(pred_norm < 1e-6, torch.ones_like(pred_norm), pred_norm)
+
+    if cfg_norm_mode == "match":
+        # DiffSynth-style: directly scale pred to match pos norm
+        scale_factor = pos_norm / pred_norm
+    else:  # "clamp" (default)
+        # Original: clamp pred norm to cfg_normalization * pos_norm
+        max_allowed_norm = pos_norm * cfg_normalization
+        scale_factor = torch.clamp(max_allowed_norm / pred_norm, max=1.0)
+
+    return pred * scale_factor
+
+
 class ZImagePipeline:
     """
     End-to-end pipeline for Z-Image text-to-image generation.
@@ -597,6 +636,7 @@ class ZImagePipeline:
         prompt_embeds: Optional[torch.Tensor] = None,
         cfg_normalization: float = 0.0,
         cfg_truncation: float = 1.0,
+        cfg_norm_mode: str = "clamp",
     ) -> Union[Image.Image, List[Image.Image], torch.Tensor]:
         """
         Generate an image from a text prompt and an input image.
@@ -844,14 +884,8 @@ class ZImagePipeline:
                         neg_f = neg.float()
                         pred = pos_f + current_cfg_scale * (pos_f - neg_f)
 
-                        # CFG normalization
-                        if cfg_normalization > 0:
-                            pos_norm = torch.linalg.vector_norm(pos_f)
-                            pred_norm = torch.linalg.vector_norm(pred)
-                            max_allowed_norm = pos_norm * cfg_normalization
-                            pred_norm = torch.where(pred_norm < 1e-6, torch.ones_like(pred_norm), pred_norm)
-                            scale_factor = torch.clamp(max_allowed_norm / pred_norm, max=1.0)
-                            pred = pred * scale_factor
+                        # CFG normalization (clamp or match mode)
+                        pred = apply_cfg_normalization(pred, pos_f, cfg_normalization, cfg_norm_mode)
 
                         noise_pred.append(pred)
                     noise_pred = torch.stack(noise_pred, dim=0)
@@ -952,6 +986,7 @@ class ZImagePipeline:
         # CFG enhancements (useful for non-distilled models like Qwen-Image-Layered)
         cfg_normalization: float = 0.0,  # 0.0 = disabled, >0 = clamp CFG norm relative to positive pred
         cfg_truncation: float = 1.0,  # 1.0 = never truncate, <1.0 = stop CFG at that progress fraction
+        cfg_norm_mode: str = "clamp",  # "clamp" or "match" (DiffSynth-style)
     ) -> Union[Image.Image, List[Image.Image], torch.Tensor]:
         """
         Generate an image from a text prompt.
@@ -1413,15 +1448,8 @@ class ZImagePipeline:
                         # Apply CFG: positive + scale * (positive - negative)
                         pred = pos_f + current_cfg_scale * (pos_f - neg_f)
 
-                        # CFG normalization: clamp combined norm relative to positive norm
-                        if cfg_normalization > 0:
-                            pos_norm = torch.linalg.vector_norm(pos_f)
-                            pred_norm = torch.linalg.vector_norm(pred)
-                            max_allowed_norm = pos_norm * cfg_normalization
-                            # Avoid division by zero
-                            pred_norm = torch.where(pred_norm < 1e-6, torch.ones_like(pred_norm), pred_norm)
-                            scale_factor = torch.clamp(max_allowed_norm / pred_norm, max=1.0)
-                            pred = pred * scale_factor
+                        # CFG normalization (clamp or match mode)
+                        pred = apply_cfg_normalization(pred, pos_f, cfg_normalization, cfg_norm_mode)
 
                         noise_pred.append(pred)
                     noise_pred = torch.stack(noise_pred, dim=0)
@@ -1581,6 +1609,7 @@ class ZImagePipeline:
         long_prompt_mode: str = "truncate",
         cfg_normalization: float = 0.0,
         cfg_truncation: float = 1.0,
+        cfg_norm_mode: str = "clamp",
     ) -> Union[Image.Image, List[Image.Image], torch.Tensor]:
         """
         Generate an image from pre-computed embeddings.
@@ -1601,6 +1630,7 @@ class ZImagePipeline:
             callback: Optional callback for progress updates
             cfg_normalization: CFG norm clamping (0.0 = disabled, typical: 1.0-2.0)
             cfg_truncation: CFG truncation threshold (1.0 = never, typical: 0.5-0.8)
+            cfg_norm_mode: "clamp" (default) or "match" (DiffSynth-style)
 
         Returns:
             Generated image(s) in specified format
@@ -1744,14 +1774,8 @@ class ZImagePipeline:
                     neg_f = neg.float()
                     pred = pos_f + current_cfg_scale * (pos_f - neg_f)
 
-                    # CFG normalization
-                    if cfg_normalization > 0:
-                        pos_norm = torch.linalg.vector_norm(pos_f)
-                        pred_norm = torch.linalg.vector_norm(pred)
-                        max_allowed_norm = pos_norm * cfg_normalization
-                        pred_norm = torch.where(pred_norm < 1e-6, torch.ones_like(pred_norm), pred_norm)
-                        scale_factor = torch.clamp(max_allowed_norm / pred_norm, max=1.0)
-                        pred = pred * scale_factor
+                    # CFG normalization (clamp or match mode)
+                    pred = apply_cfg_normalization(pred, pos_f, cfg_normalization, cfg_norm_mode)
 
                     noise_pred.append(pred)
                 noise_pred = torch.stack(noise_pred, dim=0)

@@ -166,6 +166,10 @@ class RuntimeConfig:
 
     # Scheduler
     shift: float = 3.0
+    shift_terminal: float | None = None  # Stretch sigma to terminal value (0.02 for Qwen-Image)
+
+    # CFG settings
+    cfg_norm_mode: str = "clamp"  # "clamp" or "match" (DiffSynth-style)
 
     # Generation defaults
     height: int = 1024
@@ -582,6 +586,13 @@ def create_base_parser(
         default=None,
         help="Scheduler shift parameter (default: 3.0)",
     )
+    sched_group.add_argument(
+        "--shift-terminal",
+        type=float,
+        default=None,
+        help="Stretch sigma schedule to end at this value instead of 0 (Qwen-Image only, default: None). "
+        "Example: 0.02 stretches schedule so final sigma=0.02. Not used by Z-Image.",
+    )
 
     # LoRA
     lora_group = parser.add_argument_group("LoRA")
@@ -966,6 +977,16 @@ def create_base_parser(
             "E.g., 0.7 means no CFG for the final 30%%. Reduces late-stage artifacts.",
         )
         gen_group.add_argument(
+            "--cfg-norm-mode",
+            type=str,
+            choices=["clamp", "match"],
+            default=None,
+            help="CFG normalization mode (default: clamp). "
+            "'clamp' limits combined prediction norm to factor * pos_norm. "
+            "'match' scales combined prediction to exactly match pos_norm (DiffSynth-style). "
+            "Only relevant when guidance_scale > 0 (not used by Z-Image-Turbo).",
+        )
+        gen_group.add_argument(
             "--seed",
             type=int,
             default=None,
@@ -1092,6 +1113,12 @@ def _apply_cli_overrides(args: argparse.Namespace, config: RuntimeConfig) -> Run
     # Scheduler overrides
     if getattr(args, 'shift', None) is not None:
         config.shift = args.shift
+    if getattr(args, 'shift_terminal', None) is not None:
+        config.shift_terminal = args.shift_terminal
+
+    # CFG mode override
+    if getattr(args, 'cfg_norm_mode', None) is not None:
+        config.cfg_norm_mode = args.cfg_norm_mode
 
     # PyTorch-native component overrides
     if getattr(args, 'attention_backend', None) is not None:
@@ -1446,6 +1473,12 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
     # Scheduler overrides
     if getattr(args, 'shift', None) is not None:
         config.shift = args.shift
+    if getattr(args, 'shift_terminal', None) is not None:
+        config.shift_terminal = args.shift_terminal
+
+    # CFG mode override
+    if getattr(args, 'cfg_norm_mode', None) is not None:
+        config.cfg_norm_mode = args.cfg_norm_mode
 
     # PyTorch-native component overrides
     if getattr(args, 'attention_backend', None) is not None:

@@ -65,6 +65,7 @@ class QwenImageDiT(nn.Module):
         device: torch.device,
         dtype: torch.dtype,
         uses_accelerate_dispatch: bool = False,
+        zero_cond_t: bool = False,
     ):
         """
         Initialize the DiT wrapper.
@@ -74,12 +75,14 @@ class QwenImageDiT(nn.Module):
             device: Device for computation
             dtype: Data type
             uses_accelerate_dispatch: If True, model uses accelerate's device dispatch
+            zero_cond_t: If True, model uses zero conditioning for edit tasks (2511)
         """
         super().__init__()
         self.model = model
         self._device = device
         self._dtype = dtype
         self._uses_accelerate_dispatch = uses_accelerate_dispatch
+        self.zero_cond_t = zero_cond_t
 
     @classmethod
     def from_pretrained(
@@ -92,6 +95,7 @@ class QwenImageDiT(nn.Module):
         compile_model: bool = False,
         compile_mode: str = "reduce-overhead",
         quantization: str = "none",
+        zero_cond_t: bool = False,
         **kwargs,
     ) -> "QwenImageDiT":
         """
@@ -106,6 +110,8 @@ class QwenImageDiT(nn.Module):
             compile_model: If True, compile model with torch.compile for speedup
             compile_mode: Mode for torch.compile: "reduce-overhead", "max-autotune", or "default"
             quantization: Quantization mode: "none", "4bit", or "8bit"
+            zero_cond_t: Enable zero conditioning for edit models (2511).
+                When True, uses dual timestep branches for output vs condition latents.
 
         Returns:
             Initialized QwenImageDiT
@@ -125,6 +131,12 @@ class QwenImageDiT(nn.Module):
                 "/path/to/model",
                 compile_model=True,
                 compile_mode="reduce-overhead",
+            )
+
+            # For edit models (2511)
+            dit = QwenImageDiT.from_pretrained(
+                "/path/to/Qwen-Image-Edit-2511",
+                zero_cond_t=True,
             )
         """
         model_path = Path(model_path)
@@ -155,11 +167,12 @@ class QwenImageDiT(nn.Module):
         from llm_dit.models._qwen_image_dit_components import QwenImageDiTModel
 
         # Create model with detected configuration
-        logger.info(f"Creating QwenImageDiT (num_layers={cls.NUM_LAYERS}, use_layer3d_rope={use_layer3d_rope}, use_additional_t_cond={use_additional_t_cond})")
+        logger.info(f"Creating QwenImageDiT (num_layers={cls.NUM_LAYERS}, use_layer3d_rope={use_layer3d_rope}, use_additional_t_cond={use_additional_t_cond}, zero_cond_t={zero_cond_t})")
         model = QwenImageDiTModel(
             num_layers=cls.NUM_LAYERS,
             use_layer3d_rope=use_layer3d_rope,
             use_additional_t_cond=use_additional_t_cond,
+            zero_cond_t=zero_cond_t,
         )
 
         # Load state dict
@@ -231,10 +244,10 @@ class QwenImageDiT(nn.Module):
         logger.info(
             f"Loaded QwenImageDiT: {cls.NUM_LAYERS} layers, "
             f"dim={cls.INNER_DIM}, heads={cls.NUM_HEADS}, "
-            f"device={device}, dtype={torch_dtype}, compiled={compile_model}"
+            f"device={device}, dtype={torch_dtype}, compiled={compile_model}, zero_cond_t={zero_cond_t}"
         )
 
-        return cls(model, device, torch_dtype, uses_accelerate_dispatch)
+        return cls(model, device, torch_dtype, uses_accelerate_dispatch, zero_cond_t)
 
     @property
     def device(self) -> torch.device:

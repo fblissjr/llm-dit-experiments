@@ -78,6 +78,10 @@ cfg_normalization = 0.0          # CFG norm clamping (0.0 = disabled, 1.0-2.0 ty
 cfg_truncation = 1.0             # CFG truncation threshold (1.0 = never truncate, 0.5-0.8 typical)
                                  # Stops applying CFG after this fraction of denoising progress
                                  # E.g., 0.7 = no CFG for final 30% of steps. Reduces late-stage artifacts.
+cfg_norm_mode = "clamp"          # CFG normalization mode: "clamp" or "match"
+                                 # "clamp" = limit pred norm to factor * pos_norm (original)
+                                 # "match" = scale pred to exactly match pos_norm (DiffSynth-style)
+                                 # Only relevant when guidance_scale > 0 (not used for Z-Image-Turbo)
 enable_thinking = true           # Add empty <think></think> block - model was trained with this
 default_template = ""            # Auto-apply this template to all prompts (empty = none)
 
@@ -87,6 +91,8 @@ shift = 3.0                      # Timestep shift: compresses sigma schedule for
                                  # Formula: sigma' = shift * sigma / (1 + (shift-1) * sigma)
                                  # Values 2.5-4.0 are equivalent due to turbo distillation robustness
                                  # <1.5 = incomplete denoising, >6.0 = potential artifacts
+# shift_terminal = 0.02          # Stretch sigma to end at this value instead of 0 (Qwen-Image only)
+                                 # Not used for Z-Image-Turbo. Leave commented/omit for Z-Image.
 
 [rtx4090.optimization]
 # Legacy optimization flags (use [pytorch] section for new code)
@@ -261,12 +267,14 @@ num_inference_steps = 9          # Diffusion steps: 8-9 for turbo model
 guidance_scale = 0.0             # MUST be 0.0 for Z-Image-Turbo
 cfg_normalization = 0.0          # CFG norm clamping (0 = disabled)
 cfg_truncation = 1.0             # CFG truncation threshold (1.0 = never)
+cfg_norm_mode = "clamp"          # CFG mode: "clamp" or "match" (DiffSynth-style)
 enable_thinking = true           # Add <think></think> block
 default_template = ""            # Auto-apply template (empty = none)
 
 [default.scheduler]
 # FlowMatch scheduler configuration
 shift = 3.0                      # Timestep shift (2.5-4.0 range is equivalent)
+# shift_terminal = 0.02          # Stretch sigma to terminal value (Qwen-Image only)
 
 [default.optimization]
 # Legacy optimization flags

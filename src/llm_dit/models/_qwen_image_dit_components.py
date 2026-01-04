@@ -734,9 +734,17 @@ class QwenDoubleStreamAttention(nn.Module):
 class QwenImageTransformerBlock(nn.Module):
     """Single transformer block with dual-stream attention."""
 
-    def __init__(self, dim: int, num_attention_heads: int, attention_head_dim: int, eps: float = 1e-6):
+    def __init__(
+        self,
+        dim: int,
+        num_attention_heads: int,
+        attention_head_dim: int,
+        eps: float = 1e-6,
+        zero_cond_t: bool = False,
+    ):
         super().__init__()
         self.dim = dim
+        self.zero_cond_t = zero_cond_t
 
         # Image modulation and norms
         self.img_mod = nn.Sequential(nn.SiLU(), nn.Linear(dim, 6 * dim))
@@ -758,9 +766,45 @@ class QwenImageTransformerBlock(nn.Module):
             head_dim=attention_head_dim,
         )
 
-    def _modulate(self, x: torch.Tensor, mod_params: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    def _modulate(
+        self,
+        x: torch.Tensor,
+        mod_params: torch.Tensor,
+        modulate_index: Optional[torch.Tensor] = None,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Apply modulation with optional per-token index selection.
+
+        When modulate_index is provided and zero_cond_t is True, mod_params
+        has batch dimension 2*B (positive and zero timestep branches).
+        The modulate_index selects which branch to use for each token.
+        """
         shift, scale, gate = mod_params.chunk(3, dim=-1)
-        return x * (1 + scale.unsqueeze(1)) + shift.unsqueeze(1), gate.unsqueeze(1)
+
+        if modulate_index is not None:
+            # Split modulation params into positive (index=0) and zero (index=1) branches
+            actual_batch = shift.size(0) // 2
+            shift_0, shift_1 = shift[:actual_batch], shift[actual_batch:]
+            scale_0, scale_1 = scale[:actual_batch], scale[actual_batch:]
+            gate_0, gate_1 = gate[:actual_batch], gate[actual_batch:]
+
+            # Expand for broadcasting with sequence dimension
+            shift_0_exp = shift_0.unsqueeze(1)
+            shift_1_exp = shift_1.unsqueeze(1)
+            scale_0_exp = scale_0.unsqueeze(1)
+            scale_1_exp = scale_1.unsqueeze(1)
+            gate_0_exp = gate_0.unsqueeze(1)
+            gate_1_exp = gate_1.unsqueeze(1)
+
+            # Select based on modulate_index (0=positive branch, 1=zero branch)
+            shift_result = torch.where(modulate_index == 0, shift_0_exp, shift_1_exp)
+            scale_result = torch.where(modulate_index == 0, scale_0_exp, scale_1_exp)
+            gate_result = torch.where(modulate_index == 0, gate_0_exp, gate_1_exp)
+        else:
+            shift_result = shift.unsqueeze(1)
+            scale_result = scale.unsqueeze(1)
+            gate_result = gate.unsqueeze(1)
+
+        return x * (1 + scale_result) + shift_result, gate_result
 
     def forward(
         self,
@@ -769,14 +813,21 @@ class QwenImageTransformerBlock(nn.Module):
         temb: torch.Tensor,
         image_rotary_emb: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
         attention_mask: Optional[torch.Tensor] = None,
+        modulate_index: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        # Compute modulation parameters
+        # Compute modulation parameters for image (uses both branches when zero_cond_t)
         img_mod_attn, img_mod_mlp = self.img_mod(temb).chunk(2, dim=-1)
-        txt_mod_attn, txt_mod_mlp = self.txt_mod(temb).chunk(2, dim=-1)
+
+        # For text, use only positive branch when zero_cond_t
+        if self.zero_cond_t:
+            temb_for_txt = torch.chunk(temb, 2, dim=0)[0]
+        else:
+            temb_for_txt = temb
+        txt_mod_attn, txt_mod_mlp = self.txt_mod(temb_for_txt).chunk(2, dim=-1)
 
         # Attention block
         img_normed = self.img_norm1(image)
-        img_modulated, img_gate = self._modulate(img_normed, img_mod_attn)
+        img_modulated, img_gate = self._modulate(img_normed, img_mod_attn, modulate_index)
 
         txt_normed = self.txt_norm1(text)
         txt_modulated, txt_gate = self._modulate(txt_normed, txt_mod_attn)
@@ -793,7 +844,7 @@ class QwenImageTransformerBlock(nn.Module):
 
         # MLP block
         img_normed_2 = self.img_norm2(image)
-        img_modulated_2, img_gate_2 = self._modulate(img_normed_2, img_mod_mlp)
+        img_modulated_2, img_gate_2 = self._modulate(img_normed_2, img_mod_mlp, modulate_index)
 
         txt_normed_2 = self.txt_norm2(text)
         txt_modulated_2, txt_gate_2 = self._modulate(txt_normed_2, txt_mod_mlp)
@@ -808,16 +859,28 @@ class QwenImageTransformerBlock(nn.Module):
 
 
 class QwenImageDiTModel(nn.Module):
-    """Full Qwen-Image DiT model."""
+    """Full Qwen-Image DiT model.
+
+    Args:
+        num_layers: Number of transformer blocks
+        use_layer3d_rope: Use layer-aware 3D RoPE for multi-layer decomposition
+        use_additional_t_cond: Enable additional timestep conditioning (0 or 1)
+        zero_cond_t: Enable zero conditioning for edit models (2511).
+            When True, duplicates timestep as [t, 0] and uses modulate_index
+            to select conditioning branch per token. Output latents use positive
+            branch (index=0), condition/edit latents use zero branch (index=1).
+    """
 
     def __init__(
         self,
         num_layers: int = 60,
         use_layer3d_rope: bool = False,
         use_additional_t_cond: bool = False,
+        zero_cond_t: bool = False,
     ):
         super().__init__()
         self._use_additional_t_cond = use_additional_t_cond
+        self.zero_cond_t = zero_cond_t
 
         # RoPE embeddings
         if use_layer3d_rope:
@@ -841,6 +904,7 @@ class QwenImageDiTModel(nn.Module):
                 dim=3072,
                 num_attention_heads=24,
                 attention_head_dim=128,
+                zero_cond_t=zero_cond_t,
             )
             for _ in range(num_layers)
         ])
@@ -907,7 +971,29 @@ class QwenImageDiTModel(nn.Module):
         # If model has use_additional_t_cond but no value provided, default to 0 (generation mode)
         if self._use_additional_t_cond and addition_t_cond is None:
             addition_t_cond = torch.zeros(1, dtype=torch.long, device=latents.device)
+
+        # For edit models (zero_cond_t), duplicate timestep as [t, 0]
+        # This creates two conditioning branches: positive (real timestep) and zero
+        if self.zero_cond_t:
+            timestep = torch.cat([timestep, timestep * 0], dim=0)
+            if addition_t_cond is not None:
+                addition_t_cond = torch.cat([addition_t_cond, addition_t_cond], dim=0)
+
         conditioning = self.time_text_embed(timestep, image.dtype, addition_t_cond=addition_t_cond)
+
+        # Compute modulate_index for zero_cond_t mode
+        # Index 0 = output latents (use positive conditioning)
+        # Index 1 = condition latents (use zero conditioning)
+        modulate_index = None
+        if self.zero_cond_t and len(img_shapes) > 1:
+            # First shape is output, rest are condition layers
+            output_tokens = img_shapes[0][1] * img_shapes[0][2]
+            condition_tokens = sum(s[1] * s[2] for s in img_shapes[1:])
+            modulate_index = torch.tensor(
+                [[0] * output_tokens + [1] * condition_tokens],
+                device=latents.device,
+                dtype=torch.int,
+            ).unsqueeze(-1)  # Shape: (1, seq_len, 1)
 
         # Compute RoPE (with optional DyPE modulation)
         image_rotary_emb = self.pos_embed(
@@ -925,9 +1011,12 @@ class QwenImageDiTModel(nn.Module):
                 text=text,
                 temb=conditioning,
                 image_rotary_emb=image_rotary_emb,
+                modulate_index=modulate_index,
             )
 
-        # Output projection
+        # Output projection - use only positive conditioning for norm_out
+        if self.zero_cond_t:
+            conditioning = conditioning.chunk(2, dim=0)[0]
         image = self.norm_out(image, conditioning)
         image = self.proj_out(image)
 

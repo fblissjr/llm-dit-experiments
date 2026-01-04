@@ -49,6 +49,45 @@ logger = logging.getLogger(__name__)
 SUPPORTED_RESOLUTIONS = (640, 1024)
 
 
+def apply_cfg_normalization(
+    pred: torch.Tensor,
+    pos: torch.Tensor,
+    cfg_normalization: float,
+    cfg_norm_mode: str = "clamp",
+) -> torch.Tensor:
+    """Apply CFG normalization to combined prediction.
+
+    Args:
+        pred: Combined prediction (pos + scale * (pos - neg))
+        pos: Positive (conditional) prediction
+        cfg_normalization: Normalization strength/factor
+        cfg_norm_mode: Normalization mode:
+            - "clamp": Clamp pred norm to cfg_normalization * pos_norm (original)
+            - "match": Scale pred to match pos_norm (DiffSynth-style)
+
+    Returns:
+        Normalized prediction tensor
+    """
+    if cfg_normalization <= 0:
+        return pred
+
+    pos_norm = torch.linalg.vector_norm(pos)
+    pred_norm = torch.linalg.vector_norm(pred)
+
+    # Avoid division by zero
+    pred_norm = torch.where(pred_norm < 1e-6, torch.ones_like(pred_norm), pred_norm)
+
+    if cfg_norm_mode == "match":
+        # DiffSynth-style: directly scale pred to match pos norm
+        scale_factor = pos_norm / pred_norm
+    else:  # "clamp" (default)
+        # Original: clamp pred norm to cfg_normalization * pos_norm
+        max_allowed_norm = pos_norm * cfg_normalization
+        scale_factor = torch.clamp(max_allowed_norm / pred_norm, max=1.0)
+
+    return pred * scale_factor
+
+
 def calculate_dynamic_shift(seq_len: int, base_seq_len: int = 256) -> float:
     """
     Calculate dynamic shift for flow matching scheduler.
@@ -299,6 +338,8 @@ class QwenImagePipeline:
         width: int | None = None,
         num_inference_steps: int = 30,
         cfg_scale: float = 4.0,
+        cfg_normalization: float = 0.0,
+        cfg_norm_mode: str = "clamp",
         seed: int | None = None,
         shift: float | None = None,
         progress_callback: Optional[callable] = None,
@@ -314,6 +355,9 @@ class QwenImagePipeline:
             width: Output width (defaults to image width, must be divisible by 16)
             num_inference_steps: Number of denoising steps (default: 30)
             cfg_scale: Classifier-free guidance scale (default: 4.0)
+            cfg_normalization: CFG norm factor (0.0 = disabled). Use 1.0 with "match"
+                mode for DiffSynth-style normalization.
+            cfg_norm_mode: "clamp" (default) or "match" (DiffSynth-style)
             seed: Random seed for reproducibility
             shift: Scheduler shift (computed dynamically if None)
             progress_callback: Optional callback for progress updates
@@ -448,6 +492,11 @@ class QwenImagePipeline:
 
                 # Apply CFG
                 noise_pred = noise_pred_uncond + cfg_scale * (noise_pred_cond - noise_pred_uncond)
+
+                # Apply CFG normalization if enabled
+                noise_pred = apply_cfg_normalization(
+                    noise_pred, noise_pred_cond, cfg_normalization, cfg_norm_mode
+                )
             else:
                 # No guidance
                 noise_pred = self.dit(

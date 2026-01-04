@@ -60,6 +60,7 @@ class FlowMatchScheduler:
         shift: float = 3.0,
         sigma_min: float = 0.0,
         sigma_max: float = 1.0,
+        shift_terminal: Optional[float] = None,
     ):
         """
         Initialize the scheduler.
@@ -69,11 +70,16 @@ class FlowMatchScheduler:
             shift: Sigma schedule shift (3.0 for Z-Image-Turbo)
             sigma_min: Minimum sigma value
             sigma_max: Maximum sigma value
+            shift_terminal: If set, stretches the sigma schedule so the final
+                sigma ends at this value instead of sigma_min. For example,
+                shift_terminal=0.02 means the denoising stops at sigma=0.02.
+                Used by Qwen-Image models. Default None (no stretching).
         """
         self.num_train_timesteps = num_train_timesteps
         self.shift = shift
         self.sigma_min = sigma_min
         self.sigma_max = sigma_max
+        self.shift_terminal = shift_terminal
 
         # Will be set by set_timesteps()
         self.sigmas: Optional[torch.Tensor] = None
@@ -88,12 +94,38 @@ class FlowMatchScheduler:
             "shift": self.shift,
             "sigma_min": self.sigma_min,
             "sigma_max": self.sigma_max,
+            "shift_terminal": self.shift_terminal,
             # Compatibility with diffusers shift calculation
             "base_image_seq_len": 256,
             "max_image_seq_len": 4096,
             "base_shift": 0.5,
             "max_shift": 1.15,
         }
+
+    def _stretch_shift_to_terminal(self, sigmas: torch.Tensor) -> torch.Tensor:
+        """
+        Stretch the sigma schedule so the final sigma ends at shift_terminal.
+
+        This adjusts the schedule so that instead of ending at sigma_min (typically 0),
+        it ends at shift_terminal. The transformation preserves the relative spacing
+        of the sigmas.
+
+        Formula: sigma' = 1 - (1 - sigma) / scale_factor
+        where scale_factor = (1 - sigma[-1]) / (1 - shift_terminal)
+
+        Args:
+            sigmas: Original sigma schedule tensor
+
+        Returns:
+            Stretched sigma schedule ending at shift_terminal
+        """
+        if self.shift_terminal is None:
+            return sigmas
+
+        one_minus_sigma = 1.0 - sigmas
+        # Scale factor ensures final sigma becomes shift_terminal
+        scale_factor = one_minus_sigma[-1] / (1.0 - self.shift_terminal)
+        return 1.0 - (one_minus_sigma / scale_factor)
 
     def set_timesteps(
         self,
@@ -124,6 +156,11 @@ class FlowMatchScheduler:
         # This "bakes in" the CFG-like behavior from Decoupled-DMD training
         # Formula: sigma' = shift * sigma / (1 + (shift - 1) * sigma)
         sigmas = self.shift * sigmas / (1 + (self.shift - 1) * sigmas)
+
+        # Apply shift_terminal stretching if configured
+        # This ensures the final sigma ends at shift_terminal instead of 0
+        if self.shift_terminal is not None:
+            sigmas = self._stretch_shift_to_terminal(sigmas)
 
         self.sigmas = sigmas
 
@@ -361,6 +398,7 @@ class FlowMatchSchedulerConfig:
         max_image_seq_len: int = 4096,
         base_shift: float = 0.5,
         max_shift: float = 1.15,
+        shift_terminal: Optional[float] = None,
     ):
         self.num_train_timesteps = num_train_timesteps
         self.shift = shift
@@ -368,6 +406,7 @@ class FlowMatchSchedulerConfig:
         self.max_image_seq_len = max_image_seq_len
         self.base_shift = base_shift
         self.max_shift = max_shift
+        self.shift_terminal = shift_terminal
 
     def get(self, key: str, default=None):
         """Get config value by key."""
