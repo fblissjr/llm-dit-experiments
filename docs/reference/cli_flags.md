@@ -1,6 +1,6 @@
 # cli flags reference
 
-*last updated: 2025-12-27*
+*last updated: 2026-01-04*
 
 Shared between `web/server.py` and `scripts/generate.py`.
 
@@ -8,29 +8,16 @@ Shared between `web/server.py` and `scripts/generate.py`.
 
 | Flag | Description |
 |------|-------------|
-| `--model-type` | Model type: zimage (default) or qwenimage |
+| `--model-type` | Model type: zimage (default), qwenimage-layered, qwenimage-t2i, qwenimage-edit |
 | `--model-path` | Path to Z-Image model |
 | `--qwen-image-model-path` | Path to Qwen-Image-Layered model |
 | `--config` | Path to TOML config file |
-| `--profile` | Config profile to use for legacy configs (default: "default") |
-| `--config-name` | Combined config name for modular configs (e.g., "rtx4090_zimage"). Uses modular format instead of legacy profile. |
+| `--profile` | Config profile to use (default: "default") |
 | `--templates-dir` | Path to templates directory |
 
-### config format selection
-
-Two config formats are supported:
-
-**Legacy format** (uses `--profile`):
 ```bash
 uv run scripts/generate.py --config config.toml --profile rtx4090 "A cat"
 ```
-
-**Modular format** (uses `--config-name`):
-```bash
-uv run scripts/generate.py --config config_modular.toml --config-name rtx4090_zimage "A cat"
-```
-
-The modular format reduces duplication through component-based configuration with inheritance. See `config_modular.toml.example` for the full format.
 
 ## device placement
 
@@ -46,7 +33,7 @@ The modular format reduces duplication through component-based configuration wit
 |------|-------------|
 | `--api-url` | URL for heylookitsanllm API |
 | `--api-model` | Model ID for API backend |
-| `--use-api-encoder` | Use API for encoding (local is default) |
+| `--local-encoder` | Force local encoder even when --api-url is set (for A/B testing) |
 
 ## optimization
 
@@ -77,9 +64,13 @@ The modular format reduces duplication through component-based configuration wit
 |------|-------------|
 | `--dype` | Enable DyPE position extrapolation for high-res generation |
 | `--dype-method` | Method: vision_yarn/yarn/ntk (default: vision_yarn) |
-| `--dype-scale` | Scaling factor: 2.0 for 2K, 4.0 for 4K (default: 2.0) |
-| `--dype-alpha` | Vision-YaRN alpha parameter (default: 1.0) |
-| `--dype-beta` | Vision-YaRN beta parameter (default: 32.0) |
+| `--dype-scale` | DyPE magnitude lambda_s (default: 2.0) |
+| `--dype-exponent` | DyPE decay speed lambda_t (default: 2.0 = quadratic) |
+| `--dype-start-sigma` | When to start DyPE decay (0-1, 1.0 = from start) |
+| `--dype-base-shift` | Noise schedule shift at base resolution (default: 0.5) |
+| `--dype-max-shift` | Noise schedule shift at max resolution (default: 1.15) |
+| `--dype-base-resolution` | Training resolution (Z-Image: 1024, Qwen: 1328) |
+| `--dype-anisotropic` | Use per-axis scaling for extreme aspect ratios (16:9, 9:16) |
 
 ## generation
 
@@ -103,7 +94,7 @@ The modular format reduces duplication through component-based configuration wit
 | `--system-prompt` | System message |
 | `--thinking-content` | Content inside `<think>...</think>` (triggers think block) |
 | `--assistant-content` | Content after `</think>` |
-| `--force-think-block` | Add empty think block even without content |
+| `--enable-thinking` | Add `<think></think>` structure to prompt |
 | `--template` | Template name to use |
 
 ## lora
@@ -141,42 +132,55 @@ The modular format reduces duplication through component-based configuration wit
 
 | Flag | Description |
 |------|-------------|
-| `--vl-model-path` | Path to Qwen3-VL-4B model (Instruct or Thinking) |
-| `--vl-model-variant` | Model variant: instruct/thinking/both (auto-detected from template) |
-| `--vl-device` | Device for VL model (cpu recommended to save VRAM) |
-| `--vl-alpha` | Default VL influence (0.0-1.0, default: 0.3) |
-| `--vl-hidden-layer` | Hidden layer for VL extraction (default: -2, recommend: -6 for VL) |
-| `--vl-auto-unload` | Unload VL model after extraction (default: true) |
-| `--vl-blend-mode` | Blend mode: linear/adain/adain_per_dim/style_delta |
-| `--vl-outlier-masking` | Outlier masking mode: none/zero/clamp/scale (default: none) |
-| `--vl-outlier-threshold` | Std ratio threshold for outlier masking (default: 10.0) |
+| `--vl-model-path` | Path to Qwen3-VL model (enables vision conditioning) |
+| `--vl-device` | Device for VL model: cpu/cuda/auto (cpu recommended to save VRAM) |
+| `--vl-alpha` | VL influence ratio (0.0=pure text, 1.0=pure VL, default: 0.3) |
+| `--vl-hidden-layer` | Hidden layer to extract from VL model (default: -2) |
+| `--vl-no-auto-unload` | Keep VL model loaded after extraction (uses more VRAM) |
+| `--vl-blend-mode` | Blend strategy: interpolate/adain_per_dim/adain/linear/style_only/graduated/attention_weighted |
 
-## qwen-image-layered
+## qwen-image (all variants)
+
+Unified configuration for all Qwen-Image variants. Use `--model-type` to select:
+- `qwenimage-t2i` - Text-to-image generation (60-layer DiT)
+- `qwenimage-edit` - Instruction-based image editing (8B DiT)
+- `qwenimage-layered` - Multi-layer decomposition (deprioritized)
 
 | Flag | Description |
 |------|-------------|
-| `--qwen-image-model-path` | Path to Qwen-Image-Layered model |
-| `--qwen-image-edit-model-path` | Path to Qwen-Image-Edit model (auto-downloads if empty) |
-| `--qwen-image-cpu-offload` | Enable CPU offload (recommended, ~5 GB VRAM) |
-| `--qwen-image-layers` | Number of layers to decompose (1-10, default: 4) |
-| `--qwen-image-steps` | Diffusion steps (default: 40 for Edit-2511) |
-| `--qwen-image-cfg-scale` | CFG scale for Qwen-Image (default: 4.0) |
-| `--qwen-image-resolution` | Resolution: 640 (recommended) or 1024 |
+| `--qwen-image-model-path` | Path to any Qwen-Image model |
+| `--qwen-image-cpu-offload` | Enable CPU offload (required for RTX 4090) |
+| `--qwen-image-layers` | Number of decomposition layers (layered variant only, default: 4) |
+| `--qwen-image-steps` | Diffusion steps (variant default: t2i=40, edit=25, layered=50) |
+| `--qwen-image-cfg-scale` | CFG scale (default: 4.0) |
+| `--qwen-image-resolution` | Resolution (variant default: t2i=1024, edit=640, layered=640) |
+| `--qwen-image-quantize-text-encoder` | Quantization for text encoder (Qwen2.5-VL-7B): none/4bit/8bit |
+| `--qwen-image-quantize-transformer` | Quantization for DiT (variant default: t2i=fp8, edit/layered=diffsynth-fp8) |
 
-### qwen-image quantization (vram optimization)
+### variant-aware defaults
 
-For RTX 4090 (24GB VRAM), quantization is important:
+When not specified, parameters use variant-specific defaults:
 
-| Pipeline | Recommended Quantization | VRAM Usage |
-|----------|-------------------------|------------|
-| edit_only mode | text_encoder=4bit | ~12GB |
-| decompose mode | text_encoder=4bit + transformer=4bit | ~8GB |
+| Variant | Steps | Resolution | Transformer Quantization |
+|---------|-------|------------|-------------------------|
+| `qwenimage-t2i` | 40 | 1024 | fp8 |
+| `qwenimage-edit` | 25 | 640 | diffsynth-fp8 |
+| `qwenimage-layered` | 50 | 640 | diffsynth-fp8 |
 
-The decompose pipeline (QwenImageLayeredPipeline) requires BOTH text encoder AND transformer quantization to fit in 24GB. The edit-only pipeline works with just text encoder quantization.
+### quantization recommendations (rtx 4090)
 
-Set quantization in modular config:
-```toml
-[quantization.qwen_decompose]
-text_encoder = "4bit"
-transformer = "4bit"
+For RTX 4090 (24GB VRAM):
+- **Text encoder**: Use `none` with CPU offload (best quality, 0 GPU VRAM)
+- **Transformer**: Use variant default (fp8 for T2I, diffsynth-fp8 for edit/layered)
+
+```bash
+# T2I example (uses variant defaults)
+uv run scripts/generate.py --model-type qwenimage-t2i \
+  --qwen-image-model-path /path/to/Qwen-Image-2512 \
+  "A mountain landscape"
+
+# Edit example
+uv run scripts/generate.py --model-type qwenimage-edit \
+  --qwen-image-model-path /path/to/Qwen-Image-Edit-2511 \
+  --img2img input.png "Change the sky to sunset"
 ```

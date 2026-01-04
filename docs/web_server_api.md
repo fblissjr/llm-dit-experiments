@@ -7,9 +7,6 @@ The web server provides a REST API for Z-Image generation with the Qwen3-4B text
 ## Running the Server
 
 ```bash
-# Install PyTorch separately (not pinned in dependencies)
-uv pip install torch --index-url https://download.pytorch.org/whl/cu124
-
 # Sync dependencies
 uv sync
 

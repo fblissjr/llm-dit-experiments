@@ -53,8 +53,9 @@ encoder_only_mode = False
 # Qwen-Image pipeline (separate from Z-Image)
 qwen_image_pipeline = None
 
-# Qwen-Image-2512 pipeline (pure text-to-image, separate from Qwen-Image-Layered)
-qwen_image_2512_pipeline = None
+# Qwen-Image T2I pipeline (pure text-to-image, separate from Qwen-Image-Layered/Edit)
+# Uses unified config via --model-type qwenimage-t2i --qwen-image-model-path
+qwen_image_t2i_pipeline = None
 
 # In-memory history (cleared on server restart)
 generation_history = []
@@ -137,24 +138,24 @@ def unload_qwen_image_pipeline() -> bool:
     return False
 
 
-def unload_qwen_image_2512_pipeline() -> bool:
-    """Unload Qwen-Image-2512 pipeline to free VRAM.
+def unload_qwen_image_t2i_pipeline() -> bool:
+    """Unload Qwen-Image T2I pipeline to free VRAM.
 
     Returns True if unloaded, False if not loaded.
     """
-    global qwen_image_2512_pipeline
+    global qwen_image_t2i_pipeline
     import gc
     import torch
 
-    if qwen_image_2512_pipeline is not None:
-        logger.info("[VRAM] Unloading Qwen-Image-2512 pipeline to free VRAM...")
-        del qwen_image_2512_pipeline
-        qwen_image_2512_pipeline = None
+    if qwen_image_t2i_pipeline is not None:
+        logger.info("[VRAM] Unloading Qwen-Image T2I pipeline to free VRAM...")
+        del qwen_image_t2i_pipeline
+        qwen_image_t2i_pipeline = None
         gc.collect()
         torch.cuda.empty_cache()
         if torch.cuda.is_available():
             allocated = torch.cuda.memory_allocated() / 1024**3
-            logger.info(f"[VRAM] Qwen-Image-2512 unloaded. CUDA allocated: {allocated:.2f} GB")
+            logger.info(f"[VRAM] Qwen-Image T2I unloaded. CUDA allocated: {allocated:.2f} GB")
         return True
     return False
 
@@ -171,7 +172,7 @@ def get_vram_status() -> dict:
             "qwen_image_pipeline": qwen_image_pipeline is not None,
             "qwen_image_edit": qwen_image_pipeline is not None and getattr(qwen_image_pipeline, 'edit_pipe', None) is not None,
             "qwen_image_decompose": qwen_image_pipeline is not None and getattr(qwen_image_pipeline, 'decompose_pipe', None) is not None,
-            "qwen_image_2512_pipeline": qwen_image_2512_pipeline is not None,
+            "qwen_image_t2i_pipeline": qwen_image_t2i_pipeline is not None,
         },
         "vram": None,
     }
@@ -332,7 +333,7 @@ class QwenImageEditMultiRequest(BaseModel):
 
 
 class QwenImage2512GenerateRequest(BaseModel):
-    """Request for Qwen-Image-2512 text-to-image generation."""
+    """Request for Qwen-Image T2I text-to-image generation."""
     prompt: str  # Text prompt
     negative_prompt: Optional[str] = None  # Negative prompt (optional)
     width: int = 1024
@@ -545,7 +546,7 @@ async def qwen_image_decompose(request: QwenImageDecomposeRequest):
         history_entry = {
             "id": len(generation_history),
             "timestamp": time.time(),
-            "model_type": "qwenimage",
+            "model_type": "qwenimage-layered",
             "prompt": request.prompt,
             "resolution": request.resolution,
             "layer_num": request.layer_num,
@@ -844,34 +845,52 @@ async def qwen_image_edit_multi(request: QwenImageEditMultiRequest):
 
 
 # =============================================================================
-# Qwen-Image-2512 (Pure Text-to-Image) Endpoints
+# Qwen-Image T2I (Pure Text-to-Image) Endpoints
+# Uses unified config: --model-type qwenimage-t2i --qwen-image-model-path
 # =============================================================================
+
+
+def _is_t2i_configured() -> bool:
+    """Check if T2I is configured via unified config."""
+    if runtime_config is None:
+        return False
+    # T2I uses the unified qwen_image_model_path when model_type is qwenimage-t2i
+    return bool(runtime_config.qwen_image_model_path) and runtime_config.model_type == "qwenimage-t2i"
 
 
 @app.get("/api/qwen-image-2512/status")
 async def qwen_image_2512_status():
-    """Check Qwen-Image-2512 pipeline status."""
-    configured = runtime_config is not None and bool(runtime_config.qwen_image_2512_model_path)
-    loaded = qwen_image_2512_pipeline is not None
+    """Check Qwen-Image T2I pipeline status.
 
+    Note: Uses unified config (--model-type qwenimage-t2i --qwen-image-model-path).
+    """
+    configured = _is_t2i_configured()
+    loaded = qwen_image_t2i_pipeline is not None
+
+    # T2I defaults: steps=40, resolution=1024, quantize_transformer=fp8
     return {
         "available": loaded,
         "configured": configured,
-        "model_path": runtime_config.qwen_image_2512_model_path if runtime_config else None,
-        "quantize_transformer": runtime_config.qwen_image_2512_quantize_transformer if runtime_config else "fp8",
-        "quantize_text_encoder": runtime_config.qwen_image_2512_quantize_text_encoder if runtime_config else "4bit",
+        "model_path": runtime_config.qwen_image_model_path if runtime_config else None,
+        "quantize_transformer": runtime_config.get_qwen_image_quantize_transformer() if runtime_config else "fp8",
+        "quantize_text_encoder": runtime_config.qwen_image_quantize_text_encoder if runtime_config else "none",
     }
 
 
 @app.get("/api/qwen-image-2512/config")
 async def qwen_image_2512_config():
-    """Get Qwen-Image-2512 configuration and defaults."""
+    """Get Qwen-Image T2I configuration and defaults.
+
+    Note: Uses unified config (--model-type qwenimage-t2i).
+    Variant-aware defaults: T2I uses 40 steps, 1024 resolution, fp8 quantization.
+    """
+    # T2I-specific defaults (steps=40, resolution=1024, quantize_transformer=fp8)
     return {
-        "model_path": runtime_config.qwen_image_2512_model_path if runtime_config else "",
-        "steps": runtime_config.qwen_image_2512_steps if runtime_config else 40,
-        "cfg_scale": runtime_config.qwen_image_2512_cfg_scale if runtime_config else 4.0,
-        "quantize_transformer": runtime_config.qwen_image_2512_quantize_transformer if runtime_config else "fp8",
-        "quantize_text_encoder": runtime_config.qwen_image_2512_quantize_text_encoder if runtime_config else "4bit",
+        "model_path": runtime_config.qwen_image_model_path if runtime_config else "",
+        "steps": runtime_config.get_qwen_image_steps() if runtime_config else 40,
+        "cfg_scale": runtime_config.qwen_image_cfg_scale if runtime_config else 4.0,
+        "quantize_transformer": runtime_config.get_qwen_image_quantize_transformer() if runtime_config else "fp8",
+        "quantize_text_encoder": runtime_config.qwen_image_quantize_text_encoder if runtime_config else "none",
         "default_width": 1024,
         "default_height": 1024,
         "max_sequence_length": 512,
@@ -880,53 +899,53 @@ async def qwen_image_2512_config():
 
 @app.post("/api/qwen-image-2512/generate")
 async def qwen_image_2512_generate(request: QwenImage2512GenerateRequest):
-    """Generate an image using Qwen-Image-2512 (pure text-to-image).
+    """Generate an image using Qwen-Image T2I (pure text-to-image).
 
-    This model is separate from Qwen-Image-Layered - it generates images from
-    text prompts without requiring an input image.
+    Uses unified config: --model-type qwenimage-t2i --qwen-image-model-path
+    Variant-aware defaults: T2I uses 40 steps, 1024 resolution, fp8 quantization.
     """
-    global qwen_image_2512_pipeline
+    global qwen_image_t2i_pipeline
 
     # Check if pipeline is loaded, load on-demand if needed
-    if qwen_image_2512_pipeline is None:
-        if runtime_config and runtime_config.qwen_image_2512_model_path:
-            logger.info("[Qwen-Image-2512] Loading pipeline on-demand...")
+    if qwen_image_t2i_pipeline is None:
+        if runtime_config and runtime_config.qwen_image_model_path:
+            logger.info("[Qwen-Image T2I] Loading pipeline on-demand...")
             try:
                 from llm_dit.pipelines import QwenImage2512Pipeline
 
-                # Get quantization settings
-                quant_transformer = runtime_config.qwen_image_2512_quantize_transformer
+                # Get quantization settings from unified config (variant-aware)
+                quant_transformer = runtime_config.get_qwen_image_quantize_transformer()
                 if quant_transformer == "none":
                     quant_transformer = None
 
-                quant_text_encoder = runtime_config.qwen_image_2512_quantize_text_encoder
+                quant_text_encoder = runtime_config.qwen_image_quantize_text_encoder
                 if quant_text_encoder == "none":
                     quant_text_encoder = None
 
-                qwen_image_2512_pipeline = QwenImage2512Pipeline.from_pretrained(
-                    runtime_config.qwen_image_2512_model_path,
+                qwen_image_t2i_pipeline = QwenImage2512Pipeline.from_pretrained(
+                    runtime_config.qwen_image_model_path,
                     quantize_transformer=quant_transformer,
                     quantize_text_encoder=quant_text_encoder,
-                    cpu_offload=True,
+                    cpu_offload=runtime_config.qwen_image_cpu_offload,
                 )
-                logger.info("[Qwen-Image-2512] Pipeline loaded successfully")
+                logger.info("[Qwen-Image T2I] Pipeline loaded successfully")
             except Exception as e:
-                logger.error(f"[Qwen-Image-2512] Failed to load pipeline: {e}")
+                logger.error(f"[Qwen-Image T2I] Failed to load pipeline: {e}")
                 import traceback
                 traceback.print_exc()
                 raise HTTPException(
                     status_code=503,
-                    detail=f"Failed to load Qwen-Image-2512 pipeline: {e}"
+                    detail=f"Failed to load Qwen-Image T2I pipeline: {e}"
                 )
         else:
             raise HTTPException(
                 status_code=503,
-                detail="Qwen-Image-2512 not configured. Set qwen_image_2512.model_path in config."
+                detail="Qwen-Image T2I not configured. Use --model-type qwenimage-t2i --qwen-image-model-path"
             )
 
     try:
         logger.info("=" * 60)
-        logger.info("QWEN-IMAGE-2512 GENERATION REQUEST")
+        logger.info("QWEN-IMAGE T2I GENERATION REQUEST")
         logger.info("=" * 60)
         logger.info(f"  Prompt: {request.prompt[:80]}...")
         logger.info(f"  Size: {request.width}x{request.height}")
@@ -938,7 +957,7 @@ async def qwen_image_2512_generate(request: QwenImage2512GenerateRequest):
         start = time.time()
 
         # Generate image
-        image = qwen_image_2512_pipeline(
+        image = qwen_image_t2i_pipeline(
             prompt=request.prompt,
             negative_prompt=request.negative_prompt or " ",
             height=request.height,
@@ -950,7 +969,7 @@ async def qwen_image_2512_generate(request: QwenImage2512GenerateRequest):
         )
 
         gen_time = time.time() - start
-        logger.info(f"[Qwen-Image-2512] Generated in {gen_time:.1f}s")
+        logger.info(f"[Qwen-Image T2I] Generated in {gen_time:.1f}s")
         logger.info(f"  Output size: {image.size}")
         logger.info("=" * 60)
 
@@ -965,7 +984,7 @@ async def qwen_image_2512_generate(request: QwenImage2512GenerateRequest):
         history_entry = {
             "id": len(generation_history),
             "timestamp": time.time(),
-            "model_type": "qwenimage2512",
+            "model_type": "qwenimage-t2i",
             "prompt": request.prompt,
             "width": request.width,
             "height": request.height,
@@ -994,7 +1013,7 @@ async def qwen_image_2512_generate(request: QwenImage2512GenerateRequest):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"[Qwen-Image-2512] Generation failed: {e}")
+        logger.error(f"[Qwen-Image T2I] Generation failed: {e}")
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
@@ -3226,20 +3245,58 @@ async def vram_unload_qwen_image():
     }
 
 
-@app.post("/api/vram/unload-qwen-image-2512")
-async def vram_unload_qwen_image_2512():
-    """Unload Qwen-Image-2512 pipeline to free VRAM.
+@app.post("/api/vram/unload-qwen-image-t2i")
+async def vram_unload_qwen_image_t2i():
+    """Unload Qwen-Image T2I pipeline to free VRAM.
 
     Use this before loading other models if running low on VRAM.
     The pipeline will be reloaded automatically on next generation request.
     """
-    unloaded = unload_qwen_image_2512_pipeline()
+    unloaded = unload_qwen_image_t2i_pipeline()
 
     status = get_vram_status()
     return {
         "success": unloaded,
-        "message": "Qwen-Image-2512 pipeline unloaded" if unloaded else "Qwen-Image-2512 pipeline was not loaded",
+        "message": "Qwen-Image T2I pipeline unloaded" if unloaded else "Qwen-Image T2I pipeline was not loaded",
         "vram": status.get("vram"),
+    }
+
+
+# =============================================================================
+# Configuration Management API
+# =============================================================================
+
+
+@app.get("/api/configs/available")
+async def get_available_configs():
+    """List all available configs from modular config file.
+
+    Returns configs grouped by model type with descriptions.
+    """
+    import tomllib
+    from pathlib import Path
+
+    # Config listing is not supported with the current config system
+    # Use --config config.toml --profile <profile_name> at server startup
+    return {
+        "configs": [],
+        "config_path": getattr(runtime_config, 'config_path', None),
+        "current_profile": getattr(runtime_config, 'current_profile', None),
+        "message": "Dynamic config listing not supported. Use --profile at startup.",
+    }
+
+
+@app.post("/api/configs/load")
+async def load_config_dynamic(request: dict):
+    """Load a config dynamically without server restart.
+
+    NOTE: Dynamic config loading is not supported with the current config system.
+    Use --config config.toml --profile <profile_name> at server startup.
+    """
+    # Dynamic config loading is not supported with current config system
+    return {
+        "success": False,
+        "error": "Dynamic config loading not supported. Restart server with --profile to change config.",
     }
 
 
@@ -3273,11 +3330,16 @@ def main():
     runtime_config = load_runtime_config(args)
     setup_logging(runtime_config)
 
-    # Validate model path (unless using API-only mode, edit_only mode, or qwenimage2512 mode)
+    # Store config path for reference
+    if hasattr(args, 'config') and args.config:
+        runtime_config.config_path = args.config
+    if hasattr(args, 'profile') and args.profile:
+        runtime_config.current_profile = args.profile
+
+    # Validate model path (unless using API-only mode, or Qwen-Image mode)
     has_model = runtime_config.model_path or runtime_config.api_url
-    has_edit_only = getattr(runtime_config, 'qwen_image_edit_only', False) and getattr(runtime_config, 'qwen_image_edit_model_path', '')
-    has_qwen2512 = getattr(runtime_config, 'qwen_image_2512_model_path', '')
-    if not has_model and not has_edit_only and not has_qwen2512:
+    has_qwen_image = bool(runtime_config.qwen_image_model_path)
+    if not has_model and not has_qwen_image:
         logger.error("No model path specified. Use --model-path or --config.")
         return 1
 
@@ -3305,10 +3367,13 @@ def main():
             qwen_image_pipeline = pipeline
             logger.info("[Qwen-Image] Pipeline loaded via PipelineLoader")
 
-    # Log Qwen-Image-2512 on-demand mode
-    if mode == "qwenimage2512_ondemand":
-        logger.info("[Qwen-Image-2512] Server started in on-demand mode")
-        logger.info("[Qwen-Image-2512] Pipeline will load on first generation request")
+    # Log Qwen-Image on-demand modes
+    if mode == "qwenimage-t2i_ondemand":
+        logger.info("[Qwen-Image T2I] Server started in on-demand mode")
+        logger.info("[Qwen-Image T2I] Pipeline will load on first generation request")
+    elif mode == "qwenimage-edit_ondemand":
+        logger.info("[Qwen-Image Edit] Server started in on-demand mode")
+        logger.info("[Qwen-Image Edit] Pipeline will load on first edit request")
 
     # Initialize rewriter API backend if configured
     if runtime_config.rewriter_use_api:

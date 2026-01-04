@@ -1,32 +1,14 @@
 # configuration reference
 
-*last updated: 2025-12-27*
+*last updated: 2026-01-04*
 
-## config formats
+## config format
 
-Two configuration formats are supported:
-
-### legacy format (profile-based)
-
-Uses `--profile` to select a config section. Each profile duplicates all settings.
+Uses `--profile` to select a config section from `config.toml`.
 
 ```bash
 uv run scripts/generate.py --config config.toml --profile rtx4090 "A cat"
 ```
-
-### modular format (component-based)
-
-Uses `--config-name` to select a combined config. Reduces duplication through:
-- Component library (encoders, transformers, VAEs, schedulers defined once)
-- Model type inheritance (e.g., `qwenimageedit` inherits from `qwenlayered`)
-- Hardware profiles separate from model definitions
-- Named quantization presets
-
-```bash
-uv run scripts/generate.py --config config_modular.toml --config-name rtx4090_zimage "A cat"
-```
-
-See `config_modular.toml.example` for the full modular format specification.
 
 ## dry configuration principles
 
@@ -154,60 +136,3 @@ Profiles can override defaults. Common profiles:
 - `rtx4090` - Optimized for RTX 4090
 - `low_vram` - CPU offload for limited VRAM
 - `distributed` - API-based encoding for distributed inference
-
-## modular config structure
-
-The modular config format (`config_modular.toml`) has these sections:
-
-```toml
-# Hardware profiles - device placement + optimizations
-[profiles.rtx4090]
-dtype = "bfloat16"
-attention_backend = "flash_attn_2"
-[profiles.rtx4090.devices]
-encoder = "cuda"
-dit = "cuda"
-vae = "cuda"
-
-# Component library - define once, reference by ID
-[encoders.qwen3_4b]
-model_id = "Qwen/Qwen3-4B"
-hidden_dim = 2560
-
-[transformers.zimage_dit]
-num_layers = 40
-
-# Model types - pipeline + component refs + defaults
-[models.zimage]
-pipeline_class = "ZImagePipeline"
-text_encoder = "qwen3_4b"  # Reference to [encoders.qwen3_4b]
-dit = "zimage_dit"         # Reference to [transformers.zimage_dit]
-default_steps = 9
-
-[models.qwenimageedit]
-inherits = "qwenlayered"   # Inheritance from another model
-pipeline_class = "QwenImageEditPipeline"
-default_steps = 40
-
-# Quantization presets
-[quantization.balanced]
-text_encoder = "8bit"
-transformer = "none"
-
-# Feature configs
-[features.dype]
-enabled = false
-method = "vision_yarn"
-
-# Combined configs - final assemblies
-[configs.rtx4090_zimage]
-profile = "rtx4090"
-model = "zimage"
-quantization = "balanced"
-features = []
-```
-
-Key files:
-- `src/llm_dit/config_modular.py` - Modular config dataclasses and TOML parsing
-- `config_modular.toml.example` - Complete example with all sections
-- `tests/unit/test_config_modular.py` - 43 unit tests for modular config

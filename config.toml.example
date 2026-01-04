@@ -1,4 +1,5 @@
-# Z-Image Configuration Example (Legacy Profile Format)
+# llm-dit-experiments Configuration
+# last updated: 2026-01-04
 #
 # Copy this file to config.toml and modify paths for your setup.
 # CLI flags override config values. Run `uv run scripts/generate.py --help` for all options.
@@ -10,24 +11,24 @@
 #   uv run scripts/generate.py --config config.toml --profile rtx4090 "A cat"
 #   uv run web/server.py --config config.toml --profile rtx4090
 #
-# NOTE: A modular config format is also available that reduces duplication
-# through component-based configuration with inheritance. See:
-#   - config_modular.toml.example - Full modular config example
-#   - Use --config-name instead of --profile for modular configs
-#   - Example: --config config_modular.toml --config-name rtx4090_zimage
+# Supported Models:
+#   - Z-Image (Alibaba/Tongyi) - turbo distilled text-to-image
+#   - Qwen-Image-Edit-2511 - instruction-based image editing
+#   - Qwen-Image-2512 - text-to-image generation (pure t2i, 39GB transformer)
+#   - Qwen-Image-Layered - multi-layer decomposition (deprioritized)
 
 # =============================================================================
 # RTX 4090 Profile - Optimized for 24GB VRAM
 # =============================================================================
 # This profile is optimized for NVIDIA RTX 4090 with 24GB VRAM.
-# All components run on GPU with no memory constraints.
+# Supports Z-Image, Qwen-Image-Edit-2511, and Qwen-Image-2512.
 
 [rtx4090]
 model_path = "/path/to/z-image-turbo"  # REQUIRED: Path to Z-Image model
 templates_dir = "templates/z_image"
 
 [rtx4090.encoder]
-# Text encoder (Qwen3-4B) configuration
+# Text encoder (Qwen3-4B) configuration for Z-Image
 # Extracts hidden states from text prompts for DiT conditioning
 device = "cuda"                  # cpu/cuda/mps/auto - GPU for speed
 torch_dtype = "bfloat16"         # bfloat16/float16/float32 - RTX 4090 has native BF16
@@ -71,7 +72,7 @@ height = 1024                    # Image height in pixels (must be multiple of 1
 width = 1024                     # Image width in pixels (must be multiple of 16)
 num_inference_steps = 9          # Diffusion steps: 8-9 optimal for turbo model (distilled)
 guidance_scale = 0.0             # CFG scale: MUST be 0.0 for Z-Image-Turbo (CFG baked into weights)
-                                 # For Qwen-Image-Layered: use 4.0-7.0
+                                 # For Qwen-Image models: use 4.0-7.0
 cfg_normalization = 0.0          # CFG norm clamping (0.0 = disabled, 1.0-2.0 typical)
                                  # Clamps combined prediction norm relative to positive prediction
                                  # Prevents CFG from over-amplifying. Useful for non-distilled models.
@@ -100,6 +101,8 @@ flash_attn = true                # Enable Flash Attention (deprecated: use atten
 compile = false                  # torch.compile the transformer
                                  # false: faster startup, good for interactive use
                                  # true: ~10% speedup after warmup, good for batch processing
+                                 # NOTE: torch.compile is INCOMPATIBLE with CPU offload
+compile_mode = "default"         # torch.compile mode (default is CPU-offload safe, no CUDA graphs)
 cpu_offload = false              # Offload transformer to CPU (very slow, last resort)
 
 [rtx4090.pytorch]
@@ -165,7 +168,6 @@ timeout = 120.0                  # API timeout in seconds (VL models need longer
 # Vision conditioning: extract embeddings from images to blend with text
 # For image-to-image style transfer, NOT for prompt rewriting
 # RESEARCH STATUS: Zero-shot VL conditioning showed limited viability
-# See internal/log/log_2025-12-19_siglip_omni.md for findings
 model_path = ""                  # Path to Qwen3-VL-4B-Instruct (empty = disabled)
 device = "cpu"                   # cpu/cuda/auto - CPU recommended to save VRAM
 default_alpha = 0.3              # VL influence: 0.0=pure text, 1.0=pure VL (0.3 recommended)
@@ -213,16 +215,55 @@ decode_scale = 0.5               # Intermediate VAE decode resolution (0.5 saves
 siglip_model = "google/siglip2-giant-opt-patch16-384"  # SigLIP model (~4GB VRAM)
 siglip_device = "cpu"            # Device for SigLIP (cuda/cpu) - CPU recommended for RTX 4090
 
+# =============================================================================
+# Qwen-Image Configuration (All Variants)
+# =============================================================================
+# Unified configuration for all Qwen-Image variants:
+#   - qwenimage-t2i: Pure text-to-image (60-layer DiT, 39GB bf16)
+#   - qwenimage-edit: Instruction-based editing (8B DiT)
+#   - qwenimage-layered: Multi-layer decomposition (deprioritized)
+#
+# Use --model-type to select variant. Variant-aware defaults:
+#   | Variant  | Steps | Resolution | Quantization     |
+#   |----------|-------|------------|------------------|
+#   | t2i      | 40    | 1024       | fp8              |
+#   | edit     | 25    | 640        | diffsynth-fp8    |
+#   | layered  | 50    | 640        | diffsynth-fp8    |
+#
+# All variants use Qwen2.5-VL-7B as text encoder (3584 hidden dim).
+
 [rtx4090.qwen_image]
-# Qwen-Image-Layered: separate model for image-to-layers decomposition
-# Use --model-type qwenimage to select this model
-model_path = ""                  # Path to Qwen_Qwen-Image-Layered model
-edit_model_path = ""             # Path to Qwen-Image-Edit-2511 (empty = HuggingFace auto-download)
-cpu_offload = true               # Enable CPU offload (recommended even for RTX 4090)
-layer_num = 4                    # Number of decomposition layers (output: composite + N layers)
-num_inference_steps = 40         # Diffusion steps (40 for Edit-2511, was 50 for 2509)
-cfg_scale = 4.0                  # CFG scale (required, not baked in like Z-Image)
-resolution = 640                 # Output resolution: 640 or 1024 ONLY (640 recommended)
+# Model path - use the appropriate model for your --model-type
+model_path = "/path/to/Qwen-Image-2512"  # or Qwen-Image-Edit-2511, etc.
+cpu_offload = true               # Enable CPU offload (REQUIRED for RTX 4090)
+                                 # Moves text encoder and VAE to CPU, keeps DiT on GPU
+
+# These are variant-aware - leave unset to use variant defaults
+# num_inference_steps = ...      # Variant default: t2i=40, edit=25, layered=50
+# resolution = ...               # Variant default: t2i=1024, edit=640, layered=640
+
+cfg_scale = 4.0                  # CFG scale (4.0 for all variants)
+layer_num = 4                    # Only for layered variant
+
+# Text encoder quantization
+# With cpu_offload=true, text encoder runs on CPU - no GPU VRAM needed
+quantize_text_encoder = "none"   # Options: none (recommended), 8bit, 4bit
+                                 # none: Full precision on CPU (best quality)
+                                 # 8bit: Good quality + reduced CPU RAM
+                                 # 4bit: Only if RAM constrained (slight quality loss)
+
+# Transformer (DiT) quantization
+# Variant-aware default: t2i uses fp8, edit/layered use diffsynth-fp8
+# Leave unset to use variant default, or override:
+# quantize_transformer = "diffsynth-fp8"
+                                 # diffsynth-fp8: DiffSynth-style FP8 (recommended for edit/layered)
+                                 #   - Runtime F.linear patching with torch._scaled_mm
+                                 #   - AMD ROCm support (float8_e4m3fnuz)
+                                 # fp8: TorchAO FP8 (recommended for t2i)
+                                 # int8: TorchAO INT8
+                                 # 8bit: BitsAndBytes INT8
+                                 # 4bit: BitsAndBytes NF4 (quality loss)
+                                 # none: No quantization (doesn't fit on 24GB for t2i)
 
 # =============================================================================
 # Default Profile - Conservative settings for general hardware
@@ -238,15 +279,7 @@ templates_dir = "templates/z_image"
 # Text encoder (Qwen3-4B) configuration
 device = "auto"                  # cpu/cuda/mps/auto - auto for flexibility
 torch_dtype = "bfloat16"         # bfloat16/float16/float32
-quantization = "none"            # Quantization options:
-                                 # none: No quantization (default, ~14GB for text encoder)
-                                 # fp8: TorchAO FP8 dynamic (RTX 4090+, ~50% VRAM, may skip non-16-aligned layers)
-                                 # fp8-filtered: Same as fp8 but explicitly skips incompatible layers with logging
-                                 # int8: TorchAO INT8 weight-only (~50% VRAM, works on any GPU)
-                                 # 4bit: BitsAndBytes NF4 (~75% VRAM reduction, slight quality loss)
-                                 # 8bit: BitsAndBytes INT8 (~50% VRAM reduction)
-                                 # Note: FP8 requires dimensions divisible by 16. For models with incompatible
-                                 # layers (e.g., Qwen2.5-VL vision encoder), use fp8-filtered or 4bit instead.
+quantization = "none"            # Quantization options (see rtx4090.encoder for details)
 cpu_offload = false              # Move encoder to CPU after encoding
 max_length = 512                 # Tokenizer max length
 hidden_layer = -2                # Layer for embeddings: -2=penultimate (default)
@@ -280,6 +313,7 @@ shift = 3.0                      # Timestep shift (2.5-4.0 range is equivalent)
 # Legacy optimization flags
 flash_attn = false               # Disable by default for compatibility
 compile = false                  # torch.compile disabled by default
+compile_mode = "default"         # CPU-offload safe mode
 cpu_offload = false              # Offload transformer to CPU
 
 [default.pytorch]
@@ -360,14 +394,16 @@ siglip_model = "google/siglip2-giant-opt-patch16-384"
 siglip_device = "cuda"           # cuda/cpu
 
 [default.qwen_image]
-# Qwen-Image-Layered configuration
-model_path = ""                  # Path to model
-edit_model_path = ""             # Path to Edit-2511 model
-cpu_offload = true               # Enable CPU offload
-layer_num = 4                    # Number of layers
-num_inference_steps = 40         # Diffusion steps (40 for Edit-2511)
-cfg_scale = 4.0                  # CFG scale
-resolution = 640                 # 640 or 1024
+# Qwen-Image configuration (all variants: t2i, edit, layered)
+# Use --model-type to select variant, variant-aware defaults apply
+model_path = ""                  # Path to any Qwen-Image model
+cpu_offload = true               # Enable CPU offload (required for RTX 4090)
+cfg_scale = 4.0                  # CFG scale (4.0 for all variants)
+layer_num = 4                    # Only for layered variant
+# num_inference_steps = ...      # Variant default: t2i=40, edit=25, layered=50
+# resolution = ...               # Variant default: t2i=1024, edit=640, layered=640
+quantize_text_encoder = "none"   # none (CPU offload), 4bit, 8bit
+# quantize_transformer = ...     # Variant default: t2i=fp8, edit/layered=diffsynth-fp8
 
 # =============================================================================
 # Web Server Configuration

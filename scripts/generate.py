@@ -2,25 +2,32 @@
 """
 End-to-end image generation script.
 
-Supports three model types:
+Supports four model types:
   - Z-Image (zimage): Text-to-image generation (turbo, 8-9 steps)
-  - Qwen-Image-Layered (qwenimage): Image-to-layers decomposition
-  - Qwen-Image-2512 (qwenimage2512): Text-to-image generation (40 steps, FP8)
+  - Qwen-Image Layered (qwenimage-layered): Image-to-layers decomposition [legacy]
+  - Qwen-Image T2I (qwenimage-t2i): Text-to-image generation (40 steps, FP8)
+  - Qwen-Image Edit (qwenimage-edit): Image editing with instructions
 
 Usage:
     # Z-Image (default)
     uv run scripts/generate.py --model-path /path/to/z-image "A cat sleeping in sunlight"
 
-    # Qwen-Image-Layered (image decomposition)
-    uv run scripts/generate.py --model-type qwenimage \\
+    # Qwen-Image T2I (text-to-image)
+    uv run scripts/generate.py --model-type qwenimage-t2i \\
+        --qwen-image-2512-model-path /path/to/Qwen-Image-2512 \\
+        "A majestic mountain peak at golden hour"
+
+    # Qwen-Image Edit (image editing)
+    uv run scripts/generate.py --model-type qwenimage-edit \\
+        --qwen-image-edit-model-path /path/to/Qwen-Image-Edit-2511 \\
+        --img2img input.jpg \\
+        "Make the sky more vibrant"
+
+    # Qwen-Image Layered (legacy - image decomposition)
+    uv run scripts/generate.py --model-type qwenimage-layered \\
         --qwen-image-model-path /path/to/Qwen_Qwen-Image-Layered \\
         --img2img input.jpg \\
         "A cheerful child waving under a blue sky"
-
-    # Qwen-Image-2512 (text-to-image)
-    uv run scripts/generate.py --model-type qwenimage2512 \\
-        --qwen-image-2512-model-path /path/to/Qwen-Image-2512 \\
-        "A majestic mountain peak at golden hour"
 
     # With config file (recommended)
     uv run scripts/generate.py --config config.toml "A cat sleeping in sunlight"
@@ -62,7 +69,7 @@ from llm_dit.cli import create_base_parser, load_runtime_config, setup_logging
 
 def run_qwen_image_generation(args, config, logger) -> int:
     """
-    Run Qwen-Image-Layered image decomposition.
+    Run Qwen-Image generation (decomposition or edit-only mode).
 
     Args:
         args: Parsed CLI arguments
@@ -74,21 +81,32 @@ def run_qwen_image_generation(args, config, logger) -> int:
     """
     from PIL import Image
 
-    # Validate model path
-    if not config.qwen_image_model_path:
-        logger.error(
-            "No Qwen-Image model path specified. "
-            "Use --qwen-image-model-path or set qwen_image.model_path in config."
-        )
-        return 1
+    # Validate model path based on mode
+    edit_only = getattr(config, 'qwen_image_edit_only', False)
+    if edit_only:
+        # Edit-only mode uses edit_model_path
+        if not config.qwen_image_edit_model_path:
+            logger.error(
+                "No Qwen-Image-Edit model path specified. "
+                "Use --qwen-image-edit-model-path or set qwen_image.edit_model_path in config."
+            )
+            return 1
+    else:
+        # Decompose mode uses model_path
+        if not config.qwen_image_model_path:
+            logger.error(
+                "No Qwen-Image model path specified. "
+                "Use --qwen-image-model-path or set qwen_image.model_path in config."
+            )
+            return 1
 
-    # Qwen-Image requires an input image
-    if not args.img2img:
-        logger.error(
-            "Qwen-Image-Layered requires an input image. "
-            "Use --img2img /path/to/image.jpg"
-        )
-        return 1
+        # Decompose mode requires an input image
+        if not args.img2img:
+            logger.error(
+                "Qwen-Image-Layered requires an input image. "
+                "Use --img2img /path/to/image.jpg"
+            )
+            return 1
 
     # Validate resolution
     resolution = config.qwen_image_resolution
@@ -97,6 +115,128 @@ def run_qwen_image_generation(args, config, logger) -> int:
             f"Qwen-Image only supports 640 or 1024 resolution. Got: {resolution}"
         )
         return 1
+
+    # Branch: Edit-only mode vs Decompose mode
+    if edit_only:
+        return _run_qwen_image_edit_only(args, config, logger, resolution)
+    else:
+        return _run_qwen_image_decompose(args, config, logger, resolution)
+
+
+def _run_qwen_image_edit_only(args, config, logger, resolution: int) -> int:
+    """Run Qwen-Image-Edit in standalone mode (text-to-image or image editing)."""
+    from PIL import Image
+
+    logger.info("=" * 60)
+    logger.info("Qwen-Image-Edit (Standalone)")
+    logger.info("=" * 60)
+    logger.info(f"Model: {config.qwen_image_edit_model_path}")
+    logger.info(f"Prompt: {args.prompt}")
+    logger.info(f"Input: {args.img2img or 'None (text-to-image)'}")
+    logger.info(f"Resolution: {resolution}x{resolution}")
+    logger.info(f"CFG Scale: {config.qwen_image_cfg_scale}")
+    logger.info(f"Steps: {config.qwen_image_steps}")
+    logger.info(f"Transformer quant: {config.qwen_image_quantize_transformer}")
+    logger.info(f"Text encoder quant: {config.qwen_image_quantize_text_encoder}")
+    logger.info(f"CPU offload: {config.qwen_image_cpu_offload}")
+
+    # Load input image if provided
+    input_image = None
+    if args.img2img:
+        input_image = Image.open(args.img2img)
+        logger.info(f"Input image size: {input_image.size}")
+
+    # Load pipeline
+    logger.info("Loading Qwen-Image-Edit pipeline...")
+    start_load = time.time()
+
+    from llm_dit.pipelines.qwen_image_diffusers import QwenImageDiffusersPipeline
+
+    try:
+        # Map quantization strings
+        quant_transformer = config.qwen_image_quantize_transformer
+        if quant_transformer == "none":
+            quant_transformer = None
+
+        quant_text_encoder = config.qwen_image_quantize_text_encoder
+        if quant_text_encoder == "none":
+            quant_text_encoder = None
+
+        pipe = QwenImageDiffusersPipeline.from_pretrained(
+            model_path=None,  # Not needed for edit-only
+            edit_model_path=config.qwen_image_edit_model_path,
+            edit_only=True,
+            device=torch.device(config.dit_device_resolved),
+            torch_dtype=config.get_torch_dtype(),
+            quantize_transformer=quant_transformer,
+            quantize_text_encoder=quant_text_encoder,
+            cpu_offload=config.qwen_image_cpu_offload,
+        )
+    except Exception as e:
+        logger.error(f"Failed to load Qwen-Image-Edit pipeline: {e}")
+        import traceback
+        traceback.print_exc()
+        return 1
+
+    load_time = time.time() - start_load
+    logger.info(f"Pipeline loaded in {load_time:.1f}s")
+
+    # Set up seed
+    seed = getattr(args, 'seed', None)
+
+    # Detect mode: text-to-image vs image editing
+    is_text_to_image = input_image is None
+    logger.info(f"Mode: {'Text-to-image' if is_text_to_image else 'Image editing'}")
+
+    # Run generation
+    logger.info("Running image generation...")
+    start_gen = time.time()
+
+    try:
+        if is_text_to_image:
+            # Pure text-to-image generation
+            result = pipe.generate(
+                prompt=args.prompt,
+                negative_prompt=getattr(config, 'negative_prompt', ' '),
+                height=resolution,
+                width=resolution,
+                num_inference_steps=config.qwen_image_steps,
+                cfg_scale=config.qwen_image_cfg_scale,
+                seed=seed,
+            )
+        else:
+            # Image editing mode
+            result = pipe.edit_layer(
+                layer_image=input_image,
+                instruction=args.prompt,
+                num_inference_steps=config.qwen_image_steps,
+                cfg_scale=config.qwen_image_cfg_scale,
+                seed=seed,
+                max_size=resolution,
+            )
+    except Exception as e:
+        logger.error(f"Generation failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return 1
+
+    gen_time = time.time() - start_gen
+    logger.info(f"Generation complete in {gen_time:.1f}s")
+
+    # Save output
+    output_path = Path(args.output)
+    result.save(output_path)
+    logger.info(f"Saved: {output_path}")
+
+    logger.info("=" * 60)
+    logger.info(f"Total time: load={load_time:.1f}s + generate={gen_time:.1f}s")
+
+    return 0
+
+
+def _run_qwen_image_decompose(args, config, logger, resolution: int) -> int:
+    """Run Qwen-Image-Layered image decomposition."""
+    from PIL import Image
 
     logger.info("=" * 60)
     logger.info("Qwen-Image-Layered Image Decomposition")
@@ -192,9 +332,9 @@ def run_qwen_image_generation(args, config, logger) -> int:
     return 0
 
 
-def run_qwen_image_2512_generation(args, config, logger) -> int:
+def run_qwen_image_t2i_generation(args, config, logger) -> int:
     """
-    Run Qwen-Image-2512 text-to-image generation.
+    Run Qwen-Image text-to-image generation (T2I variant).
 
     Args:
         args: Parsed CLI arguments
@@ -207,49 +347,51 @@ def run_qwen_image_2512_generation(args, config, logger) -> int:
     from pathlib import Path
 
     # Validate model path
-    model_path = config.qwen_image_2512_model_path
+    model_path = config.qwen_image_model_path
     if not model_path:
         logger.error(
-            "No Qwen-Image-2512 model path specified. "
-            "Use --qwen-image-2512-model-path or set qwen_image_2512.model_path in config."
+            "No Qwen-Image model path specified. "
+            "Use --qwen-image-model-path or set qwen_image.model_path in config."
         )
         return 1
 
+    # Get variant-aware defaults
+    steps = config.get_qwen_image_steps()
+    resolution = config.get_qwen_image_resolution()
+    quant_transformer = config.get_qwen_image_quantize_transformer()
+    cfg_scale = config.qwen_image_cfg_scale
+
     logger.info("=" * 60)
-    logger.info("Qwen-Image-2512 Text-to-Image Generation")
+    logger.info("Qwen-Image Text-to-Image Generation")
     logger.info("=" * 60)
     logger.info(f"Model: {model_path}")
     logger.info(f"Prompt: {args.prompt}")
     logger.info(f"Resolution: {config.width}x{config.height}")
-    logger.info(f"CFG Scale: {config.qwen_image_2512_cfg_scale}")
-    logger.info(f"Steps: {config.qwen_image_2512_steps}")
-    logger.info(f"Transformer quant: {config.qwen_image_2512_quantize_transformer}")
-    logger.info(f"Text encoder quant: {config.qwen_image_2512_quantize_text_encoder}")
+    logger.info(f"CFG Scale: {cfg_scale}")
+    logger.info(f"Steps: {steps}")
+    logger.info(f"Transformer quant: {quant_transformer}")
+    logger.info(f"Text encoder quant: {config.qwen_image_quantize_text_encoder}")
 
     # Load pipeline
-    logger.info("Loading Qwen-Image-2512 pipeline...")
+    logger.info("Loading Qwen-Image T2I pipeline...")
     start_load = time.time()
 
     from llm_dit.pipelines import QwenImage2512Pipeline
 
     try:
         # Map quantization strings
-        quant_transformer = config.qwen_image_2512_quantize_transformer
-        if quant_transformer == "none":
-            quant_transformer = None
-
-        quant_text_encoder = config.qwen_image_2512_quantize_text_encoder
-        if quant_text_encoder == "none":
-            quant_text_encoder = None
+        quant_tf = quant_transformer if quant_transformer != "none" else None
+        quant_te = config.qwen_image_quantize_text_encoder
+        quant_te = quant_te if quant_te != "none" else None
 
         pipe = QwenImage2512Pipeline.from_pretrained(
             model_path,
-            quantize_transformer=quant_transformer,
-            quantize_text_encoder=quant_text_encoder,
-            cpu_offload=True,  # Always use CPU offload for this large model
+            quantize_transformer=quant_tf,
+            quantize_text_encoder=quant_te,
+            cpu_offload=config.qwen_image_cpu_offload,
         )
     except Exception as e:
-        logger.error(f"Failed to load Qwen-Image-2512 pipeline: {e}")
+        logger.error(f"Failed to load Qwen-Image T2I pipeline: {e}")
         import traceback
         traceback.print_exc()
         return 1
@@ -270,8 +412,8 @@ def run_qwen_image_2512_generation(args, config, logger) -> int:
             negative_prompt=config.negative_prompt or " ",
             height=config.height,
             width=config.width,
-            num_inference_steps=config.qwen_image_2512_steps,
-            cfg_scale=config.qwen_image_2512_cfg_scale,
+            num_inference_steps=steps,
+            cfg_scale=cfg_scale,
             seed=seed,
         )
     except Exception as e:
@@ -355,11 +497,16 @@ def main():
     logger = logging.getLogger(__name__)
 
     # Handle Qwen-Image model types
-    if config.model_type == "qwenimage":
+    if config.model_type == "qwenimage-layered":
         return run_qwen_image_generation(args, config, logger)
 
-    if config.model_type == "qwenimage2512":
-        return run_qwen_image_2512_generation(args, config, logger)
+    if config.model_type == "qwenimage-t2i":
+        return run_qwen_image_t2i_generation(args, config, logger)
+
+    if config.model_type == "qwenimage-edit":
+        # TODO: Implement dedicated edit-only generation flow
+        logger.error("qwenimage-edit requires --img2img. Use qwenimage-t2i for text-to-image.")
+        return 1
 
     # Z-Image flow continues below
     # Validate model path

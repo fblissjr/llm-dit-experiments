@@ -149,12 +149,12 @@
                         <span class="block text-xs font-normal opacity-75">Decomposition</span>
                     </button>
                     <button type="button" id="modelTypeQwenImage2512" class="flex-1 min-w-[120px] px-4 py-2.5 rounded-lg bg-gray-700 text-gray-300 hover:bg-gray-600 font-medium transition-colors">
-                        Qwen-2512
+                        Qwen T2I
                         <span class="block text-xs font-normal opacity-75">Text-to-Image</span>
                     </button>
                 </div>
                 <p id="qwenImageStatus" class="hidden text-xs text-yellow-400 mt-2">Qwen-Image not configured. Set qwen_image.model_path in config.</p>
-                <p id="qwenImage2512Status" class="hidden text-xs text-yellow-400 mt-2">Qwen-Image-2512 not configured. Set qwen_image_2512.model_path in config.</p>
+                <p id="qwenImage2512Status" class="hidden text-xs text-yellow-400 mt-2">Qwen-Image T2I not configured. Use --model-type qwenimage-t2i --qwen-image-model-path</p>
             </div>
 
             <!-- Shared Generation Parameters -->
@@ -1550,6 +1550,53 @@
                     </div>
                 </div>
 
+                <!-- Configuration Selector -->
+                <div class="p-3 bg-gray-900 rounded-lg">
+                    <h3 class="text-sm font-medium text-gray-300 mb-2">Configuration</h3>
+                    <p class="text-xs text-gray-500 mb-2">Switch between model configurations. Current pipeline will be unloaded.</p>
+
+                    <!-- Current config display -->
+                    <div class="mb-3 p-2 bg-gray-800 rounded">
+                        <div class="text-xs text-gray-500">Current Config</div>
+                        <div id="currentConfigName" class="text-sm text-white font-medium">Not set</div>
+                        <div id="currentConfigDesc" class="text-xs text-gray-400 mt-1"></div>
+                    </div>
+
+                    <!-- Config selector -->
+                    <div class="mb-2">
+                        <label class="block text-xs text-gray-400 mb-1">Select Configuration</label>
+                        <select id="configSelector" class="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-sm text-white focus:border-blue-500 focus:outline-none">
+                            <option value="">Loading configs...</option>
+                        </select>
+                    </div>
+
+                    <!-- Config info display -->
+                    <div id="configInfo" class="hidden mb-3 p-2 bg-gray-800 rounded text-xs">
+                        <div class="grid grid-cols-2 gap-1">
+                            <span class="text-gray-500">Model:</span>
+                            <span id="configModel" class="text-gray-300"></span>
+                            <span class="text-gray-500">Profile:</span>
+                            <span id="configProfile" class="text-gray-300"></span>
+                            <span class="text-gray-500">Quantization:</span>
+                            <span id="configQuant" class="text-gray-300"></span>
+                        </div>
+                        <div id="configFeatures" class="mt-1 text-gray-400"></div>
+                    </div>
+
+                    <!-- Load button -->
+                    <button id="loadConfigBtn" class="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed">
+                        Load Selected Configuration
+                    </button>
+
+                    <!-- Warning -->
+                    <div class="mt-2 text-xs text-yellow-400 flex items-center gap-1">
+                        <svg class="w-3 h-3 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                            <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z"/>
+                        </svg>
+                        <span>Loading may take 30-60 seconds for large models</span>
+                    </div>
+                </div>
+
                 <!-- Cached Models -->
                 <div class="p-3 bg-gray-900 rounded-lg">
                     <h3 class="text-sm font-medium text-gray-300 mb-2">Cached Models</h3>
@@ -1739,7 +1786,7 @@
                 // Hide shift slider (Qwen doesn't use it)
                 if (shiftContainer) shiftContainer.classList.add('hidden');
             } else if (model === 'qwenimage2512') {
-                // Qwen-Image-2512 defaults: 40 steps, CFG 4.0
+                // Qwen-Image T2I defaults: 40 steps, CFG 4.0
                 stepsSlider.min = 10;
                 stepsSlider.max = 100;
                 stepsSlider.value = 40;
@@ -2570,6 +2617,134 @@
         settingsToggle?.addEventListener('click', () => {
             settingsModal.classList.remove('hidden');
             refreshSystemStatus();
+            loadAvailableConfigs();
+        });
+
+        // Configuration Management
+        let availableConfigs = [];
+
+        async function loadAvailableConfigs() {
+            try {
+                const response = await fetch(`${API_BASE}/api/configs/available`);
+                const data = await response.json();
+                availableConfigs = data.configs || [];
+
+                const selector = document.getElementById('configSelector');
+                selector.innerHTML = '<option value="">-- Select a configuration --</option>';
+
+                // Update current config display
+                if (data.current_config) {
+                    document.getElementById('currentConfigName').textContent = data.current_config;
+                    const current = availableConfigs.find(c => c.name === data.current_config);
+                    if (current) {
+                        document.getElementById('currentConfigDesc').textContent = current.description || '';
+                    }
+                }
+
+                // Group by model type
+                const byType = {};
+                availableConfigs.forEach(cfg => {
+                    const type = cfg.model_type || 'other';
+                    if (!byType[type]) byType[type] = [];
+                    byType[type].push(cfg);
+                });
+
+                // Add optgroups
+                Object.keys(byType).sort().forEach(type => {
+                    const group = document.createElement('optgroup');
+                    group.label = type.toUpperCase();
+
+                    byType[type].forEach(cfg => {
+                        const opt = document.createElement('option');
+                        opt.value = cfg.name;
+                        opt.textContent = cfg.description || cfg.name;
+                        opt.dataset.config = JSON.stringify(cfg);
+                        group.appendChild(opt);
+                    });
+
+                    selector.appendChild(group);
+                });
+            } catch (err) {
+                console.error('Failed to load configs:', err);
+            }
+        }
+
+        // Update config info when selection changes
+        document.getElementById('configSelector')?.addEventListener('change', (e) => {
+            const selected = e.target.selectedOptions[0];
+            const configInfo = document.getElementById('configInfo');
+
+            if (!selected || !selected.dataset.config) {
+                configInfo.classList.add('hidden');
+                return;
+            }
+
+            const config = JSON.parse(selected.dataset.config);
+
+            document.getElementById('configModel').textContent = config.model_type || 'N/A';
+            document.getElementById('configProfile').textContent = config.profile || 'default';
+            document.getElementById('configQuant').textContent = config.quantization || 'none';
+
+            const features = config.features && config.features.length > 0
+                ? `Features: ${config.features.join(', ')}`
+                : 'No additional features';
+            document.getElementById('configFeatures').textContent = features;
+
+            configInfo.classList.remove('hidden');
+        });
+
+        // Load selected config
+        document.getElementById('loadConfigBtn')?.addEventListener('click', async () => {
+            const selector = document.getElementById('configSelector');
+            const configName = selector.value;
+
+            if (!configName) {
+                showSettingsMessage('Please select a configuration', 'error');
+                return;
+            }
+
+            const btn = document.getElementById('loadConfigBtn');
+            const originalText = btn.textContent;
+
+            try {
+                btn.disabled = true;
+                btn.textContent = 'Loading configuration...';
+
+                const response = await fetch(`${API_BASE}/api/configs/load`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        config_name: configName,
+                        unload_existing: true,
+                    }),
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    const vramInfo = data.vram ? ` (${data.vram.allocated_gb} GB allocated)` : '';
+                    showSettingsMessage(`Loaded: ${configName}${vramInfo}`);
+
+                    // Update current config display
+                    document.getElementById('currentConfigName').textContent = configName;
+                    const selected = selector.selectedOptions[0];
+                    if (selected && selected.dataset.config) {
+                        const config = JSON.parse(selected.dataset.config);
+                        document.getElementById('currentConfigDesc').textContent = config.description || '';
+                    }
+
+                    // Refresh system status
+                    refreshSystemStatus();
+                } else {
+                    showSettingsMessage(`Failed: ${data.error}`, 'error');
+                }
+            } catch (err) {
+                console.error('Failed to load config:', err);
+                showSettingsMessage('Failed to load configuration', 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = originalText;
+            }
         });
 
         closeSettings?.addEventListener('click', () => {
@@ -3425,7 +3600,7 @@
                 let endpoint;
                 let requestBody;
                 if (currentModelType === 'qwenimage2512') {
-                    // Qwen-Image-2512 uses its own endpoint with different parameter names
+                    // Qwen-Image T2I uses its own endpoint with different parameter names
                     endpoint = `${API_BASE}/api/qwen-image-2512/generate`;
                     requestBody = {
                         prompt: params.prompt,
@@ -3437,7 +3612,7 @@
                         seed: params.seed,
                         max_sequence_length: 512,
                     };
-                    statusText.textContent = 'Generating with Qwen-Image-2512...';
+                    statusText.textContent = 'Generating with Qwen-Image T2I...';
                 } else if (useVL) {
                     endpoint = `${API_BASE}/api/vl/generate`;
                     requestBody = { ...params, ...vlParams };
@@ -3951,7 +4126,7 @@
             }
         }
 
-        // Check Qwen-Image-2512 status
+        // Check Qwen-Image T2I status
         async function checkQwenImage2512Status() {
             try {
                 const response = await fetch(`${API_BASE}/api/qwen-image-2512/status`);
@@ -3974,7 +4149,7 @@
                     }
                 }
             } catch (err) {
-                console.error('Failed to check Qwen-Image-2512 status:', err);
+                console.error('Failed to check Qwen-Image T2I status:', err);
                 qwenImage2512Available = false;
             }
         }
@@ -4026,13 +4201,13 @@
                     modelTypeQwenImage2512Btn.classList.add('bg-green-600', 'text-white');
                 }
 
-                // Qwen-Image-2512 is text-to-image, so reuse Z-Image controls
+                // Qwen-Image T2I is text-to-image, so reuse Z-Image controls
                 // but the form submission will use a different API endpoint
                 zImageControls?.classList.remove('hidden');
 
                 // Update header
                 headerTitle.textContent = 'LLM DiT Experiments UI';
-                headerSubtitle.textContent = 'Qwen-Image-2512 (Text-to-Image)';
+                headerSubtitle.textContent = 'Qwen-Image T2I (Text-to-Image)';
             }
 
             // Update shared parameter defaults for the selected model

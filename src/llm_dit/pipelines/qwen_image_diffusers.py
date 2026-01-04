@@ -74,6 +74,7 @@ class QwenImageDiffusersPipeline:
         edit_pipe=None,
         device: torch.device = None,
         dtype: torch.dtype = torch.bfloat16,
+        use_diffsynth_fp8: bool = False,
     ):
         """
         Initialize the pipeline wrapper.
@@ -83,6 +84,7 @@ class QwenImageDiffusersPipeline:
             edit_pipe: Optional loaded QwenImageEditPlusPipeline
             device: Device for inference
             dtype: Model dtype
+            use_diffsynth_fp8: Use DiffSynth-style FP8 inference (runtime F.linear patching)
         """
         self.decompose_pipe = decompose_pipe
         self.edit_pipe = edit_pipe
@@ -90,6 +92,7 @@ class QwenImageDiffusersPipeline:
         self._dtype = dtype
         self._cpu_offload_enabled = False
         self._edit_model_path = None
+        self._use_diffsynth_fp8 = use_diffsynth_fp8
 
     @classmethod
     def from_pretrained(
@@ -131,6 +134,7 @@ class QwenImageDiffusersPipeline:
                 "8bit" = BitsAndBytes INT8 (~4GB, 50% reduction)
                 "fp8" = TorchAO FP8 dynamic (~4GB, RTX 4090+ only)
                 "int8" = TorchAO INT8 weight-only (~4GB)
+                "diffsynth-fp8" = DiffSynth-style FP8 (runtime F.linear patching, ~4GB)
             compile_transformer: If True, compile DiT with torch.compile for ~1.5-2x speedup.
                 First inference will be slower due to compilation.
                 NOTE: torch.compile is INCOMPATIBLE with cpu_offload=True. If both are
@@ -167,8 +171,16 @@ class QwenImageDiffusersPipeline:
                 cpu_offload=True,
             )
         """
-        model_path = Path(model_path)
         device = torch.device(device)
+
+        # Check for DiffSynth-style FP8 (runtime patching, not TorchAO)
+        use_diffsynth_fp8 = quantize_transformer == "diffsynth-fp8"
+        if use_diffsynth_fp8:
+            # DiffSynth FP8 uses runtime F.linear patching - don't pass to TorchAO
+            effective_transformer_quant = None
+            logger.info("Using DiffSynth-style FP8 (runtime F.linear patching)")
+        else:
+            effective_transformer_quant = quantize_transformer
 
         # Resolve edit model path early (needed for edit_only mode)
         resolved_edit_path = None
@@ -184,19 +196,19 @@ class QwenImageDiffusersPipeline:
 
             logger.info(f"Loading QwenImageEditPlusPipeline from {resolved_edit_path}")
 
-            # Check if quantization is requested
-            if quantize_text_encoder or quantize_transformer:
+            # Check if quantization is requested (use effective_transformer_quant for diffsynth-fp8)
+            if quantize_text_encoder or effective_transformer_quant:
                 # Use quantized loading - load components separately then assemble pipeline
                 edit_pipe = cls._load_edit_pipeline_quantized(
                     resolved_edit_path,
                     torch_dtype=torch_dtype,
                     quantize_text_encoder=quantize_text_encoder,
-                    quantize_transformer=quantize_transformer,
+                    quantize_transformer=effective_transformer_quant,
                     cpu_offload=cpu_offload,
                     compile_transformer=compile_transformer,
                     compile_mode=compile_mode,
                 )
-            elif cpu_offload:
+            elif use_diffsynth_fp8 or cpu_offload:
                 # Use model_cpu_offload - moves whole components to GPU one at a time
                 logger.info("Loading with model CPU offload")
                 edit_pipe = QwenImageEditPlusPipeline.from_pretrained(
@@ -209,6 +221,11 @@ class QwenImageDiffusersPipeline:
                         "torch.compile is incompatible with CPU offload (accelerate's tensor swapping "
                         "fails with compiled models). Skipping compilation."
                     )
+                # For DiffSynth FP8, pre-convert weights for memory savings
+                if use_diffsynth_fp8:
+                    from llm_dit.quantization import enable_fp8_weights
+                    logger.info("Converting transformer weights to FP8 for memory savings...")
+                    enable_fp8_weights(edit_pipe.transformer)
                 edit_pipe.enable_model_cpu_offload()
                 logger.info("Model CPU offload enabled")
             else:
@@ -230,17 +247,23 @@ class QwenImageDiffusersPipeline:
                 edit_pipe=edit_pipe,
                 device=device,
                 dtype=torch_dtype,
+                use_diffsynth_fp8=use_diffsynth_fp8,
             )
             instance._cpu_offload_enabled = cpu_offload
             instance._edit_model_path = resolved_edit_path
 
             logger.info(
                 f"QwenImageDiffusersPipeline loaded (edit-only): "
-                f"decompose=False, edit=True, cpu_offload={cpu_offload}"
+                f"decompose=False, edit=True, cpu_offload={cpu_offload}, "
+                f"diffsynth_fp8={use_diffsynth_fp8}"
             )
             return instance
 
         # Normal mode: load decompose model
+        # Convert model_path to Path now (not needed for edit-only mode above)
+        if model_path is None:
+            raise ValueError("model_path is required for decompose mode")
+        model_path = Path(model_path)
         if not model_path.exists():
             raise ValueError(f"Model not found at {model_path}")
 
@@ -248,19 +271,19 @@ class QwenImageDiffusersPipeline:
 
         logger.info(f"Loading QwenImageLayeredPipeline from {model_path}")
 
-        # Check if quantization is requested for decompose pipeline
-        if quantize_text_encoder or quantize_transformer:
+        # Check if quantization is requested for decompose pipeline (use effective_transformer_quant)
+        if quantize_text_encoder or effective_transformer_quant:
             decompose_pipe = cls._load_decompose_pipeline_quantized(
                 str(model_path),
                 torch_dtype=torch_dtype,
                 quantize_text_encoder=quantize_text_encoder,
-                quantize_transformer=quantize_transformer,
+                quantize_transformer=effective_transformer_quant,
                 cpu_offload=cpu_offload,
                 compile_transformer=compile_transformer,
                 compile_mode=compile_mode,
             )
             cpu_offload_enabled = cpu_offload
-        elif cpu_offload:
+        elif use_diffsynth_fp8 or cpu_offload:
             # Diffusers loads to CPU by default, then enable_model_cpu_offload
             decompose_pipe = QwenImageLayeredPipeline.from_pretrained(
                 str(model_path),
@@ -272,6 +295,11 @@ class QwenImageDiffusersPipeline:
                     "torch.compile is incompatible with CPU offload (accelerate's tensor swapping "
                     "fails with compiled models). Skipping compilation."
                 )
+            # For DiffSynth FP8, pre-convert weights for memory savings
+            if use_diffsynth_fp8:
+                from llm_dit.quantization import enable_fp8_weights
+                logger.info("Converting transformer weights to FP8 for memory savings...")
+                enable_fp8_weights(decompose_pipe.transformer)
             logger.info("Enabling model CPU offload for decompose pipeline")
             decompose_pipe.enable_model_cpu_offload()
             cpu_offload_enabled = True
@@ -295,11 +323,16 @@ class QwenImageDiffusersPipeline:
         if load_edit_model:
             logger.info(f"Loading QwenImageEditPlusPipeline from {resolved_edit_path}")
             from diffusers import QwenImageEditPlusPipeline
-            if cpu_offload:
+            if use_diffsynth_fp8 or cpu_offload:
                 edit_pipe = QwenImageEditPlusPipeline.from_pretrained(
                     resolved_edit_path,
                     torch_dtype=torch_dtype,
                 )
+                # For DiffSynth FP8, pre-convert weights for memory savings
+                if use_diffsynth_fp8:
+                    from llm_dit.quantization import enable_fp8_weights
+                    logger.info("Converting edit transformer weights to FP8...")
+                    enable_fp8_weights(edit_pipe.transformer)
                 edit_pipe.enable_model_cpu_offload()
             else:
                 edit_pipe = QwenImageEditPlusPipeline.from_pretrained(
@@ -313,6 +346,7 @@ class QwenImageDiffusersPipeline:
             edit_pipe=edit_pipe,
             device=device,
             dtype=torch_dtype,
+            use_diffsynth_fp8=use_diffsynth_fp8,
         )
         instance._cpu_offload_enabled = cpu_offload_enabled
         instance._edit_model_path = resolved_edit_path
@@ -320,7 +354,7 @@ class QwenImageDiffusersPipeline:
         logger.info(
             f"QwenImageDiffusersPipeline loaded: "
             f"decompose=True, edit={edit_pipe is not None}, "
-            f"cpu_offload={cpu_offload_enabled}"
+            f"cpu_offload={cpu_offload_enabled}, diffsynth_fp8={use_diffsynth_fp8}"
         )
 
         return instance
@@ -877,6 +911,13 @@ class QwenImageDiffusersPipeline:
             for i, layer in enumerate(layers):
                 layer.save(f"layer_{i}.png")
         """
+        # Guard: decompose not available in edit-only mode
+        if self.decompose_pipe is None:
+            raise RuntimeError(
+                "decompose() is not available in edit-only mode. "
+                "Instantiate pipeline with edit_only=False to enable decomposition."
+            )
+
         # Validate resolution
         if resolution not in SUPPORTED_RESOLUTIONS:
             raise ValueError(
@@ -901,19 +942,29 @@ class QwenImageDiffusersPipeline:
             f"steps={num_inference_steps}, cfg={cfg_scale}"
         )
 
-        # Run decomposition
-        result = self.decompose_pipe(
-            image=image,
-            prompt=prompt if prompt else None,
-            negative_prompt=negative_prompt,
-            layers=layer_num,
-            resolution=resolution,
-            num_inference_steps=num_inference_steps,
-            true_cfg_scale=cfg_scale,
-            cfg_normalize=cfg_normalize,
-            use_en_prompt=use_en_prompt,
-            generator=generator,
-        )
+        # Setup FP8 context manager if enabled
+        if self._use_diffsynth_fp8:
+            from llm_dit.quantization import fp8_inference
+            context_manager = fp8_inference()
+            logger.debug("Using DiffSynth-style FP8 inference")
+        else:
+            from contextlib import nullcontext
+            context_manager = nullcontext()
+
+        # Run decomposition (optionally with FP8 context)
+        with context_manager:
+            result = self.decompose_pipe(
+                image=image,
+                prompt=prompt if prompt else None,
+                negative_prompt=negative_prompt,
+                layers=layer_num,
+                resolution=resolution,
+                num_inference_steps=num_inference_steps,
+                true_cfg_scale=cfg_scale,
+                cfg_normalize=cfg_normalize,
+                use_en_prompt=use_en_prompt,
+                generator=generator,
+            )
 
         # Extract layers from result (handle nested list structure)
         layers = result.images[0] if isinstance(result.images[0], list) else result.images
@@ -948,12 +999,18 @@ class QwenImageDiffusersPipeline:
             torch_dtype=self._dtype,
         )
 
+        # For DiffSynth FP8, pre-convert weights for memory savings
+        if self._use_diffsynth_fp8:
+            from llm_dit.quantization import enable_fp8_weights
+            logger.info("Converting edit transformer weights to FP8...")
+            enable_fp8_weights(self.edit_pipe.transformer)
+
         if self._cpu_offload_enabled:
             self.edit_pipe.enable_sequential_cpu_offload()
         else:
             self.edit_pipe.to(self._device)
 
-        logger.info("Edit model loaded successfully")
+        logger.info(f"Edit model loaded successfully (diffsynth_fp8={self._use_diffsynth_fp8})")
 
     def unload_decompose_model(self) -> None:
         """Unload decompose model to free VRAM for editing."""
@@ -1034,14 +1091,24 @@ class QwenImageDiffusersPipeline:
 
         logger.info(f"Editing layer: instruction='{instruction}', steps={num_inference_steps}")
 
-        # Run edit on RGB image
-        result = self.edit_pipe(
-            image=rgb_image,
-            prompt=instruction,
-            num_inference_steps=num_inference_steps,
-            true_cfg_scale=cfg_scale,
-            generator=generator,
-        )
+        # Setup FP8 context manager if enabled
+        if self._use_diffsynth_fp8:
+            from llm_dit.quantization import fp8_inference
+            context_manager = fp8_inference()
+            logger.debug("Using DiffSynth-style FP8 inference")
+        else:
+            from contextlib import nullcontext
+            context_manager = nullcontext()
+
+        # Run edit on RGB image (optionally with FP8 context)
+        with context_manager:
+            result = self.edit_pipe(
+                image=rgb_image,
+                prompt=instruction,
+                num_inference_steps=num_inference_steps,
+                true_cfg_scale=cfg_scale,
+                generator=generator,
+            )
 
         edited_rgb = result.images[0]
 
@@ -1146,19 +1213,127 @@ class QwenImageDiffusersPipeline:
             f"instruction='{instruction[:80]}...', steps={num_inference_steps}"
         )
 
-        # Run multi-image edit
+        # Setup FP8 context manager if enabled
+        if self._use_diffsynth_fp8:
+            from llm_dit.quantization import fp8_inference
+            context_manager = fp8_inference()
+            logger.debug("Using DiffSynth-style FP8 inference")
+        else:
+            from contextlib import nullcontext
+            context_manager = nullcontext()
+
+        # Run multi-image edit (optionally with FP8 context)
         # QwenImageEditPlusPipeline accepts image as a list for multi-image mode
-        result = self.edit_pipe(
-            image=rgb_images,
-            prompt=instruction,
-            num_inference_steps=num_inference_steps,
-            true_cfg_scale=cfg_scale,
-            generator=generator,
-        )
+        with context_manager:
+            result = self.edit_pipe(
+                image=rgb_images,
+                prompt=instruction,
+                num_inference_steps=num_inference_steps,
+                true_cfg_scale=cfg_scale,
+                generator=generator,
+            )
 
         output_image = result.images[0]
 
         logger.info("Multi-image edit complete")
+
+        return output_image
+
+    def generate(
+        self,
+        prompt: str,
+        negative_prompt: str = " ",
+        height: int = 640,
+        width: int = 640,
+        num_inference_steps: int = DEFAULT_STEPS,
+        cfg_scale: float = DEFAULT_CFG_SCALE,
+        seed: Optional[int] = None,
+        unload_decompose: bool = True,
+    ) -> Image.Image:
+        """
+        Generate image from text prompt only (no input image).
+
+        Pure text-to-image generation using Qwen-Image-Edit-2511.
+        Uses text-only encoding (no vision tokens).
+
+        Args:
+            prompt: Text description of image to generate
+            negative_prompt: Negative prompt (default " ")
+            height: Image height (must be multiple of 16, default 640)
+            width: Image width (must be multiple of 16, default 640)
+            num_inference_steps: Diffusion steps (default 40)
+            cfg_scale: Classifier-free guidance scale (default 4.0)
+            seed: Random seed for reproducibility
+            unload_decompose: Unload decompose model first to save VRAM (default True)
+
+        Returns:
+            Generated PIL Image
+
+        Example:
+            >>> pipe = QwenImageDiffusersPipeline.from_pretrained(
+            ...     model_path=None,
+            ...     edit_model_path="/path/to/Qwen-Image-Edit-2511",
+            ...     edit_only=True,
+            ... )
+            >>> image = pipe.generate("A cat sleeping on a couch", seed=42)
+            >>> image.save("cat.png")
+        """
+        # Unload decompose model to free VRAM if requested
+        if unload_decompose and self.decompose_pipe is not None:
+            self.unload_decompose_model()
+
+        # Lazy load edit model if needed
+        if self.edit_pipe is None:
+            self.load_edit_model()
+
+        # Validate resolution (must be multiples of 16 for VAE)
+        if width % 16 != 0 or height % 16 != 0:
+            raise ValueError(
+                f"Resolution must be multiples of 16. Got {width}x{height}. "
+                f"Try {width // 16 * 16}x{height // 16 * 16} instead."
+            )
+
+        # Setup generator for reproducibility
+        generator = None
+        if seed is not None:
+            generator = torch.Generator(device="cuda").manual_seed(seed)
+
+        logger.info(
+            f"Text-to-image generation: prompt='{prompt[:80]}...', "
+            f"resolution={width}x{height}, steps={num_inference_steps}"
+        )
+
+        # Create a blank image as starting point
+        # The edit model will "edit" this blank canvas based on the prompt
+        # This is a workaround since HF QwenImageEditPlusPipeline requires an input image
+        blank_image = Image.new("RGB", (width, height), color=(128, 128, 128))
+        logger.debug("Using gray canvas as text-to-image starting point")
+
+        # Setup FP8 context manager if enabled
+        if self._use_diffsynth_fp8:
+            from llm_dit.quantization import fp8_inference
+            context_manager = fp8_inference()
+            logger.debug("Using DiffSynth-style FP8 inference")
+        else:
+            from contextlib import nullcontext
+            context_manager = nullcontext()
+
+        # Run generation with blank image as input
+        with context_manager:
+            result = self.edit_pipe(
+                image=blank_image,
+                prompt=prompt,
+                negative_prompt=negative_prompt,
+                height=height,
+                width=width,
+                num_inference_steps=num_inference_steps,
+                true_cfg_scale=cfg_scale,
+                generator=generator,
+            )
+
+        output_image = result.images[0]
+
+        logger.info("Text-to-image generation complete")
 
         return output_image
 

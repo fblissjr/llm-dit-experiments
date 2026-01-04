@@ -259,6 +259,7 @@ class GenerationConfig:
     guidance_scale: float = 0.0
     cfg_normalization: float = 0.0  # CFG norm clamping (0.0 = disabled)
     cfg_truncation: float = 1.0  # CFG truncation threshold (1.0 = no truncation)
+    cfg_norm_mode: str = "clamp"  # CFG norm mode: "clamp" or "match" (DiffSynth-style)
     enable_thinking: bool = True
     default_template: str | None = None
 
@@ -278,6 +279,7 @@ class SchedulerConfig:
     """Scheduler settings."""
 
     shift: float = 3.0  # Flow matching scheduler shift parameter
+    shift_terminal: float | None = None  # Terminal sigma value (Qwen-Image only, None for Z-Image)
 
 
 @dataclass

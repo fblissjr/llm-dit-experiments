@@ -25,7 +25,7 @@ import torch
 from .config import Config
 
 # Supported model types
-ModelType = Literal["zimage", "qwenimage", "qwenimage2512"]
+ModelType = Literal["zimage", "qwenimage-layered", "qwenimage-t2i", "qwenimage-edit"]
 SUPPORTED_MODEL_TYPES: tuple[str, ...] = get_args(ModelType)
 
 logger = logging.getLogger(__name__)
@@ -103,31 +103,26 @@ class RuntimeConfig:
     """
 
     # Model type selection
-    model_type: str = "zimage"  # "zimage" or "qwenimage"
+    model_type: str = "zimage"  # zimage, qwenimage-layered, qwenimage-t2i, qwenimage-edit
 
     # Model paths (Z-Image)
     model_path: str = ""
     text_encoder_path: str | None = None  # If None, uses model_path/text_encoder/
     templates_dir: str | None = None
 
-    # Qwen-Image-Layered paths and settings
-    qwen_image_model_path: str = ""  # Path to Qwen-Image-Layered model
-    qwen_image_edit_model_path: str = ""  # Path to Qwen-Image-Edit model (or HuggingFace ID)
-    qwen_image_edit_only: bool = False  # If True, load edit model directly (skip decompose)
-    qwen_image_cpu_offload: bool = True  # Enable CPU offload for Qwen-Image
-    qwen_image_layer_num: int = 4  # Number of decomposition layers
-    qwen_image_cfg_scale: float = 4.0  # CFG scale for Qwen-Image
-    qwen_image_steps: int = 25  # Diffusion steps for Qwen-Image-Edit-2511
-    qwen_image_resolution: int = 640  # Resolution (640 or 1024 only)
-    qwen_image_quantize_text_encoder: str = "none"  # none/4bit/8bit - quantize Qwen2.5-VL-7B
-    qwen_image_quantize_transformer: str = "none"  # none/4bit/8bit - quantize DiT
-
-    # Qwen-Image-2512 paths and settings (pure text-to-image)
-    qwen_image_2512_model_path: str = ""  # Path to Qwen-Image-2512 model
-    qwen_image_2512_steps: int = 40  # Diffusion steps
-    qwen_image_2512_cfg_scale: float = 4.0  # CFG scale
-    qwen_image_2512_quantize_transformer: str = "fp8"  # fp8/int8/4bit/8bit - FP8 default for 24GB
-    qwen_image_2512_quantize_text_encoder: str = "none"  # none/8bit/4bit - none = CPU offload (best quality)
+    # Qwen-Image unified settings (all variants: t2i, edit, layered)
+    # Use --model-type to select variant: qwenimage-t2i, qwenimage-edit, qwenimage-layered
+    # Variant-specific defaults are applied via get_qwen_variant_defaults()
+    qwen_image_model_path: str = ""  # Path to any Qwen-Image model
+    qwen_image_edit_model_path: str = ""  # Legacy: Path to Edit model (deprecated, use model_path)
+    qwen_image_edit_only: bool = False  # Legacy: load edit model directly
+    qwen_image_cpu_offload: bool = True  # Enable CPU offload (required for RTX 4090)
+    qwen_image_layer_num: int = 4  # Number of decomposition layers (layered variant only)
+    qwen_image_cfg_scale: float = 4.0  # CFG scale (4.0 for all variants)
+    qwen_image_steps: int | None = None  # Diffusion steps (None = variant default: 40/25/50)
+    qwen_image_resolution: int | None = None  # Resolution (None = variant default: 1024/640/640)
+    qwen_image_quantize_text_encoder: str = "none"  # none/4bit/8bit - CPU offload makes quant optional
+    qwen_image_quantize_transformer: str | None = None  # None = variant default (fp8/diffsynth-fp8)
 
     # Device placement
     encoder_device: str = "auto"
@@ -288,6 +283,55 @@ class RuntimeConfig:
     def vae_device_resolved(self) -> str:
         return self.resolve_device(self.vae_device)
 
+    def get_qwen_variant_defaults(self) -> dict:
+        """
+        Return variant-specific defaults for Qwen-Image models based on model_type.
+
+        These defaults are applied when the corresponding field is None.
+
+        Returns:
+            Dict with keys: steps, resolution, quantize_transformer
+        """
+        defaults = {
+            "qwenimage-t2i": {
+                "steps": 40,
+                "resolution": 1024,
+                "quantize_transformer": "fp8",  # TorchAO for 60-layer DiT
+            },
+            "qwenimage-edit": {
+                "steps": 25,
+                "resolution": 640,
+                "quantize_transformer": "diffsynth-fp8",  # DiffSynth-style for 8B DiT
+            },
+            "qwenimage-layered": {
+                "steps": 50,
+                "resolution": 640,
+                "quantize_transformer": "diffsynth-fp8",
+            },
+        }
+        return defaults.get(self.model_type, {})
+
+    def get_qwen_image_steps(self) -> int:
+        """Get effective steps, using variant default if not explicitly set."""
+        if self.qwen_image_steps is not None:
+            return self.qwen_image_steps
+        variant_defaults = self.get_qwen_variant_defaults()
+        return variant_defaults.get("steps", 40)
+
+    def get_qwen_image_resolution(self) -> int:
+        """Get effective resolution, using variant default if not explicitly set."""
+        if self.qwen_image_resolution is not None:
+            return self.qwen_image_resolution
+        variant_defaults = self.get_qwen_variant_defaults()
+        return variant_defaults.get("resolution", 1024)
+
+    def get_qwen_image_quantize_transformer(self) -> str:
+        """Get effective transformer quantization, using variant default if not explicitly set."""
+        if self.qwen_image_quantize_transformer is not None:
+            return self.qwen_image_quantize_transformer
+        variant_defaults = self.get_qwen_variant_defaults()
+        return variant_defaults.get("quantize_transformer", "none")
+
 
 def create_base_parser(
     description: str = "Z-Image generation",
@@ -322,14 +366,7 @@ def create_base_parser(
         "--profile",
         type=str,
         default="default",
-        help="Config profile to use for legacy configs (default: default)",
-    )
-    config_group.add_argument(
-        "--config-name",
-        type=str,
-        default=None,
-        help="Combined config name for modular configs (e.g., 'rtx4090_zimage'). "
-             "When set, uses modular config format instead of legacy profile.",
+        help="Config profile to use (default: default)",
     )
 
     # Model selection
@@ -339,7 +376,7 @@ def create_base_parser(
         type=str,
         choices=list(SUPPORTED_MODEL_TYPES),
         default=None,
-        help="Model type: zimage, qwenimage (Layered), or qwenimage2512 (T2I). Default: zimage",
+        help="Model type: zimage, qwenimage-layered, qwenimage-t2i, qwenimage-edit. Default: zimage",
     )
     model_group.add_argument(
         "--model-path",
@@ -360,37 +397,32 @@ def create_base_parser(
         help="Path to templates directory",
     )
 
-    # Qwen-Image-Layered specific
-    qwen_group = parser.add_argument_group("Qwen-Image-Layered")
+    # Qwen-Image (all variants: t2i, edit, layered)
+    # Use --model-type to select: qwenimage-t2i, qwenimage-edit, qwenimage-layered
+    qwen_group = parser.add_argument_group("Qwen-Image (all variants)")
     qwen_group.add_argument(
         "--qwen-image-model-path",
         type=str,
         default=None,
-        help="Path to Qwen-Image-Layered model directory",
-    )
-    qwen_group.add_argument(
-        "--qwen-image-edit-model-path",
-        type=str,
-        default=None,
-        help="Path to Qwen-Image-Edit-2511 model (or empty for HuggingFace auto-download)",
+        help="Path to any Qwen-Image model (T2I, Edit, or Layered)",
     )
     qwen_group.add_argument(
         "--qwen-image-cpu-offload",
         action="store_true",
         default=None,
-        help="Enable CPU offload for Qwen-Image (recommended for RTX 4090)",
+        help="Enable CPU offload for Qwen-Image (required for RTX 4090)",
     )
     qwen_group.add_argument(
         "--qwen-image-layers",
         type=int,
         default=None,
-        help="Number of decomposition layers for Qwen-Image (default: 4)",
+        help="Number of decomposition layers (layered variant only, default: 4)",
     )
     qwen_group.add_argument(
         "--qwen-image-steps",
         type=int,
         default=None,
-        help="Diffusion steps for Qwen-Image (default: 40 for Edit-2511)",
+        help="Diffusion steps (variant default: t2i=40, edit=25, layered=50)",
     )
     qwen_group.add_argument(
         "--qwen-image-cfg-scale",
@@ -403,42 +435,21 @@ def create_base_parser(
         type=int,
         choices=[640, 1024],
         default=None,
-        help="Resolution for Qwen-Image (640 or 1024 only, default: 640)",
+        help="Resolution (variant default: t2i=1024, edit=640, layered=640)",
     )
-
-    # Qwen-Image-2512 specific (pure text-to-image)
-    qwen2512_group = parser.add_argument_group("Qwen-Image-2512")
-    qwen2512_group.add_argument(
-        "--qwen-image-2512-model-path",
+    qwen_group.add_argument(
+        "--qwen-image-quantize-text-encoder",
         type=str,
+        choices=["none", "4bit", "8bit", "fp8", "int8"],
         default=None,
-        help="Path to Qwen-Image-2512 model directory",
+        help="Quantization for text encoder (Qwen2.5-VL-7B): none (CPU offload), 4bit, 8bit",
     )
-    qwen2512_group.add_argument(
-        "--qwen-image-2512-steps",
-        type=int,
-        default=None,
-        help="Diffusion steps for Qwen-Image-2512 (default: 40)",
-    )
-    qwen2512_group.add_argument(
-        "--qwen-image-2512-cfg-scale",
-        type=float,
-        default=None,
-        help="CFG scale for Qwen-Image-2512 (default: 4.0)",
-    )
-    qwen2512_group.add_argument(
-        "--qwen-image-2512-quantize-transformer",
+    qwen_group.add_argument(
+        "--qwen-image-quantize-transformer",
         type=str,
-        choices=["none", "fp8", "int8", "4bit", "8bit"],
+        choices=["none", "4bit", "8bit", "fp8", "int8", "diffsynth-fp8"],
         default=None,
-        help="Quantization for DiT transformer (default: fp8 for 24GB GPUs)",
-    )
-    qwen2512_group.add_argument(
-        "--qwen-image-2512-quantize-text-encoder",
-        type=str,
-        choices=["none", "4bit", "8bit"],
-        default=None,
-        help="Quantization for text encoder (default: 4bit for 24GB GPUs)",
+        help="Quantization for DiT (variant default: t2i=fp8, edit/layered=diffsynth-fp8)",
     )
 
     # Device placement
@@ -1042,7 +1053,7 @@ def _apply_cli_overrides(args: argparse.Namespace, config: RuntimeConfig) -> Run
     """
     Apply CLI argument overrides to a RuntimeConfig.
 
-    This is called after loading config from TOML (either modular or legacy format).
+    This is called after loading config from TOML.
     CLI arguments take precedence over config file values.
 
     Args:
@@ -1077,18 +1088,12 @@ def _apply_cli_overrides(args: argparse.Namespace, config: RuntimeConfig) -> Run
         config.qwen_image_cfg_scale = args.qwen_image_cfg_scale
     if getattr(args, 'qwen_image_resolution', None) is not None:
         config.qwen_image_resolution = args.qwen_image_resolution
-
-    # Qwen-Image-2512 overrides
-    if getattr(args, 'qwen_image_2512_model_path', None) is not None:
-        config.qwen_image_2512_model_path = args.qwen_image_2512_model_path
-    if getattr(args, 'qwen_image_2512_steps', None) is not None:
-        config.qwen_image_2512_steps = args.qwen_image_2512_steps
-    if getattr(args, 'qwen_image_2512_cfg_scale', None) is not None:
-        config.qwen_image_2512_cfg_scale = args.qwen_image_2512_cfg_scale
-    if getattr(args, 'qwen_image_2512_quantize_transformer', None) is not None:
-        config.qwen_image_2512_quantize_transformer = args.qwen_image_2512_quantize_transformer
-    if getattr(args, 'qwen_image_2512_quantize_text_encoder', None) is not None:
-        config.qwen_image_2512_quantize_text_encoder = args.qwen_image_2512_quantize_text_encoder
+    if getattr(args, 'qwen_image_edit_only', False):
+        config.qwen_image_edit_only = args.qwen_image_edit_only
+    if getattr(args, 'qwen_image_quantize_text_encoder', None) is not None:
+        config.qwen_image_quantize_text_encoder = args.qwen_image_quantize_text_encoder
+    if getattr(args, 'qwen_image_quantize_transformer', None) is not None:
+        config.qwen_image_quantize_transformer = args.qwen_image_quantize_transformer
 
     # Device overrides
     if getattr(args, 'text_encoder_device', None) is not None:
@@ -1216,13 +1221,9 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
     """
     Load runtime configuration from TOML file + CLI overrides.
 
-    Supports two config formats:
-    1. Modular config (when --config-name is set): Uses [configs] section
-    2. Legacy config (when --profile is set): Uses [profile.section] format
-
     Priority (highest to lowest):
     1. CLI arguments
-    2. TOML config file
+    2. TOML config file (with profile)
     3. Defaults
 
     Args:
@@ -1231,35 +1232,7 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
     Returns:
         RuntimeConfig with all settings resolved
     """
-    # Check for modular config format
-    config_name = getattr(args, 'config_name', None)
-    if config_name and args.config:
-        from llm_dit.config_modular import ModularConfig, is_modular_config
-
-        if not is_modular_config(args.config):
-            raise ValueError(
-                f"--config-name requires modular config format (with [configs] section). "
-                f"File {args.config} uses legacy format. Use --profile instead."
-            )
-
-        logger.info(f"Loading modular config: {config_name}")
-        modular_config = ModularConfig.from_toml(args.config, config_name)
-
-        # Validate configuration
-        errors = modular_config.validate()
-        if errors:
-            for error in errors:
-                logger.warning(f"Config validation: {error}")
-
-        # Convert to RuntimeConfig
-        config = modular_config.to_runtime_config()
-        logger.info(f"Loaded modular config '{config_name}' successfully")
-
-        # Apply CLI overrides (same as legacy path below)
-        config = _apply_cli_overrides(args, config)
-        return config
-
-    # Start with defaults (legacy path)
+    # Start with defaults
     config = RuntimeConfig()
 
     # Load TOML config if provided
@@ -1437,18 +1410,12 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
         config.qwen_image_cfg_scale = args.qwen_image_cfg_scale
     if getattr(args, 'qwen_image_resolution', None) is not None:
         config.qwen_image_resolution = args.qwen_image_resolution
-
-    # Qwen-Image-2512 overrides
-    if getattr(args, 'qwen_image_2512_model_path', None) is not None:
-        config.qwen_image_2512_model_path = args.qwen_image_2512_model_path
-    if getattr(args, 'qwen_image_2512_steps', None) is not None:
-        config.qwen_image_2512_steps = args.qwen_image_2512_steps
-    if getattr(args, 'qwen_image_2512_cfg_scale', None) is not None:
-        config.qwen_image_2512_cfg_scale = args.qwen_image_2512_cfg_scale
-    if getattr(args, 'qwen_image_2512_quantize_transformer', None) is not None:
-        config.qwen_image_2512_quantize_transformer = args.qwen_image_2512_quantize_transformer
-    if getattr(args, 'qwen_image_2512_quantize_text_encoder', None) is not None:
-        config.qwen_image_2512_quantize_text_encoder = args.qwen_image_2512_quantize_text_encoder
+    if getattr(args, 'qwen_image_edit_only', False):
+        config.qwen_image_edit_only = args.qwen_image_edit_only
+    if getattr(args, 'qwen_image_quantize_text_encoder', None) is not None:
+        config.qwen_image_quantize_text_encoder = args.qwen_image_quantize_text_encoder
+    if getattr(args, 'qwen_image_quantize_transformer', None) is not None:
+        config.qwen_image_quantize_transformer = args.qwen_image_quantize_transformer
 
     # Device overrides
     if getattr(args, 'text_encoder_device', None) is not None:

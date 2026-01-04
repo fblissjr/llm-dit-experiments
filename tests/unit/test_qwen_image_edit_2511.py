@@ -471,15 +471,16 @@ class TestConfigDefaults:
     """Test configuration defaults are updated for 2511."""
 
     def test_qwen_image_config_default_steps(self):
-        """Test QwenImageConfig.num_inference_steps is 40."""
+        """Test QwenImageConfig.num_inference_steps is 25 for Edit-2511."""
         from llm_dit.config import QwenImageConfig
 
         config = QwenImageConfig()
-        assert config.num_inference_steps == 40
+        assert config.num_inference_steps == 25  # Edit-2511 uses 25 steps, 2512 uses 40
 
     def test_runtime_config_default_steps(self):
-        """Test RuntimeConfig.qwen_image_steps is 40."""
+        """Test RuntimeConfig.get_qwen_image_steps() returns 25 for Edit model."""
         from llm_dit.cli import RuntimeConfig
 
         config = RuntimeConfig()
-        assert config.qwen_image_steps == 40
+        config.model_type = "qwenimage-edit"  # Set to edit variant
+        assert config.get_qwen_image_steps() == 25  # Edit uses 25 steps via variant defaults

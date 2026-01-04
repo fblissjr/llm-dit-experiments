@@ -1,6 +1,6 @@
 # qwen-image-layered user guide
 
-last updated: 2025-12-20
+last updated: 2026-01-04
 
 ## overview
 
@@ -290,7 +290,7 @@ Check if edit model is loaded.
 
 | Flag | Description | Default |
 |------|-------------|---------|
-| `--model-type qwenimage` | Select Qwen-Image mode | zimage |
+| `--model-type qwenimage-layered` | Select Qwen-Image Layered mode | zimage |
 | `--qwen-image-model-path` | Path to model | (required) |
 | `--qwen-image-edit-model-path` | Path to edit model | (auto-download) |
 | `--qwen-image-cpu-offload` | Enable CPU offload | true |
@@ -414,6 +414,41 @@ layers = pipe.decompose(image, prompt="A park scene with trees and grass")
 # Abstract decomposition
 layers = pipe.decompose(image, prompt="An artistic composition with shapes and colors")
 ```
+
+---
+
+## architecture roadmap
+
+The current implementation uses multiple pipeline wrappers. The long-term goal is to consolidate these into a single `QwenImagePipeline` following DiffSynth-Studio's proven single-class pattern.
+
+### current state
+
+| Pipeline | Purpose | Backend |
+|----------|---------|---------|
+| `QwenImageDiffusersPipeline` | Decompose + Edit | HuggingFace diffusers |
+| `QwenImage2512Pipeline` | Text-to-image | HuggingFace diffusers |
+
+### planned consolidation
+
+```python
+class QwenImagePipeline:
+    def __call__(
+        self,
+        prompt: str,
+        edit_image: Optional[Image] = None,  # None = t2i, Image = edit
+        layer_num: Optional[int] = None,     # Set = decompose
+        ...
+    ):
+        # Mode determined by optional inputs
+```
+
+Benefits:
+- One class to maintain
+- One loading/quantization path
+- Clear mode selection based on inputs
+- Proper text-only and VL encoding paths (no blank-image workarounds)
+
+See `internal/research/diffsynth_pipeline_analysis.md` for detailed analysis.
 
 ---
 

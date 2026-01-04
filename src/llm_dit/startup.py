@@ -251,20 +251,36 @@ class PipelineLoader:
         """
         # Route to correct pipeline based on model_type
         model_type = getattr(self.config, 'model_type', 'zimage')
-        if model_type == "qwenimage":
+        if model_type == "qwenimage-layered":
             return self._load_qwen_image_pipeline()
-        elif model_type == "qwenimage2512":
-            # Qwen-Image-2512 uses on-demand loading via web API
+        elif model_type == "qwenimage-t2i":
+            # Qwen-Image T2I uses on-demand loading via web API
             # Skip startup loading - pipeline will be loaded on first request
             logger.info("=" * 60)
-            logger.info("QWEN-IMAGE-2512 MODE")
+            logger.info("QWEN-IMAGE T2I MODE")
             logger.info("=" * 60)
-            logger.info("Qwen-Image-2512 uses on-demand loading via /api/qwen-image-2512/generate")
-            logger.info(f"  Model path: {self.config.qwen_image_2512_model_path}")
-            logger.info(f"  Transformer quant: {self.config.qwen_image_2512_quantize_transformer}")
-            logger.info(f"  Text encoder quant: {self.config.qwen_image_2512_quantize_text_encoder}")
+            logger.info("Qwen-Image T2I uses on-demand loading via /api/qwen-image/generate")
+            logger.info(f"  Model path: {self.config.qwen_image_model_path}")
+            logger.info(f"  Steps: {self.config.get_qwen_image_steps()}")
+            logger.info(f"  Resolution: {self.config.get_qwen_image_resolution()}")
+            logger.info(f"  Transformer quant: {self.config.get_qwen_image_quantize_transformer()}")
+            logger.info(f"  Text encoder quant: {self.config.qwen_image_quantize_text_encoder}")
             logger.info("=" * 60)
-            return LoadResult(pipeline=None, encoder=None, mode="qwenimage2512_ondemand")
+            return LoadResult(pipeline=None, encoder=None, mode="qwenimage-t2i_ondemand")
+        elif model_type == "qwenimage-edit":
+            # Qwen-Image Edit uses on-demand loading via web API
+            # Skip startup loading - pipeline will be loaded on first request
+            logger.info("=" * 60)
+            logger.info("QWEN-IMAGE EDIT MODE")
+            logger.info("=" * 60)
+            logger.info("Qwen-Image Edit uses on-demand loading via /api/qwen-image/edit")
+            logger.info(f"  Model path: {self.config.qwen_image_model_path}")
+            logger.info(f"  Steps: {self.config.get_qwen_image_steps()}")
+            logger.info(f"  Resolution: {self.config.get_qwen_image_resolution()}")
+            logger.info(f"  Transformer quant: {self.config.get_qwen_image_quantize_transformer()}")
+            logger.info(f"  Text encoder quant: {self.config.qwen_image_quantize_text_encoder}")
+            logger.info("=" * 60)
+            return LoadResult(pipeline=None, encoder=None, mode="qwenimage-edit_ondemand")
 
         from llm_dit.pipelines import ZImagePipeline
 
@@ -392,18 +408,20 @@ class PipelineLoader:
             logger.info(f"  Model: {self.config.model_path}")
         logger.info(f"  Edit model: {self.config.qwen_image_edit_model_path or 'None'}")
         logger.info(f"  Edit only: {edit_only}")
+        logger.info(f"  Steps: {self.config.get_qwen_image_steps()}")
+        logger.info(f"  Resolution: {self.config.get_qwen_image_resolution()}")
         logger.info(f"  Dtype: {self.config.torch_dtype}")
         logger.info(f"  Text encoder quantization: {self.config.qwen_image_quantize_text_encoder}")
-        logger.info(f"  Transformer quantization: {self.config.qwen_image_quantize_transformer}")
+        logger.info(f"  Transformer quantization: {self.config.get_qwen_image_quantize_transformer()}")
         logger.info(f"  CPU offload: {self.config.qwen_image_cpu_offload}")
         logger.info(f"  torch.compile: {self.config.compile} (mode: {self.config.compile_mode})")
         logger.info("-" * 60)
 
         start = time.time()
 
-        # Get quantization settings (convert 'none' to None)
+        # Get quantization settings (convert 'none' to None, use variant-aware getter for transformer)
         quant_te = self.config.qwen_image_quantize_text_encoder
-        quant_tf = self.config.qwen_image_quantize_transformer
+        quant_tf = self.config.get_qwen_image_quantize_transformer()
         quant_te = quant_te if quant_te != 'none' else None
         quant_tf = quant_tf if quant_tf != 'none' else None
 
