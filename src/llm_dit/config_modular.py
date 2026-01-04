@@ -485,6 +485,8 @@ class ModularConfig:
             default_resolution=model_data.get("default_resolution", 1024),
             layer_num=model_data.get("layer_num"),
             cpu_offload=model_data.get("cpu_offload", True),
+            quantize_transformer=model_data.get("quantize_transformer"),
+            quantize_text_encoder=model_data.get("quantize_text_encoder"),
             inherits=None,  # Already resolved
         )
 
