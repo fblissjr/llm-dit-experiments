@@ -4,6 +4,7 @@ Quantization utilities for LLM-DiT models.
 Supports multiple quantization backends:
 - TorchAO: FP8, INT8 weight-only (recommended for RTX 4090+)
 - BitsAndBytes: 4-bit NF4, 8-bit INT8 (works with bfloat16)
+- DiffSynth-style FP8: Runtime F.linear patching with torch._scaled_mm
 
 Example:
     from llm_dit.quantization import get_quantization_config, QuantizationMethod
@@ -16,6 +17,12 @@ Example:
     from llm_dit.quantization import quantize_model_torchao_filtered
     model, stats = quantize_model_torchao_filtered(model, "fp8")
     print(f"Quantized {stats['quantized_layers']}/{stats['total_linear_layers']} layers")
+
+    # DiffSynth-style FP8 inference (runtime patching)
+    from llm_dit.quantization import fp8_inference, enable_fp8_weights
+    enable_fp8_weights(model)  # Optional: pre-convert weights for memory savings
+    with fp8_inference():
+        output = model(input)
 """
 
 from .config import QuantizationMethod, get_quantization_config, validate_quantization_dtype
@@ -30,11 +37,22 @@ from .torchao_utils import (
     create_fp8_filter_fn,
     analyze_fp8_compatibility,
 )
+from .fp8_inference import (
+    fp8_inference,
+    enable_fp8_weights,
+    enable_fp8_autocast,
+    check_fp8_available,
+    get_fp8_info,
+    get_fp8_dtype,
+    get_fp8_max,
+)
 
 __all__ = [
+    # Config
     "QuantizationMethod",
     "get_quantization_config",
     "validate_quantization_dtype",
+    # TorchAO
     "quantize_model_torchao",
     "quantize_model_torchao_filtered",
     "is_torchao_available",
@@ -44,4 +62,12 @@ __all__ = [
     "is_fp8_compatible_layer",
     "create_fp8_filter_fn",
     "analyze_fp8_compatibility",
+    # DiffSynth-style FP8 inference
+    "fp8_inference",
+    "enable_fp8_weights",
+    "enable_fp8_autocast",
+    "check_fp8_available",
+    "get_fp8_info",
+    "get_fp8_dtype",
+    "get_fp8_max",
 ]

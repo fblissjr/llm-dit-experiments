@@ -143,6 +143,7 @@ description = "Flow matching scheduler for non-turbo models"
 type = "flow_matching"
 shift = 3.0
 shift_mode = "dynamic"
+shift_terminal = 0.02  # Stretch sigma to end at 0.02 (Qwen-Image specific)
 
 # =============================================================================
 # MODEL TYPES
@@ -292,6 +293,46 @@ weights = {-3 = 0.5, -8 = 0.5}
 [layer_blend_presets.top3]
 description = "Blend top 3 output layers"
 weights = {-1 = 0.33, -2 = 0.34, -3 = 0.33}
+
+# =============================================================================
+# PROMPT REWRITER CONFIGURATION
+# Settings for prompt expansion using local LLM
+# =============================================================================
+
+[rewriter]
+# Enable API-based rewriting (uses heylookitsanllm or OpenAI-compatible API)
+use_api = false
+
+# API URL for rewriter (OpenAI-compatible)
+# If not set, falls back to main api.url
+api_url = ""
+
+# Model ID for rewriter API
+api_model = "Qwen2.5-7B-Instruct"
+
+# Sampling parameters (Qwen3 thinking mode defaults)
+temperature = 0.7    # 0.6-0.7 recommended for Qwen models
+top_p = 0.95
+top_k = 20
+min_p = 0.0
+
+# Maximum tokens to generate for rewritten prompt
+max_tokens = 1024
+
+# Request timeout in seconds
+timeout = 120.0
+
+# Presence penalty (0-2, helps reduce repetition)
+presence_penalty = 0.0
+
+# Enable VL model selection in rewriter UI
+vl_enabled = true
+
+# Preload VL model at startup (uses vl.model_path)
+preload_vl = false
+
+# Model ID for VL via API (e.g., "qwen2.5-vl-72b-mlx")
+vl_api_model = ""
 
 # =============================================================================
 # FEATURE CONFIGURATIONS

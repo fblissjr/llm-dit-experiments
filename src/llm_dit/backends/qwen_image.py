@@ -138,7 +138,7 @@ class QwenImageTextEncoderBackend:
                 quantization="4bit",
             )
         """
-        from transformers import Qwen2_5_VLConfig, Qwen2_5_VLModel
+        from transformers import Qwen2_5_VLConfig, Qwen2_5_VLForConditionalGeneration
 
         model_path = Path(model_path)
         device = torch.device(device)
@@ -231,9 +231,9 @@ class QwenImageTextEncoderBackend:
                 )
                 quantization = "none"
 
-        # Create model from config
+        # Create model from config (with lm_head for generation support)
         logger.info(f"Creating Qwen2.5-VL model (hidden_size={config.hidden_size})")
-        model = Qwen2_5_VLModel(config)
+        model = Qwen2_5_VLForConditionalGeneration(config)
 
         # Load weights from safetensors
         text_encoder_path = model_path / text_encoder_subfolder
@@ -250,20 +250,21 @@ class QwenImageTextEncoderBackend:
             file_state_dict = load_file(weight_file, device="cpu")
             state_dict.update(file_state_dict)
 
-        # Remap keys: the checkpoint uses 'model.X' but Qwen2_5_VLModel expects just 'X'
-        # Also remove 'visual.' prefix since we only use text portion
+        # Remap keys for Qwen2_5_VLForConditionalGeneration:
+        # - model.X stays as model.X (language model backbone)
+        # - lm_head.weight stays as lm_head.weight
+        # - visual.X is skipped (we only use text)
         remapped_state_dict = {}
         for k, v in state_dict.items():
             if k.startswith("model."):
-                # Language model weights: model.X -> X
-                new_key = k[6:]  # Remove "model."
-                remapped_state_dict[new_key] = v
+                # Language model weights stay under model.X
+                remapped_state_dict[k] = v
             elif k.startswith("visual."):
                 # Skip vision encoder weights (we don't use them for text-only)
                 continue
             elif k == "lm_head.weight":
-                # Skip lm_head (we don't generate text)
-                continue
+                # Keep lm_head for text generation (rewriting)
+                remapped_state_dict[k] = v
             else:
                 remapped_state_dict[k] = v
 
@@ -490,3 +491,84 @@ class QwenImageTextEncoderBackend:
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
             logger.info("Unloaded Qwen-Image text encoder from memory")
+
+    def generate(
+        self,
+        prompt: str,
+        system_prompt: str | None = None,
+        max_tokens: int = 512,
+        temperature: float = 0.7,
+        top_p: float = 0.95,
+        top_k: int = 20,
+        **kwargs,
+    ) -> str:
+        """
+        Generate text completion using the Qwen2.5-VL model.
+
+        This enables using the already-loaded encoder for prompt rewriting
+        without needing a separate API or model.
+
+        Args:
+            prompt: User prompt text
+            system_prompt: Optional system prompt
+            max_tokens: Maximum tokens to generate
+            temperature: Sampling temperature
+            top_p: Nucleus sampling threshold
+            top_k: Top-k sampling
+            **kwargs: Additional arguments (ignored for compatibility)
+
+        Returns:
+            Generated text string
+        """
+        # Format the prompt with chat template
+        if system_prompt:
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt},
+            ]
+        else:
+            messages = [
+                {"role": "user", "content": prompt},
+            ]
+
+        formatted = self.tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True,
+        )
+
+        # Tokenize
+        inputs = self.tokenizer(
+            formatted,
+            return_tensors="pt",
+            padding=True,
+        ).to(self.device)
+
+        input_length = inputs.input_ids.shape[1]
+
+        # Generate
+        with torch.no_grad():
+            output_ids = self.model.generate(
+                **inputs,
+                max_new_tokens=max_tokens,
+                temperature=temperature,
+                top_p=top_p,
+                top_k=top_k,
+                do_sample=temperature > 0,
+                pad_token_id=self.tokenizer.pad_token_id,
+                eos_token_id=self.tokenizer.eos_token_id,
+            )
+
+        # Decode only the new tokens
+        generated_ids = output_ids[0, input_length:]
+        generated_text = self.tokenizer.decode(
+            generated_ids,
+            skip_special_tokens=True,
+        )
+
+        return generated_text.strip()
+
+    @property
+    def supports_generation(self) -> bool:
+        """Return True if this backend supports text generation."""
+        return True

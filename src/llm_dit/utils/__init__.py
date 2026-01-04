@@ -96,6 +96,16 @@ from llm_dit.utils.logging_config import (
     ContextLogger,
 )
 
+from llm_dit.utils.prompt_rewriter import (
+    PromptRewriter,
+    detect_language,
+    create_rewriter_from_config,
+    ENGLISH_SYSTEM_PROMPT,
+    CHINESE_SYSTEM_PROMPT,
+    DEFAULT_NEGATIVE_PROMPT,
+    DEFAULT_NEGATIVE_PROMPT_EN,
+)
+
 __all__ = [
     # LoRA
     "LoRALoader",
@@ -168,4 +178,12 @@ __all__ = [
     "log_generation",
     "JSONFormatter",
     "ContextLogger",
+    # Prompt rewriting
+    "PromptRewriter",
+    "detect_language",
+    "create_rewriter_from_config",
+    "ENGLISH_SYSTEM_PROMPT",
+    "CHINESE_SYSTEM_PROMPT",
+    "DEFAULT_NEGATIVE_PROMPT",
+    "DEFAULT_NEGATIVE_PROMPT_EN",
 ]

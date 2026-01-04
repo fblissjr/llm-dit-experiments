@@ -98,6 +98,53 @@ class TestFlowMatchScheduler:
         # With sigma > 0, noisy should be different from original
         assert not torch.allclose(noisy, original)
 
+    def test_shift_terminal_none(self):
+        """Without shift_terminal, final sigma should be 0."""
+        from llm_dit.schedulers import FlowMatchScheduler
+
+        scheduler = FlowMatchScheduler(shift=3.0, shift_terminal=None)
+        scheduler.set_timesteps(num_inference_steps=9, device="cpu")
+
+        # Final sigma should be 0.0
+        assert scheduler.sigmas[-1].item() == pytest.approx(0.0, abs=1e-5)
+
+    def test_shift_terminal_stretches_sigma(self):
+        """With shift_terminal, final sigma should end at that value."""
+        from llm_dit.schedulers import FlowMatchScheduler
+
+        terminal = 0.02
+        scheduler = FlowMatchScheduler(shift=3.0, shift_terminal=terminal)
+        scheduler.set_timesteps(num_inference_steps=50, device="cpu")
+
+        # Final sigma should be close to shift_terminal
+        assert scheduler.sigmas[-1].item() == pytest.approx(terminal, abs=1e-4)
+
+        # First sigma should still be 1.0
+        assert scheduler.sigmas[0].item() == pytest.approx(1.0, abs=1e-5)
+
+    def test_shift_terminal_preserves_monotonicity(self):
+        """Sigma schedule should remain monotonically decreasing."""
+        from llm_dit.schedulers import FlowMatchScheduler
+
+        scheduler = FlowMatchScheduler(shift=3.0, shift_terminal=0.02)
+        scheduler.set_timesteps(num_inference_steps=50, device="cpu")
+
+        # Check monotonically decreasing
+        for i in range(len(scheduler.sigmas) - 1):
+            assert scheduler.sigmas[i] > scheduler.sigmas[i + 1], \
+                f"Sigma not monotonic at index {i}"
+
+    def test_shift_terminal_different_values(self):
+        """Test various shift_terminal values."""
+        from llm_dit.schedulers import FlowMatchScheduler
+
+        for terminal in [0.01, 0.02, 0.05, 0.1]:
+            scheduler = FlowMatchScheduler(shift=3.0, shift_terminal=terminal)
+            scheduler.set_timesteps(num_inference_steps=50, device="cpu")
+
+            assert scheduler.sigmas[-1].item() == pytest.approx(terminal, abs=1e-4), \
+                f"Failed for terminal={terminal}"
+
     def test_scale_model_input(self):
         from llm_dit.schedulers import FlowMatchScheduler
 
