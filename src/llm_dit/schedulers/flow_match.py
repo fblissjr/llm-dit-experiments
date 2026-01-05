@@ -195,6 +195,7 @@ class FlowMatchScheduler:
         timestep: torch.Tensor,
         sample: torch.Tensor,
         return_dict: bool = True,
+        use_fp32_accumulation: bool = True,
     ) -> Union[SchedulerOutput, Tuple[torch.Tensor]]:
         """
         Predict the sample at the previous timestep.
@@ -209,6 +210,9 @@ class FlowMatchScheduler:
             timestep: Current timestep value
             sample: Current noisy sample (x_t)
             return_dict: Whether to return SchedulerOutput or tuple
+            use_fp32_accumulation: Whether to use float32 for accumulation to reduce
+                numerical errors over many steps (default: True). Recommended for
+                30+ step generations.
 
         Returns:
             SchedulerOutput with prev_sample, or tuple (prev_sample,)
@@ -225,7 +229,15 @@ class FlowMatchScheduler:
 
         # Euler step: x_{t-1} = x_t + v * (sigma_{t-1} - sigma_t)
         # Note: sigma_next < sigma (we're denoising), so this adds noise_pred * negative_value
-        prev_sample = sample + model_output * (sigma_next - sigma)
+        if use_fp32_accumulation and sample.dtype != torch.float32:
+            # Upcast to float32 for accumulation to reduce numerical errors
+            orig_dtype = sample.dtype
+            sample_fp32 = sample.float()
+            model_output_fp32 = model_output.float()
+            prev_sample_fp32 = sample_fp32 + model_output_fp32 * (sigma_next.float() - sigma.float())
+            prev_sample = prev_sample_fp32.to(orig_dtype)
+        else:
+            prev_sample = sample + model_output * (sigma_next - sigma)
 
         if return_dict:
             return SchedulerOutput(prev_sample=prev_sample)

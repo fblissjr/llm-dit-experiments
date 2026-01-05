@@ -248,25 +248,25 @@ class Img2ImgRequest(BaseModel):
     prompt: str  # User prompt
     image: str  # Base64-encoded input image
     mask_image: Optional[str] = None  # Base64-encoded grayscale mask (black=preserve, white=edit)
-    strength: float = 0.75  # Denoising strength (0=no change, 1=full generation)
+    strength: float = Field(0.75, ge=0.0, le=1.0, description="Denoising strength (0=no change, 1=full generation)")
     # Common generation params
     system_prompt: Optional[str] = None
     thinking_content: Optional[str] = None
     assistant_content: Optional[str] = None
     force_think_block: bool = False
     strip_quotes: bool = False
-    width: Optional[int] = None  # If None, use input image size
-    height: Optional[int] = None  # If None, use input image size
-    steps: int = 9
+    width: Optional[int] = Field(None, ge=64, le=4096, description="Output width (if None, use input image size)")
+    height: Optional[int] = Field(None, ge=64, le=4096, description="Output height (if None, use input image size)")
+    steps: int = Field(9, ge=1, le=500, description="Number of denoising steps")
     seed: Optional[int] = None
     template: Optional[str] = None
-    guidance_scale: float = 0.0
-    cfg_normalization: float = 0.0
-    cfg_truncation: float = 1.0
+    guidance_scale: float = Field(0.0, ge=0.0, le=30.0, description="CFG guidance scale")
+    cfg_normalization: float = Field(0.0, ge=0.0, le=10.0, description="CFG normalization strength")
+    cfg_truncation: float = Field(1.0, ge=0.0, le=1.0, description="Progress threshold for CFG truncation")
     cfg_norm_mode: str = "clamp"  # CFG normalization mode: clamp or match
-    shift: float = 3.0
+    shift: float = Field(3.0, ge=0.0, le=10.0, description="Scheduler shift parameter")
     long_prompt_mode: str = "interpolate"
-    hidden_layer: int = -2
+    hidden_layer: int = Field(-2, ge=-35, le=-1, description="Hidden layer for text embeddings")
 
 
 class EncodeRequest(BaseModel):
