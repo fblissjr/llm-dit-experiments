@@ -10,7 +10,6 @@ Usage:
 """
 
 import argparse
-import asyncio
 import io
 import logging
 import re
@@ -23,8 +22,7 @@ import torch
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
-from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -239,6 +237,36 @@ class GenerateRequest(BaseModel):
     fmtt_decode_scale: Optional[float] = None  # Scale for intermediate VAE decode
     fmtt_siglip_model: Optional[str] = None  # SigLIP model for FMTT
     fmtt_siglip_device: Optional[str] = None  # Device for SigLIP (cuda/cpu)
+
+
+class Img2ImgRequest(BaseModel):
+    """Request for image-to-image generation with optional differential mask.
+
+    Note: SLG, FMTT, DyPE, and layer_weights are not supported for img2img.
+    Use text-to-image (/api/generate) for those features.
+    """
+    prompt: str  # User prompt
+    image: str  # Base64-encoded input image
+    mask_image: Optional[str] = None  # Base64-encoded grayscale mask (black=preserve, white=edit)
+    strength: float = 0.75  # Denoising strength (0=no change, 1=full generation)
+    # Common generation params
+    system_prompt: Optional[str] = None
+    thinking_content: Optional[str] = None
+    assistant_content: Optional[str] = None
+    force_think_block: bool = False
+    strip_quotes: bool = False
+    width: Optional[int] = None  # If None, use input image size
+    height: Optional[int] = None  # If None, use input image size
+    steps: int = 9
+    seed: Optional[int] = None
+    template: Optional[str] = None
+    guidance_scale: float = 0.0
+    cfg_normalization: float = 0.0
+    cfg_truncation: float = 1.0
+    cfg_norm_mode: str = "clamp"  # CFG normalization mode: clamp or match
+    shift: float = 3.0
+    long_prompt_mode: str = "interpolate"
+    hidden_layer: int = -2
 
 
 class EncodeRequest(BaseModel):
@@ -1448,6 +1476,7 @@ async def get_generation_config():
     """Get generation configuration defaults from server config.
 
     Returns default values for width, height, steps, shift, long_prompt_mode, hidden_layer, SLG, and FMTT.
+    Also returns feature flags indicating which advanced features are enabled in config.
     The UI should call this on load to sync with server config.
     """
     if runtime_config is None:
@@ -1460,16 +1489,31 @@ async def get_generation_config():
             "long_prompt_mode": "interpolate",
             "hidden_layer": -2,
             "layer_weights": None,
+            # SLG settings
             "slg_scale": 0.0,
             "slg_layers": None,
             "slg_start": 0.05,
             "slg_stop": 0.5,
+            # FMTT settings
             "fmtt_scale": 0.0,
             "fmtt_start": 0.0,
             "fmtt_stop": 0.5,
             "fmtt_normalize": "unit",
             "fmtt_decode_scale": 0.5,
+            # Feature flags (all disabled by default)
+            "features": {
+                "dype_enabled": False,
+                "slg_enabled": False,
+                "fmtt_enabled": False,
+                "differential_img2img_enabled": True,  # Always available for Z-Image
+            },
         }
+
+    # Get feature flags from config
+    dype_enabled = getattr(runtime_config, 'dype_enabled', False)
+    slg_enabled = getattr(runtime_config, 'slg_enabled', False) or getattr(runtime_config, 'slg_scale', 0.0) > 0
+    fmtt_enabled = getattr(runtime_config, 'fmtt_enabled', False) or getattr(runtime_config, 'fmtt_scale', 0.0) > 0
+
     return {
         "width": runtime_config.width,
         "height": runtime_config.height,
@@ -1479,10 +1523,12 @@ async def get_generation_config():
         "long_prompt_mode": runtime_config.long_prompt_mode,
         "hidden_layer": runtime_config.hidden_layer,
         "layer_weights": getattr(runtime_config, 'layer_weights', None),
+        # SLG settings
         "slg_scale": getattr(runtime_config, 'slg_scale', 0.0),
         "slg_layers": getattr(runtime_config, 'slg_layers', None),
         "slg_start": getattr(runtime_config, 'slg_start', 0.05),
         "slg_stop": getattr(runtime_config, 'slg_stop', 0.5),
+        # FMTT settings
         "fmtt_scale": getattr(runtime_config, 'fmtt_scale', 0.0),
         "fmtt_start": getattr(runtime_config, 'fmtt_start', 0.0),
         "fmtt_stop": getattr(runtime_config, 'fmtt_stop', 0.5),
@@ -1490,15 +1536,31 @@ async def get_generation_config():
         "fmtt_decode_scale": getattr(runtime_config, 'fmtt_decode_scale', 0.5),
         "fmtt_siglip_model": getattr(runtime_config, 'fmtt_siglip_model', 'google/siglip2-giant-opt-patch16-384'),
         "fmtt_siglip_device": getattr(runtime_config, 'fmtt_siglip_device', 'cuda'),
+        # Feature flags based on config
+        "features": {
+            "dype_enabled": dype_enabled,
+            "slg_enabled": slg_enabled,
+            "fmtt_enabled": fmtt_enabled,
+            "differential_img2img_enabled": True,  # Always available for Z-Image
+        },
     }
 
 
 @app.get("/api/resolution-config")
-async def get_resolution_config():
+async def get_resolution_config(model: Optional[str] = None):
     """Get resolution constraints for client-side validation.
 
     Returns VAE multiple, min/max limits, categorized presets, and DyPE config.
-    All resolutions are divisible by 16 (VAE constraint).
+    Presets are filtered based on the active model type.
+
+    Args:
+        model: Optional model filter ("zimage", "qwenimage-layered", "qwenimage-t2i")
+               If not provided, returns presets for all models.
+
+    Model-specific constraints:
+    - Z-Image: Flexible resolutions, must be divisible by 16
+    - Qwen-Image-Layered: Fixed 640x640 or 1024x1024 only
+    - Qwen-Image T2I: Default 1328x1328, flexible with VAE constraints
     """
     from llm_dit.constants import (
         VAE_MULTIPLE,
@@ -1509,7 +1571,22 @@ async def get_resolution_config():
         ASPECT_RATIOS,
     )
 
-    # DyPE configuration
+    # Detect currently loaded model if not specified
+    current_model = model
+    if current_model is None:
+        if pipeline is not None:
+            from llm_dit.pipelines import ZImagePipeline
+            from llm_dit.pipelines.qwen_image_diffusers import QwenImageDiffusersPipeline
+            if isinstance(pipeline, ZImagePipeline):
+                current_model = "zimage"
+            elif isinstance(pipeline, QwenImageDiffusersPipeline):
+                current_model = "qwenimage-layered"
+        if qwen_image_t2i_pipeline is not None:
+            current_model = "qwenimage-t2i"
+        if qwen_image_pipeline is not None and current_model is None:
+            current_model = "qwenimage-layered"
+
+    # DyPE configuration (Z-Image only)
     DYPE_BASE_RESOLUTION = 1024  # Z-Image training resolution
 
     def get_dype_recommendation(width: int, height: int) -> dict:
@@ -1518,7 +1595,6 @@ async def get_resolution_config():
         scale = max_dim / DYPE_BASE_RESOLUTION
         if scale <= 1.0:
             return {"recommended": False, "exponent": None}
-        # Scale-based exponent: 0.5 for gentle, 1.0 for standard, 2.0 for aggressive
         if scale >= 3.0:
             exponent = 2.0
         elif scale >= 1.5:
@@ -1527,66 +1603,142 @@ async def get_resolution_config():
             exponent = 0.5
         return {"recommended": True, "exponent": exponent}
 
-    # Categorized preset resolutions (all divisible by VAE_MULTIPLE=16)
-    # Categories: square, landscape, portrait
-    presets = [
+    # Model-specific resolution constraints
+    model_constraints = {
+        "zimage": {
+            "vae_multiple": 16,
+            "min_resolution": 256,
+            "max_resolution": 4096,
+            "default_width": 1024,
+            "default_height": 1024,
+            "flexible": True,
+            "supports_dype": True,
+            "supports_slg": True,
+            "supports_fmtt": True,
+        },
+        "qwenimage-layered": {
+            "vae_multiple": 16,
+            "min_resolution": 640,
+            "max_resolution": 1024,
+            "default_width": 640,
+            "default_height": 640,
+            "flexible": False,  # Only 640 or 1024
+            "fixed_sizes": [640, 1024],
+            "supports_dype": False,
+            "supports_slg": False,
+            "supports_fmtt": False,
+        },
+        "qwenimage-t2i": {
+            "vae_multiple": 16,
+            "min_resolution": 256,
+            "max_resolution": 2048,
+            "default_width": 1328,
+            "default_height": 1328,
+            "flexible": True,
+            "supports_dype": False,
+            "supports_slg": False,
+            "supports_fmtt": False,
+        },
+    }
+
+    # Z-Image presets (flexible, all divisible by 16)
+    zimage_presets = [
         # Square (1:1)
         {"value": "512x512", "label": "512", "width": 512, "height": 512, "category": "square", "ratio": "1:1"},
         {"value": "768x768", "label": "768", "width": 768, "height": 768, "category": "square", "ratio": "1:1"},
         {"value": "1024x1024", "label": "1024", "width": 1024, "height": 1024, "category": "square", "ratio": "1:1", "default": True},
         {"value": "1280x1280", "label": "1280", "width": 1280, "height": 1280, "category": "square", "ratio": "1:1"},
-        {"value": "1328x1328", "label": "1328", "width": 1328, "height": 1328, "category": "square", "ratio": "1:1"},  # Qwen-Image default
         {"value": "1536x1536", "label": "1536", "width": 1536, "height": 1536, "category": "square", "ratio": "1:1"},
         {"value": "1920x1920", "label": "1920", "width": 1920, "height": 1920, "category": "square", "ratio": "1:1"},
         {"value": "2048x2048", "label": "2K", "width": 2048, "height": 2048, "category": "square", "ratio": "1:1"},
-
         # Landscape - 16:9
         {"value": "1280x720", "label": "720p", "width": 1280, "height": 720, "category": "landscape", "ratio": "16:9"},
         {"value": "1920x1088", "label": "1080p", "width": 1920, "height": 1088, "category": "landscape", "ratio": "16:9"},
         {"value": "2560x1440", "label": "1440p", "width": 2560, "height": 1440, "category": "landscape", "ratio": "16:9"},
-
         # Landscape - 3:2
         {"value": "1536x1024", "label": "1536x1024", "width": 1536, "height": 1024, "category": "landscape", "ratio": "3:2"},
         {"value": "1920x1280", "label": "1920x1280", "width": 1920, "height": 1280, "category": "landscape", "ratio": "3:2"},
-
         # Landscape - 4:3
         {"value": "1024x768", "label": "1024x768", "width": 1024, "height": 768, "category": "landscape", "ratio": "4:3"},
         {"value": "1280x960", "label": "1280x960", "width": 1280, "height": 960, "category": "landscape", "ratio": "4:3"},
         {"value": "1600x1200", "label": "1600x1200", "width": 1600, "height": 1200, "category": "landscape", "ratio": "4:3"},
-
         # Landscape - 21:9 Ultrawide
         {"value": "1792x768", "label": "Ultrawide", "width": 1792, "height": 768, "category": "landscape", "ratio": "21:9"},
         {"value": "2560x1088", "label": "UW 1080", "width": 2560, "height": 1088, "category": "landscape", "ratio": "21:9"},
-
         # Portrait - 9:16
         {"value": "720x1280", "label": "720p", "width": 720, "height": 1280, "category": "portrait", "ratio": "9:16"},
         {"value": "1088x1920", "label": "1080p", "width": 1088, "height": 1920, "category": "portrait", "ratio": "9:16"},
         {"value": "1440x2560", "label": "1440p", "width": 1440, "height": 2560, "category": "portrait", "ratio": "9:16"},
-
         # Portrait - 2:3
         {"value": "1024x1536", "label": "1024x1536", "width": 1024, "height": 1536, "category": "portrait", "ratio": "2:3"},
         {"value": "1280x1920", "label": "1280x1920", "width": 1280, "height": 1920, "category": "portrait", "ratio": "2:3"},
-
         # Portrait - 3:4
         {"value": "768x1024", "label": "768x1024", "width": 768, "height": 1024, "category": "portrait", "ratio": "3:4"},
         {"value": "960x1280", "label": "960x1280", "width": 960, "height": 1280, "category": "portrait", "ratio": "3:4"},
         {"value": "1200x1600", "label": "1200x1600", "width": 1200, "height": 1600, "category": "portrait", "ratio": "3:4"},
     ]
 
-    # Add DyPE recommendations to each preset
+    # Qwen-Image-Layered presets (FIXED: only 640 or 1024 square)
+    qwenimage_layered_presets = [
+        {"value": "640x640", "label": "640 (Fast)", "width": 640, "height": 640, "category": "square", "ratio": "1:1", "default": True},
+        {"value": "1024x1024", "label": "1024 (Quality)", "width": 1024, "height": 1024, "category": "square", "ratio": "1:1"},
+    ]
+
+    # Qwen-Image T2I presets (flexible, default 1328)
+    qwenimage_t2i_presets = [
+        {"value": "512x512", "label": "512", "width": 512, "height": 512, "category": "square", "ratio": "1:1"},
+        {"value": "768x768", "label": "768", "width": 768, "height": 768, "category": "square", "ratio": "1:1"},
+        {"value": "1024x1024", "label": "1024", "width": 1024, "height": 1024, "category": "square", "ratio": "1:1"},
+        {"value": "1328x1328", "label": "1328 (Default)", "width": 1328, "height": 1328, "category": "square", "ratio": "1:1", "default": True},
+        {"value": "1536x1536", "label": "1536", "width": 1536, "height": 1536, "category": "square", "ratio": "1:1"},
+        # Landscape
+        {"value": "1328x1024", "label": "1328x1024", "width": 1328, "height": 1024, "category": "landscape", "ratio": "4:3"},
+        {"value": "1536x1024", "label": "1536x1024", "width": 1536, "height": 1024, "category": "landscape", "ratio": "3:2"},
+        # Portrait
+        {"value": "1024x1328", "label": "1024x1328", "width": 1024, "height": 1328, "category": "portrait", "ratio": "3:4"},
+        {"value": "1024x1536", "label": "1024x1536", "width": 1024, "height": 1536, "category": "portrait", "ratio": "2:3"},
+    ]
+
+    # Select presets based on model
+    if current_model == "qwenimage-layered":
+        presets = qwenimage_layered_presets
+        constraints = model_constraints["qwenimage-layered"]
+    elif current_model == "qwenimage-t2i":
+        presets = qwenimage_t2i_presets
+        constraints = model_constraints["qwenimage-t2i"]
+    else:
+        # Default to Z-Image
+        presets = zimage_presets
+        constraints = model_constraints["zimage"]
+
+    # Add DyPE recommendations to Z-Image presets
     for preset in presets:
-        preset["dype"] = get_dype_recommendation(preset["width"], preset["height"])
+        if current_model in (None, "zimage"):
+            preset["dype"] = get_dype_recommendation(preset["width"], preset["height"])
+        else:
+            preset["dype"] = {"recommended": False, "exponent": None}
+
+    # Determine available categories
+    categories = list(set(p["category"] for p in presets))
 
     return {
+        "current_model": current_model,
+        "model_constraints": model_constraints,
+        "active_constraints": constraints,
         "vae_multiple": VAE_MULTIPLE,
         "vae_scale_factor": VAE_SCALE_FACTOR,
-        "min_resolution": MIN_RESOLUTION,
-        "max_resolution": MAX_RESOLUTION,
+        "min_resolution": constraints.get("min_resolution", MIN_RESOLUTION),
+        "max_resolution": constraints.get("max_resolution", MAX_RESOLUTION),
         "default_resolution": DEFAULT_RESOLUTION,
+        "default_width": constraints.get("default_width", 1024),
+        "default_height": constraints.get("default_height", 1024),
         "dype_base_resolution": DYPE_BASE_RESOLUTION,
         "aspect_ratios": ASPECT_RATIOS,
         "presets": presets,
-        "categories": ["square", "landscape", "portrait"],
+        "categories": categories,
+        "supports_dype": constraints.get("supports_dype", False),
+        "supports_slg": constraints.get("supports_slg", False),
+        "supports_fmtt": constraints.get("supports_fmtt", False),
     }
 
 
@@ -2025,6 +2177,177 @@ async def generate(request: GenerateRequest):
 
     except Exception as e:
         logger.error(f"Generation failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/img2img")
+async def img2img(request: Img2ImgRequest):
+    """Generate an image from an input image with optional differential mask.
+
+    The mask controls per-pixel edit strength:
+    - Black (0): Preserve original
+    - White (255): Allow full editing
+    - Gray: Partial editing
+    """
+    if encoder_only_mode:
+        raise HTTPException(
+            status_code=400,
+            detail="Server running in encoder-only mode. Img2img not available."
+        )
+    if pipeline is None:
+        raise HTTPException(status_code=503, detail="Pipeline not loaded")
+
+    try:
+        import base64
+        import binascii
+        from PIL import Image as PILImage
+        from PIL import UnidentifiedImageError
+
+        logger.info("=" * 60)
+        logger.info("IMG2IMG REQUEST")
+        logger.info("=" * 60)
+        logger.info(f"  Prompt: {request.prompt[:80]}...")
+        logger.info(f"  Strength: {request.strength}")
+        logger.info(f"  Has mask: {request.mask_image is not None}")
+        logger.info(f"  Steps: {request.steps}")
+        logger.info(f"  Seed: {request.seed}")
+        logger.info("-" * 60)
+
+        # Decode and validate input image from base64
+        try:
+            # Strip data URL prefix if present
+            image_b64 = request.image
+            if image_b64.startswith("data:"):
+                image_b64 = image_b64.split(",", 1)[1]
+            image_data = base64.b64decode(image_b64, validate=True)
+            # Size limit: 50MB
+            if len(image_data) > 50_000_000:
+                raise HTTPException(status_code=413, detail="Image too large (max 50MB)")
+            input_image = PILImage.open(io.BytesIO(image_data)).convert("RGB")
+        except binascii.Error:
+            raise HTTPException(status_code=400, detail="Invalid base64 image data")
+        except UnidentifiedImageError:
+            raise HTTPException(status_code=400, detail="Unsupported image format")
+        logger.info(f"  Input image size: {input_image.size}")
+
+        # Decode and validate mask if provided
+        mask_image = None
+        if request.mask_image:
+            try:
+                mask_b64 = request.mask_image
+                if mask_b64.startswith("data:"):
+                    mask_b64 = mask_b64.split(",", 1)[1]
+                mask_data = base64.b64decode(mask_b64, validate=True)
+                if len(mask_data) > 50_000_000:
+                    raise HTTPException(status_code=413, detail="Mask image too large (max 50MB)")
+                mask_image = PILImage.open(io.BytesIO(mask_data)).convert("L")
+            except binascii.Error:
+                raise HTTPException(status_code=400, detail="Invalid base64 mask data")
+            except UnidentifiedImageError:
+                raise HTTPException(status_code=400, detail="Unsupported mask image format")
+            logger.info(f"  Mask size: {mask_image.size}")
+
+        # Determine output size
+        width = request.width if request.width else input_image.width
+        height = request.height if request.height else input_image.height
+
+        # Ensure dimensions are divisible by 16 (VAE constraint)
+        width = (width // 16) * 16
+        height = (height // 16) * 16
+
+        # Resize input image if needed
+        if input_image.size != (width, height):
+            input_image = input_image.resize((width, height), PILImage.LANCZOS)
+            logger.info(f"  Resized input to: {width}x{height}")
+
+        # Resize mask if needed
+        if mask_image and mask_image.size != (width, height):
+            mask_image = mask_image.resize((width, height), PILImage.LANCZOS)
+            logger.info(f"  Resized mask to: {width}x{height}")
+
+        # Set up generator for reproducibility
+        generator = None
+        if request.seed is not None:
+            generator = torch.Generator()
+            generator.manual_seed(request.seed)
+
+        start = time.time()
+
+        # Generate image using img2img
+        # Note: SLG, FMTT, DyPE, and layer_weights are not supported in img2img
+        logger.info(f"Calling pipeline.img2img with strength={request.strength}...")
+        if mask_image:
+            logger.info("  Using differential diffusion with mask")
+
+        image = pipeline.img2img(
+            prompt=request.prompt,
+            image=input_image,
+            mask_image=mask_image,
+            strength=request.strength,
+            num_inference_steps=request.steps,
+            guidance_scale=request.guidance_scale,
+            cfg_normalization=request.cfg_normalization,
+            cfg_truncation=request.cfg_truncation,
+            cfg_norm_mode=request.cfg_norm_mode,
+            shift=request.shift,
+            generator=generator,
+            template=request.template,
+            system_prompt=request.system_prompt,
+            thinking_content=request.thinking_content,
+            assistant_content=request.assistant_content,
+            force_think_block=request.force_think_block,
+            remove_quotes=request.strip_quotes,
+            long_prompt_mode=request.long_prompt_mode,
+            hidden_layer=request.hidden_layer,
+        )
+
+        gen_time = time.time() - start
+        logger.info(f"Generated in {gen_time:.1f}s")
+        logger.info("=" * 60)
+
+        # Convert to PNG bytes
+        img_bytes = io.BytesIO()
+        image.save(img_bytes, format="PNG")
+        img_bytes.seek(0)
+
+        # Store in history
+        img_bytes_copy = io.BytesIO()
+        image.save(img_bytes_copy, format="PNG")
+        img_b64 = base64.b64encode(img_bytes_copy.getvalue()).decode("ascii")
+
+        history_entry = {
+            "id": len(generation_history),
+            "timestamp": time.time(),
+            "model_type": "zimage-img2img",
+            "prompt": request.prompt,
+            "strength": request.strength,
+            "has_mask": request.mask_image is not None,
+            "width": width,
+            "height": height,
+            "steps": request.steps,
+            "seed": request.seed,
+            "gen_time": gen_time,
+            "image_b64": img_b64,
+        }
+        generation_history.insert(0, history_entry)
+        if len(generation_history) > MAX_HISTORY:
+            generation_history.pop()
+
+        return StreamingResponse(
+            img_bytes,
+            media_type="image/png",
+            headers={
+                "X-Generation-Time": str(gen_time),
+                "X-Seed": str(request.seed) if request.seed else "random",
+                "X-History-Id": str(history_entry["id"]),
+                "X-Mode": "differential" if request.mask_image else "standard",
+            },
+        )
+
+    except Exception as e:
+        logger.error(f"Img2img failed: {e}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 

@@ -487,6 +487,17 @@ def main():
         default=0.7,
         help="img2img strength (0.0=no change, 1.0=full regeneration, default: 0.7)",
     )
+    parser.add_argument(
+        "--mask-image",
+        "--mask",
+        type=str,
+        default=None,
+        help=(
+            "Grayscale mask for differential img2img. "
+            "Black=preserve original, white=allow editing. "
+            "Enables per-pixel control over edit strength."
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -783,6 +794,14 @@ def main():
         input_image = Image.open(args.img2img)
         logger.info(f"  Size: {input_image.size}")
 
+        # Load mask image for differential diffusion if provided
+        mask_image = None
+        mask_path = getattr(args, 'mask_image', None)
+        if mask_path:
+            mask_image = Image.open(mask_path).convert("L")
+            logger.info(f"  Mask image: {mask_path}")
+            logger.info("  Differential diffusion mode enabled")
+
         logger.info(f"Prompt: {args.prompt}")
 
         # img2img needs CUDA generator (creates noise directly on device)
@@ -796,6 +815,7 @@ def main():
         image = pipe.img2img(
             prompt=args.prompt,
             image=input_image,
+            mask_image=mask_image,
             strength=args.strength,
             num_inference_steps=config.steps,
             guidance_scale=config.guidance_scale,

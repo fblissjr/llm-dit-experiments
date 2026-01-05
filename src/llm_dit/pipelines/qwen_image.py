@@ -39,6 +39,10 @@ from llm_dit.utils.latent_packing import (
     unpack_multi_layer_latents,
     get_img_shapes_for_rope,
 )
+from llm_dit.utils.cfg import (
+    apply_cfg_normalization,
+    calculate_dynamic_shift_simple as calculate_dynamic_shift,
+)
 
 if TYPE_CHECKING:
     from llm_dit.utils.dype import DyPEConfig
@@ -47,62 +51,6 @@ logger = logging.getLogger(__name__)
 
 # Supported resolutions (from training data)
 SUPPORTED_RESOLUTIONS = (640, 1024)
-
-
-def apply_cfg_normalization(
-    pred: torch.Tensor,
-    pos: torch.Tensor,
-    cfg_normalization: float,
-    cfg_norm_mode: str = "clamp",
-) -> torch.Tensor:
-    """Apply CFG normalization to combined prediction.
-
-    Args:
-        pred: Combined prediction (pos + scale * (pos - neg))
-        pos: Positive (conditional) prediction
-        cfg_normalization: Normalization strength/factor
-        cfg_norm_mode: Normalization mode:
-            - "clamp": Clamp pred norm to cfg_normalization * pos_norm (original)
-            - "match": Scale pred to match pos_norm (DiffSynth-style)
-
-    Returns:
-        Normalized prediction tensor
-    """
-    if cfg_normalization <= 0:
-        return pred
-
-    pos_norm = torch.linalg.vector_norm(pos)
-    pred_norm = torch.linalg.vector_norm(pred)
-
-    # Avoid division by zero
-    pred_norm = torch.where(pred_norm < 1e-6, torch.ones_like(pred_norm), pred_norm)
-
-    if cfg_norm_mode == "match":
-        # DiffSynth-style: directly scale pred to match pos norm
-        scale_factor = pos_norm / pred_norm
-    else:  # "clamp" (default)
-        # Original: clamp pred norm to cfg_normalization * pos_norm
-        max_allowed_norm = pos_norm * cfg_normalization
-        scale_factor = torch.clamp(max_allowed_norm / pred_norm, max=1.0)
-
-    return pred * scale_factor
-
-
-def calculate_dynamic_shift(seq_len: int, base_seq_len: int = 256) -> float:
-    """
-    Calculate dynamic shift for flow matching scheduler.
-
-    Based on DiffSynth FlowMatchScheduler shift calculation:
-        shift_mu = (seq_len / base_seqlen) ** 0.5
-
-    Args:
-        seq_len: Current sequence length (latent H * W / 4)
-        base_seq_len: Base sequence length (256 * 256 / 16 / 16 = 256)
-
-    Returns:
-        Dynamic shift value
-    """
-    return (seq_len / base_seq_len) ** 0.5
 
 
 class QwenImagePipeline:

@@ -106,6 +106,23 @@ from llm_dit.utils.prompt_rewriter import (
     DEFAULT_NEGATIVE_PROMPT_EN,
 )
 
+from llm_dit.utils.cfg import (
+    CFGNormMode,
+    apply_cfg_normalization,
+    apply_cfg_truncation,
+    get_cfg_scale_with_truncation,
+    calculate_dynamic_shift,
+    calculate_dynamic_shift_simple,
+)
+
+from llm_dit.utils.vae_ops import (
+    encode_image_to_latents,
+    prepare_differential_masks,
+    blend_differential_latents,
+    scale_noise_for_timestep,
+    get_vae_scale_factor,
+)
+
 __all__ = [
     # LoRA
     "LoRALoader",
@@ -186,4 +203,17 @@ __all__ = [
     "CHINESE_SYSTEM_PROMPT",
     "DEFAULT_NEGATIVE_PROMPT",
     "DEFAULT_NEGATIVE_PROMPT_EN",
+    # CFG utilities
+    "CFGNormMode",
+    "apply_cfg_normalization",
+    "apply_cfg_truncation",
+    "get_cfg_scale_with_truncation",
+    "calculate_dynamic_shift",
+    "calculate_dynamic_shift_simple",
+    # VAE operations
+    "encode_image_to_latents",
+    "prepare_differential_masks",
+    "blend_differential_latents",
+    "scale_noise_for_timestep",
+    "get_vae_scale_factor",
 ]

@@ -31,6 +31,16 @@ from PIL import Image
 from llm_dit.conversation import Conversation
 from llm_dit.encoders import ZImageTextEncoder
 from llm_dit.utils.long_prompt import compress_embeddings, LongPromptMode
+from llm_dit.utils.cfg import (
+    apply_cfg_normalization,
+    apply_cfg_truncation,
+    calculate_dynamic_shift as calculate_shift,
+)
+from llm_dit.utils.vae_ops import (
+    prepare_differential_masks,
+    blend_differential_latents,
+    scale_noise_for_timestep,
+)
 
 if TYPE_CHECKING:
     from llm_dit.utils.dype import DyPEConfig
@@ -73,59 +83,6 @@ def setup_attention_backend(backend: Optional[str] = None) -> str:
 
     log_attention_info()
     return get_attention_backend()
-
-
-def calculate_shift(
-    image_seq_len: int,
-    base_seq_len: int = 256,
-    max_seq_len: int = 4096,
-    base_shift: float = 0.5,
-    max_shift: float = 1.15,
-) -> float:
-    """Calculate shift for flow matching scheduler."""
-    m = (max_shift - base_shift) / (max_seq_len - base_seq_len)
-    b = base_shift - m * base_seq_len
-    mu = image_seq_len * m + b
-    return mu
-
-
-def apply_cfg_normalization(
-    pred: torch.Tensor,
-    pos: torch.Tensor,
-    cfg_normalization: float,
-    cfg_norm_mode: str = "clamp",
-) -> torch.Tensor:
-    """Apply CFG normalization to combined prediction.
-
-    Args:
-        pred: Combined prediction (pos + scale * (pos - neg))
-        pos: Positive (conditional) prediction
-        cfg_normalization: Normalization strength/factor
-        cfg_norm_mode: Normalization mode:
-            - "clamp": Clamp pred norm to cfg_normalization * pos_norm (original)
-            - "match": Scale pred to match pos_norm (DiffSynth-style)
-
-    Returns:
-        Normalized prediction tensor
-    """
-    if cfg_normalization <= 0:
-        return pred
-
-    pos_norm = torch.linalg.vector_norm(pos)
-    pred_norm = torch.linalg.vector_norm(pred)
-
-    # Avoid division by zero
-    pred_norm = torch.where(pred_norm < 1e-6, torch.ones_like(pred_norm), pred_norm)
-
-    if cfg_norm_mode == "match":
-        # DiffSynth-style: directly scale pred to match pos norm
-        scale_factor = pos_norm / pred_norm
-    else:  # "clamp" (default)
-        # Original: clamp pred norm to cfg_normalization * pos_norm
-        max_allowed_norm = pos_norm * cfg_normalization
-        scale_factor = torch.clamp(max_allowed_norm / pred_norm, max=1.0)
-
-    return pred * scale_factor
 
 
 class ZImagePipeline:
@@ -615,6 +572,7 @@ class ZImagePipeline:
         self,
         prompt: Union[str, "Conversation", None] = None,
         image: Union[Image.Image, torch.Tensor] = None,
+        mask_image: Optional[Union[Image.Image, torch.Tensor]] = None,
         strength: float = 0.75,
         height: Optional[int] = None,
         width: Optional[int] = None,
@@ -646,9 +604,20 @@ class ZImagePipeline:
         - strength=1.0: Output ignores input completely (like txt2img)
         - strength=0.5-0.8: Good range for style transfer / modifications
 
+        Differential Diffusion Mode:
+        When mask_image is provided, enables per-pixel edit strength control:
+        - Black (0): Preserve original pixel completely
+        - White (1): Allow full editing at this pixel
+        - Gray: Partial editing proportional to brightness
+        This enables soft inpainting, multi-region editing with different
+        strengths, and smooth transitions between edited/preserved areas.
+
         Args:
             prompt: Text prompt describing the desired output
             image: Input image (PIL Image or tensor)
+            mask_image: Optional grayscale mask for differential diffusion.
+                Black = preserve original, white = allow editing.
+                Enables per-pixel control over edit strength.
             strength: How much to transform the input (0.0-1.0)
             height: Output height (default: input image height)
             width: Output width (default: input image width)
@@ -667,6 +636,10 @@ class ZImagePipeline:
             shift: Override scheduler shift/mu
             long_prompt_mode: How to handle prompts > 1504 tokens (truncate/interpolate/pool/attention_pool)
             hidden_layer: Which LLM hidden layer to extract embeddings from (default: -2)
+            prompt_embeds: Pre-computed prompt embeddings (skip encoding if provided)
+            cfg_normalization: CFG normalization strength (0 = disabled)
+            cfg_truncation: Disable CFG after this progress threshold (1.0 = never)
+            cfg_norm_mode: "clamp" or "match" (DiffSynth-style)
 
         Returns:
             Generated image in specified format
@@ -685,6 +658,15 @@ class ZImagePipeline:
                 "Add a sunset sky",
                 image=input_img,
                 strength=0.3,
+            )
+
+            # Differential diffusion: edit face, preserve background
+            mask = Image.open("face_mask.png")  # White on face, black elsewhere
+            output = pipe.img2img(
+                "Make them smile",
+                image=input_img,
+                mask_image=mask,
+                strength=0.7,
             )
         """
         import numpy as np
@@ -812,6 +794,21 @@ class ZImagePipeline:
 
         logger.info(f"[img2img] Starting denoising from step {t_start}, {len(timesteps)} steps remaining")
 
+        # 4b. Prepare differential diffusion masks if mask_image provided
+        differential_masks = None
+        use_differential = mask_image is not None
+        if use_differential:
+            logger.info("[img2img] Differential diffusion mode enabled - preparing masks")
+            differential_masks = prepare_differential_masks(
+                mask_image=mask_image,
+                num_inference_steps=len(timesteps),
+                latent_size=(latent_height, latent_width),
+                device=device,
+                dtype=torch.float32,
+            )
+            # Store original latents for blending (before noise added)
+            original_latents_for_blend = init_latents.clone()
+
         # 5. Encode negative prompt if using CFG
         negative_prompt_embeds = []
         if guidance_scale > 0:
@@ -901,6 +898,23 @@ class ZImagePipeline:
                     latents,
                     return_dict=False,
                 )[0]
+
+                # 6b. Differential diffusion: blend denoised latents with re-noised original
+                if use_differential and i < len(timesteps) - 1:
+                    # Re-noise original latents to the next timestep level
+                    next_timestep = timesteps[i + 1]
+                    noised_original = scale_noise_for_timestep(
+                        self.scheduler,
+                        original_latents_for_blend,
+                        next_timestep,
+                        noise,
+                    )
+                    # Blend: mask=True preserves original, mask=False uses denoised
+                    latents = blend_differential_latents(
+                        latents,
+                        noised_original.to(device=latents.device, dtype=latents.dtype),
+                        differential_masks[i],
+                    )
 
                 if callback is not None:
                     callback(i, len(timesteps), latents)
