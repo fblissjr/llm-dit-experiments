@@ -202,7 +202,10 @@ def scale_noise_for_timestep(
         Noised latents at the specified timestep level
     """
     if hasattr(scheduler, 'scale_noise'):
-        # diffusers scheduler
+        # diffusers scheduler expects timestep as iterable, not scalar
+        # Wrap scalar timesteps in a list
+        if timestep.dim() == 0:
+            timestep = timestep.unsqueeze(0)
         return scheduler.scale_noise(original_latents, timestep, noise)
     elif hasattr(scheduler, 'sigmas'):
         # Our custom scheduler - manual flow matching noise addition
