@@ -6,8 +6,12 @@
     <title>LLM DiT Experiments UI</title>
     <link rel="icon" type="image/png" href="/favicon.png">
     <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Modular CSS -->
+    <link rel="stylesheet" href="/static/css/layout.css">
+    <link rel="stylesheet" href="/static/css/components.css">
+    <link rel="stylesheet" href="/static/css/forms.css">
     <style>
-        /* Custom scrollbar */
+        /* Custom scrollbar - kept inline for critical rendering */
         ::-webkit-scrollbar { width: 8px; height: 8px; }
         ::-webkit-scrollbar-track { background: #1f2937; }
         ::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 4px; }
@@ -5405,5 +5409,19 @@
         checkQwenImageStatus();
         checkQwenImage2512Status();
     </script>
+
+    <!-- Modular JavaScript (loaded after inline script for progressive enhancement) -->
+    <script src="/static/js/state.js"></script>
+    <script src="/static/js/api-client.js"></script>
+    <script src="/static/js/ui-utils.js"></script>
+    <script src="/static/js/history.js"></script>
+    <script src="/static/js/templates.js"></script>
+    <script src="/static/js/rewriter.js"></script>
+    <script src="/static/js/vl-conditioning.js"></script>
+    <script src="/static/js/img2img.js"></script>
+    <script src="/static/js/layer-blend.js"></script>
+    <script src="/static/js/advanced.js"></script>
+    <script src="/static/js/qwen-image.js"></script>
+    <script src="/static/js/app.js"></script>
 </body>
 </html>

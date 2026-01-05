@@ -79,6 +79,8 @@ def mock_encoder():
     mock_backend = MagicMock()
     mock_backend.tokenizer = Mock()
     mock_backend.tokenizer.return_value = {"input_ids": torch.zeros(1, 42)}
+    # Mock tokenizer.encode() to return a list (for len() support in format-prompt)
+    mock_backend.tokenizer.encode = Mock(return_value=[1, 2, 3, 4, 5])  # Returns list of token IDs
     encoder.backend = mock_backend
 
     return encoder

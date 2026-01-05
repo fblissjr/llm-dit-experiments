@@ -46,8 +46,12 @@ def test_pipeline_import():
     return True
 
 
-def test_pipeline_loading(model_path: str):
+def test_pipeline_loading(model_path: str = None):
     """Test pipeline loading with CPU offload."""
+    import pytest
+    if model_path is None:
+        pytest.skip("Run as script with --model-path")
+
     logger.info("=" * 60)
     logger.info("TEST: Pipeline Loading")
     logger.info("=" * 60)
@@ -79,8 +83,12 @@ def test_pipeline_loading(model_path: str):
     return pipe
 
 
-def test_decomposition(pipe, input_image: Image.Image, output_dir: Path):
+def test_decomposition(pipe=None, input_image: Image.Image = None, output_dir: Path = None):
     """Test image decomposition."""
+    import pytest
+    if pipe is None:
+        pytest.skip("Run as script with --model-path")
+
     logger.info("=" * 60)
     logger.info("TEST: Image Decomposition")
     logger.info("=" * 60)
@@ -116,8 +124,12 @@ def test_decomposition(pipe, input_image: Image.Image, output_dir: Path):
     return layers
 
 
-def test_layer_editing(pipe, layer: Image.Image, output_dir: Path):
+def test_layer_editing(pipe=None, layer: Image.Image = None, output_dir: Path = None):
     """Test layer editing (requires edit model download)."""
+    import pytest
+    if pipe is None:
+        pytest.skip("Run as script with --model-path")
+
     logger.info("=" * 60)
     logger.info("TEST: Layer Editing")
     logger.info("=" * 60)
@@ -153,8 +165,12 @@ def test_layer_editing(pipe, layer: Image.Image, output_dir: Path):
     return edited
 
 
-def test_edit_status(pipe):
+def test_edit_status(pipe=None):
     """Test edit model status."""
+    import pytest
+    if pipe is None:
+        pytest.skip("Run as script with --model-path")
+
     logger.info("=" * 60)
     logger.info("TEST: Edit Model Status")
     logger.info("=" * 60)
@@ -168,11 +184,15 @@ def test_edit_status(pipe):
     return has_edit
 
 
-def test_multi_image_editing(pipe, images: list, output_dir: Path):
+def test_multi_image_editing(pipe=None, images: list = None, output_dir: Path = None):
     """Test multi-image editing (Qwen-Image-Edit-2511 feature).
 
     Combines multiple images based on text instruction.
     """
+    import pytest
+    if pipe is None:
+        pytest.skip("Run as script with --model-path")
+
     logger.info("=" * 60)
     logger.info("TEST: Multi-Image Editing (2511 Feature)")
     logger.info("=" * 60)

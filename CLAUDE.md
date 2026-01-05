@@ -93,7 +93,9 @@ scripts/
 
 web/
     server.py           # FastAPI server
-    index.html          # Web UI
+    index.html          # Web UI (markup)
+    static/js/          # Modular JS (12 files)
+    static/css/         # Modular CSS (3 files)
 
 templates/z_image/      # 140+ prompt templates
 experiments/            # Ablation studies, VL experiments
@@ -115,6 +117,7 @@ internal/               # Development docs, research, session logs
 | DyPE | `docs/reference/dype.md` | High-resolution generation (2K+) |
 | Long prompts | `docs/reference/long_prompts.md` | 1504 token limit, compression modes |
 | Chat templates | `docs/reference/chat_templates.md` | Qwen3/Qwen3-VL template format |
+| Web architecture | `docs/reference/web_architecture.md` | Modular JS/CSS structure |
 | Doc checklist | `docs/reference/documentation_checklist.md` | After implementing features |
 
 ### Guides (how-to docs)

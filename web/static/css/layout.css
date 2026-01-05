@@ -1,0 +1,95 @@
+/**
+ * layout.css - Layout, scrollbar, responsive, and animation styles
+ */
+
+/* =============================================================================
+   Custom Scrollbar
+   ============================================================================= */
+
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: #1f2937;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #4b5563;
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #6b7280;
+}
+
+/* =============================================================================
+   Animations
+   ============================================================================= */
+
+/* Loading pulse animation */
+.loading {
+    animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: .5; }
+}
+
+/* Panel transitions */
+.panel-transition {
+    transition: transform 0.3s ease, opacity 0.3s ease;
+}
+
+/* =============================================================================
+   History Panel
+   ============================================================================= */
+
+/* Thumbnail hover overlay */
+.history-item:hover .history-overlay {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.history-overlay {
+    transition: opacity 0.2s ease;
+    pointer-events: none;
+}
+
+/* Mobile bottom sheet layout */
+@media (max-width: 768px) {
+    .history-panel {
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        max-height: 60vh;
+        border-radius: 1rem 1rem 0 0;
+        z-index: 50;
+    }
+
+    .history-panel.collapsed {
+        max-height: 48px;
+    }
+}
+
+/* =============================================================================
+   Body States
+   ============================================================================= */
+
+/* Prevent body scroll when panel/modal open */
+body.panel-open {
+    overflow: hidden;
+}
+
+/* =============================================================================
+   Touch-Friendly Sizing
+   ============================================================================= */
+
+@media (max-width: 768px) {
+    button, select, input[type="number"] {
+        min-height: 44px;
+    }
+}

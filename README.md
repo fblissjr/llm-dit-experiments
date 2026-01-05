@@ -108,6 +108,7 @@ See [experiments/README.md](experiments/README.md).
 - [CLI Flags](docs/reference/cli_flags.md) - all command-line options
 - [API Endpoints](docs/reference/api_endpoints.md) - REST API
 - [Configuration](docs/reference/configuration.md) - TOML structure
+- [Web Architecture](docs/reference/web_architecture.md) - modular JS/CSS structure
 - [DyPE](docs/reference/dype.md) - high-resolution generation
 - [Long Prompts](docs/reference/long_prompts.md) - token compression
 

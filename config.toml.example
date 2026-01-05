@@ -1,5 +1,5 @@
 # llm-dit-experiments Configuration
-# last updated: 2026-01-04
+# last updated: 2025-01-05
 #
 # Copy this file to config.toml and modify paths for your setup.
 # CLI flags override config values. Run `uv run scripts/generate.py --help` for all options.

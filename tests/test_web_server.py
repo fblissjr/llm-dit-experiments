@@ -129,6 +129,11 @@ def mock_pipeline(mock_encoder):
         force_think_block=False,
         remove_quotes=False,
         shift=3.0,
+        cfg_normalization=0.0,
+        cfg_truncation=1.0,
+        long_prompt_mode="interpolate",
+        hidden_layer=-2,
+        **kwargs,  # Accept any additional future parameters
     ):
         from PIL import Image
         return Image.new("RGB", (width, height), color="blue")
@@ -420,10 +425,10 @@ class TestTemplatesEndpoint:
         assert "default" in template_names
         assert "photorealistic" in template_names
 
-        # Check has_thinking field
+        # Check add_think_block field
         for template in data["templates"]:
             assert "name" in template
-            assert "has_thinking" in template
+            assert "add_think_block" in template
 
     def test_list_templates_encoder_only(self, client_encoder_only):
         """List templates in encoder-only mode."""
@@ -442,7 +447,7 @@ class TestTemplatesEndpoint:
         assert data["templates"] == []
 
     def test_template_thinking_content(self, client_encoder_only):
-        """Verify has_thinking reflects template content."""
+        """Verify add_think_block reflects template content."""
         response = client_encoder_only.get("/api/templates")
         data = response.json()
 
@@ -450,13 +455,13 @@ class TestTemplatesEndpoint:
         photo_template = next(
             t for t in data["templates"] if t["name"] == "photorealistic"
         )
-        assert photo_template["has_thinking"] is True
+        assert photo_template["add_think_block"] is True
 
         # Find default template
         default_template = next(
             t for t in data["templates"] if t["name"] == "default"
         )
-        assert default_template["has_thinking"] is False
+        assert default_template["add_think_block"] is True  # Both templates have think block
 
 
 class TestSaveEmbeddingsEndpoint:
