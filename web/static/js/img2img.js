@@ -97,6 +97,7 @@ function clearImg2ImgImage() {
     const previewImg = document.getElementById('img2imgPreviewImg');
     const dimensions = document.getElementById('img2imgImageInfo');
     const maskCanvas = document.getElementById('img2imgMaskCanvas');
+    const maskContainer = document.getElementById('img2imgMaskContainer');
     const clearBtn = document.getElementById('img2imgClearImage');
 
     if (preview) preview.classList.add('hidden');
@@ -106,6 +107,12 @@ function clearImg2ImgImage() {
     if (maskCanvas) {
         const ctx = maskCanvas.getContext('2d');
         ctx.clearRect(0, 0, maskCanvas.width, maskCanvas.height);
+    }
+    // Clear the background image from container
+    if (maskContainer) {
+        maskContainer.style.backgroundImage = '';
+        maskContainer.style.width = '';
+        maskContainer.style.height = '';
     }
 
     AppState.img2imgMaskCtx = null;
@@ -117,18 +124,37 @@ function clearImg2ImgImage() {
 
 function initMaskCanvas(width, height) {
     const maskCanvas = document.getElementById('img2imgMaskCanvas');
+    const maskContainer = document.getElementById('img2imgMaskContainer');
     const maskControls = document.getElementById('img2imgMaskControls');
 
     if (!maskCanvas) return;
 
-    // Set canvas size to match image
+    // Set canvas internal size to match image
     maskCanvas.width = width;
     maskCanvas.height = height;
+
+    // Set display size with aspect ratio preserved (max width 512px)
+    const maxDisplayWidth = 512;
+    const scale = Math.min(maxDisplayWidth / width, 1);
+    const displayWidth = Math.round(width * scale);
+    const displayHeight = Math.round(height * scale);
+
+    maskCanvas.style.width = displayWidth + 'px';
+    maskCanvas.style.height = displayHeight + 'px';
+
+    // Show uploaded image as background of the container
+    if (maskContainer && AppState.img2imgImage) {
+        maskContainer.style.width = displayWidth + 'px';
+        maskContainer.style.height = displayHeight + 'px';
+        maskContainer.style.backgroundImage = `url(${AppState.img2imgImage.base64})`;
+        maskContainer.style.backgroundSize = 'cover';
+        maskContainer.style.backgroundPosition = 'center';
+    }
 
     const ctx = maskCanvas.getContext('2d');
     AppState.img2imgMaskCtx = ctx;
 
-    // Clear canvas (transparent = preserve)
+    // Clear canvas (transparent = preserve, paint shows on top of image)
     ctx.clearRect(0, 0, width, height);
 
     // Show mask controls

@@ -4235,11 +4235,22 @@
             // Limit canvas display size while maintaining aspect ratio
             const maxDisplayWidth = 512;
             const scale = Math.min(maxDisplayWidth / width, 1);
+            const displayWidth = Math.round(width * scale);
+            const displayHeight = Math.round(height * scale);
 
             img2imgMaskCanvas.width = width;
             img2imgMaskCanvas.height = height;
-            img2imgMaskCanvas.style.width = (width * scale) + 'px';
-            img2imgMaskCanvas.style.height = (height * scale) + 'px';
+            img2imgMaskCanvas.style.width = displayWidth + 'px';
+            img2imgMaskCanvas.style.height = displayHeight + 'px';
+
+            // Show uploaded image as background so user can see what they're painting on
+            if (img2imgMaskContainer && img2imgPreviewImg?.src) {
+                img2imgMaskContainer.style.width = displayWidth + 'px';
+                img2imgMaskContainer.style.height = displayHeight + 'px';
+                img2imgMaskContainer.style.backgroundImage = `url(${img2imgPreviewImg.src})`;
+                img2imgMaskContainer.style.backgroundSize = 'cover';
+                img2imgMaskContainer.style.backgroundPosition = 'center';
+            }
 
             img2imgMaskCtx = img2imgMaskCanvas.getContext('2d');
             // Start with transparent canvas (no mask = no edits = black)
@@ -4317,6 +4328,12 @@
             img2imgImagePreview.classList.add('hidden');
             img2imgClearImage.classList.add('hidden');
             clearImg2ImgMask();
+            // Clear background image from mask container
+            if (img2imgMaskContainer) {
+                img2imgMaskContainer.style.backgroundImage = '';
+                img2imgMaskContainer.style.width = '';
+                img2imgMaskContainer.style.height = '';
+            }
         });
 
         // Brush size slider
