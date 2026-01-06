@@ -73,7 +73,9 @@ function toggleLayerBlendControls() {
 // =============================================================================
 
 function getLayerWeights() {
-    const { layerBlendEnabled, layerBlendMode, blendLayer1, blendLayer2, blendWeight1, blendLayer3a, blendLayer3b, blendLayer3c } = DOM;
+    const { layerBlendEnabled, layerBlendMode, blendLayer1, blendLayer2, blendWeight1,
+            blendLayer3a, blendLayer3b, blendLayer3c,
+            blendWeight3a, blendWeight3b, blendWeight3c } = DOM;
 
     if (!layerBlendEnabled || !layerBlendEnabled.checked) {
         return null;
@@ -85,7 +87,8 @@ function getLayerWeights() {
     const weights = {};
 
     if (mode === '2-layer') {
-        const weight = blendWeight1 ? parseFloat(blendWeight1.value) : 0.5;
+        // Slider is 0-100, convert to 0-1
+        const weight = blendWeight1 ? parseFloat(blendWeight1.value) / 100 : 0.5;
         const layer1 = parseInt(blendLayer1?.value || -2);
         const layer2 = parseInt(blendLayer2?.value || -6);
 
@@ -97,16 +100,23 @@ function getLayerWeights() {
             weights[layer2] = 1 - weight;
         }
     } else {
-        // 3-layer mode with equal weights
+        // 3-layer mode with per-layer weights (sliders are 0-100)
         const layer3a = parseInt(blendLayer3a?.value || -1);
         const layer3b = parseInt(blendLayer3b?.value || -2);
         const layer3c = parseInt(blendLayer3c?.value || -3);
 
+        const weight3a = blendWeight3a ? parseFloat(blendWeight3a.value) / 100 : 0.33;
+        const weight3b = blendWeight3b ? parseFloat(blendWeight3b.value) / 100 : 0.33;
+        const weight3c = blendWeight3c ? parseFloat(blendWeight3c.value) / 100 : 0.34;
+
         // Handle duplicate layers by summing weights
-        const layers = [layer3a, layer3b, layer3c];
-        const baseWeight = 1/3;
-        layers.forEach(layer => {
-            weights[layer] = (weights[layer] || 0) + baseWeight;
+        const layerWeightPairs = [
+            [layer3a, weight3a],
+            [layer3b, weight3b],
+            [layer3c, weight3c]
+        ];
+        layerWeightPairs.forEach(([layer, w]) => {
+            weights[layer] = (weights[layer] || 0) + w;
         });
     }
 
@@ -122,9 +132,26 @@ function updateBlendWeightDisplay() {
 
     if (!blendWeight1 || !blendWeight1Value || !blendWeight2Value) return;
 
-    const weight = parseFloat(blendWeight1.value);
+    // Slider is 0-100, convert to 0-1 for display
+    const weight = parseFloat(blendWeight1.value) / 100;
     blendWeight1Value.textContent = formatNumber(weight, 2);
     blendWeight2Value.textContent = formatNumber(1 - weight, 2);
+}
+
+function updateThreeLayerWeightDisplay() {
+    const { blendWeight3a, blendWeight3b, blendWeight3c,
+            blendWeight3aValue, blendWeight3bValue, blendWeight3cValue } = DOM;
+
+    // Update each 3-layer weight display (sliders are 0-100, convert to 0-1)
+    if (blendWeight3a && blendWeight3aValue) {
+        blendWeight3aValue.textContent = formatNumber(parseFloat(blendWeight3a.value) / 100, 2);
+    }
+    if (blendWeight3b && blendWeight3bValue) {
+        blendWeight3bValue.textContent = formatNumber(parseFloat(blendWeight3b.value) / 100, 2);
+    }
+    if (blendWeight3c && blendWeight3cValue) {
+        blendWeight3cValue.textContent = formatNumber(parseFloat(blendWeight3c.value) / 100, 2);
+    }
 }
 
 // =============================================================================
@@ -184,14 +211,23 @@ function setupBlendPresets() {
 }
 
 function applyBlendPreset(preset) {
-    const { blendLayer1, blendLayer2, blendWeight1, layerBlendMode, layerBlendEnabled, layerBlendControls } = DOM;
+    const { blendLayer1, blendLayer2, blendWeight1, layerBlendMode, layerBlendEnabled, layerBlendControls,
+            blendLayer3a, blendLayer3b, blendLayer3c,
+            blendWeight3a, blendWeight3b, blendWeight3c } = DOM;
 
-    // Presets define layer1, layer2, and weight
+    // Presets define layers and weights (0-1 scale, converted to 0-100 for sliders)
+    // 2-layer presets: l1, l2, w (weight for l1, l2 gets 1-w)
+    // 3-layer presets: l1, l2, l3, w1, w2, w3 (individual weights)
     const presets = {
-        'default': { l1: -2, l2: -6, w: 0.7 },
-        'semantic': { l1: -6, l2: -18, w: 0.5 },
-        'style': { l1: -1, l2: -2, w: 0.3 },
-        'balanced': { l1: -2, l2: -19, w: 0.5 },
+        // 2-layer presets
+        'default': { mode: '2-layer', l1: -2, l2: -6, w: 0.7 },
+        'semantic': { mode: '2-layer', l1: -2, l2: -6, w: 0.5 },
+        'balanced': { mode: '2-layer', l1: -2, l2: -5, w: 0.5 },
+        'deep': { mode: '2-layer', l1: -2, l2: -10, w: 0.6 },
+        'middle': { mode: '2-layer', l1: -19, l2: -2, w: 0.5 },
+        'structure': { mode: '2-layer', l1: -3, l2: -8, w: 0.5 },
+        // 3-layer presets
+        'top3': { mode: '3-layer', l1: -1, l2: -2, l3: -3, w1: 0.33, w2: 0.34, w3: 0.33 },
     };
 
     const p = presets[preset];
@@ -205,18 +241,28 @@ function applyBlendPreset(preset) {
         }
     }
 
-    // Set to 2-layer mode
+    // Set mode
     if (layerBlendMode) {
-        layerBlendMode.value = '2-layer';
+        layerBlendMode.value = p.mode;
         updateLayerBlendMode();
     }
 
-    // Apply values
-    if (blendLayer1) blendLayer1.value = p.l1;
-    if (blendLayer2) blendLayer2.value = p.l2;
-    if (blendWeight1) blendWeight1.value = p.w;
-
-    updateBlendWeightDisplay();
+    if (p.mode === '2-layer') {
+        // Apply 2-layer values (w is 0-1, slider is 0-100)
+        if (blendLayer1) blendLayer1.value = p.l1;
+        if (blendLayer2) blendLayer2.value = p.l2;
+        if (blendWeight1) blendWeight1.value = p.w * 100;
+        updateBlendWeightDisplay();
+    } else {
+        // Apply 3-layer values (weights are 0-1, sliders are 0-100)
+        if (blendLayer3a) blendLayer3a.value = p.l1;
+        if (blendLayer3b) blendLayer3b.value = p.l2;
+        if (blendLayer3c) blendLayer3c.value = p.l3;
+        if (blendWeight3a) blendWeight3a.value = p.w1 * 100;
+        if (blendWeight3b) blendWeight3b.value = p.w2 * 100;
+        if (blendWeight3c) blendWeight3c.value = p.w3 * 100;
+        updateThreeLayerWeightDisplay();
+    }
 }
 
 function updateBlendPresetStyles(selectedPreset) {
@@ -241,7 +287,8 @@ function updateBlendPresetStyles(selectedPreset) {
 // =============================================================================
 
 function initLayerBlendEvents() {
-    const { layerBlendEnabled, layerBlendMode, blendWeight1, hiddenLayerSlider } = DOM;
+    const { layerBlendEnabled, layerBlendMode, blendWeight1, hiddenLayerSlider,
+            blendWeight3a, blendWeight3b, blendWeight3c } = DOM;
 
     if (layerBlendEnabled) {
         layerBlendEnabled.addEventListener('change', toggleLayerBlendControls);
@@ -253,6 +300,17 @@ function initLayerBlendEvents() {
 
     if (blendWeight1) {
         blendWeight1.addEventListener('input', updateBlendWeightDisplay);
+    }
+
+    // 3-layer weight sliders
+    if (blendWeight3a) {
+        blendWeight3a.addEventListener('input', updateThreeLayerWeightDisplay);
+    }
+    if (blendWeight3b) {
+        blendWeight3b.addEventListener('input', updateThreeLayerWeightDisplay);
+    }
+    if (blendWeight3c) {
+        blendWeight3c.addEventListener('input', updateThreeLayerWeightDisplay);
     }
 
     if (hiddenLayerSlider) {
@@ -274,6 +332,7 @@ window.updateLayerBlendMode = updateLayerBlendMode;
 window.toggleLayerBlendControls = toggleLayerBlendControls;
 window.getLayerWeights = getLayerWeights;
 window.updateBlendWeightDisplay = updateBlendWeightDisplay;
+window.updateThreeLayerWeightDisplay = updateThreeLayerWeightDisplay;
 window.setupLayerPresets = setupLayerPresets;
 window.setupBlendPresets = setupBlendPresets;
 window.initLayerBlendEvents = initLayerBlendEvents;

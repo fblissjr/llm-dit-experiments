@@ -76,6 +76,12 @@ const DOM = {
     blendLayer3a: null,
     blendLayer3b: null,
     blendLayer3c: null,
+    blendWeight3a: null,
+    blendWeight3b: null,
+    blendWeight3c: null,
+    blendWeight3aValue: null,
+    blendWeight3bValue: null,
+    blendWeight3cValue: null,
     blendPresetButtons: null,
 
     // Modal
@@ -190,6 +196,12 @@ function initDOMReferences() {
     DOM.blendLayer3a = document.getElementById('blendLayer3a');
     DOM.blendLayer3b = document.getElementById('blendLayer3b');
     DOM.blendLayer3c = document.getElementById('blendLayer3c');
+    DOM.blendWeight3a = document.getElementById('blendWeight3a');
+    DOM.blendWeight3b = document.getElementById('blendWeight3b');
+    DOM.blendWeight3c = document.getElementById('blendWeight3c');
+    DOM.blendWeight3aValue = document.getElementById('blendWeight3aValue');
+    DOM.blendWeight3bValue = document.getElementById('blendWeight3bValue');
+    DOM.blendWeight3cValue = document.getElementById('blendWeight3cValue');
     DOM.blendPresetButtons = document.querySelectorAll('.blend-preset');
 
     // Modal

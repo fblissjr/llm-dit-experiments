@@ -1187,8 +1187,8 @@
                                 <div>
                                     <label class="block text-xs font-medium text-gray-400 mb-1">Blend Mode</label>
                                     <select id="layerBlendMode" class="w-full px-3 py-2 text-sm bg-gray-800 border border-gray-700 rounded-lg text-white focus:ring-2 focus:ring-blue-500">
-                                        <option value="two-layer">Two-Layer Blend</option>
-                                        <option value="three-layer">Three-Layer Blend</option>
+                                        <option value="2-layer">Two-Layer Blend</option>
+                                        <option value="3-layer">Three-Layer Blend</option>
                                     </select>
                                 </div>
 
@@ -1224,21 +1224,33 @@
                                             <select id="blendLayer3a" class="blend-layer-select w-full px-2 py-1.5 text-sm bg-gray-800 border border-gray-700 rounded text-white">
                                                 <!-- Populated by JavaScript -->
                                             </select>
+                                            <div class="mt-1">
+                                                <input type="range" id="blendWeight3a" min="0" max="100" value="33" class="w-full h-1.5">
+                                                <span id="blendWeight3aValue" class="text-xs text-blue-400">0.33</span>
+                                            </div>
                                         </div>
                                         <div>
                                             <label class="block text-xs text-gray-400 mb-1">Layer 2</label>
                                             <select id="blendLayer3b" class="blend-layer-select w-full px-2 py-1.5 text-sm bg-gray-800 border border-gray-700 rounded text-white">
                                                 <!-- Populated by JavaScript -->
                                             </select>
+                                            <div class="mt-1">
+                                                <input type="range" id="blendWeight3b" min="0" max="100" value="33" class="w-full h-1.5">
+                                                <span id="blendWeight3bValue" class="text-xs text-blue-400">0.33</span>
+                                            </div>
                                         </div>
                                         <div>
                                             <label class="block text-xs text-gray-400 mb-1">Layer 3</label>
                                             <select id="blendLayer3c" class="blend-layer-select w-full px-2 py-1.5 text-sm bg-gray-800 border border-gray-700 rounded text-white">
                                                 <!-- Populated by JavaScript -->
                                             </select>
+                                            <div class="mt-1">
+                                                <input type="range" id="blendWeight3c" min="0" max="100" value="34" class="w-full h-1.5">
+                                                <span id="blendWeight3cValue" class="text-xs text-blue-400">0.34</span>
+                                            </div>
                                         </div>
                                     </div>
-                                    <p class="text-xs text-gray-500">Equal weights (33% each)</p>
+                                    <p class="text-xs text-gray-500">Weights are normalized (sum to 1.0)</p>
                                 </div>
 
                                 <!-- Blend Presets -->
