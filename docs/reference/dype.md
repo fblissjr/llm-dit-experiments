@@ -97,6 +97,89 @@ DyPE is implemented in `src/llm_dit/utils/dype.py` (765+ lines) with three class
 - 4K (4096x4096): May show quality degradation, use with tiled VAE
 - 8K+: Consider multi-pass rendering in addition to DyPE
 
+## recommended settings
+
+### rtx 4090 optimized config
+
+```toml
+[rtx4090.dype]
+enabled = true
+method = "vision_yarn"           # Best method for Z-Image
+dype_scale = 2.0                 # Proven community value
+dype_exponent = 2.0              # Quadratic decay
+dype_start_sigma = 1.0           # From beginning
+base_shift = 0.5                 # Base resolution shift
+max_shift = 1.15                 # High-res shift
+base_resolution = 1024           # Z-Image training res
+anisotropic = false              # Enable for 21:9, 32:9
+multipass = "twopass"            # Key for 2K quality
+pass2_strength = 0.5             # 0.3-0.7 recommended
+pass3_strength = 0.4             # For threepass only
+frequency_modulation = false     # Keep off unless experimenting
+
+[rtx4090.pytorch]
+tiled_vae = true                 # Required for 2K+
+tile_size = 512
+tile_overlap = 64
+```
+
+### resolution presets
+
+| Resolution | Multipass | Pass Strengths | tiled_vae | Notes |
+|------------|-----------|----------------|-----------|-------|
+| 1024x1024 | `single` | n/a | false | Base resolution, no DyPE needed |
+| 1536x1536 | `single` | n/a | false | Works without multipass |
+| 2048x2048 | `twopass` | 0.5 | true | Recommended 2K workflow |
+| 2560x2560 | `twopass` | 0.4-0.5 | true | Lower strength preserves detail |
+| 4096x4096 | `threepass` | 0.5/0.4 | true | Three passes for best quality |
+
+### pass strength tuning
+
+| Strength | Effect | Use Case |
+|----------|--------|----------|
+| 0.3-0.4 | Minimal change | Preserve structure from pass 1, subtle refinement |
+| 0.5 | Balanced | Good default, moderate creative freedom |
+| 0.6-0.7 | More change | Allow divergence, more detail regeneration |
+
+**Tips:**
+- Lower `pass2_strength` = more consistent with first pass
+- Higher `pass2_strength` = more freedom to add detail (but may lose coherence)
+- For portraits/faces: use 0.3-0.4 to preserve likeness
+- For landscapes/abstract: 0.5-0.6 works well
+
+### aspect ratio recommendations
+
+| Aspect | Resolution | anisotropic | Notes |
+|--------|------------|-------------|-------|
+| 1:1 | 2048x2048 | false | Standard square |
+| 16:9 | 1920x1088 | false | HD widescreen |
+| 21:9 | 2560x1088 | true | Ultrawide panorama |
+| 32:9 | 3840x1088 | true | Super ultrawide |
+| 9:16 | 1088x1920 | false | Portrait/mobile |
+
+Enable `anisotropic = true` for extreme aspect ratios (wider than 2:1 or taller than 1:2).
+
+### quick reference cli
+
+```bash
+# 2K generation (recommended)
+uv run scripts/generate.py --config config.toml --profile rtx4090 \
+  --width 2048 --height 2048 "prompt"
+
+# 2K with custom pass strength
+uv run scripts/generate.py --dype --dype-multipass twopass \
+  --dype-pass2-strength 0.4 --width 2048 --height 2048 "prompt"
+
+# 4K generation
+uv run scripts/generate.py --dype --dype-multipass threepass \
+  --dype-pass2-strength 0.5 --dype-pass3-strength 0.4 \
+  --tiled-vae --width 4096 --height 4096 "prompt"
+
+# Ultrawide panorama
+uv run scripts/generate.py --dype --dype-multipass twopass \
+  --width 3840 --height 1088 "prompt"
+```
+
 ## complementary techniques
 
 DyPE works well with:
@@ -155,6 +238,59 @@ uv run scripts/generate.py \
 ```
 
 **Note:** Frequency modulation is experimental. If results are unsatisfactory, use multipass mode instead.
+
+## dynamic shift (scheduler)
+
+**Important:** Scheduler "dynamic shift" is separate from DyPE's `base_shift`/`max_shift` settings.
+
+### what's the difference?
+
+| Setting | Where | What It Affects |
+|---------|-------|-----------------|
+| DyPE `base_shift`/`max_shift` | DyPE config | Noise schedule weighting for high-res |
+| Scheduler `dynamic_shift` | Scheduler config | FlowMatch sigma spacing |
+
+**DyPE shift** (`base_shift`, `max_shift`):
+- Part of DyPE configuration
+- Affects the internal noise schedule weighting during RoPE extrapolation
+- Linearly interpolates between `base_shift` (0.5) at 1024px and `max_shift` (1.15) at 2048px
+
+**Scheduler dynamic shift** (`dynamic_shift`):
+- Independent of DyPE
+- Affects the FlowMatch scheduler's sigma schedule
+- When enabled, calculates shift based on sequence length (resolution)
+- Formula: `shift = seq_len * m + b` (clamped to [0.5, 1.15])
+
+### using both together
+
+You can combine DyPE with scheduler dynamic shift for optimal high-resolution generation:
+
+```bash
+# DyPE multipass with dynamic shift
+uv run scripts/generate.py --config config.toml --profile rtx4090 \
+  --dype --dype-multipass twopass \
+  --dynamic-shift \
+  --width 2048 --height 2048 "prompt"
+```
+
+```toml
+[rtx4090.scheduler]
+dynamic_shift = true   # Let scheduler calculate shift based on resolution
+
+[rtx4090.dype]
+enabled = true
+base_shift = 0.5       # DyPE internal shift at base res
+max_shift = 1.15       # DyPE internal shift at max res
+```
+
+### when to use dynamic shift
+
+| Scenario | Use Dynamic Shift? | Notes |
+|----------|-------------------|-------|
+| Fixed resolution (1024x1024) | No | Use fixed `shift=3.0` |
+| Variable resolution | Yes | Automatically adapts to resolution |
+| High-res DyPE generation | Optional | May improve results at 2K+ |
+| Experimentation | Try both | Compare fixed vs dynamic shift quality |
 
 ## web ui
 

@@ -1,6 +1,6 @@
 # cli flags reference
 
-*last updated: 2026-01-04*
+*last updated: 2026-01-06*
 
 Shared between `web/server.py` and `scripts/generate.py`.
 
@@ -87,6 +87,7 @@ uv run scripts/generate.py --config config.toml --profile rtx4090 "A cat"
 | `--cfg-normalization` | CFG norm clamping (0.0 = disabled, 1.0-2.0 typical). Prevents over-amplification. |
 | `--cfg-truncation` | CFG truncation threshold (1.0 = never, 0.5-0.8 typical). Stops CFG at this progress. |
 | `--shift` | Scheduler shift/mu (default: 3.0) |
+| `--dynamic-shift` | Calculate shift based on resolution (overrides --shift). Uses linear interpolation: base_shift=0.5 at 512x512, max_shift=1.15 at 2048x2048. |
 | `--seed` | Random seed |
 | `--img2img` | Input image path for img2img generation |
 | `--strength` | img2img strength: 0.0 (no change) to 1.0 (full regeneration) (default: 0.7) |

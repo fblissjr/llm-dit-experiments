@@ -223,6 +223,7 @@ class GenerateRequest(BaseModel):
     cfg_normalization: float = 0.0  # CFG norm clamping (0 = disabled)
     cfg_truncation: float = 1.0  # CFG truncation threshold (1.0 = never)
     shift: float = 3.0  # Scheduler shift parameter
+    dynamic_shift: bool = False  # Calculate shift based on resolution (overrides shift)
     long_prompt_mode: str = "interpolate"  # truncate/interpolate/pool/attention_pool
     hidden_layer: int = -2  # Which hidden layer to extract (-1 to -35, Qwen3-4B has 36 layers)
     layer_weights: Optional[Dict[int, float]] = None  # Multi-layer blending weights (overrides hidden_layer)
@@ -271,6 +272,7 @@ class Img2ImgRequest(BaseModel):
     cfg_truncation: float = Field(1.0, ge=0.0, le=1.0, description="Progress threshold for CFG truncation")
     cfg_norm_mode: str = "clamp"  # CFG normalization mode: clamp or match
     shift: float = Field(3.0, ge=0.0, le=10.0, description="Scheduler shift parameter")
+    dynamic_shift: bool = False  # Calculate shift based on resolution (overrides shift)
     long_prompt_mode: str = "interpolate"
     hidden_layer: int = Field(-2, ge=-35, le=-1, description="Hidden layer for text embeddings")
 
@@ -332,6 +334,7 @@ class VLGenerateRequest(BaseModel):
     template: Optional[str] = None
     guidance_scale: float = 0.0
     shift: float = 3.0
+    dynamic_shift: bool = False  # Calculate shift based on resolution (overrides shift)
     long_prompt_mode: str = "interpolate"
     hidden_layer: int = -2  # For text encoder
 
@@ -1321,7 +1324,7 @@ async def vl_generate(request: VLGenerateRequest):
             guidance_scale=request.guidance_scale,
             cfg_normalization=request.cfg_normalization,
             cfg_truncation=request.cfg_truncation,
-            shift=request.shift,
+            shift=None if request.dynamic_shift else request.shift,
             generator=generator,
         )
 
@@ -1492,6 +1495,7 @@ async def get_generation_config():
             "steps": 9,
             "guidance_scale": 0.0,
             "shift": 3.0,
+            "dynamic_shift": False,
             "long_prompt_mode": "interpolate",
             "hidden_layer": -2,
             "layer_weights": None,
@@ -1526,6 +1530,7 @@ async def get_generation_config():
         "steps": runtime_config.steps,
         "guidance_scale": runtime_config.guidance_scale,
         "shift": runtime_config.shift,
+        "dynamic_shift": getattr(runtime_config, 'dynamic_shift', False),
         "long_prompt_mode": runtime_config.long_prompt_mode,
         "hidden_layer": runtime_config.hidden_layer,
         "layer_weights": getattr(runtime_config, 'layer_weights', None),
@@ -1647,6 +1652,21 @@ async def get_resolution_config(model: Optional[str] = None):
         },
     }
 
+    # Helper to determine aspect category for filter buttons
+    def get_aspect_category(width: int, height: int) -> str:
+        """Determine aspect category based on ratio for UI filtering."""
+        ratio = width / height
+        if 0.95 <= ratio <= 1.05:
+            return "square"
+        elif ratio > 1.05:
+            if ratio >= 2.0:  # 19.5:9 = 2.17, 21:9 = 2.33
+                return "mobile-landscape"
+            return "landscape"
+        else:  # ratio < 0.95
+            if ratio <= 0.5:  # 9:19.5 = 0.46, 9:20 = 0.45
+                return "mobile-portrait"
+            return "portrait"
+
     # Z-Image presets (flexible, all divisible by 16)
     zimage_presets = [
         # Square (1:1)
@@ -1668,9 +1688,10 @@ async def get_resolution_config(model: Optional[str] = None):
         {"value": "1024x768", "label": "1024x768", "width": 1024, "height": 768, "category": "landscape", "ratio": "4:3"},
         {"value": "1280x960", "label": "1280x960", "width": 1280, "height": 960, "category": "landscape", "ratio": "4:3"},
         {"value": "1600x1200", "label": "1600x1200", "width": 1600, "height": 1200, "category": "landscape", "ratio": "4:3"},
-        # Landscape - 21:9 Ultrawide
+        # Mobile Landscape - 21:9, 19.5:9 (phone screens rotated)
         {"value": "1792x768", "label": "Ultrawide", "width": 1792, "height": 768, "category": "landscape", "ratio": "21:9"},
         {"value": "2560x1088", "label": "UW 1080", "width": 2560, "height": 1088, "category": "landscape", "ratio": "21:9"},
+        {"value": "2340x1080", "label": "Phone HD", "width": 2340, "height": 1080, "category": "landscape", "ratio": "19.5:9"},
         # Portrait - 9:16
         {"value": "720x1280", "label": "720p", "width": 720, "height": 1280, "category": "portrait", "ratio": "9:16"},
         {"value": "1088x1920", "label": "1080p", "width": 1088, "height": 1920, "category": "portrait", "ratio": "9:16"},
@@ -1682,6 +1703,9 @@ async def get_resolution_config(model: Optional[str] = None):
         {"value": "768x1024", "label": "768x1024", "width": 768, "height": 1024, "category": "portrait", "ratio": "3:4"},
         {"value": "960x1280", "label": "960x1280", "width": 960, "height": 1280, "category": "portrait", "ratio": "3:4"},
         {"value": "1200x1600", "label": "1200x1600", "width": 1200, "height": 1600, "category": "portrait", "ratio": "3:4"},
+        # Mobile Portrait - 9:19.5, 9:20 (phone screens)
+        {"value": "1080x2340", "label": "Phone HD", "width": 1080, "height": 2340, "category": "portrait", "ratio": "9:19.5"},
+        {"value": "1284x2778", "label": "iPhone Pro", "width": 1284, "height": 2778, "category": "portrait", "ratio": "9:19.5"},
     ]
 
     # Qwen-Image-Layered presets (FIXED: only 640 or 1024 square)
@@ -1717,8 +1741,12 @@ async def get_resolution_config(model: Optional[str] = None):
         presets = zimage_presets
         constraints = model_constraints["zimage"]
 
-    # Add DyPE recommendations to Z-Image presets
+    # Add aspect_category and DyPE recommendations to presets
     for preset in presets:
+        # Add aspect_category for UI filtering
+        preset["aspect_category"] = get_aspect_category(preset["width"], preset["height"])
+
+        # Add DyPE recommendations (Z-Image only)
         if current_model in (None, "zimage"):
             preset["dype"] = get_dype_recommendation(preset["width"], preset["height"])
         else:
@@ -2061,7 +2089,7 @@ async def generate(request: GenerateRequest):
                 guidance_scale=request.guidance_scale,
                 cfg_normalization=request.cfg_normalization,
                 cfg_truncation=request.cfg_truncation,
-                shift=request.shift,
+                shift=None if request.dynamic_shift else request.shift,
                 skip_layer_guidance_scale=slg_scale,
                 skip_layer_indices=slg_layers,
                 skip_layer_start=slg_start,
@@ -2085,7 +2113,7 @@ async def generate(request: GenerateRequest):
                 guidance_scale=request.guidance_scale,
                 cfg_normalization=request.cfg_normalization,
                 cfg_truncation=request.cfg_truncation,
-                shift=request.shift,
+                shift=None if request.dynamic_shift else request.shift,
                 generator=generator,
                 template=request.template,
                 system_prompt=request.system_prompt,
@@ -2300,7 +2328,7 @@ async def img2img(request: Img2ImgRequest):
             cfg_normalization=request.cfg_normalization,
             cfg_truncation=request.cfg_truncation,
             cfg_norm_mode=request.cfg_norm_mode,
-            shift=request.shift,
+            shift=None if request.dynamic_shift else request.shift,
             generator=generator,
             template=request.template,
             system_prompt=request.system_prompt,

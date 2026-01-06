@@ -113,6 +113,22 @@ async function loadGenerationConfig() {
             shiftValue.textContent = formatNumber(data.shift, 1);
         }
 
+        // Handle dynamic_shift from config
+        if (data.dynamic_shift !== undefined && DOM.dynamicShiftCheckbox) {
+            DOM.dynamicShiftCheckbox.checked = data.dynamic_shift;
+            if (shiftSlider) {
+                shiftSlider.disabled = data.dynamic_shift;
+                if (data.dynamic_shift) {
+                    shiftSlider.classList.add('opacity-50');
+                    if (shiftValue) {
+                        shiftValue.textContent = 'Auto';
+                    }
+                } else {
+                    shiftSlider.classList.remove('opacity-50');
+                }
+            }
+        }
+
         if (data.long_prompt_mode && longPromptModeSelect) {
             longPromptModeSelect.value = data.long_prompt_mode;
         }
@@ -133,10 +149,21 @@ async function loadGenerationConfig() {
 }
 
 // =============================================================================
-// Resolution Presets
+// Resolution Presets (DEPRECATED - use ResolutionSelector module instead)
 // =============================================================================
 
+/**
+ * @deprecated Use ResolutionSelector.init() instead
+ * Kept for backward compatibility - delegates to ResolutionSelector if available
+ */
 async function loadResolutionPresets() {
+    // Delegate to new ResolutionSelector if available
+    if (typeof ResolutionSelector !== 'undefined' && ResolutionSelector.loadConstraints) {
+        console.log('loadResolutionPresets: delegating to ResolutionSelector');
+        return;
+    }
+
+    // Legacy fallback for old select-based UI
     const resolutionSelect = document.getElementById('resolution');
     if (!resolutionSelect) return;
 
@@ -147,9 +174,7 @@ async function loadResolutionPresets() {
         resolutionSelect.innerHTML = '';
 
         // Add presets by category
-        // Backend returns flat array with 'category' property on each preset
         if (data.presets && Array.isArray(data.presets)) {
-            // Group presets by category
             const grouped = {};
             data.presets.forEach(preset => {
                 const cat = preset.category || 'other';
@@ -157,8 +182,6 @@ async function loadResolutionPresets() {
                 grouped[cat].push(preset);
             });
 
-            // Render grouped presets
-            // Order: square first, then landscape, then portrait, then others
             const categoryOrder = ['square', 'landscape', 'portrait'];
             const sortedCategories = Object.keys(grouped).sort((a, b) => {
                 const aIdx = categoryOrder.indexOf(a);
@@ -185,13 +208,11 @@ async function loadResolutionPresets() {
             });
         }
 
-        // Add custom option
         const customOption = document.createElement('option');
         customOption.value = 'custom';
         customOption.textContent = 'Custom...';
         resolutionSelect.appendChild(customOption);
 
-        // Update DyPE recommendation if function exists
         if (typeof updateDypeRecommendation === 'function') {
             updateDypeRecommendation();
         }

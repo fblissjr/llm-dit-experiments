@@ -556,8 +556,9 @@ class ZImageDyPERoPE(DyPEPosEmbed):
         """
         # Get parameters from original embedder BEFORE super().__init__()
         # Must use local variables since we can't assign self.* before nn.Module init
+        # Note: diffusers RopeEmbedder uses "axes_dims" (plural)
         theta = getattr(original_embedder, "theta", 256)
-        axes_dim = getattr(original_embedder, "axes_dim", [32, 48, 48])
+        axes_dim = getattr(original_embedder, "axes_dims", [32, 48, 48])
 
         # Initialize base class FIRST (required by nn.Module)
         super().__init__(
@@ -681,10 +682,14 @@ class ZImageDyPERoPE(DyPEPosEmbed):
 
         # Get parameters from original embedder
         theta = self.original_embedder.theta
-        axes_dim = self.original_embedder.axes_dim
+        axes_dims = self.original_embedder.axes_dims
 
         # Compute k_t scaling based on current sigma
         k_t = compute_k_t(self.current_sigma, self.config)
+        # Clamp k_t to avoid division by zero and extreme frequency scaling
+        # k_t >= 1.0 means we only reduce frequencies (for global structure at high sigma)
+        # At low sigma, k_t=1.0 means normal frequencies (no scaling)
+        k_t = max(k_t, 1.0)
 
         # Ensure ids is 2D: (seq_len, n_axes)
         if ids.ndim != 2:
@@ -693,8 +698,8 @@ class ZImageDyPERoPE(DyPEPosEmbed):
         device = ids.device
         result = []
 
-        for i in range(len(axes_dim)):
-            d = axes_dim[i]
+        for i in range(len(axes_dims)):
+            d = axes_dims[i]
             index = ids[:, i].float()  # Position indices for this axis
 
             # Compute base frequencies (same formula as diffusers)
@@ -704,9 +709,10 @@ class ZImageDyPERoPE(DyPEPosEmbed):
 
             # Apply DyPE scaling to frequencies
             # k_t modulates how much the frequencies are stretched
-            # At high sigma (noisy), k_t is large -> lower frequencies (global structure)
-            # At low sigma (clean), k_t is small -> higher frequencies (fine details)
-            scaled_freqs = base_freqs * k_t
+            # At high sigma (noisy), k_t is large -> divide to get LOWER frequencies (global structure)
+            # At low sigma (clean), k_t is small -> divide to get HIGHER frequencies (fine details)
+            # Dividing by k_t: high k_t = lower freqs, low k_t = higher freqs
+            scaled_freqs = base_freqs / k_t
 
             # Compute angles: outer product of positions and scaled frequencies
             # Result shape: (seq_len, d/2)

@@ -128,6 +128,17 @@ function switchModelType(type) {
     if (typeof setModelDefaults === 'function') {
         setModelDefaults(type);
     }
+
+    // Reload resolution presets for new model
+    if (typeof ResolutionSelector !== 'undefined' && ResolutionSelector.loadConstraints) {
+        // Map UI model type to API model type
+        const modelMap = {
+            'zimage': 'zimage',
+            'qwenimage': 'qwenimage-layered',
+            'qwenimage2512': 'qwenimage-t2i',
+        };
+        ResolutionSelector.loadConstraints(modelMap[type] || 'zimage');
+    }
 }
 
 // =============================================================================

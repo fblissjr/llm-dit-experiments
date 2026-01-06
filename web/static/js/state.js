@@ -47,6 +47,7 @@ const DOM = {
     shiftSlider: null,
     shiftValue: null,
     shiftContainer: null,
+    dynamicShiftCheckbox: null,
     stepsMinLabel: null,
     stepsMaxLabel: null,
 
@@ -157,6 +158,7 @@ function initDOMReferences() {
     DOM.shiftSlider = document.getElementById('shift');
     DOM.shiftValue = document.getElementById('shiftValue');
     DOM.shiftContainer = document.getElementById('shiftContainer');
+    DOM.dynamicShiftCheckbox = document.getElementById('dynamicShift');
     DOM.stepsMinLabel = document.getElementById('stepsMinLabel');
     DOM.stepsMaxLabel = document.getElementById('stepsMaxLabel');
 

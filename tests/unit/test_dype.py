@@ -601,7 +601,7 @@ class TestZImageDyPERoPE:
         # Create mock original embedder
         class MockRoPEEmbedder:
             theta = 256
-            axes_dim = [32, 48, 48]
+            axes_dims = [32, 48, 48]
 
             def __call__(self, ids):
                 # Return dummy output
@@ -617,13 +617,13 @@ class TestZImageDyPERoPE:
         )
 
         assert wrapper.theta == 256
-        assert wrapper.axes_dim == [32, 48, 48]
+        assert wrapper.axes_dim == [32, 48, 48]  # Internal storage is singular
         assert wrapper.config.enabled is True
 
     def test_set_timestep(self):
         class MockRoPEEmbedder:
             theta = 256
-            axes_dim = [32, 48, 48]
+            axes_dims = [32, 48, 48]
 
             def __call__(self, ids):
                 return torch.zeros(ids.shape[0], 1, ids.shape[1], 128, 2, 2)
@@ -638,7 +638,7 @@ class TestZImageDyPERoPE:
     def test_set_scale_hint(self):
         class MockRoPEEmbedder:
             theta = 256
-            axes_dim = [32, 48, 48]
+            axes_dims = [32, 48, 48]
 
             def __call__(self, ids):
                 return torch.zeros(ids.shape[0], 1, ids.shape[1], 128, 2, 2)
@@ -657,7 +657,7 @@ class TestZImageDyPERoPE:
     def test_disabled_dype_delegates_to_original(self):
         class MockRoPEEmbedder:
             theta = 256
-            axes_dim = [32, 48, 48]
+            axes_dims = [32, 48, 48]
             call_count = 0
 
             def __call__(self, ids):
@@ -678,7 +678,7 @@ class TestZImageDyPERoPE:
         """Test that frequency_modulation=False delegates to original embedder."""
         class MockRoPEEmbedder:
             theta = 256
-            axes_dim = [32, 48, 48]
+            axes_dims = [32, 48, 48]
             call_count = 0
 
             def __call__(self, ids):
@@ -699,7 +699,7 @@ class TestZImageDyPERoPE:
         """Test that frequency modulation produces complex64 output matching diffusers."""
         class MockRoPEEmbedder:
             theta = 256.0
-            axes_dim = [32, 48, 48]
+            axes_dims = [32, 48, 48]
 
             def __call__(self, ids):
                 # Should not be called when frequency_modulation=True
@@ -724,7 +724,7 @@ class TestZImageDyPERoPE:
         """Test that frequency modulation output changes with timestep."""
         class MockRoPEEmbedder:
             theta = 256.0
-            axes_dim = [32, 48, 48]
+            axes_dims = [32, 48, 48]
 
             def __call__(self, ids):
                 raise RuntimeError("Should not be called")
@@ -763,7 +763,7 @@ class TestZImageDyPERoPE:
         """Test that dype_scale affects frequency modulation output."""
         class MockRoPEEmbedder:
             theta = 256.0
-            axes_dim = [32, 48, 48]
+            axes_dims = [32, 48, 48]
 
             def __call__(self, ids):
                 raise RuntimeError("Should not be called")
@@ -848,7 +848,7 @@ class TestPatchZImageRoPE:
         class MockTransformer:
             class RoPEEmbedder:
                 theta = 256
-                axes_dim = [32, 48, 48]
+                axes_dims = [32, 48, 48]
 
                 def __call__(self, ids):
                     return torch.zeros(ids.shape[0], 1, ids.shape[1], 128, 2, 2)
@@ -868,7 +868,7 @@ class TestPatchZImageRoPE:
         class MockTransformer:
             class RoPEEmbedder:
                 theta = 256
-                axes_dim = [32, 48, 48]
+                axes_dims = [32, 48, 48]
 
                 def __call__(self, ids):
                     return torch.zeros(ids.shape[0], 1, ids.shape[1], 128, 2, 2)
@@ -902,7 +902,7 @@ class TestSetZImageTimestep:
         class MockTransformer:
             class RoPEEmbedder:
                 theta = 256
-                axes_dim = [32, 48, 48]
+                axes_dims = [32, 48, 48]
 
                 def __call__(self, ids):
                     return torch.zeros(ids.shape[0], 1, ids.shape[1], 128, 2, 2)

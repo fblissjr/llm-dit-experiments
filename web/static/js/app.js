@@ -150,7 +150,14 @@ async function handleFormSubmit(e) {
 
         // Add Z-Image specific params
         if (modelType === 'zimage') {
-            params.shift = parseFloat(DOM.shiftSlider?.value || 3.0);
+            // Dynamic shift: calculate based on resolution, or use fixed value
+            if (DOM.dynamicShiftCheckbox?.checked) {
+                params.dynamic_shift = true;
+                // Still include shift value as fallback, but dynamic_shift takes precedence
+                params.shift = parseFloat(DOM.shiftSlider?.value || 3.0);
+            } else {
+                params.shift = parseFloat(DOM.shiftSlider?.value || 3.0);
+            }
             params.long_prompt_mode = DOM.longPromptModeSelect?.value || 'interpolate';
             params.hidden_layer = parseInt(DOM.hiddenLayerSlider?.value || -2);
 
@@ -380,6 +387,33 @@ async function refreshSystemStatus() {
             }
         } else if (configInfo) {
             configInfo.classList.add('hidden');
+        }
+
+        // Populate config selector with current profile
+        const configSelector = document.getElementById('configSelector');
+        if (configSelector) {
+            configSelector.innerHTML = '';  // Clear loading state
+            if (data.config && data.config.profile) {
+                const opt = document.createElement('option');
+                opt.value = data.config.profile;
+                opt.textContent = `${data.config.profile} (current)`;
+                opt.selected = true;
+                configSelector.appendChild(opt);
+            } else {
+                const opt = document.createElement('option');
+                opt.value = '';
+                opt.textContent = 'Default (no profile)';
+                opt.selected = true;
+                configSelector.appendChild(opt);
+            }
+        }
+
+        // Disable load button (dynamic config loading not supported)
+        const loadConfigBtn = document.getElementById('loadConfigBtn');
+        if (loadConfigBtn) {
+            loadConfigBtn.disabled = true;
+            loadConfigBtn.textContent = 'Config set at server startup';
+            loadConfigBtn.title = 'Restart server with --profile to change';
         }
 
     } catch (err) {
@@ -620,17 +654,42 @@ async function initializeApp() {
         DOM.shiftSlider.addEventListener('input', updateSliderDisplays);
     }
 
+    // Dynamic shift checkbox - toggle slider disabled state
+    if (DOM.dynamicShiftCheckbox) {
+        DOM.dynamicShiftCheckbox.addEventListener('change', (e) => {
+            if (DOM.shiftSlider) {
+                DOM.shiftSlider.disabled = e.target.checked;
+                // Update visual feedback
+                if (e.target.checked) {
+                    DOM.shiftSlider.classList.add('opacity-50');
+                    if (DOM.shiftValue) {
+                        DOM.shiftValue.textContent = 'Auto';
+                    }
+                } else {
+                    DOM.shiftSlider.classList.remove('opacity-50');
+                    if (DOM.shiftValue) {
+                        DOM.shiftValue.textContent = formatNumber(DOM.shiftSlider.value, 1);
+                    }
+                }
+            }
+        });
+    }
+
     // Setup token count updates
     const promptEl = document.getElementById('prompt');
     if (promptEl) {
         promptEl.addEventListener('input', debouncedTokenCount);
     }
 
+    // Initialize resolution selector
+    if (typeof ResolutionSelector !== 'undefined') {
+        await ResolutionSelector.init();
+    }
+
     // Load initial data
     await Promise.all([
         loadTemplates(),
         loadGenerationConfig(),
-        loadResolutionPresets(),
         loadHistory(),
         checkVLStatus(),
         checkQwenImageStatus(),

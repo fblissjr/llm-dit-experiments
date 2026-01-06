@@ -1271,11 +1271,8 @@ class ZImagePipeline:
         dype_patched = False
         if active_dype_config is not None and active_dype_config.enabled:
             logger.info(f"[Pipeline] DyPE enabled: method={active_dype_config.method}, scale={active_dype_config.dype_scale}")
-            # Note: DyPE frequency modulation is currently disabled due to output format
-            # incompatibility with diffusers' complex64 RoPE embeddings. The patch is
-            # applied but delegates to the original embedder. High-res generation still
-            # works via multipass (recommended) or the transformer's native PI support.
-            logger.warning("[Pipeline] DyPE frequency modulation not yet implemented for Z-Image (diffusers format)")
+            if active_dype_config.frequency_modulation:
+                logger.info("[Pipeline] DyPE frequency modulation enabled (experimental)")
             try:
                 patch_zimage_rope(self.transformer, active_dype_config, width, height)
                 dype_patched = True

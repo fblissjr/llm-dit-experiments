@@ -162,6 +162,7 @@ class RuntimeConfig:
     # Scheduler
     shift: float = 3.0
     shift_terminal: float | None = None  # Stretch sigma to terminal value (0.02 for Qwen-Image)
+    dynamic_shift: bool = False  # Use resolution-based shift instead of fixed value
 
     # CFG settings
     cfg_norm_mode: str = "clamp"  # "clamp" or "match" (DiffSynth-style)
@@ -607,6 +608,12 @@ def create_base_parser(
         default=None,
         help="Stretch sigma schedule to end at this value instead of 0 (Qwen-Image only, default: None). "
         "Example: 0.02 stretches schedule so final sigma=0.02. Not used by Z-Image.",
+    )
+    sched_group.add_argument(
+        "--dynamic-shift",
+        action="store_true",
+        help="Calculate shift based on resolution (overrides --shift). "
+        "Uses linear interpolation: base_shift=0.5 at 512x512, max_shift=1.15 at 2048x2048.",
     )
 
     # LoRA
@@ -1148,6 +1155,8 @@ def _apply_cli_overrides(args: argparse.Namespace, config: RuntimeConfig) -> Run
         config.shift = args.shift
     if getattr(args, 'shift_terminal', None) is not None:
         config.shift_terminal = args.shift_terminal
+    if getattr(args, 'dynamic_shift', False):
+        config.dynamic_shift = True
 
     # CFG mode override
     if getattr(args, 'cfg_norm_mode', None) is not None:
@@ -1303,6 +1312,7 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
             if hasattr(toml_config, 'scheduler'):
                 sched = toml_config.scheduler
                 config.shift = getattr(sched, 'shift', 3.0)
+                config.dynamic_shift = getattr(sched, 'dynamic_shift', False)
 
             # Check for LoRA section
             if hasattr(toml_config, 'lora'):
@@ -1474,6 +1484,8 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
         config.shift = args.shift
     if getattr(args, 'shift_terminal', None) is not None:
         config.shift_terminal = args.shift_terminal
+    if getattr(args, 'dynamic_shift', False):
+        config.dynamic_shift = True
 
     # CFG mode override
     if getattr(args, 'cfg_norm_mode', None) is not None:

@@ -251,9 +251,25 @@ function debounce(func, wait) {
 // =============================================================================
 
 /**
- * Get current resolution from select or custom inputs
+ * Get current resolution from ResolutionSelector or fallback to direct inputs
  */
 function getResolution() {
+    // Use ResolutionSelector if available (new UI)
+    if (typeof ResolutionSelector !== 'undefined' && ResolutionSelector.getResolution) {
+        return ResolutionSelector.getResolution();
+    }
+
+    // Fallback: read directly from new input fields
+    const widthInput = document.getElementById('resWidth');
+    const heightInput = document.getElementById('resHeight');
+    if (widthInput && heightInput) {
+        return {
+            width: parseInt(widthInput.value) || 1024,
+            height: parseInt(heightInput.value) || 1024
+        };
+    }
+
+    // Legacy fallback: old select element
     const resolutionSelect = document.getElementById('resolution');
     const customWidth = document.getElementById('customWidth');
     const customHeight = document.getElementById('customHeight');

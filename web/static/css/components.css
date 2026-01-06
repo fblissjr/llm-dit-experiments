@@ -379,3 +379,115 @@ body.dragging-image .drop-target-highlight {
         min-height: 48px;
     }
 }
+
+/* =============================================================================
+   Resolution Selector
+   ============================================================================= */
+
+/* Aspect ratio filter buttons */
+.aspect-filters .aspect-btn {
+    padding: 0.5rem;
+    border-radius: 0.375rem;
+    background: transparent;
+    border: 1px solid #374151;
+    color: #9ca3af;
+    transition: all 0.15s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.aspect-filters .aspect-btn:hover {
+    background: #374151;
+    color: #d1d5db;
+}
+
+.aspect-filters .aspect-btn.active {
+    background: #3b82f6;
+    border-color: #3b82f6;
+    color: white;
+}
+
+/* Resolution inputs container */
+.resolution-inputs input[type="number"] {
+    -moz-appearance: textfield;
+}
+
+.resolution-inputs input[type="number"]::-webkit-outer-spin-button,
+.resolution-inputs input[type="number"]::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+
+/* Preset chips */
+.preset-chips {
+    max-height: 120px;
+    overflow-y: auto;
+}
+
+.preset-chips .preset-chip {
+    padding: 0.25rem 0.75rem;
+    border-radius: 9999px;
+    background: #374151;
+    color: #d1d5db;
+    font-size: 0.75rem;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    border: 1px solid transparent;
+    white-space: nowrap;
+}
+
+.preset-chips .preset-chip:hover {
+    background: #4b5563;
+    color: #f3f4f6;
+}
+
+.preset-chips .preset-chip.selected {
+    background: #3b82f6;
+    border-color: #3b82f6;
+    color: white;
+}
+
+/* Fixed-only mode (Qwen-Image-Layered) */
+.resolution-selector.fixed-only .resolution-inputs {
+    opacity: 0.5;
+    pointer-events: none;
+}
+
+.resolution-selector.fixed-only .aspect-filters {
+    display: none;
+}
+
+.resolution-selector .fixed-indicator {
+    color: #9ca3af;
+    font-style: italic;
+}
+
+/* Aspect lock button states */
+#aspectLockBtn.locked {
+    color: #3b82f6;
+}
+
+/* Mobile responsiveness */
+@media (max-width: 640px) {
+    .resolution-inputs {
+        flex-wrap: wrap;
+    }
+
+    .resolution-inputs > div {
+        flex: 1 1 40%;
+    }
+
+    .preset-chips {
+        max-height: 80px;
+    }
+
+    .aspect-filters {
+        justify-content: space-between;
+    }
+
+    .aspect-filters .aspect-btn {
+        flex: 1;
+        max-width: 3rem;
+    }
+}

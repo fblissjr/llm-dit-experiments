@@ -92,6 +92,9 @@ shift = 3.0                      # Timestep shift: compresses sigma schedule for
                                  # Formula: sigma' = shift * sigma / (1 + (shift-1) * sigma)
                                  # Values 2.5-4.0 are equivalent due to turbo distillation robustness
                                  # <1.5 = incomplete denoising, >6.0 = potential artifacts
+dynamic_shift = false            # Calculate shift based on resolution (overrides shift)
+                                 # Uses linear interpolation: base_shift=0.5 at 512x512, max_shift=1.15 at 2048x2048
+                                 # Recommended for high-resolution generation
 # shift_terminal = 0.02          # Stretch sigma to end at this value instead of 0 (Qwen-Image only)
                                  # Not used for Z-Image-Turbo. Leave commented/omit for Z-Image.
 
@@ -361,6 +364,7 @@ default_template = ""            # Auto-apply template (empty = none)
 [default.scheduler]
 # FlowMatch scheduler configuration
 shift = 3.0                      # Timestep shift (2.5-4.0 range is equivalent)
+dynamic_shift = false            # Calculate shift based on resolution (overrides shift)
 # shift_terminal = 0.02          # Stretch sigma to terminal value (Qwen-Image only)
 
 [default.optimization]
