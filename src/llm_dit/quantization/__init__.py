@@ -46,6 +46,11 @@ from .fp8_inference import (
     get_fp8_dtype,
     get_fp8_max,
 )
+from .vae_utils import (
+    quantize_vae,
+    estimate_vae_vram,
+    get_vae_quant_info,
+)
 
 __all__ = [
     # Config
@@ -70,4 +75,8 @@ __all__ = [
     "get_fp8_info",
     "get_fp8_dtype",
     "get_fp8_max",
+    # VAE quantization
+    "quantize_vae",
+    "estimate_vae_vram",
+    "get_vae_quant_info",
 ]

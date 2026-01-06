@@ -91,6 +91,7 @@ class QwenImageDiffusersPipeline:
         self._device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self._dtype = dtype
         self._cpu_offload_enabled = False
+        self._offload_type = "none"
         self._edit_model_path = None
         self._use_diffsynth_fp8 = use_diffsynth_fp8
 
@@ -102,10 +103,13 @@ class QwenImageDiffusersPipeline:
         device: Union[str, torch.device] = "cuda",
         torch_dtype: torch.dtype = torch.bfloat16,
         cpu_offload: bool = True,
+        offload_type: Optional[str] = None,
+        num_blocks_per_group: int = 2,
         load_edit_model: bool = False,
         edit_only: bool = False,
         quantize_text_encoder: Optional[str] = None,
         quantize_transformer: Optional[str] = None,
+        quantize_vae: Optional[str] = None,
         compile_transformer: bool = False,
         compile_mode: str = "default",
     ) -> "QwenImageDiffusersPipeline":
@@ -118,7 +122,15 @@ class QwenImageDiffusersPipeline:
                 (defaults to "Qwen/Qwen-Image-Edit-2511" from HuggingFace)
             device: Device for inference
             torch_dtype: Model dtype (bfloat16 recommended)
-            cpu_offload: Enable sequential CPU offload for memory efficiency
+            cpu_offload: Enable CPU offload for memory efficiency (deprecated, use offload_type)
+            offload_type: Offloading strategy for VRAM management:
+                None = use cpu_offload value for backward compatibility
+                "none" = no offloading, keep all on GPU
+                "model" = model-level offload (whole components, default)
+                "group" = group offload (DiT blocks, best speed/memory trade-off)
+                "sequential" = leaf-level offload (minimum VRAM, slowest)
+            num_blocks_per_group: DiT blocks per group for "group" offload_type (default: 2)
+                Higher = more VRAM, faster. Lower = less VRAM, slower.
             load_edit_model: If True, also load the edit model
             edit_only: If True, skip loading decompose model (for edit-only workflows)
                 This saves ~12GB VRAM on 24GB cards.
@@ -135,6 +147,11 @@ class QwenImageDiffusersPipeline:
                 "fp8" = TorchAO FP8 dynamic (~4GB, RTX 4090+ only)
                 "int8" = TorchAO INT8 weight-only (~4GB)
                 "diffsynth-fp8" = DiffSynth-style FP8 (runtime F.linear patching, ~4GB)
+            quantize_vae: Quantization for VAE decoder:
+                None = no quantization (~500MB)
+                "int8" = TorchAO INT8 dynamic (~250MB, 50% reduction)
+                "8bit" = BitsAndBytes INT8 (requires reload)
+                Note: Only int8/8bit recommended for VAE (Conv2d layers)
             compile_transformer: If True, compile DiT with torch.compile for ~1.5-2x speedup.
                 First inference will be slower due to compilation.
                 NOTE: torch.compile is INCOMPATIBLE with cpu_offload=True. If both are
@@ -173,6 +190,22 @@ class QwenImageDiffusersPipeline:
         """
         device = torch.device(device)
 
+        # Resolve offload_type from new parameter or legacy cpu_offload
+        if offload_type is not None:
+            effective_offload_type = offload_type
+        elif cpu_offload:
+            effective_offload_type = "model"  # Legacy default
+        else:
+            effective_offload_type = "none"
+
+        # Validate offload_type
+        valid_offload_types = ("none", "model", "group", "sequential")
+        if effective_offload_type not in valid_offload_types:
+            raise ValueError(
+                f"Invalid offload_type: {effective_offload_type}. "
+                f"Valid options: {valid_offload_types}"
+            )
+
         # Check for DiffSynth-style FP8 (runtime patching, not TorchAO)
         use_diffsynth_fp8 = quantize_transformer == "diffsynth-fp8"
         if use_diffsynth_fp8:
@@ -197,26 +230,29 @@ class QwenImageDiffusersPipeline:
             logger.info(f"Loading QwenImageEditPlusPipeline from {resolved_edit_path}")
 
             # Check if quantization is requested (use effective_transformer_quant for diffsynth-fp8)
-            if quantize_text_encoder or effective_transformer_quant:
+            if quantize_text_encoder or effective_transformer_quant or quantize_vae:
                 # Use quantized loading - load components separately then assemble pipeline
                 edit_pipe = cls._load_edit_pipeline_quantized(
                     resolved_edit_path,
                     torch_dtype=torch_dtype,
                     quantize_text_encoder=quantize_text_encoder,
                     quantize_transformer=effective_transformer_quant,
+                    quantize_vae=quantize_vae,
                     cpu_offload=cpu_offload,
+                    offload_type=effective_offload_type,
+                    num_blocks_per_group=num_blocks_per_group,
                     compile_transformer=compile_transformer,
                     compile_mode=compile_mode,
                 )
-            elif use_diffsynth_fp8 or cpu_offload:
-                # Use model_cpu_offload - moves whole components to GPU one at a time
-                logger.info("Loading with model CPU offload")
+            elif use_diffsynth_fp8 or effective_offload_type != "none":
+                # Load pipeline first, then apply offloading
+                logger.info(f"Loading with offload_type={effective_offload_type}")
                 edit_pipe = QwenImageEditPlusPipeline.from_pretrained(
                     resolved_edit_path,
                     torch_dtype=torch_dtype,
                 )
-                # NOTE: torch.compile is INCOMPATIBLE with enable_model_cpu_offload()
-                if compile_transformer:
+                # NOTE: torch.compile is INCOMPATIBLE with CPU offload
+                if compile_transformer and effective_offload_type != "none":
                     logger.warning(
                         "torch.compile is incompatible with CPU offload (accelerate's tensor swapping "
                         "fails with compiled models). Skipping compilation."
@@ -226,8 +262,10 @@ class QwenImageDiffusersPipeline:
                     from llm_dit.quantization import enable_fp8_weights
                     logger.info("Converting transformer weights to FP8 for memory savings...")
                     enable_fp8_weights(edit_pipe.transformer)
-                edit_pipe.enable_model_cpu_offload()
-                logger.info("Model CPU offload enabled")
+                # Apply offloading based on type
+                cls._apply_offloading(
+                    edit_pipe, effective_offload_type, device, num_blocks_per_group
+                )
             else:
                 edit_pipe = QwenImageEditPlusPipeline.from_pretrained(
                     resolved_edit_path,
@@ -249,12 +287,13 @@ class QwenImageDiffusersPipeline:
                 dtype=torch_dtype,
                 use_diffsynth_fp8=use_diffsynth_fp8,
             )
-            instance._cpu_offload_enabled = cpu_offload
+            instance._cpu_offload_enabled = effective_offload_type != "none"
+            instance._offload_type = effective_offload_type
             instance._edit_model_path = resolved_edit_path
 
             logger.info(
                 f"QwenImageDiffusersPipeline loaded (edit-only): "
-                f"decompose=False, edit=True, cpu_offload={cpu_offload}, "
+                f"decompose=False, edit=True, offload_type={effective_offload_type}, "
                 f"diffsynth_fp8={use_diffsynth_fp8}"
             )
             return instance
@@ -272,25 +311,28 @@ class QwenImageDiffusersPipeline:
         logger.info(f"Loading QwenImageLayeredPipeline from {model_path}")
 
         # Check if quantization is requested for decompose pipeline (use effective_transformer_quant)
-        if quantize_text_encoder or effective_transformer_quant:
+        if quantize_text_encoder or effective_transformer_quant or quantize_vae:
             decompose_pipe = cls._load_decompose_pipeline_quantized(
                 str(model_path),
                 torch_dtype=torch_dtype,
                 quantize_text_encoder=quantize_text_encoder,
                 quantize_transformer=effective_transformer_quant,
+                quantize_vae=quantize_vae,
                 cpu_offload=cpu_offload,
+                offload_type=effective_offload_type,
+                num_blocks_per_group=num_blocks_per_group,
                 compile_transformer=compile_transformer,
                 compile_mode=compile_mode,
             )
-            cpu_offload_enabled = cpu_offload
-        elif use_diffsynth_fp8 or cpu_offload:
-            # Diffusers loads to CPU by default, then enable_model_cpu_offload
+            cpu_offload_enabled = effective_offload_type != "none"
+        elif use_diffsynth_fp8 or effective_offload_type != "none":
+            # Load pipeline then apply offloading
             decompose_pipe = QwenImageLayeredPipeline.from_pretrained(
                 str(model_path),
                 torch_dtype=torch_dtype,
             )
-            # NOTE: torch.compile is INCOMPATIBLE with enable_model_cpu_offload()
-            if compile_transformer:
+            # NOTE: torch.compile is INCOMPATIBLE with CPU offload
+            if compile_transformer and effective_offload_type != "none":
                 logger.warning(
                     "torch.compile is incompatible with CPU offload (accelerate's tensor swapping "
                     "fails with compiled models). Skipping compilation."
@@ -300,9 +342,11 @@ class QwenImageDiffusersPipeline:
                 from llm_dit.quantization import enable_fp8_weights
                 logger.info("Converting transformer weights to FP8 for memory savings...")
                 enable_fp8_weights(decompose_pipe.transformer)
-            logger.info("Enabling model CPU offload for decompose pipeline")
-            decompose_pipe.enable_model_cpu_offload()
-            cpu_offload_enabled = True
+            # Apply offloading
+            cls._apply_offloading(
+                decompose_pipe, effective_offload_type, device, num_blocks_per_group
+            )
+            cpu_offload_enabled = effective_offload_type != "none"
         else:
             decompose_pipe = QwenImageLayeredPipeline.from_pretrained(
                 str(model_path),
@@ -323,23 +367,19 @@ class QwenImageDiffusersPipeline:
         if load_edit_model:
             logger.info(f"Loading QwenImageEditPlusPipeline from {resolved_edit_path}")
             from diffusers import QwenImageEditPlusPipeline
-            if use_diffsynth_fp8 or cpu_offload:
-                edit_pipe = QwenImageEditPlusPipeline.from_pretrained(
-                    resolved_edit_path,
-                    torch_dtype=torch_dtype,
-                )
-                # For DiffSynth FP8, pre-convert weights for memory savings
-                if use_diffsynth_fp8:
-                    from llm_dit.quantization import enable_fp8_weights
-                    logger.info("Converting edit transformer weights to FP8...")
-                    enable_fp8_weights(edit_pipe.transformer)
-                edit_pipe.enable_model_cpu_offload()
-            else:
-                edit_pipe = QwenImageEditPlusPipeline.from_pretrained(
-                    resolved_edit_path,
-                    torch_dtype=torch_dtype,
-                )
-                edit_pipe.to(device)
+            edit_pipe = QwenImageEditPlusPipeline.from_pretrained(
+                resolved_edit_path,
+                torch_dtype=torch_dtype,
+            )
+            # For DiffSynth FP8, pre-convert weights for memory savings
+            if use_diffsynth_fp8:
+                from llm_dit.quantization import enable_fp8_weights
+                logger.info("Converting edit transformer weights to FP8...")
+                enable_fp8_weights(edit_pipe.transformer)
+            # Apply same offloading as decompose pipeline
+            cls._apply_offloading(
+                edit_pipe, effective_offload_type, device, num_blocks_per_group
+            )
 
         instance = cls(
             decompose_pipe=decompose_pipe,
@@ -349,15 +389,69 @@ class QwenImageDiffusersPipeline:
             use_diffsynth_fp8=use_diffsynth_fp8,
         )
         instance._cpu_offload_enabled = cpu_offload_enabled
+        instance._offload_type = effective_offload_type
         instance._edit_model_path = resolved_edit_path
 
         logger.info(
             f"QwenImageDiffusersPipeline loaded: "
             f"decompose=True, edit={edit_pipe is not None}, "
-            f"cpu_offload={cpu_offload_enabled}, diffsynth_fp8={use_diffsynth_fp8}"
+            f"offload_type={effective_offload_type}, diffsynth_fp8={use_diffsynth_fp8}"
         )
 
         return instance
+
+    @staticmethod
+    def _apply_offloading(
+        pipe,
+        offload_type: str,
+        device: torch.device,
+        num_blocks_per_group: int = 2,
+    ) -> None:
+        """
+        Apply offloading strategy to pipeline.
+
+        Args:
+            pipe: Pipeline to apply offloading to
+            offload_type: One of "none", "model", "group", "sequential"
+            device: Target device for onloading
+            num_blocks_per_group: Blocks per group for group offloading
+        """
+        if offload_type == "none":
+            pipe.to(device)
+            logger.info(f"Pipeline moved to {device} (no offloading)")
+
+        elif offload_type == "model":
+            pipe.enable_model_cpu_offload()
+            logger.info("Model CPU offload enabled (component-level)")
+
+        elif offload_type == "group":
+            # Group offloading: stream DiT blocks
+            try:
+                pipe.enable_group_offload(
+                    onload_device=device,
+                    offload_device=torch.device("cpu"),
+                    offload_type="block_level",
+                    num_blocks_per_group=num_blocks_per_group,
+                    use_stream=True,  # Async data transfer
+                    record_stream=True,  # Faster at expense of slightly more memory
+                )
+                logger.info(
+                    f"Group offloading enabled (block_level, {num_blocks_per_group} blocks/group)"
+                )
+            except AttributeError:
+                # Fallback if enable_group_offload not available
+                logger.warning(
+                    "enable_group_offload not available in this diffusers version, "
+                    "falling back to model-level offload"
+                )
+                pipe.enable_model_cpu_offload()
+
+        elif offload_type == "sequential":
+            pipe.enable_sequential_cpu_offload()
+            logger.info("Sequential CPU offload enabled (leaf-level, minimum VRAM)")
+
+        else:
+            raise ValueError(f"Unknown offload_type: {offload_type}")
 
     @classmethod
     def _load_edit_pipeline_quantized(
@@ -366,7 +460,10 @@ class QwenImageDiffusersPipeline:
         torch_dtype: torch.dtype,
         quantize_text_encoder: Optional[str],
         quantize_transformer: Optional[str],
-        cpu_offload: bool,
+        quantize_vae: Optional[str] = None,
+        cpu_offload: bool = True,
+        offload_type: Optional[str] = None,
+        num_blocks_per_group: int = 2,
         compile_transformer: bool = False,
         compile_mode: str = "default",
     ):
@@ -379,11 +476,14 @@ class QwenImageDiffusersPipeline:
         Memory savings:
         - Text encoder 4bit: ~14GB -> ~3.5GB (75% reduction)
         - Text encoder 8bit: ~14GB -> ~7GB (50% reduction)
+        - Text encoder fp8: ~14GB -> ~7GB (50% reduction, 2x faster)
         - Transformer 4bit: ~8GB -> ~2GB (75% reduction)
         - Transformer 8bit: ~8GB -> ~4GB (50% reduction)
+        - Transformer fp8: ~8GB -> ~4GB (50% reduction, 2x faster)
+        - VAE int8: ~500MB -> ~250MB (50% reduction)
 
-        For RTX 4090 (24GB), recommended: quantize_text_encoder="4bit"
-        Total: ~3.5GB + ~8GB + ~0.5GB VAE = ~12GB VRAM
+        For RTX 4090 (24GB), recommended: quantize_text_encoder="fp8", quantize_transformer="fp8"
+        Total: ~7GB + ~4GB + ~0.25GB VAE = ~11.25GB VRAM
         """
         from diffusers import (
             AutoencoderKLQwenImage,
@@ -597,11 +697,29 @@ class QwenImageDiffusersPipeline:
             **pipeline_kwargs,
         )
 
+        # Apply VAE quantization after pipeline is assembled
+        if quantize_vae and quantize_vae != "none":
+            try:
+                from llm_dit.quantization import quantize_vae as _quantize_vae
+                logger.info(f"Applying VAE quantization: {quantize_vae}")
+                edit_pipe.vae = _quantize_vae(edit_pipe.vae, quantize_vae)
+            except ImportError:
+                logger.warning("VAE quantization module not available, skipping")
+            except Exception as e:
+                logger.warning(f"VAE quantization failed: {e}, continuing without VAE quantization")
+
+        # Resolve offload_type from new parameter or legacy cpu_offload
+        if offload_type is not None:
+            effective_offload = offload_type
+        elif cpu_offload:
+            effective_offload = "model"
+        else:
+            effective_offload = "none"
+
         # Apply torch.compile BEFORE CPU offload (compile works on GPU)
-        # NOTE: torch.compile is INCOMPATIBLE with enable_model_cpu_offload()
-        # The compiled model has weakrefs that prevent accelerate's tensor swapping
+        # NOTE: torch.compile is INCOMPATIBLE with CPU offload
         if compile_transformer:
-            if cpu_offload:
+            if effective_offload != "none":
                 logger.warning(
                     "torch.compile is incompatible with CPU offload (accelerate's tensor swapping "
                     "fails with compiled models). Skipping compilation. To use torch.compile, "
@@ -622,9 +740,13 @@ class QwenImageDiffusersPipeline:
                 )
                 logger.info("Transformer compiled successfully")
 
-        if cpu_offload:
-            edit_pipe.enable_model_cpu_offload()
-            logger.info("Model CPU offload enabled")
+        # Apply offloading
+        cls._apply_offloading(
+            edit_pipe,
+            effective_offload,
+            torch.device("cuda"),
+            num_blocks_per_group,
+        )
 
         return edit_pipe
 
@@ -635,7 +757,10 @@ class QwenImageDiffusersPipeline:
         torch_dtype: torch.dtype = torch.bfloat16,
         quantize_text_encoder: Optional[str] = None,
         quantize_transformer: Optional[str] = None,
+        quantize_vae: Optional[str] = None,
         cpu_offload: bool = True,
+        offload_type: Optional[str] = None,
+        num_blocks_per_group: int = 2,
         compile_transformer: bool = False,
         compile_mode: str = "default",
     ):
@@ -829,10 +954,27 @@ class QwenImageDiffusersPipeline:
             **pipeline_kwargs,
         )
 
+        # Apply VAE quantization after pipeline is assembled
+        if quantize_vae and quantize_vae != "none":
+            try:
+                from llm_dit.quantization import quantize_vae as _quantize_vae
+                logger.info(f"Applying VAE quantization: {quantize_vae}")
+                decompose_pipe.vae = _quantize_vae(decompose_pipe.vae, quantize_vae)
+            except ImportError:
+                logger.warning("VAE quantization module not available, skipping")
+
+        # Resolve offload_type from new parameter or legacy cpu_offload
+        if offload_type is not None:
+            effective_offload = offload_type
+        elif cpu_offload:
+            effective_offload = "model"
+        else:
+            effective_offload = "none"
+
         # Apply torch.compile BEFORE CPU offload
-        # NOTE: torch.compile is INCOMPATIBLE with enable_model_cpu_offload()
+        # NOTE: torch.compile is INCOMPATIBLE with CPU offload
         if compile_transformer:
-            if cpu_offload:
+            if effective_offload != "none":
                 logger.warning(
                     "torch.compile is incompatible with CPU offload (accelerate's tensor swapping "
                     "fails with compiled models). Skipping compilation."
@@ -846,9 +988,13 @@ class QwenImageDiffusersPipeline:
                 )
                 logger.info("Transformer compiled successfully")
 
-        if cpu_offload:
-            decompose_pipe.enable_model_cpu_offload()
-            logger.info("Model CPU offload enabled for decompose pipeline")
+        # Apply offloading
+        cls._apply_offloading(
+            decompose_pipe,
+            effective_offload,
+            torch.device("cuda"),
+            num_blocks_per_group,
+        )
 
         return decompose_pipe
 

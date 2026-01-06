@@ -181,7 +181,6 @@ def load_templates_from_dir(
         try:
             template = load_template(path)
             templates[template.name] = template
-            logger.debug(f"Loaded template: {template.name} (category={template.category})")
         except Exception as e:
             logger.warning(f"Failed to load template {path}: {e}")
 

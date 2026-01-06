@@ -1,5 +1,5 @@
 # llm-dit-experiments Configuration
-# last updated: 2025-01-05
+# last updated: 2025-01-06
 #
 # Copy this file to config.toml and modify paths for your setup.
 # CLI flags override config values. Run `uv run scripts/generate.py --help` for all options.
@@ -189,6 +189,10 @@ base_shift = 0.5                 # Noise schedule shift at base resolution
 max_shift = 1.15                 # Noise schedule shift at max resolution
 base_resolution = 1024           # Training resolution (Z-Image: 1024)
 anisotropic = false              # Per-axis scaling for extreme aspect ratios (21:9, etc.)
+multipass = "single"             # single, twopass (512->target), threepass (256->512->target)
+pass2_strength = 0.5             # img2img strength for second pass (0.3-0.7 recommended)
+pass3_strength = 0.4             # img2img strength for third pass
+frequency_modulation = false     # Enable timestep-based RoPE frequency scaling (experimental)
 
 [rtx4090.slg]
 # Skip Layer Guidance (SLG) for improved structure/anatomy
@@ -235,8 +239,16 @@ siglip_device = "cpu"            # Device for SigLIP (cuda/cpu) - CPU recommende
 [rtx4090.qwen_image]
 # Model path - use the appropriate model for your --model-type
 model_path = "/path/to/Qwen-Image-2512"  # or Qwen-Image-Edit-2511, etc.
-cpu_offload = true               # Enable CPU offload (REQUIRED for RTX 4090)
-                                 # Moves text encoder and VAE to CPU, keeps DiT on GPU
+
+# Offloading strategy (REQUIRED for RTX 4090 due to VRAM constraints)
+offload_type = "model"           # Offload strategy:
+                                 # model: Component-level offload (default, best balance)
+                                 # group: Stream DiT blocks in groups (~4-6GB VRAM)
+                                 # sequential: Layer-by-layer offload (min VRAM, slowest)
+                                 # none: No offloading (requires >48GB VRAM for t2i)
+num_blocks_per_group = 2         # For group offloading: DiT blocks per group
+                                 # Higher = more VRAM, faster. Lower = less VRAM, slower.
+cpu_offload = true               # Legacy flag (use offload_type instead)
 
 # These are variant-aware - leave unset to use variant defaults
 # num_inference_steps = ...      # Variant default: t2i=40, edit=25, layered=50
@@ -245,25 +257,67 @@ cpu_offload = true               # Enable CPU offload (REQUIRED for RTX 4090)
 cfg_scale = 4.0                  # CFG scale (4.0 for all variants)
 layer_num = 4                    # Only for layered variant
 
-# Text encoder quantization
-# With cpu_offload=true, text encoder runs on CPU - no GPU VRAM needed
-quantize_text_encoder = "none"   # Options: none (recommended), 8bit, 4bit
-                                 # none: Full precision on CPU (best quality)
-                                 # 8bit: Good quality + reduced CPU RAM
-                                 # 4bit: Only if RAM constrained (slight quality loss)
+# Text encoder quantization (Qwen2.5-VL-7B, ~14GB full precision)
+quantize_text_encoder = "none"   # Options:
+                                 # none: Full precision (best quality)
+                                 # fp8: TorchAO FP8 dynamic (~7GB, RTX 4090+ only)
+                                 # fp8-filtered: FP8 with explicit incompatible layer skip
+                                 # int8: TorchAO INT8 weight-only (~7GB)
+                                 # 8bit: BitsAndBytes INT8 (~7GB)
+                                 # 4bit: BitsAndBytes NF4 (~3.5GB, slight quality loss)
 
-# Transformer (DiT) quantization
+# Transformer (DiT) quantization (~8GB full precision)
 # Variant-aware default: t2i uses fp8, edit/layered use diffsynth-fp8
-# Leave unset to use variant default, or override:
 # quantize_transformer = "diffsynth-fp8"
                                  # diffsynth-fp8: DiffSynth-style FP8 (recommended for edit/layered)
                                  #   - Runtime F.linear patching with torch._scaled_mm
                                  #   - AMD ROCm support (float8_e4m3fnuz)
-                                 # fp8: TorchAO FP8 (recommended for t2i)
-                                 # int8: TorchAO INT8
+                                 # fp8: TorchAO FP8 (recommended for t2i, 2x faster)
+                                 # fp8-filtered: FP8 with explicit incompatible layer skip
+                                 # int8: TorchAO INT8 weight-only
                                  # 8bit: BitsAndBytes INT8
                                  # 4bit: BitsAndBytes NF4 (quality loss)
                                  # none: No quantization (doesn't fit on 24GB for t2i)
+
+# VAE quantization (~500MB full precision)
+quantize_vae = "none"            # Options:
+                                 # none: Full precision (recommended for quality)
+                                 # int8: TorchAO INT8 (~250MB, 50% reduction)
+                                 # 8bit: BitsAndBytes INT8 (requires model reload)
+                                 # Note: FP8 NOT supported for Conv2d (VAE uses Conv2d)
+
+# =============================================================================
+# Optimization Presets (use with QwenImageConfig.from_preset() in code)
+# =============================================================================
+# Presets apply multiple settings at once for common use cases.
+# Available presets:
+#
+# balanced         - Good defaults (8bit text encoder, model offload)
+#                    VRAM: ~20GB, Speed: baseline, Quality: excellent
+#
+# rtx4090_fp8      - Maximum performance on RTX 4090
+#                    quantize_text_encoder = "fp8"
+#                    quantize_transformer = "fp8"
+#                    quantize_vae = "int8"
+#                    offload_type = "none"
+#                    VRAM: ~13GB, Speed: 2x faster, Quality: excellent
+#
+# rtx4090_group    - RTX 4090 with group offloading for larger batches
+#                    quantize_text_encoder = "8bit"
+#                    offload_type = "group"
+#                    num_blocks_per_group = 2
+#                    VRAM: ~16-18GB, Speed: ~70%, Quality: excellent
+#
+# max_vram_savings - Minimum VRAM (~8-10GB), quality trade-off
+#                    quantize_text_encoder = "4bit"
+#                    quantize_transformer = "4bit"
+#                    offload_type = "group"
+#                    num_blocks_per_group = 1
+#                    VRAM: ~8-10GB, Speed: ~60%, Quality: good (95%)
+#
+# amd_mi300        - AMD ROCm support with DiffSynth FP8
+#                    quantize_transformer = "diffsynth-fp8"
+#                    VRAM: ~18GB, Speed: ~80%, Quality: excellent
 
 # =============================================================================
 # Default Profile - Conservative settings for general hardware
@@ -373,6 +427,10 @@ base_shift = 0.5                 # Shift at base res
 max_shift = 1.15                 # Shift at max res
 base_resolution = 1024           # Training resolution
 anisotropic = false              # Per-axis scaling
+multipass = "single"             # single/twopass/threepass
+pass2_strength = 0.5             # img2img strength for pass 2
+pass3_strength = 0.4             # img2img strength for pass 3
+frequency_modulation = false     # Timestep-based RoPE scaling (experimental)
 
 [default.slg]
 # Skip Layer Guidance for anatomy
@@ -397,13 +455,16 @@ siglip_device = "cuda"           # cuda/cpu
 # Qwen-Image configuration (all variants: t2i, edit, layered)
 # Use --model-type to select variant, variant-aware defaults apply
 model_path = ""                  # Path to any Qwen-Image model
-cpu_offload = true               # Enable CPU offload (required for RTX 4090)
+offload_type = "model"           # model/group/sequential/none (model recommended)
+num_blocks_per_group = 2         # For group offloading
+cpu_offload = true               # Legacy flag (use offload_type instead)
 cfg_scale = 4.0                  # CFG scale (4.0 for all variants)
 layer_num = 4                    # Only for layered variant
 # num_inference_steps = ...      # Variant default: t2i=40, edit=25, layered=50
 # resolution = ...               # Variant default: t2i=1024, edit=640, layered=640
-quantize_text_encoder = "none"   # none (CPU offload), 4bit, 8bit
+quantize_text_encoder = "none"   # none/fp8/fp8-filtered/int8/8bit/4bit
 # quantize_transformer = ...     # Variant default: t2i=fp8, edit/layered=diffsynth-fp8
+quantize_vae = "none"            # none/int8/8bit (FP8 not supported for Conv2d)
 
 # =============================================================================
 # Web Server Configuration

@@ -181,3 +181,201 @@
     opacity: 1;
     visibility: visible;
 }
+
+/* =============================================================================
+   Result Action Bar
+   ============================================================================= */
+
+.result-action-bar {
+    animation: slideUp 0.3s ease-out;
+}
+
+@keyframes slideUp {
+    from {
+        opacity: 0;
+        transform: translateY(8px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.result-action-btn {
+    position: relative;
+    overflow: hidden;
+}
+
+.result-action-btn::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(135deg, rgba(255,255,255,0.1) 0%, transparent 50%);
+    opacity: 0;
+    transition: opacity 0.2s;
+}
+
+.result-action-btn:hover::before {
+    opacity: 1;
+}
+
+/* =============================================================================
+   Lightbox Action Bar
+   ============================================================================= */
+
+.lightbox-action-bar {
+    animation: fadeInUp 0.4s ease-out 0.2s both;
+}
+
+@keyframes fadeInUp {
+    from {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.lightbox-action-btn {
+    min-width: 100px;
+}
+
+@media (max-width: 768px) {
+    .lightbox-action-bar {
+        width: 100%;
+        max-width: 100%;
+        border-radius: 0;
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        margin: 0;
+        padding: 1rem;
+        background: rgba(17, 24, 39, 0.95);
+    }
+
+    .lightbox-action-btn {
+        flex: 1;
+        min-width: auto;
+        padding: 0.75rem 0.5rem;
+        font-size: 0.75rem;
+    }
+
+    .lightbox-action-btn svg {
+        display: none;
+    }
+}
+
+/* =============================================================================
+   History Dropdown Menu
+   ============================================================================= */
+
+.history-use-dropdown {
+    animation: dropdownOpen 0.15s ease-out;
+}
+
+@keyframes dropdownOpen {
+    from {
+        opacity: 0;
+        transform: translateY(4px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.history-use-dropdown button {
+    white-space: nowrap;
+}
+
+/* =============================================================================
+   Drag and Drop States
+   ============================================================================= */
+
+.history-item {
+    transition: transform 0.2s, opacity 0.2s, box-shadow 0.2s;
+}
+
+.history-item.dragging {
+    opacity: 0.5;
+    transform: scale(0.95);
+}
+
+.history-item[draggable="true"] {
+    cursor: grab;
+}
+
+.history-item[draggable="true"]:active {
+    cursor: grabbing;
+}
+
+/* Drop target highlighting during drag */
+body.dragging-image .drop-target-highlight {
+    border-color: #8b5cf6 !important;
+    background: rgba(139, 92, 246, 0.15) !important;
+    box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.3);
+    animation: pulseGlow 1.5s ease-in-out infinite;
+}
+
+@keyframes pulseGlow {
+    0%, 100% {
+        box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.3);
+    }
+    50% {
+        box-shadow: 0 0 0 6px rgba(139, 92, 246, 0.2);
+    }
+}
+
+.dropzone.drop-target-active {
+    border-color: #22c55e !important;
+    background: rgba(34, 197, 94, 0.2) !important;
+    transform: scale(1.02);
+}
+
+/* =============================================================================
+   Mobile Touch Improvements
+   ============================================================================= */
+
+@media (max-width: 768px) {
+    .result-action-bar .flex {
+        justify-content: center;
+    }
+
+    .result-action-btn {
+        flex: 1;
+        max-width: 120px;
+        padding: 0.625rem 0.5rem;
+        font-size: 0.7rem;
+    }
+
+    .result-action-btn svg {
+        width: 14px;
+        height: 14px;
+    }
+
+    /* Make history items larger for touch */
+    .history-item {
+        min-height: 100px;
+    }
+
+    /* History dropdown as bottom sheet on mobile */
+    .history-use-dropdown {
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        top: auto;
+        margin: 0;
+        border-radius: 1rem 1rem 0 0;
+        z-index: 100;
+    }
+
+    .history-use-dropdown button {
+        padding: 1rem;
+        font-size: 0.875rem;
+        min-height: 48px;
+    }
+}

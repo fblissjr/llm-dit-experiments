@@ -69,6 +69,10 @@ def build_dype_config(config: "RuntimeConfig") -> Optional["DyPEConfigType"]:
         max_shift=getattr(config, 'dype_max_shift', 1.15),
         base_resolution=getattr(config, 'dype_base_resolution', 1024),
         anisotropic=getattr(config, 'dype_anisotropic', False),
+        multipass=getattr(config, 'dype_multipass', 'single'),
+        pass2_strength=getattr(config, 'dype_pass2_strength', 0.5),
+        pass3_strength=getattr(config, 'dype_pass3_strength', 0.4),
+        frequency_modulation=getattr(config, 'dype_frequency_modulation', False),
     )
 
 
@@ -133,7 +137,25 @@ class PipelineLoader:
 
         # Attention backend (if specified)
         if self.config.attention_backend and self.config.attention_backend != "auto":
-            # Map our config names to diffusers names
+            # Set global attention backend for llm_dit.utils.attention
+            try:
+                from llm_dit.utils.attention import (
+                    set_attention_backend,
+                    get_available_backends,
+                )
+                available = get_available_backends()
+                if self.config.attention_backend in available:
+                    set_attention_backend(self.config.attention_backend)
+                    logger.info(f"Global attention backend set to: {self.config.attention_backend}")
+                else:
+                    logger.warning(
+                        f"Requested attention backend '{self.config.attention_backend}' not available. "
+                        f"Available: {available}. Using auto-detection."
+                    )
+            except Exception as e:
+                logger.warning(f"Failed to set global attention backend: {e}")
+
+            # Also set diffusers-specific attention backend
             backend_map = {
                 "sdpa": "native",  # diffusers calls SDPA "native"
                 "flash_attn_2": "flash",
@@ -142,13 +164,13 @@ class PipelineLoader:
                 "sage": "sage",
             }
             diffusers_backend = backend_map.get(self.config.attention_backend, self.config.attention_backend)
-            logger.info(f"Setting attention backend to {self.config.attention_backend} (diffusers: {diffusers_backend})...")
+            logger.info(f"Setting diffusers attention backend to: {diffusers_backend}")
             try:
                 if hasattr(pipeline.transformer, 'set_attention_backend'):
                     pipeline.transformer.set_attention_backend(diffusers_backend)
-                    logger.info(f"  Attention backend set to {diffusers_backend}")
+                    logger.info(f"  Diffusers attention backend set to {diffusers_backend}")
             except Exception as e:
-                logger.warning(f"  Failed to set attention backend: {e}")
+                logger.warning(f"  Failed to set diffusers attention backend: {e}")
 
         # torch.compile
         if self.config.compile:

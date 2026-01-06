@@ -41,6 +41,10 @@ class DyPEConfig:
         max_shift: Noise schedule shift at max resolution
         base_resolution: Training resolution (Z-Image: 1024, Qwen: 1328)
         anisotropic: Use per-axis scaling for extreme aspect ratios
+        multipass: Generation mode (single, twopass, threepass)
+        pass2_strength: img2img strength for second pass (0.0-1.0)
+        pass3_strength: img2img strength for third pass (0.0-1.0)
+        frequency_modulation: Enable timestep-based RoPE frequency scaling
     """
 
     enabled: bool = False
@@ -52,6 +56,10 @@ class DyPEConfig:
     max_shift: float = 1.15
     base_resolution: int = 1024
     anisotropic: bool = False
+    multipass: Literal["single", "twopass", "threepass"] = "single"
+    pass2_strength: float = 0.5
+    pass3_strength: float = 0.4
+    frequency_modulation: bool = False
 
     def __post_init__(self):
         """Validate and clamp parameters."""
@@ -69,6 +77,10 @@ class DyPEConfig:
             "max_shift": self.max_shift,
             "base_resolution": self.base_resolution,
             "anisotropic": self.anisotropic,
+            "multipass": self.multipass,
+            "pass2_strength": self.pass2_strength,
+            "pass3_strength": self.pass3_strength,
+            "frequency_modulation": self.frequency_modulation,
         }
 
     @classmethod
@@ -84,6 +96,10 @@ class DyPEConfig:
             max_shift=d.get("max_shift", 1.15),
             base_resolution=d.get("base_resolution", 1024),
             anisotropic=d.get("anisotropic", False),
+            multipass=d.get("multipass", "single"),
+            pass2_strength=d.get("pass2_strength", 0.5),
+            pass3_strength=d.get("pass3_strength", 0.4),
+            frequency_modulation=d.get("frequency_modulation", False),
         )
 
 
@@ -650,25 +666,58 @@ class ZImageDyPERoPE(DyPEPosEmbed):
         """Compute RoPE embeddings for Z-Image.
 
         Args:
-            ids: Position indices tensor of shape (B, seq_len, 3)
+            ids: Position indices tensor of shape (seq_len, 3) where 3 = [text, height, width]
 
         Returns:
             RoPE embeddings in Z-Image format (complex64)
 
-        Note:
-            The diffusers RopeEmbedder returns complex64 embeddings using torch.polar.
-            Currently, we delegate to the original embedder for all cases because
-            reimplementing the exact complex format with DyPE modulation requires
-            matching diffusers' internal apply_rotary_emb function.
-
-            TODO: Implement DyPE-modulated complex embeddings that match the
-            diffusers format: torch.polar(ones, angles) -> complex64
+        When frequency_modulation is enabled, scales RoPE frequencies by k_t
+        (timestep-dependent factor) to dynamically adjust position encoding
+        based on the diffusion timestep.
         """
-        # Always delegate to original embedder for now
-        # The DyPE timestep modulation needs to be applied differently
-        # (modifying how frequencies are computed in the original embedder)
-        # rather than replacing the embedder output format
-        return self.original_embedder(ids)
+        # Check if frequency modulation is enabled
+        if not self.config.enabled or not self.config.frequency_modulation:
+            return self.original_embedder(ids)
+
+        # Get parameters from original embedder
+        theta = self.original_embedder.theta
+        axes_dim = self.original_embedder.axes_dim
+
+        # Compute k_t scaling based on current sigma
+        k_t = compute_k_t(self.current_sigma, self.config)
+
+        # Ensure ids is 2D: (seq_len, n_axes)
+        if ids.ndim != 2:
+            raise ValueError(f"Expected ids to have 2 dimensions, got {ids.ndim}")
+
+        device = ids.device
+        result = []
+
+        for i in range(len(axes_dim)):
+            d = axes_dim[i]
+            index = ids[:, i].float()  # Position indices for this axis
+
+            # Compute base frequencies (same formula as diffusers)
+            # freqs = 1.0 / (theta ** (torch.arange(0, d, 2) / d))
+            freq_indices = torch.arange(0, d, 2, device=device, dtype=torch.float32)
+            base_freqs = 1.0 / (theta ** (freq_indices / d))
+
+            # Apply DyPE scaling to frequencies
+            # k_t modulates how much the frequencies are stretched
+            # At high sigma (noisy), k_t is large -> lower frequencies (global structure)
+            # At low sigma (clean), k_t is small -> higher frequencies (fine details)
+            scaled_freqs = base_freqs * k_t
+
+            # Compute angles: outer product of positions and scaled frequencies
+            # Result shape: (seq_len, d/2)
+            angles = torch.outer(index, scaled_freqs)
+
+            # Convert to complex64 (matching diffusers format exactly)
+            freqs_cis = torch.polar(torch.ones_like(angles), angles).to(torch.complex64)
+            result.append(freqs_cis)
+
+        # Concatenate along the last dimension
+        return torch.cat(result, dim=-1)
 
 
 def patch_zimage_rope(

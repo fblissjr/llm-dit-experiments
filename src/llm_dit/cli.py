@@ -230,6 +230,10 @@ class RuntimeConfig:
     dype_max_shift: float = 1.15  # Noise schedule shift at max resolution
     dype_base_resolution: int = 1024  # Training resolution
     dype_anisotropic: bool = False  # Per-axis scaling for extreme aspect ratios
+    dype_multipass: str = "single"  # single, twopass, threepass
+    dype_pass2_strength: float = 0.5  # img2img strength for pass 2
+    dype_pass3_strength: float = 0.4  # img2img strength for pass 3
+    dype_frequency_modulation: bool = False  # Enable timestep-based frequency scaling
 
     # Skip Layer Guidance (SLG) for improved structure/anatomy
     slg_scale: float = 0.0  # Guidance scale (0 = disabled, 2-3 typical)
@@ -853,6 +857,30 @@ def create_base_parser(
         action="store_true",
         help="Use per-axis scaling for extreme aspect ratios (16:9, 9:16)",
     )
+    dype_group.add_argument(
+        "--dype-multipass",
+        type=str,
+        choices=["single", "twopass", "threepass"],
+        default=None,
+        help="Generation mode: single (direct), twopass (512->target), threepass (256->512->target)",
+    )
+    dype_group.add_argument(
+        "--dype-pass2-strength",
+        type=float,
+        default=None,
+        help="img2img strength for second pass (0.0-1.0, default: 0.5)",
+    )
+    dype_group.add_argument(
+        "--dype-pass3-strength",
+        type=float,
+        default=None,
+        help="img2img strength for third pass (0.0-1.0, default: 0.4)",
+    )
+    dype_group.add_argument(
+        "--dype-frequency-modulation",
+        action="store_true",
+        help="Enable timestep-based RoPE frequency scaling (experimental)",
+    )
 
     # Skip Layer Guidance (SLG)
     slg_group = parser.add_argument_group("Skip Layer Guidance (SLG)")
@@ -1345,6 +1373,10 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
                 config.dype_max_shift = getattr(dype, 'max_shift', 1.15)
                 config.dype_base_resolution = getattr(dype, 'base_resolution', 1024)
                 config.dype_anisotropic = getattr(dype, 'anisotropic', False)
+                config.dype_multipass = getattr(dype, 'multipass', 'single')
+                config.dype_pass2_strength = getattr(dype, 'pass2_strength', 0.5)
+                config.dype_pass3_strength = getattr(dype, 'pass3_strength', 0.4)
+                config.dype_frequency_modulation = getattr(dype, 'frequency_modulation', False)
 
             # Check for SLG (Skip Layer Guidance) section
             if hasattr(toml_config, 'slg'):
@@ -1559,6 +1591,14 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
         config.dype_base_resolution = args.dype_base_resolution
     if getattr(args, 'dype_anisotropic', False):
         config.dype_anisotropic = True
+    if getattr(args, 'dype_multipass', None) is not None:
+        config.dype_multipass = args.dype_multipass
+    if getattr(args, 'dype_pass2_strength', None) is not None:
+        config.dype_pass2_strength = args.dype_pass2_strength
+    if getattr(args, 'dype_pass3_strength', None) is not None:
+        config.dype_pass3_strength = args.dype_pass3_strength
+    if getattr(args, 'dype_frequency_modulation', False):
+        config.dype_frequency_modulation = True
 
     # Skip Layer Guidance overrides
     if getattr(args, 'slg_scale', None) is not None:

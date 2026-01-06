@@ -71,6 +71,10 @@ uv run scripts/generate.py --config config.toml --profile rtx4090 "A cat"
 | `--dype-max-shift` | Noise schedule shift at max resolution (default: 1.15) |
 | `--dype-base-resolution` | Training resolution (Z-Image: 1024, Qwen: 1328) |
 | `--dype-anisotropic` | Use per-axis scaling for extreme aspect ratios (16:9, 9:16) |
+| `--dype-multipass` | Generation mode: single/twopass/threepass (default: single) |
+| `--dype-pass2-strength` | img2img strength for second pass (default: 0.5) |
+| `--dype-pass3-strength` | img2img strength for third pass (default: 0.4) |
+| `--dype-frequency-modulation` | Enable timestep-based RoPE frequency scaling (experimental) |
 
 ## generation
 

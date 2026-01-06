@@ -1,18 +1,21 @@
 # dype (dynamic position extrapolation)
 
-*last updated: 2025-12-24*
+*last updated: 2025-01-06*
 
 DyPE enables generation at resolutions beyond the model's training resolution (1024x1024) by dynamically scaling the RoPE position encodings. Essential for high-resolution generation (2K, 4K) without retraining.
 
 ## current status
 
-**DyPE frequency modulation is not yet implemented for Z-Image.** The diffusers `ZImageTransformer2DModel` uses complex64 RoPE embeddings (via `torch.polar`) which requires matching the exact output format. The current implementation delegates to the original embedder.
+DyPE now supports two high-resolution generation approaches:
 
-**Recommended approach for high-resolution generation:** Use **multipass** mode which works well without frequency modulation:
+1. **Multipass mode** (recommended, stable): Generate at lower resolution first, then refine via img2img
+2. **Frequency modulation** (experimental): Dynamically scale RoPE frequencies based on diffusion timestep
+
+**Recommended approach:** Use **multipass** mode for best results:
 - Two-pass: 512px first pass, then img2img upscale to target
 - Three-pass: 256px -> 512px -> target
 
-The multipass approach produces excellent results and avoids the need for DyPE frequency extrapolation.
+Frequency modulation is available as an experimental option via `--dype-frequency-modulation`.
 
 ## why dype is needed
 
@@ -127,11 +130,29 @@ uv run scripts/generate.py \
 ```
 
 **Multipass modes:**
-- `single`: Direct generation at target resolution (frequency modulation not yet working)
-- `twopass`: Half-res first pass, then img2img refinement
-- `threepass`: Quarter-res -> half-res -> full-res
+- `single`: Direct generation at target resolution (use with `--dype-frequency-modulation` for best results)
+- `twopass`: Half-res first pass, then img2img refinement (recommended)
+- `threepass`: Quarter-res -> half-res -> full-res (for 4K+)
 
 **pass2_strength:** Controls how much the refinement passes change the image (0.3-0.7 recommended).
+
+## frequency modulation (experimental)
+
+Frequency modulation dynamically scales RoPE frequencies based on the diffusion timestep:
+- Early steps (high sigma): Lower frequencies capture global structure
+- Late steps (low sigma): Higher frequencies capture fine details
+
+```bash
+# Single-pass with frequency modulation
+uv run scripts/generate.py \
+  --model-path /path/to/z-image \
+  --dype \
+  --dype-frequency-modulation \
+  --width 2048 --height 2048 \
+  "A detailed landscape"
+```
+
+**Note:** Frequency modulation is experimental. If results are unsatisfactory, use multipass mode instead.
 
 ## python api
 

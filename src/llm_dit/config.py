@@ -59,6 +59,55 @@ except ImportError:
         tomllib = None
 
 
+# Qwen-Image optimization presets for different hardware/memory configurations
+QWEN_IMAGE_PRESETS = {
+    "balanced": {
+        # Good defaults for most systems
+        "quantize_text_encoder": "8bit",
+        "quantize_transformer": "none",
+        "quantize_vae": "none",
+        "offload_type": "model",
+        "cpu_offload": True,
+    },
+    "rtx4090_fp8": {
+        # Maximum performance on RTX 4090 (FP8 + torch.compile)
+        # ~13GB VRAM: 7GB text encoder + 4GB DiT + 0.25GB VAE
+        "quantize_text_encoder": "fp8",
+        "quantize_transformer": "fp8",
+        "quantize_vae": "int8",
+        "offload_type": "none",
+        "cpu_offload": False,
+    },
+    "rtx4090_group": {
+        # RTX 4090 with group offloading for larger batches
+        # ~16-18GB VRAM with streaming DiT blocks
+        "quantize_text_encoder": "8bit",
+        "quantize_transformer": "none",
+        "quantize_vae": "int8",
+        "offload_type": "group",
+        "num_blocks_per_group": 2,
+        "cpu_offload": True,
+    },
+    "max_vram_savings": {
+        # Minimum VRAM (~8-10GB), quality trade-off
+        "quantize_text_encoder": "4bit",
+        "quantize_transformer": "4bit",
+        "quantize_vae": "int8",
+        "offload_type": "group",
+        "num_blocks_per_group": 1,
+        "cpu_offload": True,
+    },
+    "amd_mi300": {
+        # AMD ROCm support with DiffSynth FP8
+        "quantize_text_encoder": "8bit",
+        "quantize_transformer": "diffsynth-fp8",
+        "quantize_vae": "int8",
+        "offload_type": "model",
+        "cpu_offload": True,
+    },
+}
+
+
 @dataclass
 class EncoderConfig:
     """Configuration for the text encoder (LLM).
@@ -283,6 +332,19 @@ class SchedulerConfig:
 
 
 @dataclass
+class APIConfig:
+    """Configuration for remote text encoder API (distributed inference).
+
+    When configured, the text encoder runs on a remote server (e.g., Mac)
+    while the DiT runs locally on GPU. This enables distributed inference
+    across machines.
+    """
+
+    url: str = ""  # API URL, e.g., "http://mac-host:8080" (empty = use local encoder)
+    model: str = "Qwen3-4B"  # Model ID for embedding extraction
+
+
+@dataclass
 class LoRAConfig:
     """LoRA configuration."""
 
@@ -321,11 +383,11 @@ class VLConfig:
 
     model_path: str = ""  # Path to Qwen3-VL model (empty = disabled)
     device: str = "cpu"  # Device for Qwen3-VL (cpu recommended to save VRAM)
-    default_alpha: float = 1.0  # Default interpolation ratio (0.0=text, 1.0=VL) - use 1.0 for pure VL
-    default_hidden_layer: int = -8  # Layer -8 produces cleaner results than -2 (penultimate)
+    default_alpha: float = 0.3  # Default interpolation ratio (0.0=text, 1.0=VL) - research validated
+    default_hidden_layer: int = -6  # Layer -6 produces best results (research validated)
     text_tokens_only: bool = True  # Use only text token positions (image tokens cause artifacts)
     auto_unload: bool = True  # Unload after extraction to save VRAM
-    target_std: float = 70.0  # Target std for scaling (measured from Qwen3-4B text embeddings)
+    target_std: float = 58.75  # Target std for scaling (research validated from experiments)
 
 
 @dataclass
@@ -355,8 +417,22 @@ class QwenImageConfig:
     cpu_offload: bool = True  # Enable sequential CPU offload for memory efficiency
 
     # Quantization (for VRAM-constrained GPUs like RTX 4090)
-    quantize_text_encoder: str = "none"  # none/4bit/8bit - Qwen2.5-VL-7B: 14GB -> 3.5GB (4bit)
-    quantize_transformer: str = "none"  # none/4bit/8bit - DiT: 8GB -> 2GB (4bit)
+    # Valid options: none, 4bit, 8bit, fp8, fp8-filtered, int8, diffsynth-fp8
+    # - none: Full precision (BF16)
+    # - 4bit/8bit: BitsAndBytes quantization (any GPU)
+    # - fp8/fp8-filtered: TorchAO FP8 (RTX 4090+, 2x faster)
+    # - int8: TorchAO INT8 weight-only (any GPU)
+    # - diffsynth-fp8: Runtime FP8 patching (RTX 4090+, AMD MI300)
+    quantize_text_encoder: str = "none"  # Qwen2.5-VL-7B: 14GB -> 7GB (fp8) or 3.5GB (4bit)
+    quantize_transformer: str = "none"  # DiT: 8GB -> 4GB (fp8) or 2GB (4bit)
+    quantize_vae: str = "none"  # VAE: 500MB -> 250MB (int8). Only int8/8bit for Conv2d
+
+    # Offloading strategy
+    # - model: enable_model_cpu_offload() - swap entire components
+    # - group: apply_group_offloading() - stream DiT blocks (4-6GB VRAM)
+    # - sequential: enable_sequential_cpu_offload() - layer-by-layer (slowest)
+    offload_type: str = "model"  # model, group, sequential
+    num_blocks_per_group: int = 2  # For group offloading: blocks to keep on GPU
 
     # Generation settings
     num_inference_steps: int = 25  # Denoising steps for Edit-2511
@@ -398,6 +474,114 @@ class QwenImageConfig:
                 f"resolutions and other values may produce poor results."
             )
 
+    def validate_quantization(self) -> None:
+        """Validate quantization settings and check hardware compatibility."""
+        valid_quant = ("none", "4bit", "8bit", "fp8", "fp8-filtered", "int8", "diffsynth-fp8")
+        valid_vae_quant = ("none", "int8", "8bit")  # Only int8/8bit for Conv2d
+        valid_offload = ("model", "group", "sequential")
+
+        for field, value in [
+            ("quantize_text_encoder", self.quantize_text_encoder),
+            ("quantize_transformer", self.quantize_transformer),
+        ]:
+            if value not in valid_quant:
+                raise ValueError(
+                    f"Invalid {field}='{value}'. "
+                    f"Valid options: {', '.join(valid_quant)}"
+                )
+
+        if self.quantize_vae not in valid_vae_quant:
+            raise ValueError(
+                f"Invalid quantize_vae='{self.quantize_vae}'. "
+                f"VAE only supports: {', '.join(valid_vae_quant)} (Conv2d layers)"
+            )
+
+        if self.offload_type not in valid_offload:
+            raise ValueError(
+                f"Invalid offload_type='{self.offload_type}'. "
+                f"Valid options: {', '.join(valid_offload)}"
+            )
+
+        # Check FP8 hardware compatibility
+        fp8_options = ("fp8", "fp8-filtered", "diffsynth-fp8")
+        uses_fp8 = (
+            self.quantize_text_encoder in fp8_options
+            or self.quantize_transformer in fp8_options
+        )
+        if uses_fp8:
+            try:
+                from llm_dit.quantization import check_fp8_support
+                if not check_fp8_support():
+                    logger.warning(
+                        "FP8 quantization requires RTX 4090+ (compute 8.9+) or AMD MI300. "
+                        "FP8 may not work on this hardware. Consider 'int8' or '8bit' instead."
+                    )
+            except ImportError:
+                pass  # quantization module not available
+
+    def apply_preset(self, preset_name: str) -> None:
+        """
+        Apply an optimization preset to this config.
+
+        Available presets:
+        - "balanced": Good defaults for most systems (8-bit text encoder, model offload)
+        - "rtx4090_fp8": Max performance on RTX 4090 (FP8, no offload, ~13GB VRAM)
+        - "rtx4090_group": RTX 4090 with group offloading (~16-18GB VRAM)
+        - "max_vram_savings": Minimum VRAM (~8-10GB), uses 4-bit quantization
+        - "amd_mi300": AMD ROCm support with DiffSynth FP8
+
+        Args:
+            preset_name: Name of preset to apply
+
+        Raises:
+            ValueError: If preset_name is not valid
+        """
+        if preset_name not in QWEN_IMAGE_PRESETS:
+            valid = list(QWEN_IMAGE_PRESETS.keys())
+            raise ValueError(
+                f"Unknown preset: {preset_name}. Valid presets: {valid}"
+            )
+
+        preset = QWEN_IMAGE_PRESETS[preset_name]
+        for key, value in preset.items():
+            if hasattr(self, key):
+                setattr(self, key, value)
+            else:
+                logger.warning(f"Preset '{preset_name}' has unknown field: {key}")
+
+        logger.info(f"Applied QwenImage preset: {preset_name}")
+
+    @classmethod
+    def from_preset(cls, preset_name: str, **overrides) -> "QwenImageConfig":
+        """
+        Create a QwenImageConfig from a preset with optional overrides.
+
+        Args:
+            preset_name: Preset to start from
+            **overrides: Additional config values to override
+
+        Returns:
+            Configured QwenImageConfig instance
+
+        Example:
+            config = QwenImageConfig.from_preset(
+                "rtx4090_fp8",
+                model_path="/path/to/model",
+                resolution=1024,
+            )
+        """
+        config = cls()
+        config.apply_preset(preset_name)
+
+        # Apply overrides
+        for key, value in overrides.items():
+            if hasattr(config, key):
+                setattr(config, key, value)
+            else:
+                logger.warning(f"Unknown config field: {key}")
+
+        return config
+
 
 @dataclass
 class DyPEConfig:
@@ -420,6 +604,10 @@ class DyPEConfig:
         max_shift: Noise schedule shift at max resolution
         base_resolution: Training resolution (Z-Image: 1024, Qwen: 1328)
         anisotropic: Use per-axis scaling for extreme aspect ratios
+        multipass: Generation mode (single, twopass, threepass)
+        pass2_strength: img2img strength for second pass (0.0-1.0)
+        pass3_strength: img2img strength for third pass (0.0-1.0)
+        frequency_modulation: Enable timestep-based RoPE frequency scaling
     """
 
     enabled: bool = False
@@ -431,6 +619,10 @@ class DyPEConfig:
     max_shift: float = 1.15
     base_resolution: int = 1024
     anisotropic: bool = False
+    multipass: Literal["single", "twopass", "threepass"] = "single"
+    pass2_strength: float = 0.5
+    pass3_strength: float = 0.4
+    frequency_modulation: bool = False
 
     def __post_init__(self):
         """Validate and clamp parameters."""
@@ -448,6 +640,10 @@ class DyPEConfig:
             "max_shift": self.max_shift,
             "base_resolution": self.base_resolution,
             "anisotropic": self.anisotropic,
+            "multipass": self.multipass,
+            "pass2_strength": self.pass2_strength,
+            "pass3_strength": self.pass3_strength,
+            "frequency_modulation": self.frequency_modulation,
         }
 
 
@@ -634,6 +830,7 @@ class Config:
     generation: GenerationConfig = field(default_factory=GenerationConfig)
     optimization: OptimizationConfig = field(default_factory=OptimizationConfig)
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
+    api: APIConfig = field(default_factory=APIConfig)
     lora: LoRAConfig = field(default_factory=LoRAConfig)
     pytorch: PyTorchConfig = field(default_factory=PyTorchConfig)
     rewriter: RewriterConfig = field(default_factory=RewriterConfig)
@@ -651,6 +848,7 @@ class Config:
         generation_data = data.pop("generation", {})
         optimization_data = data.pop("optimization", {})
         scheduler_data = data.pop("scheduler", {})
+        api_data = data.pop("api", {})
         lora_data = data.pop("lora", {})
         pytorch_data = data.pop("pytorch", {})
         rewriter_data = data.pop("rewriter", {})
@@ -668,6 +866,7 @@ class Config:
             generation=GenerationConfig(**generation_data),
             optimization=OptimizationConfig(**optimization_data),
             scheduler=SchedulerConfig(**scheduler_data),
+            api=APIConfig(**api_data),
             lora=LoRAConfig(**lora_data),
             pytorch=PyTorchConfig(**pytorch_data),
             rewriter=RewriterConfig(**rewriter_data),
@@ -753,16 +952,25 @@ class Config:
                 "width": self.generation.width,
                 "num_inference_steps": self.generation.num_inference_steps,
                 "guidance_scale": self.generation.guidance_scale,
+                "cfg_normalization": self.generation.cfg_normalization,
+                "cfg_truncation": self.generation.cfg_truncation,
+                "cfg_norm_mode": self.generation.cfg_norm_mode,
                 "enable_thinking": self.generation.enable_thinking,
                 "default_template": self.generation.default_template,
             },
             "optimization": {
                 "flash_attn": self.optimization.flash_attn,
                 "compile": self.optimization.compile,
+                "compile_mode": self.optimization.compile_mode,
                 "cpu_offload": self.optimization.cpu_offload,
             },
             "scheduler": {
                 "shift": self.scheduler.shift,
+                "shift_terminal": self.scheduler.shift_terminal,
+            },
+            "api": {
+                "url": self.api.url,
+                "model": self.api.model,
             },
             "lora": {
                 "paths": self.lora.paths,
@@ -790,12 +998,15 @@ class Config:
                 "max_tokens": self.rewriter.max_tokens,
                 "vl_enabled": self.rewriter.vl_enabled,
                 "preload_vl": self.rewriter.preload_vl,
+                "vl_api_model": self.rewriter.vl_api_model,
+                "timeout": self.rewriter.timeout,
             },
             "vl": {
                 "model_path": self.vl.model_path,
                 "device": self.vl.device,
                 "default_alpha": self.vl.default_alpha,
                 "default_hidden_layer": self.vl.default_hidden_layer,
+                "text_tokens_only": self.vl.text_tokens_only,
                 "auto_unload": self.vl.auto_unload,
                 "target_std": self.vl.target_std,
             },
@@ -806,6 +1017,11 @@ class Config:
                 "text_encoder_device": self.qwen_image.text_encoder_device,
                 "torch_dtype": self.qwen_image.torch_dtype,
                 "cpu_offload": self.qwen_image.cpu_offload,
+                "quantize_text_encoder": self.qwen_image.quantize_text_encoder,
+                "quantize_transformer": self.qwen_image.quantize_transformer,
+                "quantize_vae": self.qwen_image.quantize_vae,
+                "offload_type": self.qwen_image.offload_type,
+                "num_blocks_per_group": self.qwen_image.num_blocks_per_group,
                 "num_inference_steps": self.qwen_image.num_inference_steps,
                 "cfg_scale": self.qwen_image.cfg_scale,
                 "layer_num": self.qwen_image.layer_num,

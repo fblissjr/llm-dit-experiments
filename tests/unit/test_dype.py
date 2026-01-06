@@ -113,6 +113,75 @@ class TestDyPEConfig:
         assert config.enabled is True
         assert config.method == "vision_yarn"  # default
 
+    def test_multipass_fields_default(self):
+        """Test that new multipass fields have correct defaults."""
+        config = DyPEConfig()
+        assert config.multipass == "single"
+        assert config.pass2_strength == 0.5
+        assert config.pass3_strength == 0.4
+
+    def test_frequency_modulation_default(self):
+        """Test that frequency_modulation defaults to False (opt-in)."""
+        config = DyPEConfig()
+        assert config.frequency_modulation is False
+
+    def test_multipass_customization(self):
+        """Test multipass field customization."""
+        config = DyPEConfig(
+            multipass="twopass",
+            pass2_strength=0.6,
+            pass3_strength=0.3,
+        )
+        assert config.multipass == "twopass"
+        assert config.pass2_strength == 0.6
+        assert config.pass3_strength == 0.3
+
+    def test_frequency_modulation_enabled(self):
+        """Test enabling frequency modulation."""
+        config = DyPEConfig(frequency_modulation=True)
+        assert config.frequency_modulation is True
+
+    def test_to_dict_includes_new_fields(self):
+        """Test that to_dict includes multipass and frequency_modulation fields."""
+        config = DyPEConfig(
+            multipass="threepass",
+            pass2_strength=0.7,
+            pass3_strength=0.5,
+            frequency_modulation=True,
+        )
+        d = config.to_dict()
+
+        assert d["multipass"] == "threepass"
+        assert d["pass2_strength"] == 0.7
+        assert d["pass3_strength"] == 0.5
+        assert d["frequency_modulation"] is True
+
+    def test_from_dict_with_new_fields(self):
+        """Test from_dict with multipass and frequency_modulation fields."""
+        d = {
+            "enabled": True,
+            "multipass": "twopass",
+            "pass2_strength": 0.4,
+            "pass3_strength": 0.3,
+            "frequency_modulation": True,
+        }
+        config = DyPEConfig.from_dict(d)
+
+        assert config.multipass == "twopass"
+        assert config.pass2_strength == 0.4
+        assert config.pass3_strength == 0.3
+        assert config.frequency_modulation is True
+
+    def test_from_dict_new_fields_use_defaults(self):
+        """Test that new fields use defaults when not specified in dict."""
+        d = {"enabled": True}
+        config = DyPEConfig.from_dict(d)
+
+        assert config.multipass == "single"
+        assert config.pass2_strength == 0.5
+        assert config.pass3_strength == 0.4
+        assert config.frequency_modulation is False
+
 
 class TestComputeDypeShift:
     """Test compute_dype_shift function."""
@@ -605,6 +674,123 @@ class TestZImageDyPERoPE:
         # Should delegate to original
         assert original.call_count == 1
 
+    def test_frequency_modulation_disabled_delegates_to_original(self):
+        """Test that frequency_modulation=False delegates to original embedder."""
+        class MockRoPEEmbedder:
+            theta = 256
+            axes_dim = [32, 48, 48]
+            call_count = 0
+
+            def __call__(self, ids):
+                self.call_count += 1
+                return torch.zeros(ids.shape[0], 1, ids.shape[1], 128, 2, 2)
+
+        original = MockRoPEEmbedder()
+        config = DyPEConfig(enabled=True, frequency_modulation=False)
+        wrapper = ZImageDyPERoPE(original, config)
+
+        ids = torch.zeros(1, 100, 3)
+        wrapper(ids)
+
+        # Should delegate to original when frequency_modulation=False
+        assert original.call_count == 1
+
+    def test_frequency_modulation_produces_complex64_output(self):
+        """Test that frequency modulation produces complex64 output matching diffusers."""
+        class MockRoPEEmbedder:
+            theta = 256.0
+            axes_dim = [32, 48, 48]
+
+            def __call__(self, ids):
+                # Should not be called when frequency_modulation=True
+                raise RuntimeError("Original embedder should not be called")
+
+        original = MockRoPEEmbedder()
+        config = DyPEConfig(enabled=True, frequency_modulation=True)
+        wrapper = ZImageDyPERoPE(original, config)
+        wrapper.set_timestep(1.0)
+
+        # Create position IDs for 3 axes (text, height, width)
+        ids = torch.tensor([[0, 0, 0], [0, 1, 0], [0, 0, 1], [0, 1, 1]]).float()
+
+        output = wrapper(ids)
+
+        # Output should be complex64
+        assert output.dtype == torch.complex64
+        # Output shape should match concatenated dims: 32/2 + 48/2 + 48/2 = 64 complex values
+        assert output.shape == (4, 64)
+
+    def test_frequency_modulation_varies_with_timestep(self):
+        """Test that frequency modulation output changes with timestep."""
+        class MockRoPEEmbedder:
+            theta = 256.0
+            axes_dim = [32, 48, 48]
+
+            def __call__(self, ids):
+                raise RuntimeError("Should not be called")
+
+        original = MockRoPEEmbedder()
+        config = DyPEConfig(
+            enabled=True,
+            frequency_modulation=True,
+            dype_scale=2.0,
+            dype_exponent=2.0,
+        )
+        wrapper = ZImageDyPERoPE(original, config)
+
+        ids = torch.tensor([[0, 1, 1], [0, 2, 2]]).float()
+
+        # Get output at sigma=1.0 (early/noisy)
+        wrapper.set_timestep(1.0)
+        output_early = wrapper(ids)
+
+        # Get output at sigma=0.5 (mid)
+        wrapper.set_timestep(0.5)
+        output_mid = wrapper(ids)
+
+        # Get output at sigma=0.0 (late/clean)
+        wrapper.set_timestep(0.0)
+        output_late = wrapper(ids)
+
+        # Outputs should differ at different timesteps
+        assert not torch.allclose(output_early, output_mid)
+        # At sigma=0, k_t = 0, so frequencies are all scaled to 0
+        # This means angles are 0, and polar gives (1+0j) for all
+        assert torch.allclose(output_late.real, torch.ones_like(output_late.real))
+        assert torch.allclose(output_late.imag, torch.zeros_like(output_late.imag))
+
+    def test_frequency_modulation_respects_dype_scale(self):
+        """Test that dype_scale affects frequency modulation output."""
+        class MockRoPEEmbedder:
+            theta = 256.0
+            axes_dim = [32, 48, 48]
+
+            def __call__(self, ids):
+                raise RuntimeError("Should not be called")
+
+        original = MockRoPEEmbedder()
+
+        ids = torch.tensor([[0, 1, 1]]).float()
+
+        # Low scale
+        config_low = DyPEConfig(
+            enabled=True, frequency_modulation=True, dype_scale=1.0, dype_exponent=2.0
+        )
+        wrapper_low = ZImageDyPERoPE(original, config_low)
+        wrapper_low.set_timestep(1.0)
+        output_low = wrapper_low(ids)
+
+        # High scale
+        config_high = DyPEConfig(
+            enabled=True, frequency_modulation=True, dype_scale=4.0, dype_exponent=2.0
+        )
+        wrapper_high = ZImageDyPERoPE(original, config_high)
+        wrapper_high.set_timestep(1.0)
+        output_high = wrapper_high(ids)
+
+        # Different scales should produce different outputs
+        assert not torch.allclose(output_low, output_high)
+
 
 class TestDyPEPosEmbed:
     """Test DyPEPosEmbed base class."""
@@ -746,3 +932,87 @@ class TestSetZImageTimestep:
 
         # Should not raise error
         set_zimage_timestep(transformer, sigma=0.5)
+
+
+class TestDyPECLIArguments:
+    """Test CLI argument parsing for DyPE options."""
+
+    def test_dype_multipass_argument_parsing(self):
+        """Test that --dype-multipass argument is parsed correctly."""
+        from llm_dit.cli import create_base_parser
+
+        parser = create_base_parser()
+
+        # Test single
+        args = parser.parse_args(["--dype-multipass", "single"])
+        assert args.dype_multipass == "single"
+
+        # Test twopass
+        args = parser.parse_args(["--dype-multipass", "twopass"])
+        assert args.dype_multipass == "twopass"
+
+        # Test threepass
+        args = parser.parse_args(["--dype-multipass", "threepass"])
+        assert args.dype_multipass == "threepass"
+
+    def test_dype_pass_strength_arguments(self):
+        """Test that pass strength arguments are parsed correctly."""
+        from llm_dit.cli import create_base_parser
+
+        parser = create_base_parser()
+
+        args = parser.parse_args([
+            "--dype-pass2-strength", "0.6",
+            "--dype-pass3-strength", "0.3",
+        ])
+        assert args.dype_pass2_strength == 0.6
+        assert args.dype_pass3_strength == 0.3
+
+    def test_dype_frequency_modulation_flag(self):
+        """Test that --dype-frequency-modulation flag is parsed correctly."""
+        from llm_dit.cli import create_base_parser
+
+        parser = create_base_parser()
+
+        # Without flag (default)
+        args = parser.parse_args([])
+        assert args.dype_frequency_modulation is False
+
+        # With flag
+        args = parser.parse_args(["--dype-frequency-modulation"])
+        assert args.dype_frequency_modulation is True
+
+    def test_dype_multipass_invalid_choice(self):
+        """Test that invalid multipass choice raises error."""
+        from llm_dit.cli import create_base_parser
+
+        parser = create_base_parser()
+
+        with pytest.raises(SystemExit):
+            parser.parse_args(["--dype-multipass", "invalid"])
+
+    def test_combined_dype_arguments(self):
+        """Test parsing all new DyPE arguments together."""
+        from llm_dit.cli import create_base_parser
+
+        parser = create_base_parser()
+
+        args = parser.parse_args([
+            "--dype",
+            "--dype-multipass", "twopass",
+            "--dype-pass2-strength", "0.7",
+            "--dype-pass3-strength", "0.4",
+            "--dype-frequency-modulation",
+            "--dype-scale", "3.0",
+            "--width", "2048",
+            "--height", "2048",
+        ])
+
+        assert args.dype is True
+        assert args.dype_multipass == "twopass"
+        assert args.dype_pass2_strength == 0.7
+        assert args.dype_pass3_strength == 0.4
+        assert args.dype_frequency_modulation is True
+        assert args.dype_scale == 3.0
+        assert args.width == 2048
+        assert args.height == 2048

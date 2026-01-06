@@ -847,29 +847,64 @@ def main():
             generator.manual_seed(seed)
 
         start = time.time()
-        image = pipe(
-            args.prompt,
-            height=config.height,
-            width=config.width,
-            num_inference_steps=config.steps,
-            guidance_scale=config.guidance_scale,
-            negative_prompt=negative_prompt,
-            generator=generator,
-            template=config.default_template,
-            system_prompt=config.system_prompt,
-            thinking_content=config.thinking_content,
-            assistant_content=config.assistant_content,
-            force_think_block=config.enable_thinking,  # enable_thinking maps to force_think_block
-            long_prompt_mode=config.long_prompt_mode,
-            hidden_layer=config.hidden_layer,
-            layer_weights=config.layer_weights,
-            skip_layer_guidance_scale=config.slg_scale,
-            skip_layer_indices=config.slg_layers,
-            skip_layer_start=config.slg_start,
-            skip_layer_stop=config.slg_stop,
-            shift=config.shift,
-            callback=progress_callback if config.verbose else None,
-        )
+
+        # Check for multipass mode (for high-resolution DyPE generation)
+        multipass_mode = getattr(config, 'dype_multipass', 'single')
+        if multipass_mode != 'single' and config.dype_enabled:
+            # Build passes configuration based on mode
+            if multipass_mode == 'twopass':
+                passes = [
+                    {"scale": 0.5, "steps": config.steps},
+                    {"scale": 1.0, "steps": config.steps, "strength": config.dype_pass2_strength},
+                ]
+            else:  # threepass
+                passes = [
+                    {"scale": 0.25, "steps": config.steps},
+                    {"scale": 0.5, "steps": config.steps, "strength": config.dype_pass2_strength},
+                    {"scale": 1.0, "steps": config.steps, "strength": config.dype_pass3_strength},
+                ]
+
+            logger.info(f"Using DyPE multipass mode: {multipass_mode}")
+            image = pipe.generate_multipass(
+                prompt=args.prompt,
+                final_width=config.width,
+                final_height=config.height,
+                passes=passes,
+                generator=generator,
+                template=config.default_template,
+                system_prompt=config.system_prompt,
+                thinking_content=config.thinking_content,
+                assistant_content=config.assistant_content,
+                force_think_block=config.enable_thinking,
+                long_prompt_mode=config.long_prompt_mode,
+                hidden_layer=config.hidden_layer,
+                callback=progress_callback if config.verbose else None,
+            )
+        else:
+            # Standard single-pass generation
+            image = pipe(
+                args.prompt,
+                height=config.height,
+                width=config.width,
+                num_inference_steps=config.steps,
+                guidance_scale=config.guidance_scale,
+                negative_prompt=negative_prompt,
+                generator=generator,
+                template=config.default_template,
+                system_prompt=config.system_prompt,
+                thinking_content=config.thinking_content,
+                assistant_content=config.assistant_content,
+                force_think_block=config.enable_thinking,  # enable_thinking maps to force_think_block
+                long_prompt_mode=config.long_prompt_mode,
+                hidden_layer=config.hidden_layer,
+                layer_weights=config.layer_weights,
+                skip_layer_guidance_scale=config.slg_scale,
+                skip_layer_indices=config.slg_layers,
+                skip_layer_start=config.slg_start,
+                skip_layer_stop=config.slg_stop,
+                shift=config.shift,
+                callback=progress_callback if config.verbose else None,
+            )
         gen_time = time.time() - start
 
     # Save

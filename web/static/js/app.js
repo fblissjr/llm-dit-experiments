@@ -259,6 +259,11 @@ async function handleFormSubmit(e) {
 
             // Store current params for reuse
             AppState.currentParams = { ...params, seed: data.seed };
+
+            // Store current result for workflow actions (image-utils.js)
+            if (typeof setCurrentResult === 'function') {
+                setCurrentResult(imageSrc, resolution.width, resolution.height);
+            }
         }
 
         hideStatus();
@@ -352,6 +357,139 @@ function setupKeyboardShortcuts() {
 }
 
 // =============================================================================
+// Result Action Buttons
+// =============================================================================
+
+function setupResultActionButtons() {
+    // Use as Img2Img
+    const useImg2Img = document.getElementById('resultUseImg2Img');
+    if (useImg2Img) {
+        useImg2Img.addEventListener('click', async () => {
+            const result = getCurrentResult();
+            if (result) {
+                await useAsImg2Img(result.base64, result.width, result.height);
+            }
+        });
+    }
+
+    // Use as VL Reference
+    const useVL = document.getElementById('resultUseVL');
+    if (useVL) {
+        useVL.addEventListener('click', async () => {
+            const result = getCurrentResult();
+            if (result) {
+                await useAsVLReference(result.base64);
+            }
+        });
+    }
+
+    // Use in Qwen Edit
+    const useQwenEdit = document.getElementById('resultUseQwenEdit');
+    if (useQwenEdit) {
+        useQwenEdit.addEventListener('click', async () => {
+            const result = getCurrentResult();
+            if (result) {
+                await useInQwenEdit(result.base64);
+            }
+        });
+    }
+
+    // Add to Combine
+    const addCombine = document.getElementById('resultAddCombine');
+    if (addCombine) {
+        addCombine.addEventListener('click', async () => {
+            const result = getCurrentResult();
+            if (result) {
+                await addToCombine(result.base64);
+            }
+        });
+    }
+}
+
+// =============================================================================
+// Lightbox Action Buttons
+// =============================================================================
+
+function setupLightboxActionButtons() {
+    // Store current lightbox image data
+    let lightboxImageData = null;
+
+    // Override openImageModal to track current image
+    const originalOpenImageModal = window.openImageModal;
+    window.openImageModal = function(src, width, height) {
+        lightboxImageData = { base64: src, width: width, height: height };
+        if (originalOpenImageModal) {
+            originalOpenImageModal(src);
+        } else {
+            // Fallback implementation
+            const modal = document.getElementById('imageModal');
+            const modalImage = document.getElementById('modalImage');
+            if (modal && modalImage) {
+                modalImage.src = src;
+                modal.classList.remove('hidden');
+            }
+        }
+    };
+
+    // Save button
+    const saveBtn = document.getElementById('lightboxSave');
+    if (saveBtn) {
+        saveBtn.addEventListener('click', () => {
+            if (lightboxImageData) {
+                const link = document.createElement('a');
+                link.href = lightboxImageData.base64;
+                link.download = `image_${Date.now()}.png`;
+                link.click();
+            }
+        });
+    }
+
+    // Use as Img2Img
+    const useImg2Img = document.getElementById('lightboxUseImg2Img');
+    if (useImg2Img) {
+        useImg2Img.addEventListener('click', async () => {
+            if (lightboxImageData) {
+                closeImageModal();
+                await useAsImg2Img(lightboxImageData.base64, lightboxImageData.width, lightboxImageData.height);
+            }
+        });
+    }
+
+    // Use as VL Reference
+    const useVL = document.getElementById('lightboxUseVL');
+    if (useVL) {
+        useVL.addEventListener('click', async () => {
+            if (lightboxImageData) {
+                closeImageModal();
+                await useAsVLReference(lightboxImageData.base64);
+            }
+        });
+    }
+
+    // Use in Qwen Edit
+    const useQwenEdit = document.getElementById('lightboxUseQwenEdit');
+    if (useQwenEdit) {
+        useQwenEdit.addEventListener('click', async () => {
+            if (lightboxImageData) {
+                closeImageModal();
+                await useInQwenEdit(lightboxImageData.base64);
+            }
+        });
+    }
+
+    // Add to Combine
+    const addCombine = document.getElementById('lightboxAddCombine');
+    if (addCombine) {
+        addCombine.addEventListener('click', async () => {
+            if (lightboxImageData) {
+                closeImageModal();
+                await addToCombine(lightboxImageData.base64);
+            }
+        });
+    }
+}
+
+// =============================================================================
 // Initialization
 // =============================================================================
 
@@ -373,6 +511,17 @@ async function initializeApp() {
     initLayerBlendEvents();
     initAdvancedEvents();
     initQwenImageEvents();
+
+    // Initialize image utilities (workflow continuity)
+    if (typeof initImageUtils === 'function') {
+        initImageUtils();
+    }
+
+    // Setup result action buttons
+    setupResultActionButtons();
+
+    // Setup lightbox action buttons
+    setupLightboxActionButtons();
 
     // Setup settings modal
     setupSettingsModal();
