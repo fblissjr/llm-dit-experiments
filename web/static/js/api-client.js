@@ -169,7 +169,7 @@ const ApiClient = {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data),
         });
-        return response.json();
+        return this._handleImageResponse(response);
     },
 
     // =========================================================================
@@ -182,7 +182,7 @@ const ApiClient = {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data),
         });
-        return response.json();
+        return this._handleImageResponse(response);
     },
 
     async img2img(data) {
@@ -191,7 +191,47 @@ const ApiClient = {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data),
         });
-        return response.json();
+        return this._handleImageResponse(response);
+    },
+
+    /**
+     * Handle binary PNG response from generation endpoints
+     * Converts to { image: "data:image/png;base64,...", seed, gen_time, history_id }
+     */
+    async _handleImageResponse(response) {
+        if (!response.ok) {
+            // Try to parse error as JSON
+            try {
+                const error = await response.json();
+                throw new Error(error.detail || 'Generation failed');
+            } catch {
+                throw new Error(`Generation failed: ${response.status} ${response.statusText}`);
+            }
+        }
+
+        // Read binary PNG and convert to base64
+        const blob = await response.blob();
+        const base64 = await this._blobToBase64(blob);
+
+        // Extract metadata from headers
+        return {
+            image: base64,
+            seed: response.headers.get('X-Seed'),
+            gen_time: parseFloat(response.headers.get('X-Generation-Time') || '0'),
+            history_id: response.headers.get('X-History-Id'),
+        };
+    },
+
+    /**
+     * Convert a Blob to a base64 data URL
+     */
+    _blobToBase64(blob) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result);
+            reader.onerror = reject;
+            reader.readAsDataURL(blob);
+        });
     },
 
     // =========================================================================
@@ -245,7 +285,7 @@ const ApiClient = {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data),
         });
-        return response.json();
+        return this._handleImageResponse(response);
     },
 };
 

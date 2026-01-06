@@ -147,12 +147,33 @@ async function loadResolutionPresets() {
         resolutionSelect.innerHTML = '';
 
         // Add presets by category
-        if (data.presets) {
-            Object.keys(data.presets).forEach(category => {
-                const group = document.createElement('optgroup');
-                group.label = category;
+        // Backend returns flat array with 'category' property on each preset
+        if (data.presets && Array.isArray(data.presets)) {
+            // Group presets by category
+            const grouped = {};
+            data.presets.forEach(preset => {
+                const cat = preset.category || 'other';
+                if (!grouped[cat]) grouped[cat] = [];
+                grouped[cat].push(preset);
+            });
 
-                data.presets[category].forEach(preset => {
+            // Render grouped presets
+            // Order: square first, then landscape, then portrait, then others
+            const categoryOrder = ['square', 'landscape', 'portrait'];
+            const sortedCategories = Object.keys(grouped).sort((a, b) => {
+                const aIdx = categoryOrder.indexOf(a);
+                const bIdx = categoryOrder.indexOf(b);
+                if (aIdx === -1 && bIdx === -1) return a.localeCompare(b);
+                if (aIdx === -1) return 1;
+                if (bIdx === -1) return -1;
+                return aIdx - bIdx;
+            });
+
+            sortedCategories.forEach(category => {
+                const group = document.createElement('optgroup');
+                group.label = category.charAt(0).toUpperCase() + category.slice(1);
+
+                grouped[category].forEach(preset => {
                     const option = document.createElement('option');
                     option.value = `${preset.width}x${preset.height}`;
                     option.textContent = preset.label || `${preset.width}x${preset.height}`;
