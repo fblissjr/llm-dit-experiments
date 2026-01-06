@@ -22,6 +22,7 @@ import torch
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 logging.basicConfig(level=logging.INFO)
@@ -37,6 +38,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Static files (CSS, JS)
+app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"), name="static")
 
 # Global pipeline/encoder (loaded on startup)
 pipeline = None  # Z-Image pipeline
