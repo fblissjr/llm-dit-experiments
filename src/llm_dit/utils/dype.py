@@ -860,7 +860,9 @@ def unpatch_zimage_rope(transformer: nn.Module) -> nn.Module:
                 f"Keeping current rope_embedder to avoid corruption."
             )
             return transformer
-        transformer.rope_embedder = original
+        # Use object.__setattr__ to bypass nn.Module's attribute handling
+        # since diffusers RopeEmbedder is NOT an nn.Module
+        object.__setattr__(transformer, 'rope_embedder', original)
     return transformer
 
 
