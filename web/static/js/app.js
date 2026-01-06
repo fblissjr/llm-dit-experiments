@@ -172,16 +172,21 @@ async function handleFormSubmit(e) {
                 params.dype = dypeConfig;
             }
 
-            // SLG
+            // SLG - flatten to match backend flat fields
             const slgConfig = getSlgConfig();
             if (slgConfig) {
-                params.slg = slgConfig;
+                params.slg_scale = slgConfig.scale;
+                params.slg_layers = slgConfig.layers;
+                params.slg_start = slgConfig.start;
+                params.slg_stop = slgConfig.end;  // Frontend uses 'end', backend uses 'stop'
             }
 
-            // FMTT
+            // FMTT - flatten to match backend flat fields
             const fmttConfig = getFmttConfig();
             if (fmttConfig) {
-                params.fmtt = fmttConfig;
+                params.fmtt_scale = fmttConfig.scale || 1.0;
+                params.fmtt_start = fmttConfig.start;
+                params.fmtt_stop = fmttConfig.end;  // Frontend uses 'end', backend uses 'stop'
             }
         }
 
@@ -292,14 +297,89 @@ async function refreshSystemStatus() {
         const vramTotal = document.getElementById('vramTotal');
         const loadedModels = document.getElementById('loadedModels');
 
-        if (vramUsed && data.vram_used !== undefined) {
-            vramUsed.textContent = formatBytes(data.vram_used * 1024 * 1024 * 1024);
+        // VRAM info is in data.cuda (values in GB)
+        if (vramUsed && data.cuda && data.cuda.allocated_gb !== undefined) {
+            vramUsed.textContent = formatBytes(data.cuda.allocated_gb * 1024 * 1024 * 1024);
         }
-        if (vramTotal && data.vram_total !== undefined) {
-            vramTotal.textContent = formatBytes(data.vram_total * 1024 * 1024 * 1024);
+        if (vramTotal && data.cuda && data.cuda.total_gb !== undefined) {
+            vramTotal.textContent = formatBytes(data.cuda.total_gb * 1024 * 1024 * 1024);
         }
-        if (loadedModels && data.loaded_models) {
-            loadedModels.textContent = data.loaded_models.join(', ') || 'None';
+
+        // Build loaded models list from status
+        if (loadedModels) {
+            const models = [];
+            if (data.pipeline_loaded) models.push('Z-Image');
+            if (data.qwen_image_available) models.push('Qwen-Image');
+            if (data.vl_available) models.push('VL');
+            if (data.fmtt_cached) models.push('FMTT');
+            loadedModels.textContent = models.length > 0 ? models.join(', ') : 'None';
+        }
+
+        // Populate config info display
+        const configInfo = document.getElementById('configInfo');
+        if (configInfo && data.config) {
+            configInfo.classList.remove('hidden');
+            const cfg = data.config;
+
+            // Model type
+            const configModel = document.getElementById('configModel');
+            if (configModel) {
+                configModel.textContent = cfg.model_type || 'N/A';
+            }
+
+            // Profile (stored in state)
+            const configProfile = document.getElementById('configProfile');
+            if (configProfile) {
+                configProfile.textContent = cfg.profile || 'default';
+            }
+
+            // Quantization
+            const configQuant = document.getElementById('configQuant');
+            if (configQuant) {
+                if (cfg.model_type === 'zimage') {
+                    configQuant.textContent = cfg.quantization || 'none';
+                } else if (cfg.model_type && cfg.model_type.startsWith('qwenimage')) {
+                    const parts = [];
+                    if (cfg.quantize_text_encoder) parts.push(`enc:${cfg.quantize_text_encoder}`);
+                    if (cfg.quantize_transformer) parts.push(`dit:${cfg.quantize_transformer}`);
+                    if (cfg.quantize_vae) parts.push(`vae:${cfg.quantize_vae}`);
+                    configQuant.textContent = parts.length > 0 ? parts.join(', ') : 'none';
+                } else {
+                    configQuant.textContent = 'N/A';
+                }
+            }
+
+            // Offload type
+            const configOffload = document.getElementById('configOffload');
+            if (configOffload) {
+                if (cfg.model_type === 'zimage') {
+                    configOffload.textContent = cfg.cpu_offload ? 'model' : 'none';
+                } else {
+                    configOffload.textContent = cfg.offload_type || 'none';
+                }
+            }
+
+            // Attention backend
+            const configAttention = document.getElementById('configAttention');
+            if (configAttention) {
+                configAttention.textContent = cfg.attention_backend || 'auto';
+            }
+
+            // Features
+            const configFeatures = document.getElementById('configFeatures');
+            if (configFeatures) {
+                const features = [];
+                if (cfg.torch_compile) features.push('torch.compile');
+                if (cfg.tiled_vae) features.push('VAE tiling');
+                if (features.length > 0) {
+                    configFeatures.textContent = 'Features: ' + features.join(', ');
+                    configFeatures.classList.remove('hidden');
+                } else {
+                    configFeatures.classList.add('hidden');
+                }
+            }
+        } else if (configInfo) {
+            configInfo.classList.add('hidden');
         }
 
     } catch (err) {

@@ -1,6 +1,6 @@
 # dype (dynamic position extrapolation)
 
-*last updated: 2025-01-06*
+*last updated: 2026-01-06*
 
 DyPE enables generation at resolutions beyond the model's training resolution (1024x1024) by dynamically scaling the RoPE position encodings. Essential for high-resolution generation (2K, 4K) without retraining.
 
@@ -134,7 +134,9 @@ uv run scripts/generate.py \
 - `twopass`: Half-res first pass, then img2img refinement (recommended)
 - `threepass`: Quarter-res -> half-res -> full-res (for 4K+)
 
-**pass2_strength:** Controls how much the refinement passes change the image (0.3-0.7 recommended).
+**Pass strength:**
+- `pass2_strength` (default 0.5): Controls how much the second pass changes the image. Lower values preserve more detail from the first pass. Range: 0.3-0.8.
+- `pass3_strength` (default 0.4): Controls the third pass refinement in threepass mode. Typically lower than pass2 for fine-tuning. Range: 0.2-0.7.
 
 ## frequency modulation (experimental)
 
@@ -153,6 +155,27 @@ uv run scripts/generate.py \
 ```
 
 **Note:** Frequency modulation is experimental. If results are unsatisfactory, use multipass mode instead.
+
+## web ui
+
+The web UI exposes all DyPE parameters in a collapsible "DyPE (High-Resolution)" section:
+
+| Control | Parameter | Range | Default | Notes |
+|---------|-----------|-------|---------|-------|
+| Enable DyPE | `enabled` | checkbox | false | Master toggle |
+| Method | `method` | select | vision_yarn | vision_yarn, yarn, ntk |
+| Multipass | `multipass` | select | twopass | single, twopass, threepass |
+| DyPE Scale | `dype_scale` | 0.5-4.0 | 2.0 | Magnitude of effect |
+| DyPE Exponent | `dype_exponent` | 1.0-4.0 | 2.0 | Decay speed |
+| Base Shift | `base_shift` | 0.1-1.0 | 0.5 | Noise schedule at 1024px |
+| Max Shift | `max_shift` | 0.5-2.0 | 1.15 | Noise schedule at max res |
+| Pass 2 Strength | `pass2_strength` | 0.3-0.8 | 0.5 | Refinement pass intensity |
+| Pass 3 Strength | `pass3_strength` | 0.2-0.7 | 0.4 | Third pass (threepass only) |
+| Frequency Modulation | `frequency_modulation` | checkbox | false | Experimental timestep-based RoPE |
+
+**Visibility notes:**
+- Pass 3 Strength only visible when "threepass" mode selected
+- Frequency Modulation marked as experimental
 
 ## python api
 

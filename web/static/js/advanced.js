@@ -47,6 +47,16 @@ function updateMultipassVisibility() {
     multipassControls.classList.toggle('hidden', !isMultipass);
 }
 
+function updatePass3Visibility() {
+    const multipassSelect = document.getElementById('dypeMultipass');
+    const pass3Container = document.getElementById('dypePass3StrengthContainer');
+
+    if (multipassSelect && pass3Container) {
+        const isThreePass = multipassSelect.value === 'threepass';
+        pass3Container.classList.toggle('hidden', !isThreePass);
+    }
+}
+
 function updateDypeRecommendation() {
     const resolution = getResolution();
     const dypeRecommendation = document.getElementById('dypeRecommendation');
@@ -71,23 +81,18 @@ function getDypeConfig() {
         return null;
     }
 
-    const dypeMethod = document.getElementById('dypeMethod');
-    const dypeMode = document.getElementById('dypeMode');
-    const multipassPasses = document.getElementById('multipassPasses');
-    const multipassOverlap = document.getElementById('multipassOverlap');
-
-    const config = {
+    return {
         enabled: true,
-        method: dypeMethod ? dypeMethod.value : 'native',
-        mode: dypeMode ? dypeMode.value : 'bilinear',
+        method: document.getElementById('dypeMethod')?.value || 'vision_yarn',
+        multipass: document.getElementById('dypeMultipass')?.value || 'twopass',
+        dype_scale: parseFloat(document.getElementById('dypeScale')?.value) || 2.0,
+        dype_exponent: parseFloat(document.getElementById('dypeExponent')?.value) || 2.0,
+        base_shift: parseFloat(document.getElementById('dypeBaseShift')?.value) || 0.5,
+        max_shift: parseFloat(document.getElementById('dypeMaxShift')?.value) || 1.15,
+        pass2_strength: parseFloat(document.getElementById('dypeStrength')?.value) || 0.5,
+        pass3_strength: parseFloat(document.getElementById('dypePass3Strength')?.value) || 0.4,
+        frequency_modulation: document.getElementById('dypeFrequencyMod')?.checked || false,
     };
-
-    if (config.method === 'multipass') {
-        config.passes = multipassPasses ? parseInt(multipassPasses.value) : 2;
-        config.overlap = multipassOverlap ? parseFloat(multipassOverlap.value) : 0.25;
-    }
-
-    return config;
 }
 
 // =============================================================================
@@ -236,11 +241,13 @@ function getFmttConfig() {
         return null;
     }
 
+    const fmttScale = document.getElementById('fmttScale');
     const fmttStart = document.getElementById('fmttStart');
     const fmttEnd = document.getElementById('fmttEnd');
 
     return {
         enabled: true,
+        scale: fmttScale ? parseFloat(fmttScale.value) : 1.0,
         start: fmttStart ? parseFloat(fmttStart.value) : 0.0,
         end: fmttEnd ? parseFloat(fmttEnd.value) : 0.5,
     };
@@ -317,6 +324,7 @@ function initAdvancedEvents() {
     // DyPE
     const dypeEnabled = document.getElementById('dypeEnabled');
     const dypeMethod = document.getElementById('dypeMethod');
+    const dypeMultipass = document.getElementById('dypeMultipass');
 
     if (dypeEnabled) {
         dypeEnabled.addEventListener('change', updateDypeStatus);
@@ -324,6 +332,29 @@ function initAdvancedEvents() {
     if (dypeMethod) {
         dypeMethod.addEventListener('change', updateMultipassVisibility);
     }
+    if (dypeMultipass) {
+        dypeMultipass.addEventListener('change', updatePass3Visibility);
+    }
+
+    // DyPE slider value displays
+    const dypeSliders = [
+        { slider: 'dypeScale', display: 'dypeScaleValue', decimals: 1 },
+        { slider: 'dypeExponent', display: 'dypeExponentValue', decimals: 1 },
+        { slider: 'dypeBaseShift', display: 'dypeBaseShiftValue', decimals: 2 },
+        { slider: 'dypeMaxShift', display: 'dypeMaxShiftValue', decimals: 2 },
+        { slider: 'dypeStrength', display: 'dypeStrengthValue', decimals: 2 },
+        { slider: 'dypePass3Strength', display: 'dypePass3StrengthValue', decimals: 2 },
+    ];
+
+    dypeSliders.forEach(({ slider, display, decimals }) => {
+        const sliderEl = document.getElementById(slider);
+        const displayEl = document.getElementById(display);
+        if (sliderEl && displayEl) {
+            sliderEl.addEventListener('input', () => {
+                displayEl.textContent = parseFloat(sliderEl.value).toFixed(decimals);
+            });
+        }
+    });
 
     // SLG
     const slgEnabled = document.getElementById('slgEnabled');
@@ -364,6 +395,7 @@ function initAdvancedEvents() {
 // Export for use by other modules
 window.updateDypeStatus = updateDypeStatus;
 window.updateMultipassVisibility = updateMultipassVisibility;
+window.updatePass3Visibility = updatePass3Visibility;
 window.updateDypeRecommendation = updateDypeRecommendation;
 window.getDypeConfig = getDypeConfig;
 window.updateSlgStatus = updateSlgStatus;

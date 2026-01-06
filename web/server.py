@@ -199,6 +199,8 @@ class DyPEConfigRequest(BaseModel):
     base_shift: float = 0.5  # Shift at base resolution
     max_shift: float = 1.15  # Shift at max resolution
     pass2_strength: float = 0.5  # img2img strength for pass 2
+    pass3_strength: float = 0.4  # img2img strength for pass 3
+    frequency_modulation: bool = False  # Timestep-based RoPE frequency scaling (experimental)
 
 
 class GenerateRequest(BaseModel):
@@ -1999,6 +2001,10 @@ async def generate(request: GenerateRequest):
                 base_shift=request.dype.base_shift,
                 max_shift=request.dype.max_shift,
                 base_resolution=1024,  # Z-Image base
+                multipass=request.dype.multipass,
+                pass2_strength=request.dype.pass2_strength,
+                pass3_strength=request.dype.pass3_strength,
+                frequency_modulation=request.dype.frequency_modulation,
             )
 
         # Generate image
@@ -2011,10 +2017,11 @@ async def generate(request: GenerateRequest):
             logger.info(f"  DyPE: method={dype_config.method}, scale={dype_config.dype_scale}, exponent={dype_config.dype_exponent}")
 
         # Check for multipass generation (for high-res with DyPE)
-        multipass_mode = request.dype.multipass if request.dype else "single"
-        pass2_strength = request.dype.pass2_strength if request.dype else 0.5
+        multipass_mode = dype_config.multipass if dype_config else "single"
+        pass2_strength = dype_config.pass2_strength if dype_config else 0.5
+        pass3_strength = dype_config.pass3_strength if dype_config else 0.4
 
-        if multipass_mode != "single" and request.dype and request.dype.enabled:
+        if multipass_mode != "single" and dype_config and dype_config.enabled:
             # Build passes configuration based on multipass mode
             if multipass_mode == "twopass":
                 passes = [
@@ -2024,13 +2031,13 @@ async def generate(request: GenerateRequest):
             elif multipass_mode == "threepass":
                 passes = [
                     {"scale": 0.25, "steps": request.steps},
-                    {"scale": 0.5, "steps": request.steps, "strength": 0.6},
-                    {"scale": 1.0, "steps": request.steps, "strength": pass2_strength},
+                    {"scale": 0.5, "steps": request.steps, "strength": pass2_strength},
+                    {"scale": 1.0, "steps": request.steps, "strength": pass3_strength},
                 ]
             else:
                 passes = None  # Use default
 
-            logger.info(f"  Multipass: {multipass_mode}, pass2_strength={pass2_strength}")
+            logger.info(f"  Multipass: {multipass_mode}, pass2_strength={pass2_strength}, pass3_strength={pass3_strength}")
             image = pipeline.generate_multipass(
                 request.prompt,
                 final_width=request.width,
@@ -3464,6 +3471,43 @@ async def system_status():
             "total_gb": round(total, 2),
             "free_gb": round(free, 2),
         }
+
+    # Current configuration info (read-only display)
+    if runtime_config is not None:
+        config_info = {
+            "model_type": runtime_config.model_type,
+            "attention_backend": runtime_config.attention_backend or "auto",
+        }
+
+        # Add profile if available
+        if hasattr(runtime_config, 'current_profile'):
+            config_info["profile"] = runtime_config.current_profile
+
+        # Z-Image specific config
+        if runtime_config.model_type == "zimage":
+            config_info["quantization"] = runtime_config.quantization
+            config_info["cpu_offload"] = runtime_config.cpu_offload
+            config_info["flash_attn"] = runtime_config.flash_attn
+            config_info["torch_compile"] = runtime_config.compile
+            config_info["tiled_vae"] = getattr(runtime_config, 'tiled_vae', False)
+
+        # Qwen-Image specific config (all variants)
+        if runtime_config.model_type.startswith("qwenimage"):
+            config_info["quantize_text_encoder"] = runtime_config.qwen_image_quantize_text_encoder
+            config_info["quantize_transformer"] = (
+                runtime_config.get_qwen_image_quantize_transformer()
+                if hasattr(runtime_config, 'get_qwen_image_quantize_transformer')
+                else runtime_config.qwen_image_quantize_transformer or "none"
+            )
+            config_info["quantize_vae"] = getattr(runtime_config, 'qwen_image_quantize_vae', "none")
+            config_info["cpu_offload"] = runtime_config.qwen_image_cpu_offload
+            # Check for new offload_type if available
+            if hasattr(runtime_config, 'qwen_image_offload_type'):
+                config_info["offload_type"] = runtime_config.qwen_image_offload_type
+            else:
+                config_info["offload_type"] = "model" if runtime_config.qwen_image_cpu_offload else "none"
+
+        status["config"] = config_info
 
     return status
 

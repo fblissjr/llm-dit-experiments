@@ -1,6 +1,6 @@
 # rest api reference
 
-*last updated: 2025-12-22*
+*last updated: 2026-01-06*
 
 ## endpoints
 
@@ -51,9 +51,38 @@
   "slg_scale": 0.0,
   "slg_layers": [7, 8, 9, 10, 11, 12],
   "slg_start": 0.05,
-  "slg_stop": 0.50
+  "slg_stop": 0.50,
+  "dype": {
+    "enabled": true,
+    "method": "vision_yarn",
+    "multipass": "twopass",
+    "dype_scale": 2.0,
+    "dype_exponent": 2.0,
+    "base_shift": 0.5,
+    "max_shift": 1.15,
+    "pass2_strength": 0.5,
+    "pass3_strength": 0.4,
+    "frequency_modulation": false
+  }
 }
 ```
+
+## dype configuration
+
+The `dype` object enables high-resolution generation (2K+):
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | bool | false | Enable DyPE |
+| `method` | string | "vision_yarn" | RoPE method: vision_yarn, yarn, ntk |
+| `multipass` | string | "single" | Generation mode: single, twopass, threepass |
+| `dype_scale` | float | 2.0 | Magnitude of DyPE effect (2.0 for 2K, 4.0 for 4K) |
+| `dype_exponent` | float | 2.0 | Decay speed (2.0 = quadratic) |
+| `base_shift` | float | 0.5 | Noise schedule shift at 1024px |
+| `max_shift` | float | 1.15 | Noise schedule shift at max resolution |
+| `pass2_strength` | float | 0.5 | Second pass img2img strength (0.3-0.8) |
+| `pass3_strength` | float | 0.4 | Third pass strength (threepass only) |
+| `frequency_modulation` | bool | false | Experimental timestep-based RoPE scaling |
 
 ## think block behavior
 

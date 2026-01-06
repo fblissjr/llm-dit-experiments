@@ -178,13 +178,23 @@ async function loadImageIntoTarget(base64, target, options = {}) {
 // =============================================================================
 
 /**
- * Expand a collapsible section by its toggle button ID or content ID
- * @param {string} sectionId - The ID of the collapsible section to expand
+ * Expand a collapsible section by its ID
+ * Handles both <details> elements and collapsible-content divs
+ * @param {string} sectionId - The ID of the section to expand
  */
 function expandSection(sectionId) {
-    const content = document.getElementById(sectionId);
-    if (content && content.classList.contains('collapsible-content')) {
-        content.classList.add('expanded');
+    const element = document.getElementById(sectionId);
+    if (!element) return;
+
+    // Handle <details> elements
+    if (element.tagName === 'DETAILS') {
+        element.open = true;
+        return;
+    }
+
+    // Handle collapsible-content divs
+    if (element.classList.contains('collapsible-content')) {
+        element.classList.add('expanded');
 
         // Update the toggle button aria-expanded
         const toggle = document.querySelector(`[aria-controls="${sectionId}"]`);
@@ -238,11 +248,11 @@ function enableFeatureAndExpand(checkboxId, controlsId) {
  * @param {number} height - Image height
  */
 async function useAsImg2Img(base64, width, height) {
+    // Expand the img2img details section
+    expandSection('img2imgSection');
+
     // Enable img2img mode
     enableFeatureAndExpand('img2imgEnabled', 'img2imgControls');
-
-    // Expand the img2img section
-    expandSection('img2imgCollapsible');
 
     // Load the image
     await loadImageIntoImg2Img(base64, width, height);
@@ -256,8 +266,8 @@ async function useAsImg2Img(base64, width, height) {
  * @param {string} base64 - The base64 image data
  */
 async function useAsVLReference(base64) {
-    // Expand the VL section
-    expandSection('vlCollapsible');
+    // Expand the VL details section
+    expandSection('vlSection');
 
     // Load the image
     await loadImageIntoVL(base64);
