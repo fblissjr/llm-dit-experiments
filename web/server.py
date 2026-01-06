@@ -1971,70 +1971,22 @@ async def generate(request: GenerateRequest):
 
         start = time.time()
 
-        # Apply SLG config defaults (use config values when request doesn't specify)
-        slg_scale = request.slg_scale
-        slg_layers = request.slg_layers
-        slg_start = request.slg_start
-        slg_stop = request.slg_stop
+        # SLG config: "UI always wins" - don't fall back to runtime_config
+        # None means disabled, not "use config default"
+        slg_scale = request.slg_scale if request.slg_scale is not None else 0.0
+        slg_layers = request.slg_layers  # None is valid (means SLG disabled)
+        slg_start = request.slg_start if request.slg_start is not None else 0.01
+        slg_stop = request.slg_stop if request.slg_stop is not None else 0.2
 
-        if runtime_config is not None:
-            if slg_scale is None:
-                slg_scale = getattr(runtime_config, 'slg_scale', 0.0)
-            if slg_layers is None:
-                slg_layers = getattr(runtime_config, 'slg_layers', None)
-            if slg_start is None:
-                slg_start = getattr(runtime_config, 'slg_start', 0.05)
-            if slg_stop is None:
-                slg_stop = getattr(runtime_config, 'slg_stop', 0.5)
-        else:
-            # Fallback defaults (Z-Image optimized)
-            if slg_scale is None:
-                slg_scale = 0.0
-            if slg_start is None:
-                slg_start = 0.05
-            if slg_stop is None:
-                slg_stop = 0.5
-
-        # Apply FMTT config defaults (use config values when request doesn't specify)
-        fmtt_scale = request.fmtt_scale
-        fmtt_start = request.fmtt_start
-        fmtt_stop = request.fmtt_stop
-        fmtt_normalize = request.fmtt_normalize
-        fmtt_decode_scale = request.fmtt_decode_scale
-        fmtt_siglip_model = request.fmtt_siglip_model
-        fmtt_siglip_device = request.fmtt_siglip_device
-
-        if runtime_config is not None:
-            if fmtt_scale is None:
-                fmtt_scale = getattr(runtime_config, 'fmtt_scale', 0.0)
-            if fmtt_start is None:
-                fmtt_start = getattr(runtime_config, 'fmtt_start', 0.0)
-            if fmtt_stop is None:
-                fmtt_stop = getattr(runtime_config, 'fmtt_stop', 0.5)
-            if fmtt_normalize is None:
-                fmtt_normalize = getattr(runtime_config, 'fmtt_normalize', 'unit')
-            if fmtt_decode_scale is None:
-                fmtt_decode_scale = getattr(runtime_config, 'fmtt_decode_scale', 0.5)
-            if fmtt_siglip_model is None:
-                fmtt_siglip_model = getattr(runtime_config, 'fmtt_siglip_model', 'google/siglip2-giant-opt-patch16-384')
-            if fmtt_siglip_device is None:
-                fmtt_siglip_device = getattr(runtime_config, 'fmtt_siglip_device', 'cuda')
-        else:
-            # Fallback defaults
-            if fmtt_scale is None:
-                fmtt_scale = 0.0
-            if fmtt_start is None:
-                fmtt_start = 0.0
-            if fmtt_stop is None:
-                fmtt_stop = 0.5
-            if fmtt_normalize is None:
-                fmtt_normalize = "unit"
-            if fmtt_decode_scale is None:
-                fmtt_decode_scale = 0.5
-            if fmtt_siglip_model is None:
-                fmtt_siglip_model = "google/siglip2-giant-opt-patch16-384"
-            if fmtt_siglip_device is None:
-                fmtt_siglip_device = "cuda"
+        # FMTT config: "UI always wins" - don't fall back to runtime_config
+        # None means disabled, not "use config default"
+        fmtt_scale = request.fmtt_scale if request.fmtt_scale is not None else 0.0
+        fmtt_start = request.fmtt_start if request.fmtt_start is not None else 0.0
+        fmtt_stop = request.fmtt_stop if request.fmtt_stop is not None else 0.5
+        fmtt_normalize = request.fmtt_normalize if request.fmtt_normalize is not None else "unit"
+        fmtt_decode_scale = request.fmtt_decode_scale if request.fmtt_decode_scale is not None else 0.5
+        fmtt_siglip_model = request.fmtt_siglip_model if request.fmtt_siglip_model is not None else "google/siglip2-giant-opt-patch16-384"
+        fmtt_siglip_device = request.fmtt_siglip_device if request.fmtt_siglip_device is not None else "cuda"
 
         # Convert DyPE request to DyPEConfig if provided
         dype_config = None
