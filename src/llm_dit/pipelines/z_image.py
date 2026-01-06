@@ -1291,9 +1291,9 @@ class ZImagePipeline:
         from llm_dit.utils.dype import patch_zimage_rope, set_zimage_timestep, unpatch_zimage_rope
         unpatch_zimage_rope(self.transformer)
 
-        # Debug: log what dype configs we have
-        logger.info(f"[Pipeline] DyPE debug: request dype_config={dype_config}, self.dype_config={self.dype_config}")
-        active_dype_config = dype_config if dype_config is not None else self.dype_config
+        # Use request dype_config only - don't fall back to self.dype_config
+        # (self.dype_config was intended for default config but causes state leakage bugs)
+        active_dype_config = dype_config
         dype_patched = False
         if active_dype_config is not None and active_dype_config.enabled:
             logger.info(f"[Pipeline] DyPE enabled: method={active_dype_config.method}, scale={active_dype_config.dype_scale}")
@@ -2177,7 +2177,8 @@ class ZImagePipeline:
         kwargs.pop("fmtt_siglip_model", None)
         kwargs.pop("fmtt_siglip_device", None)
         kwargs.pop("fmtt_reward_fn", None)
-        kwargs.pop("dype_config", None)  # DyPE is handled internally by multipass
+        # Extract dype_config to pass explicitly (not via kwargs)
+        multipass_dype_config = kwargs.pop("dype_config", None)
 
         result = None
         for pass_idx, pass_config in enumerate(passes):
@@ -2219,7 +2220,8 @@ class ZImagePipeline:
                     long_prompt_mode=long_prompt_mode,
                     hidden_layer=hidden_layer,
                     prompt_embeds=prompt_embeds,
-                    **kwargs,  # Pass through CFG, SLG, FMTT, DyPE, etc.
+                    dype_config=multipass_dype_config,  # Pass DyPE config explicitly
+                    **kwargs,  # Pass through CFG, d_noise, etc.
                 )
             else:
                 # Subsequent passes: img2img
