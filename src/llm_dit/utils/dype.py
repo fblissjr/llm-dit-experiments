@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from typing import Literal, Tuple, List
+from typing import Any, Literal, Tuple, List
 
 import torch
 import torch.nn as nn
@@ -543,14 +543,14 @@ class ZImageDyPERoPE(DyPEPosEmbed):
 
     def __init__(
         self,
-        original_embedder: nn.Module,
+        original_embedder: Any,  # diffusers RopeEmbedder is not nn.Module
         config: DyPEConfig | None = None,
         scale_hint: float = 1.0,
     ):
         """Initialize Z-Image DyPE RoPE wrapper.
 
         Args:
-            original_embedder: Original rope_embedder from transformer
+            original_embedder: Original rope_embedder from transformer (callable)
             config: DyPE configuration
             scale_hint: Resolution scale hint from external source
         """
@@ -569,14 +569,21 @@ class ZImageDyPERoPE(DyPEPosEmbed):
         )
 
         # Now safe to assign module attributes
-        # Validate that original_embedder is an nn.Module instance
-        if not isinstance(original_embedder, nn.Module):
+        # Validate that original_embedder is callable (diffusers RopeEmbedder is NOT nn.Module)
+        if not callable(original_embedder):
             raise TypeError(
-                f"original_embedder must be an nn.Module instance, "
+                f"original_embedder must be callable, "
                 f"got {type(original_embedder)} (value: {original_embedder})"
             )
-        self.original_embedder = original_embedder
+        # Store as regular attribute since diffusers RopeEmbedder isn't nn.Module
+        # Use object.__setattr__ to bypass nn.Module's attribute handling
+        object.__setattr__(self, '_original_embedder', original_embedder)
         self.scale_hint = scale_hint
+
+    @property
+    def original_embedder(self):
+        """Access the original embedder (stored as _original_embedder to avoid nn.Module registration)."""
+        return object.__getattribute__(self, '_original_embedder')
 
     def set_scale_hint(self, scale: float):
         """Set external resolution scale hint.
@@ -767,13 +774,20 @@ def patch_zimage_rope(
 
     original_embedder = transformer.rope_embedder
 
-    # Validate that original_embedder is an nn.Module instance (not a class)
-    if not isinstance(original_embedder, nn.Module):
-        embedder_type = type(original_embedder)
+    # Validate that original_embedder is an instance (not a class) and is callable
+    # Note: diffusers RopeEmbedder is NOT an nn.Module, just a plain Python class
+    if isinstance(original_embedder, type):
+        # It's a class, not an instance
         raise TypeError(
-            f"transformer.rope_embedder is not an nn.Module instance. "
-            f"Got {embedder_type} (value: {original_embedder}). "
-            f"This may indicate a corrupted model state or incompatible diffusers version."
+            f"transformer.rope_embedder is a class, not an instance. "
+            f"Got {original_embedder}. "
+            f"This may indicate a corrupted model state."
+        )
+    if not callable(original_embedder):
+        raise TypeError(
+            f"transformer.rope_embedder is not callable. "
+            f"Got {type(original_embedder)} (value: {original_embedder}). "
+            f"Expected a RoPE embedder instance."
         )
 
     # Compute scale hint from resolution
@@ -835,12 +849,13 @@ def unpatch_zimage_rope(transformer: nn.Module) -> nn.Module:
         transformer.rope_embedder, ZImageDyPERoPE
     ):
         original = transformer.rope_embedder.original_embedder
-        # Validate that original is an nn.Module before restoring
-        if not isinstance(original, nn.Module):
+        # Validate that original is callable before restoring
+        # Note: diffusers RopeEmbedder is NOT nn.Module, just a plain callable class
+        if not callable(original):
             import logging
             logger = logging.getLogger(__name__)
             logger.error(
-                f"DyPE unpatch failed: original_embedder is not an nn.Module. "
+                f"DyPE unpatch failed: original_embedder is not callable. "
                 f"Got {type(original)} (value: {original}). "
                 f"Keeping current rope_embedder to avoid corruption."
             )

@@ -2157,8 +2157,10 @@ class ZImagePipeline:
 
         # Pop parameters that are explicitly passed to avoid duplicate argument errors
         # These can be overridden per-pass via pass_config
+        # Also pop parameters that __call__ accepts but img2img doesn't
         kwargs.pop("guidance_scale", None)
         kwargs.pop("shift", None)
+        kwargs.pop("layer_weights", None)  # img2img doesn't accept layer_weights
 
         result = None
         for pass_idx, pass_config in enumerate(passes):
