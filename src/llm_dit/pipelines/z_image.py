@@ -2160,7 +2160,22 @@ class ZImagePipeline:
         # Also pop parameters that __call__ accepts but img2img doesn't
         kwargs.pop("guidance_scale", None)
         kwargs.pop("shift", None)
-        kwargs.pop("layer_weights", None)  # img2img doesn't accept layer_weights
+        kwargs.pop("latents", None)
+        # img2img doesn't accept layer_weights or SLG/FMTT params
+        kwargs.pop("layer_weights", None)
+        kwargs.pop("skip_layer_guidance_scale", None)
+        kwargs.pop("skip_layer_indices", None)
+        kwargs.pop("skip_layer_start", None)
+        kwargs.pop("skip_layer_stop", None)
+        kwargs.pop("fmtt_guidance_scale", None)
+        kwargs.pop("fmtt_guidance_start", None)
+        kwargs.pop("fmtt_guidance_stop", None)
+        kwargs.pop("fmtt_normalize_mode", None)
+        kwargs.pop("fmtt_decode_scale", None)
+        kwargs.pop("fmtt_siglip_model", None)
+        kwargs.pop("fmtt_siglip_device", None)
+        kwargs.pop("fmtt_reward_fn", None)
+        kwargs.pop("dype_config", None)  # DyPE is handled internally by multipass
 
         result = None
         for pass_idx, pass_config in enumerate(passes):
