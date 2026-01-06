@@ -75,8 +75,9 @@ function renderHistory(history) {
                     </button>
                 </div>
             </div>
-            <div class="absolute top-1 right-1 text-xs text-white/70 bg-black/50 px-1 rounded">
-                ${item.width}x${item.height}
+            <div class="absolute top-1 right-1 flex gap-1">
+                <span class="text-xs text-white/70 bg-black/50 px-1 rounded">${item.width}x${item.height}</span>
+                ${item.seed ? `<span class="text-xs text-yellow-400/80 bg-black/50 px-1 rounded" title="Seed: ${item.seed}">#${item.seed}</span>` : ''}
             </div>
         </div>
     `).join('');

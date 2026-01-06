@@ -302,124 +302,76 @@ async function refreshSystemStatus() {
     try {
         const data = await ApiClient.getSystemStatus();
 
-        const vramUsed = document.getElementById('vramUsed');
-        const vramTotal = document.getElementById('vramTotal');
-        const loadedModels = document.getElementById('loadedModels');
-
-        // VRAM info is in data.cuda (values in GB)
-        if (vramUsed && data.cuda && data.cuda.allocated_gb !== undefined) {
-            vramUsed.textContent = formatBytes(data.cuda.allocated_gb * 1024 * 1024 * 1024);
-        }
-        if (vramTotal && data.cuda && data.cuda.total_gb !== undefined) {
-            vramTotal.textContent = formatBytes(data.cuda.total_gb * 1024 * 1024 * 1024);
-        }
-
-        // Build loaded models list from status
-        if (loadedModels) {
-            const models = [];
-            if (data.pipeline_loaded) models.push('Z-Image');
-            if (data.qwen_image_available) models.push('Qwen-Image');
-            if (data.vl_available) models.push('VL');
-            if (data.fmtt_cached) models.push('FMTT');
-            loadedModels.textContent = models.length > 0 ? models.join(', ') : 'None';
+        // GPU Memory info
+        const gpuMemoryInfo = document.getElementById('gpuMemoryInfo');
+        if (gpuMemoryInfo && data.cuda) {
+            const used = formatBytes(data.cuda.allocated_gb * 1024 * 1024 * 1024);
+            const total = formatBytes(data.cuda.total_gb * 1024 * 1024 * 1024);
+            const free = formatBytes(data.cuda.free_gb * 1024 * 1024 * 1024);
+            gpuMemoryInfo.textContent = `${used} / ${total} (${free} free)`;
+        } else if (gpuMemoryInfo) {
+            gpuMemoryInfo.textContent = 'CUDA not available';
         }
 
-        // Populate config info display
-        const configInfo = document.getElementById('configInfo');
-        if (configInfo && data.config) {
-            configInfo.classList.remove('hidden');
-            const cfg = data.config;
-
-            // Model type
-            const configModel = document.getElementById('configModel');
-            if (configModel) {
-                configModel.textContent = cfg.model_type || 'N/A';
-            }
-
-            // Profile (stored in state)
-            const configProfile = document.getElementById('configProfile');
-            if (configProfile) {
-                configProfile.textContent = cfg.profile || 'default';
-            }
-
-            // Quantization
-            const configQuant = document.getElementById('configQuant');
-            if (configQuant) {
-                if (cfg.model_type === 'zimage') {
-                    configQuant.textContent = cfg.quantization || 'none';
-                } else if (cfg.model_type && cfg.model_type.startsWith('qwenimage')) {
-                    const parts = [];
-                    if (cfg.quantize_text_encoder) parts.push(`enc:${cfg.quantize_text_encoder}`);
-                    if (cfg.quantize_transformer) parts.push(`dit:${cfg.quantize_transformer}`);
-                    if (cfg.quantize_vae) parts.push(`vae:${cfg.quantize_vae}`);
-                    configQuant.textContent = parts.length > 0 ? parts.join(', ') : 'none';
-                } else {
-                    configQuant.textContent = 'N/A';
-                }
-            }
-
-            // Offload type
-            const configOffload = document.getElementById('configOffload');
-            if (configOffload) {
-                if (cfg.model_type === 'zimage') {
-                    configOffload.textContent = cfg.cpu_offload ? 'model' : 'none';
-                } else {
-                    configOffload.textContent = cfg.offload_type || 'none';
-                }
-            }
-
-            // Attention backend
-            const configAttention = document.getElementById('configAttention');
-            if (configAttention) {
-                configAttention.textContent = cfg.attention_backend || 'auto';
-            }
-
-            // Features
-            const configFeatures = document.getElementById('configFeatures');
-            if (configFeatures) {
-                const features = [];
-                if (cfg.torch_compile) features.push('torch.compile');
-                if (cfg.tiled_vae) features.push('VAE tiling');
-                if (features.length > 0) {
-                    configFeatures.textContent = 'Features: ' + features.join(', ');
-                    configFeatures.classList.remove('hidden');
-                } else {
-                    configFeatures.classList.add('hidden');
-                }
-            }
-        } else if (configInfo) {
-            configInfo.classList.add('hidden');
-        }
-
-        // Populate config selector with current profile
-        const configSelector = document.getElementById('configSelector');
-        if (configSelector) {
-            configSelector.innerHTML = '';  // Clear loading state
-            if (data.config && data.config.profile) {
-                const opt = document.createElement('option');
-                opt.value = data.config.profile;
-                opt.textContent = `${data.config.profile} (current)`;
-                opt.selected = true;
-                configSelector.appendChild(opt);
+        // Z-Image pipeline status
+        const zimageStatus = document.getElementById('zimageStatus');
+        const unloadZimageBtn = document.getElementById('unloadZimageBtn');
+        if (zimageStatus) {
+            if (data.pipeline_loaded) {
+                zimageStatus.textContent = 'Loaded';
+                zimageStatus.className = 'text-xs px-2 py-1 rounded bg-green-600/20 text-green-400';
+                if (unloadZimageBtn) unloadZimageBtn.classList.remove('hidden');
             } else {
-                const opt = document.createElement('option');
-                opt.value = '';
-                opt.textContent = 'Default (no profile)';
-                opt.selected = true;
-                configSelector.appendChild(opt);
+                zimageStatus.textContent = 'Not loaded';
+                zimageStatus.className = 'text-xs px-2 py-1 rounded bg-gray-700 text-gray-400';
+                if (unloadZimageBtn) unloadZimageBtn.classList.add('hidden');
             }
         }
 
-        // Disable load button (dynamic config loading not supported)
-        const loadConfigBtn = document.getElementById('loadConfigBtn');
-        if (loadConfigBtn) {
-            loadConfigBtn.disabled = true;
-            loadConfigBtn.textContent = 'Config set at server startup';
-            loadConfigBtn.title = 'Restart server with --profile to change';
+        // Qwen-Image pipeline status
+        const qwenImageStatus = document.getElementById('qwenImageStatus');
+        const unloadQwenImageBtn = document.getElementById('unloadQwenImageBtn');
+        if (qwenImageStatus) {
+            if (data.qwen_image_available) {
+                qwenImageStatus.textContent = 'Loaded';
+                qwenImageStatus.className = 'text-xs px-2 py-1 rounded bg-green-600/20 text-green-400';
+                if (unloadQwenImageBtn) unloadQwenImageBtn.classList.remove('hidden');
+            } else {
+                qwenImageStatus.textContent = 'Not loaded';
+                qwenImageStatus.className = 'text-xs px-2 py-1 rounded bg-gray-700 text-gray-400';
+                if (unloadQwenImageBtn) unloadQwenImageBtn.classList.add('hidden');
+            }
+        }
+
+        // FMTT (SigLIP) status
+        const fmttStatus = document.getElementById('fmttStatus');
+        const unloadFmttBtn = document.getElementById('unloadFmttBtn');
+        if (fmttStatus) {
+            if (data.fmtt_cached) {
+                fmttStatus.textContent = 'Loaded';
+                fmttStatus.className = 'text-xs px-2 py-1 rounded bg-yellow-600/20 text-yellow-400';
+                if (unloadFmttBtn) unloadFmttBtn.disabled = false;
+            } else {
+                fmttStatus.textContent = 'Not loaded';
+                fmttStatus.className = 'text-xs px-2 py-1 rounded bg-gray-700 text-gray-400';
+                if (unloadFmttBtn) unloadFmttBtn.disabled = true;
+            }
+        }
+
+        // VL Cache status
+        const vlCacheStatus = document.getElementById('vlCacheStatus');
+        if (vlCacheStatus) {
+            const count = data.vl_cache_count || 0;
+            vlCacheStatus.textContent = `${count} item${count !== 1 ? 's' : ''}`;
         }
 
     } catch (err) {
         console.error('Failed to refresh system status:', err);
+        // Show error in GPU memory info
+        const gpuMemoryInfo = document.getElementById('gpuMemoryInfo');
+        if (gpuMemoryInfo) {
+            gpuMemoryInfo.textContent = 'Failed to load status';
+        }
     }
 }
 
@@ -449,6 +401,121 @@ function setupSettingsModal() {
             }
         });
     }
+
+    // Status tab action buttons
+    const unloadFmttBtn = document.getElementById('unloadFmttBtn');
+    if (unloadFmttBtn) {
+        unloadFmttBtn.addEventListener('click', async () => {
+            unloadFmttBtn.disabled = true;
+            unloadFmttBtn.textContent = 'Unloading...';
+            try {
+                const result = await ApiClient.unloadFMTT();
+                showSettingsMessage(result.message || 'FMTT unloaded', 'success');
+            } catch (err) {
+                showSettingsMessage('Failed to unload FMTT', 'error');
+            }
+            await refreshSystemStatus();
+            unloadFmttBtn.textContent = 'Unload FMTT (~4-6 GB)';
+        });
+    }
+
+    const clearCacheBtn = document.getElementById('clearCacheBtn');
+    if (clearCacheBtn) {
+        clearCacheBtn.addEventListener('click', async () => {
+            clearCacheBtn.disabled = true;
+            try {
+                const result = await ApiClient.clearCache();
+                showSettingsMessage(result.message || 'Cache cleared', 'success');
+            } catch (err) {
+                showSettingsMessage('Failed to clear cache', 'error');
+            }
+            await refreshSystemStatus();
+            clearCacheBtn.disabled = false;
+        });
+    }
+
+    const clearVlCacheBtn = document.getElementById('clearVlCacheBtn');
+    if (clearVlCacheBtn) {
+        clearVlCacheBtn.addEventListener('click', async () => {
+            clearVlCacheBtn.disabled = true;
+            try {
+                const result = await ApiClient.clearVLCache();
+                showSettingsMessage(`Cleared ${result.cleared || 0} VL cache entries`, 'success');
+            } catch (err) {
+                showSettingsMessage('Failed to clear VL cache', 'error');
+            }
+            await refreshSystemStatus();
+            clearVlCacheBtn.disabled = false;
+        });
+    }
+
+    const clearHistoryBtn2 = document.getElementById('clearHistoryBtn2');
+    if (clearHistoryBtn2) {
+        clearHistoryBtn2.addEventListener('click', async () => {
+            if (!confirm('Clear all generation history?')) return;
+            clearHistoryBtn2.disabled = true;
+            try {
+                await ApiClient.clearHistory();
+                showSettingsMessage('History cleared', 'success');
+                if (typeof loadHistory === 'function') loadHistory();
+            } catch (err) {
+                showSettingsMessage('Failed to clear history', 'error');
+            }
+            clearHistoryBtn2.disabled = false;
+        });
+    }
+
+    const unloadZimageBtn = document.getElementById('unloadZimageBtn');
+    if (unloadZimageBtn) {
+        unloadZimageBtn.addEventListener('click', async () => {
+            unloadZimageBtn.disabled = true;
+            unloadZimageBtn.textContent = 'Unloading...';
+            try {
+                const result = await ApiClient.unloadZImage();
+                showSettingsMessage(result.message || 'Z-Image unloaded', 'success');
+            } catch (err) {
+                showSettingsMessage('Failed to unload Z-Image', 'error');
+            }
+            await refreshSystemStatus();
+            unloadZimageBtn.textContent = 'Unload';
+        });
+    }
+
+    const unloadQwenImageBtn = document.getElementById('unloadQwenImageBtn');
+    if (unloadQwenImageBtn) {
+        unloadQwenImageBtn.addEventListener('click', async () => {
+            unloadQwenImageBtn.disabled = true;
+            unloadQwenImageBtn.textContent = 'Unloading...';
+            try {
+                const result = await ApiClient.unloadQwenImage();
+                showSettingsMessage(result.message || 'Qwen-Image unloaded', 'success');
+            } catch (err) {
+                showSettingsMessage('Failed to unload Qwen-Image', 'error');
+            }
+            await refreshSystemStatus();
+            unloadQwenImageBtn.textContent = 'Unload';
+        });
+    }
+}
+
+// Helper to show messages in the settings modal
+function showSettingsMessage(text, type = 'info') {
+    const msgEl = document.getElementById('settingsMessage');
+    if (!msgEl) return;
+
+    msgEl.textContent = text;
+    msgEl.className = 'text-sm text-center py-2 px-3 rounded-lg';
+
+    if (type === 'success') {
+        msgEl.classList.add('bg-green-600/20', 'text-green-400');
+    } else if (type === 'error') {
+        msgEl.classList.add('bg-red-600/20', 'text-red-400');
+    } else {
+        msgEl.classList.add('bg-blue-600/20', 'text-blue-400');
+    }
+
+    msgEl.classList.remove('hidden');
+    setTimeout(() => msgEl.classList.add('hidden'), 3000);
 }
 
 // =============================================================================
