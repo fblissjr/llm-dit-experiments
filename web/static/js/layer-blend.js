@@ -81,28 +81,36 @@ function getLayerWeights() {
 
     const mode = layerBlendMode ? layerBlendMode.value : '2-layer';
 
+    // Build dict mapping layer index to weight (backend format: Dict[int, float])
+    const weights = {};
+
     if (mode === '2-layer') {
         const weight = blendWeight1 ? parseFloat(blendWeight1.value) : 0.5;
-        return {
-            mode: '2-layer',
-            layers: [
-                parseInt(blendLayer1?.value || -2),
-                parseInt(blendLayer2?.value || -6),
-            ],
-            weights: [weight, 1 - weight],
-        };
+        const layer1 = parseInt(blendLayer1?.value || -2);
+        const layer2 = parseInt(blendLayer2?.value || -6);
+
+        // If same layer selected twice, just use weight 1.0
+        if (layer1 === layer2) {
+            weights[layer1] = 1.0;
+        } else {
+            weights[layer1] = weight;
+            weights[layer2] = 1 - weight;
+        }
     } else {
         // 3-layer mode with equal weights
-        return {
-            mode: '3-layer',
-            layers: [
-                parseInt(blendLayer3a?.value || -1),
-                parseInt(blendLayer3b?.value || -2),
-                parseInt(blendLayer3c?.value || -3),
-            ],
-            weights: [1/3, 1/3, 1/3],
-        };
+        const layer3a = parseInt(blendLayer3a?.value || -1);
+        const layer3b = parseInt(blendLayer3b?.value || -2);
+        const layer3c = parseInt(blendLayer3c?.value || -3);
+
+        // Handle duplicate layers by summing weights
+        const layers = [layer3a, layer3b, layer3c];
+        const baseWeight = 1/3;
+        layers.forEach(layer => {
+            weights[layer] = (weights[layer] || 0) + baseWeight;
+        });
     }
+
+    return weights;
 }
 
 // =============================================================================
