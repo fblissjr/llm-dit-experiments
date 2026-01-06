@@ -333,7 +333,14 @@ class PipelineLoader:
             logger.info(f"    Cache size: {self.config.cache_size}")
         logger.info(f"  Long prompt mode: {self.config.long_prompt_mode}")
         logger.info(f"  Custom scheduler: {self.config.use_custom_scheduler}")
-        logger.info(f"  Scheduler shift: {self.config.shift}")
+        dynamic_shift = getattr(self.config, 'dynamic_shift', False)
+        if dynamic_shift:
+            logger.info(f"  Scheduler shift: dynamic (base=0.5, max=1.15)")
+        else:
+            logger.info(f"  Scheduler shift: {self.config.shift}")
+        d_noise = getattr(self.config, 'd_noise', 1.0)
+        if d_noise != 1.0:
+            logger.info(f"  D-noise: {d_noise:.3f}")
         if self.config.lora_paths:
             logger.info(f"  LoRAs: {len(self.config.lora_paths)}")
 

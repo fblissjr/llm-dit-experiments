@@ -88,6 +88,7 @@ uv run scripts/generate.py --config config.toml --profile rtx4090 "A cat"
 | `--cfg-truncation` | CFG truncation threshold (1.0 = never, 0.5-0.8 typical). Stops CFG at this progress. |
 | `--shift` | Scheduler shift/mu (default: 3.0) |
 | `--dynamic-shift` | Calculate shift based on resolution (overrides --shift). Uses linear interpolation: base_shift=0.5 at 512x512, max_shift=1.15 at 2048x2048. |
+| `--d-noise` | Sigma schedule scaling factor. <1.0 = sharper/more detail (try 0.95-0.98), >1.0 = softer/deeper colors (try 1.02-1.05). Default: 1.0 (no scaling). |
 | `--seed` | Random seed |
 | `--img2img` | Input image path for img2img generation |
 | `--strength` | img2img strength: 0.0 (no change) to 1.0 (full regeneration) (default: 0.7) |

@@ -1,6 +1,6 @@
 # resolution constraints
 
-*last updated: 2025-12-23*
+*last updated: 2026-01-06*
 
 Z-Image requires image dimensions divisible by 16 (VAE constraint). All preset resolutions are pre-validated.
 
@@ -15,9 +15,62 @@ Z-Image requires image dimensions divisible by 16 (VAE constraint). All preset r
 | `DEFAULT_RESOLUTION` | 1024 | Default width/height |
 | `DYPE_BASE_RESOLUTION` | 1024 | Z-Image training resolution (DyPE threshold) |
 
+## web ui resolution selector
+
+The web UI provides a comprehensive resolution selector (`web/static/js/resolution.js`) with:
+
+### controls
+
+| Control | Description |
+|---------|-------------|
+| Width/Height inputs | Numeric inputs with VAE snapping (auto-rounds to multiple of 16) |
+| Aspect filter icons | Filter presets by aspect category (square, landscape, portrait, mobile) |
+| Aspect lock button | Lock ratio - changing one dimension scales the other |
+| Preset chips | Quick-select buttons, filtered by active aspect category |
+| DyPE hint | Shown when resolution exceeds 1024px (Z-Image only) |
+
+### aspect categories
+
+| Category | Ratio Range | Examples |
+|----------|-------------|----------|
+| square | 0.95 - 1.05 | 1:1 |
+| landscape | 1.05 - 2.0 | 16:9, 3:2, 4:3, 21:9 |
+| portrait | 0.5 - 0.95 | 9:16, 2:3, 3:4 |
+| mobile-landscape | > 2.0 | 19.5:9, 20:9 (phone screens horizontal) |
+| mobile-portrait | < 0.5 | 9:19.5, 9:20 (phone screens vertical) |
+
+### model-specific behavior
+
+| Model | Mode | Min | Max | Notes |
+|-------|------|-----|-----|-------|
+| Z-Image | Flexible | 256 | 4096 | Any valid resolution, DyPE hints |
+| Qwen-Image-Layered | Fixed | 640 | 1024 | Only 640x640 or 1024x1024 allowed |
+| Qwen-Image T2I | Flexible | 256 | 2048 | Default 1328, no DyPE |
+
+In fixed mode (Qwen-Image-Layered), the width/height inputs are disabled and only preset chips are selectable.
+
+### javascript api
+
+```javascript
+// Initialize (called by app.js on page load)
+await ResolutionSelector.init();
+
+// Load constraints when switching models
+await ResolutionSelector.loadConstraints('zimage');
+
+// Get current resolution
+const { width, height } = ResolutionSelector.getResolution();
+
+// Set resolution programmatically
+ResolutionSelector.setResolution(1920, 1080);
+
+// Validate current resolution against constraints
+const isValid = ResolutionSelector.validate();
+```
+
 ## available presets (web ui)
 
-The web UI provides categorized presets with filter tabs (All / Square / Landscape / Portrait).
+The web UI provides categorized presets with filter tabs.
 
 ### square (1:1)
 
@@ -47,6 +100,15 @@ The web UI provides categorized presets with filter tabs (All / Square / Landsca
 | 9:16 | 720x1280 (720p), 1088x1920 (1080p), 1440x2560 (1440p) |
 | 2:3 | 1024x1536, 1280x1920 |
 | 3:4 | 768x1024, 960x1280, 1200x1600 |
+
+### mobile (phone screens)
+
+| Orientation | Ratio | Resolutions |
+|-------------|-------|-------------|
+| Landscape | 19.5:9 | 2340x1080 (Phone HD), 2796x1290 (iPhone Pro Max) |
+| Portrait | 9:19.5 | 1080x2340 (Phone HD), 1290x2796 (iPhone Pro Max) |
+
+These are common smartphone screen resolutions. Useful for wallpapers and mobile app mockups.
 
 ## dype recommendation
 
@@ -91,13 +153,27 @@ Resolution presets are served by `/api/resolution-config`:
       "height": 1024,
       "category": "square",
       "ratio": "1:1",
+      "aspect_category": "square",
       "default": true,
       "dype": {"recommended": false, "exponent": null}
+    },
+    {
+      "value": "1080x2340",
+      "label": "Phone HD",
+      "width": 1080,
+      "height": 2340,
+      "category": "portrait",
+      "ratio": "19.5:9",
+      "aspect_category": "mobile-portrait",
+      "default": false,
+      "dype": {"recommended": true, "exponent": 2.0}
     },
     ...
   ]
 }
 ```
+
+The `aspect_category` field is used by the frontend resolution selector for filtering. Categories are: `square`, `landscape`, `portrait`, `mobile-landscape`, `mobile-portrait`.
 
 ## helper functions
 

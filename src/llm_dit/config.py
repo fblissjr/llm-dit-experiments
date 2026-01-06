@@ -329,6 +329,8 @@ class SchedulerConfig:
 
     shift: float = 3.0  # Flow matching scheduler shift parameter
     shift_terminal: float | None = None  # Terminal sigma value (Qwen-Image only, None for Z-Image)
+    dynamic_shift: bool = False  # Calculate shift based on resolution (overrides shift)
+    d_noise: float = 1.0  # Sigma schedule scaling: <1.0 = sharper, >1.0 = softer
 
 
 @dataclass

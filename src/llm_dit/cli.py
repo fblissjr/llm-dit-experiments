@@ -163,6 +163,7 @@ class RuntimeConfig:
     shift: float = 3.0
     shift_terminal: float | None = None  # Stretch sigma to terminal value (0.02 for Qwen-Image)
     dynamic_shift: bool = False  # Use resolution-based shift instead of fixed value
+    d_noise: float = 1.0  # Sigma schedule scaling: <1.0 = sharper/detailed, >1.0 = softer
 
     # CFG settings
     cfg_norm_mode: str = "clamp"  # "clamp" or "match" (DiffSynth-style)
@@ -614,6 +615,13 @@ def create_base_parser(
         action="store_true",
         help="Calculate shift based on resolution (overrides --shift). "
         "Uses linear interpolation: base_shift=0.5 at 512x512, max_shift=1.15 at 2048x2048.",
+    )
+    sched_group.add_argument(
+        "--d-noise",
+        type=float,
+        default=None,
+        help="Sigma schedule scaling factor. <1.0 = sharper/more detail (try 0.95-0.98), "
+        ">1.0 = softer/deeper colors (try 1.02-1.05). Default: 1.0 (no scaling).",
     )
 
     # LoRA
@@ -1157,6 +1165,8 @@ def _apply_cli_overrides(args: argparse.Namespace, config: RuntimeConfig) -> Run
         config.shift_terminal = args.shift_terminal
     if getattr(args, 'dynamic_shift', False):
         config.dynamic_shift = True
+    if getattr(args, 'd_noise', None) is not None:
+        config.d_noise = args.d_noise
 
     # CFG mode override
     if getattr(args, 'cfg_norm_mode', None) is not None:
@@ -1313,6 +1323,7 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
                 sched = toml_config.scheduler
                 config.shift = getattr(sched, 'shift', 3.0)
                 config.dynamic_shift = getattr(sched, 'dynamic_shift', False)
+                config.d_noise = getattr(sched, 'd_noise', 1.0)
 
             # Check for LoRA section
             if hasattr(toml_config, 'lora'):
@@ -1486,6 +1497,8 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
         config.shift_terminal = args.shift_terminal
     if getattr(args, 'dynamic_shift', False):
         config.dynamic_shift = True
+    if getattr(args, 'd_noise', None) is not None:
+        config.d_noise = args.d_noise
 
     # CFG mode override
     if getattr(args, 'cfg_norm_mode', None) is not None:

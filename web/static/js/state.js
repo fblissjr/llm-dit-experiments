@@ -48,6 +48,9 @@ const DOM = {
     shiftValue: null,
     shiftContainer: null,
     dynamicShiftCheckbox: null,
+    dNoiseSlider: null,
+    dNoiseValue: null,
+    dNoiseContainer: null,
     stepsMinLabel: null,
     stepsMaxLabel: null,
 
@@ -159,6 +162,9 @@ function initDOMReferences() {
     DOM.shiftValue = document.getElementById('shiftValue');
     DOM.shiftContainer = document.getElementById('shiftContainer');
     DOM.dynamicShiftCheckbox = document.getElementById('dynamicShift');
+    DOM.dNoiseSlider = document.getElementById('dNoise');
+    DOM.dNoiseValue = document.getElementById('dNoiseValue');
+    DOM.dNoiseContainer = document.getElementById('dNoiseContainer');
     DOM.stepsMinLabel = document.getElementById('stepsMinLabel');
     DOM.stepsMaxLabel = document.getElementById('stepsMaxLabel');
 

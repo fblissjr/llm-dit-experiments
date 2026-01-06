@@ -595,6 +595,7 @@ class ZImagePipeline:
         cfg_normalization: float = 0.0,
         cfg_truncation: float = 1.0,
         cfg_norm_mode: str = "clamp",
+        d_noise: float = 1.0,
     ) -> Union[Image.Image, List[Image.Image], torch.Tensor]:
         """
         Generate an image from a text prompt and an input image.
@@ -774,15 +775,28 @@ class ZImagePipeline:
         elif hasattr(self.scheduler, 'shift'):
             self.scheduler.shift = mu  # our FlowMatchScheduler
         self.scheduler.set_timesteps(num_inference_steps, device=device, mu=mu)
+
+        # Apply d_noise scaling to sigma schedule (RES4LYF technique)
+        # d_noise < 1.0 = sharper/more detail, > 1.0 = softer/deeper colors
+        if d_noise != 1.0 and hasattr(self.scheduler, 'sigmas'):
+            original_sigmas = self.scheduler.sigmas.clone()
+            self.scheduler.sigmas = self.scheduler.sigmas * d_noise
+            logger.info(f"[img2img] Applied d_noise={d_noise:.3f} to sigma schedule")
+            logger.info(f"[img2img] Sigmas scaled: {original_sigmas[0]:.4f} -> {self.scheduler.sigmas[0]:.4f}")
+
         timesteps = self.scheduler.timesteps[t_start:]
 
         # 4. Add noise to init latents
+        # Generate on CPU with generator (if provided), then move to device
+        # This avoids the "Expected CUDA device for generator" error
         noise = torch.randn(
             init_latents.shape,
             generator=generator,
-            device=device,
+            device="cpu" if generator is not None else device,
             dtype=dtype,
         )
+        if generator is not None:
+            noise = noise.to(device=device)
 
         # Get the starting sigma (noise level)
         if t_start < len(self.scheduler.sigmas):
@@ -1005,6 +1019,8 @@ class ZImagePipeline:
         cfg_normalization: float = 0.0,  # 0.0 = disabled, >0 = clamp CFG norm relative to positive pred
         cfg_truncation: float = 1.0,  # 1.0 = never truncate, <1.0 = stop CFG at that progress fraction
         cfg_norm_mode: str = "clamp",  # "clamp" or "match" (DiffSynth-style)
+        # Sigma schedule scaling (from RES4LYF research)
+        d_noise: float = 1.0,  # <1.0 = sharper/more detail, >1.0 = softer/deeper colors
     ) -> Union[Image.Image, List[Image.Image], torch.Tensor]:
         """
         Generate an image from a text prompt.
@@ -1246,6 +1262,14 @@ class ZImagePipeline:
             self.scheduler.shift = mu  # our FlowMatchScheduler
         self.scheduler.set_timesteps(num_inference_steps, device=device, mu=mu)
         timesteps = self.scheduler.timesteps
+
+        # Apply d_noise scaling to sigma schedule (RES4LYF technique)
+        # d_noise < 1.0 = sharper/more detail, > 1.0 = softer/deeper colors
+        if d_noise != 1.0 and hasattr(self.scheduler, 'sigmas'):
+            original_sigmas = self.scheduler.sigmas.clone()
+            self.scheduler.sigmas = self.scheduler.sigmas * d_noise
+            logger.info(f"[Pipeline] Applied d_noise={d_noise:.3f} to sigma schedule")
+            logger.info(f"[Pipeline] Sigmas scaled: {original_sigmas[0]:.4f} -> {self.scheduler.sigmas[0]:.4f}")
 
         logger.info(f"[Pipeline] Latent shape: {latents.shape}, device={latents.device}")
         logger.info(f"[Pipeline] Prompt embeds: shape={prompt_embeds[0].shape}, device={prompt_embeds[0].device}")
@@ -1625,6 +1649,7 @@ class ZImagePipeline:
         cfg_normalization: float = 0.0,
         cfg_truncation: float = 1.0,
         cfg_norm_mode: str = "clamp",
+        d_noise: float = 1.0,
     ) -> Union[Image.Image, List[Image.Image], torch.Tensor]:
         """
         Generate an image from pre-computed embeddings.
@@ -1744,6 +1769,15 @@ class ZImagePipeline:
         elif hasattr(self.scheduler, 'shift'):
             self.scheduler.shift = mu  # our FlowMatchScheduler
         self.scheduler.set_timesteps(num_inference_steps, device=device, mu=mu)
+
+        # Apply d_noise scaling to sigma schedule (RES4LYF technique)
+        # d_noise < 1.0 = sharper/more detail, > 1.0 = softer/deeper colors
+        if d_noise != 1.0 and hasattr(self.scheduler, 'sigmas'):
+            original_sigmas = self.scheduler.sigmas.clone()
+            self.scheduler.sigmas = self.scheduler.sigmas * d_noise
+            logger.debug(f"Applied d_noise={d_noise:.3f} to sigma schedule")
+            logger.debug(f"Sigmas scaled: {original_sigmas[0]:.4f} -> {self.scheduler.sigmas[0]:.4f}")
+
         timesteps = self.scheduler.timesteps
 
         # Denoising loop

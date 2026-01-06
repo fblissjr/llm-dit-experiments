@@ -1,6 +1,6 @@
 # Web UI Architecture
 
-last updated: 2025-01-05
+last updated: 2026-01-06
 
 The web UI is a modular JavaScript/CSS application served by FastAPI.
 
@@ -8,17 +8,17 @@ The web UI is a modular JavaScript/CSS application served by FastAPI.
 
 ```
 web/
-  index.html          # Main HTML (markup only, ~1500 lines)
+  index.html          # Main HTML (markup only, ~1900 lines)
   server.py           # FastAPI backend
   static/
     css/
       layout.css      # Scrollbar, responsive, animations
-      components.css  # Buttons, cards, modals, dropzone
+      components.css  # Buttons, cards, modals, dropzone, resolution selector
       forms.css       # Slider/range styling
     js/
       state.js        # DOM references, shared state (AppState, DOM)
       api-client.js   # ApiClient object - all backend communication
-      ui-utils.js     # Helpers: escapeHtml, formatNumber, debounce
+      ui-utils.js     # Helpers: escapeHtml, formatNumber, debounce, getResolution
       history.js      # Generation history panel
       templates.js    # Template loading and selection
       rewriter.js     # Prompt rewriter system
@@ -27,6 +27,8 @@ web/
       layer-blend.js  # Multi-layer blending controls
       advanced.js     # DyPE, SLG, FMTT, CFG controls
       qwen-image.js   # Qwen-Image model controls
+      resolution.js   # Resolution selector with aspect filters
+      image-utils.js  # Shared image loading/workflow utilities
       app.js          # Initialization and main form handling
 ```
 
@@ -52,6 +54,8 @@ Order matters due to dependencies:
 <script src="/static/js/layer-blend.js"></script>
 <script src="/static/js/advanced.js"></script>
 <script src="/static/js/qwen-image.js"></script>
+<script src="/static/js/resolution.js"></script>
+<script src="/static/js/image-utils.js"></script>
 <script src="/static/js/app.js"></script>
 ```
 
@@ -127,7 +131,7 @@ async function initializeApp() {
 |--------|---------|---------------|
 | state.js | Shared state | `initDOMReferences()` |
 | api-client.js | Backend calls | `ApiClient.*` methods |
-| ui-utils.js | Helpers | `escapeHtml()`, `debounce()`, `showError()` |
+| ui-utils.js | Helpers | `escapeHtml()`, `debounce()`, `showError()`, `getResolution()` |
 | history.js | History panel | `loadHistory()`, `reuseHistoryItem()` |
 | templates.js | Templates | `loadTemplates()`, `onTemplateChange()` |
 | rewriter.js | Prompt rewriting | `rewritePrompt()`, `loadRewriters()` |
@@ -136,6 +140,8 @@ async function initializeApp() {
 | layer-blend.js | Layer blending | `getLayerWeights()`, `populateLayerDropdowns()` |
 | advanced.js | Advanced controls | `getDypeConfig()`, `getSlgConfig()`, `getFmttConfig()` |
 | qwen-image.js | Qwen-Image | `executeDecompose()`, `executeLayerEdit()` |
+| resolution.js | Resolution selector | `ResolutionSelector.init()`, `.loadConstraints()`, `.getResolution()` |
+| image-utils.js | Image workflows | `useAsImg2Img()`, `useAsVLReference()`, `setupDropzoneForInternalImages()` |
 | app.js | Main entry | `initializeApp()`, `handleFormSubmit()` |
 
 ## CSS Organization

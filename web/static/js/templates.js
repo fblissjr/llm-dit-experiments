@@ -129,6 +129,14 @@ async function loadGenerationConfig() {
             }
         }
 
+        // Handle d_noise from config
+        if (data.d_noise !== undefined && DOM.dNoiseSlider) {
+            DOM.dNoiseSlider.value = data.d_noise;
+            if (DOM.dNoiseValue) {
+                DOM.dNoiseValue.textContent = parseFloat(data.d_noise).toFixed(2);
+            }
+        }
+
         if (data.long_prompt_mode && longPromptModeSelect) {
             longPromptModeSelect.value = data.long_prompt_mode;
         }

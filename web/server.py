@@ -224,6 +224,7 @@ class GenerateRequest(BaseModel):
     cfg_truncation: float = 1.0  # CFG truncation threshold (1.0 = never)
     shift: float = 3.0  # Scheduler shift parameter
     dynamic_shift: bool = False  # Calculate shift based on resolution (overrides shift)
+    d_noise: float = 1.0  # Sigma schedule scaling (<1.0 = sharper, >1.0 = softer)
     long_prompt_mode: str = "interpolate"  # truncate/interpolate/pool/attention_pool
     hidden_layer: int = -2  # Which hidden layer to extract (-1 to -35, Qwen3-4B has 36 layers)
     layer_weights: Optional[Dict[int, float]] = None  # Multi-layer blending weights (overrides hidden_layer)
@@ -273,6 +274,7 @@ class Img2ImgRequest(BaseModel):
     cfg_norm_mode: str = "clamp"  # CFG normalization mode: clamp or match
     shift: float = Field(3.0, ge=0.0, le=10.0, description="Scheduler shift parameter")
     dynamic_shift: bool = False  # Calculate shift based on resolution (overrides shift)
+    d_noise: float = Field(1.0, ge=0.5, le=2.0, description="Sigma scaling (<1.0 = sharper, >1.0 = softer)")
     long_prompt_mode: str = "interpolate"
     hidden_layer: int = Field(-2, ge=-35, le=-1, description="Hidden layer for text embeddings")
 
@@ -335,6 +337,7 @@ class VLGenerateRequest(BaseModel):
     guidance_scale: float = 0.0
     shift: float = 3.0
     dynamic_shift: bool = False  # Calculate shift based on resolution (overrides shift)
+    d_noise: float = 1.0  # Sigma schedule scaling (<1.0 = sharper, >1.0 = softer)
     long_prompt_mode: str = "interpolate"
     hidden_layer: int = -2  # For text encoder
 
@@ -1325,6 +1328,7 @@ async def vl_generate(request: VLGenerateRequest):
             cfg_normalization=request.cfg_normalization,
             cfg_truncation=request.cfg_truncation,
             shift=None if request.dynamic_shift else request.shift,
+            d_noise=request.d_noise,
             generator=generator,
         )
 
@@ -1531,6 +1535,7 @@ async def get_generation_config():
         "guidance_scale": runtime_config.guidance_scale,
         "shift": runtime_config.shift,
         "dynamic_shift": getattr(runtime_config, 'dynamic_shift', False),
+        "d_noise": getattr(runtime_config, 'd_noise', 1.0),
         "long_prompt_mode": runtime_config.long_prompt_mode,
         "hidden_layer": runtime_config.hidden_layer,
         "layer_weights": getattr(runtime_config, 'layer_weights', None),
@@ -2090,6 +2095,7 @@ async def generate(request: GenerateRequest):
                 cfg_normalization=request.cfg_normalization,
                 cfg_truncation=request.cfg_truncation,
                 shift=None if request.dynamic_shift else request.shift,
+                d_noise=request.d_noise,
                 skip_layer_guidance_scale=slg_scale,
                 skip_layer_indices=slg_layers,
                 skip_layer_start=slg_start,
@@ -2114,6 +2120,7 @@ async def generate(request: GenerateRequest):
                 cfg_normalization=request.cfg_normalization,
                 cfg_truncation=request.cfg_truncation,
                 shift=None if request.dynamic_shift else request.shift,
+                d_noise=request.d_noise,
                 generator=generator,
                 template=request.template,
                 system_prompt=request.system_prompt,
@@ -2329,6 +2336,7 @@ async def img2img(request: Img2ImgRequest):
             cfg_truncation=request.cfg_truncation,
             cfg_norm_mode=request.cfg_norm_mode,
             shift=None if request.dynamic_shift else request.shift,
+            d_noise=request.d_noise,
             generator=generator,
             template=request.template,
             system_prompt=request.system_prompt,

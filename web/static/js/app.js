@@ -158,6 +158,8 @@ async function handleFormSubmit(e) {
             } else {
                 params.shift = parseFloat(DOM.shiftSlider?.value || 3.0);
             }
+            // D-noise (sigma schedule scaling)
+            params.d_noise = parseFloat(DOM.dNoiseSlider?.value || 1.0);
             params.long_prompt_mode = DOM.longPromptModeSelect?.value || 'interpolate';
             params.hidden_layer = parseInt(DOM.hiddenLayerSlider?.value || -2);
 
@@ -671,6 +673,15 @@ async function initializeApp() {
                         DOM.shiftValue.textContent = formatNumber(DOM.shiftSlider.value, 1);
                     }
                 }
+            }
+        });
+    }
+
+    // D-noise slider - update displayed value
+    if (DOM.dNoiseSlider) {
+        DOM.dNoiseSlider.addEventListener('input', () => {
+            if (DOM.dNoiseValue) {
+                DOM.dNoiseValue.textContent = parseFloat(DOM.dNoiseSlider.value).toFixed(2);
             }
         });
     }

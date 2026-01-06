@@ -668,6 +668,7 @@ def main():
             guidance_scale=config.guidance_scale,
             generator=generator,
             shift=None if config.dynamic_shift else config.shift,
+            d_noise=config.d_noise,
             callback=progress_callback if config.verbose else None,
         )
         gen_time = time.time() - start
@@ -746,6 +747,7 @@ def main():
             skip_layer_start=config.slg_start,
             skip_layer_stop=config.slg_stop,
             shift=None if config.dynamic_shift else config.shift,
+            d_noise=config.d_noise,
             callback=progress_callback if config.verbose else None,
         )
         gen_time = time.time() - start
@@ -830,6 +832,7 @@ def main():
             hidden_layer=config.hidden_layer,
             layer_weights=config.layer_weights,
             shift=None if config.dynamic_shift else config.shift,
+            d_noise=config.d_noise,
             callback=progress_callback if config.verbose else None,
         )
         gen_time = time.time() - start
@@ -903,6 +906,7 @@ def main():
                 skip_layer_start=config.slg_start,
                 skip_layer_stop=config.slg_stop,
                 shift=None if config.dynamic_shift else config.shift,
+                d_noise=config.d_noise,
                 callback=progress_callback if config.verbose else None,
             )
         gen_time = time.time() - start

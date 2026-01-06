@@ -95,6 +95,9 @@ shift = 3.0                      # Timestep shift: compresses sigma schedule for
 dynamic_shift = false            # Calculate shift based on resolution (overrides shift)
                                  # Uses linear interpolation: base_shift=0.5 at 512x512, max_shift=1.15 at 2048x2048
                                  # Recommended for high-resolution generation
+d_noise = 1.0                    # Sigma schedule scaling (from RES4LYF research)
+                                 # <1.0 = sharper/more detail (try 0.95-0.98)
+                                 # >1.0 = softer/deeper colors (try 1.02-1.05)
 # shift_terminal = 0.02          # Stretch sigma to end at this value instead of 0 (Qwen-Image only)
                                  # Not used for Z-Image-Turbo. Leave commented/omit for Z-Image.
 
@@ -365,6 +368,7 @@ default_template = ""            # Auto-apply template (empty = none)
 # FlowMatch scheduler configuration
 shift = 3.0                      # Timestep shift (2.5-4.0 range is equivalent)
 dynamic_shift = false            # Calculate shift based on resolution (overrides shift)
+d_noise = 1.0                    # Sigma schedule scaling (<1.0 = sharper, >1.0 = softer)
 # shift_terminal = 0.02          # Stretch sigma to terminal value (Qwen-Image only)
 
 [default.optimization]
