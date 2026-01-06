@@ -12,6 +12,12 @@ function toggleHistoryPanel() {
     const { historyPanel } = DOM;
     if (!historyPanel) return;
 
+    // On mobile, also toggle the 'hidden' class since Tailwind's hidden overrides CSS positioning
+    const isMobile = window.innerWidth < 768;
+    if (isMobile) {
+        historyPanel.classList.toggle('hidden');
+    }
+
     historyPanel.classList.toggle('collapsed');
     document.body.classList.toggle('panel-open', !historyPanel.classList.contains('collapsed'));
 }
