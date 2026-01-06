@@ -1291,6 +1291,8 @@ class ZImagePipeline:
         from llm_dit.utils.dype import patch_zimage_rope, set_zimage_timestep, unpatch_zimage_rope
         unpatch_zimage_rope(self.transformer)
 
+        # Debug: log what dype configs we have
+        logger.info(f"[Pipeline] DyPE debug: request dype_config={dype_config}, self.dype_config={self.dype_config}")
         active_dype_config = dype_config if dype_config is not None else self.dype_config
         dype_patched = False
         if active_dype_config is not None and active_dype_config.enabled:
