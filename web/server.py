@@ -1760,6 +1760,16 @@ async def get_resolution_config(model: Optional[str] = None):
     # Determine available categories
     categories = list(set(p["category"] for p in presets))
 
+    # Use config.toml values if available, otherwise fall back to model defaults
+    # This ensures the UI respects user's configured resolution while still
+    # providing sensible defaults (1024x1024 for Z-Image)
+    if runtime_config is not None and current_model == "zimage":
+        default_width = getattr(runtime_config, 'width', None) or constraints.get("default_width", 1024)
+        default_height = getattr(runtime_config, 'height', None) or constraints.get("default_height", 1024)
+    else:
+        default_width = constraints.get("default_width", 1024)
+        default_height = constraints.get("default_height", 1024)
+
     return {
         "current_model": current_model,
         "model_constraints": model_constraints,
@@ -1769,8 +1779,8 @@ async def get_resolution_config(model: Optional[str] = None):
         "min_resolution": constraints.get("min_resolution", MIN_RESOLUTION),
         "max_resolution": constraints.get("max_resolution", MAX_RESOLUTION),
         "default_resolution": DEFAULT_RESOLUTION,
-        "default_width": constraints.get("default_width", 1024),
-        "default_height": constraints.get("default_height", 1024),
+        "default_width": default_width,
+        "default_height": default_height,
         "dype_base_resolution": DYPE_BASE_RESOLUTION,
         "aspect_ratios": ASPECT_RATIOS,
         "presets": presets,

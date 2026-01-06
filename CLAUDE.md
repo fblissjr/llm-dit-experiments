@@ -115,6 +115,7 @@ internal/               # Development docs, research, session logs
 | Configuration | `docs/reference/configuration.md` | Adding new parameters (DRY principles) |
 | Resolution | `docs/reference/resolution.md` | VAE constraints, presets |
 | DyPE | `docs/reference/dype.md` | High-resolution generation (2K+) |
+| Scheduler tuning | `docs/reference/scheduler_tuning.md` | Shift, d_noise, output quality control |
 | Long prompts | `docs/reference/long_prompts.md` | 1504 token limit, compression modes |
 | Chat templates | `docs/reference/chat_templates.md` | Qwen3/Qwen3-VL template format |
 | Web architecture | `docs/reference/web_architecture.md` | Modular JS/CSS structure |

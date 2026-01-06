@@ -569,6 +569,12 @@ class ZImageDyPERoPE(DyPEPosEmbed):
         )
 
         # Now safe to assign module attributes
+        # Validate that original_embedder is an nn.Module instance
+        if not isinstance(original_embedder, nn.Module):
+            raise TypeError(
+                f"original_embedder must be an nn.Module instance, "
+                f"got {type(original_embedder)} (value: {original_embedder})"
+            )
         self.original_embedder = original_embedder
         self.scale_hint = scale_hint
 
@@ -761,6 +767,15 @@ def patch_zimage_rope(
 
     original_embedder = transformer.rope_embedder
 
+    # Validate that original_embedder is an nn.Module instance (not a class)
+    if not isinstance(original_embedder, nn.Module):
+        embedder_type = type(original_embedder)
+        raise TypeError(
+            f"transformer.rope_embedder is not an nn.Module instance. "
+            f"Got {embedder_type} (value: {original_embedder}). "
+            f"This may indicate a corrupted model state or incompatible diffusers version."
+        )
+
     # Compute scale hint from resolution
     base_patches = (config.base_resolution // 8) // 2  # patch_size=2
     target_patches_h = (height // 8) // 2
@@ -820,6 +835,16 @@ def unpatch_zimage_rope(transformer: nn.Module) -> nn.Module:
         transformer.rope_embedder, ZImageDyPERoPE
     ):
         original = transformer.rope_embedder.original_embedder
+        # Validate that original is an nn.Module before restoring
+        if not isinstance(original, nn.Module):
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(
+                f"DyPE unpatch failed: original_embedder is not an nn.Module. "
+                f"Got {type(original)} (value: {original}). "
+                f"Keeping current rope_embedder to avoid corruption."
+            )
+            return transformer
         transformer.rope_embedder = original
     return transformer
 

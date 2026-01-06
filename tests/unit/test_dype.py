@@ -10,6 +10,7 @@ import math
 
 import pytest
 import torch
+import torch.nn as nn
 
 from llm_dit.utils.dype import (
     DyPEConfig,
@@ -597,17 +598,29 @@ class TestGet1DYaRNPosEmbed:
 class TestZImageDyPERoPE:
     """Test ZImageDyPERoPE wrapper."""
 
-    def test_initialization(self):
-        # Create mock original embedder
-        class MockRoPEEmbedder:
-            theta = 256
-            axes_dims = [32, 48, 48]
+    @staticmethod
+    def _create_mock_embedder(call_count_tracking=False):
+        """Create a mock RoPE embedder that inherits from nn.Module."""
+        class MockRoPEEmbedder(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.theta = 256
+                self.axes_dims = [32, 48, 48]
+                self._call_count = 0
 
-            def __call__(self, ids):
-                # Return dummy output
+            def forward(self, ids):
+                self._call_count += 1
                 return torch.zeros(ids.shape[0], 1, ids.shape[1], 128, 2, 2)
 
-        original = MockRoPEEmbedder()
+            @property
+            def call_count(self):
+                return self._call_count
+
+        return MockRoPEEmbedder()
+
+    def test_initialization(self):
+        # Create mock original embedder
+        original = self._create_mock_embedder()
         config = DyPEConfig(enabled=True)
 
         wrapper = ZImageDyPERoPE(
@@ -621,14 +634,7 @@ class TestZImageDyPERoPE:
         assert wrapper.config.enabled is True
 
     def test_set_timestep(self):
-        class MockRoPEEmbedder:
-            theta = 256
-            axes_dims = [32, 48, 48]
-
-            def __call__(self, ids):
-                return torch.zeros(ids.shape[0], 1, ids.shape[1], 128, 2, 2)
-
-        original = MockRoPEEmbedder()
+        original = self._create_mock_embedder()
         config = DyPEConfig(enabled=True)
         wrapper = ZImageDyPERoPE(original, config)
 
@@ -636,14 +642,7 @@ class TestZImageDyPERoPE:
         assert wrapper.current_sigma == 0.5
 
     def test_set_scale_hint(self):
-        class MockRoPEEmbedder:
-            theta = 256
-            axes_dims = [32, 48, 48]
-
-            def __call__(self, ids):
-                return torch.zeros(ids.shape[0], 1, ids.shape[1], 128, 2, 2)
-
-        original = MockRoPEEmbedder()
+        original = self._create_mock_embedder()
         config = DyPEConfig(enabled=True)
         wrapper = ZImageDyPERoPE(original, config)
 
@@ -655,16 +654,7 @@ class TestZImageDyPERoPE:
         assert wrapper.scale_hint == 1.0
 
     def test_disabled_dype_delegates_to_original(self):
-        class MockRoPEEmbedder:
-            theta = 256
-            axes_dims = [32, 48, 48]
-            call_count = 0
-
-            def __call__(self, ids):
-                self.call_count += 1
-                return torch.zeros(ids.shape[0], 1, ids.shape[1], 128, 2, 2)
-
-        original = MockRoPEEmbedder()
+        original = self._create_mock_embedder()
         config = DyPEConfig(enabled=False)
         wrapper = ZImageDyPERoPE(original, config)
 
@@ -676,16 +666,7 @@ class TestZImageDyPERoPE:
 
     def test_frequency_modulation_disabled_delegates_to_original(self):
         """Test that frequency_modulation=False delegates to original embedder."""
-        class MockRoPEEmbedder:
-            theta = 256
-            axes_dims = [32, 48, 48]
-            call_count = 0
-
-            def __call__(self, ids):
-                self.call_count += 1
-                return torch.zeros(ids.shape[0], 1, ids.shape[1], 128, 2, 2)
-
-        original = MockRoPEEmbedder()
+        original = self._create_mock_embedder()
         config = DyPEConfig(enabled=True, frequency_modulation=False)
         wrapper = ZImageDyPERoPE(original, config)
 
@@ -697,15 +678,9 @@ class TestZImageDyPERoPE:
 
     def test_frequency_modulation_produces_complex64_output(self):
         """Test that frequency modulation produces complex64 output matching diffusers."""
-        class MockRoPEEmbedder:
-            theta = 256.0
-            axes_dims = [32, 48, 48]
-
-            def __call__(self, ids):
-                # Should not be called when frequency_modulation=True
-                raise RuntimeError("Original embedder should not be called")
-
-        original = MockRoPEEmbedder()
+        original = self._create_mock_embedder()
+        # Override theta to match expected float value
+        original.theta = 256.0
         config = DyPEConfig(enabled=True, frequency_modulation=True)
         wrapper = ZImageDyPERoPE(original, config)
         wrapper.set_timestep(1.0)
@@ -722,14 +697,8 @@ class TestZImageDyPERoPE:
 
     def test_frequency_modulation_varies_with_timestep(self):
         """Test that frequency modulation output changes with timestep."""
-        class MockRoPEEmbedder:
-            theta = 256.0
-            axes_dims = [32, 48, 48]
-
-            def __call__(self, ids):
-                raise RuntimeError("Should not be called")
-
-        original = MockRoPEEmbedder()
+        original = self._create_mock_embedder()
+        original.theta = 256.0
         config = DyPEConfig(
             enabled=True,
             frequency_modulation=True,
@@ -761,14 +730,8 @@ class TestZImageDyPERoPE:
 
     def test_frequency_modulation_respects_dype_scale(self):
         """Test that dype_scale affects frequency modulation output."""
-        class MockRoPEEmbedder:
-            theta = 256.0
-            axes_dims = [32, 48, 48]
-
-            def __call__(self, ids):
-                raise RuntimeError("Should not be called")
-
-        original = MockRoPEEmbedder()
+        original = self._create_mock_embedder()
+        original.theta = 256.0
 
         ids = torch.tensor([[0, 1, 1]]).float()
 
@@ -843,19 +806,29 @@ class TestDyPEPosEmbed:
 class TestPatchZImageRoPE:
     """Test patch_zimage_rope function."""
 
+    @staticmethod
+    def _create_mock_rope_embedder():
+        """Create a mock RoPE embedder that inherits from nn.Module."""
+        class MockRoPEEmbedder(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.theta = 256
+                self.axes_dims = [32, 48, 48]
+
+            def forward(self, ids):
+                return torch.zeros(ids.shape[0], 1, ids.shape[1], 128, 2, 2)
+
+        return MockRoPEEmbedder()
+
     def test_patch_creates_wrapper(self):
-        # Create mock transformer
-        class MockTransformer:
-            class RoPEEmbedder:
-                theta = 256
-                axes_dims = [32, 48, 48]
+        # Create mock transformer with nn.Module rope_embedder
+        class MockTransformer(nn.Module):
+            def __init__(self, rope_embedder):
+                super().__init__()
+                self.rope_embedder = rope_embedder
 
-                def __call__(self, ids):
-                    return torch.zeros(ids.shape[0], 1, ids.shape[1], 128, 2, 2)
-
-            rope_embedder = RoPEEmbedder()
-
-        transformer = MockTransformer()
+        rope_embedder = self._create_mock_rope_embedder()
+        transformer = MockTransformer(rope_embedder)
         config = DyPEConfig(enabled=True)
 
         patched = patch_zimage_rope(transformer, config, width=2048, height=2048)
@@ -865,17 +838,13 @@ class TestPatchZImageRoPE:
         assert patched.rope_embedder.config.enabled is True
 
     def test_patch_computes_scale_hint(self):
-        class MockTransformer:
-            class RoPEEmbedder:
-                theta = 256
-                axes_dims = [32, 48, 48]
+        class MockTransformer(nn.Module):
+            def __init__(self, rope_embedder):
+                super().__init__()
+                self.rope_embedder = rope_embedder
 
-                def __call__(self, ids):
-                    return torch.zeros(ids.shape[0], 1, ids.shape[1], 128, 2, 2)
-
-            rope_embedder = RoPEEmbedder()
-
-        transformer = MockTransformer()
+        rope_embedder = self._create_mock_rope_embedder()
+        transformer = MockTransformer(rope_embedder)
         config = DyPEConfig(enabled=True, base_resolution=1024)
 
         patched = patch_zimage_rope(transformer, config, width=2048, height=2048)
@@ -885,8 +854,10 @@ class TestPatchZImageRoPE:
         assert patched.rope_embedder.scale_hint == 2.0
 
     def test_patch_without_rope_embedder_raises(self):
-        class MockTransformer:
-            pass  # No rope_embedder attribute
+        class MockTransformer(nn.Module):
+            def __init__(self):
+                super().__init__()
+                # No rope_embedder attribute
 
         transformer = MockTransformer()
         config = DyPEConfig(enabled=True)
@@ -898,18 +869,28 @@ class TestPatchZImageRoPE:
 class TestSetZImageTimestep:
     """Test set_zimage_timestep function."""
 
+    @staticmethod
+    def _create_mock_rope_embedder():
+        """Create a mock RoPE embedder that inherits from nn.Module."""
+        class MockRoPEEmbedder(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.theta = 256
+                self.axes_dims = [32, 48, 48]
+
+            def forward(self, ids):
+                return torch.zeros(ids.shape[0], 1, ids.shape[1], 128, 2, 2)
+
+        return MockRoPEEmbedder()
+
     def test_sets_timestep_on_dype_embedder(self):
-        class MockTransformer:
-            class RoPEEmbedder:
-                theta = 256
-                axes_dims = [32, 48, 48]
+        class MockTransformer(nn.Module):
+            def __init__(self, rope_embedder):
+                super().__init__()
+                self.rope_embedder = rope_embedder
 
-                def __call__(self, ids):
-                    return torch.zeros(ids.shape[0], 1, ids.shape[1], 128, 2, 2)
-
-            rope_embedder = RoPEEmbedder()
-
-        transformer = MockTransformer()
+        rope_embedder = self._create_mock_rope_embedder()
+        transformer = MockTransformer(rope_embedder)
         config = DyPEConfig(enabled=True)
 
         # Patch transformer
