@@ -1,6 +1,6 @@
 # configuration reference
 
-*last updated: 2026-01-04*
+*last updated: 2026-01-06*
 
 ## config format
 
@@ -136,3 +136,26 @@ Profiles can override defaults. Common profiles:
 - `rtx4090` - Optimized for RTX 4090
 - `low_vram` - CPU offload for limited VRAM
 - `distributed` - API-based encoding for distributed inference
+
+## hot-reload vs restart parameters
+
+When changing config values via the web UI, parameters are classified by whether they require a server restart:
+
+### hot-reload safe (immediate effect)
+
+These can be changed at runtime without restart:
+- `shift`, `d_noise`, `dynamic_shift`
+- `steps`, `guidance_scale`, `height`, `width`
+- `hidden_layer`, `layer_weights`, `long_prompt_mode`
+- All `dype_*`, `slg_*`, `fmtt_*` parameters
+- `tiled_vae`, `tile_size`, `embedding_cache`
+
+### requires restart (model reload)
+
+These require server restart to take effect:
+- `model_path`, `text_encoder_path`, device placements
+- `quantization`, `cpu_offload`
+- `attention_backend`, `flash_attn`, `compile`
+- `lora_paths`, `lora_scales`
+
+See [config_management.md](../guides/config_management.md) for the UI guide.

@@ -1,6 +1,6 @@
 # documentation checklist
 
-*last updated: 2025-12-22*
+*last updated: 2026-01-06*
 
 ## documentation structure
 
@@ -35,6 +35,7 @@ How-to docs - load when working on features:
 
 | File | Content |
 |------|---------|
+| `config_management.md` | Edit config from UI, profiles, server control |
 | `vl_conditioning.md` | Vision conditioning (single source of truth) |
 | `prompt_rewriting.md` | Qwen3 prompt expansion |
 | `lora.md` | LoRA loading and fusion |

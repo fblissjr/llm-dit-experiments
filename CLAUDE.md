@@ -21,6 +21,7 @@ A standalone diffusers-based experimentation platform for LLM-DiT image generati
 - Rich template system (140+ templates from ComfyUI)
 - Distributed inference support (encode on Mac, generate on CUDA)
 - Web UI and REST API for generation
+- Config management UI (edit params, profiles, server control)
 - Granular device placement (encoder/DiT/VAE on CPU/GPU independently)
 - LoRA support with automatic weight fusion
 - TOML config file support with CLI overrides
@@ -94,7 +95,7 @@ scripts/
 web/
     server.py           # FastAPI server
     index.html          # Web UI (markup)
-    static/js/          # Modular JS (12 files)
+    static/js/          # Modular JS (14 files)
     static/css/         # Modular CSS (3 files)
 
 templates/z_image/      # 140+ prompt templates
@@ -125,6 +126,7 @@ internal/               # Development docs, research, session logs
 
 | Topic | File | When to Read |
 |-------|------|--------------|
+| Config management | `docs/guides/config_management.md` | Edit config from UI, profiles, server control |
 | VL conditioning | `docs/guides/vl_conditioning.md` | Vision conditioning with Qwen3-VL |
 | Prompt rewriting | `docs/guides/prompt_rewriting.md` | Qwen3 prompt expansion |
 | LoRA | `docs/guides/lora.md` | Loading and fusing LoRAs |

@@ -2,6 +2,16 @@
 
 *last updated: 2026-01-06*
 
+## config management endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/config/session` | GET | Get current session config values |
+| `/api/config/session` | PUT | Update hot-reload safe parameters |
+| `/api/config/profiles` | GET | List available config profiles |
+| `/api/server/status` | GET | Get server status and uptime |
+| `/api/server/restart` | POST | Restart server (optionally with new profile) |
+
 ## endpoints
 
 | Endpoint | Method | Description |
@@ -140,5 +150,101 @@ Available models:
   "steps": 50,
   "cfg_scale": 4.0,
   "resolution": 640
+}
+```
+
+## config session response
+
+```json
+{
+  "values": {
+    "shift": 3.0,
+    "d_noise": 1.0,
+    "steps": 9,
+    "guidance_scale": 0.0,
+    "width": 1024,
+    "height": 1024
+  },
+  "profile": "rtx4090",
+  "modified": ["shift"],
+  "config_file": "config.toml"
+}
+```
+
+## config session update request
+
+Only hot-reload safe parameters can be updated without restart:
+
+```json
+{
+  "shift": 3.5,
+  "d_noise": 0.98,
+  "steps": 12
+}
+```
+
+Response:
+
+```json
+{
+  "success": true,
+  "updated": ["shift", "d_noise", "steps"],
+  "pending_restart": []
+}
+```
+
+## hot-reload safe parameters
+
+These parameters can be changed without server restart:
+- `shift`, `d_noise`, `dynamic_shift`
+- `steps`, `guidance_scale`, `height`, `width`
+- `hidden_layer`, `layer_weights`, `long_prompt_mode`
+- `dype_*`, `slg_*`, `fmtt_*` (feature parameters)
+- `tiled_vae`, `tile_size`, `embedding_cache`
+
+## parameters requiring restart
+
+These require server restart to take effect:
+- `model_path`, `text_encoder_path`, device placements
+- `quantization`, `cpu_offload`
+- `attention_backend`, `flash_attn`, `compile`
+- `lora_paths`, `lora_scales`
+
+## profiles response
+
+```json
+{
+  "profiles": ["default", "rtx4090", "low_vram"],
+  "current": "rtx4090",
+  "config_file": "config.toml"
+}
+```
+
+## server status response
+
+```json
+{
+  "status": "running",
+  "uptime_seconds": 3600,
+  "profile": "rtx4090",
+  "pending_restart": {}
+}
+```
+
+## server restart request
+
+```json
+{
+  "reason": "user_request",
+  "new_profile": "low_vram"
+}
+```
+
+Response:
+
+```json
+{
+  "success": true,
+  "message": "Server restarting..."
 }
 ```

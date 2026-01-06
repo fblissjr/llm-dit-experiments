@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Config Management UI for editing generation parameters from the web interface
+  - Settings modal with four tabs: Status, Config, Profiles, Server
+  - Edit session defaults (shift, d_noise, steps, guidance_scale) without restart
+  - View and load config profiles from config.toml
+  - Server status display with uptime and pending restart changes
+  - Restart server with optional profile selection
+  - New `config-manager.js` module for frontend logic
+  - New endpoints: `/api/config/session`, `/api/config/profiles`, `/api/server/status`, `/api/server/restart`
+  - Hot-reload safe parameter classification (40+ params) vs restart-required (20+ params)
+  - RuntimeConfig.to_dict() method for API serialization
+  - Mobile-friendly for cross-device config management
 - Skip Layer Guidance (SLG) for improved structure/anatomy in generated images
   - New `src/llm_dit/guidance/` module with `SkipLayerGuidance` class
   - Hook-based layer skipping with context manager pattern

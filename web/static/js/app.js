@@ -708,6 +708,11 @@ async function initializeApp() {
         loadRewriterConfig(),
     ]);
 
+    // Initialize config manager (must be after loadGenerationConfig)
+    if (typeof ConfigManager !== 'undefined') {
+        await ConfigManager.init();
+    }
+
     // Set initial model defaults
     setModelDefaults('zimage');
 

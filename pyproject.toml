@@ -28,6 +28,7 @@ dependencies = [
     "image-reward>=1.5",
     "matplotlib>=3.10.7",
     "torchao>=0.15.0",
+    "tomli-w>=1.2.0",
 ]
 
 [project.optional-dependencies]

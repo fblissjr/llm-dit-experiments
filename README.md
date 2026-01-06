@@ -59,6 +59,7 @@ See [docs/reference/cli_flags.md](docs/reference/cli_flags.md) for full CLI refe
 
 **Configuration**:
 - TOML-based with hardware profiles
+- Web UI config management (edit params, switch profiles, restart server)
 - Modular component system
 - CLI overrides
 
@@ -82,6 +83,8 @@ See [config.toml.example](config.toml.example) for all options.
 | `/api/qwen-image/edit` | POST | Instruction editing |
 | `/api/vl/generate` | POST | Vision-conditioned generation |
 | `/api/rewrite` | POST | Prompt expansion |
+| `/api/config/session` | GET/PUT | Session config management |
+| `/api/server/restart` | POST | Server restart with profile |
 
 See [docs/reference/api_endpoints.md](docs/reference/api_endpoints.md) for full reference.
 
@@ -99,6 +102,7 @@ See [experiments/README.md](experiments/README.md).
 - [Qwen-Image-Edit-2511](docs/models/qwen_image_edit_2511.md) - instruction editing
 
 **Guides**:
+- [Config Management](docs/guides/config_management.md) - web UI config editing
 - [VL Conditioning](docs/guides/vl_conditioning.md) - vision-based style transfer
 - [LoRA](docs/guides/lora.md) - loading and fusing
 - [Distributed](docs/guides/distributed.md) - multi-machine setup

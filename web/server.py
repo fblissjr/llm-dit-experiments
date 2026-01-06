@@ -63,6 +63,61 @@ qwen_image_t2i_pipeline = None
 generation_history = []
 MAX_HISTORY = 50
 
+# Config management - session tracking
+session_file_values = {}  # Original values from config file (for detecting changes)
+session_modified_fields = set()  # Fields modified during this session
+pending_restart_changes = {}  # Changes that require server restart
+server_start_time = None  # For uptime tracking
+
+# Fields that can be hot-reloaded without restarting
+HOT_RELOAD_SAFE = {
+    # Scheduler params
+    "shift", "shift_terminal", "dynamic_shift", "d_noise",
+    # Generation defaults
+    "height", "width", "steps", "guidance_scale",
+    "cfg_normalization", "cfg_truncation", "cfg_norm_mode",
+    # Prompt handling
+    "long_prompt_mode", "hidden_layer", "layer_weights",
+    "enable_thinking", "default_template",
+    "system_prompt", "thinking_content", "assistant_content",
+    # DyPE feature params
+    "dype_enabled", "dype_method", "dype_scale", "dype_exponent",
+    "dype_start_sigma", "dype_base_shift", "dype_max_shift",
+    "dype_base_resolution", "dype_anisotropic", "dype_multipass",
+    "dype_pass2_strength", "dype_pass3_strength", "dype_frequency_modulation",
+    # SLG feature params
+    "slg_scale", "slg_layers", "slg_start", "slg_stop",
+    # FMTT feature params
+    "fmtt_scale", "fmtt_start", "fmtt_stop", "fmtt_normalize",
+    "fmtt_decode_scale", "fmtt_siglip_model", "fmtt_siglip_device",
+    # Cache settings
+    "embedding_cache", "cache_size",
+    # Tiled VAE (can change between generations)
+    "tiled_vae", "tile_size", "tile_overlap",
+    # Seed
+    "seed", "negative_prompt",
+}
+
+# Fields that require server restart (model reload)
+REQUIRES_RESTART = {
+    # Model paths
+    "model_path", "text_encoder_path", "templates_dir",
+    "vl_model_path", "qwen_image_model_path", "qwen_image_edit_model_path",
+    # Device placement
+    "encoder_device", "dit_device", "vae_device",
+    # Quantization
+    "quantization", "torch_dtype",
+    "qwen_image_quantize_text_encoder", "qwen_image_quantize_transformer",
+    # Memory management
+    "cpu_offload", "qwen_image_cpu_offload",
+    # Attention backend
+    "attention_backend", "flash_attn",
+    # Compilation
+    "compile", "compile_mode",
+    # LoRA (requires pipeline reload)
+    "lora_paths", "lora_scales",
+}
+
 
 def unload_zimage_pipeline() -> bool:
     """Unload Z-Image pipeline (encoder + DiT + VAE) to free VRAM.
@@ -3669,6 +3724,204 @@ async def load_config_dynamic(request: dict):
     }
 
 
+# =============================================================================
+# Config Management Endpoints (Phase 1-3)
+# =============================================================================
+
+@app.get("/api/config/session")
+async def get_session_config():
+    """Get current session configuration values.
+
+    Returns the current runtime_config values, the loaded profile name,
+    and which fields have been modified during this session.
+    """
+    if runtime_config is None:
+        raise HTTPException(status_code=503, detail="Server not initialized")
+
+    # Get all config values
+    values = runtime_config.to_dict()
+
+    # Filter to just hot-reload safe fields for the config UI
+    ui_values = {k: v for k, v in values.items() if k in HOT_RELOAD_SAFE}
+
+    return {
+        "values": ui_values,
+        "profile": getattr(runtime_config, 'current_profile', 'default'),
+        "modified": list(session_modified_fields),
+        "config_file": getattr(runtime_config, 'config_path', None),
+    }
+
+
+@app.put("/api/config/session")
+async def update_session_config(request: dict):
+    """Update session defaults (hot-reload safe fields only).
+
+    These changes apply immediately but don't persist to file.
+    They last until server restart.
+    """
+    global session_modified_fields
+
+    if runtime_config is None:
+        raise HTTPException(status_code=503, detail="Server not initialized")
+
+    updated = []
+    rejected = []
+    pending_restart = []
+
+    for field, value in request.items():
+        if field in HOT_RELOAD_SAFE:
+            # Hot-reload: apply immediately
+            old_value = getattr(runtime_config, field, None)
+            setattr(runtime_config, field, value)
+            session_modified_fields.add(field)
+            updated.append(field)
+            logger.info(f"Session config updated: {field} = {value} (was {old_value})")
+        elif field in REQUIRES_RESTART:
+            # Requires restart: track for later
+            pending_restart_changes[field] = value
+            pending_restart.append(field)
+            logger.info(f"Config change pending restart: {field} = {value}")
+        else:
+            rejected.append(field)
+            logger.warning(f"Unknown config field rejected: {field}")
+
+    return {
+        "success": True,
+        "updated": updated,
+        "pending_restart": pending_restart,
+        "rejected": rejected,
+    }
+
+
+@app.get("/api/config/profiles")
+async def list_profiles():
+    """List available profiles from config.toml."""
+    import tomllib
+    from pathlib import Path
+
+    config_path = getattr(runtime_config, 'config_path', None)
+    if not config_path:
+        return {
+            "profiles": [],
+            "current": getattr(runtime_config, 'current_profile', 'default'),
+            "config_file": None,
+            "error": "No config file loaded",
+        }
+
+    try:
+        config_file = Path(config_path)
+        if not config_file.exists():
+            return {
+                "profiles": [],
+                "current": getattr(runtime_config, 'current_profile', 'default'),
+                "config_file": str(config_path),
+                "error": f"Config file not found: {config_path}",
+            }
+
+        with open(config_file, "rb") as f:
+            toml_data = tomllib.load(f)
+
+        # Extract profile names (top-level keys that aren't _metadata)
+        profiles = [k for k in toml_data.keys() if not k.startswith("_")]
+
+        return {
+            "profiles": profiles,
+            "current": getattr(runtime_config, 'current_profile', 'default'),
+            "config_file": str(config_path),
+        }
+    except Exception as e:
+        logger.error(f"Error listing profiles: {e}")
+        return {
+            "profiles": [],
+            "current": getattr(runtime_config, 'current_profile', 'default'),
+            "config_file": str(config_path) if config_path else None,
+            "error": str(e),
+        }
+
+
+@app.get("/api/server/status")
+async def get_server_status():
+    """Get server status including uptime and pending changes."""
+    import time
+
+    uptime_seconds = None
+    if server_start_time:
+        uptime_seconds = int(time.time() - server_start_time)
+
+    return {
+        "status": "running",
+        "uptime_seconds": uptime_seconds,
+        "profile": getattr(runtime_config, 'current_profile', 'default'),
+        "config_file": getattr(runtime_config, 'config_path', None),
+        "pending_restart": pending_restart_changes,
+        "session_modified": list(session_modified_fields),
+        "can_restart": True,  # We'll implement restart in Phase 3
+    }
+
+
+@app.post("/api/server/restart")
+async def restart_server(request: dict = None):
+    """Request server restart.
+
+    This endpoint signals the server to restart. The actual restart
+    mechanism depends on how the server was launched (systemd, docker, etc.).
+    """
+    import sys
+    import os
+
+    reason = request.get("reason", "user_request") if request else "user_request"
+    new_profile = request.get("new_profile") if request else None
+
+    logger.info(f"Server restart requested: reason={reason}, new_profile={new_profile}")
+
+    # For now, we'll use os.execv to restart the process
+    # This works when running directly with python/uv run
+    # Note: This won't work in all deployment scenarios
+
+    # Build the restart command
+    python = sys.executable
+    args = sys.argv.copy()
+
+    # If a new profile was requested, update the args
+    if new_profile:
+        # Remove existing --profile if present
+        new_args = []
+        skip_next = False
+        for arg in args:
+            if skip_next:
+                skip_next = False
+                continue
+            if arg == "--profile":
+                skip_next = True
+                continue
+            if arg.startswith("--profile="):
+                continue
+            new_args.append(arg)
+        new_args.extend(["--profile", new_profile])
+        args = new_args
+
+    # Log the restart
+    logger.info(f"Restarting server with: {python} {' '.join(args)}")
+
+    # Return response before restarting
+    response = {
+        "success": True,
+        "message": "Server restarting...",
+        "new_profile": new_profile,
+    }
+
+    # Schedule the restart after a short delay
+    import asyncio
+
+    async def do_restart():
+        await asyncio.sleep(1)  # Give time for response to be sent
+        os.execv(python, [python] + args)
+
+    asyncio.create_task(do_restart())
+
+    return response
+
+
 def main():
     # Use shared CLI argument parser
     from llm_dit.cli import create_base_parser, load_runtime_config, setup_logging
@@ -3799,6 +4052,13 @@ def main():
 
     # Run server
     import uvicorn
+    import time
+
+    # Initialize server start time and save initial config values
+    global server_start_time, session_file_values
+    server_start_time = time.time()
+    session_file_values = runtime_config.to_dict()
+
     host = runtime_config.host
     port = runtime_config.port
     logger.info(f"Starting server at http://{host}:{port} ({mode} mode)")

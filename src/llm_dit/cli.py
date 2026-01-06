@@ -338,6 +338,23 @@ class RuntimeConfig:
         variant_defaults = self.get_qwen_variant_defaults()
         return variant_defaults.get("quantize_transformer", "none")
 
+    def to_dict(self) -> dict:
+        """
+        Serialize runtime config to a dictionary for API responses.
+
+        Returns:
+            Dict with all config field names and values.
+        """
+        from dataclasses import fields as dataclass_fields
+        result = {}
+        for f in dataclass_fields(self):
+            value = getattr(self, f.name)
+            # Handle non-JSON-serializable types
+            if isinstance(value, torch.dtype):
+                value = str(value).replace("torch.", "")
+            result[f.name] = value
+        return result
+
 
 def create_base_parser(
     description: str = "Z-Image generation",

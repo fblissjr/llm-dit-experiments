@@ -8,7 +8,7 @@ The web UI is a modular JavaScript/CSS application served by FastAPI.
 
 ```
 web/
-  index.html          # Main HTML (markup only, ~1900 lines)
+  index.html          # Main HTML (markup only, ~2100 lines)
   server.py           # FastAPI backend
   static/
     css/
@@ -29,6 +29,7 @@ web/
       qwen-image.js   # Qwen-Image model controls
       resolution.js   # Resolution selector with aspect filters
       image-utils.js  # Shared image loading/workflow utilities
+      config-manager.js  # Settings modal config management
       app.js          # Initialization and main form handling
 ```
 
@@ -56,6 +57,7 @@ Order matters due to dependencies:
 <script src="/static/js/qwen-image.js"></script>
 <script src="/static/js/resolution.js"></script>
 <script src="/static/js/image-utils.js"></script>
+<script src="/static/js/config-manager.js"></script>
 <script src="/static/js/app.js"></script>
 ```
 
@@ -142,6 +144,7 @@ async function initializeApp() {
 | qwen-image.js | Qwen-Image | `executeDecompose()`, `executeLayerEdit()` |
 | resolution.js | Resolution selector | `ResolutionSelector.init()`, `.loadConstraints()`, `.getResolution()` |
 | image-utils.js | Image workflows | `useAsImg2Img()`, `useAsVLReference()`, `setupDropzoneForInternalImages()` |
+| config-manager.js | Config management | `ConfigManager.init()`, `.loadSessionConfig()`, `.applyToSession()` |
 | app.js | Main entry | `initializeApp()`, `handleFormSubmit()` |
 
 ## CSS Organization
