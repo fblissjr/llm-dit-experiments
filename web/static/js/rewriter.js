@@ -16,47 +16,57 @@ let rewriterMode = 'transformers';
 // =============================================================================
 
 function setupRewriterModeToggle() {
-    const toggleBtns = document.querySelectorAll('[data-rewriter-mode]');
-    toggleBtns.forEach(btn => {
-        btn.addEventListener('click', () => {
-            const mode = btn.dataset.rewriterMode;
-            setRewriterMode(mode);
-        });
-    });
+    const templateBtn = document.getElementById('rewriterModeTemplate');
+    const customBtn = document.getElementById('rewriterModeCustom');
+
+    if (templateBtn) {
+        templateBtn.addEventListener('click', () => setRewriterMode('template'));
+    }
+    if (customBtn) {
+        customBtn.addEventListener('click', () => setRewriterMode('custom'));
+    }
 }
 
 function setRewriterMode(mode) {
     rewriterMode = mode;
 
     // Update toggle button styles
-    const toggleBtns = document.querySelectorAll('[data-rewriter-mode]');
-    toggleBtns.forEach(btn => {
-        if (btn.dataset.rewriterMode === mode) {
-            btn.classList.add('bg-blue-600');
-            btn.classList.remove('bg-gray-700');
+    const templateBtn = document.getElementById('rewriterModeTemplate');
+    const customBtn = document.getElementById('rewriterModeCustom');
+
+    if (templateBtn) {
+        if (mode === 'template') {
+            templateBtn.classList.add('bg-blue-600');
+            templateBtn.classList.remove('bg-gray-700');
         } else {
-            btn.classList.remove('bg-blue-600');
-            btn.classList.add('bg-gray-700');
+            templateBtn.classList.remove('bg-blue-600');
+            templateBtn.classList.add('bg-gray-700');
         }
-    });
+    }
+    if (customBtn) {
+        if (mode === 'custom') {
+            customBtn.classList.add('bg-blue-600');
+            customBtn.classList.remove('bg-gray-700');
+        } else {
+            customBtn.classList.remove('bg-blue-600');
+            customBtn.classList.add('bg-gray-700');
+        }
+    }
 
     // Show/hide relevant controls
-    const transformersControls = document.getElementById('rewriterTransformersControls');
-    const apiControls = document.getElementById('rewriterApiControls');
+    const templateMode = document.getElementById('rewriterTemplateMode');
+    const customMode = document.getElementById('rewriterCustomMode');
 
-    if (transformersControls) {
-        transformersControls.classList.toggle('hidden', mode !== 'transformers');
+    if (templateMode) {
+        templateMode.classList.toggle('hidden', mode !== 'template');
     }
-    if (apiControls) {
-        apiControls.classList.toggle('hidden', mode !== 'api');
+    if (customMode) {
+        customMode.classList.toggle('hidden', mode !== 'custom');
     }
 
-    // Load models for the selected mode
-    if (mode === 'transformers') {
-        loadRewriterModels();
-    } else {
-        loadRewriters();
-    }
+    // Load rewriter templates and models
+    loadRewriters();
+    loadRewriterModels();
 }
 
 // =============================================================================
@@ -64,17 +74,17 @@ function setRewriterMode(mode) {
 // =============================================================================
 
 async function loadRewriters() {
-    const rewriterSelect = document.getElementById('rewriterSelect');
+    const rewriterSelect = document.getElementById('rewriterTemplate');
     if (!rewriterSelect) return;
 
     try {
         const data = await ApiClient.getRewriters();
         const rewriters = data.rewriters || [];
 
-        rewriterSelect.innerHTML = '';
+        rewriterSelect.innerHTML = '<option value="">Select a rewriter...</option>';
         rewriters.forEach(rw => {
             const option = document.createElement('option');
-            option.value = rw.id;
+            option.value = rw.name;
             option.textContent = rw.name;
             if (rw.description) option.title = rw.description;
             rewriterSelect.appendChild(option);
@@ -86,7 +96,7 @@ async function loadRewriters() {
 }
 
 async function loadRewriterModels() {
-    const modelSelect = document.getElementById('rewriterModelSelect');
+    const modelSelect = document.getElementById('rewriterModel');
     if (!modelSelect) return;
 
     try {
@@ -98,7 +108,7 @@ async function loadRewriterModels() {
             const option = document.createElement('option');
             option.value = model.id;
             option.textContent = model.name;
-            if (model.supports_vision) {
+            if (model.supports_image) {
                 option.textContent += ' (Vision)';
             }
             modelSelect.appendChild(option);
@@ -115,16 +125,29 @@ async function loadRewriterConfig() {
     try {
         const data = await ApiClient.getRewriterConfig();
 
-        // Set default mode
-        if (data.default_mode) {
-            setRewriterMode(data.default_mode);
-        }
+        // Set default mode (use 'template' as default)
+        setRewriterMode('template');
 
         // Set default model
-        const modelSelect = document.getElementById('rewriterModelSelect');
+        const modelSelect = document.getElementById('rewriterModel');
         if (data.default_model && modelSelect) {
             modelSelect.value = data.default_model;
         }
+
+        // Set parameter defaults from config
+        const maxTokensEl = document.getElementById('rewriterMaxTokens');
+        const temperatureEl = document.getElementById('rewriterTemperature');
+        const topPEl = document.getElementById('rewriterTopP');
+        const topKEl = document.getElementById('rewriterTopK');
+        const minPEl = document.getElementById('rewriterMinP');
+        const presencePenaltyEl = document.getElementById('rewriterPresencePenalty');
+
+        if (maxTokensEl && data.max_tokens) maxTokensEl.value = data.max_tokens;
+        if (temperatureEl && data.temperature !== undefined) temperatureEl.value = data.temperature;
+        if (topPEl && data.top_p !== undefined) topPEl.value = data.top_p;
+        if (topKEl && data.top_k !== undefined) topKEl.value = data.top_k;
+        if (minPEl && data.min_p !== undefined) minPEl.value = data.min_p;
+        if (presencePenaltyEl && data.presence_penalty !== undefined) presencePenaltyEl.value = data.presence_penalty;
 
     } catch (err) {
         console.error('Failed to load rewriter config:', err);
@@ -136,15 +159,15 @@ async function loadRewriterConfig() {
 // =============================================================================
 
 function onRewriterModelChange() {
-    const modelSelect = document.getElementById('rewriterModelSelect');
+    const modelSelect = document.getElementById('rewriterModel');
     const imageUploadArea = document.getElementById('rewriterImageUpload');
 
     if (!modelSelect || !imageUploadArea) return;
 
     const selectedModel = rewriterModels.find(m => m.id === modelSelect.value);
-    const supportsVision = selectedModel?.supports_vision || false;
+    const supportsImage = selectedModel?.supports_image || false;
 
-    imageUploadArea.classList.toggle('hidden', !supportsVision);
+    imageUploadArea.classList.toggle('hidden', !supportsImage);
 }
 
 // =============================================================================
@@ -152,13 +175,19 @@ function onRewriterModelChange() {
 // =============================================================================
 
 function setupRewriterImageUpload() {
-    const dropzone = document.getElementById('rewriterImageDropzone');
+    const dropzone = document.getElementById('rewriterDropzone');
     const input = document.getElementById('rewriterImageInput');
     const preview = document.getElementById('rewriterImagePreview');
 
     if (!dropzone || !input) return;
 
-    dropzone.addEventListener('click', () => input.click());
+    dropzone.addEventListener('click', (e) => {
+        // Prevent triggering if clicking on clear button or preview
+        if (e.target.id === 'rewriterClearImage' || e.target.closest('#rewriterImagePreview')) {
+            return;
+        }
+        input.click();
+    });
 
     dropzone.addEventListener('dragover', (e) => {
         e.preventDefault();
@@ -238,20 +267,54 @@ async function rewritePrompt() {
     try {
         const data = {
             prompt: promptEl.value,
-            mode: rewriterMode,
         };
 
-        if (rewriterMode === 'transformers') {
-            const modelSelect = document.getElementById('rewriterModelSelect');
-            if (modelSelect) data.model = modelSelect.value;
+        // Get model selection
+        const modelSelect = document.getElementById('rewriterModel');
+        if (modelSelect) {
+            data.model = modelSelect.value;
+        }
 
-            // Add image if available
-            if (AppState.rewriterImage) {
-                data.image = AppState.rewriterImage;
+        // Add image if available (for VL models)
+        if (AppState.rewriterImage) {
+            data.image = AppState.rewriterImage;
+        }
+
+        // Get generation parameters
+        const maxTokensEl = document.getElementById('rewriterMaxTokens');
+        const temperatureEl = document.getElementById('rewriterTemperature');
+        const topPEl = document.getElementById('rewriterTopP');
+        const topKEl = document.getElementById('rewriterTopK');
+        const minPEl = document.getElementById('rewriterMinP');
+        const presencePenaltyEl = document.getElementById('rewriterPresencePenalty');
+
+        if (maxTokensEl) data.max_tokens = parseInt(maxTokensEl.value, 10);
+        if (temperatureEl) data.temperature = parseFloat(temperatureEl.value);
+        if (topPEl) data.top_p = parseFloat(topPEl.value);
+        if (topKEl) data.top_k = parseInt(topKEl.value, 10);
+        if (minPEl) data.min_p = parseFloat(minPEl.value);
+        if (presencePenaltyEl) data.presence_penalty = parseFloat(presencePenaltyEl.value);
+
+        // Handle template vs custom mode
+        if (rewriterMode === 'template') {
+            const rewriterSelect = document.getElementById('rewriterTemplate');
+            if (rewriterSelect && rewriterSelect.value) {
+                data.rewriter = rewriterSelect.value;
+            } else {
+                showError('Please select a rewriter template');
+                resetButton(rewriteBtn);
+                return;
             }
         } else {
-            const rewriterSelect = document.getElementById('rewriterSelect');
-            if (rewriterSelect) data.rewriter = rewriterSelect.value;
+            // Custom mode - use custom system prompt
+            const customPromptEl = document.getElementById('customRewriterPrompt');
+            if (customPromptEl && customPromptEl.value.trim()) {
+                data.custom_system_prompt = customPromptEl.value.trim();
+            } else {
+                showError('Please enter custom rewriting instructions');
+                resetButton(rewriteBtn);
+                return;
+            }
         }
 
         const result = await ApiClient.rewritePrompt(data);
@@ -267,7 +330,7 @@ async function rewritePrompt() {
 
     } catch (err) {
         console.error('Failed to rewrite prompt:', err);
-        showError('Failed to rewrite prompt');
+        showError('Failed to rewrite prompt: ' + (err.message || 'Unknown error'));
     } finally {
         resetButton(rewriteBtn);
     }
@@ -281,7 +344,7 @@ function initRewriterEvents() {
     setupRewriterModeToggle();
     setupRewriterImageUpload();
 
-    const modelSelect = document.getElementById('rewriterModelSelect');
+    const modelSelect = document.getElementById('rewriterModel');
     if (modelSelect) {
         modelSelect.addEventListener('change', onRewriterModelChange);
     }
@@ -291,7 +354,7 @@ function initRewriterEvents() {
         rewriteBtn.addEventListener('click', rewritePrompt);
     }
 
-    const clearBtn = document.getElementById('clearRewriterImage');
+    const clearBtn = document.getElementById('rewriterClearImage');
     if (clearBtn) {
         clearBtn.addEventListener('click', clearRewriterImagePreview);
     }
