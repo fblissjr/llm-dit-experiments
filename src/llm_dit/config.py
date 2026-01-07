@@ -811,7 +811,7 @@ class RewriterConfig:
     top_k: int = 20  # Qwen3 thinking mode: 20
     min_p: float = 0.0  # Qwen3: 0.0 (disabled)
     presence_penalty: float = 0.0  # 0-2, helps reduce endless repetitions
-    max_tokens: int = 512  # Maximum tokens to generate
+    max_tokens: int = 1024  # Maximum tokens to generate
     # VL rewriter settings
     vl_enabled: bool = True  # Allow VL model selection in rewriter UI
     preload_vl: bool = False  # Load Qwen3-VL at startup for rewriter (uses vl.model_path)

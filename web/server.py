@@ -1863,7 +1863,7 @@ async def get_rewriter_config():
             "top_k": 20,
             "min_p": 0.0,
             "presence_penalty": 0.0,
-            "max_tokens": 512,
+            "max_tokens": 1024,
             "use_api": False,
         }
     return {
@@ -2595,7 +2595,7 @@ async def _rewrite_with_vl_api(request: RewriteRequest) -> dict:
         rewriter_name = "default_vl"
 
     # Get generation parameters (use 'is not None' to preserve 0 values)
-    max_tokens = request.max_tokens if request.max_tokens is not None else (runtime_config.rewriter_max_tokens if runtime_config else 512)
+    max_tokens = request.max_tokens if request.max_tokens is not None else (runtime_config.rewriter_max_tokens if runtime_config else 1024)
     temperature = request.temperature if request.temperature is not None else (runtime_config.rewriter_temperature if runtime_config else 0.6)
     top_p = request.top_p if request.top_p is not None else (runtime_config.rewriter_top_p if runtime_config else 0.95)
     top_k = request.top_k if request.top_k is not None else (runtime_config.rewriter_top_k if runtime_config else 20)
@@ -2778,7 +2778,7 @@ async def _rewrite_with_vl(request: RewriteRequest) -> dict:
         rewriter_name = "default_vl"
 
     # Get generation parameters (use 'is not None' to preserve 0 values)
-    max_tokens = request.max_tokens if request.max_tokens is not None else (runtime_config.rewriter_max_tokens if runtime_config else 512)
+    max_tokens = request.max_tokens if request.max_tokens is not None else (runtime_config.rewriter_max_tokens if runtime_config else 1024)
     temperature = request.temperature if request.temperature is not None else (runtime_config.rewriter_temperature if runtime_config else 0.6)
     top_p = request.top_p if request.top_p is not None else (runtime_config.rewriter_top_p if runtime_config else 0.95)
     top_k = request.top_k if request.top_k is not None else (runtime_config.rewriter_top_k if runtime_config else 20)
@@ -2982,7 +2982,7 @@ async def rewrite_prompt(request: RewriteRequest):
     else:
         # Fallback defaults (Qwen3 thinking mode)
         if max_tokens is None:
-            max_tokens = 512
+            max_tokens = 1024
         if temperature is None:
             temperature = 0.6
         if top_p is None:

@@ -412,7 +412,7 @@ top_p = 0.95                     # Nucleus sampling
 top_k = 20                       # Top-k sampling
 min_p = 0.0                      # Min probability cutoff
 presence_penalty = 0.0           # Repetition penalty
-max_tokens = 512                 # Max tokens to generate
+max_tokens = 1024                # Max tokens to generate
 timeout = 120.0                  # API timeout
 
 [default.vl]
