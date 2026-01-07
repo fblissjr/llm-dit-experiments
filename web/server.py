@@ -2642,6 +2642,9 @@ async def _rewrite_with_vl_api(request: RewriteRequest) -> dict:
             thinking_content = re.sub(r'</?think>', '', thinking_content).strip()
         if rewritten_prompt:
             rewritten_prompt = re.sub(r'</?think>', '', rewritten_prompt).strip()
+            # Strip surrounding quotes if the entire prompt is wrapped
+            if rewritten_prompt.startswith('"') and rewritten_prompt.endswith('"'):
+                rewritten_prompt = rewritten_prompt[1:-1].strip()
 
         return {
             "original_prompt": request.prompt or "(image only)",
@@ -2825,6 +2828,9 @@ async def _rewrite_with_vl(request: RewriteRequest) -> dict:
             thinking_content = re.sub(r'</?think>', '', thinking_content).strip()
         if rewritten_prompt:
             rewritten_prompt = re.sub(r'</?think>', '', rewritten_prompt).strip()
+            # Strip surrounding quotes if the entire prompt is wrapped
+            if rewritten_prompt.startswith('"') and rewritten_prompt.endswith('"'):
+                rewritten_prompt = rewritten_prompt[1:-1].strip()
 
         # Clear CUDA cache
         if torch.cuda.is_available():
@@ -3060,6 +3066,9 @@ async def rewrite_prompt(request: RewriteRequest):
             thinking_content = re.sub(r'</?think>', '', thinking_content).strip()
         if rewritten_prompt:
             rewritten_prompt = re.sub(r'</?think>', '', rewritten_prompt).strip()
+            # Strip surrounding quotes if the entire prompt is wrapped
+            if rewritten_prompt.startswith('"') and rewritten_prompt.endswith('"'):
+                rewritten_prompt = rewritten_prompt[1:-1].strip()
 
         # Clear CUDA cache to prevent memory issues when switching back to encoding
         if torch.cuda.is_available():
