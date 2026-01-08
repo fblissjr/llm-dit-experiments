@@ -441,6 +441,7 @@ function setupSettingsModal() {
             }
             await refreshSystemStatus();
             unloadFmttBtn.textContent = 'Unload FMTT (~4-6 GB)';
+            // Note: disabled state is managed by refreshSystemStatus based on fmtt_cached
         });
     }
 

@@ -1898,7 +1898,7 @@
                 <!-- Loaded Pipelines (for model switching) -->
                 <div class="p-3 bg-gray-900 rounded-lg">
                     <h3 class="text-sm font-medium text-gray-300 mb-2">Loaded Pipelines</h3>
-                    <p class="text-xs text-gray-500 mb-2">Only one pipeline can run at a time on 24GB VRAM. Unload one to use the other.</p>
+                    <p class="text-xs text-gray-500 mb-2">Pipelines load on-demand when you generate. Unload to free VRAM for other models.</p>
                     <div class="space-y-2">
                         <div class="flex items-center justify-between">
                             <div>
@@ -1950,9 +1950,12 @@
 
                 <!-- Actions -->
                 <div class="space-y-2">
-                    <button id="unloadFmttBtn" class="w-full px-4 py-2 bg-yellow-600/20 text-yellow-400 rounded-lg hover:bg-yellow-600/30 transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed">
-                        Unload FMTT (~4-6 GB)
-                    </button>
+                    <div>
+                        <button id="unloadFmttBtn" disabled class="w-full px-4 py-2 bg-yellow-600/20 text-yellow-400 rounded-lg hover:bg-yellow-600/30 transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed">
+                            Unload FMTT (~4-6 GB)
+                        </button>
+                        <p class="text-xs text-gray-500 mt-1">Enable FMTT in Advanced Options and generate to load it first.</p>
+                    </div>
                     <button id="clearCacheBtn" class="w-full px-4 py-2 bg-blue-600/20 text-blue-400 rounded-lg hover:bg-blue-600/30 transition-colors text-sm">
                         Clear CUDA Cache
                     </button>
