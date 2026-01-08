@@ -57,6 +57,13 @@ async function updateTokenCount() {
 
     if (!tokenCountEl || !promptEl) return;
 
+    // Token counting only works for Z-Image (requires Z-Image encoder)
+    const modelType = typeof getSelectedModelType === 'function' ? getSelectedModelType() : 'zimage';
+    if (modelType !== 'zimage') {
+        tokenCountEl.textContent = '';  // Hide token count for Qwen models
+        return;
+    }
+
     const prompt = promptEl.value;
     if (!prompt.trim()) {
         tokenCountEl.textContent = '-- / 1504 tokens';
@@ -90,7 +97,8 @@ async function updateTokenCount() {
         }
 
     } catch (err) {
-        console.error('Failed to update token count:', err);
+        // Silently fail if encoder not loaded (e.g., Z-Image unloaded)
+        tokenCountEl.textContent = '';
     }
 }
 
