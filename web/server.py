@@ -3533,6 +3533,7 @@ async def system_status():
         "encoder_only_mode": encoder_only_mode,
         "vl_available": vl_extractor is not None,
         "qwen_image_available": qwen_image_pipeline is not None,
+        "qwen_image_t2i_available": qwen_image_t2i_pipeline is not None,
         "fmtt_cached": False,
         "vl_cache_count": len(vl_embeddings_cache),
         "history_count": len(generation_history),

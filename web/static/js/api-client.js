@@ -39,6 +39,11 @@ const ApiClient = {
         return response.json();
     },
 
+    async unloadQwenImageT2i() {
+        const response = await fetch(`${API_BASE}/api/vram/unload-qwen-image-t2i`, { method: 'POST' });
+        return response.json();
+    },
+
     // =========================================================================
     // Configuration
     // =========================================================================

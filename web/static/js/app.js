@@ -338,7 +338,7 @@ async function refreshSystemStatus() {
             }
         }
 
-        // Qwen-Image pipeline status
+        // Qwen-Image Edit pipeline status
         const qwenImageStatus = document.getElementById('qwenImageStatus');
         const unloadQwenImageBtn = document.getElementById('unloadQwenImageBtn');
         if (qwenImageStatus) {
@@ -350,6 +350,21 @@ async function refreshSystemStatus() {
                 qwenImageStatus.textContent = 'Not loaded';
                 qwenImageStatus.className = 'text-xs px-2 py-1 rounded bg-gray-700 text-gray-400';
                 if (unloadQwenImageBtn) unloadQwenImageBtn.classList.add('hidden');
+            }
+        }
+
+        // Qwen-Image T2I pipeline status
+        const qwenImageT2iStatus = document.getElementById('qwenImageT2iStatus');
+        const unloadQwenImageT2iBtn = document.getElementById('unloadQwenImageT2iBtn');
+        if (qwenImageT2iStatus) {
+            if (data.qwen_image_t2i_available) {
+                qwenImageT2iStatus.textContent = 'Loaded';
+                qwenImageT2iStatus.className = 'text-xs px-2 py-1 rounded bg-green-600/20 text-green-400';
+                if (unloadQwenImageT2iBtn) unloadQwenImageT2iBtn.classList.remove('hidden');
+            } else {
+                qwenImageT2iStatus.textContent = 'Not loaded';
+                qwenImageT2iStatus.className = 'text-xs px-2 py-1 rounded bg-gray-700 text-gray-400';
+                if (unloadQwenImageT2iBtn) unloadQwenImageT2iBtn.classList.add('hidden');
             }
         }
 
@@ -488,6 +503,7 @@ function setupSettingsModal() {
             }
             await refreshSystemStatus();
             unloadZimageBtn.textContent = 'Unload';
+            unloadZimageBtn.disabled = false;
         });
     }
 
@@ -498,12 +514,30 @@ function setupSettingsModal() {
             unloadQwenImageBtn.textContent = 'Unloading...';
             try {
                 const result = await ApiClient.unloadQwenImage();
-                showSettingsMessage(result.message || 'Qwen-Image unloaded', 'success');
+                showSettingsMessage(result.message || 'Qwen-Image Edit unloaded', 'success');
             } catch (err) {
-                showSettingsMessage('Failed to unload Qwen-Image', 'error');
+                showSettingsMessage('Failed to unload Qwen-Image Edit', 'error');
             }
             await refreshSystemStatus();
             unloadQwenImageBtn.textContent = 'Unload';
+            unloadQwenImageBtn.disabled = false;
+        });
+    }
+
+    const unloadQwenImageT2iBtn = document.getElementById('unloadQwenImageT2iBtn');
+    if (unloadQwenImageT2iBtn) {
+        unloadQwenImageT2iBtn.addEventListener('click', async () => {
+            unloadQwenImageT2iBtn.disabled = true;
+            unloadQwenImageT2iBtn.textContent = 'Unloading...';
+            try {
+                const result = await ApiClient.unloadQwenImageT2i();
+                showSettingsMessage(result.message || 'Qwen-Image T2I unloaded', 'success');
+            } catch (err) {
+                showSettingsMessage('Failed to unload Qwen-Image T2I', 'error');
+            }
+            await refreshSystemStatus();
+            unloadQwenImageT2iBtn.textContent = 'Unload';
+            unloadQwenImageT2iBtn.disabled = false;
         });
     }
 }
