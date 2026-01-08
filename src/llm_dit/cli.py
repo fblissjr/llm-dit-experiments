@@ -252,6 +252,11 @@ class RuntimeConfig:
     fmtt_siglip_model: str = "google/siglip2-giant-opt-patch16-384"  # SigLIP model
     fmtt_siglip_device: str = "cuda"  # Device for SigLIP (cuda/cpu)
 
+    # Forward Block Cache (FBCache) for inference acceleration
+    fbcache: bool = False  # Enable FBCache (30-50% speedup)
+    fbcache_threshold: float | None = None  # Override middle threshold (default 0.05 = 5%)
+    fbcache_log: bool = False  # Log residual statistics
+
     # Debug and logging
     debug: bool = False
     verbose: bool = False
@@ -998,6 +1003,31 @@ def create_base_parser(
         help="Device for SigLIP model (default: cuda). Use cpu to save VRAM.",
     )
 
+    # Forward Block Cache (FBCache)
+    fbcache_group = parser.add_argument_group("Forward Block Cache (FBCache)")
+    fbcache_group.add_argument(
+        "--fbcache",
+        action="store_true",
+        help=(
+            "Enable FBCache for 30-50%% inference speedup. "
+            "Skips redundant transformer blocks when residuals are similar."
+        ),
+    )
+    fbcache_group.add_argument(
+        "--fbcache-threshold",
+        type=float,
+        default=None,
+        help=(
+            "Override middle-phase threshold (default: 0.05 = 5%%). "
+            "Lower = more conservative (fewer skips), higher = more aggressive."
+        ),
+    )
+    fbcache_group.add_argument(
+        "--fbcache-log",
+        action="store_true",
+        help="Log FBCache residual statistics for analysis",
+    )
+
     # Generation parameters (optional)
     if include_generation_args:
         gen_group = parser.add_argument_group("Generation")
@@ -1438,6 +1468,14 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
                     config.fmtt_normalize = getattr(fmtt, 'normalize_mode', 'unit')
                     config.fmtt_decode_scale = getattr(fmtt, 'decode_scale', 0.5)
 
+            # Check for FBCache (Forward Block Cache) section
+            if hasattr(toml_config, 'fbcache'):
+                fbcache = toml_config.fbcache
+                if getattr(fbcache, 'enabled', False):
+                    config.fbcache = True
+                    config.fbcache_threshold = getattr(fbcache, 'middle_threshold', 0.05)
+                    config.fbcache_log = getattr(fbcache, 'log_residuals', False)
+
         except Exception as e:
             logger.warning(f"Failed to load config: {e}")
 
@@ -1668,6 +1706,14 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
         config.fmtt_siglip_model = args.fmtt_siglip_model
     if getattr(args, 'fmtt_siglip_device', None) is not None:
         config.fmtt_siglip_device = args.fmtt_siglip_device
+
+    # FBCache (Forward Block Cache) overrides
+    if getattr(args, 'fbcache', False):
+        config.fbcache = True
+    if getattr(args, 'fbcache_threshold', None) is not None:
+        config.fbcache_threshold = args.fbcache_threshold
+    if getattr(args, 'fbcache_log', False):
+        config.fbcache_log = True
 
     # Generation overrides
     if getattr(args, 'height', None) is not None:

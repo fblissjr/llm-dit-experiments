@@ -14,6 +14,7 @@ Usage:
 """
 
 import logging
+from collections import OrderedDict
 from typing import Optional
 
 import torch
@@ -50,6 +51,7 @@ class DifferentiableSigLIP:
         model_name: str = DEFAULT_MODEL,
         device: str = "cuda",
         dtype: torch.dtype = torch.bfloat16,
+        max_cache_size: int = 100,
     ):
         """Initialize differentiable SigLIP2 reward function.
 
@@ -57,6 +59,7 @@ class DifferentiableSigLIP:
             model_name: HuggingFace model ID
             device: Device for computation
             dtype: Model dtype (bf16 recommended)
+            max_cache_size: Maximum number of text embeddings to cache (default 100)
         """
         from transformers import AutoModel, AutoProcessor
 
@@ -77,10 +80,11 @@ class DifferentiableSigLIP:
         # Get image size from processor config
         self.image_size = self.processor.image_processor.size.get("height", 384)
 
-        # Cache for text embeddings (constant per prompt)
-        self._text_cache: dict[str, torch.Tensor] = {}
+        # LRU cache for text embeddings (bounded to prevent memory growth)
+        self._text_cache: OrderedDict[str, torch.Tensor] = OrderedDict()
+        self._max_cache_size = max_cache_size
 
-        logger.info(f"SigLIP2 loaded: {self.image_size}px input, {dtype}")
+        logger.info(f"SigLIP2 loaded: {self.image_size}px input, {dtype}, cache_size={max_cache_size}")
 
     def _get_text_embedding(self, prompt: str) -> torch.Tensor:
         """Get cached or compute text embedding (no gradients needed).
@@ -88,24 +92,35 @@ class DifferentiableSigLIP:
         Text embeddings are constant for a given prompt, so we cache them
         and compute without gradients to save memory.
 
+        Uses LRU eviction to bound cache size and prevent unbounded memory growth.
+
         Note: SigLIP has a 64 token limit. Longer prompts are truncated.
         """
-        if prompt not in self._text_cache:
-            text_inputs = self.processor(
-                text=[prompt],
-                return_tensors="pt",
-                padding=True,
-                truncation=True,  # SigLIP max is 64 tokens
-                max_length=64,
-            ).to(self.device)
+        if prompt in self._text_cache:
+            # Move to end (most recently used)
+            self._text_cache.move_to_end(prompt)
+            return self._text_cache[prompt]
 
-            with torch.no_grad():
-                text_embeds = self.model.get_text_features(**text_inputs)
-                text_embeds = F.normalize(text_embeds, p=2, dim=-1)
+        # Compute new embedding
+        text_inputs = self.processor(
+            text=[prompt],
+            return_tensors="pt",
+            padding=True,
+            truncation=True,  # SigLIP max is 64 tokens
+            max_length=64,
+        ).to(self.device)
 
-            self._text_cache[prompt] = text_embeds
+        with torch.no_grad():
+            text_embeds = self.model.get_text_features(**text_inputs)
+            text_embeds = F.normalize(text_embeds, p=2, dim=-1)
 
-        return self._text_cache[prompt]
+        # Evict oldest if at capacity
+        if len(self._text_cache) >= self._max_cache_size:
+            # Pop first item (least recently used)
+            self._text_cache.popitem(last=False)
+
+        self._text_cache[prompt] = text_embeds
+        return text_embeds
 
     def _differentiable_preprocess(self, image: torch.Tensor) -> torch.Tensor:
         """Differentiable image preprocessing.

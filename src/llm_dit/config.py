@@ -780,6 +780,66 @@ class FMTTConfig:
 
 
 @dataclass
+class FBCacheRuntimeConfig:
+    """Configuration for Forward Block Cache (FBCache).
+
+    FBCache accelerates DiT inference by skipping redundant transformer block
+    computations when residual changes between steps are minimal. This is based
+    on the observation that consecutive diffusion steps often produce similar
+    intermediate representations.
+
+    How it works:
+        1. Always compute first transformer block
+        2. Compare first-block residual to previous step
+        3. If change is below threshold, skip remaining blocks and reuse cached output
+        4. Always compute fully on first and last steps for quality
+
+    Expected speedup: 30-50% with minimal quality degradation
+
+    Adaptive thresholds by sigma phase:
+        - Early (sigma > 0.7): Conservative (1%) - structure discovery phase
+        - Middle (0.3 < sigma < 0.7): Aggressive (5%) - detail refinement, safe to skip
+        - Late (sigma < 0.3): Conservative (1%) - fine details, be careful
+
+    Attributes:
+        enabled: Master toggle for FBCache (default: False)
+        early_threshold: Threshold for high sigma phase (default: 0.01 = 1%)
+        middle_threshold: Threshold for middle sigma phase (default: 0.05 = 5%)
+        late_threshold: Threshold for low sigma phase (default: 0.01 = 1%)
+        log_residuals: Log residual statistics for analysis (default: False)
+        log_file: Optional file path for residual logs (default: None)
+
+    Example config.toml:
+        [rtx4090.fbcache]
+        enabled = true
+        early_threshold = 0.01
+        middle_threshold = 0.05
+        late_threshold = 0.01
+        log_residuals = true
+
+    Reference: DiffSynth-Engine FBCache implementation
+    """
+
+    enabled: bool = False
+    early_threshold: float = 0.01
+    middle_threshold: float = 0.05
+    late_threshold: float = 0.01
+    log_residuals: bool = False
+    log_file: str | None = None
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary."""
+        return {
+            "enabled": self.enabled,
+            "early_threshold": self.early_threshold,
+            "middle_threshold": self.middle_threshold,
+            "late_threshold": self.late_threshold,
+            "log_residuals": self.log_residuals,
+            "log_file": self.log_file,
+        }
+
+
+@dataclass
 class RewriterConfig:
     """Configuration for prompt rewriting using LLM generation.
 
@@ -841,6 +901,7 @@ class Config:
     dype: DyPEConfig = field(default_factory=DyPEConfig)
     slg: SLGConfig = field(default_factory=SLGConfig)
     fmtt: FMTTConfig = field(default_factory=FMTTConfig)
+    fbcache: FBCacheRuntimeConfig = field(default_factory=FBCacheRuntimeConfig)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Config":
@@ -859,6 +920,7 @@ class Config:
         dype_data = data.pop("dype", {})
         slg_data = data.pop("slg", {})
         fmtt_data = data.pop("fmtt", {})
+        fbcache_data = data.pop("fbcache", {})
 
         return cls(
             model_path=data.get("model_path", ""),
@@ -877,6 +939,7 @@ class Config:
             dype=DyPEConfig(**dype_data),
             slg=SLGConfig(**slg_data),
             fmtt=FMTTConfig(**fmtt_data),
+            fbcache=FBCacheRuntimeConfig(**fbcache_data),
         )
 
     @classmethod

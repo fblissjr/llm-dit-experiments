@@ -311,6 +311,10 @@ class QwenImage2512Pipeline:
         cfg_scale: float = DEFAULT_CFG_SCALE,
         seed: Optional[int] = None,
         max_sequence_length: int = 512,
+        # Forward Block Cache (FBCache) for inference acceleration
+        fbcache: bool = False,
+        fbcache_threshold: Optional[float] = None,
+        fbcache_log: bool = False,
     ) -> Image.Image:
         """
         Generate an image from a text prompt.
@@ -357,6 +361,23 @@ class QwenImage2512Pipeline:
             from contextlib import nullcontext
             context_manager = nullcontext()
 
+        # Initialize FBCache for inference acceleration
+        fbcache_ctx = None
+        fbcache_state = None
+        fbcache_callback = None
+
+        if fbcache:
+            # FBCache is not yet supported for Qwen-Image due to different transformer block signatures
+            # Qwen-Image uses keyword arguments (hidden_states=...) while FBCache wrapper expects
+            # positional arguments. This requires a separate implementation.
+            logger.warning(
+                "FBCache is not yet supported for Qwen-Image-2512. "
+                "The transformer block signatures differ from Z-Image. "
+                "Proceeding without FBCache acceleration."
+            )
+            # Disable fbcache for this generation
+            fbcache = False
+
         # Run generation (optionally with FP8 context)
         with context_manager:
             result = self.pipe(
@@ -368,7 +389,19 @@ class QwenImage2512Pipeline:
                 num_inference_steps=num_inference_steps,
                 generator=generator,
                 max_sequence_length=max_sequence_length,
+                callback_on_step_end=fbcache_callback,
             )
+
+        # Clean up FBCache
+        if fbcache_ctx is not None:
+            fbcache_ctx.__exit__(None, None, None)
+            if fbcache_state is not None:
+                stats = fbcache_state.get_stats()
+                logger.info(
+                    f"FBCache stats: "
+                    f"{stats['skips']} skips, {stats['computes']} computes, "
+                    f"ratio={stats['skip_ratio']:.1%}, est. speedup={stats['estimated_speedup']:.2f}x"
+                )
 
         image = result.images[0]
         logger.info("Image generation complete")

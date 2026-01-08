@@ -41,6 +41,7 @@ from llm_dit.utils.vae_ops import (
     blend_differential_latents,
     scale_noise_for_timestep,
 )
+from llm_dit.models.fbcache import FBCacheConfig, FBCacheState, FBCacheContext
 
 if TYPE_CHECKING:
     from llm_dit.utils.dype import DyPEConfig
@@ -596,6 +597,10 @@ class ZImagePipeline:
         cfg_truncation: float = 1.0,
         cfg_norm_mode: str = "clamp",
         d_noise: float = 1.0,
+        # Forward Block Cache (FBCache) for inference acceleration
+        fbcache: bool = False,
+        fbcache_threshold: Optional[float] = None,
+        fbcache_log: bool = False,
     ) -> Union[Image.Image, List[Image.Image], torch.Tensor]:
         """
         Generate an image from a text prompt and an input image.
@@ -844,6 +849,20 @@ class ZImagePipeline:
         # 6. Denoising loop (same as txt2img but starting from noised latents)
         cpu_offload = getattr(self, '_enable_cpu_offload', False)
 
+        # Initialize FBCache for inference acceleration
+        fbcache_ctx = None
+        fbcache_state = None
+        if fbcache:
+            fbcache_config = FBCacheConfig(
+                enabled=True,
+                middle_threshold=fbcache_threshold if fbcache_threshold is not None else 0.05,
+                log_residuals=fbcache_log,
+            )
+            fbcache_state = FBCacheState(fbcache_config, num_inference_steps=init_timestep)
+            fbcache_ctx = FBCacheContext(self.transformer, fbcache_state)
+            fbcache_ctx.__enter__()
+            logger.info(f"[img2img] FBCache enabled: threshold={fbcache_config.middle_threshold:.2%}")
+
         with torch.no_grad():
             for i, t in enumerate(timesteps):
                 if torch.cuda.is_available():
@@ -879,11 +898,25 @@ class ZImagePipeline:
                 latent_input = latent_input.unsqueeze(2)
                 latent_list = list(latent_input.unbind(dim=0))
 
+                # Get sigma for FBCache skip decision
+                if hasattr(self.scheduler, 'sigmas'):
+                    current_sigma = self.scheduler.sigmas[i].item()
+                else:
+                    current_sigma = t.item() / 1000.0
+
+                # Set sigma for FBCache
+                if fbcache_ctx is not None:
+                    fbcache_ctx.set_sigma(current_sigma)
+
                 model_output = self.transformer(
                     latent_list,
                     timestep_input,
                     embeds_input,
                 )[0]
+
+                # Advance FBCache step counter
+                if fbcache_ctx is not None:
+                    fbcache_ctx.advance_step()
 
                 if cpu_offload:
                     self.transformer.to("cpu")
@@ -936,6 +969,21 @@ class ZImagePipeline:
 
                 if callback is not None:
                     callback(i, len(timesteps), latents)
+
+        # Free differential diffusion tensors after denoising loop
+        if use_differential:
+            del differential_masks, original_latents_for_blend
+
+        # Clean up FBCache and log stats
+        if fbcache_ctx is not None:
+            fbcache_ctx.__exit__(None, None, None)
+            if fbcache_state is not None:
+                stats = fbcache_state.get_stats()
+                logger.info(
+                    f"[img2img] FBCache stats: "
+                    f"{stats['skips']} skips, {stats['computes']} computes, "
+                    f"ratio={stats['skip_ratio']:.1%}, est. speedup={stats['estimated_speedup']:.2f}x"
+                )
 
         # 7. Decode latents
         if output_type == "latent":
@@ -1021,6 +1069,10 @@ class ZImagePipeline:
         cfg_norm_mode: str = "clamp",  # "clamp" or "match" (DiffSynth-style)
         # Sigma schedule scaling (from RES4LYF research)
         d_noise: float = 1.0,  # <1.0 = sharper/more detail, >1.0 = softer/deeper colors
+        # Forward Block Cache (FBCache) for inference acceleration
+        fbcache: bool = False,  # Enable FBCache for 30-50% speedup
+        fbcache_threshold: Optional[float] = None,  # Override middle threshold (default 0.05)
+        fbcache_log: bool = False,  # Log residual statistics
     ) -> Union[Image.Image, List[Image.Image], torch.Tensor]:
         """
         Generate an image from a text prompt.
@@ -1407,6 +1459,20 @@ class ZImagePipeline:
                 f"scale={fmtt_guidance_scale}, range=[{fmtt_guidance_start:.0%}, {fmtt_guidance_stop:.0%}]"
             )
 
+        # Initialize FBCache for inference acceleration (30-50% speedup)
+        fbcache_ctx = None
+        fbcache_state = None
+        if fbcache:
+            fbcache_config = FBCacheConfig(
+                enabled=True,
+                middle_threshold=fbcache_threshold if fbcache_threshold is not None else 0.05,
+                log_residuals=fbcache_log,
+            )
+            fbcache_state = FBCacheState(fbcache_config, num_inference_steps=num_inference_steps)
+            fbcache_ctx = FBCacheContext(self.transformer, fbcache_state)
+            fbcache_ctx.__enter__()
+            logger.info(f"[Pipeline] FBCache enabled: threshold={fbcache_config.middle_threshold:.2%}")
+
         # Run denoising loop with no_grad to prevent gradient accumulation
         with torch.no_grad():
             for i, t in enumerate(timesteps):
@@ -1456,6 +1522,16 @@ class ZImagePipeline:
                 # Check if SLG is active at this step
                 use_slg = slg is not None and slg.is_active(i, num_inference_steps)
 
+                # Get sigma for FBCache (computed here so it's available for both FBCache and FMTT)
+                if hasattr(self.scheduler, 'sigmas'):
+                    current_sigma = self.scheduler.sigmas[i].item()
+                else:
+                    current_sigma = t.item() / 1000.0
+
+                # Set sigma for FBCache skip decision
+                if fbcache_ctx is not None:
+                    fbcache_ctx.set_sigma(current_sigma)
+
                 # Run transformer (normal forward pass)
                 model_output = self.transformer(
                     latent_list,
@@ -1471,6 +1547,10 @@ class ZImagePipeline:
                             timestep_input,
                             embeds_input,
                         )[0]
+
+                # Advance FBCache step counter after all transformer calls
+                if fbcache_ctx is not None:
+                    fbcache_ctx.advance_step()
 
                 # Move transformer back to CPU after forward pass if using CPU offload
                 if cpu_offload:
@@ -1502,6 +1582,8 @@ class ZImagePipeline:
                     noise_pred_skip = torch.stack([o.float() for o in model_output_skip], dim=0)
                     # For Z-Image (no CFG), SLG formula: pred = pred_cond + scale * (pred_cond - pred_skip)
                     noise_pred = slg.guide(noise_pred, noise_pred_skip, cfg_scale=current_cfg_scale)
+                    # Free SLG intermediate tensors to reduce VRAM
+                    del model_output_skip, noise_pred_skip
 
                 noise_pred = noise_pred.squeeze(2)
 
@@ -1509,17 +1591,15 @@ class ZImagePipeline:
                 # FMTT modifies velocity to guide toward higher-reward regions
                 use_fmtt = fmtt is not None and fmtt.is_active(i, num_inference_steps)
                 if use_fmtt:
-                    # Get sigma for flow map prediction
-                    sigma = self.scheduler.sigmas[i].item() if hasattr(self.scheduler, 'sigmas') else t.item() / 1000.0
-
                     # noise_pred is the raw velocity from DiT (before negation)
                     velocity = noise_pred
 
                     # Compute FMTT gradient (this enables gradients internally)
+                    # Uses current_sigma computed earlier for FBCache
                     fmtt_grad, reward = fmtt.compute_gradient(
                         latents=latents,
                         velocity=velocity.detach(),
-                        sigma=sigma,
+                        sigma=current_sigma,
                         prompt=fmtt_prompt,
                     )
 
@@ -1529,6 +1609,9 @@ class ZImagePipeline:
 
                     if i % 3 == 0:  # Log every few steps
                         logger.info(f"[FMTT] Step {i}: reward={reward:.4f}, grad_norm={fmtt_grad.norm().item():.4f}")
+
+                    # Free FMTT gradient tensor to reduce VRAM
+                    del fmtt_grad, velocity
 
                 noise_pred = -noise_pred  # Negate output for Z-Image
 
@@ -1559,6 +1642,17 @@ class ZImagePipeline:
                         logger.info(f"[Pipeline] Step {i+1}/{len(timesteps)} complete")
 
         logger.info(f"[Pipeline] Denoising complete, latents shape: {latents.shape}")
+
+        # Clean up FBCache and log stats
+        if fbcache_ctx is not None:
+            fbcache_ctx.__exit__(None, None, None)
+            if fbcache_state is not None:
+                stats = fbcache_state.get_stats()
+                logger.info(
+                    f"[Pipeline] FBCache stats: "
+                    f"{stats['skips']} skips, {stats['computes']} computes, "
+                    f"ratio={stats['skip_ratio']:.1%}, est. speedup={stats['estimated_speedup']:.2f}x"
+                )
 
         # 5. Decode latents
         if output_type == "latent":
