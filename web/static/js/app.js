@@ -339,16 +339,16 @@ async function refreshSystemStatus() {
         }
 
         // Qwen-Image Edit pipeline status
-        const qwenImageStatus = document.getElementById('qwenImageStatus');
+        const qwenImagePipelineStatus = document.getElementById('qwenImagePipelineStatus');
         const unloadQwenImageBtn = document.getElementById('unloadQwenImageBtn');
-        if (qwenImageStatus) {
+        if (qwenImagePipelineStatus) {
             if (data.qwen_image_available) {
-                qwenImageStatus.textContent = 'Loaded';
-                qwenImageStatus.className = 'text-xs px-2 py-1 rounded bg-green-600/20 text-green-400';
+                qwenImagePipelineStatus.textContent = 'Loaded';
+                qwenImagePipelineStatus.className = 'text-xs px-2 py-1 rounded bg-green-600/20 text-green-400';
                 if (unloadQwenImageBtn) unloadQwenImageBtn.classList.remove('hidden');
             } else {
-                qwenImageStatus.textContent = 'Not loaded';
-                qwenImageStatus.className = 'text-xs px-2 py-1 rounded bg-gray-700 text-gray-400';
+                qwenImagePipelineStatus.textContent = 'Not loaded';
+                qwenImagePipelineStatus.className = 'text-xs px-2 py-1 rounded bg-gray-700 text-gray-400';
                 if (unloadQwenImageBtn) unloadQwenImageBtn.classList.add('hidden');
             }
         }

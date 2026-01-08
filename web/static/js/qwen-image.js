@@ -91,9 +91,9 @@ function updateQiSections() {
 }
 
 function getSelectedModelType() {
-    const zimageBtn = document.getElementById('modelZImage');
-    const qwenImageBtn = document.getElementById('modelQwenImage');
-    const qwenImage2512Btn = document.getElementById('modelQwenImage2512');
+    const zimageBtn = document.getElementById('modelTypeZImage');
+    const qwenImageBtn = document.getElementById('modelTypeQwenImage');
+    const qwenImage2512Btn = document.getElementById('modelTypeQwenImage2512');
 
     if (zimageBtn && zimageBtn.classList.contains('bg-blue-600')) return 'zimage';
     if (qwenImageBtn && qwenImageBtn.classList.contains('bg-blue-600')) return 'qwenimage';
@@ -104,9 +104,9 @@ function getSelectedModelType() {
 
 function switchModelType(type) {
     const buttons = {
-        'zimage': document.getElementById('modelZImage'),
-        'qwenimage': document.getElementById('modelQwenImage'),
-        'qwenimage2512': document.getElementById('modelQwenImage2512'),
+        'zimage': document.getElementById('modelTypeZImage'),
+        'qwenimage': document.getElementById('modelTypeQwenImage'),
+        'qwenimage2512': document.getElementById('modelTypeQwenImage2512'),
     };
 
     // Update button styles
@@ -553,12 +553,15 @@ async function executMultiCombine() {
 
 function initQwenImageEvents() {
     // Model type buttons
-    const modelButtons = ['modelZImage', 'modelQwenImage', 'modelQwenImage2512'];
-    modelButtons.forEach(id => {
+    const modelButtons = [
+        { id: 'modelTypeZImage', type: 'zimage' },
+        { id: 'modelTypeQwenImage', type: 'qwenimage' },
+        { id: 'modelTypeQwenImage2512', type: 'qwenimage2512' }
+    ];
+    modelButtons.forEach(({ id, type }) => {
         const btn = document.getElementById(id);
         if (btn) {
             btn.addEventListener('click', () => {
-                const type = id.replace('model', '').toLowerCase();
                 switchModelType(type);
             });
         }
