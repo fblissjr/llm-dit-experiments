@@ -35,12 +35,11 @@ Standalone diffusers-based experimentation platform for LLM-DiT image generation
 
 ### p0: verification and testing
 
-- [ ] **Clean up scripts/ directory**
-  - Archive 5 one-off test scripts to `scripts/archive/`
-  - Keep 11 core/utility scripts
-  - **Keep**: generate.py, train.py, profiler.py, embeddings.py, smoke_test.py, check_fp8_compatibility.py, quantize_model.py, clear-cuda.py, install_sageattention.sh, start-server.sh, stop-server.sh
-  - **Archive**: test_qwen_image_2512.py, test_qwen_image_edit_2511.py, test_fp8_load.py, test_quantized_dit.py, convert_image_encoders.py
-  - Update any docs referencing archived scripts
+- [x] **Clean up scripts/ directory** (completed 2026-01-08)
+  - Archived 6 one-off test scripts to `scripts/archive/`
+  - Kept 11 core/utility scripts
+  - **Kept**: generate.py, train.py, profiler.py, embeddings.py, smoke_test.py, check_fp8_compatibility.py, quantize_model.py, clear-cuda.py, install_sageattention.sh, start-server.sh, stop-server.sh
+  - **Archived**: test_qwen_image_2512.py, test_qwen_image_edit_2511.py, test_fp8_load.py, test_quantized_dit.py, convert_image_encoders.py, test_qwen_image_2512_standalone.py
 
 - [ ] **Test DyPE multipass at 2K+ resolution**
   - Real-world testing with twopass and threepass modes
