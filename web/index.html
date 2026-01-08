@@ -1564,6 +1564,54 @@
                     </div>
                 </details>
 
+                <!-- FBCache (Forward Block Cache) Options (collapsible) -->
+                <details class="group" id="fbcacheSection">
+                    <summary class="flex items-center gap-2 text-sm font-medium text-gray-300 cursor-pointer py-2 select-none">
+                        <svg class="w-3 h-3 transition-transform group-open:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                        </svg>
+                        FBCache (Block Caching)
+                        <span id="fbcacheStatusBadge" class="ml-auto text-xs px-2 py-0.5 rounded-full bg-gray-700 text-gray-400">Off</span>
+                    </summary>
+                    <div class="pt-2 pb-1 space-y-4 pl-5 border-l-2 border-gray-700/50 ml-1.5">
+                        <p class="text-xs text-gray-500">Skips redundant transformer blocks when residuals are stable. Works best with non-distilled models (50+ steps).</p>
+
+                        <!-- Enable FBCache -->
+                        <div>
+                            <label for="fbcacheEnabled" class="flex items-center gap-2 cursor-pointer">
+                                <input type="checkbox" id="fbcacheEnabled" class="w-5 h-5 text-blue-600 bg-gray-700 border-gray-600 rounded focus:ring-blue-500">
+                                <span class="text-sm font-medium text-gray-300">Enable FBCache</span>
+                            </label>
+                            <p class="text-xs text-gray-500 mt-1">Note: Z-Image Turbo (8 steps) shows minimal benefit. Best for 50+ step schedules.</p>
+                        </div>
+
+                        <!-- FBCache Controls (hidden until enabled) -->
+                        <div id="fbcacheControls" class="hidden space-y-4">
+                            <!-- Threshold Override -->
+                            <div>
+                                <label class="block text-sm font-medium text-gray-300 mb-2">
+                                    Threshold Override: <span id="fbcacheThresholdValue" class="text-blue-400">auto</span>
+                                </label>
+                                <input type="range" id="fbcacheThreshold" min="0" max="0.2" step="0.01" value="0" class="w-full">
+                                <div class="flex justify-between text-xs text-gray-500 mt-1">
+                                    <span>0 (Auto)</span>
+                                    <span>0.2 (20%)</span>
+                                </div>
+                                <p class="text-xs text-gray-500 mt-1">Relative L1 threshold for block skipping. 0 = use adaptive sigma-based thresholds.</p>
+                            </div>
+
+                            <!-- Log Residuals -->
+                            <div>
+                                <label for="fbcacheLog" class="flex items-center gap-2 cursor-pointer">
+                                    <input type="checkbox" id="fbcacheLog" class="w-5 h-5 text-blue-600 bg-gray-700 border-gray-600 rounded focus:ring-blue-500">
+                                    <span class="text-sm font-medium text-gray-300">Log Residuals</span>
+                                </label>
+                                <p class="text-xs text-gray-500 mt-1">Log residual statistics to server console for analysis.</p>
+                            </div>
+                        </div>
+                    </div>
+                </details>
+
                 <!-- CFG Enhancements (for non-distilled models) -->
                 <details class="group" id="cfgSection">
                     <summary class="flex items-center gap-2 text-sm font-medium text-gray-300 cursor-pointer py-2 select-none">

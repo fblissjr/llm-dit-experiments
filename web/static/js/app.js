@@ -197,6 +197,16 @@ async function handleFormSubmit(e) {
                 params.fmtt_start = fmttConfig.start;
                 params.fmtt_stop = fmttConfig.end;  // Frontend uses 'end', backend uses 'stop'
             }
+
+            // FBCache - flatten to match backend flat fields
+            const fbcacheConfig = getFbcacheConfig();
+            if (fbcacheConfig && fbcacheConfig.enabled) {
+                params.fbcache = true;
+                if (fbcacheConfig.threshold) {
+                    params.fbcache_threshold = fbcacheConfig.threshold;
+                }
+                params.fbcache_log = fbcacheConfig.log || false;
+            }
         }
 
         // Determine endpoint and add mode-specific params

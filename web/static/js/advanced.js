@@ -254,6 +254,80 @@ function getFmttConfig() {
 }
 
 // =============================================================================
+// FBCache (Forward Block Cache)
+// =============================================================================
+
+function updateFbcacheStatus() {
+    const fbcacheEnabled = document.getElementById('fbcacheEnabled');
+    const fbcacheStatus = document.getElementById('fbcacheStatus');
+    const fbcacheControls = document.getElementById('fbcacheControls');
+    const fbcacheStatusBadge = document.getElementById('fbcacheStatusBadge');
+
+    if (!fbcacheEnabled) return;
+
+    const enabled = fbcacheEnabled.checked;
+
+    if (fbcacheStatus) {
+        if (enabled) {
+            fbcacheStatus.textContent = 'Enabled';
+            fbcacheStatus.classList.add('text-green-400');
+            fbcacheStatus.classList.remove('text-gray-500');
+        } else {
+            fbcacheStatus.textContent = 'Disabled';
+            fbcacheStatus.classList.remove('text-green-400');
+            fbcacheStatus.classList.add('text-gray-500');
+        }
+    }
+
+    // Update status badge
+    if (fbcacheStatusBadge) {
+        if (enabled) {
+            fbcacheStatusBadge.textContent = 'On';
+            fbcacheStatusBadge.classList.remove('bg-gray-700', 'text-gray-400');
+            fbcacheStatusBadge.classList.add('bg-green-700', 'text-green-300');
+        } else {
+            fbcacheStatusBadge.textContent = 'Off';
+            fbcacheStatusBadge.classList.remove('bg-green-700', 'text-green-300');
+            fbcacheStatusBadge.classList.add('bg-gray-700', 'text-gray-400');
+        }
+    }
+
+    if (fbcacheControls) {
+        fbcacheControls.classList.toggle('hidden', !enabled);
+    }
+}
+
+function updateFbcacheThresholdDisplay() {
+    const fbcacheThreshold = document.getElementById('fbcacheThreshold');
+    const fbcacheThresholdValue = document.getElementById('fbcacheThresholdValue');
+
+    if (!fbcacheThreshold || !fbcacheThresholdValue) return;
+
+    const value = parseFloat(fbcacheThreshold.value);
+    if (value === 0) {
+        fbcacheThresholdValue.textContent = 'auto';
+    } else {
+        fbcacheThresholdValue.textContent = (value * 100).toFixed(0) + '%';
+    }
+}
+
+function getFbcacheConfig() {
+    const fbcacheEnabled = document.getElementById('fbcacheEnabled');
+    if (!fbcacheEnabled || !fbcacheEnabled.checked) {
+        return { enabled: false };
+    }
+
+    const fbcacheThreshold = document.getElementById('fbcacheThreshold');
+    const fbcacheLog = document.getElementById('fbcacheLog');
+
+    return {
+        enabled: true,
+        threshold: fbcacheThreshold ? parseFloat(fbcacheThreshold.value) || null : null,
+        log: fbcacheLog ? fbcacheLog.checked : false,
+    };
+}
+
+// =============================================================================
 // CFG Enhancement
 // =============================================================================
 
@@ -373,6 +447,16 @@ function initAdvancedEvents() {
         fmttEnabled.addEventListener('change', updateFmttStatus);
     }
 
+    // FBCache
+    const fbcacheEnabled = document.getElementById('fbcacheEnabled');
+    if (fbcacheEnabled) {
+        fbcacheEnabled.addEventListener('change', updateFbcacheStatus);
+    }
+    const fbcacheThreshold = document.getElementById('fbcacheThreshold');
+    if (fbcacheThreshold) {
+        fbcacheThreshold.addEventListener('input', updateFbcacheThresholdDisplay);
+    }
+
     // CFG
     const cfgNormEnabled = document.getElementById('cfgNormEnabled');
     if (cfgNormEnabled) {
@@ -405,6 +489,9 @@ window.getSlgConfig = getSlgConfig;
 window.updateFmttStatus = updateFmttStatus;
 window.loadFmttConfig = loadFmttConfig;
 window.getFmttConfig = getFmttConfig;
+window.updateFbcacheStatus = updateFbcacheStatus;
+window.updateFbcacheThresholdDisplay = updateFbcacheThresholdDisplay;
+window.getFbcacheConfig = getFbcacheConfig;
 window.updateCfgStatus = updateCfgStatus;
 window.getCfgEnhancementConfig = getCfgEnhancementConfig;
 window.updateThinkingContentVisibility = updateThinkingContentVisibility;

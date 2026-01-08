@@ -300,6 +300,10 @@ class GenerateRequest(BaseModel):
     fmtt_decode_scale: Optional[float] = None  # Scale for intermediate VAE decode
     fmtt_siglip_model: Optional[str] = None  # SigLIP model for FMTT
     fmtt_siglip_device: Optional[str] = None  # Device for SigLIP (cuda/cpu)
+    # FBCache (Forward Block Cache) options
+    fbcache: bool = False  # Enable FBCache acceleration
+    fbcache_threshold: Optional[float] = None  # Override threshold (default: adaptive by sigma)
+    fbcache_log: bool = False  # Log residual statistics
 
 
 class Img2ImgRequest(BaseModel):
@@ -332,6 +336,10 @@ class Img2ImgRequest(BaseModel):
     d_noise: float = Field(1.0, ge=0.5, le=2.0, description="Sigma scaling (<1.0 = sharper, >1.0 = softer)")
     long_prompt_mode: str = "interpolate"
     hidden_layer: int = Field(-2, ge=-35, le=-1, description="Hidden layer for text embeddings")
+    # FBCache (Forward Block Cache) options
+    fbcache: bool = False  # Enable FBCache acceleration
+    fbcache_threshold: Optional[float] = None  # Override threshold (default: adaptive by sigma)
+    fbcache_log: bool = False  # Log residual statistics
 
 
 class EncodeRequest(BaseModel):
@@ -2125,6 +2133,9 @@ async def generate(request: GenerateRequest):
                 fmtt_siglip_model=fmtt_siglip_model,
                 fmtt_siglip_device=fmtt_siglip_device,
                 dype_config=dype_config,
+                fbcache=request.fbcache,
+                fbcache_threshold=request.fbcache_threshold,
+                fbcache_log=request.fbcache_log,
             )
         else:
             # Single pass generation
@@ -2160,6 +2171,9 @@ async def generate(request: GenerateRequest):
                 fmtt_siglip_model=fmtt_siglip_model,
                 fmtt_siglip_device=fmtt_siglip_device,
                 dype_config=dype_config,
+                fbcache=request.fbcache,
+                fbcache_threshold=request.fbcache_threshold,
+                fbcache_log=request.fbcache_log,
             )
 
         gen_time = time.time() - start
@@ -2363,6 +2377,9 @@ async def img2img(request: Img2ImgRequest):
             remove_quotes=request.strip_quotes,
             long_prompt_mode=request.long_prompt_mode,
             hidden_layer=request.hidden_layer,
+            fbcache=request.fbcache,
+            fbcache_threshold=request.fbcache_threshold,
+            fbcache_log=request.fbcache_log,
         )
 
         gen_time = time.time() - start
