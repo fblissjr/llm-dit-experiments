@@ -25,7 +25,7 @@ import torch
 from .config import Config
 
 # Supported model types
-ModelType = Literal["zimage", "qwenimage-layered", "qwenimage-t2i", "qwenimage-edit"]
+ModelType = Literal["zimage", "qwenimage-layered", "qwenimage-t2i", "qwenimage-edit", "ltx2"]
 SUPPORTED_MODEL_TYPES: tuple[str, ...] = get_args(ModelType)
 
 logger = logging.getLogger(__name__)
@@ -123,6 +123,18 @@ class RuntimeConfig:
     qwen_image_resolution: int | None = None  # Resolution (None = variant default: 1024/640/640)
     qwen_image_quantize_text_encoder: str = "none"  # none/4bit/8bit - CPU offload makes quant optional
     qwen_image_quantize_transformer: str | None = None  # None = variant default (fp8/diffsynth-fp8)
+
+    # LTX-2 video generation
+    ltx2_model_path: str = ""  # Path to LTX-2 model directory
+    ltx2_num_frames: int = 33  # Number of frames (33-65 typical for 24GB)
+    ltx2_fps: int = 24  # Output framerate
+    ltx2_guidance_scale: float = 3.5  # CFG scale (3.0-4.0 recommended)
+    ltx2_steps: int | None = None  # Diffusion steps (None = config default: 12 for distilled)
+    ltx2_lora_path: str = ""  # Path to LoRA safetensors
+    ltx2_lora_scale: float = 1.0  # LoRA blend scale
+    ltx2_offload_mode: str = "model"  # none, model, sequential, group
+    ltx2_audio: bool = False  # Enable audio generation
+    ltx2_output_path: str = "output.mp4"  # Output video path
 
     # Device placement
     encoder_device: str = "auto"
@@ -478,6 +490,70 @@ def create_base_parser(
         choices=["none", "4bit", "8bit", "fp8", "int8", "diffsynth-fp8"],
         default=None,
         help="Quantization for DiT (variant default: t2i=fp8, edit/layered=diffsynth-fp8)",
+    )
+
+    # LTX-2 video generation
+    ltx2_group = parser.add_argument_group("LTX-2 Video Generation")
+    ltx2_group.add_argument(
+        "--ltx2-model-path",
+        type=str,
+        default=None,
+        help="Path to LTX-2 model directory (e.g., ~/Storage/LTX-2)",
+    )
+    ltx2_group.add_argument(
+        "--ltx2-num-frames",
+        type=int,
+        default=None,
+        help="Number of video frames (default: 33, max ~65 for 24GB)",
+    )
+    ltx2_group.add_argument(
+        "--ltx2-fps",
+        type=int,
+        default=None,
+        help="Output framerate (default: 24)",
+    )
+    ltx2_group.add_argument(
+        "--ltx2-guidance-scale",
+        type=float,
+        default=None,
+        help="CFG guidance scale (default: 3.5, range 3.0-4.0)",
+    )
+    ltx2_group.add_argument(
+        "--ltx2-steps",
+        type=int,
+        default=None,
+        help="Diffusion steps (default: 12 for distilled model)",
+    )
+    ltx2_group.add_argument(
+        "--ltx2-lora-path",
+        type=str,
+        default=None,
+        help="Path to LoRA safetensors file",
+    )
+    ltx2_group.add_argument(
+        "--ltx2-lora-scale",
+        type=float,
+        default=None,
+        help="LoRA blend scale (default: 1.0)",
+    )
+    ltx2_group.add_argument(
+        "--ltx2-offload-mode",
+        type=str,
+        choices=["none", "model", "sequential", "group"],
+        default=None,
+        help="CPU offload mode (default: model for 24GB VRAM)",
+    )
+    ltx2_group.add_argument(
+        "--ltx2-audio",
+        action="store_true",
+        default=None,
+        help="Enable audio generation",
+    )
+    ltx2_group.add_argument(
+        "--ltx2-output",
+        type=str,
+        default=None,
+        help="Output video path (default: output.mp4)",
     )
 
     # Device placement
@@ -1185,6 +1261,28 @@ def _apply_cli_overrides(args: argparse.Namespace, config: RuntimeConfig) -> Run
     if getattr(args, 'qwen_image_quantize_transformer', None) is not None:
         config.qwen_image_quantize_transformer = args.qwen_image_quantize_transformer
 
+    # LTX-2 video overrides
+    if getattr(args, 'ltx2_model_path', None) is not None:
+        config.ltx2_model_path = args.ltx2_model_path
+    if getattr(args, 'ltx2_num_frames', None) is not None:
+        config.ltx2_num_frames = args.ltx2_num_frames
+    if getattr(args, 'ltx2_fps', None) is not None:
+        config.ltx2_fps = args.ltx2_fps
+    if getattr(args, 'ltx2_guidance_scale', None) is not None:
+        config.ltx2_guidance_scale = args.ltx2_guidance_scale
+    if getattr(args, 'ltx2_steps', None) is not None:
+        config.ltx2_steps = args.ltx2_steps
+    if getattr(args, 'ltx2_lora_path', None) is not None:
+        config.ltx2_lora_path = args.ltx2_lora_path
+    if getattr(args, 'ltx2_lora_scale', None) is not None:
+        config.ltx2_lora_scale = args.ltx2_lora_scale
+    if getattr(args, 'ltx2_offload_mode', None) is not None:
+        config.ltx2_offload_mode = args.ltx2_offload_mode
+    if getattr(args, 'ltx2_audio', False):
+        config.ltx2_audio = True
+    if getattr(args, 'ltx2_output', None) is not None:
+        config.ltx2_output_path = args.ltx2_output
+
     # Device overrides
     if getattr(args, 'text_encoder_device', None) is not None:
         config.encoder_device = args.text_encoder_device
@@ -1429,6 +1527,19 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
                 config.qwen_image_quantize_text_encoder = getattr(qi, 'quantize_text_encoder', 'none')
                 config.qwen_image_quantize_transformer = getattr(qi, 'quantize_transformer', 'none')
 
+            # Check for LTX-2 section
+            if hasattr(toml_config, 'ltx2'):
+                ltx2 = toml_config.ltx2
+                config.ltx2_model_path = getattr(ltx2, 'model_path', '')
+                config.ltx2_num_frames = getattr(ltx2, 'num_frames', 33)
+                config.ltx2_fps = getattr(ltx2, 'fps', 24)
+                config.ltx2_guidance_scale = getattr(ltx2, 'guidance_scale', 3.5)
+                config.ltx2_steps = getattr(ltx2, 'num_inference_steps', None)
+                config.ltx2_lora_path = getattr(ltx2, 'lora_path', '')
+                config.ltx2_lora_scale = getattr(ltx2, 'lora_scale', 1.0)
+                config.ltx2_offload_mode = getattr(ltx2, 'offload_mode', 'model')
+                config.ltx2_audio = getattr(ltx2, 'audio_enabled', False)
+
             # Check for DyPE section
             if hasattr(toml_config, 'dype'):
                 dype = toml_config.dype
@@ -1524,6 +1635,28 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
         config.qwen_image_quantize_text_encoder = args.qwen_image_quantize_text_encoder
     if getattr(args, 'qwen_image_quantize_transformer', None) is not None:
         config.qwen_image_quantize_transformer = args.qwen_image_quantize_transformer
+
+    # LTX-2 video overrides
+    if getattr(args, 'ltx2_model_path', None) is not None:
+        config.ltx2_model_path = args.ltx2_model_path
+    if getattr(args, 'ltx2_num_frames', None) is not None:
+        config.ltx2_num_frames = args.ltx2_num_frames
+    if getattr(args, 'ltx2_fps', None) is not None:
+        config.ltx2_fps = args.ltx2_fps
+    if getattr(args, 'ltx2_guidance_scale', None) is not None:
+        config.ltx2_guidance_scale = args.ltx2_guidance_scale
+    if getattr(args, 'ltx2_steps', None) is not None:
+        config.ltx2_steps = args.ltx2_steps
+    if getattr(args, 'ltx2_lora_path', None) is not None:
+        config.ltx2_lora_path = args.ltx2_lora_path
+    if getattr(args, 'ltx2_lora_scale', None) is not None:
+        config.ltx2_lora_scale = args.ltx2_lora_scale
+    if getattr(args, 'ltx2_offload_mode', None) is not None:
+        config.ltx2_offload_mode = args.ltx2_offload_mode
+    if getattr(args, 'ltx2_audio', False):
+        config.ltx2_audio = True
+    if getattr(args, 'ltx2_output', None) is not None:
+        config.ltx2_output_path = args.ltx2_output
 
     # Device overrides
     if getattr(args, 'text_encoder_device', None) is not None:

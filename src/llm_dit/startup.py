@@ -303,6 +303,8 @@ class PipelineLoader:
             logger.info(f"  Text encoder quant: {self.config.qwen_image_quantize_text_encoder}")
             logger.info("=" * 60)
             return LoadResult(pipeline=None, encoder=None, mode="qwenimage-edit_ondemand")
+        elif model_type == "ltx2":
+            return self._load_ltx2_pipeline()
 
         from llm_dit.pipelines import ZImagePipeline
 
@@ -476,6 +478,44 @@ class PipelineLoader:
             load_time=load_time,
             mode="full",
         )
+
+    def _load_ltx2_pipeline(self) -> LoadResult:
+        """
+        Load LTX-2 video generation pipeline.
+
+        LTX-2 is a 19B video+audio model that uses on-demand loading
+        for memory efficiency on 24GB GPUs.
+
+        Returns:
+            LoadResult with mode set for on-demand loading
+        """
+        # Get LTX-2 config
+        ltx2_model_path = getattr(self.config, 'ltx2_model_path', '')
+        ltx2_num_frames = getattr(self.config, 'ltx2_num_frames', 33)
+        ltx2_fps = getattr(self.config, 'ltx2_fps', 24)
+        ltx2_steps = getattr(self.config, 'ltx2_steps', None)
+        ltx2_guidance_scale = getattr(self.config, 'ltx2_guidance_scale', 3.5)
+        ltx2_offload_mode = getattr(self.config, 'ltx2_offload_mode', 'model')
+        ltx2_lora_path = getattr(self.config, 'ltx2_lora_path', '')
+        ltx2_lora_scale = getattr(self.config, 'ltx2_lora_scale', 1.0)
+        ltx2_audio = getattr(self.config, 'ltx2_audio', False)
+
+        logger.info("=" * 60)
+        logger.info("LTX-2 VIDEO MODE")
+        logger.info("=" * 60)
+        logger.info("LTX-2 uses on-demand loading via /api/ltx2/generate")
+        logger.info(f"  Model path: {ltx2_model_path}")
+        logger.info(f"  Frames: {ltx2_num_frames}")
+        logger.info(f"  FPS: {ltx2_fps}")
+        logger.info(f"  Steps: {ltx2_steps or 'auto (12 for distilled)'}")
+        logger.info(f"  Guidance: {ltx2_guidance_scale}")
+        logger.info(f"  Offload: {ltx2_offload_mode}")
+        if ltx2_lora_path:
+            logger.info(f"  LoRA: {ltx2_lora_path} (scale={ltx2_lora_scale})")
+        logger.info(f"  Audio: {ltx2_audio}")
+        logger.info("=" * 60)
+
+        return LoadResult(pipeline=None, encoder=None, mode="ltx2_ondemand")
 
     def load_api_encoder(self) -> LoadResult:
         """
