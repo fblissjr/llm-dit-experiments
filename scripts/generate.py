@@ -33,12 +33,15 @@ Usage:
     # LTX-2 (text-to-video)
     uv run scripts/generate.py --model-type ltx2 \\
         --ltx2-model-path ~/Storage/LTX-2 \\
+        --width 768 --height 512 \\
         --ltx2-num-frames 33 --ltx2-fps 24 \\
+        --output video.mp4 \\
         "A cat walking through a sunny garden"
 
     # LTX-2 with config file
     uv run scripts/generate.py --model-type ltx2 \\
         --config config.toml --profile rtx4090 \\
+        --output video.mp4 \\
         "Ocean waves crashing on rocky shore"
 
     # With config file (recommended)
@@ -490,11 +493,13 @@ def run_ltx2_generation(args, config, logger) -> int:
     lora_scale = config.ltx2_lora_scale
     offload_mode = config.ltx2_offload_mode
     audio_enabled = config.ltx2_audio
-    output_path = getattr(config, 'ltx2_output_path', 'output.mp4')
 
-    # Use height/width from config if set
-    height = config.height if config.height else 768
-    width = config.width if config.width else 512
+    # Output path: prefer --ltx2-output, fall back to --output
+    output_path = getattr(config, 'ltx2_output_path', None) or args.output or 'output.mp4'
+
+    # Use general --width/--height args (landscape default for video: 768x512)
+    width = config.width if config.width else 768
+    height = config.height if config.height else 512
 
     # Get seed
     seed = getattr(args, 'seed', None)
