@@ -126,6 +126,7 @@ class RuntimeConfig:
 
     # LTX-2 video generation
     ltx2_model_path: str = ""  # Path to LTX-2 model directory
+    ltx2_encoder_model_id: str = "google/gemma-3-12b-it-qat-q4_0-unquantized"  # Gemma 3 encoder
     ltx2_num_frames: int = 33  # Number of frames (33-65 typical for 24GB)
     ltx2_fps: int = 24  # Output framerate
     ltx2_guidance_scale: float = 3.5  # CFG scale (3.0-4.0 recommended)
@@ -499,6 +500,12 @@ def create_base_parser(
         type=str,
         default=None,
         help="Path to LTX-2 model directory (e.g., ~/Storage/LTX-2)",
+    )
+    ltx2_group.add_argument(
+        "--ltx2-encoder-model-id",
+        type=str,
+        default=None,
+        help="Gemma 3 text encoder model ID (default: google/gemma-3-12b-it-qat-q4_0-unquantized)",
     )
     ltx2_group.add_argument(
         "--ltx2-num-frames",
@@ -1264,6 +1271,8 @@ def _apply_cli_overrides(args: argparse.Namespace, config: RuntimeConfig) -> Run
     # LTX-2 video overrides
     if getattr(args, 'ltx2_model_path', None) is not None:
         config.ltx2_model_path = args.ltx2_model_path
+    if getattr(args, 'ltx2_encoder_model_id', None) is not None:
+        config.ltx2_encoder_model_id = args.ltx2_encoder_model_id
     if getattr(args, 'ltx2_num_frames', None) is not None:
         config.ltx2_num_frames = args.ltx2_num_frames
     if getattr(args, 'ltx2_fps', None) is not None:

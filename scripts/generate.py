@@ -485,6 +485,7 @@ def run_ltx2_generation(args, config, logger) -> int:
         return 1
 
     # Get parameters from config
+    encoder_model_id = config.ltx2_encoder_model_id
     num_frames = config.ltx2_num_frames
     fps = config.ltx2_fps
     guidance_scale = config.ltx2_guidance_scale
@@ -508,6 +509,7 @@ def run_ltx2_generation(args, config, logger) -> int:
     logger.info("LTX-2 VIDEO GENERATION")
     logger.info("=" * 60)
     logger.info(f"  Model: {model_path}")
+    logger.info(f"  Encoder: {encoder_model_id}")
     logger.info(f"  Resolution: {width}x{height}")
     logger.info(f"  Frames: {num_frames} @ {fps} FPS")
     logger.info(f"  Steps: {steps or 'auto (12 for distilled)'}")
@@ -528,7 +530,13 @@ def run_ltx2_generation(args, config, logger) -> int:
     try:
         # Try to load from single file first (safetensors checkpoint)
         from pathlib import Path
-        model_dir = Path(model_path)
+        model_dir = Path(model_path).expanduser()
+
+        # Auto-detect local text_encoder if available (saves download from HuggingFace)
+        local_encoder_path = model_dir / "text_encoder"
+        if local_encoder_path.exists() and local_encoder_path.is_dir():
+            logger.info(f"Found local text encoder: {local_encoder_path}")
+            encoder_model_id = str(local_encoder_path)
 
         # Check for common checkpoint file names
         checkpoint_patterns = [
@@ -549,6 +557,7 @@ def run_ltx2_generation(args, config, logger) -> int:
             logger.info(f"Loading from checkpoint: {checkpoint_file}")
             pipeline = LTX2Pipeline.from_single_file(
                 checkpoint_file,
+                encoder_model_id=encoder_model_id,
                 torch_dtype=torch.bfloat16,
                 enable_cpu_offload=(offload_mode != "none"),
             )

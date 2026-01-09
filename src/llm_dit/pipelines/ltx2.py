@@ -142,6 +142,7 @@ class LTX2Pipeline:
     def from_single_file(
         cls,
         checkpoint_path: str,
+        encoder_model_id: str = "google/gemma-3-12b-it-qat-q4_0-unquantized",
         torch_dtype: torch.dtype = torch.bfloat16,
         device: str = "cuda",
         enable_cpu_offload: bool = True,
@@ -150,12 +151,18 @@ class LTX2Pipeline:
         """
         Load pipeline from a single safetensors checkpoint.
 
+        The LTX-2 checkpoint contains only transformer/VAE/vocoder weights.
+        The Gemma 3-12B text encoder must be loaded separately and passed
+        to diffusers.
+
         Args:
             checkpoint_path: Path to .safetensors checkpoint file.
-            torch_dtype: Model dtype.
+            encoder_model_id: HuggingFace model ID for Gemma 3 text encoder.
+                Defaults to the Q4 QAT quantized variant for memory efficiency.
+            torch_dtype: Model dtype for transformer/VAE.
             device: Device to load on.
-            enable_cpu_offload: Enable CPU offload.
-            **kwargs: Additional arguments.
+            enable_cpu_offload: Enable CPU offload for memory-constrained GPUs.
+            **kwargs: Additional arguments passed to diffusers.
 
         Returns:
             Initialized LTX2Pipeline.
@@ -168,10 +175,50 @@ class LTX2Pipeline:
                 "Install with: pip install diffusers>=0.32.0"
             )
 
-        logger.info(f"Loading LTX-2 from checkpoint: {checkpoint_path}")
+        try:
+            from transformers import Gemma3ForConditionalGeneration, AutoTokenizer
+        except ImportError:
+            raise ImportError(
+                "transformers with Gemma3 support required. "
+                "Install with: pip install transformers>=4.44.0"
+            )
 
+        # Load Gemma 3 text encoder and tokenizer separately
+        # (not included in LTX-2 safetensors checkpoint)
+        logger.info(f"Loading Gemma 3 text encoder: {encoder_model_id}")
+
+        # Handle local paths - LTX-2 directory structure has text_encoder/ and tokenizer/ siblings
+        encoder_path = Path(encoder_model_id).expanduser()
+        if encoder_path.exists() and encoder_path.is_dir():
+            # Local directory - check for sibling tokenizer/ directory
+            tokenizer_path = encoder_path.parent / "tokenizer"
+            if tokenizer_path.exists():
+                logger.info(f"Using local tokenizer: {tokenizer_path}")
+                tokenizer_source = str(tokenizer_path)
+            else:
+                # Tokenizer might be in same directory as encoder
+                tokenizer_source = str(encoder_path)
+            encoder_source = str(encoder_path)
+        else:
+            # HuggingFace model ID - both encoder and tokenizer from same ID
+            encoder_source = encoder_model_id
+            tokenizer_source = encoder_model_id
+
+        text_encoder = Gemma3ForConditionalGeneration.from_pretrained(
+            encoder_source,
+            torch_dtype=torch_dtype,
+            # Start on CPU when offloading, diffusers will manage device placement
+            device_map="cpu" if enable_cpu_offload else "auto",
+        )
+        tokenizer = AutoTokenizer.from_pretrained(tokenizer_source)
+
+        logger.info(f"Loading LTX-2 transformer from checkpoint: {checkpoint_path}")
+
+        # Pass pre-loaded encoder to diffusers
         pipe = DiffusersLTX2Pipeline.from_single_file(
             checkpoint_path,
+            text_encoder=text_encoder,
+            tokenizer=tokenizer,
             torch_dtype=torch_dtype,
             **kwargs,
         )
@@ -213,20 +260,29 @@ class LTX2Pipeline:
         if not model_path:
             raise ValueError("LTX2Config.model_path is required")
 
+        # Auto-detect local text_encoder if available (saves download from HuggingFace)
+        encoder_model_id = ltx2_config.encoder_model_id
+        local_encoder_path = Path(model_path).expanduser() / "text_encoder"
+        if local_encoder_path.exists() and local_encoder_path.is_dir():
+            # Prefer local encoder over HuggingFace download
+            logger.info(f"Found local text encoder: {local_encoder_path}")
+            encoder_model_id = str(local_encoder_path)
+
         # Check for single file vs directory
         transformer_path = ltx2_config.get_model_file_path()
 
         if os.path.isfile(transformer_path):
-            # Single file loading
+            # Single file loading - Gemma 3 encoder loaded separately
             pipe = cls.from_single_file(
                 transformer_path,
+                encoder_model_id=encoder_model_id,
                 torch_dtype=ltx2_config.get_torch_dtype(),
                 device=device,
                 enable_cpu_offload=(ltx2_config.offload_mode != "none"),
                 **kwargs,
             )
         else:
-            # Directory loading (HuggingFace format)
+            # Directory loading (HuggingFace format) - assumes complete pipeline
             pipe = cls.from_pretrained(
                 model_path,
                 torch_dtype=ltx2_config.get_torch_dtype(),
