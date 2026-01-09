@@ -376,6 +376,21 @@ async function refreshSystemStatus() {
             }
         }
 
+        // LTX-2 Video pipeline status
+        const ltx2PipelineStatus = document.getElementById('ltx2PipelineStatus');
+        const unloadLtx2Btn = document.getElementById('unloadLtx2Btn');
+        if (ltx2PipelineStatus) {
+            if (data.ltx2_pipeline) {
+                ltx2PipelineStatus.textContent = 'Loaded';
+                ltx2PipelineStatus.className = 'text-xs px-2 py-1 rounded bg-green-600/20 text-green-400';
+                if (unloadLtx2Btn) unloadLtx2Btn.classList.remove('hidden');
+            } else {
+                ltx2PipelineStatus.textContent = 'Not loaded';
+                ltx2PipelineStatus.className = 'text-xs px-2 py-1 rounded bg-gray-700 text-gray-400';
+                if (unloadLtx2Btn) unloadLtx2Btn.classList.add('hidden');
+            }
+        }
+
         // FMTT (SigLIP) status
         const fmttStatus = document.getElementById('fmttStatus');
         const unloadFmttBtn = document.getElementById('unloadFmttBtn');
@@ -547,6 +562,23 @@ function setupSettingsModal() {
             await refreshSystemStatus();
             unloadQwenImageT2iBtn.textContent = 'Unload';
             unloadQwenImageT2iBtn.disabled = false;
+        });
+    }
+
+    const unloadLtx2Btn = document.getElementById('unloadLtx2Btn');
+    if (unloadLtx2Btn) {
+        unloadLtx2Btn.addEventListener('click', async () => {
+            unloadLtx2Btn.disabled = true;
+            unloadLtx2Btn.textContent = 'Unloading...';
+            try {
+                const result = await ApiClient.unloadLtx2();
+                showSettingsMessage(result.message || 'LTX-2 Video unloaded', 'success');
+            } catch (err) {
+                showSettingsMessage('Failed to unload LTX-2 Video', 'error');
+            }
+            await refreshSystemStatus();
+            unloadLtx2Btn.textContent = 'Unload';
+            unloadLtx2Btn.disabled = false;
         });
     }
 }

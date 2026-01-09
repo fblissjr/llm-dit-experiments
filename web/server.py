@@ -10,12 +10,15 @@ Usage:
 """
 
 import argparse
+import asyncio
+import hashlib
 import io
+import json
 import logging
 import re
 import time
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, AsyncIterator, Dict, List, Optional
 
 import httpx
 import torch
@@ -58,6 +61,10 @@ qwen_image_pipeline = None
 # Qwen-Image T2I pipeline (pure text-to-image, separate from Qwen-Image-Layered/Edit)
 # Uses unified config via --model-type qwenimage-t2i --qwen-image-model-path
 qwen_image_t2i_pipeline = None
+
+# LTX-2 video generation pipeline
+# Uses Gemma 3-12B text encoder with sequential CPU offload for 24GB VRAM
+ltx2_pipeline = None
 
 # In-memory history (cleared on server restart)
 generation_history = []
@@ -217,6 +224,29 @@ def unload_qwen_image_t2i_pipeline() -> bool:
     return False
 
 
+def unload_ltx2_pipeline() -> bool:
+    """Unload LTX-2 video pipeline to free VRAM.
+
+    Returns True if unloaded, False if not loaded.
+    LTX-2 uses ~20GB VRAM, so unloading is important before loading other models.
+    """
+    global ltx2_pipeline
+    import gc
+    import torch
+
+    if ltx2_pipeline is not None:
+        logger.info("[VRAM] Unloading LTX-2 pipeline to free VRAM...")
+        del ltx2_pipeline
+        ltx2_pipeline = None
+        gc.collect()
+        torch.cuda.empty_cache()
+        if torch.cuda.is_available():
+            allocated = torch.cuda.memory_allocated() / 1024**3
+            logger.info(f"[VRAM] LTX-2 unloaded. CUDA allocated: {allocated:.2f} GB")
+        return True
+    return False
+
+
 def get_vram_status() -> dict:
     """Get current VRAM usage and loaded models status."""
     import torch
@@ -230,6 +260,7 @@ def get_vram_status() -> dict:
             "qwen_image_edit": qwen_image_pipeline is not None and getattr(qwen_image_pipeline, 'edit_pipe', None) is not None,
             "qwen_image_decompose": qwen_image_pipeline is not None and getattr(qwen_image_pipeline, 'decompose_pipe', None) is not None,
             "qwen_image_t2i_pipeline": qwen_image_t2i_pipeline is not None,
+            "ltx2_pipeline": ltx2_pipeline is not None,
         },
         "vram": None,
     }
@@ -445,6 +476,20 @@ class QwenImage2512GenerateRequest(BaseModel):
     cfg_scale: float = 4.0  # Classifier-free guidance scale
     seed: Optional[int] = None  # Random seed
     max_sequence_length: int = 512  # Max prompt tokens
+
+
+class LTX2GenerateRequest(BaseModel):
+    """Request for LTX-2 video generation."""
+    prompt: str  # Text prompt
+    negative_prompt: str = "worst quality, blurry, distorted, inconsistent motion"
+    width: int = 768  # Must be multiple of 32
+    height: int = 512  # Must be multiple of 32
+    num_frames: int = 33  # Must be 8n+1 (9, 17, 25, 33, 41, 49...)
+    fps: float = 24.0  # Output framerate
+    num_inference_steps: int = 12  # Diffusion steps (12 for distilled)
+    guidance_scale: float = 3.5  # CFG scale (3.0-4.0 recommended)
+    seed: Optional[int] = None  # Random seed
+    enable_audio: bool = False  # Generate audio alongside video
 
 
 @app.get("/")
@@ -1545,6 +1590,276 @@ async def dype_status():
 # =====================================================================
 # End DyPE Endpoints
 # =====================================================================
+
+
+# =============================================================================
+# LTX-2 Video Generation Endpoints
+# =============================================================================
+
+# Video output directory
+VIDEO_OUTPUT_DIR = Path(__file__).parent.parent / "outputs" / "videos"
+VIDEO_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+
+async def cleanup_old_videos(max_age_hours: int = 24) -> int:
+    """Delete videos older than max_age_hours.
+
+    Called on startup to prevent unbounded storage growth.
+    Returns count of deleted files.
+    """
+    import time
+
+    max_age_seconds = max_age_hours * 3600
+    now = time.time()
+    deleted_count = 0
+
+    if VIDEO_OUTPUT_DIR.exists():
+        for video_file in VIDEO_OUTPUT_DIR.glob("*.mp4"):
+            try:
+                age = now - video_file.stat().st_mtime
+                if age > max_age_seconds:
+                    video_file.unlink()
+                    deleted_count += 1
+                    # Also delete thumbnail if exists
+                    thumb = video_file.with_suffix(".png")
+                    if thumb.exists():
+                        thumb.unlink()
+            except OSError as e:
+                logger.warning(f"Failed to delete old video {video_file}: {e}")
+
+    if deleted_count > 0:
+        logger.info(f"[Cleanup] Deleted {deleted_count} videos older than {max_age_hours}h")
+
+    return deleted_count
+
+
+@app.on_event("startup")
+async def startup_video_cleanup():
+    """Clean up old videos on server startup."""
+    await cleanup_old_videos(max_age_hours=24)
+
+
+def load_ltx2_pipeline():
+    """Load LTX-2 pipeline on-demand.
+
+    Uses config settings if available, otherwise uses defaults.
+    Returns the loaded pipeline or raises exception.
+    """
+    global ltx2_pipeline
+
+    if ltx2_pipeline is not None:
+        return ltx2_pipeline
+
+    logger.info("[LTX-2] Loading pipeline on first request...")
+
+    try:
+        from llm_dit.pipelines.ltx2 import LTX2Pipeline
+
+        # Try to load from config if available
+        config_path = getattr(runtime_config, 'config_path', None) if runtime_config else None
+        profile = getattr(runtime_config, 'current_profile', 'default') if runtime_config else 'default'
+
+        if config_path:
+            from llm_dit.config import Config
+            config = Config.load(config_path, profile=profile)
+            if config.ltx2 and config.ltx2.model_path:
+                logger.info(f"[LTX-2] Loading from config: {config.ltx2.model_path}")
+                ltx2_pipeline = LTX2Pipeline.from_config(config)
+            else:
+                raise ValueError(
+                    "LTX-2 not configured. Set ltx2.model_path in config.toml "
+                    f"under [{profile}.ltx2] section."
+                )
+        else:
+            # Fallback: Try default path
+            default_path = Path.home() / "Storage" / "LTX-2"
+            if default_path.exists():
+                ltx2_pipeline = LTX2Pipeline.from_pretrained(
+                    str(default_path),
+                    torch_dtype=torch.bfloat16,
+                    enable_cpu_offload=True,
+                )
+            else:
+                raise ValueError(
+                    f"LTX-2 model not found at {default_path}. "
+                    "Configure ltx2.model_path in config.toml."
+                )
+
+        logger.info("[LTX-2] Pipeline loaded successfully")
+        return ltx2_pipeline
+
+    except Exception as e:
+        logger.error(f"[LTX-2] Failed to load pipeline: {e}")
+        raise
+
+
+@app.get("/api/ltx2/status")
+async def ltx2_status():
+    """Get LTX-2 pipeline status.
+
+    Returns availability, loaded state, and VRAM usage.
+    """
+    # Check if LTX-2 config exists in the loaded config file
+    ltx2_configured = False
+
+    config_path = getattr(runtime_config, 'config_path', None) if runtime_config else None
+    profile = getattr(runtime_config, 'current_profile', 'default') if runtime_config else 'default'
+
+    if config_path:
+        try:
+            from llm_dit.config import Config
+            config = Config.load(config_path, profile=profile)
+            if config.ltx2 and config.ltx2.model_path:
+                # Check if path actually exists
+                model_dir = Path(config.ltx2.model_path).expanduser()
+                ltx2_configured = model_dir.exists()
+        except Exception:
+            pass
+
+    # Check default path if not configured
+    if not ltx2_configured:
+        default_path = Path.home() / "Storage" / "LTX-2"
+        ltx2_configured = default_path.exists()
+
+    return {
+        "available": ltx2_configured,
+        "loaded": ltx2_pipeline is not None,
+        "vram_used_gb": None,  # TODO: Track actual VRAM usage per model
+    }
+
+
+@app.post("/api/ltx2/generate/stream")
+async def ltx2_generate_stream(request: LTX2GenerateRequest):
+    """Generate video with SSE progress streaming.
+
+    Returns Server-Sent Events with progress updates during generation,
+    then final result with video URL.
+    """
+
+    async def generate() -> AsyncIterator[str]:
+        """Async generator for SSE events."""
+        try:
+            # Yield initial status
+            yield f"data: {json.dumps({'type': 'status', 'message': 'Loading LTX-2 pipeline...'})}\n\n"
+
+            # Load pipeline (blocking, so run in thread)
+            pipe = await asyncio.get_event_loop().run_in_executor(
+                None, load_ltx2_pipeline
+            )
+
+            yield f"data: {json.dumps({'type': 'status', 'message': 'Pipeline loaded, starting generation...'})}\n\n"
+
+            # Progress tracking
+            progress_state = {"step": 0, "total": request.num_inference_steps}
+
+            def progress_callback(pipe, step, timestep, callback_kwargs):
+                """Callback to track progress (can't yield directly from here)."""
+                progress_state["step"] = step + 1
+                return callback_kwargs
+
+            # Generate video (blocking)
+            seed = request.seed if request.seed is not None else int(time.time()) % (2**32)
+            generator = torch.Generator(device="cuda").manual_seed(seed)
+
+            start_time = time.time()
+
+            # Run generation in thread pool to not block event loop
+            def do_generate():
+                return pipe(
+                    prompt=request.prompt,
+                    negative_prompt=request.negative_prompt,
+                    height=request.height,
+                    width=request.width,
+                    num_frames=request.num_frames,
+                    fps=request.fps,
+                    num_inference_steps=request.num_inference_steps,
+                    guidance_scale=request.guidance_scale,
+                    generator=generator,
+                    enable_audio=request.enable_audio,
+                    callback_on_step_end=progress_callback,
+                )
+
+            # Start generation in background
+            loop = asyncio.get_event_loop()
+            gen_task = loop.run_in_executor(None, do_generate)
+
+            # Poll progress while generating
+            while not gen_task.done():
+                await asyncio.sleep(0.5)
+                step = progress_state["step"]
+                total = progress_state["total"]
+                elapsed = time.time() - start_time
+                if step > 0:
+                    eta = (elapsed / step) * (total - step)
+                    its = step / elapsed
+                    yield f"data: {json.dumps({'type': 'progress', 'step': step, 'total': total, 'elapsed': round(elapsed, 1), 'eta': round(eta, 1), 'its': round(its, 2)})}\n\n"
+
+            # Get result
+            output = await gen_task
+            generation_time = time.time() - start_time
+
+            yield f"data: {json.dumps({'type': 'status', 'message': 'Saving video...'})}\n\n"
+
+            # Generate unique filename
+            timestamp = time.strftime("%Y%m%d_%H%M%S")
+            hash_suffix = hashlib.md5(f"{request.prompt}{seed}".encode()).hexdigest()[:8]
+            video_filename = f"video_{timestamp}_{hash_suffix}.mp4"
+            video_path = VIDEO_OUTPUT_DIR / video_filename
+
+            # Save video
+            await asyncio.get_event_loop().run_in_executor(
+                None, lambda: pipe.save_video(output, str(video_path))
+            )
+
+            # Generate thumbnail (first frame)
+            thumb_filename = f"thumb_{timestamp}_{hash_suffix}.png"
+            thumb_path = VIDEO_OUTPUT_DIR / thumb_filename
+
+            try:
+                from PIL import Image
+                frames = output.frames if hasattr(output, 'frames') else output
+                if hasattr(frames, 'ndim') and frames.ndim == 5:
+                    frames = frames[0]
+                first_frame = frames[0]
+                if first_frame.max() <= 1.0:
+                    first_frame = (first_frame * 255).astype('uint8')
+                Image.fromarray(first_frame).save(str(thumb_path))
+            except Exception as e:
+                logger.warning(f"Failed to save thumbnail: {e}")
+                thumb_filename = None
+
+            # Return final result
+            result = {
+                "type": "complete",
+                "video_url": f"/outputs/videos/{video_filename}",
+                "thumbnail_url": f"/outputs/videos/{thumb_filename}" if thumb_filename else None,
+                "seed": seed,
+                "generation_time": round(generation_time, 1),
+                "num_frames": request.num_frames,
+                "fps": request.fps,
+                "has_audio": request.enable_audio and output.audio is not None,
+            }
+            yield f"data: {json.dumps(result)}\n\n"
+
+        except Exception as e:
+            logger.error(f"[LTX-2] Generation failed: {e}")
+            import traceback
+            traceback.print_exc()
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # Disable nginx buffering
+        },
+    )
+
+
+# Serve video files
+app.mount("/outputs/videos", StaticFiles(directory=VIDEO_OUTPUT_DIR), name="videos")
 
 
 @app.get("/api/generation-config")
@@ -3709,6 +4024,24 @@ async def vram_unload_qwen_image_t2i():
     return {
         "success": unloaded,
         "message": "Qwen-Image T2I pipeline unloaded" if unloaded else "Qwen-Image T2I pipeline was not loaded",
+        "vram": status.get("vram"),
+    }
+
+
+@app.post("/api/vram/unload-ltx2")
+async def vram_unload_ltx2():
+    """Unload LTX-2 video pipeline to free VRAM.
+
+    LTX-2 uses ~20GB VRAM with sequential offload. Unloading is recommended
+    before loading other models like Z-Image or Qwen-Image.
+    The pipeline will be reloaded automatically on next video generation request.
+    """
+    unloaded = unload_ltx2_pipeline()
+
+    status = get_vram_status()
+    return {
+        "success": unloaded,
+        "message": "LTX-2 pipeline unloaded" if unloaded else "LTX-2 pipeline was not loaded",
         "vram": status.get("vram"),
     }
 

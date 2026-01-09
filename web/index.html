@@ -156,9 +156,14 @@
                         Qwen T2I
                         <span class="block text-xs font-normal opacity-75">Text-to-Image</span>
                     </button>
+                    <button type="button" id="modelTypeLTX2" class="flex-1 min-w-[120px] px-4 py-2.5 rounded-lg bg-gray-700 text-gray-300 hover:bg-gray-600 font-medium transition-colors">
+                        LTX-2
+                        <span class="block text-xs font-normal opacity-75">Text-to-Video</span>
+                    </button>
                 </div>
                 <p id="qwenImageStatus" class="hidden text-xs text-yellow-400 mt-2">Qwen-Image not configured. Set qwen_image.model_path in config.</p>
                 <p id="qwenImage2512Status" class="hidden text-xs text-yellow-400 mt-2">Qwen-Image T2I not configured. Use --model-type qwenimage-t2i --qwen-image-model-path</p>
+                <p id="ltx2Status" class="hidden text-xs text-yellow-400 mt-2">LTX-2 not available. Configure ltx2.model_path in config.toml</p>
             </div>
 
             <!-- Shared Generation Parameters -->
@@ -1776,6 +1781,165 @@
                 </div>
             </div>
             </div> <!-- End zImageControls -->
+
+            <!-- LTX-2 Video Controls (hidden by default) -->
+            <div id="ltx2Section" class="hidden space-y-4">
+                <!-- Main Form -->
+                <form id="ltx2Form" class="space-y-4" novalidate>
+                    <!-- Prompt -->
+                    <div>
+                        <label for="ltx2Prompt" class="block text-sm font-medium text-gray-300 mb-2">Prompt *</label>
+                        <textarea
+                            id="ltx2Prompt"
+                            rows="4"
+                            required
+                            class="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-white placeholder-gray-500 focus:ring-2 focus:ring-purple-500 focus:border-transparent resize-none"
+                            placeholder="Describe the video you want to generate..."
+                        ></textarea>
+                    </div>
+
+                    <!-- Negative Prompt -->
+                    <div>
+                        <label for="ltx2NegativePrompt" class="block text-sm font-medium text-gray-300 mb-2">Negative Prompt</label>
+                        <input
+                            type="text"
+                            id="ltx2NegativePrompt"
+                            value="worst quality, blurry, distorted, inconsistent motion"
+                            class="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-xl text-white placeholder-gray-500 focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                        >
+                    </div>
+
+                    <!-- Video Parameters Grid -->
+                    <div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                        <!-- Resolution -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-2">Resolution</label>
+                            <select id="ltx2Resolution" class="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-xl text-white focus:ring-2 focus:ring-purple-500">
+                                <option value="512x384">512×384</option>
+                                <option value="768x512" selected>768×512</option>
+                                <option value="768x768">768×768</option>
+                                <option value="1024x576">1024×576</option>
+                            </select>
+                        </div>
+
+                        <!-- Frames -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-2">Frames</label>
+                            <select id="ltx2Frames" class="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-xl text-white focus:ring-2 focus:ring-purple-500">
+                                <option value="17">17 (~0.7s)</option>
+                                <option value="25">25 (~1s)</option>
+                                <option value="33" selected>33 (~1.4s)</option>
+                                <option value="41">41 (~1.7s)</option>
+                                <option value="49">49 (~2s)</option>
+                            </select>
+                        </div>
+
+                        <!-- FPS -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-2">FPS</label>
+                            <input type="number" id="ltx2Fps" value="24" min="12" max="30" class="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-xl text-white focus:ring-2 focus:ring-purple-500">
+                        </div>
+
+                        <!-- Steps -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-2">Steps</label>
+                            <input type="number" id="ltx2Steps" value="12" min="8" max="20" class="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-xl text-white focus:ring-2 focus:ring-purple-500">
+                        </div>
+                    </div>
+
+                    <!-- Guidance and Seed -->
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-2">
+                                Guidance: <span id="ltx2GuidanceValue" class="text-purple-400">3.5</span>
+                            </label>
+                            <input type="range" id="ltx2Guidance" min="1.0" max="7.0" step="0.1" value="3.5" class="w-full">
+                            <div class="flex justify-between text-xs text-gray-500 mt-1">
+                                <span>1.0</span>
+                                <span>7.0</span>
+                            </div>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-2">Seed</label>
+                            <div class="flex gap-2">
+                                <input type="number" id="ltx2Seed" placeholder="Random" class="flex-1 px-3 py-2 bg-gray-800 border border-gray-700 rounded-xl text-white placeholder-gray-500 focus:ring-2 focus:ring-purple-500">
+                                <button type="button" id="ltx2RandomSeed" class="px-3 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-xl" title="Random seed">🎲</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Audio Toggle -->
+                    <div class="flex items-center gap-3 p-3 bg-gray-800/50 rounded-xl border border-gray-700">
+                        <input type="checkbox" id="ltx2Audio" class="w-4 h-4 rounded bg-gray-700 border-gray-600 text-purple-500 focus:ring-purple-500">
+                        <label for="ltx2Audio" class="text-sm text-gray-300 cursor-pointer">Generate Audio</label>
+                        <span class="text-xs text-gray-500">(Adds ~10s to generation)</span>
+                    </div>
+
+                    <!-- Generate Button -->
+                    <button
+                        type="submit"
+                        id="ltx2GenerateBtn"
+                        class="w-full py-3 px-4 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-semibold rounded-xl transition-colors flex items-center justify-center gap-2"
+                    >
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/>
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                        </svg>
+                        Generate Video
+                    </button>
+                </form>
+
+                <!-- Progress Bar -->
+                <div id="ltx2Progress" class="hidden">
+                    <div class="p-4 bg-gray-800/50 rounded-xl border border-gray-700">
+                        <div class="flex justify-between text-sm text-gray-300 mb-2">
+                            <span id="ltx2ProgressStatus">Starting...</span>
+                            <span id="ltx2ProgressEta">--</span>
+                        </div>
+                        <div class="w-full bg-gray-700 rounded-full h-3">
+                            <div id="ltx2ProgressBar" class="bg-purple-600 h-3 rounded-full transition-all duration-300" style="width: 0%"></div>
+                        </div>
+                        <p class="text-xs text-gray-500 mt-2" id="ltx2ProgressDetail">Preparing...</p>
+                    </div>
+                </div>
+
+                <!-- Video Result -->
+                <div id="ltx2Result" class="hidden">
+                    <div class="p-4 bg-gray-800/50 rounded-xl border border-gray-700">
+                        <div class="mb-3 flex justify-between items-center">
+                            <h3 class="text-sm font-medium text-gray-300">Generated Video</h3>
+                            <span id="ltx2ResultTime" class="text-xs text-gray-500">--</span>
+                        </div>
+                        <video id="ltx2Video" controls class="w-full rounded-lg bg-black">
+                            <source src="" type="video/mp4">
+                            Your browser does not support the video tag.
+                        </video>
+                        <div class="flex gap-2 mt-3">
+                            <button
+                                id="ltx2Download"
+                                class="flex-1 py-2 px-4 bg-green-600 hover:bg-green-700 text-white font-medium rounded-lg transition-colors flex items-center justify-center gap-2"
+                            >
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+                                </svg>
+                                Download Video
+                            </button>
+                            <button
+                                id="ltx2DownloadAudio"
+                                class="hidden flex-1 py-2 px-4 bg-gray-700 hover:bg-gray-600 text-white font-medium rounded-lg transition-colors flex items-center justify-center gap-2"
+                            >
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3"/>
+                                </svg>
+                                Audio Only
+                            </button>
+                        </div>
+                        <div class="mt-3 text-xs text-gray-500">
+                            <span id="ltx2ResultInfo">--</span>
+                        </div>
+                    </div>
+                </div>
+            </div> <!-- End ltx2Section -->
         </div>
 
         <!-- Image Lightbox Modal -->
@@ -1928,6 +2092,16 @@
                             <div class="flex items-center gap-2">
                                 <span id="qwenImageT2iStatus" class="text-xs px-2 py-1 rounded bg-gray-700 text-gray-400">Unknown</span>
                                 <button id="unloadQwenImageT2iBtn" class="text-xs px-2 py-1 rounded bg-red-600/20 text-red-400 hover:bg-red-600/30 hidden">Unload</button>
+                            </div>
+                        </div>
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <span class="text-sm text-gray-400">LTX-2 Video</span>
+                                <span class="text-xs text-gray-500 ml-1">(~20GB)</span>
+                            </div>
+                            <div class="flex items-center gap-2">
+                                <span id="ltx2PipelineStatus" class="text-xs px-2 py-1 rounded bg-gray-700 text-gray-400">Unknown</span>
+                                <button id="unloadLtx2Btn" class="text-xs px-2 py-1 rounded bg-red-600/20 text-red-400 hover:bg-red-600/30 hidden">Unload</button>
                             </div>
                         </div>
                     </div>
@@ -2121,6 +2295,7 @@
     <script src="/static/js/layer-blend.js"></script>
     <script src="/static/js/advanced.js"></script>
     <script src="/static/js/qwen-image.js"></script>
+    <script src="/static/js/ltx2.js"></script>
     <script src="/static/js/image-utils.js"></script>
     <script src="/static/js/config-manager.js"></script>
     <script src="/static/js/app.js"></script>

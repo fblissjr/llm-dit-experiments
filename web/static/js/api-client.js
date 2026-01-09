@@ -44,6 +44,89 @@ const ApiClient = {
         return response.json();
     },
 
+    async unloadLtx2() {
+        const response = await fetch(`${API_BASE}/api/vram/unload-ltx2`, { method: 'POST' });
+        return response.json();
+    },
+
+    // =========================================================================
+    // LTX-2 Video Generation
+    // =========================================================================
+
+    async getLtx2Status() {
+        const response = await fetch(`${API_BASE}/api/ltx2/status`);
+        return response.json();
+    },
+
+    /**
+     * Generate video with LTX-2 using Server-Sent Events for progress.
+     * @param {Object} params - Generation parameters
+     * @param {Function} onProgress - Progress callback (step, total, elapsed, eta, its)
+     * @param {Function} onStatus - Status callback (message)
+     * @param {Function} onComplete - Completion callback (result)
+     * @param {Function} onError - Error callback (error message)
+     * @returns {EventSource} - The EventSource for manual control
+     */
+    ltx2GenerateStream(params, { onProgress, onStatus, onComplete, onError }) {
+        const url = new URL(`${API_BASE}/api/ltx2/generate/stream`);
+
+        // Use fetch with POST to get the SSE stream
+        const eventSource = new EventSource(`${API_BASE}/api/ltx2/generate/stream?${new URLSearchParams({})}`);
+
+        // Note: EventSource only supports GET, so we use fetch with ReadableStream
+        return this._ltx2GenerateSSE(params, { onProgress, onStatus, onComplete, onError });
+    },
+
+    async _ltx2GenerateSSE(params, { onProgress, onStatus, onComplete, onError }) {
+        try {
+            const response = await fetch(`${API_BASE}/api/ltx2/generate/stream`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(params),
+            });
+
+            if (!response.ok) {
+                const error = await response.text();
+                onError && onError(error);
+                return;
+            }
+
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n\n');
+                buffer = lines.pop() || '';
+
+                for (const line of lines) {
+                    if (line.startsWith('data: ')) {
+                        try {
+                            const data = JSON.parse(line.slice(6));
+                            if (data.type === 'progress') {
+                                onProgress && onProgress(data);
+                            } else if (data.type === 'status') {
+                                onStatus && onStatus(data.message);
+                            } else if (data.type === 'complete') {
+                                onComplete && onComplete(data);
+                            } else if (data.type === 'error') {
+                                onError && onError(data.message);
+                            }
+                        } catch (e) {
+                            console.warn('Failed to parse SSE data:', line);
+                        }
+                    }
+                }
+            }
+        } catch (err) {
+            onError && onError(err.message);
+        }
+    },
+
     // =========================================================================
     // Configuration
     // =========================================================================
