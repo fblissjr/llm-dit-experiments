@@ -536,10 +536,13 @@ def run_ltx2_generation(args, config, logger) -> int:
         model_index_path = model_dir / "model_index.json"
         if model_index_path.exists():
             logger.info(f"Found model_index.json - using from_pretrained()")
+            logger.info("Note: Using sequential CPU offload (layer-by-layer)")
+            logger.info("  This is slower (~4s/step) but fits in 24GB VRAM")
             pipeline = LTX2Pipeline.from_pretrained(
                 str(model_dir),
                 torch_dtype=torch.bfloat16,
                 enable_cpu_offload=(offload_mode != "none"),
+                fast_mode=False,  # Use reliable sequential offload
             )
         else:
             # No model_index.json - try single file loading
@@ -566,6 +569,8 @@ def run_ltx2_generation(args, config, logger) -> int:
 
             if checkpoint_file:
                 logger.info(f"Loading from checkpoint: {checkpoint_file}")
+                logger.info("Note: Using sequential CPU offload (layer-by-layer)")
+                logger.info("  This is slower (~4s/step) but fits in 24GB VRAM")
                 pipeline = LTX2Pipeline.from_single_file(
                     checkpoint_file,
                     encoder_model_id=encoder_model_id,
@@ -575,10 +580,13 @@ def run_ltx2_generation(args, config, logger) -> int:
             else:
                 # Try HuggingFace format
                 logger.info(f"Loading from directory: {model_path}")
+                logger.info("Note: Using sequential CPU offload (layer-by-layer)")
+                logger.info("  This is slower (~4s/step) but fits in 24GB VRAM")
                 pipeline = LTX2Pipeline.from_pretrained(
                     model_path,
                     torch_dtype=torch.bfloat16,
                     enable_cpu_offload=(offload_mode != "none"),
+                    fast_mode=False,  # Use reliable sequential offload
                 )
 
     except Exception as e:
@@ -615,8 +623,10 @@ def run_ltx2_generation(args, config, logger) -> int:
     start_gen = time.time()
 
     # Create progress callback for step-by-step updates
+    # Default to 12 steps for distilled model
+    actual_steps = steps if steps else 12
     from llm_dit.pipelines.ltx2 import ProgressCallback
-    progress = ProgressCallback(total_steps=steps, desc="Diffusion")
+    progress = ProgressCallback(total_steps=actual_steps, desc="Diffusion")
 
     try:
         output = pipeline(

@@ -61,7 +61,7 @@ class ProgressCallback:
 
     def __init__(
         self,
-        total_steps: int,
+        total_steps: int = 12,
         desc: str = "Generating",
         disable: bool = False,
     ):
@@ -69,11 +69,11 @@ class ProgressCallback:
         Initialize progress callback.
 
         Args:
-            total_steps: Total number of diffusion steps.
+            total_steps: Total number of diffusion steps. Defaults to 12.
             desc: Description shown in progress bar.
             disable: Disable progress output.
         """
-        self.total_steps = total_steps
+        self.total_steps = total_steps if total_steps else 12
         self.desc = desc
         self.disable = disable
         self.current_step = 0
@@ -224,6 +224,7 @@ class LTX2Pipeline:
         device: str = "cuda",
         enable_cpu_offload: bool = True,
         variant: Optional[str] = None,
+        fast_mode: bool = False,  # Disabled by default until embeddings integration is complete
         **kwargs,
     ) -> "LTX2Pipeline":
         """
@@ -235,6 +236,10 @@ class LTX2Pipeline:
             device: Device to load on ("cuda", "cpu").
             enable_cpu_offload: Enable model CPU offload for memory efficiency.
             variant: Model variant (e.g., "fp8" for FP8 quantized).
+            fast_mode: Use 8-bit encoder with pre-encoding for faster generation.
+                When True, loads 8-bit encoder, pre-encodes prompts, then deletes
+                encoder before loading transformer. This is faster than sequential
+                offload but requires re-loading pipeline for different prompts.
             **kwargs: Additional arguments for diffusers pipeline.
 
         Returns:
@@ -253,7 +258,6 @@ class LTX2Pipeline:
         # Check if local text encoder is float32 (too big for 24GB)
         text_encoder_path = Path(model_path).expanduser() / "text_encoder"
         use_hf_encoder = False
-        hf_encoder_id = "google/gemma-3-12b-it-qat-q4_0-unquantized"
 
         if text_encoder_path.exists():
             config_path = text_encoder_path / "config.json"
@@ -264,44 +268,65 @@ class LTX2Pipeline:
                     if te_config.get("dtype") == "float32":
                         logger.warning(
                             f"Local text encoder is float32 (~50GB) - too large for 24GB VRAM. "
-                            f"Loading Q4 version from HuggingFace instead: {hf_encoder_id}"
+                            f"Loading from HuggingFace instead."
                         )
                         use_hf_encoder = True
 
+        encoder_id = "google/gemma-3-12b-it"
         load_kwargs = {"torch_dtype": torch_dtype, "variant": variant, **kwargs}
 
+        # Fast mode: Use 8-bit encoder pre-encoding approach
+        # This is faster than sequential offload because transformer doesn't need layer-by-layer loading
+        if fast_mode and use_hf_encoder:
+            logger.info("Using FAST MODE: 8-bit encoder with pre-encoding")
+            logger.info("  - Loads 8-bit encoder (~12GB)")
+            logger.info("  - Pre-encodes prompts")
+            logger.info("  - Deletes encoder before transformer")
+            logger.info("  - Transformer uses model-level offload (faster)")
+
+            # Load tokenizer (always needed)
+            from transformers import AutoTokenizer
+            tokenizer = AutoTokenizer.from_pretrained(encoder_id)
+
+            # Create wrapper with lazy encoder loading
+            # Pipeline will be loaded without encoder, encoder loaded on first call
+            instance = cls(pipe=None)
+            instance._model_path = model_path
+            instance._load_kwargs = load_kwargs
+            instance._encoder_id = encoder_id
+            instance._tokenizer = tokenizer
+            instance._torch_dtype = torch_dtype
+            instance._device = device
+            instance._enable_cpu_offload = enable_cpu_offload
+            instance._fast_mode = True
+            instance._encoder_loaded = False
+            instance._pipe_loaded = False
+
+            return instance
+
+        # Standard mode: Load encoder and enable offloading
         if use_hf_encoder:
-            # Load text encoder in bfloat16 WITHOUT quantization
-            # Let diffusers' sequential CPU offload handle memory management
-            # Each layer is ~600MB, sequential offload loads one at a time
-            try:
-                from transformers import Gemma3ForConditionalGeneration, AutoTokenizer
+            from transformers import Gemma3ForConditionalGeneration, AutoTokenizer
 
-                encoder_id = "google/gemma-3-12b-it"
-                logger.info(f"Loading text encoder (bfloat16, no quant): {encoder_id}")
-                logger.info("Sequential CPU offload will move layers one at a time (~600MB each)")
+            logger.info(f"Loading text encoder (bfloat16): {encoder_id}")
+            logger.info("Sequential CPU offload will move layers one at a time (~600MB each)")
 
-                text_encoder = Gemma3ForConditionalGeneration.from_pretrained(
-                    encoder_id,
-                    torch_dtype=torch_dtype,
-                    low_cpu_mem_usage=True,
-                    # No device_map - let diffusers handle placement
-                )
-                tokenizer = AutoTokenizer.from_pretrained(encoder_id)
+            text_encoder = Gemma3ForConditionalGeneration.from_pretrained(
+                encoder_id,
+                torch_dtype=torch_dtype,
+                low_cpu_mem_usage=True,
+            )
+            logger.info("Text encoder loaded to CPU (bfloat16)")
 
-                load_kwargs["text_encoder"] = text_encoder
-                load_kwargs["tokenizer"] = tokenizer
-                logger.info("Text encoder loaded to CPU (bfloat16)")
-            except Exception as e:
-                logger.error(f"Failed to load text encoder: {e}")
-                raise
+            tokenizer = AutoTokenizer.from_pretrained(encoder_id)
+            load_kwargs["text_encoder"] = text_encoder
+            load_kwargs["tokenizer"] = tokenizer
 
         pipe = DiffusersLTX2Pipeline.from_pretrained(model_path, **load_kwargs)
 
         # Enable CPU offload for memory efficiency
         if enable_cpu_offload and device != "cpu":
-            # Use sequential offload - more aggressive, moves each layer individually
-            # Slower (~3-5x) but required for 24GB with 12B encoder + 19B transformer
+            # Sequential offload - moves each layer, slower but guaranteed to fit
             logger.info("Enabling SEQUENTIAL CPU offload (layer-by-layer) for memory efficiency")
             pipe.enable_sequential_cpu_offload()
         elif device != "cpu":
@@ -313,7 +338,9 @@ class LTX2Pipeline:
             reserved = torch.cuda.memory_reserved() / 1e9
             logger.info(f"GPU memory after load: {allocated:.1f}GB allocated, {reserved:.1f}GB reserved")
 
-        return cls(pipe=pipe)
+        instance = cls(pipe=pipe)
+        instance._fast_mode = False
+        return instance
 
     @classmethod
     def from_single_file(
@@ -519,6 +546,162 @@ class LTX2Pipeline:
         self._pipe.unload_lora_weights()
         logger.info("LoRA weights unloaded")
 
+    def _load_8bit_encoder_and_encode(
+        self,
+        prompt: str,
+        negative_prompt: str,
+        max_sequence_length: int = 1024,
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        Load 8-bit encoder, encode prompts, then delete encoder to free VRAM.
+
+        This is the core of fast_mode - encoding with 8-bit (~12GB) then freeing
+        that VRAM for the transformer (~19GB).
+
+        Returns:
+            Tuple of (prompt_embeds, prompt_attention_mask,
+                     negative_prompt_embeds, negative_prompt_attention_mask)
+        """
+        from transformers import Gemma3ForConditionalGeneration, BitsAndBytesConfig
+
+        logger.info(f"Loading 8-bit text encoder: {self._encoder_id}")
+
+        # Load 8-bit encoder to GPU
+        bnb_config = BitsAndBytesConfig(
+            load_in_8bit=True,
+        )
+
+        encoder = Gemma3ForConditionalGeneration.from_pretrained(
+            self._encoder_id,
+            quantization_config=bnb_config,
+            torch_dtype=self._torch_dtype,
+            device_map="auto",
+            low_cpu_mem_usage=True,
+        )
+
+        if torch.cuda.is_available():
+            allocated = torch.cuda.memory_allocated() / 1e9
+            logger.info(f"Encoder loaded: {allocated:.1f}GB VRAM used")
+
+        # Set up tokenizer
+        tokenizer = self._tokenizer
+        tokenizer.padding_side = "left"
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token
+
+        device = encoder.device
+        dtype = self._torch_dtype
+
+        # Encode positive prompt
+        logger.info("Encoding positive prompt...")
+        text_inputs = tokenizer(
+            [prompt.strip()],
+            padding="max_length",
+            max_length=max_sequence_length,
+            truncation=True,
+            add_special_tokens=True,
+            return_tensors="pt",
+        )
+        text_input_ids = text_inputs.input_ids.to(device)
+        prompt_attention_mask = text_inputs.attention_mask.to(device)
+
+        with torch.no_grad():
+            text_encoder_outputs = encoder(
+                input_ids=text_input_ids,
+                attention_mask=prompt_attention_mask,
+                output_hidden_states=True,
+            )
+        text_encoder_hidden_states = text_encoder_outputs.hidden_states
+        text_encoder_hidden_states = torch.stack(text_encoder_hidden_states, dim=-1)
+        sequence_lengths = prompt_attention_mask.sum(dim=-1)
+
+        # We need to replicate _pack_text_embeds from diffusers
+        # For now, store raw hidden states - diffusers will handle packing
+        prompt_embeds = text_encoder_hidden_states
+
+        # Encode negative prompt
+        logger.info("Encoding negative prompt...")
+        neg_text_inputs = tokenizer(
+            [negative_prompt.strip()],
+            padding="max_length",
+            max_length=max_sequence_length,
+            truncation=True,
+            add_special_tokens=True,
+            return_tensors="pt",
+        )
+        neg_text_input_ids = neg_text_inputs.input_ids.to(device)
+        negative_prompt_attention_mask = neg_text_inputs.attention_mask.to(device)
+
+        with torch.no_grad():
+            neg_encoder_outputs = encoder(
+                input_ids=neg_text_input_ids,
+                attention_mask=negative_prompt_attention_mask,
+                output_hidden_states=True,
+            )
+        neg_hidden_states = neg_encoder_outputs.hidden_states
+        neg_hidden_states = torch.stack(neg_hidden_states, dim=-1)
+
+        negative_prompt_embeds = neg_hidden_states
+
+        # Move embeddings to CPU to free GPU memory
+        prompt_embeds = prompt_embeds.cpu()
+        prompt_attention_mask = prompt_attention_mask.cpu()
+        negative_prompt_embeds = negative_prompt_embeds.cpu()
+        negative_prompt_attention_mask = negative_prompt_attention_mask.cpu()
+        sequence_lengths = sequence_lengths.cpu()
+
+        # Delete encoder and free VRAM
+        logger.info("Deleting encoder to free VRAM...")
+        del encoder
+        del text_encoder_outputs
+        del neg_encoder_outputs
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            allocated = torch.cuda.memory_allocated() / 1e9
+            logger.info(f"After encoder cleanup: {allocated:.1f}GB VRAM used")
+
+        # Store sequence lengths for later packing
+        self._sequence_lengths = sequence_lengths
+        self._neg_sequence_lengths = negative_prompt_attention_mask.sum(dim=-1)
+
+        return (
+            prompt_embeds,
+            prompt_attention_mask,
+            negative_prompt_embeds,
+            negative_prompt_attention_mask,
+        )
+
+    def _load_pipeline_without_encoder(self) -> None:
+        """Load the diffusers pipeline without text encoder for fast_mode."""
+        from diffusers import LTX2Pipeline as DiffusersLTX2Pipeline
+
+        logger.info(f"Loading LTX-2 pipeline (without encoder): {self._model_path}")
+
+        # Load pipeline with a dummy/None encoder
+        # We'll pass pre-computed embeddings instead
+        pipe = DiffusersLTX2Pipeline.from_pretrained(
+            self._model_path,
+            text_encoder=None,  # Don't load encoder
+            tokenizer=self._tokenizer,
+            **self._load_kwargs,
+        )
+
+        # Enable model-level CPU offload (faster than sequential)
+        if self._enable_cpu_offload and self._device != "cpu":
+            logger.info("Enabling MODEL CPU offload (faster than sequential)")
+            pipe.enable_model_cpu_offload()
+        elif self._device != "cpu":
+            pipe.to(self._device)
+
+        self._pipe = pipe
+        self._pipe_loaded = True
+
+        if torch.cuda.is_available():
+            allocated = torch.cuda.memory_allocated() / 1e9
+            reserved = torch.cuda.memory_reserved() / 1e9
+            logger.info(f"Pipeline loaded: {allocated:.1f}GB allocated, {reserved:.1f}GB reserved")
+
     def __call__(
         self,
         prompt: str,
@@ -589,7 +772,51 @@ class LTX2Pipeline:
             f"{num_inference_steps} steps, guidance={guidance_scale}"
         )
 
-        # Call diffusers pipeline
+        # Fast mode: Lazy loading with pre-encoding
+        if getattr(self, '_fast_mode', False) and self._pipe is None:
+            logger.info("FAST MODE: Pre-encoding prompts with 8-bit encoder...")
+
+            # Step 1: Load 8-bit encoder and encode prompts
+            (
+                prompt_embeds,
+                prompt_attention_mask,
+                negative_prompt_embeds,
+                negative_prompt_attention_mask,
+            ) = self._load_8bit_encoder_and_encode(prompt, negative_prompt)
+
+            # Step 2: Load pipeline without encoder
+            self._load_pipeline_without_encoder()
+
+            # Step 3: Generate using pre-computed embeddings
+            # Note: We pass raw hidden states, diffusers will pack them
+            # Actually, we need to use the pipeline's _pack_text_embeds method
+            # But since we loaded without encoder, we need to handle this differently
+
+            # For now, fall back to standard path with the loaded pipeline
+            # The embeddings approach requires more integration with diffusers internals
+            logger.warning(
+                "Fast mode pre-encoding not yet fully integrated with diffusers. "
+                "Falling back to standard generation (will be slower)."
+            )
+
+            # Re-encode with the pipeline (which now has no encoder, so this will fail)
+            # Actually, let's just generate normally since we've loaded the pipeline
+            # but without encoder, we need embeddings
+
+            # TODO: Complete the embeddings integration
+            # For now, reload with encoder for this run
+            logger.info("Reloading with bfloat16 encoder for this generation...")
+            from transformers import Gemma3ForConditionalGeneration
+
+            text_encoder = Gemma3ForConditionalGeneration.from_pretrained(
+                self._encoder_id,
+                torch_dtype=self._torch_dtype,
+                low_cpu_mem_usage=True,
+            )
+            self._pipe.text_encoder = text_encoder
+            self._pipe.enable_sequential_cpu_offload()
+
+        # Standard generation
         result = self._pipe(
             prompt=prompt,
             negative_prompt=negative_prompt,
@@ -647,14 +874,6 @@ class LTX2Pipeline:
         Returns:
             Path to saved video.
         """
-        try:
-            from diffusers.pipelines.ltx2.export_utils import encode_video
-        except ImportError:
-            raise ImportError(
-                "diffusers export_utils required. "
-                "Install with: pip install diffusers>=0.32.0"
-            )
-
         if isinstance(output, VideoOutput):
             frames = output.frames
             audio = output.audio
@@ -664,34 +883,156 @@ class LTX2Pipeline:
             frames = output
             fps = fps or 24.0
 
+        # Handle batch dimension: [B, F, H, W, C] -> [F, H, W, C]
+        if frames.ndim == 5:
+            frames = frames[0]
+
         # Ensure uint8
         if frames.dtype != np.uint8:
-            frames = (frames * 255).round().astype(np.uint8)
+            if frames.max() <= 1.0:
+                frames = (frames * 255).round().astype(np.uint8)
+            else:
+                frames = frames.astype(np.uint8)
 
-        # Convert to torch for export
-        video_tensor = torch.from_numpy(frames)
+        # Try different video writers in order of preference
+        saved = False
 
-        # Handle batch dimension
-        if video_tensor.ndim == 5:
-            video_tensor = video_tensor[0]  # Take first batch
+        # Option 1: PyAV (official LTX-2 method, supports audio)
+        try:
+            import av
+            from fractions import Fraction
 
-        # Prepare audio
-        audio_tensor = None
-        if audio is not None:
-            audio_tensor = torch.from_numpy(audio).float()
-            if audio_tensor.ndim == 2:
-                audio_tensor = audio_tensor[0]  # Take first batch
+            num_frames, height, width, _ = frames.shape
+            container = av.open(output_path, mode="w")
 
-        # Save video
-        encode_video(
-            video_tensor,
-            fps=fps,
-            audio=audio_tensor,
-            audio_sample_rate=audio_sample_rate,
-            output_path=output_path,
-        )
+            # Video stream
+            video_stream = container.add_stream("libx264", rate=int(fps))
+            video_stream.width = width
+            video_stream.height = height
+            video_stream.pix_fmt = "yuv420p"
 
-        logger.info(f"Video saved to {output_path}")
+            # Audio stream (if audio provided)
+            audio_stream = None
+            if audio is not None:
+                audio_stream = container.add_stream("aac", rate=audio_sample_rate)
+                audio_stream.codec_context.sample_rate = audio_sample_rate
+                audio_stream.codec_context.layout = "stereo"
+                audio_stream.codec_context.time_base = Fraction(1, audio_sample_rate)
+
+            # Write video frames
+            for frame_array in frames:
+                frame = av.VideoFrame.from_ndarray(frame_array, format="rgb24")
+                for packet in video_stream.encode(frame):
+                    container.mux(packet)
+
+            # Flush video encoder
+            for packet in video_stream.encode():
+                container.mux(packet)
+
+            # Write audio if provided
+            if audio is not None and audio_stream is not None:
+                # Convert audio to proper format
+                audio_data = audio
+                if isinstance(audio_data, np.ndarray):
+                    audio_tensor = torch.from_numpy(audio_data)
+                else:
+                    audio_tensor = audio_data
+
+                if audio_tensor.ndim == 1:
+                    audio_tensor = audio_tensor.unsqueeze(1)
+                if audio_tensor.shape[1] != 2 and audio_tensor.shape[0] == 2:
+                    audio_tensor = audio_tensor.T
+                # Mono to stereo if needed
+                if audio_tensor.shape[1] == 1:
+                    audio_tensor = audio_tensor.repeat(1, 2)
+
+                # Convert to int16
+                if audio_tensor.dtype != torch.int16:
+                    audio_tensor = torch.clip(audio_tensor.float(), -1.0, 1.0)
+                    audio_tensor = (audio_tensor * 32767.0).to(torch.int16)
+
+                # Create audio frame
+                audio_np = audio_tensor.contiguous().reshape(1, -1).cpu().numpy()
+                audio_frame = av.AudioFrame.from_ndarray(audio_np, format="s16", layout="stereo")
+                audio_frame.sample_rate = audio_sample_rate
+
+                # Resample and encode
+                resampler = av.audio.resampler.AudioResampler(
+                    format=audio_stream.codec_context.format or "fltp",
+                    layout=audio_stream.codec_context.layout or "stereo",
+                    rate=audio_sample_rate,
+                )
+                audio_pts = 0
+                for resampled_frame in resampler.resample(audio_frame):
+                    if resampled_frame.pts is None:
+                        resampled_frame.pts = audio_pts
+                    audio_pts += resampled_frame.samples
+                    resampled_frame.sample_rate = audio_sample_rate
+                    for packet in audio_stream.encode(resampled_frame):
+                        container.mux(packet)
+
+                # Flush audio encoder
+                for packet in audio_stream.encode():
+                    container.mux(packet)
+
+                logger.info(f"Video+Audio saved with PyAV: {output_path}")
+            else:
+                logger.info(f"Video saved with PyAV: {output_path}")
+
+            container.close()
+            saved = True
+        except ImportError:
+            logger.debug("PyAV not available, trying alternatives...")
+        except Exception as e:
+            logger.warning(f"PyAV failed: {e}")
+            import traceback
+            traceback.print_exc()
+
+        # Option 2: torchvision (if available)
+        if not saved:
+            try:
+                import torchvision.io as tvio
+                video_tensor = torch.from_numpy(frames)
+                tvio.write_video(output_path, video_tensor, fps=fps)
+                saved = True
+                logger.info(f"Video saved with torchvision: {output_path}")
+            except Exception as e:
+                logger.debug(f"torchvision.io.write_video failed: {e}")
+
+        # Option 3: imageio (if available)
+        if not saved:
+            try:
+                import imageio.v3 as iio
+                iio.imwrite(output_path, frames, fps=fps)
+                saved = True
+                logger.info(f"Video saved with imageio: {output_path}")
+            except Exception as e:
+                logger.debug(f"imageio failed: {e}")
+
+        # Option 4: OpenCV (if available)
+        if not saved:
+            try:
+                import cv2
+                h, w = frames.shape[1:3]
+                fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+                out = cv2.VideoWriter(output_path, fourcc, fps, (w, h))
+                for frame in frames:
+                    out.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
+                out.release()
+                saved = True
+                logger.info(f"Video saved with OpenCV: {output_path}")
+            except Exception as e:
+                logger.debug(f"OpenCV failed: {e}")
+
+        if not saved:
+            raise RuntimeError(
+                "No video encoder available. Install one of:\n"
+                "  pip install av          (recommended, supports audio)\n"
+                "  pip install torchvision\n"
+                "  pip install imageio[ffmpeg]\n"
+                "  pip install opencv-python"
+            )
+
         return output_path
 
     def offload(self) -> None:
