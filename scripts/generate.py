@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """
-End-to-end image generation script.
+End-to-end image/video generation script.
 
-Supports four model types:
+Supports five model types:
   - Z-Image (zimage): Text-to-image generation (turbo, 8-9 steps)
   - Qwen-Image Layered (qwenimage-layered): Image-to-layers decomposition [legacy]
   - Qwen-Image T2I (qwenimage-t2i): Text-to-image generation (40 steps, FP8)
   - Qwen-Image Edit (qwenimage-edit): Image editing with instructions
+  - LTX-2 (ltx2): Text-to-video generation (19B, FP8)
 
 Usage:
     # Z-Image (default)
@@ -28,6 +29,17 @@ Usage:
         --qwen-image-model-path /path/to/Qwen_Qwen-Image-Layered \\
         --img2img input.jpg \\
         "A cheerful child waving under a blue sky"
+
+    # LTX-2 (text-to-video)
+    uv run scripts/generate.py --model-type ltx2 \\
+        --ltx2-model-path ~/Storage/LTX-2 \\
+        --ltx2-num-frames 33 --ltx2-fps 24 \\
+        "A cat walking through a sunny garden"
+
+    # LTX-2 with config file
+    uv run scripts/generate.py --model-type ltx2 \\
+        --config config.toml --profile rtx4090 \\
+        "Ocean waves crashing on rocky shore"
 
     # With config file (recommended)
     uv run scripts/generate.py --config config.toml "A cat sleeping in sunlight"
@@ -440,6 +452,171 @@ def run_qwen_image_t2i_generation(args, config, logger) -> int:
     return 0
 
 
+def run_ltx2_generation(args, config, logger) -> int:
+    """
+    Run LTX-2 video generation.
+
+    Args:
+        args: Parsed CLI arguments
+        config: RuntimeConfig with all settings
+        logger: Logger instance
+
+    Returns:
+        Exit code (0 for success)
+    """
+    # Validate model path
+    model_path = config.ltx2_model_path
+    if not model_path:
+        logger.error(
+            "No LTX-2 model path specified. "
+            "Use --ltx2-model-path or set ltx2.model_path in config."
+        )
+        return 1
+
+    # Import LTX2Pipeline
+    try:
+        from llm_dit.pipelines.ltx2 import LTX2Pipeline, VideoOutput
+    except ImportError as e:
+        logger.error(f"Failed to import LTX2Pipeline: {e}")
+        logger.error("Ensure diffusers>=0.32.0 is installed.")
+        return 1
+
+    # Get parameters from config
+    num_frames = config.ltx2_num_frames
+    fps = config.ltx2_fps
+    guidance_scale = config.ltx2_guidance_scale
+    steps = config.ltx2_steps
+    lora_path = config.ltx2_lora_path
+    lora_scale = config.ltx2_lora_scale
+    offload_mode = config.ltx2_offload_mode
+    audio_enabled = config.ltx2_audio
+    output_path = getattr(config, 'ltx2_output_path', 'output.mp4')
+
+    # Use height/width from config if set
+    height = config.height if config.height else 768
+    width = config.width if config.width else 512
+
+    # Get seed
+    seed = getattr(args, 'seed', None)
+
+    logger.info("=" * 60)
+    logger.info("LTX-2 VIDEO GENERATION")
+    logger.info("=" * 60)
+    logger.info(f"  Model: {model_path}")
+    logger.info(f"  Resolution: {width}x{height}")
+    logger.info(f"  Frames: {num_frames} @ {fps} FPS")
+    logger.info(f"  Steps: {steps or 'auto (12 for distilled)'}")
+    logger.info(f"  Guidance: {guidance_scale}")
+    logger.info(f"  Offload: {offload_mode}")
+    if lora_path:
+        logger.info(f"  LoRA: {lora_path} (scale={lora_scale})")
+    logger.info(f"  Audio: {audio_enabled}")
+    logger.info(f"  Output: {output_path}")
+    if seed is not None:
+        logger.info(f"  Seed: {seed}")
+    logger.info("-" * 60)
+
+    # Load pipeline
+    logger.info("Loading LTX-2 pipeline...")
+    start_load = time.time()
+
+    try:
+        # Try to load from single file first (safetensors checkpoint)
+        from pathlib import Path
+        model_dir = Path(model_path)
+
+        # Check for common checkpoint file names
+        checkpoint_patterns = [
+            "ltx-2-19b-distilled-fp8.safetensors",
+            "ltx-2-19b-dev-fp8.safetensors",
+            "ltx-2-19b-dev-fp4.safetensors",
+            "ltx-2-19b-dev.safetensors",
+        ]
+
+        checkpoint_file = None
+        for pattern in checkpoint_patterns:
+            candidate = model_dir / pattern
+            if candidate.exists():
+                checkpoint_file = str(candidate)
+                break
+
+        if checkpoint_file:
+            logger.info(f"Loading from checkpoint: {checkpoint_file}")
+            pipeline = LTX2Pipeline.from_single_file(
+                checkpoint_file,
+                torch_dtype=torch.bfloat16,
+                enable_cpu_offload=(offload_mode != "none"),
+            )
+        else:
+            # Try HuggingFace format
+            logger.info(f"Loading from directory: {model_path}")
+            pipeline = LTX2Pipeline.from_pretrained(
+                model_path,
+                torch_dtype=torch.bfloat16,
+                enable_cpu_offload=(offload_mode != "none"),
+            )
+
+    except Exception as e:
+        logger.error(f"Failed to load LTX-2 pipeline: {e}")
+        import traceback
+        traceback.print_exc()
+        return 1
+
+    load_time = time.time() - start_load
+    logger.info(f"Pipeline loaded in {load_time:.1f}s")
+
+    # Load LoRA if configured
+    if lora_path:
+        try:
+            pipeline.load_lora(lora_path, scale=lora_scale)
+            logger.info(f"LoRA loaded: {lora_path}")
+        except Exception as e:
+            logger.warning(f"Failed to load LoRA: {e}")
+
+    # Generate video
+    prompt = args.prompt
+    negative_prompt = getattr(args, 'negative_prompt', None) or \
+        "worst quality, blurry, distorted, inconsistent motion"
+
+    logger.info(f"Generating video for: {prompt[:80]}...")
+    start_gen = time.time()
+
+    try:
+        output = pipeline(
+            prompt=prompt,
+            negative_prompt=negative_prompt,
+            height=height,
+            width=width,
+            num_frames=num_frames,
+            fps=float(fps),
+            num_inference_steps=steps,
+            guidance_scale=guidance_scale,
+            seed=seed,
+            enable_audio=audio_enabled,
+        )
+    except Exception as e:
+        logger.error(f"Generation failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return 1
+
+    gen_time = time.time() - start_gen
+    logger.info(f"Generation complete in {gen_time:.1f}s")
+
+    # Save video
+    try:
+        pipeline.save_video(output, output_path)
+        logger.info(f"Saved: {output_path}")
+    except Exception as e:
+        logger.error(f"Failed to save video: {e}")
+        return 1
+
+    logger.info("=" * 60)
+    logger.info(f"Total time: load={load_time:.1f}s + generate={gen_time:.1f}s")
+
+    return 0
+
+
 def main():
     # Create parser with generation args
     parser = create_base_parser(
@@ -522,6 +699,9 @@ def main():
         # TODO: Implement dedicated edit-only generation flow
         logger.error("qwenimage-edit requires --img2img. Use qwenimage-t2i for text-to-image.")
         return 1
+
+    if config.model_type == "ltx2":
+        return run_ltx2_generation(args, config, logger)
 
     # Z-Image flow continues below
     # Validate model path
