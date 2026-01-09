@@ -36,6 +36,7 @@ Example:
 import gc
 import logging
 import os
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterator, List, Optional, Tuple, Union
@@ -44,6 +45,134 @@ import torch
 import numpy as np
 
 logger = logging.getLogger(__name__)
+
+
+class ProgressCallback:
+    """
+    Progress callback for diffusers pipeline with tqdm-style output.
+
+    Tracks step progress and performance metrics (it/s, ETA).
+
+    Usage:
+        callback = ProgressCallback(total_steps=12)
+        pipeline(prompt="...", callback_on_step_end=callback)
+        callback.close()
+    """
+
+    def __init__(
+        self,
+        total_steps: int,
+        desc: str = "Generating",
+        disable: bool = False,
+    ):
+        """
+        Initialize progress callback.
+
+        Args:
+            total_steps: Total number of diffusion steps.
+            desc: Description shown in progress bar.
+            disable: Disable progress output.
+        """
+        self.total_steps = total_steps
+        self.desc = desc
+        self.disable = disable
+        self.current_step = 0
+        self.start_time: Optional[float] = None
+        self.step_times: list[float] = []
+        self._last_step_time: Optional[float] = None
+        self._pbar = None
+
+    def _format_time(self, seconds: float) -> str:
+        """Format seconds into human readable string."""
+        if seconds < 60:
+            return f"{seconds:.1f}s"
+        elif seconds < 3600:
+            mins = int(seconds // 60)
+            secs = int(seconds % 60)
+            return f"{mins}:{secs:02d}"
+        else:
+            hours = int(seconds // 3600)
+            mins = int((seconds % 3600) // 60)
+            return f"{hours}:{mins:02d}:00"
+
+    def __call__(self, pipe, step: int, timestep: int, callback_kwargs: dict) -> dict:
+        """
+        Called at end of each diffusion step.
+
+        Args:
+            pipe: Pipeline instance.
+            step: Current step index (0-based).
+            timestep: Current diffusion timestep.
+            callback_kwargs: Additional callback arguments.
+
+        Returns:
+            callback_kwargs dict (unchanged).
+        """
+        if self.disable:
+            return callback_kwargs
+
+        now = time.time()
+
+        # Initialize on first call
+        if self.start_time is None:
+            self.start_time = now
+            self._last_step_time = now
+
+        # Track step time
+        if self._last_step_time is not None:
+            step_time = now - self._last_step_time
+            self.step_times.append(step_time)
+        self._last_step_time = now
+
+        self.current_step = step + 1  # 1-indexed for display
+
+        # Calculate metrics
+        elapsed = now - self.start_time
+        avg_step_time = elapsed / self.current_step if self.current_step > 0 else 0
+        its = 1.0 / avg_step_time if avg_step_time > 0 else 0
+        remaining_steps = self.total_steps - self.current_step
+        eta = avg_step_time * remaining_steps
+
+        # Build progress bar string
+        pct = (self.current_step / self.total_steps) * 100
+        bar_width = 30
+        filled = int(bar_width * self.current_step / self.total_steps)
+        bar = "█" * filled + "░" * (bar_width - filled)
+
+        # Print progress line (carriage return to overwrite)
+        status = (
+            f"\r{self.desc}: |{bar}| {self.current_step}/{self.total_steps} "
+            f"[{self._format_time(elapsed)}<{self._format_time(eta)}, {its:.2f}it/s]"
+        )
+        print(status, end="", flush=True)
+
+        # Newline on completion
+        if self.current_step >= self.total_steps:
+            print()  # Final newline
+
+        return callback_kwargs
+
+    def close(self) -> None:
+        """Close progress bar (prints newline if needed)."""
+        if self.current_step > 0 and self.current_step < self.total_steps:
+            print()  # Ensure newline if interrupted
+
+    def get_stats(self) -> dict:
+        """
+        Get performance statistics.
+
+        Returns:
+            Dict with elapsed, avg_step_time, its, step_times.
+        """
+        elapsed = time.time() - self.start_time if self.start_time else 0
+        avg_step_time = elapsed / self.current_step if self.current_step > 0 else 0
+        return {
+            "elapsed": elapsed,
+            "avg_step_time": avg_step_time,
+            "its": 1.0 / avg_step_time if avg_step_time > 0 else 0,
+            "step_times": self.step_times,
+            "total_steps": self.current_step,
+        }
 
 
 @dataclass
@@ -121,20 +250,68 @@ class LTX2Pipeline:
 
         logger.info(f"Loading LTX-2 pipeline from {model_path}")
 
-        # Load diffusers pipeline
-        pipe = DiffusersLTX2Pipeline.from_pretrained(
-            model_path,
-            torch_dtype=torch_dtype,
-            variant=variant,
-            **kwargs,
-        )
+        # Check if local text encoder is float32 (too big for 24GB)
+        text_encoder_path = Path(model_path).expanduser() / "text_encoder"
+        use_hf_encoder = False
+        hf_encoder_id = "google/gemma-3-12b-it-qat-q4_0-unquantized"
+
+        if text_encoder_path.exists():
+            config_path = text_encoder_path / "config.json"
+            if config_path.exists():
+                import json
+                with open(config_path) as f:
+                    te_config = json.load(f)
+                    if te_config.get("dtype") == "float32":
+                        logger.warning(
+                            f"Local text encoder is float32 (~50GB) - too large for 24GB VRAM. "
+                            f"Loading Q4 version from HuggingFace instead: {hf_encoder_id}"
+                        )
+                        use_hf_encoder = True
+
+        load_kwargs = {"torch_dtype": torch_dtype, "variant": variant, **kwargs}
+
+        if use_hf_encoder:
+            # Load text encoder in bfloat16 WITHOUT quantization
+            # Let diffusers' sequential CPU offload handle memory management
+            # Each layer is ~600MB, sequential offload loads one at a time
+            try:
+                from transformers import Gemma3ForConditionalGeneration, AutoTokenizer
+
+                encoder_id = "google/gemma-3-12b-it"
+                logger.info(f"Loading text encoder (bfloat16, no quant): {encoder_id}")
+                logger.info("Sequential CPU offload will move layers one at a time (~600MB each)")
+
+                text_encoder = Gemma3ForConditionalGeneration.from_pretrained(
+                    encoder_id,
+                    torch_dtype=torch_dtype,
+                    low_cpu_mem_usage=True,
+                    # No device_map - let diffusers handle placement
+                )
+                tokenizer = AutoTokenizer.from_pretrained(encoder_id)
+
+                load_kwargs["text_encoder"] = text_encoder
+                load_kwargs["tokenizer"] = tokenizer
+                logger.info("Text encoder loaded to CPU (bfloat16)")
+            except Exception as e:
+                logger.error(f"Failed to load text encoder: {e}")
+                raise
+
+        pipe = DiffusersLTX2Pipeline.from_pretrained(model_path, **load_kwargs)
 
         # Enable CPU offload for memory efficiency
         if enable_cpu_offload and device != "cpu":
-            logger.info("Enabling model CPU offload for memory efficiency")
-            pipe.enable_model_cpu_offload()
+            # Use sequential offload - more aggressive, moves each layer individually
+            # Slower (~3-5x) but required for 24GB with 12B encoder + 19B transformer
+            logger.info("Enabling SEQUENTIAL CPU offload (layer-by-layer) for memory efficiency")
+            pipe.enable_sequential_cpu_offload()
         elif device != "cpu":
             pipe.to(device)
+
+        # Log memory status after loading
+        if torch.cuda.is_available():
+            allocated = torch.cuda.memory_allocated() / 1e9
+            reserved = torch.cuda.memory_reserved() / 1e9
+            logger.info(f"GPU memory after load: {allocated:.1f}GB allocated, {reserved:.1f}GB reserved")
 
         return cls(pipe=pipe)
 
@@ -260,36 +437,50 @@ class LTX2Pipeline:
         if not model_path:
             raise ValueError("LTX2Config.model_path is required")
 
-        # Auto-detect local text_encoder if available (saves download from HuggingFace)
-        encoder_model_id = ltx2_config.encoder_model_id
-        local_encoder_path = Path(model_path).expanduser() / "text_encoder"
-        if local_encoder_path.exists() and local_encoder_path.is_dir():
-            # Prefer local encoder over HuggingFace download
-            logger.info(f"Found local text encoder: {local_encoder_path}")
-            encoder_model_id = str(local_encoder_path)
+        model_dir = Path(model_path).expanduser()
 
-        # Check for single file vs directory
-        transformer_path = ltx2_config.get_model_file_path()
-
-        if os.path.isfile(transformer_path):
-            # Single file loading - Gemma 3 encoder loaded separately
-            pipe = cls.from_single_file(
-                transformer_path,
-                encoder_model_id=encoder_model_id,
+        # Check if this is a full HuggingFace directory (has model_index.json)
+        # If so, prefer from_pretrained() which reads configs properly
+        model_index_path = model_dir / "model_index.json"
+        if model_index_path.exists():
+            logger.info(f"Found model_index.json - using from_pretrained() for proper config loading")
+            pipe = cls.from_pretrained(
+                str(model_dir),
                 torch_dtype=ltx2_config.get_torch_dtype(),
                 device=device,
                 enable_cpu_offload=(ltx2_config.offload_mode != "none"),
                 **kwargs,
             )
         else:
-            # Directory loading (HuggingFace format) - assumes complete pipeline
-            pipe = cls.from_pretrained(
-                model_path,
-                torch_dtype=ltx2_config.get_torch_dtype(),
-                device=device,
-                enable_cpu_offload=(ltx2_config.offload_mode != "none"),
-                **kwargs,
-            )
+            # No model_index.json - try single file loading
+            # Auto-detect local text_encoder if available
+            encoder_model_id = ltx2_config.encoder_model_id
+            local_encoder_path = model_dir / "text_encoder"
+            if local_encoder_path.exists() and local_encoder_path.is_dir():
+                logger.info(f"Found local text encoder: {local_encoder_path}")
+                encoder_model_id = str(local_encoder_path)
+
+            transformer_path = ltx2_config.get_model_file_path()
+
+            if os.path.isfile(transformer_path):
+                # Single file loading - Gemma 3 encoder loaded separately
+                pipe = cls.from_single_file(
+                    transformer_path,
+                    encoder_model_id=encoder_model_id,
+                    torch_dtype=ltx2_config.get_torch_dtype(),
+                    device=device,
+                    enable_cpu_offload=(ltx2_config.offload_mode != "none"),
+                    **kwargs,
+                )
+            else:
+                # Try as HuggingFace model ID
+                pipe = cls.from_pretrained(
+                    model_path,
+                    torch_dtype=ltx2_config.get_torch_dtype(),
+                    device=device,
+                    enable_cpu_offload=(ltx2_config.offload_mode != "none"),
+                    **kwargs,
+                )
 
         pipe._config = ltx2_config
 

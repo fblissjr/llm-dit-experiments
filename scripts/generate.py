@@ -528,47 +528,58 @@ def run_ltx2_generation(args, config, logger) -> int:
     start_load = time.time()
 
     try:
-        # Try to load from single file first (safetensors checkpoint)
         from pathlib import Path
         model_dir = Path(model_path).expanduser()
 
-        # Auto-detect local text_encoder if available (saves download from HuggingFace)
-        local_encoder_path = model_dir / "text_encoder"
-        if local_encoder_path.exists() and local_encoder_path.is_dir():
-            logger.info(f"Found local text encoder: {local_encoder_path}")
-            encoder_model_id = str(local_encoder_path)
-
-        # Check for common checkpoint file names
-        checkpoint_patterns = [
-            "ltx-2-19b-distilled-fp8.safetensors",
-            "ltx-2-19b-dev-fp8.safetensors",
-            "ltx-2-19b-dev-fp4.safetensors",
-            "ltx-2-19b-dev.safetensors",
-        ]
-
-        checkpoint_file = None
-        for pattern in checkpoint_patterns:
-            candidate = model_dir / pattern
-            if candidate.exists():
-                checkpoint_file = str(candidate)
-                break
-
-        if checkpoint_file:
-            logger.info(f"Loading from checkpoint: {checkpoint_file}")
-            pipeline = LTX2Pipeline.from_single_file(
-                checkpoint_file,
-                encoder_model_id=encoder_model_id,
+        # Check if this is a full HuggingFace directory (has model_index.json)
+        # If so, prefer from_pretrained() which reads configs properly
+        model_index_path = model_dir / "model_index.json"
+        if model_index_path.exists():
+            logger.info(f"Found model_index.json - using from_pretrained()")
+            pipeline = LTX2Pipeline.from_pretrained(
+                str(model_dir),
                 torch_dtype=torch.bfloat16,
                 enable_cpu_offload=(offload_mode != "none"),
             )
         else:
-            # Try HuggingFace format
-            logger.info(f"Loading from directory: {model_path}")
-            pipeline = LTX2Pipeline.from_pretrained(
-                model_path,
-                torch_dtype=torch.bfloat16,
-                enable_cpu_offload=(offload_mode != "none"),
-            )
+            # No model_index.json - try single file loading
+            # Auto-detect local text_encoder if available
+            local_encoder_path = model_dir / "text_encoder"
+            if local_encoder_path.exists() and local_encoder_path.is_dir():
+                logger.info(f"Found local text encoder: {local_encoder_path}")
+                encoder_model_id = str(local_encoder_path)
+
+            # Check for common checkpoint file names
+            checkpoint_patterns = [
+                "ltx-2-19b-distilled-fp8.safetensors",
+                "ltx-2-19b-dev-fp8.safetensors",
+                "ltx-2-19b-dev-fp4.safetensors",
+                "ltx-2-19b-dev.safetensors",
+            ]
+
+            checkpoint_file = None
+            for pattern in checkpoint_patterns:
+                candidate = model_dir / pattern
+                if candidate.exists():
+                    checkpoint_file = str(candidate)
+                    break
+
+            if checkpoint_file:
+                logger.info(f"Loading from checkpoint: {checkpoint_file}")
+                pipeline = LTX2Pipeline.from_single_file(
+                    checkpoint_file,
+                    encoder_model_id=encoder_model_id,
+                    torch_dtype=torch.bfloat16,
+                    enable_cpu_offload=(offload_mode != "none"),
+                )
+            else:
+                # Try HuggingFace format
+                logger.info(f"Loading from directory: {model_path}")
+                pipeline = LTX2Pipeline.from_pretrained(
+                    model_path,
+                    torch_dtype=torch.bfloat16,
+                    enable_cpu_offload=(offload_mode != "none"),
+                )
 
     except Exception as e:
         logger.error(f"Failed to load LTX-2 pipeline: {e}")
@@ -592,8 +603,20 @@ def run_ltx2_generation(args, config, logger) -> int:
     negative_prompt = getattr(args, 'negative_prompt', None) or \
         "worst quality, blurry, distorted, inconsistent motion"
 
+    # Clear CUDA cache before generation to maximize available VRAM
+    import gc
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        free_mem = torch.cuda.mem_get_info()[0] / 1e9
+        logger.info(f"VRAM available before generation: {free_mem:.1f}GB")
+
     logger.info(f"Generating video for: {prompt[:80]}...")
     start_gen = time.time()
+
+    # Create progress callback for step-by-step updates
+    from llm_dit.pipelines.ltx2 import ProgressCallback
+    progress = ProgressCallback(total_steps=steps, desc="Diffusion")
 
     try:
         output = pipeline(
@@ -607,15 +630,21 @@ def run_ltx2_generation(args, config, logger) -> int:
             guidance_scale=guidance_scale,
             seed=seed,
             enable_audio=audio_enabled,
+            callback_on_step_end=progress,
         )
     except Exception as e:
+        progress.close()  # Ensure newline before error
         logger.error(f"Generation failed: {e}")
         import traceback
         traceback.print_exc()
         return 1
 
     gen_time = time.time() - start_gen
-    logger.info(f"Generation complete in {gen_time:.1f}s")
+    stats = progress.get_stats()
+    logger.info(
+        f"Generation complete in {gen_time:.1f}s "
+        f"({stats['its']:.2f} it/s avg, {stats['avg_step_time']:.2f}s/step)"
+    )
 
     # Save video
     try:
