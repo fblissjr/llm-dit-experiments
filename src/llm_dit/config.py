@@ -43,7 +43,7 @@ import os
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, List, Literal
+from typing import Any, ClassVar, List, Literal
 
 import torch
 
@@ -390,6 +390,243 @@ class VLConfig:
     text_tokens_only: bool = True  # Use only text token positions (image tokens cause artifacts)
     auto_unload: bool = True  # Unload after extraction to save VRAM
     target_std: float = 58.75  # Target std for scaling (research validated from experiments)
+
+
+@dataclass
+class LTX2Config:
+    """Configuration for LTX-2 video generation model.
+
+    LTX-2 is a 19B parameter video+audio generation model from Lightricks:
+    - 14B video transformer + 5B audio transformer (asymmetric dual-stream DiT)
+    - Text encoder: Gemma 3-12B (NOT Qwen3)
+    - Output: Video (512x768 typical) + optional audio
+    - Memory: FP8 model (25GB) + CPU offload for RTX 4090
+
+    Key differences from Z-Image:
+    - Uses Gemma 3-12B text encoder (4096 dim) vs Qwen3-4B (2560 dim)
+    - Outputs video+audio vs image only
+    - 19B params vs ~2B params
+    - Requires model-level CPU offloading for 24GB VRAM
+
+    IMPORTANT: RTX 4090 (SM89) has NATIVE FP8 tensor core support but FP4 is EMULATED.
+    FP8 is faster than FP4 on RTX 4090 despite larger size. Use FP4 only on Hopper+.
+
+    Offload modes:
+    - none: No offloading (requires >48GB VRAM)
+    - model: Model-level offload (~20-50% slower, enables 24GB inference)
+    - sequential: Layer-by-layer streaming (~3-5x slower)
+    - group: Stream DiT blocks in groups (configurable VRAM vs speed)
+
+    Memory budget (24GB):
+    - Encoder (Gemma 3-12B Q4): ~6GB → offload after encoding
+    - Transformer (FP8): ~19GB peak during generation
+    - VAE: ~2GB for tiled decode
+    - Peak: ~23-24GB with proper offloading
+    """
+
+    # Model paths
+    model_path: str = ""  # Directory containing LTX-2 model files
+    transformer_file: str = "ltx-2-19b-distilled-fp8.safetensors"  # Native FP8 recommended
+
+    # Text encoder (Gemma 3-12B)
+    encoder_model_id: str = "google/gemma-3-12b-it-qat-q4_0-unquantized"
+    encoder_quantization: str = "none"  # Gemma 3 already ships with Q4 QAT
+    encoder_cpu_offload: bool = True  # Offload after encoding (REQUIRED for 24GB)
+
+    # LoRA configuration
+    lora_path: str = ""  # Path to LoRA safetensors
+    lora_scale: float = 1.0  # LoRA blend scale (0.0-1.0)
+
+    # CPU offloading during generation
+    offload_mode: str = "model"  # none, model, sequential, group
+    num_blocks_per_group: int = 2  # For group offload: DiT blocks to keep on GPU
+
+    # Video generation defaults
+    height: int = 768  # Video height (multiple of 32)
+    width: int = 512  # Video width (multiple of 32)
+    num_frames: int = 33  # Number of frames (33-65 typical for 24GB)
+    fps: int = 24  # Output FPS
+    num_inference_steps: int = 12  # Diffusion steps (8+4 for distilled, 40 for full)
+    guidance_scale: float = 3.5  # CFG scale (3.0-4.0 recommended)
+
+    # Audio generation
+    audio_enabled: bool = False  # Enable audio stream generation
+    audio_negative_prompt: str = ""  # Negative prompt for audio CFG
+
+    # Distillation settings
+    use_distilled: bool = True  # Use distilled model (8+4 step)
+    distilled_steps_stage1: int = 8  # First stage steps (distilled)
+    distilled_steps_stage2: int = 4  # Second stage steps (distilled)
+
+    # Image-to-video (optional)
+    input_image: str = ""  # Path to input image for I2V mode
+    image_weight: float = 0.7  # Blend weight for input image (0.0-1.0)
+
+    # VAE settings
+    tiled_vae: bool = True  # REQUIRED for video decode on 24GB
+    tile_size_temporal: int = 8  # Temporal tile size (frames)
+    tile_size_spatial: int = 256  # Spatial tile size (pixels)
+    tile_overlap_temporal: int = 4  # Temporal overlap
+    tile_overlap_spatial: int = 32  # Spatial overlap
+
+    def get_torch_dtype(self) -> torch.dtype:
+        """Get torch dtype for computation.
+
+        LTX-2 always uses bfloat16 for computation regardless of weight quantization.
+        FP8/FP4 refers to weight storage format, not computation dtype.
+        The transformer loads quantized weights but computes in bfloat16.
+        """
+        return torch.bfloat16
+
+    def get_model_file_path(self) -> str:
+        """Get full path to transformer model file."""
+        if not self.model_path:
+            raise ValueError("model_path is required")
+        return os.path.join(self.model_path, self.transformer_file)
+
+    def get_total_steps(self) -> int:
+        """Get total inference steps based on distillation mode."""
+        if self.use_distilled:
+            return self.distilled_steps_stage1 + self.distilled_steps_stage2
+        return self.num_inference_steps
+
+    def validate(self) -> None:
+        """Validate configuration settings."""
+        valid_offload_modes = ("none", "model", "sequential", "group")
+        if self.offload_mode not in valid_offload_modes:
+            raise ValueError(
+                f"Invalid offload_mode='{self.offload_mode}'. "
+                f"Valid options: {', '.join(valid_offload_modes)}"
+            )
+
+        # Validate num_blocks_per_group for group offload mode
+        if self.offload_mode == "group" and self.num_blocks_per_group <= 0:
+            raise ValueError(
+                f"num_blocks_per_group must be > 0 for group offload mode, "
+                f"got {self.num_blocks_per_group}"
+            )
+
+        # Validate dimensions are multiples of 32
+        if self.height % 32 != 0:
+            raise ValueError(f"height must be multiple of 32, got {self.height}")
+        if self.width % 32 != 0:
+            raise ValueError(f"width must be multiple of 32, got {self.width}")
+
+        # Validate LoRA scale
+        if not 0.0 <= self.lora_scale <= 1.0:
+            raise ValueError(f"lora_scale must be 0.0-1.0, got {self.lora_scale}")
+
+        # Validate image weight
+        if not 0.0 <= self.image_weight <= 1.0:
+            raise ValueError(f"image_weight must be 0.0-1.0, got {self.image_weight}")
+
+        # Warn if num_inference_steps doesn't match distilled mode
+        expected_steps = self.distilled_steps_stage1 + self.distilled_steps_stage2
+        if self.use_distilled and self.num_inference_steps != expected_steps:
+            logger.warning(
+                f"use_distilled=True but num_inference_steps={self.num_inference_steps} "
+                f"doesn't match distilled steps ({expected_steps}). "
+                f"get_total_steps() will return {expected_steps} for distilled mode."
+            )
+
+        # Warn about FP4 on RTX 4090
+        if "fp4" in self.transformer_file.lower():
+            logger.warning(
+                "FP4 model selected. Note: RTX 4090 (SM89) emulates FP4, which is slower "
+                "than native FP8. Consider using FP8 model for better performance on RTX 4090."
+            )
+
+    # LTX-2 architecture constants for VRAM estimation (ClassVar to exclude from dataclass fields)
+    _LTX2_NUM_BLOCKS: ClassVar[int] = 48  # Total transformer blocks (14B video DiT)
+    _LTX2_VRAM_FP8_GB: ClassVar[float] = 19.0  # FP8 quantized transformer
+    _LTX2_VRAM_FP4_GB: ClassVar[float] = 14.0  # FP4 quantized transformer
+    _LTX2_VRAM_BF16_GB: ClassVar[float] = 38.0  # Full precision transformer
+    _GEMMA3_VRAM_Q4_GB: ClassVar[float] = 6.0  # Q4 quantized Gemma 3-12B
+    _GEMMA3_VRAM_FULL_GB: ClassVar[float] = 24.0  # Full precision Gemma 3-12B
+    _VAE_VRAM_GB: ClassVar[float] = 2.0  # Video VAE
+    _OVERHEAD_GB: ClassVar[float] = 2.0  # CUDA overhead, activations, etc.
+    _GROUP_OVERHEAD_GB: ClassVar[float] = 4.0  # Additional overhead for group offload
+
+    def estimate_vram_usage(self) -> dict[str, float]:
+        """Estimate VRAM usage for different components (in GB).
+
+        Returns:
+            Dictionary with estimated VRAM for each component and total peak.
+
+        Note:
+            These are rough estimates based on model architecture.
+            Actual usage depends on batch size, resolution, and runtime factors.
+        """
+        estimates = {}
+
+        # Transformer VRAM based on file type
+        if "fp8" in self.transformer_file.lower():
+            estimates["transformer"] = self._LTX2_VRAM_FP8_GB
+        elif "fp4" in self.transformer_file.lower():
+            estimates["transformer"] = self._LTX2_VRAM_FP4_GB
+        else:
+            estimates["transformer"] = self._LTX2_VRAM_BF16_GB
+
+        # Encoder (loaded temporarily, offloaded before transformer)
+        if "q4" in self.encoder_model_id.lower():
+            estimates["encoder"] = self._GEMMA3_VRAM_Q4_GB
+        else:
+            estimates["encoder"] = self._GEMMA3_VRAM_FULL_GB
+
+        # VAE
+        estimates["vae"] = self._VAE_VRAM_GB
+
+        # Peak depends on offload mode
+        if self.offload_mode == "none":
+            # All components loaded simultaneously
+            estimates["peak"] = estimates["transformer"] + estimates["vae"]
+        elif self.offload_mode in ("model", "sequential"):
+            # Sequential loading: max of any single component + overhead
+            estimates["peak"] = max(estimates.values()) + self._OVERHEAD_GB
+        else:  # group offload
+            # Reduced transformer based on blocks per group
+            # Clamp to valid range to avoid division errors
+            blocks = max(1, min(self.num_blocks_per_group, self._LTX2_NUM_BLOCKS))
+            block_fraction = blocks / self._LTX2_NUM_BLOCKS
+            estimates["peak"] = (
+                estimates["transformer"] * block_fraction
+                + estimates["vae"]
+                + self._GROUP_OVERHEAD_GB
+            )
+
+        return estimates
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary."""
+        return {
+            "model_path": self.model_path,
+            "transformer_file": self.transformer_file,
+            "encoder_model_id": self.encoder_model_id,
+            "encoder_quantization": self.encoder_quantization,
+            "encoder_cpu_offload": self.encoder_cpu_offload,
+            "lora_path": self.lora_path,
+            "lora_scale": self.lora_scale,
+            "offload_mode": self.offload_mode,
+            "num_blocks_per_group": self.num_blocks_per_group,
+            "height": self.height,
+            "width": self.width,
+            "num_frames": self.num_frames,
+            "fps": self.fps,
+            "num_inference_steps": self.num_inference_steps,
+            "guidance_scale": self.guidance_scale,
+            "audio_enabled": self.audio_enabled,
+            "audio_negative_prompt": self.audio_negative_prompt,
+            "use_distilled": self.use_distilled,
+            "distilled_steps_stage1": self.distilled_steps_stage1,
+            "distilled_steps_stage2": self.distilled_steps_stage2,
+            "input_image": self.input_image,
+            "image_weight": self.image_weight,
+            "tiled_vae": self.tiled_vae,
+            "tile_size_temporal": self.tile_size_temporal,
+            "tile_size_spatial": self.tile_size_spatial,
+            "tile_overlap_temporal": self.tile_overlap_temporal,
+            "tile_overlap_spatial": self.tile_overlap_spatial,
+        }
 
 
 @dataclass
@@ -882,7 +1119,7 @@ class RewriterConfig:
 
 @dataclass
 class Config:
-    """Complete configuration for Z-Image and Qwen-Image generation."""
+    """Complete configuration for Z-Image, Qwen-Image, and LTX-2 generation."""
 
     model_path: str = ""
     templates_dir: str | None = None
@@ -898,6 +1135,7 @@ class Config:
     rewriter: RewriterConfig = field(default_factory=RewriterConfig)
     vl: VLConfig = field(default_factory=VLConfig)
     qwen_image: QwenImageConfig = field(default_factory=QwenImageConfig)
+    ltx2: LTX2Config = field(default_factory=LTX2Config)
     dype: DyPEConfig = field(default_factory=DyPEConfig)
     slg: SLGConfig = field(default_factory=SLGConfig)
     fmtt: FMTTConfig = field(default_factory=FMTTConfig)
@@ -917,6 +1155,7 @@ class Config:
         rewriter_data = data.pop("rewriter", {})
         vl_data = data.pop("vl", {})
         qwen_image_data = data.pop("qwen_image", {})
+        ltx2_data = data.pop("ltx2", {})
         dype_data = data.pop("dype", {})
         slg_data = data.pop("slg", {})
         fmtt_data = data.pop("fmtt", {})
@@ -936,6 +1175,7 @@ class Config:
             rewriter=RewriterConfig(**rewriter_data),
             vl=VLConfig(**vl_data),
             qwen_image=QwenImageConfig(**qwen_image_data),
+            ltx2=LTX2Config(**ltx2_data),
             dype=DyPEConfig(**dype_data),
             slg=SLGConfig(**slg_data),
             fmtt=FMTTConfig(**fmtt_data),
@@ -1093,6 +1333,7 @@ class Config:
                 "resolution": self.qwen_image.resolution,
                 "shift": self.qwen_image.shift,
             },
+            "ltx2": self.ltx2.to_dict(),
             "dype": self.dype.to_dict(),
             "slg": self.slg.to_dict(),
             "fmtt": self.fmtt.to_dict(),

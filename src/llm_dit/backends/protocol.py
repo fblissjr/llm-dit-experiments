@@ -120,6 +120,7 @@ class TextEncoderBackend(Protocol):
         self,
         texts: List[str],
         return_padded: bool = False,
+        layer_index: int = -2,
     ) -> EncodingOutput:
         """
         Encode pre-formatted text to embeddings.
@@ -130,14 +131,17 @@ class TextEncoderBackend(Protocol):
         Args:
             texts: List of pre-formatted text strings (with chat template tokens).
             return_padded: If True, also return padded batch tensors.
+            layer_index: Which hidden layer to extract embeddings from.
+                        Default -2 (penultimate) matches Z-Image training.
+                        Use -1 for last layer, or negative indices for other layers.
 
         Returns:
             EncodingOutput with variable-length embeddings per input.
             Each embedding has shape [valid_seq_len, hidden_dim].
 
         Note:
-            Embeddings are extracted from hidden_states[-2] (penultimate layer),
-            matching the Z-Image reference implementation.
+            Embeddings are extracted from hidden_states[layer_index],
+            defaulting to -2 (penultimate layer) to match Z-Image reference.
         """
         ...
 

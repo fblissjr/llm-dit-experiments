@@ -1,0 +1,228 @@
+"""
+Encoder Factory for creating model-agnostic encoders.
+
+This factory provides a unified interface for creating any encoder type
+based on configuration. It handles:
+- Automatic encoder type detection from pipeline type
+- Quantization configuration
+- Device placement
+- Caching setup
+
+Usage:
+    from llm_dit.encoders import EncoderFactory, EncoderType
+
+    # Create by type
+    encoder = EncoderFactory.create(
+        encoder_type=EncoderType.QWEN3,
+        model_path="Tongyi-MAI/Z-Image-Turbo",
+    )
+
+    # Auto-detect from pipeline
+    encoder = EncoderFactory.for_pipeline("z_image", model_path="...")
+"""
+
+import logging
+from dataclasses import dataclass
+from typing import Optional, Union
+
+from llm_dit.encoders.protocol import (
+    AnyEncoder,
+    EncoderType,
+    TextEncoderProtocol,
+)
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class EncoderConfig:
+    """Configuration for encoder creation."""
+
+    encoder_type: EncoderType
+    model_path: str
+    model_subfolder: Optional[str] = None
+    tokenizer_subfolder: Optional[str] = None
+    quantization: Optional[str] = None
+    device: str = "auto"
+    dtype: str = "bfloat16"
+    enable_cache: bool = False
+    cache_size: int = 100
+
+    # Gemma3-specific
+    output_mode: str = "video"  # "video" or "audio"
+
+
+# Pipeline to encoder type mapping
+PIPELINE_ENCODER_MAP = {
+    "z_image": EncoderType.QWEN3,
+    "qwen_image": EncoderType.QWEN25_VL,
+    "qwen_image_diffusers": EncoderType.QWEN25_VL,
+    "qwen_image_layered": EncoderType.QWEN25_VL,
+    "ltx2": EncoderType.GEMMA3,
+}
+
+
+class EncoderFactory:
+    """Factory for creating encoder instances."""
+
+    @staticmethod
+    def create(
+        encoder_type: Union[EncoderType, str],
+        model_path: str,
+        model_subfolder: Optional[str] = None,
+        tokenizer_subfolder: Optional[str] = None,
+        quantization: Optional[str] = None,
+        device: str = "auto",
+        dtype: str = "bfloat16",
+        enable_cache: bool = False,
+        cache_size: int = 100,
+        **kwargs,
+    ) -> AnyEncoder:
+        """
+        Create an encoder instance.
+
+        Args:
+            encoder_type: Type of encoder to create.
+            model_path: Path to model or HuggingFace ID.
+            model_subfolder: Subfolder containing model weights.
+            tokenizer_subfolder: Subfolder containing tokenizer.
+            quantization: Quantization mode (none, 4bit, 8bit, int8_dynamic).
+            device: Device to load on (auto, cuda, cpu).
+            dtype: Model dtype (bfloat16, float16).
+            enable_cache: Enable embedding cache.
+            cache_size: Cache size if enabled.
+            **kwargs: Additional encoder-specific arguments.
+
+        Returns:
+            Initialized encoder instance.
+
+        Raises:
+            ValueError: If encoder type is not supported.
+        """
+        # Convert string to enum if needed
+        if isinstance(encoder_type, str):
+            encoder_type = EncoderType(encoder_type)
+
+        logger.info(f"Creating {encoder_type.value} encoder from {model_path}")
+
+        if encoder_type == EncoderType.QWEN3:
+            from llm_dit.encoders.qwen3 import Qwen3Encoder
+
+            return Qwen3Encoder.from_pretrained(
+                model_path=model_path,
+                model_subfolder=model_subfolder or "text_encoder",
+                tokenizer_subfolder=tokenizer_subfolder or "tokenizer",
+                quantization=quantization,
+                device=device,
+                dtype=dtype,
+                enable_cache=enable_cache,
+                cache_size=cache_size,
+                **kwargs,
+            )
+
+        elif encoder_type == EncoderType.QWEN25_VL:
+            from llm_dit.encoders.qwen25_vl import Qwen25VLEncoder
+
+            return Qwen25VLEncoder.from_pretrained(
+                model_path=model_path,
+                quantization=quantization,
+                device=device,
+                dtype=dtype,
+                **kwargs,
+            )
+
+        elif encoder_type == EncoderType.GEMMA3:
+            from llm_dit.encoders.gemma3 import Gemma3Encoder
+
+            return Gemma3Encoder.from_pretrained(
+                model_path=model_path,
+                output_mode=kwargs.pop("output_mode", "video"),
+                quantization=quantization,
+                device=device,
+                dtype=dtype,
+                **kwargs,
+            )
+
+        else:
+            raise ValueError(f"Unsupported encoder type: {encoder_type}")
+
+    @staticmethod
+    def for_pipeline(
+        pipeline_type: str,
+        model_path: str,
+        **kwargs,
+    ) -> AnyEncoder:
+        """
+        Create an encoder appropriate for a pipeline type.
+
+        Args:
+            pipeline_type: Pipeline type (z_image, qwen_image, ltx2, etc.)
+            model_path: Path to model.
+            **kwargs: Additional arguments for create().
+
+        Returns:
+            Encoder instance appropriate for the pipeline.
+
+        Raises:
+            ValueError: If pipeline type is not recognized.
+        """
+        if pipeline_type not in PIPELINE_ENCODER_MAP:
+            raise ValueError(
+                f"Unknown pipeline type: {pipeline_type}. "
+                f"Supported: {list(PIPELINE_ENCODER_MAP.keys())}"
+            )
+
+        encoder_type = PIPELINE_ENCODER_MAP[pipeline_type]
+        logger.info(f"Pipeline '{pipeline_type}' uses encoder type: {encoder_type.value}")
+
+        return EncoderFactory.create(
+            encoder_type=encoder_type,
+            model_path=model_path,
+            **kwargs,
+        )
+
+    @staticmethod
+    def from_config(config: EncoderConfig) -> AnyEncoder:
+        """
+        Create an encoder from a configuration object.
+
+        Args:
+            config: EncoderConfig with all settings.
+
+        Returns:
+            Initialized encoder instance.
+        """
+        return EncoderFactory.create(
+            encoder_type=config.encoder_type,
+            model_path=config.model_path,
+            model_subfolder=config.model_subfolder,
+            tokenizer_subfolder=config.tokenizer_subfolder,
+            quantization=config.quantization,
+            device=config.device,
+            dtype=config.dtype,
+            enable_cache=config.enable_cache,
+            cache_size=config.cache_size,
+            output_mode=config.output_mode,
+        )
+
+    @staticmethod
+    def get_encoder_type_for_pipeline(pipeline_type: str) -> EncoderType:
+        """
+        Get the encoder type for a pipeline without creating an encoder.
+
+        Args:
+            pipeline_type: Pipeline type name.
+
+        Returns:
+            EncoderType for the pipeline.
+
+        Raises:
+            ValueError: If pipeline type is not recognized.
+        """
+        if pipeline_type not in PIPELINE_ENCODER_MAP:
+            raise ValueError(
+                f"Unknown pipeline type: {pipeline_type}. "
+                f"Supported: {list(PIPELINE_ENCODER_MAP.keys())}"
+            )
+
+        return PIPELINE_ENCODER_MAP[pipeline_type]

@@ -16,6 +16,7 @@
 #   - Qwen-Image-Edit-2511 - instruction-based image editing
 #   - Qwen-Image-2512 - text-to-image generation (pure t2i, 39GB transformer)
 #   - Qwen-Image-Layered - multi-layer decomposition (deprioritized)
+#   - LTX-2 - 19B video+audio generation (Lightricks)
 
 # =============================================================================
 # RTX 4090 Profile - Optimized for 24GB VRAM
@@ -293,6 +294,85 @@ quantize_vae = "none"            # Options:
                                  # Note: FP8 NOT supported for Conv2d (VAE uses Conv2d)
 
 # =============================================================================
+# LTX-2 Configuration (Video + Audio Generation)
+# =============================================================================
+# LTX-2 is a 19B parameter video generation model from Lightricks:
+#   - 14B video transformer + 5B audio transformer
+#   - Text encoder: Gemma 3-12B (NOT Qwen3)
+#   - Output: Video (512x768 typical) + optional audio
+#   - Memory: FP8 model (25GB) + CPU offload for RTX 4090
+#
+# Available model variants:
+#   | Model                            | Size   | RTX 4090 | Notes |
+#   |----------------------------------|--------|----------|-------|
+#   | ltx-2-19b-dev.safetensors        | 40.3GB | No       | Full BF16 |
+#   | ltx-2-19b-dev-fp8.safetensors    | 25.2GB | Yes ✓    | Native FP8 on SM89 |
+#   | ltx-2-19b-dev-fp4.safetensors    | 18.6GB | Slow     | FP4 emulated on SM89 |
+#   | ltx-2-19b-distilled.safetensors  | 40.3GB | No       | Full BF16 distilled |
+#   | ltx-2-19b-distilled-fp8          | 25.3GB | Yes ✓    | Recommended |
+#
+# IMPORTANT: RTX 4090 (SM89) has NATIVE FP8 tensor core support but FP4 is EMULATED.
+# FP8 is faster than FP4 on RTX 4090 despite larger size. Use FP4 only on Hopper+.
+#
+# Memory strategy for 24GB VRAM:
+#   1. Use FP8 model with model-level CPU offloading
+#   2. Sequential loading: Encoder → Unload → Transformer → VAE
+#   3. Tiled VAE for large video decode
+#   4. SageAttention INT8/FP16 for attention efficiency
+#   5. Peak VRAM: ~23-24GB with proper offloading
+
+[rtx4090.ltx2]
+# Model paths
+model_path = "/path/to/LTX-2"    # Directory containing model files
+transformer_file = "ltx-2-19b-distilled-fp8.safetensors"  # Native FP8 on RTX 4090
+
+# Text encoder (Gemma 3-12B) - uses [encoder] settings with overrides
+# Note: LTX-2 uses Gemma 3, not Qwen3. The encoder factory auto-selects based on pipeline.
+encoder_model_id = "google/gemma-3-12b-it-qat-q4_0-unquantized"
+encoder_quantization = "none"    # Gemma 3 already ships with Q4 QAT
+encoder_cpu_offload = true       # Offload after encoding (REQUIRED for 24GB)
+
+# LoRA configuration (optional)
+# The ltx-2-19b-distilled-lora-384 LoRA provides additional quality/speed tradeoffs
+# "384" refers to LoRA rank (inner dimension of low-rank matrices)
+lora_path = ""                   # Path to LoRA safetensors, e.g., "/path/to/lora-384.safetensors"
+lora_scale = 1.0                 # LoRA blend scale (0.0-1.0, 1.0 = full strength)
+
+# CPU offloading during generation
+# Model-level offload: ~20-50% slower but enables 24GB inference
+# Sequential offload: ~3-5x slower, layer-by-layer streaming
+offload_mode = "model"           # none, model, sequential, group
+num_blocks_per_group = 2         # For group offload: DiT blocks to keep on GPU
+
+# Video generation defaults
+height = 768                     # Video height (multiple of 32)
+width = 512                      # Video width (multiple of 32)
+num_frames = 33                  # Number of frames (33-65 typical for 24GB)
+fps = 24                         # Output FPS
+num_inference_steps = 12         # Diffusion steps (8+4 for distilled, 40 for full)
+guidance_scale = 3.5             # CFG scale (3.0-4.0 recommended)
+
+# Audio generation
+audio_enabled = false            # Enable audio stream generation
+audio_negative_prompt = ""       # Negative prompt for audio CFG
+
+# Distillation (for ltx-2-19b-distilled models)
+use_distilled = true             # Use distilled model (8+4 step) - matches transformer_file
+distilled_steps_stage1 = 8       # First stage steps (distilled)
+distilled_steps_stage2 = 4       # Second stage steps (distilled)
+
+# Image-to-video (optional)
+input_image = ""                 # Path to input image for I2V mode
+image_weight = 0.7               # Blend weight for input image (0.0-1.0)
+
+# VAE settings
+tiled_vae = true                 # REQUIRED for video decode on 24GB
+tile_size_temporal = 8           # Temporal tile size (frames)
+tile_size_spatial = 256          # Spatial tile size (pixels)
+tile_overlap_temporal = 4        # Temporal overlap
+tile_overlap_spatial = 32        # Spatial overlap
+
+# =============================================================================
 # Optimization Presets (use with QwenImageConfig.from_preset() in code)
 # =============================================================================
 # Presets apply multiple settings at once for common use cases.
@@ -473,6 +553,34 @@ layer_num = 4                    # Only for layered variant
 quantize_text_encoder = "none"   # none/fp8/fp8-filtered/int8/8bit/4bit
 # quantize_transformer = ...     # Variant default: t2i=fp8, edit/layered=diffsynth-fp8
 quantize_vae = "none"            # none/int8/8bit (FP8 not supported for Conv2d)
+
+[default.ltx2]
+# LTX-2 video generation configuration
+# See rtx4090.ltx2 section for detailed documentation
+model_path = ""                  # Directory containing LTX-2 model files
+transformer_file = "ltx-2-19b-distilled-fp8.safetensors"  # Native FP8 recommended
+encoder_model_id = "google/gemma-3-12b-it-qat-q4_0-unquantized"
+encoder_quantization = "none"    # Gemma 3 ships with Q4 QAT
+encoder_cpu_offload = true       # Offload after encoding
+
+# LoRA
+lora_path = ""                   # Path to LoRA safetensors
+lora_scale = 1.0                 # LoRA blend scale
+
+# CPU offloading
+offload_mode = "model"           # none, model, sequential, group
+num_blocks_per_group = 2         # For group offload
+
+# Generation
+height = 768                     # Video height
+width = 512                      # Video width
+num_frames = 33                  # Number of frames
+fps = 24                         # Output FPS
+num_inference_steps = 12         # Diffusion steps (8+4 for distilled)
+guidance_scale = 3.5             # CFG scale
+audio_enabled = false            # Enable audio generation
+use_distilled = true             # Use distilled model (matches transformer_file)
+tiled_vae = true                 # Required for video decode
 
 # =============================================================================
 # Web Server Configuration

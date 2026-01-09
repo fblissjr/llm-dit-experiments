@@ -50,6 +50,11 @@ training = [
     "tqdm>=4.65.0",  # Progress bars
     "tensorboard>=2.15.0",  # Optional logging
 ]
+# Attention backends (require source builds, see scripts/ for install helpers)
+# sageattention: Best for RTX 4090 (SM80+), supports INT8/FP16 quantized attention
+#   Install: ./scripts/install_sageattention.sh
+# flash-attn: Standard fast attention for Ampere/Hopper
+#   Install: pip install flash-attn --no-build-isolation
 # Note: vllm and sglang require CUDA, will be added back when needed
 # vllm = ["vllm"]
 # sglang = ["sglang"]
@@ -64,9 +69,7 @@ packages = ["src/llm_dit"]
 [tool.hatch.metadata]
 allow-direct-references = true
 
-# Optional source builds (not in dependencies):
-#   SageAttention: ./scripts/install_sageattention.sh
-#   FlashAttention: pip install flash-attn --no-build-isolation
+# Optional source builds configured above in optional-dependencies comments
 
 [[tool.uv.index]]
 name = "pytorch-cu130"
