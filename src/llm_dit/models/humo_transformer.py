@@ -720,15 +720,16 @@ class HuMoTransformer(nn.Module):
         head_mod = t_mod[:, :2, :]  # [B, 2, D]
         x = self.head(x, head_mod)  # [B, N, C*p1*p2*p3]
 
-        # Unpatchify
+        # Unpatchify to output channels (16), not input channels (36)
         p1, p2, p3 = self.patch_size
         T_out = T // p1
         H_out = H // p2
         W_out = W // p3
+        C_out = self.out_channels
 
-        x = x.reshape(B, T_out, H_out, W_out, C, p1, p2, p3)
+        x = x.reshape(B, T_out, H_out, W_out, C_out, p1, p2, p3)
         x = x.permute(0, 4, 1, 5, 2, 6, 3, 7)
-        x = x.reshape(B, C, T, H, W)
+        x = x.reshape(B, C_out, T, H, W)
 
         return x
 
