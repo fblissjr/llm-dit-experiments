@@ -30,4 +30,10 @@ def __getattr__(name: str):
     if name == "QwenImageDiT":
         from llm_dit.models.qwen_image_dit import QwenImageDiT
         return QwenImageDiT
+    if name == "HuMoTransformer":
+        from llm_dit.models.humo_transformer import HuMoTransformer
+        return HuMoTransformer
+    if name == "WanVAE":
+        from llm_dit.models.wan_vae import WanVAE
+        return WanVAE
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

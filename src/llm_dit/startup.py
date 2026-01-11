@@ -523,16 +523,16 @@ class PipelineLoader:
         """
         Load Wan video generation pipeline.
 
-        Wan 2.1/2.2 is a 14B video model with optional HuMo audio conditioning.
-        Uses on-demand loading for memory efficiency on 24GB GPUs.
+        Wan 2.1/2.2 is a video model (1.3B to 14B variants) that wraps
+        diffusers' WanPipeline (T2V) or WanImageToVideoPipeline (I2V).
 
         Returns:
-            LoadResult with mode set for on-demand loading
+            LoadResult with pipeline loaded
         """
+        from llm_dit.pipelines import WanVideoPipeline
+
         # Get Wan config
         wan_model_path = getattr(self.config, 'wan_model_path', '')
-        wan_vae_path = getattr(self.config, 'wan_vae_path', '')
-        wan_text_encoder_path = getattr(self.config, 'wan_text_encoder_path', '')
         wan_num_frames = getattr(self.config, 'wan_num_frames', 81)
         wan_fps = getattr(self.config, 'wan_fps', 24)
         wan_height = getattr(self.config, 'wan_height', 720)
@@ -542,22 +542,41 @@ class PipelineLoader:
         wan_offload_mode = getattr(self.config, 'wan_offload_mode', 'model')
 
         logger.info("=" * 60)
-        logger.info("WAN VIDEO MODE")
+        logger.info("LOADING WAN VIDEO PIPELINE")
         logger.info("=" * 60)
-        logger.info("Wan uses on-demand loading via /api/wan/generate")
         logger.info(f"  Model path: {wan_model_path}")
-        if wan_vae_path:
-            logger.info(f"  VAE path: {wan_vae_path}")
-        if wan_text_encoder_path:
-            logger.info(f"  Text encoder: {wan_text_encoder_path}")
         logger.info(f"  Resolution: {wan_width}x{wan_height}")
         logger.info(f"  Frames: {wan_num_frames} (~{wan_num_frames/wan_fps:.1f}s at {wan_fps}fps)")
         logger.info(f"  Steps: {wan_steps}")
         logger.info(f"  Guidance: {wan_guidance_scale}")
         logger.info(f"  Offload: {wan_offload_mode}")
+        logger.info("-" * 60)
+
+        start = time.time()
+
+        # Determine CPU offload setting
+        enable_cpu_offload = wan_offload_mode in ('model', 'sequential')
+
+        # Load pipeline (auto-detects T2V vs I2V from path)
+        self._pipeline = WanVideoPipeline.from_pretrained(
+            wan_model_path,
+            torch_dtype=self.config.get_torch_dtype(),
+            enable_cpu_offload=enable_cpu_offload,
+        )
+
+        load_time = time.time() - start
+
+        logger.info(f"Wan pipeline loaded in {load_time:.1f}s")
+        logger.info(f"  Mode: {self._pipeline.mode.upper()}")
+        logger.info(f"  Device: {self._pipeline.device}")
+        logger.info(f"  Dtype: {self._pipeline.dtype}")
         logger.info("=" * 60)
 
-        return LoadResult(pipeline=None, encoder=None, mode="wan_ondemand")
+        return LoadResult(
+            pipeline=self._pipeline,
+            load_time=load_time,
+            mode=f"wan_{self._pipeline.mode}",
+        )
 
     def load_api_encoder(self) -> LoadResult:
         """

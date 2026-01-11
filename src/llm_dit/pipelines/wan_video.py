@@ -1,71 +1,64 @@
 """
-Wan Video Pipeline for text-to-video and image-to-video generation.
+Wan Video Pipeline with HuMo audio conditioning support.
 
 Last Updated: 2026-01-11
 
-This pipeline implements Wan 2.1/2.2 video generation with support for:
-- Text-to-video (T2V) generation
-- Image-to-video (I2V) conditioning
-- Optional HuMo audio conditioning extension
+This pipeline uses HuMo's transformer as the base, which supports:
+- Text-to-video (T2V): scale_a=0, text prompt only
+- Text-Audio (TA): scale_a>0, audio-synchronized video
+- Text-Image-Audio (TIA): scale_a>0, audio + reference image
 
 Architecture:
-- VideoTransformer: 40-layer DiT with 5120 dim, 40 heads
-- Video VAE: 3D conv encoder/decoder (8x spatial, 4x temporal compression)
-- UMT5-XXL: Text encoder (4096 dim -> 5120 via projection)
-- Flow matching scheduler
-
-Memory Strategy (24GB VRAM):
-1. Enable model CPU offload (moves each component to GPU only when needed)
-2. Sequential loading: encoder -> transformer -> VAE
-3. FP8 quantized transformer for memory efficiency
+- Transformer: HuMo-17B or HuMo-1.7B (DiT with audio cross-attention)
+- VAE: From Wan2.1-T2V-1.3B
+- Text encoder: UMT5-XXL from Wan2.1-T2V-1.3B
+- Audio encoder: Whisper-large-v3 (lazy-loaded)
 
 Example:
     from llm_dit.pipelines.wan_video import WanVideoPipeline
 
+    # Load pipeline
     pipe = WanVideoPipeline.from_pretrained(
-        model_path="path/to/wan-weights.safetensors",
-        vae_path="path/to/vae.safetensors",
-        text_encoder_path="path/to/umt5-xxl",
+        humo_path="~/Storage/HuMo/HuMo-17B",
+        wan_path="~/Storage/Wan2.1-T2V-1.3B",
     )
 
+    # T2V mode (no audio)
+    video = pipe(prompt="A woman dancing gracefully")
+
+    # TA mode (audio-conditioned)
     video = pipe(
-        prompt="A woman dancing in a garden",
-        num_frames=81,
+        prompt="A person dancing",
+        audio="music.wav",
+        audio_scale=1.0,
     )
+
     pipe.save_video(video, "output.mp4")
 """
 
 import gc
 import logging
-import os
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Union
 
+import numpy as np
 import torch
 import torch.nn as nn
-import numpy as np
-
-try:
-    from safetensors import safe_open
-    from safetensors.torch import load_file as load_safetensors
-except ImportError:
-    safe_open = None
-    load_safetensors = None
+import torch.nn.functional as F
 
 logger = logging.getLogger(__name__)
 
 
-# Reuse VideoOutput from LTX2 pattern
 @dataclass
 class VideoOutput:
     """Output from Wan video generation."""
 
     frames: np.ndarray  # [B, F, H, W, C] uint8 video frames
-    audio: Optional[np.ndarray] = None  # [B, samples] float audio (if HuMo conditioning)
-    fps: float = 24.0  # Output framerate
-    audio_sample_rate: int = 24000  # Audio sample rate
+    audio: Optional[np.ndarray] = None  # [samples] float audio waveform
+    fps: float = 25.0  # Output framerate (HuMo trained at 25 FPS)
+    audio_sample_rate: int = 16000  # Whisper sample rate
 
 
 class ProgressCallback:
@@ -75,26 +68,18 @@ class ProgressCallback:
     Tracks step progress and performance metrics (it/s, ETA).
 
     Usage:
-        callback = ProgressCallback(total_steps=30)
+        callback = ProgressCallback(total_steps=50)
         pipeline(prompt="...", callback=callback)
         callback.close()
     """
 
     def __init__(
         self,
-        total_steps: int = 30,
+        total_steps: int = 50,
         desc: str = "Generating",
         disable: bool = False,
     ):
-        """
-        Initialize progress callback.
-
-        Args:
-            total_steps: Total number of diffusion steps.
-            desc: Description shown in progress bar.
-            disable: Disable progress output.
-        """
-        self.total_steps = total_steps if total_steps else 30
+        self.total_steps = total_steps if total_steps else 50
         self.desc = desc
         self.disable = disable
         self.current_step = 0
@@ -115,14 +100,14 @@ class ProgressCallback:
             mins = int((seconds % 3600) // 60)
             return f"{hours}:{mins:02d}:00"
 
-    def __call__(self, step: int, timestep: float, latents: torch.Tensor) -> None:
+    def __call__(self, step: int, timestep: float, **kwargs) -> None:
         """
         Called at end of each diffusion step.
 
         Args:
             step: Current step index (0-based).
             timestep: Current diffusion timestep.
-            latents: Current latent tensor.
+            **kwargs: Additional info.
         """
         if self.disable:
             return
@@ -183,137 +168,46 @@ class ProgressCallback:
         }
 
 
-# ============================================================================
-# Wan Architecture Components
-# ============================================================================
-
 @dataclass
 class WanConfig:
-    """Configuration for Wan video transformer."""
+    """Configuration for Wan/HuMo video pipeline."""
 
-    # Transformer dimensions
-    hidden_size: int = 5120
-    num_layers: int = 40
-    num_attention_heads: int = 40
-    head_dim: int = 128  # 5120 / 40
+    # Model paths
+    humo_path: str = ""  # Path to HuMo transformer weights
+    wan_path: str = ""  # Path to Wan2.1-T2V for VAE/text encoder
+    whisper_path: str = ""  # Path to Whisper (optional, for audio)
 
-    # Input/output
-    in_channels: int = 16  # VAE latent channels
-    out_channels: int = 16
-    patch_size: Tuple[int, int, int] = (1, 2, 2)  # (T, H, W)
+    # Model variant
+    humo_variant: str = "17B"  # "17B" or "1.7B"
 
-    # Text encoder
-    text_dim: int = 4096  # UMT5-XXL output dimension
-    text_len: int = 512  # Max text sequence length
+    # Generation defaults
+    num_frames: int = 97  # HuMo trained at 97 frames
+    height: int = 720
+    width: int = 1280
+    fps: float = 25.0  # HuMo trained at 25 FPS
+    num_inference_steps: int = 50
 
-    # Conditioning
-    freq_shift: int = 256
-    time_embed_dim: int = 512
-    ffn_dim_mult: float = 8 / 3  # Standard transformer ratio
-    qk_norm: bool = True
-    use_rope: bool = True  # 3D rotary position embedding
+    # Guidance scales
+    guidance_scale: float = 5.0  # Text guidance (scale_t)
+    audio_scale: float = 0.0  # Audio guidance (scale_a), 0 = T2V mode
 
-    # Normalization
-    norm_eps: float = 1e-6
+    # Memory
+    enable_cpu_offload: bool = True
+    dtype: str = "bfloat16"
 
-    @classmethod
-    def from_json(cls, path: str) -> "WanConfig":
-        """Load config from JSON file."""
-        import json
-        with open(path, "r") as f:
-            data = json.load(f)
-        return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
-
-
-class WanTextProjection(nn.Module):
-    """Projects UMT5 text embeddings to transformer hidden dim."""
-
-    def __init__(self, text_dim: int = 4096, hidden_dim: int = 5120):
-        super().__init__()
-        self.proj = nn.Sequential(
-            nn.Linear(text_dim, hidden_dim),
-            nn.SiLU(),
-            nn.Linear(hidden_dim, hidden_dim),
-        )
-        self.norm = nn.LayerNorm(hidden_dim)
-
-    def forward(self, text_embeds: torch.Tensor) -> torch.Tensor:
-        """
-        Args:
-            text_embeds: [B, seq_len, text_dim]
-        Returns:
-            [B, seq_len, hidden_dim]
-        """
-        return self.norm(self.proj(text_embeds))
-
-
-class WanTimestepEmbedding(nn.Module):
-    """Sinusoidal timestep embedding with MLP projection."""
-
-    def __init__(
-        self,
-        dim: int = 512,
-        hidden_dim: int = 5120,
-        freq_shift: int = 256,
-    ):
-        super().__init__()
-        self.dim = dim
-        self.freq_shift = freq_shift
-        self.mlp = nn.Sequential(
-            nn.Linear(dim, hidden_dim),
-            nn.SiLU(),
-            nn.Linear(hidden_dim, hidden_dim),
-        )
-
-    def forward(self, timesteps: torch.Tensor) -> torch.Tensor:
-        """
-        Args:
-            timesteps: [B] float timesteps in [0, 1]
-        Returns:
-            [B, hidden_dim] timestep embeddings
-        """
-        # Sinusoidal embedding
-        half_dim = self.dim // 2
-        freqs = torch.exp(
-            -torch.log(torch.tensor(10000.0, device=timesteps.device))
-            * torch.arange(half_dim, device=timesteps.device)
-            / half_dim
-        )
-        # Shift frequencies for flow matching
-        freqs = freqs * self.freq_shift
-
-        args = timesteps[:, None] * freqs[None, :]
-        embedding = torch.cat([torch.cos(args), torch.sin(args)], dim=-1)
-
-        return self.mlp(embedding)
-
-
-class RMSNorm(nn.Module):
-    """RMS normalization (used instead of LayerNorm in Wan)."""
-
-    def __init__(self, dim: int, eps: float = 1e-6):
-        super().__init__()
-        self.eps = eps
-        self.weight = nn.Parameter(torch.ones(dim))
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        rms = torch.sqrt(x.pow(2).mean(-1, keepdim=True) + self.eps)
-        return x / rms * self.weight
-
-
-# ============================================================================
-# Main Pipeline
-# ============================================================================
 
 class WanVideoPipeline:
     """
-    Wan 2.1/2.2 video generation pipeline.
+    Wan/HuMo video generation pipeline.
 
-    Supports text-to-video (T2V) and image-to-video (I2V) generation.
-    Optional HuMo audio conditioning can be added as an extension.
+    Uses HuMo transformer as base, supporting both T2V and audio-conditioned modes.
+    Audio conditioning is controlled via audio_scale parameter at runtime.
 
-    This is our own implementation following the Wan architecture,
-    not a wrapper around external code.
+    Architecture:
+    - transformer: HuMo-17B or HuMo-1.7B (DiT with audio cross-attention)
+    - vae: Wan VAE for video encoding/decoding
+    - text_encoder: UMT5-XXL for text conditioning
+    - whisper: Whisper-large-v3 encoder for audio (lazy-loaded)
     """
 
     def __init__(
@@ -328,13 +222,7 @@ class WanVideoPipeline:
         """
         Initialize pipeline with components.
 
-        Args:
-            transformer: Video transformer (DiT).
-            vae: Video VAE for encoding/decoding.
-            text_encoder: UMT5-XXL text encoder.
-            tokenizer: Text tokenizer.
-            scheduler: Diffusion scheduler.
-            config: Wan configuration.
+        Typically use from_pretrained() instead of direct construction.
         """
         self.transformer = transformer
         self.vae = vae
@@ -343,16 +231,21 @@ class WanVideoPipeline:
         self.scheduler = scheduler
         self.config = config or WanConfig()
 
+        # Lazy-loaded audio components
+        self._whisper_encoder = None
+        self._audio_processor = None
+
+        # Device tracking
         self._device = torch.device("cpu")
         self._dtype = torch.bfloat16
-        self._is_offloaded = True
 
     @classmethod
     def from_pretrained(
         cls,
-        model_path: str,
-        vae_path: Optional[str] = None,
-        text_encoder_path: Optional[str] = None,
+        humo_path: str,
+        wan_path: str,
+        whisper_path: Optional[str] = None,
+        humo_variant: str = "17B",
         torch_dtype: torch.dtype = torch.bfloat16,
         device: str = "cuda",
         enable_cpu_offload: bool = True,
@@ -362,250 +255,581 @@ class WanVideoPipeline:
         Load pipeline from pretrained weights.
 
         Args:
-            model_path: Path to transformer safetensors weights.
-            vae_path: Path to VAE weights (optional, can be in model_path dir).
-            text_encoder_path: Path to UMT5-XXL encoder.
-            torch_dtype: Model dtype (bfloat16 recommended, fp8 for memory).
-            device: Device to load on.
-            enable_cpu_offload: Enable CPU offload for memory efficiency.
-            **kwargs: Additional arguments.
+            humo_path: Path to HuMo weights (e.g., ~/Storage/HuMo)
+            wan_path: Path to Wan2.1-T2V-1.3B (for VAE/text encoder)
+            whisper_path: Path to Whisper (optional, lazy-loads if None)
+            humo_variant: "17B" or "1.7B"
+            torch_dtype: Model dtype (bfloat16 recommended)
+            device: Target device
+            enable_cpu_offload: Enable CPU offload for memory efficiency
+            **kwargs: Additional arguments
 
         Returns:
-            Initialized WanVideoPipeline.
+            Initialized WanVideoPipeline
         """
-        if load_safetensors is None:
-            raise ImportError(
-                "safetensors required. Install with: pip install safetensors"
-            )
+        # Expand paths
+        humo_path = str(Path(humo_path).expanduser())
+        wan_path = str(Path(wan_path).expanduser())
+        if whisper_path:
+            whisper_path = str(Path(whisper_path).expanduser())
 
-        model_path = Path(model_path).expanduser()
-        logger.info(f"Loading Wan pipeline from {model_path}")
+        logger.info("=" * 60)
+        logger.info("LOADING WAN/HUMO VIDEO PIPELINE")
+        logger.info("=" * 60)
+        logger.info(f"  HuMo path: {humo_path}")
+        logger.info(f"  HuMo variant: {humo_variant}")
+        logger.info(f"  Wan path: {wan_path}")
+        logger.info(f"  Whisper path: {whisper_path or 'lazy-load'}")
+        logger.info(f"  Device: {device}")
+        logger.info(f"  Dtype: {torch_dtype}")
+        logger.info(f"  CPU offload: {enable_cpu_offload}")
+        logger.info("-" * 60)
 
-        # Determine what we're loading
-        if model_path.is_file():
-            transformer_path = model_path
-            model_dir = model_path.parent
-        else:
-            model_dir = model_path
-            # Look for transformer weights
-            possible_names = [
-                "diffusion_pytorch_model.safetensors",
-                "transformer.safetensors",
-                "model.safetensors",
-            ]
-            transformer_path = None
-            for name in possible_names:
-                candidate = model_dir / name
-                if candidate.exists():
-                    transformer_path = candidate
-                    break
+        start_time = time.time()
 
-            if transformer_path is None:
-                # Check for FP8 variants
-                for f in model_dir.glob("*.safetensors"):
-                    if "fp8" in f.name.lower() or "transformer" in f.name.lower():
-                        transformer_path = f
-                        break
+        # Build config
+        config = WanConfig(
+            humo_path=humo_path,
+            wan_path=wan_path,
+            whisper_path=whisper_path or "",
+            humo_variant=humo_variant,
+            enable_cpu_offload=enable_cpu_offload,
+        )
 
-            if transformer_path is None:
-                raise FileNotFoundError(
-                    f"Could not find transformer weights in {model_dir}. "
-                    f"Looked for: {possible_names}"
-                )
+        # Load components
+        transformer = cls._load_humo_transformer(humo_path, humo_variant, torch_dtype, device, enable_cpu_offload)
+        vae = cls._load_wan_vae(wan_path, torch_dtype, device, enable_cpu_offload)
+        text_encoder, tokenizer = cls._load_text_encoder(wan_path, torch_dtype, device, enable_cpu_offload)
+        scheduler = cls._create_scheduler()
 
-        logger.info(f"Loading transformer from: {transformer_path}")
+        load_time = time.time() - start_time
+        logger.info(f"Pipeline loaded in {load_time:.1f}s")
+        logger.info("=" * 60)
 
-        # Load state dict to inspect structure
-        logger.info("Inspecting model weight structure...")
-        with safe_open(str(transformer_path), framework="pt", device="cpu") as f:
-            keys = list(f.keys())
-            logger.info(f"Found {len(keys)} keys in checkpoint")
-
-            # Log sample keys for debugging
-            sample_keys = keys[:10] if len(keys) > 10 else keys
-            for key in sample_keys:
-                tensor = f.get_tensor(key)
-                logger.debug(f"  {key}: {tensor.shape}, {tensor.dtype}")
-
-        # For now, create a placeholder pipeline
-        # The actual transformer will be built once we verify weight structure
         instance = cls(
-            transformer=None,
-            vae=None,
-            text_encoder=None,
-            tokenizer=None,
-            scheduler=None,
+            transformer=transformer,
+            vae=vae,
+            text_encoder=text_encoder,
+            tokenizer=tokenizer,
+            scheduler=scheduler,
+            config=config,
         )
         instance._device = torch.device(device)
         instance._dtype = torch_dtype
-        instance._model_path = transformer_path
-        instance._vae_path = vae_path
-        instance._text_encoder_path = text_encoder_path
-        instance._enable_cpu_offload = enable_cpu_offload
-        instance._weight_keys = keys  # Store for architecture verification
-
-        logger.info(
-            "Pipeline initialized (lazy loading). "
-            "Components will load on first generation."
-        )
 
         return instance
 
-    @classmethod
-    def from_config(
-        cls,
-        config: "Config",
-        device: str = "cuda",
-        **kwargs,
-    ) -> "WanVideoPipeline":
+    @staticmethod
+    def _load_humo_transformer(
+        humo_path: str,
+        variant: str,
+        dtype: torch.dtype,
+        device: str,
+        cpu_offload: bool,
+    ) -> nn.Module:
+        """Load HuMo transformer weights."""
+        variant_path = Path(humo_path) / f"HuMo-{variant}"
+        logger.info(f"Loading HuMo-{variant} transformer from {variant_path}")
+
+        # Check for safetensors index
+        index_file = variant_path / "humo.safetensors.index.json"
+        if not index_file.exists():
+            raise FileNotFoundError(
+                f"HuMo weights not found at {variant_path}. "
+                f"Expected {index_file}. Download with: "
+                f"huggingface-cli download bytedance-research/HuMo --local-dir {humo_path}"
+            )
+
+        # Load sharded weights
+        import json
+        from safetensors import safe_open
+
+        with open(index_file) as f:
+            index = json.load(f)
+
+        weight_map = index.get("weight_map", {})
+        shard_files = set(weight_map.values())
+
+        logger.info(f"  Loading {len(shard_files)} shards...")
+
+        # Determine architecture from variant
+        if variant == "17B":
+            # HuMo-17B: 40 blocks, hidden=5120, 40 heads
+            num_layers = 40
+            hidden_size = 5120
+            num_heads = 40
+            ffn_dim = 13824
+        else:
+            # HuMo-1.7B: 30 blocks, hidden=1536, 12 heads (matches Wan 1.3B)
+            num_layers = 30
+            hidden_size = 1536
+            num_heads = 12
+            ffn_dim = 8960
+
+        # Create transformer model
+        from llm_dit.models.humo_transformer import HuMoTransformer
+
+        transformer = HuMoTransformer(
+            num_layers=num_layers,
+            hidden_size=hidden_size,
+            num_heads=num_heads,
+            ffn_dim=ffn_dim,
+        )
+
+        # Load weights from shards
+        state_dict = {}
+        for shard_file in sorted(shard_files):
+            shard_path = variant_path / shard_file
+            logger.info(f"    Loading {shard_file}...")
+            with safe_open(str(shard_path), framework="pt", device="cpu") as f:
+                for key in f.keys():
+                    state_dict[key] = f.get_tensor(key)
+
+        # Load state dict
+        missing, unexpected = transformer.load_state_dict(state_dict, strict=False)
+        if missing:
+            logger.warning(f"  Missing keys: {len(missing)}")
+        if unexpected:
+            logger.warning(f"  Unexpected keys: {len(unexpected)}")
+
+        transformer = transformer.to(dtype)
+        if not cpu_offload:
+            transformer = transformer.to(device)
+
+        logger.info(f"  HuMo transformer loaded: {num_layers} layers, {hidden_size} hidden, {num_heads} heads")
+
+        return transformer
+
+    @staticmethod
+    def _load_wan_vae(
+        wan_path: str,
+        dtype: torch.dtype,
+        device: str,
+        cpu_offload: bool,
+    ) -> nn.Module:
+        """Load Wan VAE for video encoding/decoding."""
+        vae_path = Path(wan_path) / "Wan2.1_VAE.pth"
+        logger.info(f"Loading Wan VAE from {vae_path}")
+
+        if not vae_path.exists():
+            raise FileNotFoundError(
+                f"Wan VAE not found at {vae_path}. "
+                f"Download with: huggingface-cli download Wan-AI/Wan2.1-T2V-1.3B --local-dir {wan_path}"
+            )
+
+        # Load VAE state dict
+        state_dict = torch.load(vae_path, map_location="cpu", weights_only=True)
+
+        # Create VAE model
+        from llm_dit.models.wan_vae import WanVAE
+
+        vae = WanVAE()
+        vae.load_state_dict(state_dict)
+        vae = vae.to(dtype)
+
+        if not cpu_offload:
+            vae = vae.to(device)
+
+        logger.info("  Wan VAE loaded")
+        return vae
+
+    @staticmethod
+    def _load_text_encoder(
+        wan_path: str,
+        dtype: torch.dtype,
+        device: str,
+        cpu_offload: bool,
+    ):
+        """Load UMT5-XXL text encoder and tokenizer."""
+        encoder_path = Path(wan_path) / "google" / "umt5-xxl"
+        logger.info(f"Loading UMT5-XXL text encoder from {encoder_path}")
+
+        if not encoder_path.exists():
+            raise FileNotFoundError(
+                f"Text encoder not found at {encoder_path}. "
+                f"Download with: huggingface-cli download Wan-AI/Wan2.1-T2V-1.3B --local-dir {wan_path}"
+            )
+
+        from transformers import AutoTokenizer, T5EncoderModel
+
+        tokenizer = AutoTokenizer.from_pretrained(str(encoder_path))
+
+        # Check for model weights
+        model_file = encoder_path / "model.safetensors"
+        if not model_file.exists():
+            # Try to load from HuggingFace if local weights missing
+            logger.info("  Local weights not found, loading from google/umt5-xxl...")
+            text_encoder = T5EncoderModel.from_pretrained(
+                "google/umt5-xxl",
+                torch_dtype=dtype,
+            )
+        else:
+            text_encoder = T5EncoderModel.from_pretrained(
+                str(encoder_path),
+                torch_dtype=dtype,
+            )
+
+        if not cpu_offload:
+            text_encoder = text_encoder.to(device)
+
+        logger.info("  UMT5-XXL text encoder loaded")
+        return text_encoder, tokenizer
+
+    @staticmethod
+    def _create_scheduler():
+        """Create diffusion scheduler."""
+        from diffusers import FlowMatchEulerDiscreteScheduler
+
+        scheduler = FlowMatchEulerDiscreteScheduler(
+            num_train_timesteps=1000,
+            shift=3.0,
+        )
+        return scheduler
+
+    def load_whisper(self, whisper_path: Optional[str] = None) -> None:
         """
-        Load pipeline using config settings.
+        Load Whisper encoder for audio conditioning.
+
+        Called lazily when audio is first used.
 
         Args:
-            config: Config object with wan section.
-            device: Device to load on.
-            **kwargs: Override config settings.
+            whisper_path: Path to Whisper weights, or None to use config path
+        """
+        if self._whisper_encoder is not None:
+            return  # Already loaded
+
+        path = whisper_path or self.config.whisper_path
+        if not path:
+            path = "openai/whisper-large-v3"  # Default to HuggingFace
+
+        logger.info(f"Loading Whisper encoder from {path}")
+
+        from transformers import WhisperModel, WhisperProcessor
+
+        self._audio_processor = WhisperProcessor.from_pretrained(path)
+        whisper = WhisperModel.from_pretrained(path, torch_dtype=self._dtype)
+        self._whisper_encoder = whisper.encoder
+
+        if not self.config.enable_cpu_offload:
+            self._whisper_encoder = self._whisper_encoder.to(self._device)
+
+        logger.info("  Whisper encoder loaded")
+
+    def encode_audio(self, audio: Union[str, np.ndarray, torch.Tensor]) -> torch.Tensor:
+        """
+        Encode audio using Whisper.
+
+        Args:
+            audio: Audio file path, waveform array, or tensor
 
         Returns:
-            Initialized WanVideoPipeline.
+            Audio embeddings [B, seq_len, 1280]
         """
-        # Import here to avoid circular dependency
-        from llm_dit.config import Config
+        # Lazy load Whisper
+        if self._whisper_encoder is None:
+            self.load_whisper()
 
-        # Get Wan config section (will be added to config.py)
-        wan_config = getattr(config, "wan", None)
-        if wan_config is None:
-            raise ValueError(
-                "Config has no 'wan' section. "
-                "Add [wan] section with model_path."
-            )
+        # Load audio if path
+        if isinstance(audio, str):
+            import torchaudio
+            waveform, sr = torchaudio.load(audio)
+            if sr != 16000:
+                waveform = torchaudio.functional.resample(waveform, sr, 16000)
+            audio = waveform.squeeze().numpy()
 
-        return cls.from_pretrained(
-            model_path=wan_config.model_path,
-            vae_path=getattr(wan_config, "vae_path", None),
-            text_encoder_path=getattr(wan_config, "text_encoder_path", None),
-            torch_dtype=getattr(wan_config, "get_torch_dtype", lambda: torch.bfloat16)(),
-            device=device,
-            enable_cpu_offload=getattr(wan_config, "offload_mode", "model") != "none",
-            **kwargs,
+        # Process with Whisper processor
+        inputs = self._audio_processor(
+            audio,
+            sampling_rate=16000,
+            return_tensors="pt",
         )
 
-    def _load_components(self) -> None:
-        """
-        Lazy load model components on first use.
+        # Encode
+        input_features = inputs.input_features.to(self._device, self._dtype)
+        with torch.no_grad():
+            encoder_output = self._whisper_encoder(input_features)
+            audio_embeds = encoder_output.last_hidden_state
 
-        This allows memory-efficient initialization where components
-        are only loaded when actually needed.
-        """
-        if self.transformer is not None:
-            # Already loaded
-            return
-
-        logger.info("Loading Wan components...")
-
-        # TODO: Build transformer architecture based on weight keys
-        # For now, just log what we would load
-        logger.warning(
-            "Transformer architecture implementation in progress. "
-            "Weight keys available for verification."
-        )
-
-        # Load scheduler from diffusers
-        try:
-            from diffusers import FlowMatchEulerDiscreteScheduler
-
-            self.scheduler = FlowMatchEulerDiscreteScheduler(
-                num_train_timesteps=1000,
-                shift=3.0,  # Wan uses shift=3.0 for flow matching
-            )
-            logger.info("Scheduler loaded: FlowMatchEulerDiscreteScheduler")
-        except ImportError:
-            logger.warning(
-                "diffusers not available for scheduler. "
-                "Install with: pip install diffusers"
-            )
+        return audio_embeds
 
     def __call__(
         self,
         prompt: str,
-        negative_prompt: str = "low quality, blurry, distorted",
+        negative_prompt: str = "",
+        audio: Optional[Union[str, np.ndarray, torch.Tensor]] = None,
         image: Optional[Union[torch.Tensor, np.ndarray, "PIL.Image.Image"]] = None,
-        height: int = 720,
-        width: int = 1280,
-        num_frames: int = 81,
-        fps: float = 24.0,
-        num_inference_steps: int = 30,
-        guidance_scale: float = 5.0,
+        height: Optional[int] = None,
+        width: Optional[int] = None,
+        num_frames: Optional[int] = None,
+        num_inference_steps: Optional[int] = None,
+        guidance_scale: Optional[float] = None,
+        audio_scale: Optional[float] = None,
         generator: Optional[torch.Generator] = None,
         seed: Optional[int] = None,
         callback: Optional[ProgressCallback] = None,
-        output_type: str = "np",
         **kwargs,
     ) -> VideoOutput:
         """
-        Generate video from text prompt.
+        Generate video from text prompt and optional audio/image.
 
         Args:
-            prompt: Text prompt describing desired video.
-            negative_prompt: Negative prompt for CFG.
-            image: Optional input image for I2V mode.
-            height: Video height (multiple of 16).
-            width: Video width (multiple of 16).
-            num_frames: Number of frames (multiple of 4 + 1, e.g., 81).
-            fps: Output framerate.
-            num_inference_steps: Diffusion steps (30 recommended).
-            guidance_scale: CFG scale (5.0 recommended for Wan).
-            generator: Optional torch Generator for reproducibility.
-            seed: Random seed.
-            callback: Progress callback.
-            output_type: "np" for numpy, "pt" for torch.
-            **kwargs: Additional arguments.
+            prompt: Text prompt describing desired video
+            negative_prompt: Negative prompt for CFG
+            audio: Audio for conditioning (file path, waveform, or None for T2V)
+            image: Reference image for TIA mode (optional)
+            height: Video height (default: 720)
+            width: Video width (default: 1280)
+            num_frames: Number of frames (default: 97)
+            num_inference_steps: Diffusion steps (default: 50)
+            guidance_scale: Text guidance scale_t (default: 5.0)
+            audio_scale: Audio guidance scale_a (default: 0.0, set >0 for audio mode)
+            generator: Torch generator for reproducibility
+            seed: Random seed
+            callback: Progress callback
+            **kwargs: Additional arguments
 
         Returns:
-            VideoOutput with generated frames.
+            VideoOutput with generated frames
         """
-        # Ensure components are loaded
-        self._load_components()
+        # Use defaults from config
+        height = height or self.config.height
+        width = width or self.config.width
+        num_frames = num_frames or self.config.num_frames
+        num_inference_steps = num_inference_steps or self.config.num_inference_steps
+        guidance_scale = guidance_scale if guidance_scale is not None else self.config.guidance_scale
+        audio_scale = audio_scale if audio_scale is not None else self.config.audio_scale
+
+        # Auto-enable audio mode if audio provided
+        if audio is not None and audio_scale == 0.0:
+            audio_scale = 1.0
+            logger.info("Audio provided, setting audio_scale=1.0")
 
         # Create generator from seed
         if seed is not None and generator is None:
-            device = self._device if self._device.type != "cpu" else "cpu"
-            generator = torch.Generator(device=device).manual_seed(seed)
+            generator = torch.Generator(device="cpu").manual_seed(seed)
+
+        # Determine mode
+        if audio is not None:
+            mode = "TIA" if image is not None else "TA"
+        else:
+            mode = "T2V"
 
         logger.info(
-            f"Generating video: {width}x{height}, {num_frames} frames @ {fps}fps, "
-            f"{num_inference_steps} steps, guidance={guidance_scale}"
+            f"Generating video: {width}x{height}, {num_frames} frames, "
+            f"{num_inference_steps} steps, mode={mode}"
+        )
+        logger.info(f"  scale_t={guidance_scale}, scale_a={audio_scale}")
+
+        # Encode text
+        text_embeds = self._encode_text(prompt)
+        if negative_prompt:
+            negative_embeds = self._encode_text(negative_prompt)
+        else:
+            negative_embeds = self._encode_text("")
+
+        # Encode audio if provided
+        audio_embeds = None
+        if audio is not None:
+            audio_embeds = self.encode_audio(audio)
+
+        # Encode image if provided
+        image_latents = None
+        if image is not None:
+            image_latents = self._encode_image(image)
+
+        # Run diffusion
+        latents = self._diffusion_loop(
+            text_embeds=text_embeds,
+            negative_embeds=negative_embeds,
+            audio_embeds=audio_embeds,
+            image_latents=image_latents,
+            height=height,
+            width=width,
+            num_frames=num_frames,
+            num_inference_steps=num_inference_steps,
+            guidance_scale=guidance_scale,
+            audio_scale=audio_scale,
+            generator=generator,
+            callback=callback,
         )
 
-        # Calculate latent dimensions
-        # VAE compression: 8x spatial, 4x temporal
-        latent_height = height // 8
-        latent_width = width // 8
-        latent_frames = (num_frames - 1) // 4 + 1  # e.g., 81 -> 21
-
-        logger.info(
-            f"Latent shape: ({latent_frames}, {latent_height}, {latent_width})"
-        )
-
-        # TODO: Implement actual generation once transformer is built
-        # For now, return placeholder video
-        logger.warning(
-            "Generation not yet implemented. "
-            "Returning placeholder frames for testing."
-        )
-
-        # Create placeholder video (random noise for testing pipeline)
-        frames = np.random.randint(
-            0, 255,
-            size=(1, num_frames, height, width, 3),
-            dtype=np.uint8,
-        )
+        # Decode latents to video
+        frames = self._decode_latents(latents)
 
         return VideoOutput(
             frames=frames,
-            audio=None,
-            fps=fps,
+            fps=self.config.fps,
         )
+
+    def _encode_text(self, prompt: str) -> torch.Tensor:
+        """Encode text prompt with UMT5."""
+        inputs = self.tokenizer(
+            prompt,
+            max_length=512,
+            padding="max_length",
+            truncation=True,
+            return_tensors="pt",
+        )
+
+        input_ids = inputs.input_ids.to(self._device)
+        attention_mask = inputs.attention_mask.to(self._device)
+
+        # Move encoder to device if needed
+        if self.config.enable_cpu_offload:
+            self.text_encoder = self.text_encoder.to(self._device)
+
+        with torch.no_grad():
+            outputs = self.text_encoder(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+            )
+            text_embeds = outputs.last_hidden_state
+
+        # Offload if needed
+        if self.config.enable_cpu_offload:
+            self.text_encoder = self.text_encoder.to("cpu")
+            torch.cuda.empty_cache()
+
+        return text_embeds
+
+    def _encode_image(self, image) -> torch.Tensor:
+        """Encode reference image with VAE."""
+        # Convert to tensor if needed
+        if not isinstance(image, torch.Tensor):
+            from PIL import Image
+            if isinstance(image, np.ndarray):
+                image = Image.fromarray(image)
+            # Assume PIL Image
+            image = torch.from_numpy(np.array(image)).float() / 255.0
+            image = image.permute(2, 0, 1).unsqueeze(0)  # [1, 3, H, W]
+
+        image = image.to(self._device, self._dtype)
+
+        # Move VAE to device if needed
+        if self.config.enable_cpu_offload:
+            self.vae = self.vae.to(self._device)
+
+        with torch.no_grad():
+            latents = self.vae.encode(image)
+
+        # Offload if needed
+        if self.config.enable_cpu_offload:
+            self.vae = self.vae.to("cpu")
+            torch.cuda.empty_cache()
+
+        return latents
+
+    def _diffusion_loop(
+        self,
+        text_embeds: torch.Tensor,
+        negative_embeds: torch.Tensor,
+        audio_embeds: Optional[torch.Tensor],
+        image_latents: Optional[torch.Tensor],
+        height: int,
+        width: int,
+        num_frames: int,
+        num_inference_steps: int,
+        guidance_scale: float,
+        audio_scale: float,
+        generator: Optional[torch.Generator],
+        callback: Optional[ProgressCallback],
+    ) -> torch.Tensor:
+        """Run the diffusion denoising loop."""
+        # Calculate latent dimensions
+        # Wan VAE: spatial 8x downscale, temporal 4x downscale
+        latent_height = height // 8
+        latent_width = width // 8
+        latent_frames = (num_frames - 1) // 4 + 1  # Temporal compression
+
+        # Initialize latents
+        latents = torch.randn(
+            (1, 16, latent_frames, latent_height, latent_width),
+            generator=generator,
+            device=self._device,
+            dtype=self._dtype,
+        )
+
+        # Set up scheduler
+        self.scheduler.set_timesteps(num_inference_steps)
+        timesteps = self.scheduler.timesteps
+
+        # Move transformer to device if needed
+        if self.config.enable_cpu_offload:
+            self.transformer = self.transformer.to(self._device)
+
+        # Denoising loop
+        for i, t in enumerate(timesteps):
+            # Prepare model input
+            latent_model_input = torch.cat([latents] * 2) if guidance_scale > 1.0 else latents
+            timestep = t.expand(latent_model_input.shape[0]).to(self._device)
+
+            # Prepare text embeddings for CFG
+            if guidance_scale > 1.0:
+                text_input = torch.cat([negative_embeds, text_embeds])
+            else:
+                text_input = text_embeds
+
+            # Prepare audio embeddings
+            audio_input = None
+            if audio_embeds is not None and audio_scale > 0:
+                if guidance_scale > 1.0:
+                    # Duplicate for CFG
+                    audio_input = torch.cat([audio_embeds, audio_embeds])
+                else:
+                    audio_input = audio_embeds
+
+            # Forward pass
+            with torch.no_grad():
+                noise_pred = self.transformer(
+                    hidden_states=latent_model_input,
+                    timestep=timestep,
+                    encoder_hidden_states=text_input,
+                    audio_hidden_states=audio_input,
+                    audio_scale=audio_scale,
+                )
+
+            # CFG
+            if guidance_scale > 1.0:
+                noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
+                noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond)
+
+            # Scheduler step
+            latents = self.scheduler.step(noise_pred, t, latents, return_dict=False)[0]
+
+            # Callback
+            if callback is not None:
+                callback(i, t.item())
+
+        # Offload transformer if needed
+        if self.config.enable_cpu_offload:
+            self.transformer = self.transformer.to("cpu")
+            torch.cuda.empty_cache()
+
+        return latents
+
+    def _decode_latents(self, latents: torch.Tensor) -> np.ndarray:
+        """Decode latents to video frames."""
+        # Move VAE to device if needed
+        if self.config.enable_cpu_offload:
+            self.vae = self.vae.to(self._device)
+
+        with torch.no_grad():
+            video = self.vae.decode(latents)
+
+        # Offload VAE if needed
+        if self.config.enable_cpu_offload:
+            self.vae = self.vae.to("cpu")
+            torch.cuda.empty_cache()
+
+        # Convert to numpy uint8
+        video = video.cpu().float().numpy()
+        video = (video * 255).clip(0, 255).astype(np.uint8)
+
+        # Reshape: [1, 3, F, H, W] -> [1, F, H, W, 3]
+        if video.ndim == 5:
+            video = video.transpose(0, 2, 3, 4, 1)
+
+        return video
 
     def save_video(
         self,
@@ -613,20 +837,20 @@ class WanVideoPipeline:
         output_path: str,
         audio: Optional[np.ndarray] = None,
         fps: Optional[float] = None,
-        audio_sample_rate: int = 24000,
+        audio_sample_rate: int = 16000,
     ) -> str:
         """
         Save video output to file.
 
         Args:
-            output: VideoOutput or video frames array.
-            output_path: Path to save video.
-            audio: Audio waveform (if output is array).
-            fps: Framerate (if output is array).
-            audio_sample_rate: Audio sample rate.
+            output: VideoOutput or video frames array
+            output_path: Path to save video
+            audio: Audio waveform (if output is array)
+            fps: Framerate (if output is array)
+            audio_sample_rate: Audio sample rate
 
         Returns:
-            Path to saved video.
+            Path to saved video
         """
         if isinstance(output, VideoOutput):
             frames = output.frames
@@ -635,7 +859,7 @@ class WanVideoPipeline:
             audio_sample_rate = output.audio_sample_rate
         else:
             frames = output
-            fps = fps or 24.0
+            fps = fps or 25.0
 
         # Handle batch dimension: [B, F, H, W, C] -> [F, H, W, C]
         if frames.ndim == 5:
@@ -644,9 +868,9 @@ class WanVideoPipeline:
         # Ensure uint8
         if frames.dtype != np.uint8:
             if frames.max() <= 1.0:
-                frames = (frames * 255).round().astype(np.uint8)
+                frames = (frames * 255).clip(0, 255).astype(np.uint8)
             else:
-                frames = frames.astype(np.uint8)
+                frames = frames.clip(0, 255).astype(np.uint8)
 
         saved = False
 
@@ -788,31 +1012,32 @@ class WanVideoPipeline:
     def offload(self) -> None:
         """Offload all models to CPU."""
         if self.transformer is not None:
-            self.transformer.to("cpu")
+            self.transformer = self.transformer.to("cpu")
         if self.vae is not None:
-            self.vae.to("cpu")
+            self.vae = self.vae.to("cpu")
         if self.text_encoder is not None:
-            self.text_encoder.to("cpu")
+            self.text_encoder = self.text_encoder.to("cpu")
+        if self._whisper_encoder is not None:
+            self._whisper_encoder = self._whisper_encoder.to("cpu")
 
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
-        self._is_offloaded = True
         logger.info("WanVideoPipeline offloaded to CPU")
 
     def to(self, device: Union[str, torch.device]) -> "WanVideoPipeline":
         """Move pipeline to device."""
         device = torch.device(device)
         if self.transformer is not None:
-            self.transformer.to(device)
+            self.transformer = self.transformer.to(device)
         if self.vae is not None:
-            self.vae.to(device)
+            self.vae = self.vae.to(device)
         if self.text_encoder is not None:
-            self.text_encoder.to(device)
-
+            self.text_encoder = self.text_encoder.to(device)
+        if self._whisper_encoder is not None:
+            self._whisper_encoder = self._whisper_encoder.to(device)
         self._device = device
-        self._is_offloaded = str(device) == "cpu"
         return self
 
     @property
@@ -825,15 +1050,26 @@ class WanVideoPipeline:
         """Get pipeline dtype."""
         return self._dtype
 
-    def get_weight_keys(self) -> List[str]:
-        """Get list of weight keys from loaded checkpoint (for debugging)."""
-        return getattr(self, "_weight_keys", [])
+    @property
+    def mode(self) -> str:
+        """Get pipeline mode based on config."""
+        if self.config.audio_scale > 0:
+            return "audio"
+        return "t2v"
 
     def estimate_memory(self) -> Dict[str, float]:
         """Estimate memory usage in GB."""
+        variant = self.config.humo_variant
+        if variant == "17B":
+            transformer_gb = 34.0  # 17B params in bf16
+        else:
+            transformer_gb = 3.4  # 1.7B params in bf16
+
         return {
-            "transformer": 14.0,  # 14B params in fp8 ~ 14GB
-            "vae": 0.5,
-            "text_encoder": 6.0,  # UMT5-XXL
-            "peak": 16.0,
+            "transformer": transformer_gb,
+            "vae": 1.0,
+            "text_encoder": 12.0,  # UMT5-XXL in bf16
+            "whisper": 3.0,  # Whisper-large-v3
+            "peak_with_offload": max(transformer_gb, 12.0) + 2.0,  # Largest component + overhead
+            "peak_no_offload": transformer_gb + 12.0 + 1.0 + 3.0 + 5.0,  # All + activations
         }
