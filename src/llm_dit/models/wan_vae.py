@@ -401,7 +401,8 @@ class WanVAE(nn.Module):
         Returns:
             [B, z_dim, T', H', W'] latent codes
         """
-        with torch.cuda.amp.autocast(dtype=self.dtype):
+        device_type = str(videos.device).split(':')[0]
+        with torch.amp.autocast(device_type=device_type, dtype=self.dtype):
             return self.model.encode(videos, self.scale)
 
     def decode(self, latents: torch.Tensor) -> torch.Tensor:
@@ -414,7 +415,8 @@ class WanVAE(nn.Module):
         Returns:
             [B, 3, T, H, W] RGB videos clamped to [-1, 1]
         """
-        with torch.cuda.amp.autocast(dtype=self.dtype):
+        device_type = str(latents.device).split(':')[0]
+        with torch.amp.autocast(device_type=device_type, dtype=self.dtype):
             videos = self.model.decode(latents, self.scale)
             return videos.clamp(-1, 1)
 

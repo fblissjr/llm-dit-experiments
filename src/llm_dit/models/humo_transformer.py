@@ -84,28 +84,6 @@ class LayerNormWrapper(nn.Module):
         return self.layer(x)
 
 
-class SinusoidalEmbedding(nn.Module):
-    """Sinusoidal positional embedding for timesteps."""
-
-    def __init__(self, dim: int, max_period: int = 10000):
-        super().__init__()
-        self.dim = dim
-        self.max_period = max_period
-
-    def forward(self, timesteps: torch.Tensor) -> torch.Tensor:
-        half_dim = self.dim // 2
-        freqs = torch.exp(
-            -math.log(self.max_period)
-            * torch.arange(half_dim, device=timesteps.device, dtype=torch.float32)
-            / half_dim
-        )
-        args = timesteps[:, None].float() * freqs[None, :]
-        embedding = torch.cat([torch.cos(args), torch.sin(args)], dim=-1)
-        if self.dim % 2:
-            embedding = F.pad(embedding, (0, 1))
-        return embedding
-
-
 class AudioProjection(nn.Module):
     """
     Audio projection from Whisper features to model dimension.
@@ -741,12 +719,52 @@ class HuMoTransformer(nn.Module):
         """
         Prepare audio embeddings for cross-attention.
 
+        Audio projection expects input shaped as [B*F, seq_len=8, blocks=5, channels=1280]
+        representing 40 Whisper timesteps per video frame.
+
         Args:
             audio_hidden_states: [B, T_audio, 1280] from Whisper encoder
-            num_frames: Number of video frames
+            num_frames: Number of video frames (after temporal patchification)
 
         Returns:
             [B, num_frames * audio_token_num, audio_dim] audio context
         """
-        # Simplified - full implementation would use audio_proj with proper reshaping
-        return audio_hidden_states
+        B, T_audio, whisper_dim = audio_hidden_states.shape
+
+        # Audio projection expects: seq_len * blocks = 8 * 5 = 40 timesteps per frame
+        timesteps_per_frame = self.audio_proj.seq_len * self.audio_proj.blocks  # 40
+
+        # Calculate how many Whisper timesteps we need total
+        total_needed = num_frames * timesteps_per_frame
+
+        # Interpolate or pad/truncate audio to match needed length
+        if T_audio != total_needed:
+            # Reshape for interpolation: [B, 1280, T_audio] -> interpolate -> [B, 1280, total_needed]
+            audio_t = audio_hidden_states.transpose(1, 2)  # [B, 1280, T_audio]
+            audio_t = F.interpolate(audio_t, size=total_needed, mode='linear', align_corners=False)
+            audio_hidden_states = audio_t.transpose(1, 2)  # [B, total_needed, 1280]
+
+        # Reshape to [B, num_frames, seq_len, blocks, channels]
+        audio_reshaped = audio_hidden_states.view(
+            B, num_frames,
+            self.audio_proj.seq_len,  # 8
+            self.audio_proj.blocks,   # 5
+            whisper_dim               # 1280
+        )
+
+        # Flatten batch and frames for projection: [B*F, seq_len, blocks, channels]
+        audio_flat = audio_reshaped.view(
+            B * num_frames,
+            self.audio_proj.seq_len,
+            self.audio_proj.blocks,
+            whisper_dim
+        )
+
+        # Project through audio_proj: [B*F, 8, 5, 1280] -> [B, F, 16, 1536]
+        audio_tokens = self.audio_proj(audio_flat, num_frames)
+
+        # Reshape for cross-attention: [B, F * context_tokens, output_dim]
+        # audio_tokens is [B, F, context_tokens=16, output_dim=1536]
+        audio_context = audio_tokens.view(B, -1, self.audio_proj.output_dim)
+
+        return audio_context

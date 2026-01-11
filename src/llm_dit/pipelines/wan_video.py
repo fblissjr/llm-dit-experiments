@@ -719,6 +719,50 @@ class WanVideoPipeline:
 
         return latents
 
+    def _prepare_transformer_input(
+        self,
+        noise_latents: torch.Tensor,
+        image_latents: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        """
+        Assemble 36-channel input for HuMo transformer.
+
+        HuMo expects concatenated inputs:
+        - 16 channels: noise latents (from VAE / diffusion)
+        - 16 channels: image latents (for I2V/TIA mode) or zeros (for T2V)
+        - 4 channels: extra conditioning (mask, padding info)
+
+        Args:
+            noise_latents: [B, 16, T, H, W] noise/denoising latents
+            image_latents: [B, 16, T, H, W] image conditioning or None
+
+        Returns:
+            [B, 36, T, H, W] concatenated transformer input
+        """
+        B, C, T, H, W = noise_latents.shape
+
+        # Image conditioning: use provided latents or zeros for T2V mode
+        if image_latents is None:
+            image_cond = torch.zeros_like(noise_latents)
+        else:
+            # Ensure image latents match temporal dimension
+            if image_latents.shape[2] != T:
+                # Repeat first frame for all timesteps (image-to-video)
+                image_cond = image_latents[:, :, :1, :, :].expand(-1, -1, T, -1, -1)
+            else:
+                image_cond = image_latents
+
+        # Extra conditioning: 4 channels (typically mask/padding info)
+        # For now, zeros - can be extended for more complex conditioning
+        extra_cond = torch.zeros(
+            B, 4, T, H, W,
+            device=noise_latents.device,
+            dtype=noise_latents.dtype
+        )
+
+        # Concatenate: [noise, image, extra] -> [B, 36, T, H, W]
+        return torch.cat([noise_latents, image_cond, extra_cond], dim=1)
+
     def _diffusion_loop(
         self,
         text_embeds: torch.Tensor,
@@ -741,7 +785,7 @@ class WanVideoPipeline:
         latent_width = width // 8
         latent_frames = (num_frames - 1) // 4 + 1  # Temporal compression
 
-        # Initialize latents
+        # Initialize latents (16 channels for noise)
         latents = torch.randn(
             (1, 16, latent_frames, latent_height, latent_width),
             generator=generator,
@@ -759,9 +803,21 @@ class WanVideoPipeline:
 
         # Denoising loop
         for i, t in enumerate(timesteps):
-            # Prepare model input
-            latent_model_input = torch.cat([latents] * 2) if guidance_scale > 1.0 else latents
-            timestep = t.expand(latent_model_input.shape[0]).to(self._device)
+            # Prepare noise latents for CFG (duplicate if using guidance)
+            if guidance_scale > 1.0:
+                latent_for_cfg = torch.cat([latents, latents])
+            else:
+                latent_for_cfg = latents
+
+            # Assemble 36-channel transformer input
+            # For CFG: both unconditional and conditional use same image (or zeros)
+            if guidance_scale > 1.0:
+                img_for_cfg = torch.cat([image_latents, image_latents]) if image_latents is not None else None
+            else:
+                img_for_cfg = image_latents
+            transformer_input = self._prepare_transformer_input(latent_for_cfg, img_for_cfg)
+
+            timestep = t.expand(transformer_input.shape[0]).to(self._device)
 
             # Prepare text embeddings for CFG
             if guidance_scale > 1.0:
@@ -778,10 +834,10 @@ class WanVideoPipeline:
                 else:
                     audio_input = audio_embeds
 
-            # Forward pass
+            # Forward pass through transformer (expects 36-channel input)
             with torch.no_grad():
                 noise_pred = self.transformer(
-                    hidden_states=latent_model_input,
+                    hidden_states=transformer_input,  # Now 36 channels
                     timestep=timestep,
                     encoder_hidden_states=text_input,
                     audio_hidden_states=audio_input,

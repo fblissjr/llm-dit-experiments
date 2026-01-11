@@ -1,6 +1,6 @@
 # agent context
 
-*last updated: 2026-01-08*
+*last updated: 2026-01-11*
 
 Quick reference for LLM agents working on this codebase.
 
@@ -44,13 +44,27 @@ Text encoder extracts embeddings from Qwen3-4B hidden states (default layer -2).
 | steps | 50 | non-distilled |
 | resolution | 640/1024 | fixed |
 
+### wan (humo video)
+
+| param | value | notes |
+|-------|-------|-------|
+| transformer | HuMo-17B | 5120 hidden, 40 blocks |
+| encoder | UMT5-XXL | 4096 hidden dim |
+| vae | Wan2.1 | 8x spatial, 4x temporal |
+| input channels | 36 | 16 noise + 16 image + 4 extra |
+| output channels | 16 | latent dimension |
+| audio | Whisper-large-v3 | optional, for audio-sync |
+
+**Status:** Phase 1 complete (transformer + pipeline structure). Phase 2 pending (VAE + text encoder + scheduler integration).
+
 ## key files
 
 | area | files |
 |------|-------|
-| pipeline | `src/llm_dit/pipelines/z_image.py`, `qwen_image.py` |
+| pipeline | `src/llm_dit/pipelines/z_image.py`, `qwen_image.py`, `wan_video.py` |
 | config | `src/llm_dit/config.py`, `cli.py` |
 | encoder | `src/llm_dit/encoders/z_image_encoder.py` |
+| models | `src/llm_dit/models/humo_transformer.py`, `wan_vae.py` |
 | web | `web/server.py`, `static/js/`, `static/css/` |
 | tests | `tests/unit/`, `tests/integration/` |
 
@@ -81,6 +95,9 @@ uv run scripts/generate.py --model-path /path/to/z-image --lora style.safetensor
 
 # high-res (DyPE)
 uv run scripts/generate.py --model-path /path/to/z-image --dype --width 2048 --height 2048 "Prompt"
+
+# wan video (when complete)
+uv run scripts/generate.py --model-type wan --wan-humo-path ~/Storage/HuMo/HuMo-17B --wan-base-path ~/Storage/Wan2.1-T2V-1.3B "A man singing"
 
 # web server
 uv run web/server.py --config config.toml --profile default
