@@ -521,34 +521,42 @@ class PipelineLoader:
 
     def _load_wan_pipeline(self) -> LoadResult:
         """
-        Load Wan video generation pipeline.
+        Load Wan/HuMo video generation pipeline.
 
-        Wan 2.1/2.2 is a video model (1.3B to 14B variants) that wraps
-        diffusers' WanPipeline (T2V) or WanImageToVideoPipeline (I2V).
+        Uses HuMo transformer as base, supporting both T2V and audio-conditioned modes.
+        Audio conditioning is controlled via audio_scale parameter at runtime.
 
         Returns:
             LoadResult with pipeline loaded
         """
         from llm_dit.pipelines import WanVideoPipeline
 
-        # Get Wan config
-        wan_model_path = getattr(self.config, 'wan_model_path', '')
-        wan_num_frames = getattr(self.config, 'wan_num_frames', 81)
-        wan_fps = getattr(self.config, 'wan_fps', 24)
+        # Get Wan/HuMo config
+        humo_path = getattr(self.config, 'wan_humo_path', '')
+        wan_path = getattr(self.config, 'wan_base_path', '')
+        whisper_path = getattr(self.config, 'wan_whisper_path', '')
+        humo_variant = getattr(self.config, 'wan_humo_variant', '17B')
+        wan_num_frames = getattr(self.config, 'wan_num_frames', 97)
+        wan_fps = getattr(self.config, 'wan_fps', 25)
         wan_height = getattr(self.config, 'wan_height', 720)
         wan_width = getattr(self.config, 'wan_width', 1280)
-        wan_steps = getattr(self.config, 'wan_steps', 30)
+        wan_steps = getattr(self.config, 'wan_steps', 50)
         wan_guidance_scale = getattr(self.config, 'wan_guidance_scale', 5.0)
+        wan_audio_scale = getattr(self.config, 'wan_audio_scale', 0.0)
         wan_offload_mode = getattr(self.config, 'wan_offload_mode', 'model')
 
         logger.info("=" * 60)
-        logger.info("LOADING WAN VIDEO PIPELINE")
+        logger.info("LOADING WAN/HUMO VIDEO PIPELINE")
         logger.info("=" * 60)
-        logger.info(f"  Model path: {wan_model_path}")
+        logger.info(f"  HuMo path: {humo_path}")
+        logger.info(f"  HuMo variant: {humo_variant}")
+        logger.info(f"  Wan path: {wan_path}")
+        logger.info(f"  Whisper path: {whisper_path or 'lazy-load'}")
         logger.info(f"  Resolution: {wan_width}x{wan_height}")
         logger.info(f"  Frames: {wan_num_frames} (~{wan_num_frames/wan_fps:.1f}s at {wan_fps}fps)")
         logger.info(f"  Steps: {wan_steps}")
-        logger.info(f"  Guidance: {wan_guidance_scale}")
+        logger.info(f"  Text guidance (scale_t): {wan_guidance_scale}")
+        logger.info(f"  Audio guidance (scale_a): {wan_audio_scale}")
         logger.info(f"  Offload: {wan_offload_mode}")
         logger.info("-" * 60)
 
@@ -557,16 +565,19 @@ class PipelineLoader:
         # Determine CPU offload setting
         enable_cpu_offload = wan_offload_mode in ('model', 'sequential')
 
-        # Load pipeline (auto-detects T2V vs I2V from path)
+        # Load HuMo pipeline
         self._pipeline = WanVideoPipeline.from_pretrained(
-            wan_model_path,
+            humo_path=humo_path,
+            wan_path=wan_path,
+            whisper_path=whisper_path or None,
+            humo_variant=humo_variant,
             torch_dtype=self.config.get_torch_dtype(),
             enable_cpu_offload=enable_cpu_offload,
         )
 
         load_time = time.time() - start
 
-        logger.info(f"Wan pipeline loaded in {load_time:.1f}s")
+        logger.info(f"Wan/HuMo pipeline loaded in {load_time:.1f}s")
         logger.info(f"  Mode: {self._pipeline.mode.upper()}")
         logger.info(f"  Device: {self._pipeline.device}")
         logger.info(f"  Dtype: {self._pipeline.dtype}")

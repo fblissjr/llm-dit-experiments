@@ -137,16 +137,18 @@ class RuntimeConfig:
     ltx2_audio: bool = False  # Enable audio generation
     ltx2_output_path: str = "output.mp4"  # Output video path
 
-    # Wan video generation (Wan 2.1/2.2, HuMo)
-    wan_model_path: str = ""  # Path to Wan transformer weights
-    wan_vae_path: str = ""  # Path to Wan VAE (optional, may be bundled)
-    wan_text_encoder_path: str = ""  # Path to UMT5-XXL encoder
-    wan_num_frames: int = 81  # Number of frames (81 = ~3.4s at 24fps)
-    wan_fps: int = 24  # Output framerate
+    # Wan/HuMo video generation
+    wan_humo_path: str = ""  # Path to HuMo transformer (e.g., ~/Storage/HuMo)
+    wan_base_path: str = ""  # Path to Wan2.1-T2V for VAE/text encoder
+    wan_whisper_path: str = ""  # Path to Whisper (optional, for audio)
+    wan_humo_variant: str = "17B"  # "17B" or "1.7B"
+    wan_num_frames: int = 97  # Number of frames (97 = ~3.9s at 25fps, HuMo default)
+    wan_fps: int = 25  # Output framerate (25 for HuMo)
     wan_height: int = 720  # Video height (multiple of 16)
     wan_width: int = 1280  # Video width (multiple of 16)
-    wan_guidance_scale: float = 5.0  # CFG scale (5.0 typical for Wan)
-    wan_steps: int = 30  # Diffusion steps
+    wan_guidance_scale: float = 5.0  # Text guidance (scale_t)
+    wan_audio_scale: float = 0.0  # Audio guidance (scale_a), 0 = T2V mode
+    wan_steps: int = 50  # Diffusion steps (50 for HuMo)
     wan_offload_mode: str = "model"  # none, model, sequential
     wan_output_path: str = "wan_output.mp4"  # Output video path
 
@@ -576,37 +578,44 @@ def create_base_parser(
         help="Output video path (default: output.mp4)",
     )
 
-    # Wan video generation (Wan 2.1/2.2, HuMo)
-    wan_group = parser.add_argument_group("Wan Video Generation")
+    # Wan/HuMo video generation
+    wan_group = parser.add_argument_group("Wan/HuMo Video Generation")
     wan_group.add_argument(
-        "--wan-model-path",
+        "--wan-humo-path",
         type=str,
         default=None,
-        help="Path to Wan transformer weights (safetensors file or directory)",
+        help="Path to HuMo transformer (e.g., ~/Storage/HuMo)",
     )
     wan_group.add_argument(
-        "--wan-vae-path",
+        "--wan-base-path",
         type=str,
         default=None,
-        help="Path to Wan VAE weights (optional if bundled with model)",
+        help="Path to Wan2.1-T2V for VAE/text encoder (e.g., ~/Storage/Wan2.1-T2V-1.3B)",
     )
     wan_group.add_argument(
-        "--wan-text-encoder-path",
+        "--wan-whisper-path",
         type=str,
         default=None,
-        help="Path to UMT5-XXL text encoder",
+        help="Path to Whisper for audio (optional, lazy-loads if not set)",
+    )
+    wan_group.add_argument(
+        "--wan-humo-variant",
+        type=str,
+        choices=["17B", "1.7B"],
+        default=None,
+        help="HuMo variant (default: 17B)",
     )
     wan_group.add_argument(
         "--wan-num-frames",
         type=int,
         default=None,
-        help="Number of video frames (default: 81, ~3.4s at 24fps)",
+        help="Number of video frames (default: 97, ~3.9s at 25fps)",
     )
     wan_group.add_argument(
         "--wan-fps",
         type=int,
         default=None,
-        help="Output framerate (default: 24)",
+        help="Output framerate (default: 25 for HuMo)",
     )
     wan_group.add_argument(
         "--wan-height",
@@ -624,13 +633,19 @@ def create_base_parser(
         "--wan-guidance-scale",
         type=float,
         default=None,
-        help="CFG guidance scale (default: 5.0)",
+        help="Text guidance scale_t (default: 5.0)",
+    )
+    wan_group.add_argument(
+        "--wan-audio-scale",
+        type=float,
+        default=None,
+        help="Audio guidance scale_a (default: 0.0, set >0 for audio mode)",
     )
     wan_group.add_argument(
         "--wan-steps",
         type=int,
         default=None,
-        help="Diffusion steps (default: 30)",
+        help="Diffusion steps (default: 50 for HuMo)",
     )
     wan_group.add_argument(
         "--wan-offload-mode",
@@ -1375,13 +1390,15 @@ def _apply_cli_overrides(args: argparse.Namespace, config: RuntimeConfig) -> Run
     if getattr(args, 'ltx2_output', None) is not None:
         config.ltx2_output_path = args.ltx2_output
 
-    # Wan video overrides
-    if getattr(args, 'wan_model_path', None) is not None:
-        config.wan_model_path = args.wan_model_path
-    if getattr(args, 'wan_vae_path', None) is not None:
-        config.wan_vae_path = args.wan_vae_path
-    if getattr(args, 'wan_text_encoder_path', None) is not None:
-        config.wan_text_encoder_path = args.wan_text_encoder_path
+    # Wan/HuMo video overrides
+    if getattr(args, 'wan_humo_path', None) is not None:
+        config.wan_humo_path = args.wan_humo_path
+    if getattr(args, 'wan_base_path', None) is not None:
+        config.wan_base_path = args.wan_base_path
+    if getattr(args, 'wan_whisper_path', None) is not None:
+        config.wan_whisper_path = args.wan_whisper_path
+    if getattr(args, 'wan_humo_variant', None) is not None:
+        config.wan_humo_variant = args.wan_humo_variant
     if getattr(args, 'wan_num_frames', None) is not None:
         config.wan_num_frames = args.wan_num_frames
     if getattr(args, 'wan_fps', None) is not None:
@@ -1392,6 +1409,8 @@ def _apply_cli_overrides(args: argparse.Namespace, config: RuntimeConfig) -> Run
         config.wan_width = args.wan_width
     if getattr(args, 'wan_guidance_scale', None) is not None:
         config.wan_guidance_scale = args.wan_guidance_scale
+    if getattr(args, 'wan_audio_scale', None) is not None:
+        config.wan_audio_scale = args.wan_audio_scale
     if getattr(args, 'wan_steps', None) is not None:
         config.wan_steps = args.wan_steps
     if getattr(args, 'wan_offload_mode', None) is not None:
@@ -1659,15 +1678,17 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
             # Check for Wan section
             if hasattr(toml_config, 'wan'):
                 wan = toml_config.wan
-                config.wan_model_path = getattr(wan, 'model_path', '')
-                config.wan_vae_path = getattr(wan, 'vae_path', '')
-                config.wan_text_encoder_path = getattr(wan, 'text_encoder_path', '')
-                config.wan_num_frames = getattr(wan, 'num_frames', 81)
-                config.wan_fps = getattr(wan, 'fps', 24)
+                config.wan_humo_path = getattr(wan, 'humo_path', '')
+                config.wan_base_path = getattr(wan, 'base_path', '')
+                config.wan_whisper_path = getattr(wan, 'whisper_path', '')
+                config.wan_humo_variant = getattr(wan, 'humo_variant', '17B')
+                config.wan_num_frames = getattr(wan, 'num_frames', 97)
+                config.wan_fps = getattr(wan, 'fps', 25)
                 config.wan_height = getattr(wan, 'height', 720)
                 config.wan_width = getattr(wan, 'width', 1280)
                 config.wan_guidance_scale = getattr(wan, 'guidance_scale', 5.0)
-                config.wan_steps = getattr(wan, 'num_inference_steps', 30)
+                config.wan_audio_scale = getattr(wan, 'audio_scale', 0.0)
+                config.wan_steps = getattr(wan, 'num_inference_steps', 50)
                 config.wan_offload_mode = getattr(wan, 'offload_mode', 'model')
 
             # Check for DyPE section

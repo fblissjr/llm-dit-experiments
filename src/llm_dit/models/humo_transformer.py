@@ -9,16 +9,19 @@ https://github.com/Phantom-video/HuMo
 The model supports both T2V (text-to-video) and audio-conditioned generation.
 Audio conditioning is controlled via audio_scale parameter at runtime.
 
-Architecture based on official HuMo repo (humo/models/wan_modules/model_humo.py).
-
-Weight key mapping:
-- patch_embedding.* -> video patch embedding
-- time_embedding.* -> sinusoidal time embedding
-- time_projection.* -> time MLP projection
-- text_embedding.* -> text context embedding
-- audio_proj.audio_proj_glob_* -> audio projection layers
-- blocks.N.* -> transformer blocks with audio cross-attention
-- head.* -> output projection
+Weight key mapping (matched to official HuMo weights):
+- patch_embedding.weight, bias -> video patch embedding (Conv3d flattened)
+- time_embedding.{0,2}.* -> sinusoidal time MLP (index 0, 2 = Linear layers)
+- time_projection.1.* -> time projection (single Linear at index 1)
+- text_embedding.{0,2}.* -> text context MLP (index 0, 2 = Linear layers)
+- audio_proj.audio_proj_glob_*.layer.* -> audio projection with .layer wrapper
+- blocks.N.modulation -> AdaLN modulation weights (generates scale/shift)
+- blocks.N.norm3.* -> only norm3 (other norms via modulation)
+- blocks.N.self_attn.{q,k,v,o}.*, norm_q.*, norm_k.* -> self-attention
+- blocks.N.cross_attn.{q,k,v,o}.*, norm_q.*, norm_k.* -> text cross-attention
+- blocks.N.audio_cross_attn_wrapper.* -> audio cross-attention
+- blocks.N.ffn.{0,2}.* -> FFN (index 0, 2 = Linear layers)
+- head.head.*, head.modulation -> output projection with modulation
 """
 
 import math
@@ -46,6 +49,41 @@ class RMSNorm(nn.Module):
         return (self.weight * x).to(dtype)
 
 
+class LayerNormWithBias(nn.Module):
+    """Layer normalization with bias, wrapped to match weight key pattern."""
+
+    def __init__(self, dim: int, eps: float = 1e-6):
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(dim))
+        self.bias = nn.Parameter(torch.zeros(dim))
+        self.eps = eps
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return F.layer_norm(x, (x.shape[-1],), self.weight, self.bias, self.eps)
+
+
+class LinearWrapper(nn.Module):
+    """Wrapper that adds .layer attribute for weight key compatibility."""
+
+    def __init__(self, in_features: int, out_features: int, bias: bool = True):
+        super().__init__()
+        self.layer = nn.Linear(in_features, out_features, bias=bias)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.layer(x)
+
+
+class LayerNormWrapper(nn.Module):
+    """Wrapper that adds .layer attribute for weight key compatibility."""
+
+    def __init__(self, dim: int, eps: float = 1e-6):
+        super().__init__()
+        self.layer = nn.LayerNorm(dim, eps=eps)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.layer(x)
+
+
 class SinusoidalEmbedding(nn.Module):
     """Sinusoidal positional embedding for timesteps."""
 
@@ -68,47 +106,19 @@ class SinusoidalEmbedding(nn.Module):
         return embedding
 
 
-class PatchEmbedding3D(nn.Module):
-    """3D patch embedding for video: (C, T, H, W) -> (N, D)."""
-
-    def __init__(
-        self,
-        in_channels: int = 16,
-        hidden_size: int = 5120,
-        patch_size: Tuple[int, int, int] = (1, 2, 2),
-    ):
-        super().__init__()
-        self.patch_size = patch_size
-        self.proj = nn.Conv3d(
-            in_channels,
-            hidden_size,
-            kernel_size=patch_size,
-            stride=patch_size,
-        )
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # x: [B, C, T, H, W]
-        x = self.proj(x)  # [B, D, T', H', W']
-        x = rearrange(x, "b d t h w -> b (t h w) d")
-        return x
-
-
 class AudioProjection(nn.Module):
     """
     Audio projection from Whisper features to model dimension.
 
-    Maps flattened Whisper features to context tokens:
-    - audio_proj_glob_1: [intermediate_dim, seq_len * blocks * channels]
-    - audio_proj_glob_2: [intermediate_dim, intermediate_dim]
-    - audio_proj_glob_3: [context_tokens * output_dim, intermediate_dim]
-    - audio_proj_glob_norm: LayerNorm(output_dim)
+    Weight keys: audio_proj.audio_proj_glob_*.layer.*
+    Uses LinearWrapper/LayerNormWrapper to add .layer attribute.
     """
 
     def __init__(
         self,
         seq_len: int = 8,
         blocks: int = 5,
-        channels: int = 1280,  # Whisper hidden dim
+        channels: int = 1280,
         intermediate_dim: int = 512,
         output_dim: int = 1536,
         context_tokens: int = 16,
@@ -122,11 +132,11 @@ class AudioProjection(nn.Module):
 
         input_dim = seq_len * blocks * channels
 
-        # Match HuMo weight keys: audio_proj.audio_proj_glob_*
-        self.audio_proj_glob_1 = nn.Linear(input_dim, intermediate_dim)
-        self.audio_proj_glob_2 = nn.Linear(intermediate_dim, intermediate_dim)
-        self.audio_proj_glob_3 = nn.Linear(intermediate_dim, context_tokens * output_dim)
-        self.audio_proj_glob_norm = nn.LayerNorm(output_dim)
+        # Match weight keys: audio_proj.audio_proj_glob_*.layer.*
+        self.audio_proj_glob_1 = LinearWrapper(input_dim, intermediate_dim)
+        self.audio_proj_glob_2 = LinearWrapper(intermediate_dim, intermediate_dim)
+        self.audio_proj_glob_3 = LinearWrapper(intermediate_dim, context_tokens * output_dim)
+        self.audio_proj_glob_norm = LayerNormWrapper(output_dim)
 
     def forward(self, audio: torch.Tensor, num_frames: int) -> torch.Tensor:
         """
@@ -163,13 +173,19 @@ class AudioProjection(nn.Module):
 
 
 class SelfAttention(nn.Module):
-    """Self-attention with optional RoPE."""
+    """
+    Self-attention with QK norm.
+
+    Weight keys: blocks.N.self_attn.{q,k,v,o}.*, norm_q.*, norm_k.*
+
+    Note: QK norm is applied BEFORE splitting into heads (full hidden_size),
+    not per-head as in some other implementations.
+    """
 
     def __init__(
         self,
         hidden_size: int,
         num_heads: int,
-        qk_norm: bool = True,
         eps: float = 1e-6,
     ):
         super().__init__()
@@ -178,15 +194,15 @@ class SelfAttention(nn.Module):
         self.head_dim = hidden_size // num_heads
         self.scale = self.head_dim ** -0.5
 
+        # Projections with bias
         self.q = nn.Linear(hidden_size, hidden_size)
         self.k = nn.Linear(hidden_size, hidden_size)
         self.v = nn.Linear(hidden_size, hidden_size)
         self.o = nn.Linear(hidden_size, hidden_size)
 
-        self.qk_norm = qk_norm
-        if qk_norm:
-            self.q_norm = RMSNorm(self.head_dim, eps=eps)
-            self.k_norm = RMSNorm(self.head_dim, eps=eps)
+        # QK norm - applied before head split (full hidden_size)
+        self.norm_q = RMSNorm(hidden_size, eps=eps)
+        self.norm_k = RMSNorm(hidden_size, eps=eps)
 
     def forward(
         self,
@@ -195,21 +211,27 @@ class SelfAttention(nn.Module):
     ) -> torch.Tensor:
         B, N, _ = x.shape
 
-        q = self.q(x).reshape(B, N, self.num_heads, self.head_dim)
-        k = self.k(x).reshape(B, N, self.num_heads, self.head_dim)
-        v = self.v(x).reshape(B, N, self.num_heads, self.head_dim)
+        # Project Q, K, V
+        q = self.q(x)  # [B, N, D]
+        k = self.k(x)
+        v = self.v(x)
 
-        if self.qk_norm:
-            q = self.q_norm(q)
-            k = self.k_norm(k)
+        # Apply QK norm BEFORE head split
+        q = self.norm_q(q)
+        k = self.norm_k(k)
+
+        # Now reshape to heads
+        q = q.reshape(B, N, self.num_heads, self.head_dim)
+        k = k.reshape(B, N, self.num_heads, self.head_dim)
+        v = v.reshape(B, N, self.num_heads, self.head_dim)
 
         # Apply RoPE if provided
         if freqs is not None:
             q = self._apply_rope(q, freqs)
             k = self._apply_rope(k, freqs)
 
-        # Attention
-        q = q.transpose(1, 2)  # [B, H, N, D]
+        # Attention: [B, H, N, D]
+        q = q.transpose(1, 2)
         k = k.transpose(1, 2)
         v = v.transpose(1, 2)
 
@@ -222,11 +244,9 @@ class SelfAttention(nn.Module):
 
     def _apply_rope(self, x: torch.Tensor, freqs: torch.Tensor) -> torch.Tensor:
         """Apply rotary position embedding."""
-        # x: [B, N, H, D], freqs: [N, D//2, 2]
         x_reshape = x.reshape(*x.shape[:-1], -1, 2)
-        freqs = freqs.unsqueeze(0).unsqueeze(2)  # [1, N, 1, D//2, 2]
+        freqs = freqs.unsqueeze(0).unsqueeze(2)
 
-        # Complex rotation
         x_complex = torch.view_as_complex(x_reshape.float())
         freqs_complex = torch.view_as_complex(freqs.float())
         x_rotated = x_complex * freqs_complex
@@ -235,14 +255,19 @@ class SelfAttention(nn.Module):
 
 
 class CrossAttention(nn.Module):
-    """Cross-attention for text conditioning."""
+    """
+    Cross-attention for text conditioning.
+
+    Weight keys: blocks.N.cross_attn.{q,k,v,o}.*, norm_q.*, norm_k.*
+
+    Note: QK norm is applied BEFORE splitting into heads (full hidden_size).
+    """
 
     def __init__(
         self,
         hidden_size: int,
         context_dim: int,
         num_heads: int,
-        qk_norm: bool = True,
         eps: float = 1e-6,
     ):
         super().__init__()
@@ -256,22 +281,27 @@ class CrossAttention(nn.Module):
         self.v = nn.Linear(context_dim, hidden_size)
         self.o = nn.Linear(hidden_size, hidden_size)
 
-        self.qk_norm = qk_norm
-        if qk_norm:
-            self.q_norm = RMSNorm(self.head_dim, eps=eps)
-            self.k_norm = RMSNorm(self.head_dim, eps=eps)
+        # QK norm - applied before head split (full hidden_size)
+        self.norm_q = RMSNorm(hidden_size, eps=eps)
+        self.norm_k = RMSNorm(hidden_size, eps=eps)
 
     def forward(self, x: torch.Tensor, context: torch.Tensor) -> torch.Tensor:
         B, N, _ = x.shape
         _, S, _ = context.shape
 
-        q = self.q(x).reshape(B, N, self.num_heads, self.head_dim)
-        k = self.k(context).reshape(B, S, self.num_heads, self.head_dim)
-        v = self.v(context).reshape(B, S, self.num_heads, self.head_dim)
+        # Project
+        q = self.q(x)  # [B, N, D]
+        k = self.k(context)  # [B, S, D]
+        v = self.v(context)
 
-        if self.qk_norm:
-            q = self.q_norm(q)
-            k = self.k_norm(k)
+        # Apply QK norm BEFORE head split
+        q = self.norm_q(q)
+        k = self.norm_k(k)
+
+        # Reshape to heads
+        q = q.reshape(B, N, self.num_heads, self.head_dim)
+        k = k.reshape(B, S, self.num_heads, self.head_dim)
+        v = v.reshape(B, S, self.num_heads, self.head_dim)
 
         q = q.transpose(1, 2)
         k = k.transpose(1, 2)
@@ -286,7 +316,14 @@ class CrossAttention(nn.Module):
 
 
 class AudioCrossAttention(nn.Module):
-    """Cross-attention for audio conditioning."""
+    """
+    Cross-attention for audio conditioning.
+
+    Weight keys: blocks.N.audio_cross_attn_wrapper.audio_cross_attn.{q,k,v,o}.*,
+                 norm_q.*, norm_k.*
+
+    Note: QK norm is applied BEFORE splitting into heads (full hidden_size).
+    """
 
     def __init__(
         self,
@@ -301,11 +338,14 @@ class AudioCrossAttention(nn.Module):
         self.head_dim = hidden_size // num_heads
         self.scale = self.head_dim ** -0.5
 
-        # Match HuMo weight keys: blocks.N.audio_cross_attn_wrapper.audio_cross_attn.*
         self.q = nn.Linear(hidden_size, hidden_size)
         self.k = nn.Linear(audio_dim, hidden_size)
         self.v = nn.Linear(audio_dim, hidden_size)
         self.o = nn.Linear(hidden_size, hidden_size)
+
+        # QK norm - applied before head split (full hidden_size)
+        self.norm_q = RMSNorm(hidden_size, eps=eps)
+        self.norm_k = RMSNorm(hidden_size, eps=eps)
 
     def forward(
         self,
@@ -313,21 +353,22 @@ class AudioCrossAttention(nn.Module):
         audio: torch.Tensor,
         audio_scale: float = 1.0,
     ) -> torch.Tensor:
-        """
-        Args:
-            x: [B, N, D] hidden states
-            audio: [B, A, audio_dim] audio context
-            audio_scale: Scaling factor for audio influence
-
-        Returns:
-            [B, N, D] audio-conditioned hidden states
-        """
         B, N, _ = x.shape
         _, A, _ = audio.shape
 
-        q = self.q(x).reshape(B, N, self.num_heads, self.head_dim)
-        k = self.k(audio).reshape(B, A, self.num_heads, self.head_dim)
-        v = self.v(audio).reshape(B, A, self.num_heads, self.head_dim)
+        # Project
+        q = self.q(x)  # [B, N, D]
+        k = self.k(audio)  # [B, A, D]
+        v = self.v(audio)
+
+        # Apply QK norm BEFORE head split
+        q = self.norm_q(q)
+        k = self.norm_k(k)
+
+        # Reshape to heads
+        q = q.reshape(B, N, self.num_heads, self.head_dim)
+        k = k.reshape(B, A, self.num_heads, self.head_dim)
+        v = v.reshape(B, A, self.num_heads, self.head_dim)
 
         q = q.transpose(1, 2)
         k = k.transpose(1, 2)
@@ -343,7 +384,11 @@ class AudioCrossAttention(nn.Module):
 
 
 class AudioCrossAttentionWrapper(nn.Module):
-    """Wrapper for audio cross-attention with normalization."""
+    """
+    Wrapper for audio cross-attention with normalization.
+
+    Weight keys: blocks.N.audio_cross_attn_wrapper.norm1_audio.*, audio_cross_attn.*
+    """
 
     def __init__(
         self,
@@ -353,8 +398,8 @@ class AudioCrossAttentionWrapper(nn.Module):
         eps: float = 1e-6,
     ):
         super().__init__()
-        # Match HuMo weight keys: blocks.N.audio_cross_attn_wrapper.*
-        self.norm1_audio = RMSNorm(hidden_size, eps=eps)
+        # norm1_audio has bias (LayerNorm style)
+        self.norm1_audio = nn.LayerNorm(hidden_size, eps=eps)
         self.audio_cross_attn = AudioCrossAttention(
             hidden_size=hidden_size,
             audio_dim=audio_dim,
@@ -373,22 +418,21 @@ class AudioCrossAttentionWrapper(nn.Module):
         return x + out
 
 
-class FeedForward(nn.Module):
-    """Feed-forward network with GELU activation."""
-
-    def __init__(self, hidden_size: int, ffn_dim: int):
-        super().__init__()
-        self.w1 = nn.Linear(hidden_size, ffn_dim)
-        self.w2 = nn.Linear(ffn_dim, hidden_size)
-        self.w3 = nn.Linear(hidden_size, ffn_dim)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # SwiGLU variant
-        return self.w2(F.silu(self.w1(x)) * self.w3(x))
-
-
 class TransformerBlock(nn.Module):
-    """Single transformer block with audio cross-attention."""
+    """
+    Single transformer block with AdaLN modulation and audio cross-attention.
+
+    Weight keys:
+    - blocks.N.modulation -> AdaLN modulation (generates 6 scale/shift values)
+    - blocks.N.norm3.* -> only norm3 (pre-FFN norm with bias)
+    - blocks.N.self_attn.* -> self attention
+    - blocks.N.cross_attn.* -> text cross attention
+    - blocks.N.audio_cross_attn_wrapper.* -> audio cross attention
+    - blocks.N.ffn.{0,2}.* -> FFN (Linear, SiLU, Linear)
+
+    AdaLN modulation produces 6 values: [shift1, scale1, shift2, scale2, shift3, scale3]
+    Applied to self_attn output, cross_attn output, and ffn input.
+    """
 
     def __init__(
         self,
@@ -397,20 +441,29 @@ class TransformerBlock(nn.Module):
         ffn_dim: int,
         text_dim: int = 4096,
         audio_dim: int = 1536,
-        qk_norm: bool = True,
         eps: float = 1e-6,
         has_audio: bool = True,
     ):
         super().__init__()
-        # Match HuMo weight keys: blocks.N.*
-        self.norm1 = RMSNorm(hidden_size, eps=eps)
-        self.self_attn = SelfAttention(hidden_size, num_heads, qk_norm, eps)
+        self.hidden_size = hidden_size
 
-        self.norm2 = RMSNorm(hidden_size, eps=eps)
-        self.cross_attn = CrossAttention(hidden_size, text_dim, num_heads, qk_norm, eps)
+        # AdaLN modulation: produces 6 values from time embedding
+        # Shape [1, 6, D] - the leading 1 is for broadcasting
+        self.modulation = nn.Parameter(torch.zeros(1, 6, hidden_size))
 
-        self.norm3 = RMSNorm(hidden_size, eps=eps)
-        self.ffn = FeedForward(hidden_size, ffn_dim)
+        # Only norm3 exists (applied before FFN)
+        self.norm3 = nn.LayerNorm(hidden_size, eps=eps)
+
+        # Attention layers
+        self.self_attn = SelfAttention(hidden_size, num_heads, eps)
+        self.cross_attn = CrossAttention(hidden_size, text_dim, num_heads, eps)
+
+        # FFN as Sequential with indices 0, 2 (Linear, SiLU, Linear)
+        self.ffn = nn.Sequential(
+            nn.Linear(hidden_size, ffn_dim),  # [0]
+            nn.SiLU(),  # [1] - not saved
+            nn.Linear(ffn_dim, hidden_size),  # [2]
+        )
 
         # Audio cross-attention (optional)
         self.has_audio = has_audio
@@ -423,24 +476,67 @@ class TransformerBlock(nn.Module):
         self,
         x: torch.Tensor,
         context: torch.Tensor,
+        time_mod: torch.Tensor,
         audio: Optional[torch.Tensor] = None,
         audio_scale: float = 0.0,
         freqs: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        # Self-attention
-        x = x + self.self_attn(self.norm1(x), freqs)
+        # Get modulation values
+        # time_mod: [B, 6, D] from time_projection
+        # self.modulation: [1, 6, D] per-block learned modulation
+        # Combine: element-wise product
+        mod = self.modulation * time_mod  # [B, 6, D]
 
-        # Text cross-attention
-        x = x + self.cross_attn(self.norm2(x), context)
+        shift1, scale1, shift2, scale2, shift3, scale3 = mod.chunk(6, dim=1)
+        shift1, scale1 = shift1.squeeze(1), scale1.squeeze(1)
+        shift2, scale2 = shift2.squeeze(1), scale2.squeeze(1)
+        shift3, scale3 = shift3.squeeze(1), scale3.squeeze(1)
+
+        # Self-attention with AdaLN
+        h = self.self_attn(x, freqs)
+        h = h * (1 + scale1) + shift1
+        x = x + h
+
+        # Text cross-attention with AdaLN
+        h = self.cross_attn(x, context)
+        h = h * (1 + scale2) + shift2
+        x = x + h
 
         # Audio cross-attention (if audio provided and scale > 0)
         if self.has_audio and audio is not None and audio_scale > 0:
             x = self.audio_cross_attn_wrapper(x, audio, audio_scale)
 
-        # FFN
-        x = x + self.ffn(self.norm3(x))
+        # FFN with AdaLN
+        h = self.norm3(x)
+        h = h * (1 + scale3) + shift3
+        h = self.ffn(h)
+        x = x + h
 
         return x
+
+
+class OutputHead(nn.Module):
+    """
+    Output head with modulation.
+
+    Weight keys: head.head.*, head.modulation
+    """
+
+    def __init__(self, hidden_size: int, out_features: int, eps: float = 1e-6):
+        super().__init__()
+        # Shape [1, 2, D] - the leading 1 is for broadcasting
+        self.modulation = nn.Parameter(torch.zeros(1, 2, hidden_size))
+        self.head = nn.Linear(hidden_size, out_features)
+
+    def forward(self, x: torch.Tensor, time_mod: torch.Tensor) -> torch.Tensor:
+        # time_mod: [B, 2, D] (first 2 components of the 6-component modulation)
+        # self.modulation: [1, 2, D] per-head learned modulation
+        mod = self.modulation * time_mod  # [B, 2, D]
+        shift, scale = mod.chunk(2, dim=1)
+        shift, scale = shift.squeeze(1), scale.squeeze(1)
+
+        x = x * (1 + scale) + shift
+        return self.head(x)
 
 
 class HuMoTransformer(nn.Module):
@@ -452,6 +548,8 @@ class HuMoTransformer(nn.Module):
     - TA (text+audio): audio_scale>0
     - TIA (text+image+audio): audio_scale>0 with image latents
 
+    Weight keys matched to official HuMo checkpoint.
+
     Args:
         num_layers: Number of transformer blocks (40 for 17B, 30 for 1.7B)
         hidden_size: Model dimension (5120 for 17B, 2048 for 1.7B)
@@ -459,8 +557,7 @@ class HuMoTransformer(nn.Module):
         ffn_dim: Feed-forward dimension (13824 for 17B)
         in_channels: Input latent channels (16)
         text_dim: Text embedding dimension (4096 for UMT5-XXL)
-        text_len: Max text sequence length (512)
-        freq_dim: RoPE frequency dimension (256)
+        freq_dim: Time embedding dimension (256)
         audio_dim: Audio context dimension (1536)
         patch_size: 3D patch size (1, 2, 2)
         eps: Layer norm epsilon
@@ -475,7 +572,6 @@ class HuMoTransformer(nn.Module):
         in_channels: int = 16,
         out_channels: int = 16,
         text_dim: int = 4096,
-        text_len: int = 512,
         freq_dim: int = 256,
         audio_dim: int = 1536,
         audio_token_num: int = 16,
@@ -487,36 +583,50 @@ class HuMoTransformer(nn.Module):
         self.hidden_size = hidden_size
         self.num_heads = num_heads
         self.patch_size = patch_size
-        self.text_len = text_len
         self.audio_token_num = audio_token_num
+        self.in_channels = in_channels
+        self.out_channels = out_channels
 
-        # Patch embedding
-        self.patch_embedding = PatchEmbedding3D(
-            in_channels=in_channels,
-            hidden_size=hidden_size,
-            patch_size=patch_size,
+        # Patch embedding: Conv3d flattened to weight/bias
+        # Weight keys: patch_embedding.weight, patch_embedding.bias
+        # HuMo uses 36 input channels (noise 16 + image 16 + extra 4)
+        patch_in_channels = 36  # Fixed for HuMo architecture
+        self.patch_embedding = nn.Conv3d(
+            patch_in_channels,
+            hidden_size,
+            kernel_size=patch_size,
+            stride=patch_size,
         )
 
-        # Time embedding
-        self.time_embedding = SinusoidalEmbedding(freq_dim)
+        # Time embedding: Sequential with Linear at 0, 2
+        # Weight keys: time_embedding.{0,2}.*
+        self.time_embedding = nn.Sequential(
+            nn.Linear(freq_dim, hidden_size),  # [0]
+            nn.SiLU(),  # [1] - not saved
+            nn.Linear(hidden_size, hidden_size),  # [2]
+        )
+
+        # Time projection: outputs 6 * hidden_size for all modulation values
+        # Weight keys: time_projection.1.*
+        # Output: 30720 = 6 * 5120 (shift/scale for self_attn, cross_attn, ffn)
         self.time_projection = nn.Sequential(
-            nn.Linear(freq_dim, hidden_size),
-            nn.SiLU(),
-            nn.Linear(hidden_size, hidden_size),
+            nn.Identity(),  # [0] - placeholder
+            nn.Linear(hidden_size, hidden_size * 6),  # [1] outputs all modulations
         )
 
-        # Text embedding projection
+        # Text embedding: Sequential with Linear at 0, 2
+        # Weight keys: text_embedding.{0,2}.*
         self.text_embedding = nn.Sequential(
-            nn.Linear(text_dim, hidden_size),
-            nn.SiLU(),
-            nn.Linear(hidden_size, hidden_size),
+            nn.Linear(text_dim, hidden_size),  # [0]
+            nn.SiLU(),  # [1] - not saved
+            nn.Linear(hidden_size, hidden_size),  # [2]
         )
 
-        # Audio projection (from Whisper features)
+        # Audio projection
         self.audio_proj = AudioProjection(
             seq_len=8,
             blocks=5,
-            channels=1280,  # Whisper hidden dim
+            channels=1280,
             intermediate_dim=512,
             output_dim=audio_dim,
             context_tokens=audio_token_num,
@@ -530,7 +640,6 @@ class HuMoTransformer(nn.Module):
                 ffn_dim=ffn_dim,
                 text_dim=hidden_size,  # After text_embedding projection
                 audio_dim=audio_dim,
-                qk_norm=True,
                 eps=eps,
                 has_audio=True,
             )
@@ -538,10 +647,23 @@ class HuMoTransformer(nn.Module):
         ])
 
         # Output head
-        self.head = nn.Sequential(
-            RMSNorm(hidden_size, eps=eps),
-            nn.Linear(hidden_size, out_channels * patch_size[0] * patch_size[1] * patch_size[2]),
+        out_features = out_channels * patch_size[0] * patch_size[1] * patch_size[2]
+        self.head = OutputHead(hidden_size, out_features, eps)
+
+        # Sinusoidal embedding for timesteps (not saved, computed)
+        self._freq_dim = freq_dim
+
+    def _get_sinusoidal_embedding(self, timesteps: torch.Tensor) -> torch.Tensor:
+        """Compute sinusoidal embedding for timesteps."""
+        half_dim = self._freq_dim // 2
+        freqs = torch.exp(
+            -math.log(10000.0)
+            * torch.arange(half_dim, device=timesteps.device, dtype=torch.float32)
+            / half_dim
         )
+        args = timesteps[:, None].float() * freqs[None, :]
+        embedding = torch.cat([torch.cos(args), torch.sin(args)], dim=-1)
+        return embedding
 
     def forward(
         self,
@@ -566,16 +688,17 @@ class HuMoTransformer(nn.Module):
         """
         B, C, T, H, W = hidden_states.shape
 
-        # Patch embed
-        x = self.patch_embedding(hidden_states)  # [B, N, D]
-        N = x.shape[1]
+        # Patch embed: [B, C, T, H, W] -> [B, D, T', H', W'] -> [B, N, D]
+        x = self.patch_embedding(hidden_states)
+        x = rearrange(x, "b d t h w -> b (t h w) d")
 
         # Time embedding
-        t_emb = self.time_embedding(timestep)
-        t_emb = self.time_projection(t_emb)  # [B, D]
+        t_emb = self._get_sinusoidal_embedding(timestep)  # [B, freq_dim]
+        t_emb = self.time_embedding(t_emb)  # [B, D]
+        t_emb_proj = self.time_projection(t_emb)  # [B, 6*D]
 
-        # Add time embedding to all tokens
-        x = x + t_emb.unsqueeze(1)
+        # Reshape to [B, 6, D] for blocks - these are the base modulation values
+        t_mod = t_emb_proj.reshape(B, 6, self.hidden_size)
 
         # Project text context
         context = self.text_embedding(encoder_hidden_states)  # [B, S, D]
@@ -583,22 +706,19 @@ class HuMoTransformer(nn.Module):
         # Process audio if provided
         audio = None
         if audio_hidden_states is not None and audio_scale > 0:
-            # Reshape and project audio
-            # audio_hidden_states: [B, T_audio, 1280] from Whisper
-            # Need to reshape for audio_proj which expects [B*F, seq_len, blocks, channels]
-            # For simplicity, flatten and project
             num_frames = T // self.patch_size[0]
             audio = self._prepare_audio(audio_hidden_states, num_frames)
 
-        # RoPE frequencies (simplified - could use 3D freqs)
-        freqs = None  # TODO: implement 3D RoPE
+        # RoPE frequencies (TODO: implement 3D RoPE)
+        freqs = None
 
-        # Transformer blocks
+        # Transformer blocks - pass both original time_emb and reshaped modulation
         for block in self.blocks:
-            x = block(x, context, audio, audio_scale, freqs)
+            x = block(x, context, t_mod, audio, audio_scale, freqs)
 
-        # Output head
-        x = self.head(x)  # [B, N, C*p1*p2*p3]
+        # Output head - uses reshaped modulation (take first 2 components)
+        head_mod = t_mod[:, :2, :]  # [B, 2, D]
+        x = self.head(x, head_mod)  # [B, N, C*p1*p2*p3]
 
         # Unpatchify
         p1, p2, p3 = self.patch_size
@@ -607,7 +727,7 @@ class HuMoTransformer(nn.Module):
         W_out = W // p3
 
         x = x.reshape(B, T_out, H_out, W_out, C, p1, p2, p3)
-        x = x.permute(0, 4, 1, 5, 2, 6, 3, 7)  # [B, C, T_out, p1, H_out, p2, W_out, p3]
+        x = x.permute(0, 4, 1, 5, 2, 6, 3, 7)
         x = x.reshape(B, C, T, H, W)
 
         return x
@@ -620,9 +740,6 @@ class HuMoTransformer(nn.Module):
         """
         Prepare audio embeddings for cross-attention.
 
-        This is a simplified version - the full HuMo uses a more complex
-        reshaping based on video frame alignment.
-
         Args:
             audio_hidden_states: [B, T_audio, 1280] from Whisper encoder
             num_frames: Number of video frames
@@ -630,19 +747,5 @@ class HuMoTransformer(nn.Module):
         Returns:
             [B, num_frames * audio_token_num, audio_dim] audio context
         """
-        B = audio_hidden_states.shape[0]
-
-        # Simple approach: interpolate audio to match video frames
-        # then flatten context tokens
-        audio = audio_hidden_states  # [B, T_audio, 1280]
-
-        # Reshape for projection (simplified)
-        # In full HuMo, this involves window-based processing
-        # Here we just project directly
-        audio_flat = audio.reshape(B, -1)  # [B, T_audio * 1280]
-
-        # Use a simpler linear projection for now
-        # Full implementation would use audio_proj with proper reshaping
-        audio_context = audio_hidden_states  # Pass through for cross-attention
-
-        return audio_context
+        # Simplified - full implementation would use audio_proj with proper reshaping
+        return audio_hidden_states
