@@ -7,6 +7,7 @@ Provides:
 - QwenImageDiffusersPipeline: Low-level diffusers wrapper (Qwen-Image-Layered)
 - QwenImage2512Pipeline: Text-to-image generation (Qwen-Image-2512)
 - LTX2Pipeline: Text-to-video generation (LTX-2, requires diffusers>=0.32.0)
+- WanVideoPipeline: Text/Image-to-video generation (Wan 2.1/2.2)
 - setup_attention_backend: Configure attention backend (flash_attn_2, sdpa, etc.)
 - MAX_TEXT_SEQ_LEN: Maximum text sequence length supported by Z-Image DiT (1504 tokens)
 """
@@ -24,13 +25,23 @@ except ImportError:
     LTX2Pipeline = None
     VideoOutput = None
 
+# WanVideoPipeline for Wan 2.1/2.2 video generation
+try:
+    from llm_dit.pipelines.wan_video import WanVideoPipeline
+    from llm_dit.pipelines.wan_video import VideoOutput as WanVideoOutput
+except ImportError:
+    WanVideoPipeline = None
+    WanVideoOutput = None
+
 __all__ = [
     "ZImagePipeline",
     "QwenImagePipeline",
     "QwenImageDiffusersPipeline",
     "QwenImage2512Pipeline",
     "LTX2Pipeline",
+    "WanVideoPipeline",
     "VideoOutput",
+    "WanVideoOutput",
     "setup_attention_backend",
     "MAX_TEXT_SEQ_LEN",
 ]

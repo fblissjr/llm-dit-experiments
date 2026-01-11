@@ -25,7 +25,7 @@ import torch
 from .config import Config
 
 # Supported model types
-ModelType = Literal["zimage", "qwenimage-layered", "qwenimage-t2i", "qwenimage-edit", "ltx2"]
+ModelType = Literal["zimage", "qwenimage-layered", "qwenimage-t2i", "qwenimage-edit", "ltx2", "wan"]
 SUPPORTED_MODEL_TYPES: tuple[str, ...] = get_args(ModelType)
 
 logger = logging.getLogger(__name__)
@@ -136,6 +136,19 @@ class RuntimeConfig:
     ltx2_offload_mode: str = "model"  # none, model, sequential, group
     ltx2_audio: bool = False  # Enable audio generation
     ltx2_output_path: str = "output.mp4"  # Output video path
+
+    # Wan video generation (Wan 2.1/2.2, HuMo)
+    wan_model_path: str = ""  # Path to Wan transformer weights
+    wan_vae_path: str = ""  # Path to Wan VAE (optional, may be bundled)
+    wan_text_encoder_path: str = ""  # Path to UMT5-XXL encoder
+    wan_num_frames: int = 81  # Number of frames (81 = ~3.4s at 24fps)
+    wan_fps: int = 24  # Output framerate
+    wan_height: int = 720  # Video height (multiple of 16)
+    wan_width: int = 1280  # Video width (multiple of 16)
+    wan_guidance_scale: float = 5.0  # CFG scale (5.0 typical for Wan)
+    wan_steps: int = 30  # Diffusion steps
+    wan_offload_mode: str = "model"  # none, model, sequential
+    wan_output_path: str = "wan_output.mp4"  # Output video path
 
     # Device placement
     encoder_device: str = "auto"
@@ -417,7 +430,7 @@ def create_base_parser(
         type=str,
         choices=list(SUPPORTED_MODEL_TYPES),
         default=None,
-        help="Model type: zimage, qwenimage-layered, qwenimage-t2i, qwenimage-edit, ltx2. Default: zimage",
+        help="Model type: zimage, qwenimage-layered, qwenimage-t2i, qwenimage-edit, ltx2, wan. Default: zimage",
     )
     model_group.add_argument(
         "--model-path",
@@ -561,6 +574,76 @@ def create_base_parser(
         type=str,
         default=None,
         help="Output video path (default: output.mp4)",
+    )
+
+    # Wan video generation (Wan 2.1/2.2, HuMo)
+    wan_group = parser.add_argument_group("Wan Video Generation")
+    wan_group.add_argument(
+        "--wan-model-path",
+        type=str,
+        default=None,
+        help="Path to Wan transformer weights (safetensors file or directory)",
+    )
+    wan_group.add_argument(
+        "--wan-vae-path",
+        type=str,
+        default=None,
+        help="Path to Wan VAE weights (optional if bundled with model)",
+    )
+    wan_group.add_argument(
+        "--wan-text-encoder-path",
+        type=str,
+        default=None,
+        help="Path to UMT5-XXL text encoder",
+    )
+    wan_group.add_argument(
+        "--wan-num-frames",
+        type=int,
+        default=None,
+        help="Number of video frames (default: 81, ~3.4s at 24fps)",
+    )
+    wan_group.add_argument(
+        "--wan-fps",
+        type=int,
+        default=None,
+        help="Output framerate (default: 24)",
+    )
+    wan_group.add_argument(
+        "--wan-height",
+        type=int,
+        default=None,
+        help="Video height (default: 720, multiple of 16)",
+    )
+    wan_group.add_argument(
+        "--wan-width",
+        type=int,
+        default=None,
+        help="Video width (default: 1280, multiple of 16)",
+    )
+    wan_group.add_argument(
+        "--wan-guidance-scale",
+        type=float,
+        default=None,
+        help="CFG guidance scale (default: 5.0)",
+    )
+    wan_group.add_argument(
+        "--wan-steps",
+        type=int,
+        default=None,
+        help="Diffusion steps (default: 30)",
+    )
+    wan_group.add_argument(
+        "--wan-offload-mode",
+        type=str,
+        choices=["none", "model", "sequential"],
+        default=None,
+        help="CPU offload mode (default: model for 24GB VRAM)",
+    )
+    wan_group.add_argument(
+        "--wan-output",
+        type=str,
+        default=None,
+        help="Output video path (default: wan_output.mp4)",
     )
 
     # Device placement
@@ -1292,6 +1375,30 @@ def _apply_cli_overrides(args: argparse.Namespace, config: RuntimeConfig) -> Run
     if getattr(args, 'ltx2_output', None) is not None:
         config.ltx2_output_path = args.ltx2_output
 
+    # Wan video overrides
+    if getattr(args, 'wan_model_path', None) is not None:
+        config.wan_model_path = args.wan_model_path
+    if getattr(args, 'wan_vae_path', None) is not None:
+        config.wan_vae_path = args.wan_vae_path
+    if getattr(args, 'wan_text_encoder_path', None) is not None:
+        config.wan_text_encoder_path = args.wan_text_encoder_path
+    if getattr(args, 'wan_num_frames', None) is not None:
+        config.wan_num_frames = args.wan_num_frames
+    if getattr(args, 'wan_fps', None) is not None:
+        config.wan_fps = args.wan_fps
+    if getattr(args, 'wan_height', None) is not None:
+        config.wan_height = args.wan_height
+    if getattr(args, 'wan_width', None) is not None:
+        config.wan_width = args.wan_width
+    if getattr(args, 'wan_guidance_scale', None) is not None:
+        config.wan_guidance_scale = args.wan_guidance_scale
+    if getattr(args, 'wan_steps', None) is not None:
+        config.wan_steps = args.wan_steps
+    if getattr(args, 'wan_offload_mode', None) is not None:
+        config.wan_offload_mode = args.wan_offload_mode
+    if getattr(args, 'wan_output', None) is not None:
+        config.wan_output_path = args.wan_output
+
     # Device overrides
     if getattr(args, 'text_encoder_device', None) is not None:
         config.encoder_device = args.text_encoder_device
@@ -1548,6 +1655,20 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
                 config.ltx2_lora_scale = getattr(ltx2, 'lora_scale', 1.0)
                 config.ltx2_offload_mode = getattr(ltx2, 'offload_mode', 'model')
                 config.ltx2_audio = getattr(ltx2, 'audio_enabled', False)
+
+            # Check for Wan section
+            if hasattr(toml_config, 'wan'):
+                wan = toml_config.wan
+                config.wan_model_path = getattr(wan, 'model_path', '')
+                config.wan_vae_path = getattr(wan, 'vae_path', '')
+                config.wan_text_encoder_path = getattr(wan, 'text_encoder_path', '')
+                config.wan_num_frames = getattr(wan, 'num_frames', 81)
+                config.wan_fps = getattr(wan, 'fps', 24)
+                config.wan_height = getattr(wan, 'height', 720)
+                config.wan_width = getattr(wan, 'width', 1280)
+                config.wan_guidance_scale = getattr(wan, 'guidance_scale', 5.0)
+                config.wan_steps = getattr(wan, 'num_inference_steps', 30)
+                config.wan_offload_mode = getattr(wan, 'offload_mode', 'model')
 
             # Check for DyPE section
             if hasattr(toml_config, 'dype'):

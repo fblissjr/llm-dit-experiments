@@ -305,6 +305,8 @@ class PipelineLoader:
             return LoadResult(pipeline=None, encoder=None, mode="qwenimage-edit_ondemand")
         elif model_type == "ltx2":
             return self._load_ltx2_pipeline()
+        elif model_type == "wan":
+            return self._load_wan_pipeline()
 
         from llm_dit.pipelines import ZImagePipeline
 
@@ -516,6 +518,46 @@ class PipelineLoader:
         logger.info("=" * 60)
 
         return LoadResult(pipeline=None, encoder=None, mode="ltx2_ondemand")
+
+    def _load_wan_pipeline(self) -> LoadResult:
+        """
+        Load Wan video generation pipeline.
+
+        Wan 2.1/2.2 is a 14B video model with optional HuMo audio conditioning.
+        Uses on-demand loading for memory efficiency on 24GB GPUs.
+
+        Returns:
+            LoadResult with mode set for on-demand loading
+        """
+        # Get Wan config
+        wan_model_path = getattr(self.config, 'wan_model_path', '')
+        wan_vae_path = getattr(self.config, 'wan_vae_path', '')
+        wan_text_encoder_path = getattr(self.config, 'wan_text_encoder_path', '')
+        wan_num_frames = getattr(self.config, 'wan_num_frames', 81)
+        wan_fps = getattr(self.config, 'wan_fps', 24)
+        wan_height = getattr(self.config, 'wan_height', 720)
+        wan_width = getattr(self.config, 'wan_width', 1280)
+        wan_steps = getattr(self.config, 'wan_steps', 30)
+        wan_guidance_scale = getattr(self.config, 'wan_guidance_scale', 5.0)
+        wan_offload_mode = getattr(self.config, 'wan_offload_mode', 'model')
+
+        logger.info("=" * 60)
+        logger.info("WAN VIDEO MODE")
+        logger.info("=" * 60)
+        logger.info("Wan uses on-demand loading via /api/wan/generate")
+        logger.info(f"  Model path: {wan_model_path}")
+        if wan_vae_path:
+            logger.info(f"  VAE path: {wan_vae_path}")
+        if wan_text_encoder_path:
+            logger.info(f"  Text encoder: {wan_text_encoder_path}")
+        logger.info(f"  Resolution: {wan_width}x{wan_height}")
+        logger.info(f"  Frames: {wan_num_frames} (~{wan_num_frames/wan_fps:.1f}s at {wan_fps}fps)")
+        logger.info(f"  Steps: {wan_steps}")
+        logger.info(f"  Guidance: {wan_guidance_scale}")
+        logger.info(f"  Offload: {wan_offload_mode}")
+        logger.info("=" * 60)
+
+        return LoadResult(pipeline=None, encoder=None, mode="wan_ondemand")
 
     def load_api_encoder(self) -> LoadResult:
         """
