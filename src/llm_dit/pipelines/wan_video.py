@@ -331,40 +331,35 @@ class WanVideoPipeline:
         variant_path = Path(humo_path) / f"HuMo-{variant}"
         logger.info(f"Loading HuMo-{variant} transformer from {variant_path}")
 
-        # Check for safetensors index
+        # Check for weights in multiple formats
         index_file = variant_path / "humo.safetensors.index.json"
-        if not index_file.exists():
+        ema_pth_file = variant_path / "ema.pth"
+        single_safetensors = variant_path / "humo.safetensors"
+
+        if not (index_file.exists() or ema_pth_file.exists() or single_safetensors.exists()):
             raise FileNotFoundError(
                 f"HuMo weights not found at {variant_path}. "
-                f"Expected {index_file}. Download with: "
-                f"huggingface-cli download bytedance-research/HuMo --local-dir {humo_path}"
+                f"Expected one of: {index_file.name}, {ema_pth_file.name}, {single_safetensors.name}. "
+                f"Download with: huggingface-cli download bytedance-research/HuMo --local-dir {humo_path}"
             )
-
-        # Load sharded weights
-        import json
-        from safetensors import safe_open
-
-        with open(index_file) as f:
-            index = json.load(f)
-
-        weight_map = index.get("weight_map", {})
-        shard_files = set(weight_map.values())
-
-        logger.info(f"  Loading {len(shard_files)} shards...")
 
         # Determine architecture from variant
         if variant == "17B":
             # HuMo-17B: 40 blocks, hidden=5120, 40 heads
+            # 36 input channels (noise 16 + image 16 + audio 4) for I2V/audio modes
             num_layers = 40
             hidden_size = 5120
             num_heads = 40
             ffn_dim = 13824
+            patch_in_channels = 36
         else:
             # HuMo-1.7B: 30 blocks, hidden=1536, 12 heads (matches Wan 1.3B)
+            # 16 input channels (noise only) for T2V mode
             num_layers = 30
             hidden_size = 1536
             num_heads = 12
             ffn_dim = 8960
+            patch_in_channels = 16
 
         # Create transformer model
         from llm_dit.models.humo_transformer import HuMoTransformer
@@ -374,16 +369,40 @@ class WanVideoPipeline:
             hidden_size=hidden_size,
             num_heads=num_heads,
             ffn_dim=ffn_dim,
+            patch_in_channels=patch_in_channels,
         )
 
-        # Load weights from shards
-        state_dict = {}
-        for shard_file in sorted(shard_files):
-            shard_path = variant_path / shard_file
-            logger.info(f"    Loading {shard_file}...")
-            with safe_open(str(shard_path), framework="pt", device="cpu") as f:
-                for key in f.keys():
-                    state_dict[key] = f.get_tensor(key)
+        # Load weights based on available format
+        if index_file.exists():
+            # Sharded safetensors (HuMo-17B)
+            import json
+            from safetensors import safe_open
+
+            with open(index_file) as f:
+                index = json.load(f)
+
+            weight_map = index.get("weight_map", {})
+            shard_files = set(weight_map.values())
+            logger.info(f"  Loading {len(shard_files)} shards...")
+
+            state_dict = {}
+            for shard_file in sorted(shard_files):
+                shard_path = variant_path / shard_file
+                logger.info(f"    Loading {shard_file}...")
+                with safe_open(str(shard_path), framework="pt", device="cpu") as f:
+                    for key in f.keys():
+                        state_dict[key] = f.get_tensor(key)
+
+        elif single_safetensors.exists():
+            # Single safetensors file
+            from safetensors.torch import load_file as load_safetensors
+            logger.info(f"  Loading {single_safetensors.name}...")
+            state_dict = load_safetensors(str(single_safetensors))
+
+        else:
+            # PyTorch .pth file (HuMo-1.7B ema.pth)
+            logger.info(f"  Loading {ema_pth_file.name}...")
+            state_dict = torch.load(str(ema_pth_file), map_location="cpu", weights_only=True)
 
         # Load state dict
         missing, unexpected = transformer.load_state_dict(state_dict, strict=False)
@@ -471,8 +490,11 @@ class WanVideoPipeline:
         text_encoder.load_tokenizer(str(tokenizer_path))
         text_encoder.load_weights(str(weights_path))
 
+        # Always convert to target dtype (weights are stored in fp32)
+        text_encoder.model = text_encoder.model.to(dtype=dtype)
+
         if not cpu_offload:
-            text_encoder.model = text_encoder.model.to(dtype=dtype, device=device)
+            text_encoder.model = text_encoder.model.to(device=device)
 
         logger.info("  UMT5-XXL text encoder loaded")
         # Return encoder only (tokenizer is integrated)
@@ -671,7 +693,7 @@ class WanVideoPipeline:
             self.text_encoder.model = self.text_encoder.model.to(self._device)
 
         # Encode using WanTextEncoder interface
-        text_embeds, _ = self.text_encoder.encode(prompt, device=self._device)
+        text_embeds, _ = self.text_encoder.encode(prompt)
 
         # Offload if needed
         if self.config.enable_cpu_offload:
@@ -713,20 +735,24 @@ class WanVideoPipeline:
         image_latents: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
-        Assemble 36-channel input for HuMo transformer.
+        Prepare input for HuMo transformer.
 
-        HuMo expects concatenated inputs:
-        - 16 channels: noise latents (from VAE / diffusion)
-        - 16 channels: image latents (for I2V/TIA mode) or zeros (for T2V)
-        - 4 channels: extra conditioning (mask, padding info)
+        Input channels depend on variant:
+        - HuMo-17B: 36 channels (noise 16 + image 16 + extra 4)
+        - HuMo-1.7B: 16 channels (noise only, T2V mode)
 
         Args:
             noise_latents: [B, 16, T, H, W] noise/denoising latents
             image_latents: [B, 16, T, H, W] image conditioning or None
 
         Returns:
-            [B, 36, T, H, W] concatenated transformer input
+            Transformer input with variant-appropriate channels
         """
+        # HuMo-1.7B only supports 16-channel input (T2V mode only)
+        if self.config.humo_variant == "1.7B":
+            return noise_latents
+
+        # HuMo-17B: 36 channels for I2V/TIA modes
         B, C, T, H, W = noise_latents.shape
 
         # Image conditioning: use provided latents or zeros for T2V mode
@@ -774,12 +800,13 @@ class WanVideoPipeline:
         latent_frames = (num_frames - 1) // 4 + 1  # Temporal compression
 
         # Initialize latents (16 channels for noise)
+        # Generate on CPU for reproducibility, then move to device
         latents = torch.randn(
             (1, 16, latent_frames, latent_height, latent_width),
             generator=generator,
-            device=self._device,
+            device="cpu",
             dtype=self._dtype,
-        )
+        ).to(self._device)
 
         # Set up scheduler
         self.scheduler.set_timesteps(num_inference_steps)
@@ -805,7 +832,7 @@ class WanVideoPipeline:
                 img_for_cfg = image_latents
             transformer_input = self._prepare_transformer_input(latent_for_cfg, img_for_cfg)
 
-            timestep = t.expand(transformer_input.shape[0]).to(self._device)
+            timestep = t.expand(transformer_input.shape[0]).to(device=self._device, dtype=self._dtype)
 
             # Prepare text embeddings for CFG
             if guidance_scale > 1.0:

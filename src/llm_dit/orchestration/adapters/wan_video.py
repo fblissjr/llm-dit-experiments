@@ -54,10 +54,10 @@ class WanVideoAdapter(PipelineStep):
     Outputs:
         video: VideoOutput - Generated video frames
 
-    Required Models:
-        - humo-transformer: HuMo-17B or HuMo-1.7B transformer
-        - wan-vae: Wan 2.1 VAE for decoding
-        - umt5-xxl: UMT5-XXL text encoder
+    Models (self-managed via WanVideoPipeline):
+        - HuMo-17B or HuMo-1.7B transformer
+        - Wan 2.1 VAE for decoding
+        - UMT5-XXL text encoder
     """
 
     name = "WanVideoAdapter"
@@ -91,25 +91,34 @@ class WanVideoAdapter(PipelineStep):
         StepOutput("video", OrchVideoOutput, description="Generated video"),
     ]
 
-    required_models = ["humo-transformer", "wan-vae", "umt5-xxl"]
+    # Note: This adapter manages its own models via WanVideoPipeline.from_pretrained()
+    # It doesn't use models from the ModelPool. Set to empty to avoid loading errors.
+    # Future: Could be refactored to accept models from pool for sharing across adapters.
+    required_models = []
 
     def __init__(
         self,
         humo_path: Optional[str] = None,
         wan_path: Optional[str] = None,
+        humo_variant: str = "17B",
+        enable_cpu_offload: bool = True,
         **config,
     ):
         """
         Initialize adapter.
 
         Args:
-            humo_path: Override path for HuMo weights
+            humo_path: Override path for HuMo base directory
             wan_path: Override path for Wan weights
+            humo_variant: HuMo model variant ("17B" or "1.7B")
+            enable_cpu_offload: Whether to offload models to CPU when not in use
             **config: Additional pipeline config
         """
         super().__init__(**config)
         self._humo_path = humo_path
         self._wan_path = wan_path
+        self._humo_variant = humo_variant
+        self._enable_cpu_offload = enable_cpu_offload
         self._pipeline = None
 
     def execute(
@@ -171,15 +180,20 @@ class WanVideoAdapter(PipelineStep):
             from llm_dit.pipelines.wan_video import WanVideoPipeline
 
             humo_path = self._humo_path or self.config.get(
-                "humo_path", "~/Storage/HuMo/HuMo-17B"
+                "humo_path", "~/Storage/HuMo"
             )
             wan_path = self._wan_path or self.config.get(
                 "wan_path", "~/Storage/Wan2.1-T2V-1.3B"
+            )
+            humo_variant = self._humo_variant or self.config.get(
+                "humo_variant", "17B"
             )
 
             self._pipeline = WanVideoPipeline.from_pretrained(
                 humo_path=humo_path,
                 wan_path=wan_path,
+                humo_variant=humo_variant,
+                enable_cpu_offload=self._enable_cpu_offload,
             )
 
         return self._pipeline

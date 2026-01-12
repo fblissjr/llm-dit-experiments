@@ -578,6 +578,10 @@ class TransformerBlock(nn.Module):
         mod = self.modulation * time_mod  # [B, 6, D]
 
         shift1, scale1, shift2, scale2, shift3, scale3 = mod.unbind(dim=1)
+        # Add sequence dim for broadcasting: [B, D] -> [B, 1, D]
+        shift1, scale1 = shift1.unsqueeze(1), scale1.unsqueeze(1)
+        shift2, scale2 = shift2.unsqueeze(1), scale2.unsqueeze(1)
+        shift3, scale3 = shift3.unsqueeze(1), scale3.unsqueeze(1)
 
         # Self-attention with AdaLN
         h = self.self_attn(x, freqs)
@@ -620,6 +624,8 @@ class OutputHead(nn.Module):
         # self.modulation: [1, 2, D] per-head learned modulation
         mod = self.modulation * time_mod  # [B, 2, D]
         shift, scale = mod.unbind(dim=1)
+        # Add sequence dim for broadcasting: [B, D] -> [B, 1, D]
+        shift, scale = shift.unsqueeze(1), scale.unsqueeze(1)
 
         x = x * (1 + scale) + shift
         return self.head(x)
@@ -657,6 +663,7 @@ class HuMoTransformer(nn.Module):
         ffn_dim: int = 13824,
         in_channels: int = 16,
         out_channels: int = 16,
+        patch_in_channels: int = 36,  # 36 for HuMo-17B (I2V/audio), 16 for HuMo-1.7B (T2V only)
         text_dim: int = 4096,
         freq_dim: int = 256,
         audio_dim: int = 1536,
@@ -675,8 +682,7 @@ class HuMoTransformer(nn.Module):
 
         # Patch embedding: Conv3d flattened to weight/bias
         # Weight keys: patch_embedding.weight, patch_embedding.bias
-        # HuMo uses 36 input channels (noise 16 + image 16 + extra 4)
-        patch_in_channels = 36  # Fixed for HuMo architecture
+        # HuMo-17B uses 36 (noise 16 + image 16 + audio 4), HuMo-1.7B uses 16 (noise only)
         self.patch_embedding = nn.Conv3d(
             patch_in_channels,
             hidden_size,
@@ -749,7 +755,10 @@ class HuMoTransformer(nn.Module):
 
     def _get_sinusoidal_embedding(self, timesteps: torch.Tensor) -> torch.Tensor:
         """Compute sinusoidal embedding for timesteps."""
+        # Store original dtype for final conversion
+        original_dtype = timesteps.dtype
         half_dim = self._freq_dim // 2
+        # Use fp32 for numerical precision in sinusoidal computation
         freqs = torch.exp(
             -math.log(10000.0)
             * torch.arange(half_dim, device=timesteps.device, dtype=torch.float32)
@@ -757,7 +766,8 @@ class HuMoTransformer(nn.Module):
         )
         args = timesteps[:, None].float() * freqs[None, :]
         embedding = torch.cat([torch.cos(args), torch.sin(args)], dim=-1)
-        return embedding
+        # Convert back to model dtype
+        return embedding.to(original_dtype)
 
     def forward(
         self,
