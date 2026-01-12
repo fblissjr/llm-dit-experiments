@@ -314,12 +314,16 @@ class CachedEmbeddingDataset(Dataset):
 
         # Derive embedding filename from image name
         image_name = Path(item["image"]).stem
-        embedding_path = self.embedding_dir / f"{image_name}.pt"
+        embedding_path = self.embedding_dir / f"{image_name}.safetensors"
 
         if not embedding_path.exists():
-            raise FileNotFoundError(f"Cached embeddings not found: {embedding_path}")
+            raise FileNotFoundError(
+                f"Cached embeddings not found: {embedding_path}. "
+                f"Convert with: uv run python scripts/convert_to_safetensors.py {self.embedding_dir} --recursive"
+            )
 
-        return torch.load(embedding_path, weights_only=True)
+        from safetensors.torch import load_file
+        return load_file(str(embedding_path))
 
     def __len__(self) -> int:
         return len(self.data) * self.repeat

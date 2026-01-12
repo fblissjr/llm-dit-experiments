@@ -1,10 +1,11 @@
 """
 Wan Video VAE for video encoding/decoding.
 
-Last Updated: 2026-01-11
+Last Updated: 2026-01-12
 
-This implements the Wan VAE architecture from:
-https://github.com/Phantom-video/HuMo (humo/models/wan_modules/vae.py)
+This implements the official Wan VAE architecture to match checkpoint weights.
+NOTE: ONLY TESTED AND BUILT FOR Wan-AI/Wan2.1-T2V-1.3B
+- IMPORTANT: NEED TO TEST FOR OTHER VARIANTS OF WAN 2.1 and WAN 2.2
 
 The VAE uses:
 - 3D causal convolutions for temporal consistency
@@ -12,383 +13,495 @@ The VAE uses:
 - Latent dimension: 16 channels
 - Mean/std normalization for stable training
 
-Weight file: Wan2.1_VAE.pth from Wan-AI/Wan2.1-T2V-1.3B
+Weight file: Wan2.1_VAE.safetensors
 """
 
-from typing import List, Optional, Tuple
+from typing import List, Tuple
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from einops import rearrange
+
+CACHE_T = 2
 
 
-class CausalConv3d(nn.Module):
-    """
-    3D causal convolution with padding for temporal causality.
+class CausalConv3d(nn.Conv3d):
+    """Causal 3D convolution with temporal padding for causality."""
 
-    Ensures outputs at time t only depend on inputs at times <= t.
-    """
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Store original padding and set to zero (will pad manually)
+        self._padding = (
+            self.padding[2],
+            self.padding[2],  # Width
+            self.padding[1],
+            self.padding[1],  # Height
+            2 * self.padding[0],
+            0,  # Temporal: causal
+        )
+        self.padding = (0, 0, 0)
+
+    def forward(self, x: torch.Tensor, cache_x: torch.Tensor = None) -> torch.Tensor:
+        padding = list(self._padding)
+        if cache_x is not None and self._padding[4] > 0:
+            cache_x = cache_x.to(x.device)
+            x = torch.cat([cache_x, x], dim=2)
+            padding[4] -= cache_x.shape[2]
+        x = F.pad(x, padding)
+        return super().forward(x)
+
+
+class RMS_norm(nn.Module):
+    """RMS normalization with gamma parameter (matches official weights)."""
 
     def __init__(
-        self,
-        in_channels: int,
-        out_channels: int,
-        kernel_size: int = 3,
-        stride: int = 1,
-        padding: int = 1,
+        self, dim: int, channel_first: bool = True, images: bool = False, bias: bool = False
     ):
         super().__init__()
-        self.conv = nn.Conv3d(
-            in_channels,
-            out_channels,
-            kernel_size=(kernel_size, kernel_size, kernel_size),
-            stride=(stride, stride, stride) if isinstance(stride, int) else stride,
-            padding=(kernel_size - 1, padding, padding),
-        )
-        self.causal_padding = kernel_size - 1
+        # images=False gives 4D shape [C,1,1,1] for video, images=True gives 3D [C,1,1] for 2D
+        broadcastable_dims = (1, 1, 1) if not images else (1, 1)
+        shape = (dim, *broadcastable_dims) if channel_first else (dim,)
+
+        self.channel_first = channel_first
+        self.scale = dim**0.5
+        self.gamma = nn.Parameter(torch.ones(shape))
+        self.bias = nn.Parameter(torch.zeros(shape)) if bias else 0.0
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # x: [B, C, T, H, W]
-        x = self.conv(x)
-        # Remove future frames from temporal dimension
-        if self.causal_padding > 0:
-            x = x[:, :, :-self.causal_padding, :, :]
+        dtype = x.dtype
+        x = (
+            F.normalize(x, dim=(1 if self.channel_first else -1)) * self.scale * self.gamma
+            + self.bias
+        )
+        return x.to(dtype)
+
+
+class Upsample(nn.Upsample):
+    """Upsample with bfloat16 fix."""
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return super().forward(x.float()).type_as(x)
+
+
+class Resample(nn.Module):
+    """Spatial/temporal resampling module."""
+
+    def __init__(self, dim: int, mode: str):
+        assert mode in ("none", "upsample2d", "upsample3d", "downsample2d", "downsample3d")
+        super().__init__()
+        self.dim = dim
+        self.mode = mode
+
+        if mode in ("upsample2d", "upsample3d"):
+            self.resample = nn.Sequential(
+                Upsample(scale_factor=(2.0, 2.0), mode="nearest-exact"),
+                nn.Conv2d(dim, dim // 2, 3, padding=1),
+            )
+            if mode == "upsample3d":
+                self.time_conv = CausalConv3d(dim, dim * 2, (3, 1, 1), padding=(1, 0, 0))
+        elif mode in ("downsample2d", "downsample3d"):
+            self.resample = nn.Sequential(
+                nn.ZeroPad2d((0, 1, 0, 1)),
+                nn.Conv2d(dim, dim, 3, stride=(2, 2)),
+            )
+            if mode == "downsample3d":
+                self.time_conv = CausalConv3d(dim, dim, (3, 1, 1), stride=(2, 1, 1), padding=(0, 0, 0))
+        else:
+            self.resample = nn.Identity()
+
+    def forward(self, x: torch.Tensor, feat_cache: dict = None) -> torch.Tensor:
+        b, c, t, h, w = x.size()
+
+        if self.mode == "downsample3d":
+            if feat_cache is not None:
+                key = id(self.time_conv)
+                if key not in feat_cache:
+                    feat_cache[key] = x.clone()
+                else:
+                    cache_x = x[:, :, -1:, :, :].clone()
+                    x = self.time_conv(torch.cat([feat_cache[key][:, :, -1:, :, :], x], 2))
+                    feat_cache[key] = cache_x
+            else:
+                x = self.time_conv(x)
+
+        t = x.shape[2]
+        x = rearrange(x, "b c t h w -> (b t) c h w")
+        x = self.resample(x)
+        x = rearrange(x, "(b t) c h w -> b c t h w", t=t)
         return x
 
 
-class GroupNorm32(nn.GroupNorm):
-    """Group normalization with 32 groups, float32 computation."""
+class ResidualBlock(nn.Module):
+    """Residual block with RMS norm and causal conv."""
 
-    def __init__(self, num_channels: int):
-        super().__init__(32, num_channels)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return super().forward(x.float()).to(x.dtype)
-
-
-class ResBlock3D(nn.Module):
-    """3D residual block with causal convolutions."""
-
-    def __init__(
-        self,
-        in_channels: int,
-        out_channels: int,
-        dropout: float = 0.0,
-    ):
+    def __init__(self, in_dim: int, out_dim: int, dropout: float = 0.0):
         super().__init__()
-        self.in_channels = in_channels
-        self.out_channels = out_channels
+        self.in_dim = in_dim
+        self.out_dim = out_dim
 
-        self.norm1 = GroupNorm32(in_channels)
-        self.conv1 = CausalConv3d(in_channels, out_channels, 3, 1, 1)
-
-        self.norm2 = GroupNorm32(out_channels)
-        self.dropout = nn.Dropout(dropout)
-        self.conv2 = CausalConv3d(out_channels, out_channels, 3, 1, 1)
-
-        if in_channels != out_channels:
-            self.skip = nn.Conv3d(in_channels, out_channels, 1)
-        else:
-            self.skip = nn.Identity()
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        h = self.norm1(x)
-        h = F.silu(h)
-        h = self.conv1(h)
-
-        h = self.norm2(h)
-        h = F.silu(h)
-        h = self.dropout(h)
-        h = self.conv2(h)
-
-        return h + self.skip(x)
-
-
-class Downsample3D(nn.Module):
-    """3D downsampling with strided convolution."""
-
-    def __init__(
-        self,
-        channels: int,
-        temporal_stride: int = 1,
-        spatial_stride: int = 2,
-    ):
-        super().__init__()
-        stride = (temporal_stride, spatial_stride, spatial_stride)
-        self.conv = nn.Conv3d(channels, channels, 3, stride, 1)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.conv(x)
-
-
-class Upsample3D(nn.Module):
-    """3D upsampling with interpolation and convolution."""
-
-    def __init__(
-        self,
-        channels: int,
-        temporal_scale: int = 1,
-        spatial_scale: int = 2,
-    ):
-        super().__init__()
-        self.temporal_scale = temporal_scale
-        self.spatial_scale = spatial_scale
-        self.conv = CausalConv3d(channels, channels, 3, 1, 1)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        B, C, T, H, W = x.shape
-        x = F.interpolate(
-            x,
-            size=(T * self.temporal_scale, H * self.spatial_scale, W * self.spatial_scale),
-            mode="nearest",
+        # Main path: norm -> silu -> conv -> norm -> silu -> dropout -> conv
+        self.residual = nn.Sequential(
+            RMS_norm(in_dim),  # [0]
+            nn.SiLU(),  # [1]
+            CausalConv3d(in_dim, out_dim, 3, padding=1),  # [2]
+            RMS_norm(out_dim),  # [3]
+            nn.SiLU(),  # [4]
+            nn.Dropout(dropout),  # [5]
+            CausalConv3d(out_dim, out_dim, 3, padding=1),  # [6]
         )
-        return self.conv(x)
+
+        # Shortcut if dimensions change
+        if in_dim != out_dim:
+            self.shortcut = CausalConv3d(in_dim, out_dim, 1)
+        else:
+            self.shortcut = nn.Identity()
+
+    def forward(self, x: torch.Tensor, feat_cache: dict = None) -> torch.Tensor:
+        h = x
+        for i, layer in enumerate(self.residual):
+            if isinstance(layer, CausalConv3d) and feat_cache is not None:
+                key = id(layer)
+                cache_x = h[:, :, -CACHE_T:, :, :].clone() if h.shape[2] >= CACHE_T else h.clone()
+                h = layer(h, feat_cache.get(key))
+                feat_cache[key] = cache_x
+            else:
+                h = layer(h)
+
+        if isinstance(self.shortcut, CausalConv3d) and feat_cache is not None:
+            key = id(self.shortcut)
+            cache_x = x[:, :, -CACHE_T:, :, :].clone() if x.shape[2] >= CACHE_T else x.clone()
+            x = self.shortcut(x, feat_cache.get(key))
+            feat_cache[key] = cache_x
+        else:
+            x = self.shortcut(x)
+
+        return x + h
 
 
-class SelfAttention3D(nn.Module):
-    """3D self-attention for video features."""
+class AttentionBlock(nn.Module):
+    """Self-attention block for VAE (uses 2D conv applied per-frame)."""
 
-    def __init__(self, channels: int, num_heads: int = 8):
+    def __init__(self, dim: int):
         super().__init__()
-        self.num_heads = num_heads
-        self.norm = GroupNorm32(channels)
-        self.qkv = nn.Conv3d(channels, channels * 3, 1)
-        self.proj = nn.Conv3d(channels, channels, 1)
+        self.dim = dim
+        # Attention norm uses images=True (3D gamma shape) per checkpoint
+        self.norm = RMS_norm(dim, images=True)
+        # Uses 2D conv (matches checkpoint shape [C*3, C, 1, 1])
+        self.to_qkv = nn.Conv2d(dim, dim * 3, 1)
+        self.proj = nn.Conv2d(dim, dim, 1)  # Named 'proj' in checkpoint
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        B, C, T, H, W = x.shape
-        h = self.norm(x)
+    def forward(self, x: torch.Tensor, feat_cache: dict = None) -> torch.Tensor:
+        b, c, t, h, w = x.shape
+        residual = x
 
-        qkv = self.qkv(h)
-        qkv = qkv.reshape(B, 3, self.num_heads, C // self.num_heads, T * H * W)
-        q, k, v = qkv[:, 0], qkv[:, 1], qkv[:, 2]
+        # Reshape to 4D, apply norm with 3D gamma [C,1,1], process with 2D conv
+        x = rearrange(x, "b c t h w -> (b t) c h w")
+        x = self.norm(x)  # norm gamma is [C,1,1] for 4D input
+        qkv = self.to_qkv(x)
+        x = rearrange(qkv, "(b t) c h w -> b c t h w", t=t)
 
-        # Attention
-        scale = (C // self.num_heads) ** -0.5
-        attn = torch.einsum("bhdn,bhdm->bhnm", q, k) * scale
+        q, k, v = x.chunk(3, dim=1)
+
+        # Reshape for attention (across all spatial-temporal positions)
+        q = rearrange(q, "b c t h w -> b (t h w) c")
+        k = rearrange(k, "b c t h w -> b (t h w) c")
+        v = rearrange(v, "b c t h w -> b (t h w) c")
+
+        # Scaled dot-product attention
+        scale = c**-0.5
+        attn = torch.bmm(q, k.transpose(-2, -1)) * scale
         attn = F.softmax(attn, dim=-1)
-        out = torch.einsum("bhnm,bhdm->bhdn", attn, v)
+        out = torch.bmm(attn, v)
 
-        out = out.reshape(B, C, T, H, W)
+        # Apply output projection per-frame
+        out = rearrange(out, "b (t h w) c -> (b t) c h w", t=t, h=h, w=w)
         out = self.proj(out)
+        out = rearrange(out, "(b t) c h w -> b c t h w", t=t)
 
-        return x + out
+        return residual + out
 
 
-class Encoder3D(nn.Module):
+class Encoder3d(nn.Module):
     """3D video encoder."""
 
     def __init__(
         self,
-        in_channels: int = 3,
+        dim: int = 96,
         z_dim: int = 16,
-        dims: Tuple[int, ...] = (128, 256, 512, 512),
+        dim_mult: List[int] = [1, 2, 4, 4],
         num_res_blocks: int = 2,
-        temporal_strides: Tuple[int, ...] = (1, 2, 2, 1),
-        spatial_strides: Tuple[int, ...] = (2, 2, 2, 1),
-        use_attention: Tuple[bool, ...] = (False, False, True, True),
+        attn_scales: List[float] = [],
+        temporal_downsample: List[bool] = [False, True, True],
+        dropout: float = 0.0,
     ):
         super().__init__()
+        self.dim = dim
+        self.z_dim = z_dim
 
-        # Initial convolution
-        self.conv_in = CausalConv3d(in_channels, dims[0], 3, 1, 1)
+        # Dimensions at each level
+        dims = [dim * u for u in [1] + dim_mult]
 
-        # Downsampling blocks
-        self.down_blocks = nn.ModuleList()
-        in_dim = dims[0]
-        for i, out_dim in enumerate(dims):
-            block = nn.ModuleList()
+        # Input convolution
+        self.conv1 = CausalConv3d(3, dims[0], 3, padding=1)
 
+        # Downsample blocks
+        downsamples = []
+        scale = 1.0
+        for i, (in_dim, out_dim) in enumerate(zip(dims[:-1], dims[1:])):
             # Residual blocks
             for _ in range(num_res_blocks):
-                block.append(ResBlock3D(in_dim, out_dim))
+                downsamples.append(ResidualBlock(in_dim, out_dim, dropout))
+                if scale in attn_scales:
+                    downsamples.append(AttentionBlock(out_dim))
                 in_dim = out_dim
 
-            # Attention
-            if use_attention[i]:
-                block.append(SelfAttention3D(out_dim))
+            # Downsample (except last level)
+            if i != len(dim_mult) - 1:
+                mode = "downsample3d" if temporal_downsample[i] else "downsample2d"
+                downsamples.append(Resample(out_dim, mode=mode))
+                scale /= 2.0
 
-            # Downsample
-            if temporal_strides[i] > 1 or spatial_strides[i] > 1:
-                block.append(Downsample3D(out_dim, temporal_strides[i], spatial_strides[i]))
-
-            self.down_blocks.append(block)
+        self.downsamples = nn.ModuleList(downsamples)
 
         # Middle blocks
-        self.mid_block1 = ResBlock3D(dims[-1], dims[-1])
-        self.mid_attn = SelfAttention3D(dims[-1])
-        self.mid_block2 = ResBlock3D(dims[-1], dims[-1])
+        self.middle = nn.Sequential(
+            ResidualBlock(dims[-1], dims[-1], dropout),
+            AttentionBlock(dims[-1]),
+            ResidualBlock(dims[-1], dims[-1], dropout),
+        )
 
         # Output
-        self.norm_out = GroupNorm32(dims[-1])
-        self.conv_out = CausalConv3d(dims[-1], z_dim * 2, 3, 1, 1)  # mu and log_var
+        self.head = nn.Sequential(
+            RMS_norm(dims[-1]),
+            nn.SiLU(),
+            CausalConv3d(dims[-1], z_dim * 2, 3, padding=1),  # mu and log_var
+        )
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # x: [B, 3, T, H, W]
-        h = self.conv_in(x)
+    def forward(self, x: torch.Tensor, feat_cache: dict = None) -> torch.Tensor:
+        x = self.conv1(x)
 
-        # Downsampling
-        for block in self.down_blocks:
-            for layer in block:
-                h = layer(h)
+        for block in self.downsamples:
+            x = block(x, feat_cache)
 
-        # Middle
-        h = self.mid_block1(h)
-        h = self.mid_attn(h)
-        h = self.mid_block2(h)
+        for block in self.middle:
+            x = block(x, feat_cache) if hasattr(block, "forward") else block(x)
 
-        # Output
-        h = self.norm_out(h)
-        h = F.silu(h)
-        h = self.conv_out(h)
+        x = self.head[0](x)  # norm
+        x = self.head[1](x)  # silu
+        x = self.head[2](x, feat_cache.get(id(self.head[2])) if feat_cache else None)
 
-        return h
+        return x
 
 
-class Decoder3D(nn.Module):
+class Decoder3d(nn.Module):
     """3D video decoder."""
 
     def __init__(
         self,
-        out_channels: int = 3,
+        dim: int = 96,
         z_dim: int = 16,
-        dims: Tuple[int, ...] = (512, 512, 256, 128),
+        dim_mult: List[int] = [1, 2, 4, 4],
         num_res_blocks: int = 2,
-        temporal_strides: Tuple[int, ...] = (1, 2, 2, 1),
-        spatial_strides: Tuple[int, ...] = (1, 2, 2, 2),
-        use_attention: Tuple[bool, ...] = (True, True, False, False),
+        attn_scales: List[float] = [],
+        temporal_upsample: List[bool] = [True, True, False],
+        dropout: float = 0.0,
     ):
         super().__init__()
+        self.dim = dim
+        self.z_dim = z_dim
+
+        # Dimensions (reversed for decoder)
+        dims = [dim * u for u in [dim_mult[-1]] + dim_mult[::-1]]
 
         # Input convolution
-        self.conv_in = CausalConv3d(z_dim, dims[0], 3, 1, 1)
+        self.conv1 = CausalConv3d(z_dim, dims[0], 3, padding=1)
 
         # Middle blocks
-        self.mid_block1 = ResBlock3D(dims[0], dims[0])
-        self.mid_attn = SelfAttention3D(dims[0])
-        self.mid_block2 = ResBlock3D(dims[0], dims[0])
+        self.middle = nn.Sequential(
+            ResidualBlock(dims[0], dims[0], dropout),
+            AttentionBlock(dims[0]),
+            ResidualBlock(dims[0], dims[0], dropout),
+        )
 
-        # Upsampling blocks
-        self.up_blocks = nn.ModuleList()
-        in_dim = dims[0]
-        for i, out_dim in enumerate(dims):
-            block = nn.ModuleList()
+        # Upsample blocks
+        upsamples = []
+        scale = 1.0 / 2 ** (len(dim_mult) - 2)
+        for i, (in_dim, out_dim) in enumerate(zip(dims[:-1], dims[1:])):
+            # Adjust input dim after upsample
+            if i in [1, 2, 3]:
+                in_dim = in_dim // 2
 
-            # Residual blocks
+            # Residual blocks (one extra compared to encoder)
             for _ in range(num_res_blocks + 1):
-                block.append(ResBlock3D(in_dim, out_dim))
+                upsamples.append(ResidualBlock(in_dim, out_dim, dropout))
+                if scale in attn_scales:
+                    upsamples.append(AttentionBlock(out_dim))
                 in_dim = out_dim
 
-            # Attention
-            if use_attention[i]:
-                block.append(SelfAttention3D(out_dim))
+            # Upsample (except last level)
+            if i != len(dim_mult) - 1:
+                mode = "upsample3d" if temporal_upsample[i] else "upsample2d"
+                upsamples.append(Resample(out_dim, mode=mode))
+                scale *= 2.0
 
-            # Upsample
-            if temporal_strides[i] > 1 or spatial_strides[i] > 1:
-                block.append(Upsample3D(out_dim, temporal_strides[i], spatial_strides[i]))
+        self.upsamples = nn.ModuleList(upsamples)
 
-            self.up_blocks.append(block)
+        # Output head
+        self.head = nn.Sequential(
+            RMS_norm(dims[-1]),
+            nn.SiLU(),
+            CausalConv3d(dims[-1], 3, 3, padding=1),
+        )
 
-        # Output
-        self.norm_out = GroupNorm32(dims[-1])
-        self.conv_out = CausalConv3d(dims[-1], out_channels, 3, 1, 1)
+    def forward(self, x: torch.Tensor, feat_cache: dict = None) -> torch.Tensor:
+        x = self.conv1(x, feat_cache.get(id(self.conv1)) if feat_cache else None)
 
-    def forward(self, z: torch.Tensor) -> torch.Tensor:
-        # z: [B, z_dim, T', H', W']
-        h = self.conv_in(z)
+        for block in self.middle:
+            x = block(x, feat_cache) if hasattr(block, "forward") else block(x)
 
-        # Middle
-        h = self.mid_block1(h)
-        h = self.mid_attn(h)
-        h = self.mid_block2(h)
+        for block in self.upsamples:
+            x = block(x, feat_cache)
 
-        # Upsampling
-        for block in self.up_blocks:
-            for layer in block:
-                h = layer(h)
+        x = self.head[0](x)  # norm
+        x = self.head[1](x)  # silu
+        x = self.head[2](x, feat_cache.get(id(self.head[2])) if feat_cache else None)
 
-        # Output
-        h = self.norm_out(h)
-        h = F.silu(h)
-        h = self.conv_out(h)
-
-        return h
+        return x
 
 
-class WanVAE_(nn.Module):
-    """Inner VAE model combining encoder and decoder."""
+class VideoVAE(nn.Module):
+    """
+    Video VAE matching official Wan2.1 weights.
 
-    def __init__(self, z_dim: int = 16):
+    Weight keys:
+    - encoder.conv1.*, encoder.downsamples.*, encoder.middle.*, encoder.head.*
+    - decoder.conv1.*, decoder.middle.*, decoder.upsamples.*, decoder.head.*
+    """
+
+    def __init__(
+        self,
+        dim: int = 96,
+        z_dim: int = 16,
+        dim_mult: List[int] = [1, 2, 4, 4],
+        num_res_blocks: int = 2,
+        attn_scales: List[float] = [],
+        temporal_downsample: List[bool] = [False, True, True],
+        dropout: float = 0.0,
+    ):
         super().__init__()
+        self.dim = dim
         self.z_dim = z_dim
-        self.encoder = Encoder3D(z_dim=z_dim)
-        self.decoder = Decoder3D(z_dim=z_dim)
 
-    def encode(self, x: torch.Tensor, scale: Tuple[torch.Tensor, torch.Tensor]) -> torch.Tensor:
-        """Encode video to latent space."""
+        temporal_upsample = temporal_downsample[::-1]
+
+        self.encoder = Encoder3d(
+            dim, z_dim, dim_mult, num_res_blocks, attn_scales, temporal_downsample, dropout
+        )
+        self.conv1 = CausalConv3d(z_dim * 2, z_dim * 2, 1)
+        self.conv2 = CausalConv3d(z_dim, z_dim, 1)
+        self.decoder = Decoder3d(
+            dim, z_dim, dim_mult, num_res_blocks, attn_scales, temporal_upsample, dropout
+        )
+
+    def encode(self, x: torch.Tensor, scale: Tuple[float, float] = None) -> torch.Tensor:
+        """Encode video to latents."""
         h = self.encoder(x)
+        h = self.conv1(h)
         mu, log_var = h.chunk(2, dim=1)
 
-        # Apply scaling
-        mean, inv_std = scale
-        mu = (mu - mean.view(1, -1, 1, 1, 1)) * inv_std.view(1, -1, 1, 1, 1)
+        if scale is not None:
+            mean, inv_std = scale
+            if isinstance(mean, torch.Tensor):
+                mu = (mu - mean.view(1, self.z_dim, 1, 1, 1)) * inv_std.view(1, self.z_dim, 1, 1, 1)
+            else:
+                mu = (mu - mean) * inv_std
 
-        return mu  # Return mean for deterministic encoding
+        return mu
 
-    def decode(self, z: torch.Tensor, scale: Tuple[torch.Tensor, torch.Tensor]) -> torch.Tensor:
-        """Decode latent to video."""
-        # Reverse scaling
-        mean, inv_std = scale
-        z = z / inv_std.view(1, -1, 1, 1, 1) + mean.view(1, -1, 1, 1, 1)
+    def decode(self, z: torch.Tensor, scale: Tuple[float, float] = None) -> torch.Tensor:
+        """Decode latents to video."""
+        if scale is not None:
+            mean, inv_std = scale
+            if isinstance(mean, torch.Tensor):
+                z = z / inv_std.view(1, self.z_dim, 1, 1, 1) + mean.view(1, self.z_dim, 1, 1, 1)
+            else:
+                z = z / inv_std + mean
 
-        x = self.decoder(z)
-        return x
+        z = self.conv2(z)
+        return self.decoder(z)
+
+    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Encode then decode (for training)."""
+        h = self.encoder(x)
+        h = self.conv1(h)
+        mu, log_var = h.chunk(2, dim=1)
+        z = mu + torch.exp(0.5 * log_var) * torch.randn_like(mu)
+        z = self.conv2(z)
+        x_recon = self.decoder(z)
+        return x_recon, mu, log_var
 
 
 class WanVAE(nn.Module):
     """
-    Wan Video VAE wrapper with scaling normalization.
+    High-level wrapper for Wan Video VAE with scaling.
 
-    Handles loading pretrained weights and provides encode/decode interface
-    with proper scaling for stable latent distributions.
-
-    Args:
-        z_dim: Latent dimension (default: 16)
-        dtype: Model dtype
-        device: Target device
+    Provides simple encode/decode interface with mean/std normalization.
     """
 
-    # Pre-computed scaling factors from HuMo
-    # These normalize the latent distribution
-    DEFAULT_MEAN = torch.tensor([
-        -0.9550, -0.2344, -0.5676, 0.0602, -0.2411, 0.0965, 0.0291, -0.1245,
-        1.5527, 0.8210, -0.4052, 0.3337, 0.0856, 0.5285, 0.5874, 0.3952
-    ])
-    DEFAULT_STD = torch.tensor([
-        3.2765, 2.0246, 2.6274, 2.4534, 2.6318, 2.0892, 2.0189, 2.2684,
-        2.4907, 2.3623, 2.0694, 2.0502, 2.0760, 2.0819, 1.8831, 1.1145
-    ])
+    # Normalization constants from official implementation
+    MEAN = torch.tensor(
+        [
+            -0.7571,
+            -0.7089,
+            -0.9113,
+            0.1075,
+            -0.1745,
+            0.9653,
+            -0.1517,
+            1.5508,
+            0.4134,
+            -0.0715,
+            0.5517,
+            -0.3632,
+            -0.1922,
+            -0.9497,
+            0.2503,
+            -0.2921,
+        ]
+    )
+    STD = torch.tensor(
+        [
+            2.8184,
+            1.4541,
+            2.3275,
+            2.6558,
+            1.2196,
+            2.6780,
+            2.4944,
+            2.3565,
+            2.1346,
+            2.3635,
+            1.6543,
+            1.7366,
+            2.5187,
+            2.0825,
+            2.7897,
+            2.1521,
+        ]
+    )
 
-    def __init__(
-        self,
-        z_dim: int = 16,
-        dtype: torch.dtype = torch.float32,
-        device: str = "cuda",
-    ):
+    def __init__(self, dtype: torch.dtype = torch.bfloat16):
         super().__init__()
-        self.z_dim = z_dim
         self.dtype = dtype
+        self.model = VideoVAE()
 
-        # Inner model
-        self.model = WanVAE_(z_dim=z_dim)
-
-        # Scaling parameters
-        self.register_buffer("mean", self.DEFAULT_MEAN)
-        self.register_buffer("inv_std", 1.0 / self.DEFAULT_STD)
+        # Precompute inverse std for efficiency
+        self.register_buffer("mean", self.MEAN)
+        self.register_buffer("inv_std", 1.0 / self.STD)
 
     @property
     def scale(self) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Get scaling parameters."""
         return (self.mean, self.inv_std)
 
     def encode(self, videos: torch.Tensor) -> torch.Tensor:
@@ -396,13 +509,12 @@ class WanVAE(nn.Module):
         Encode videos to latent space.
 
         Args:
-            videos: [B, 3, T, H, W] RGB videos in [-1, 1] range
+            videos: [B, 3, T, H, W] RGB videos in [-1, 1]
 
         Returns:
             [B, z_dim, T', H', W'] latent codes
         """
-        device_type = str(videos.device).split(':')[0]
-        with torch.amp.autocast(device_type=device_type, dtype=self.dtype):
+        with torch.amp.autocast(device_type=videos.device.type, dtype=self.dtype):
             return self.model.encode(videos, self.scale)
 
     def decode(self, latents: torch.Tensor) -> torch.Tensor:
@@ -415,8 +527,7 @@ class WanVAE(nn.Module):
         Returns:
             [B, 3, T, H, W] RGB videos clamped to [-1, 1]
         """
-        device_type = str(latents.device).split(':')[0]
-        with torch.amp.autocast(device_type=device_type, dtype=self.dtype):
+        with torch.amp.autocast(device_type=latents.device.type, dtype=self.dtype):
             videos = self.model.decode(latents, self.scale)
             return videos.clamp(-1, 1)
 

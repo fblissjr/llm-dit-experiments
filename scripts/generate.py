@@ -923,24 +923,20 @@ def main():
         logger.info("Running in embeddings mode (skip text encoding)")
         logger.info(f"Loading embeddings from {args.load_embeddings}")
 
-        # Determine file format and load embeddings
+        # Load embeddings (safetensors only)
         emb_path = Path(args.load_embeddings)
-        if emb_path.suffix == ".pt":
-            # Simple PyTorch format (from Qwen3-VL or other sources)
-            saved = torch.load(args.load_embeddings, weights_only=True)
-            embeddings = saved["embeddings"]
-            source_info = saved.get("source_image", "unknown")
-            logger.info(f"Loaded embeddings: shape={embeddings.shape}")
-            logger.info(f"  Source: {source_info}")
-        else:
-            # Safetensors format (from distributed module)
-            from llm_dit.distributed import load_embeddings
-            emb_file = load_embeddings(args.load_embeddings)
-            embeddings = emb_file.embeddings
-            source_info = emb_file.metadata.prompt[:50] if emb_file.metadata.prompt else "unknown"
-            logger.info(f"Loaded embeddings: shape={embeddings.shape}")
-            logger.info(f"  Source: {source_info}...")
-            logger.info(f"  Original device: {emb_file.metadata.encoder_device}")
+        if emb_path.suffix != ".safetensors":
+            raise ValueError(
+                f"Expected .safetensors file, got {emb_path.suffix}. "
+                f"Convert with: uv run python scripts/convert_to_safetensors.py {emb_path}"
+            )
+        from llm_dit.distributed import load_embeddings
+        emb_file = load_embeddings(args.load_embeddings)
+        embeddings = emb_file.embeddings
+        source_info = emb_file.metadata.prompt[:50] if emb_file.metadata.prompt else "unknown"
+        logger.info(f"Loaded embeddings: shape={embeddings.shape}")
+        logger.info(f"  Source: {source_info}...")
+        logger.info(f"  Original device: {emb_file.metadata.encoder_device}")
 
         # Load pipeline using optimized PipelineLoader (same as full generation)
         # This uses the correct device placement from config, avoids the OOM from generator_only

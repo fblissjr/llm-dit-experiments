@@ -227,11 +227,13 @@ def load_lora(
 
     logger.info(f"Loading LoRA: {lora_path} (scale={scale})")
 
-    # Load state dict
-    if lora_path.suffix == ".safetensors":
-        state_dict = load_safetensors(str(lora_path))
-    else:
-        state_dict = torch.load(str(lora_path), map_location="cpu", weights_only=True)
+    # Load state dict (safetensors only)
+    if lora_path.suffix != ".safetensors":
+        raise ValueError(
+            f"Expected .safetensors file, got {lora_path.suffix}. "
+            f"Convert with: uv run python scripts/convert_to_safetensors.py {lora_path}"
+        )
+    state_dict = load_safetensors(str(lora_path))
 
     # Fuse
     loader = LoRALoader(device=device, torch_dtype=torch_dtype)

@@ -49,6 +49,105 @@ class RMSNorm(nn.Module):
         return (self.weight * x).to(dtype)
 
 
+class HuMo3DRoPE(nn.Module):
+    """
+    3D Rotary Position Embedding for HuMo video transformer.
+
+    Computes separate frequency components for:
+    - Frame axis (temporal): axes_dim[0] dims (default 16)
+    - Height axis (spatial): axes_dim[1] dims (default 56)
+    - Width axis (spatial): axes_dim[2] dims (default 56)
+    Total: 128 dims (matches head_dim = 5120/40)
+
+    Uses centered indices for height/width (negative + positive) for better
+    extrapolation to different resolutions.
+    """
+
+    def __init__(
+        self,
+        theta: float = 10000.0,
+        axes_dim: Tuple[int, int, int] = (16, 56, 56),
+        max_seq: int = 4096,
+    ):
+        super().__init__()
+        self.theta = theta
+        self.axes_dim = axes_dim
+        self.head_dim = sum(axes_dim)
+
+        # Precompute positive and negative index frequencies
+        pos_index = torch.arange(max_seq, dtype=torch.float32)
+        neg_index = torch.arange(max_seq, dtype=torch.float32).flip(0) * -1 - 1
+
+        self.register_buffer("pos_freqs", self._compute_freqs(pos_index))
+        self.register_buffer("neg_freqs", self._compute_freqs(neg_index))
+
+    def _compute_freqs(self, index: torch.Tensor) -> torch.Tensor:
+        """Compute complex frequency tensor for all axes."""
+        freqs = []
+        for dim in self.axes_dim:
+            # Compute frequencies: 1 / (theta^(2i/d)) for i in [0, dim/2)
+            axis_freqs = torch.outer(
+                index,
+                1.0 / torch.pow(self.theta, torch.arange(0, dim, 2, dtype=torch.float32) / dim)
+            )
+            # Store as complex exponentials
+            freqs.append(torch.polar(torch.ones_like(axis_freqs), axis_freqs))
+        return torch.cat(freqs, dim=1)
+
+    def forward(
+        self,
+        num_frames: int,
+        height: int,
+        width: int,
+        device: torch.device,
+        dtype: torch.dtype = torch.float32,
+    ) -> torch.Tensor:
+        """
+        Compute 3D RoPE frequencies for given video shape.
+
+        Args:
+            num_frames: Number of frames (after temporal patchification)
+            height: Height in patches
+            width: Width in patches
+            device: Output device
+            dtype: Output dtype
+
+        Returns:
+            Complex tensor [T*H*W, head_dim//2] for RoPE application
+        """
+        seq_len = num_frames * height * width
+
+        # Split precomputed frequencies by axis
+        pos_split = self.pos_freqs.split([d // 2 for d in self.axes_dim], dim=1)
+        neg_split = self.neg_freqs.split([d // 2 for d in self.axes_dim], dim=1)
+
+        # Frame frequencies: sequential positive indices
+        f_freqs = pos_split[0][:num_frames].view(num_frames, 1, 1, -1)
+        f_freqs = f_freqs.expand(num_frames, height, width, -1)
+
+        # Height frequencies: centered (negative first half, positive second half)
+        h_half = height // 2
+        h_freqs = torch.cat([
+            neg_split[1][-(height - h_half):],  # Negative indices for first half
+            pos_split[1][:h_half],              # Positive indices for second half
+        ], dim=0).view(1, height, 1, -1)
+        h_freqs = h_freqs.expand(num_frames, height, width, -1)
+
+        # Width frequencies: centered
+        w_half = width // 2
+        w_freqs = torch.cat([
+            neg_split[2][-(width - w_half):],
+            pos_split[2][:w_half],
+        ], dim=0).view(1, 1, width, -1)
+        w_freqs = w_freqs.expand(num_frames, height, width, -1)
+
+        # Concatenate and reshape to [seq_len, head_dim//2]
+        freqs = torch.cat([f_freqs, h_freqs, w_freqs], dim=-1)
+        freqs = freqs.reshape(seq_len, -1).to(device)
+
+        return freqs
+
+
 class LayerNormWithBias(nn.Module):
     """Layer normalization with bias, wrapped to match weight key pattern."""
 
@@ -221,13 +320,26 @@ class SelfAttention(nn.Module):
         return self.o(out)
 
     def _apply_rope(self, x: torch.Tensor, freqs: torch.Tensor) -> torch.Tensor:
-        """Apply rotary position embedding."""
-        x_reshape = x.reshape(*x.shape[:-1], -1, 2)
-        freqs = freqs.unsqueeze(0).unsqueeze(2)
+        """Apply rotary position embedding.
 
-        x_complex = torch.view_as_complex(x_reshape.float())
-        freqs_complex = torch.view_as_complex(freqs.float())
-        x_rotated = x_complex * freqs_complex
+        Args:
+            x: [B, N, num_heads, head_dim] query or key tensor
+            freqs: [N, head_dim//2] complex frequency tensor from HuMo3DRoPE
+
+        Returns:
+            Rotated tensor with same shape as input
+        """
+        # Reshape x to pairs for complex view: [B, N, H, D] -> [B, N, H, D/2, 2]
+        x_reshape = x.reshape(*x.shape[:-1], -1, 2)
+        x_complex = torch.view_as_complex(x_reshape.float())  # [B, N, H, D/2]
+
+        # freqs is already complex: [N, D/2] -> [1, N, 1, D/2] for broadcasting
+        freqs_broadcast = freqs.unsqueeze(0).unsqueeze(2)
+
+        # Complex multiplication for rotation
+        x_rotated = x_complex * freqs_broadcast
+
+        # Convert back to real: [B, N, H, D/2] -> [B, N, H, D]
         x_out = torch.view_as_real(x_rotated).flatten(-2)
         return x_out.to(x.dtype)
 
@@ -465,10 +577,7 @@ class TransformerBlock(nn.Module):
         # Combine: element-wise product
         mod = self.modulation * time_mod  # [B, 6, D]
 
-        shift1, scale1, shift2, scale2, shift3, scale3 = mod.chunk(6, dim=1)
-        shift1, scale1 = shift1.squeeze(1), scale1.squeeze(1)
-        shift2, scale2 = shift2.squeeze(1), scale2.squeeze(1)
-        shift3, scale3 = shift3.squeeze(1), scale3.squeeze(1)
+        shift1, scale1, shift2, scale2, shift3, scale3 = mod.unbind(dim=1)
 
         # Self-attention with AdaLN
         h = self.self_attn(x, freqs)
@@ -510,8 +619,7 @@ class OutputHead(nn.Module):
         # time_mod: [B, 2, D] (first 2 components of the 6-component modulation)
         # self.modulation: [1, 2, D] per-head learned modulation
         mod = self.modulation * time_mod  # [B, 2, D]
-        shift, scale = mod.chunk(2, dim=1)
-        shift, scale = shift.squeeze(1), scale.squeeze(1)
+        shift, scale = mod.unbind(dim=1)
 
         x = x * (1 + scale) + shift
         return self.head(x)
@@ -628,6 +736,14 @@ class HuMoTransformer(nn.Module):
         out_features = out_channels * patch_size[0] * patch_size[1] * patch_size[2]
         self.head = OutputHead(hidden_size, out_features, eps)
 
+        # 3D RoPE for positional encoding
+        head_dim = hidden_size // num_heads  # 128 for 17B (5120/40)
+        self.rope = HuMo3DRoPE(
+            theta=10000.0,
+            axes_dim=(16, 56, 56),  # frame, height, width = 128 total
+            max_seq=4096,
+        )
+
         # Sinusoidal embedding for timesteps (not saved, computed)
         self._freq_dim = freq_dim
 
@@ -687,8 +803,12 @@ class HuMoTransformer(nn.Module):
             num_frames = T // self.patch_size[0]
             audio = self._prepare_audio(audio_hidden_states, num_frames)
 
-        # RoPE frequencies (TODO: implement 3D RoPE)
-        freqs = None
+        # Compute 3D RoPE frequencies for video patches
+        p1, p2, p3 = self.patch_size
+        T_out = T // p1
+        H_out = H // p2
+        W_out = W // p3
+        freqs = self.rope(T_out, H_out, W_out, hidden_states.device)
 
         # Transformer blocks - pass both original time_emb and reshaped modulation
         for block in self.blocks:
@@ -699,10 +819,6 @@ class HuMoTransformer(nn.Module):
         x = self.head(x, head_mod)  # [B, N, C*p1*p2*p3]
 
         # Unpatchify to output channels (16), not input channels (36)
-        p1, p2, p3 = self.patch_size
-        T_out = T // p1
-        H_out = H // p2
-        W_out = W // p3
         C_out = self.out_channels
 
         x = x.reshape(B, T_out, H_out, W_out, C_out, p1, p2, p3)

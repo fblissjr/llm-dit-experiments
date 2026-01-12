@@ -408,17 +408,20 @@ class WanVideoPipeline:
         cpu_offload: bool,
     ) -> nn.Module:
         """Load Wan VAE for video encoding/decoding."""
-        vae_path = Path(wan_path) / "Wan2.1_VAE.pth"
-        logger.info(f"Loading Wan VAE from {vae_path}")
+        from safetensors.torch import load_file as load_safetensors
+
+        vae_path = Path(wan_path) / "Wan2.1_VAE.safetensors"
 
         if not vae_path.exists():
             raise FileNotFoundError(
                 f"Wan VAE not found at {vae_path}. "
-                f"Download with: huggingface-cli download Wan-AI/Wan2.1-T2V-1.3B --local-dir {wan_path}"
+                f"Download and convert with:\n"
+                f"  huggingface-cli download Wan-AI/Wan2.1-T2V-1.3B --local-dir {wan_path}\n"
+                f"  uv run python scripts/convert_to_safetensors.py {wan_path} --recursive"
             )
 
-        # Load VAE state dict
-        state_dict = torch.load(vae_path, map_location="cpu", weights_only=True)
+        logger.info(f"Loading Wan VAE from {vae_path}")
+        state_dict = load_safetensors(str(vae_path))
 
         # Create VAE model
         from llm_dit.models.wan_vae import WanVAE
@@ -441,39 +444,38 @@ class WanVideoPipeline:
         cpu_offload: bool,
     ):
         """Load UMT5-XXL text encoder and tokenizer."""
-        encoder_path = Path(wan_path) / "google" / "umt5-xxl"
-        logger.info(f"Loading UMT5-XXL text encoder from {encoder_path}")
+        from ..models.wan_text_encoder import WanTextEncoder
 
-        if not encoder_path.exists():
+        tokenizer_path = Path(wan_path) / "google" / "umt5-xxl"
+        weights_path = Path(wan_path) / "models_t5_umt5-xxl-enc-bf16.safetensors"
+
+        logger.info(f"Loading UMT5-XXL text encoder from {weights_path}")
+
+        if not tokenizer_path.exists():
             raise FileNotFoundError(
-                f"Text encoder not found at {encoder_path}. "
+                f"Tokenizer not found at {tokenizer_path}. "
                 f"Download with: huggingface-cli download Wan-AI/Wan2.1-T2V-1.3B --local-dir {wan_path}"
             )
 
-        from transformers import AutoTokenizer, T5EncoderModel
-
-        tokenizer = AutoTokenizer.from_pretrained(str(encoder_path))
-
-        # Check for model weights
-        model_file = encoder_path / "model.safetensors"
-        if not model_file.exists():
-            # Try to load from HuggingFace if local weights missing
-            logger.info("  Local weights not found, loading from google/umt5-xxl...")
-            text_encoder = T5EncoderModel.from_pretrained(
-                "google/umt5-xxl",
-                torch_dtype=dtype,
+        if not weights_path.exists():
+            raise FileNotFoundError(
+                f"Text encoder weights not found at {weights_path}. "
+                f"Download and convert with:\n"
+                f"  huggingface-cli download Wan-AI/Wan2.1-T2V-1.3B --local-dir {wan_path}\n"
+                f"  uv run python scripts/convert_to_safetensors.py {wan_path} --recursive"
             )
-        else:
-            text_encoder = T5EncoderModel.from_pretrained(
-                str(encoder_path),
-                torch_dtype=dtype,
-            )
+
+        # Create encoder with tokenizer
+        text_encoder = WanTextEncoder(max_length=512, dtype=dtype)
+        text_encoder.load_tokenizer(str(tokenizer_path))
+        text_encoder.load_weights(str(weights_path))
 
         if not cpu_offload:
-            text_encoder = text_encoder.to(device)
+            text_encoder.model = text_encoder.model.to(dtype=dtype, device=device)
 
         logger.info("  UMT5-XXL text encoder loaded")
-        return text_encoder, tokenizer
+        # Return encoder only (tokenizer is integrated)
+        return text_encoder, text_encoder.tokenizer
 
     @staticmethod
     def _create_scheduler():
@@ -482,7 +484,7 @@ class WanVideoPipeline:
 
         scheduler = FlowMatchEulerDiscreteScheduler(
             num_train_timesteps=1000,
-            shift=3.0,
+            shift=5.0,  # Wan 2.1 uses shift=5.0 (not 3.0 like FLUX)
         )
         return scheduler
 
@@ -663,31 +665,16 @@ class WanVideoPipeline:
 
     def _encode_text(self, prompt: str) -> torch.Tensor:
         """Encode text prompt with UMT5."""
-        inputs = self.tokenizer(
-            prompt,
-            max_length=512,
-            padding="max_length",
-            truncation=True,
-            return_tensors="pt",
-        )
-
-        input_ids = inputs.input_ids.to(self._device)
-        attention_mask = inputs.attention_mask.to(self._device)
-
         # Move encoder to device if needed
         if self.config.enable_cpu_offload:
-            self.text_encoder = self.text_encoder.to(self._device)
+            self.text_encoder.model = self.text_encoder.model.to(self._device)
 
-        with torch.no_grad():
-            outputs = self.text_encoder(
-                input_ids=input_ids,
-                attention_mask=attention_mask,
-            )
-            text_embeds = outputs.last_hidden_state
+        # Encode using WanTextEncoder interface
+        text_embeds, _ = self.text_encoder.encode(prompt, device=self._device)
 
         # Offload if needed
         if self.config.enable_cpu_offload:
-            self.text_encoder = self.text_encoder.to("cpu")
+            self.text_encoder.model = self.text_encoder.model.to("cpu")
             torch.cuda.empty_cache()
 
         return text_embeds
@@ -1072,7 +1059,7 @@ class WanVideoPipeline:
         if self.vae is not None:
             self.vae = self.vae.to("cpu")
         if self.text_encoder is not None:
-            self.text_encoder = self.text_encoder.to("cpu")
+            self.text_encoder.model = self.text_encoder.model.to("cpu")
         if self._whisper_encoder is not None:
             self._whisper_encoder = self._whisper_encoder.to("cpu")
 
@@ -1090,7 +1077,7 @@ class WanVideoPipeline:
         if self.vae is not None:
             self.vae = self.vae.to(device)
         if self.text_encoder is not None:
-            self.text_encoder = self.text_encoder.to(device)
+            self.text_encoder.model = self.text_encoder.model.to(device)
         if self._whisper_encoder is not None:
             self._whisper_encoder = self._whisper_encoder.to(device)
         self._device = device

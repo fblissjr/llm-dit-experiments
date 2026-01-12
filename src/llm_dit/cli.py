@@ -1278,7 +1278,7 @@ def create_base_parser(
             "--embeddings-file",
             type=str,
             default=None,
-            help="Path to pre-computed embeddings file (.pt). Skips text encoding.",
+            help="Path to pre-computed embeddings file (.safetensors). Skips text encoding.",
         )
 
     # Server args (optional)

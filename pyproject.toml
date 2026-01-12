@@ -29,12 +29,11 @@ dependencies = [
     "matplotlib>=3.10.7",
     "torchao>=0.15.0",
     "tomli-w>=1.2.0",
+    "sentencepiece>=0.2.1",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "ipython",
-    "jupyter",
     "pytest",
     "ruff",
 ]

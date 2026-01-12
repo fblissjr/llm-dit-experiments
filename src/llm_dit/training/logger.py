@@ -165,38 +165,23 @@ class ModelLogger:
         if not accelerator.is_main_process:
             return
 
-        try:
-            from safetensors.torch import save_file
+        from safetensors.torch import save_file
 
-            # Get state dict from accelerator
-            state_dict = accelerator.get_state_dict(model)
+        # Get state dict from accelerator
+        state_dict = accelerator.get_state_dict(model)
 
-            # Export only trainable parameters
-            model_unwrapped = accelerator.unwrap_model(model)
-            state_dict = model_unwrapped.export_trainable_state_dict(
-                state_dict,
-                remove_prefix=self.remove_prefix,
-            )
+        # Export only trainable parameters
+        model_unwrapped = accelerator.unwrap_model(model)
+        state_dict = model_unwrapped.export_trainable_state_dict(
+            state_dict,
+            remove_prefix=self.remove_prefix,
+        )
 
-            # Save with safetensors
-            save_path = self.output_dir / filename
-            save_file(state_dict, save_path)
+        # Save with safetensors
+        save_path = self.output_dir / filename
+        save_file(state_dict, save_path)
 
-            logger.info(f"Saved checkpoint: {save_path}")
-
-        except ImportError:
-            # Fall back to torch.save
-            state_dict = accelerator.get_state_dict(model)
-            model_unwrapped = accelerator.unwrap_model(model)
-            state_dict = model_unwrapped.export_trainable_state_dict(
-                state_dict,
-                remove_prefix=self.remove_prefix,
-            )
-
-            save_path = self.output_dir / filename.replace(".safetensors", ".pt")
-            torch.save(state_dict, save_path)
-
-            logger.info(f"Saved checkpoint (pt format): {save_path}")
+        logger.info(f"Saved checkpoint: {save_path}")
 
 
 class TensorBoardLogger:
