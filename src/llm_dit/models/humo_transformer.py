@@ -574,8 +574,8 @@ class TransformerBlock(nn.Module):
         # Get modulation values
         # time_mod: [B, 6, D] from time_projection
         # self.modulation: [1, 6, D] per-block learned modulation
-        # Combine: element-wise product
-        mod = self.modulation * time_mod  # [B, 6, D]
+        # Combine: element-wise ADD (not multiply!)
+        mod = self.modulation + time_mod  # [B, 6, D]
 
         shift1, scale1, shift2, scale2, shift3, scale3 = mod.unbind(dim=1)
         # Add sequence dim for broadcasting: [B, D] -> [B, 1, D]
@@ -583,12 +583,12 @@ class TransformerBlock(nn.Module):
         shift2, scale2 = shift2.unsqueeze(1), scale2.unsqueeze(1)
         shift3, scale3 = shift3.unsqueeze(1), scale3.unsqueeze(1)
 
-        # Self-attention with AdaLN
+        # Self-attention with AdaLN modulation
         h = self.self_attn(x, freqs)
         h = h * (1 + scale1) + shift1
         x = x + h
 
-        # Text cross-attention with AdaLN
+        # Text cross-attention with AdaLN modulation
         h = self.cross_attn(x, context)
         h = h * (1 + scale2) + shift2
         x = x + h
@@ -597,7 +597,7 @@ class TransformerBlock(nn.Module):
         if self.has_audio and audio is not None and audio_scale > 0:
             x = self.audio_cross_attn_wrapper(x, audio, audio_scale)
 
-        # FFN with AdaLN
+        # FFN with AdaLN (pre-norm with norm3)
         h = self.norm3(x)
         h = h * (1 + scale3) + shift3
         h = self.ffn(h)
@@ -622,7 +622,7 @@ class OutputHead(nn.Module):
     def forward(self, x: torch.Tensor, time_mod: torch.Tensor) -> torch.Tensor:
         # time_mod: [B, 2, D] (first 2 components of the 6-component modulation)
         # self.modulation: [1, 2, D] per-head learned modulation
-        mod = self.modulation * time_mod  # [B, 2, D]
+        mod = self.modulation + time_mod  # [B, 2, D] - ADD not multiply!
         shift, scale = mod.unbind(dim=1)
         # Add sequence dim for broadcasting: [B, D] -> [B, 1, D]
         shift, scale = shift.unsqueeze(1), scale.unsqueeze(1)
