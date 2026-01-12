@@ -258,12 +258,14 @@ def test_full():
     orch = Orchestrator(pool)
     orch.add_step(adapter)
 
-    print(f"\n4. Running generation (small test: 17 frames, 480x832)...")
+    # Note: VAE temporal upsampling is broken (see wan_vae.py Resample class),
+    # so latent_frames = video_frames. 5 frames fits in 24GB VRAM.
+    print(f"\n4. Running generation (small test: 5 frames, 480x832)...")
     try:
         result = orch.run(
             {
                 "prompt": "A cat sitting peacefully on a sunny windowsill",
-                "num_frames": 17,  # Minimum for testing
+                "num_frames": 5,  # Limited by VRAM without temporal compression
                 "height": 480,
                 "width": 832,
                 "num_inference_steps": 10,  # Fast test

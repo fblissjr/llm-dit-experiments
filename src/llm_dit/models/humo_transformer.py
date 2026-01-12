@@ -743,10 +743,18 @@ class HuMoTransformer(nn.Module):
         self.head = OutputHead(hidden_size, out_features, eps)
 
         # 3D RoPE for positional encoding
-        head_dim = hidden_size // num_heads  # 128 for 17B (5120/40)
+        # axes_dim splits head_dim across frame/height/width axes
+        head_dim = hidden_size // num_heads
+        if head_dim == 128:  # HuMo-17B (5120/40)
+            axes_dim = (16, 56, 56)
+        elif head_dim == 64:  # HuMo-1.7B (1536/24)
+            axes_dim = (8, 28, 28)
+        else:
+            # Fallback: proportional split (1/8 temporal, 7/16 each spatial)
+            axes_dim = (head_dim // 8, (head_dim * 7) // 16, (head_dim * 7) // 16)
         self.rope = HuMo3DRoPE(
             theta=10000.0,
-            axes_dim=(16, 56, 56),  # frame, height, width = 128 total
+            axes_dim=axes_dim,
             max_seq=4096,
         )
 

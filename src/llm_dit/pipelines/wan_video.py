@@ -353,11 +353,11 @@ class WanVideoPipeline:
             ffn_dim = 13824
             patch_in_channels = 36
         else:
-            # HuMo-1.7B: 30 blocks, hidden=1536, 12 heads (matches Wan 1.3B)
+            # HuMo-1.7B: 30 blocks, hidden=1536, 24 heads
             # 16 input channels (noise only) for T2V mode
             num_layers = 30
             hidden_size = 1536
-            num_heads = 12
+            num_heads = 24  # head_dim=64
             ffn_dim = 8960
             patch_in_channels = 16
 
@@ -794,10 +794,14 @@ class WanVideoPipeline:
     ) -> torch.Tensor:
         """Run the diffusion denoising loop."""
         # Calculate latent dimensions
-        # Wan VAE: spatial 8x downscale, temporal 4x downscale
+        # Wan VAE: spatial 8x downscale
+        # NOTE: VAE should have 4x temporal compression, but temporal upsampling in
+        # wan_vae.py Resample class is not implemented. Using latent_frames = num_frames
+        # so users get exactly the frames they request.
+        # TODO: Fix VAE temporal upsampling (see DiffSynth-Engine reference)
         latent_height = height // 8
         latent_width = width // 8
-        latent_frames = (num_frames - 1) // 4 + 1  # Temporal compression
+        latent_frames = num_frames
 
         # Initialize latents (16 channels for noise)
         # Generate on CPU for reproducibility, then move to device
