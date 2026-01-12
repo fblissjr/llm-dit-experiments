@@ -427,7 +427,8 @@ class WanVideoPipeline:
         from llm_dit.models.wan_vae import WanVAE
 
         vae = WanVAE()
-        vae.load_state_dict(state_dict)
+        # Checkpoint keys have no 'model.' prefix - load into inner VideoVAE
+        vae.model.load_state_dict(state_dict)
         vae = vae.to(dtype)
 
         if not cpu_offload:
