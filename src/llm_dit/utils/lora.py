@@ -17,7 +17,7 @@ Usage:
 
 import logging
 from pathlib import Path
-from typing import Dict, Optional, Union
+from typing import Dict, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -185,6 +185,27 @@ class LoRALoader:
         return updated_num
 
 
+def _infer_model_device_dtype(
+    model: nn.Module,
+    device: Optional[Union[str, torch.device]] = None,
+    torch_dtype: Optional[torch.dtype] = None,
+) -> Tuple[Union[str, torch.device], torch.dtype]:
+    """Infer device and dtype from model parameters if not specified."""
+    if device is None:
+        try:
+            device = next(model.parameters()).device
+        except StopIteration:
+            device = "cpu"
+
+    if torch_dtype is None:
+        try:
+            torch_dtype = next(model.parameters()).dtype
+        except StopIteration:
+            torch_dtype = torch.float32
+
+    return device, torch_dtype
+
+
 def load_lora(
     model: nn.Module,
     lora_path: Union[str, Path],
@@ -212,18 +233,7 @@ def load_lora(
     if not lora_path.exists():
         raise FileNotFoundError(f"LoRA file not found: {lora_path}")
 
-    # Infer device/dtype from model if not specified
-    if device is None:
-        try:
-            device = next(model.parameters()).device
-        except StopIteration:
-            device = "cpu"
-
-    if torch_dtype is None:
-        try:
-            torch_dtype = next(model.parameters()).dtype
-        except StopIteration:
-            torch_dtype = torch.float32
+    device, torch_dtype = _infer_model_device_dtype(model, device, torch_dtype)
 
     logger.info(f"Loading LoRA: {lora_path} (scale={scale})")
 
@@ -262,18 +272,7 @@ def fuse_lora(
     Returns:
         Number of layers updated
     """
-    if device is None:
-        try:
-            device = next(model.parameters()).device
-        except StopIteration:
-            device = "cpu"
-
-    if torch_dtype is None:
-        try:
-            torch_dtype = next(model.parameters()).dtype
-        except StopIteration:
-            torch_dtype = torch.float32
-
+    device, torch_dtype = _infer_model_device_dtype(model, device, torch_dtype)
     loader = LoRALoader(device=device, torch_dtype=torch_dtype)
     return loader.fuse_lora_to_base_model(model, state_dict, alpha=scale)
 

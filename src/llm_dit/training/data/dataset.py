@@ -322,8 +322,8 @@ class CachedEmbeddingDataset(Dataset):
                 f"Convert with: uv run python scripts/convert_to_safetensors.py {self.embedding_dir} --recursive"
             )
 
-        from safetensors.torch import load_file
-        return load_file(str(embedding_path))
+        from safetensors.torch import load_file as load_safetensors
+        return load_safetensors(str(embedding_path))
 
     def __len__(self) -> int:
         return len(self.data) * self.repeat

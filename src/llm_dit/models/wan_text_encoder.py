@@ -300,17 +300,12 @@ class WanTextEncoder(nn.Module):
         state_dict = load_safetensors(str(path))
         self.model.load_state_dict(state_dict)
 
-    def encode(
-        self,
-        text: str,
-        device: Optional[torch.device] = None,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    def encode(self, text: str) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Encode text to embeddings.
 
         Args:
             text: Input text string
-            device: Target device
 
         Returns:
             embeddings: [1, seq_len, 4096] text embeddings
@@ -331,7 +326,7 @@ class WanTextEncoder(nn.Module):
         input_ids = inputs.input_ids
         attention_mask = inputs.attention_mask
 
-        # Move to model device (ignore device param - always use model's device)
+        # Move to model device
         model_device = next(self.model.parameters()).device
         input_ids = input_ids.to(model_device)
         attention_mask = attention_mask.to(model_device)

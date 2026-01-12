@@ -359,8 +359,6 @@ def run_qwen_image_t2i_generation(args, config, logger) -> int:
     Returns:
         Exit code (0 for success)
     """
-    from pathlib import Path
-
     # Validate model path
     model_path = config.qwen_image_model_path
     if not model_path:
@@ -528,7 +526,6 @@ def run_ltx2_generation(args, config, logger) -> int:
     start_load = time.time()
 
     try:
-        from pathlib import Path
         model_dir = Path(model_path).expanduser()
 
         # Check if this is a full HuggingFace directory (has model_index.json)

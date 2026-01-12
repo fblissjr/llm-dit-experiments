@@ -16,7 +16,7 @@ The VAE uses:
 Weight file: Wan2.1_VAE.safetensors
 """
 
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -229,13 +229,20 @@ class Encoder3d(nn.Module):
         self,
         dim: int = 96,
         z_dim: int = 16,
-        dim_mult: List[int] = [1, 2, 4, 4],
+        dim_mult: Optional[List[int]] = None,
         num_res_blocks: int = 2,
-        attn_scales: List[float] = [],
-        temporal_downsample: List[bool] = [False, True, True],
+        attn_scales: Optional[List[float]] = None,
+        temporal_downsample: Optional[List[bool]] = None,
         dropout: float = 0.0,
     ):
         super().__init__()
+        if dim_mult is None:
+            dim_mult = [1, 2, 4, 4]
+        if attn_scales is None:
+            attn_scales = []
+        if temporal_downsample is None:
+            temporal_downsample = [False, True, True]
+
         self.dim = dim
         self.z_dim = z_dim
 
@@ -301,13 +308,20 @@ class Decoder3d(nn.Module):
         self,
         dim: int = 96,
         z_dim: int = 16,
-        dim_mult: List[int] = [1, 2, 4, 4],
+        dim_mult: Optional[List[int]] = None,
         num_res_blocks: int = 2,
-        attn_scales: List[float] = [],
-        temporal_upsample: List[bool] = [True, True, False],
+        attn_scales: Optional[List[float]] = None,
+        temporal_upsample: Optional[List[bool]] = None,
         dropout: float = 0.0,
     ):
         super().__init__()
+        if dim_mult is None:
+            dim_mult = [1, 2, 4, 4]
+        if attn_scales is None:
+            attn_scales = []
+        if temporal_upsample is None:
+            temporal_upsample = [True, True, False]
+
         self.dim = dim
         self.z_dim = z_dim
 
@@ -383,13 +397,20 @@ class VideoVAE(nn.Module):
         self,
         dim: int = 96,
         z_dim: int = 16,
-        dim_mult: List[int] = [1, 2, 4, 4],
+        dim_mult: Optional[List[int]] = None,
         num_res_blocks: int = 2,
-        attn_scales: List[float] = [],
-        temporal_downsample: List[bool] = [False, True, True],
+        attn_scales: Optional[List[float]] = None,
+        temporal_downsample: Optional[List[bool]] = None,
         dropout: float = 0.0,
     ):
         super().__init__()
+        if dim_mult is None:
+            dim_mult = [1, 2, 4, 4]
+        if attn_scales is None:
+            attn_scales = []
+        if temporal_downsample is None:
+            temporal_downsample = [False, True, True]
+
         self.dim = dim
         self.z_dim = z_dim
 
