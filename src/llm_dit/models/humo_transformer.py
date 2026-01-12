@@ -575,33 +575,36 @@ class TransformerBlock(nn.Module):
         # time_mod: [B, 6, D] from time_projection
         # self.modulation: [1, 6, D] per-block learned modulation
         # Combine: element-wise ADD (not multiply!)
+        # Interpretation: shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp
         mod = self.modulation + time_mod  # [B, 6, D]
 
-        shift1, scale1, shift2, scale2, shift3, scale3 = mod.unbind(dim=1)
+        shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = mod.unbind(dim=1)
         # Add sequence dim for broadcasting: [B, D] -> [B, 1, D]
-        shift1, scale1 = shift1.unsqueeze(1), scale1.unsqueeze(1)
-        shift2, scale2 = shift2.unsqueeze(1), scale2.unsqueeze(1)
-        shift3, scale3 = shift3.unsqueeze(1), scale3.unsqueeze(1)
+        shift_msa = shift_msa.unsqueeze(1)
+        scale_msa = scale_msa.unsqueeze(1)
+        gate_msa = gate_msa.unsqueeze(1)
+        shift_mlp = shift_mlp.unsqueeze(1)
+        scale_mlp = scale_mlp.unsqueeze(1)
+        gate_mlp = gate_mlp.unsqueeze(1)
 
-        # Self-attention with AdaLN modulation
+        # Self-attention with gated residual
         h = self.self_attn(x, freqs)
-        h = h * (1 + scale1) + shift1
-        x = x + h
+        h = h * (1 + scale_msa) + shift_msa
+        x = x + gate_msa * h
 
-        # Text cross-attention with AdaLN modulation
-        h = self.cross_attn(x, context)
-        h = h * (1 + scale2) + shift2
+        # Text cross-attention (no modulation, direct residual)
+        h = self.cross_attn(self.norm3(x), context)
         x = x + h
 
         # Audio cross-attention (if audio provided and scale > 0)
         if self.has_audio and audio is not None and audio_scale > 0:
             x = self.audio_cross_attn_wrapper(x, audio, audio_scale)
 
-        # FFN with AdaLN (pre-norm with norm3)
+        # FFN with gated residual (pre-norm already applied via norm3 for cross-attn path)
         h = self.norm3(x)
-        h = h * (1 + scale3) + shift3
+        h = h * (1 + scale_mlp) + shift_mlp
         h = self.ffn(h)
-        x = x + h
+        x = x + gate_mlp * h
 
         return x
 
