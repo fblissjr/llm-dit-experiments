@@ -1211,14 +1211,17 @@ class WanVideoPipeline:
             except Exception as e:
                 logger.debug(f"torchvision.io.write_video failed: {e}")
 
-        # Option 3: imageio
+        # Option 3: imageio (matching DiffSynth-Engine approach)
         if not saved:
             try:
                 import imageio.v3 as iio
 
-                iio.imwrite(output_path, frames, fps=fps)
+                # Use FFMPEG plugin explicitly with libx264 codec (matches DiffSynth-Engine)
+                codec = "libvpx-vp9" if output_path.endswith(".webm") else "libx264"
+                with iio.imopen(output_path, "w", plugin="FFMPEG") as writer:
+                    writer.write(frames, fps=fps, codec=codec)
                 saved = True
-                logger.info(f"Video saved with imageio: {output_path}")
+                logger.info(f"Video saved with imageio (FFMPEG): {output_path}")
             except Exception as e:
                 logger.debug(f"imageio failed: {e}")
 
