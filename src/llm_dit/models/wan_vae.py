@@ -634,11 +634,13 @@ class WanVAE(nn.Module):
             latents: [B, z_dim, T', H', W'] latent codes
 
         Returns:
-            [B, 3, T, H, W] RGB videos clamped to [-1, 1]
+            [B, 3, T, H, W] RGB videos in float32, clamped to [-1, 1]
         """
+        # Run decode in model dtype, but always return float32 for precision
+        # This matches DiffSynth-Engine: video.float().clamp_(-1, 1)
         with torch.amp.autocast(device_type=latents.device.type, dtype=self.dtype):
             videos = self.model.decode(latents, self.scale)
-            return videos.clamp(-1, 1)
+        return videos.float().clamp(-1, 1)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Encode then decode (for training)."""
