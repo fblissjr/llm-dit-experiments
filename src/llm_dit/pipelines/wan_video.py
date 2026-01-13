@@ -389,6 +389,10 @@ class WanVideoPipeline:
         logger.info("Decoding video...")
         video = self.decode_video(latents)
 
+        # Trim to requested frame count (nuclear fix produces extra frames)
+        if video.shape[2] > num_frames:
+            video = video[:, :, :num_frames, :, :]
+
         # To numpy uint8
         video = video.float().cpu()
         video = (video + 1) / 2  # [-1, 1] -> [0, 1]
