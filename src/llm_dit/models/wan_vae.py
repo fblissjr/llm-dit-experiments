@@ -130,10 +130,15 @@ class Resample(nn.Module):
                 x = self.time_conv(x)
 
         # Temporal upsampling (2x) - stack frames from doubled channels
-        # Matches DiffSynth-Studio/ComfyUI behavior exactly:
-        # - Frame 0: skip time_conv entirely (no temporal upsample)
-        # - Frame 1: apply time_conv WITHOUT cache (zeros padding internally)
-        # - Frame 2+: apply time_conv WITH cache from previous frame
+        #
+        # Improved from DiffSynth-Studio/ComfyUI behavior:
+        # - Frame 0: skip time_conv (preserves frame count), but STORE as history
+        # - Frame 1: apply time_conv WITH Frame 0 as history (not zeros!)
+        # - Frame 2+: apply time_conv WITH cache from previous frames
+        #
+        # The key improvement: Frame 1 uses replicated Frame 0 as history instead
+        # of zero padding. This reduces the statistical discontinuity between
+        # Frame 0 (no conv) and Frame 1 (conv), which was causing flickering.
         #
         # CRITICAL: Use reshape+stack, NOT einops rearrange!
         # rearrange interleaves incorrectly, stack preserves temporal order
