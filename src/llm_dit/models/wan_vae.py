@@ -1,7 +1,7 @@
 """
 Wan Video VAE for video encoding/decoding.
 
-Last Updated: 2026-01-12
+Last Updated: 2026-01-13
 
 This implements the official Wan VAE architecture to match checkpoint weights.
 NOTE: ONLY TESTED AND BUILT FOR Wan-AI/Wan2.1-T2V-1.3B
@@ -45,7 +45,8 @@ class CausalConv3d(nn.Conv3d):
     def forward(self, x: torch.Tensor, cache_x: torch.Tensor = None) -> torch.Tensor:
         padding = list(self._padding)
         if cache_x is not None and self._padding[4] > 0:
-            cache_x = cache_x.to(x.device)
+            # Ensure cache matches both device AND dtype to prevent precision issues
+            cache_x = cache_x.to(device=x.device, dtype=x.dtype)
             x = torch.cat([cache_x, x], dim=2)
             padding[4] -= cache_x.shape[2]
         x = F.pad(x, padding)
@@ -121,7 +122,9 @@ class Resample(nn.Module):
                     feat_cache[key] = x.clone()
                 else:
                     cache_x = x[:, :, -1:, :, :].clone()
-                    x = self.time_conv(torch.cat([feat_cache[key][:, :, -1:, :, :], x], 2))
+                    # Ensure dtype consistency between cache and current tensor
+                    cached_slice = feat_cache[key][:, :, -1:, :, :].to(dtype=x.dtype)
+                    x = self.time_conv(torch.cat([cached_slice, x], 2))
                     feat_cache[key] = cache_x
             else:
                 x = self.time_conv(x)
@@ -165,10 +168,9 @@ class Resample(nn.Module):
                     # Update cache with current frame (pad if needed)
                     new_cache = x[:, :, -CACHE_T:, :, :].clone()
                     if new_cache.shape[2] < CACHE_T:
-                        new_cache = torch.cat([
-                            cache_x[:, :, -1:, :, :],
-                            new_cache
-                        ], dim=2)
+                        # Ensure dtype consistency when padding cache
+                        cache_slice = cache_x[:, :, -1:, :, :].to(dtype=new_cache.dtype)
+                        new_cache = torch.cat([cache_slice, new_cache], dim=2)
                     feat_cache[time_key] = new_cache
                     # Temporal stack: [b, c*2, t, h, w] -> [b, c, t*2, h, w]
                     b, _, t, h, w = x_out.shape
@@ -636,10 +638,17 @@ class WanVAE(nn.Module):
         Returns:
             [B, 3, T, H, W] RGB videos in float32, clamped to [-1, 1]
         """
-        # Run decode in model dtype, but always return float32 for precision
-        # This matches DiffSynth-Engine: video.float().clamp_(-1, 1)
-        with torch.amp.autocast(device_type=latents.device.type, dtype=self.dtype):
-            videos = self.model.decode(latents, self.scale)
+        # When dtype is float32, run WITHOUT autocast for explicit precision control
+        # Autocast with float32 is essentially a no-op but can have subtle edge cases
+        # This matches DiffSynth-Engine pattern of running VAE decode in float32
+        if self.dtype == torch.float32:
+            # Explicitly ensure latents and scale are float32
+            latents = latents.float()
+            scale = (self.mean.float(), self.inv_std.float())
+            videos = self.model.decode(latents, scale)
+        else:
+            with torch.amp.autocast(device_type=latents.device.type, dtype=self.dtype):
+                videos = self.model.decode(latents, self.scale)
         return videos.float().clamp(-1, 1)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
