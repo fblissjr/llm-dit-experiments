@@ -625,25 +625,38 @@ class OutputHead(nn.Module):
     """
     Output head with modulation.
 
-    Weight keys: head.head.*, head.modulation
+    Weight keys: head.head.*, head.modulation, head.norm.*
+
+    Official HuMo: Receives time_embedding (not time_projection!) as [B, D],
+    broadcasts with modulation [1, 2, D] to get shift and scale.
     """
 
     def __init__(self, hidden_size: int, out_features: int, eps: float = 1e-6):
         super().__init__()
-        # Shape [1, 2, D] - the leading 1 is for broadcasting
-        self.modulation = nn.Parameter(torch.zeros(1, 2, hidden_size))
+        # Shape [1, 2, D] - initialized with randn/sqrt(dim) like official HuMo
+        self.modulation = nn.Parameter(torch.randn(1, 2, hidden_size) / (hidden_size ** 0.5))
+        self.norm = nn.LayerNorm(hidden_size, eps=eps, elementwise_affine=False)
         self.head = nn.Linear(hidden_size, out_features)
 
-    def forward(self, x: torch.Tensor, time_mod: torch.Tensor) -> torch.Tensor:
-        # time_mod: [B, 2, D] (first 2 components of the 6-component modulation)
-        # self.modulation: [1, 2, D] per-head learned modulation
-        mod = self.modulation + time_mod  # [B, 2, D] - ADD not multiply!
-        shift, scale = mod.unbind(dim=1)
-        # Add sequence dim for broadcasting: [B, D] -> [B, 1, D]
-        shift, scale = shift.unsqueeze(1), scale.unsqueeze(1)
+    def forward(self, x: torch.Tensor, time_emb: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            x: Token features [B, N, D]
+            time_emb: Time embedding from time_embedding (NOT time_projection!) [B, D]
 
-        x = x * (1 + scale) + shift
-        return self.head(x)
+        Returns:
+            Output predictions [B, N, out_features]
+        """
+        # CRITICAL: All modulation operations in float32
+        # time_emb: [B, D] -> unsqueeze to [B, 1, D]
+        # self.modulation: [1, 2, D]
+        # Broadcasting: [B, 1, D] + [1, 2, D] = [B, 2, D]
+        with torch.amp.autocast(device_type='cuda', enabled=False):
+            mod = (self.modulation.float() + time_emb.float().unsqueeze(1)).chunk(2, dim=1)
+            # mod is 2 tensors of shape [B, 1, D]
+            shift, scale = mod
+            x = self.head(self.norm(x).float() * (1 + scale) + shift)
+        return x
 
 
 class HuMoTransformer(nn.Module):
@@ -819,13 +832,11 @@ class HuMoTransformer(nn.Module):
         x = self.patch_embedding(hidden_states)
         x = rearrange(x, "b d t h w -> b (t h w) d")
 
-        # Time embedding
-        t_emb = self._get_sinusoidal_embedding(timestep)  # [B, freq_dim]
-        t_emb = self.time_embedding(t_emb)  # [B, D]
-        t_emb_proj = self.time_projection(t_emb)  # [B, 6*D]
-
-        # Reshape to [B, 6, D] for blocks - these are the base modulation values
-        t_mod = t_emb_proj.reshape(B, 6, self.hidden_size)
+        # Time embedding - MUST be computed and stored in float32 for modulation
+        with torch.amp.autocast(device_type='cuda', enabled=False):
+            t_emb = self._get_sinusoidal_embedding(timestep.float())  # [B, freq_dim]
+            t_emb = self.time_embedding(t_emb.float()).float()  # [B, D] - stays float32 for head
+            t_mod = self.time_projection(t_emb).unflatten(1, (6, self.hidden_size)).float()  # [B, 6, D]
 
         # Project text context
         context = self.text_embedding(encoder_hidden_states)  # [B, S, D]
@@ -843,13 +854,13 @@ class HuMoTransformer(nn.Module):
         W_out = W // p3
         freqs = self.rope(T_out, H_out, W_out, hidden_states.device)
 
-        # Transformer blocks - pass both original time_emb and reshaped modulation
+        # Transformer blocks - pass time modulation (float32)
         for block in self.blocks:
             x = block(x, context, t_mod, audio, audio_scale, freqs)
 
-        # Output head - uses reshaped modulation (take first 2 components)
-        head_mod = t_mod[:, :2, :]  # [B, 2, D]
-        x = self.head(x, head_mod)  # [B, N, C*p1*p2*p3]
+        # Output head - receives t_emb [B, D] (NOT t_mod!)
+        # Official HuMo passes time_embedding output to head, not time_projection output
+        x = self.head(x, t_emb)  # [B, N, C*p1*p2*p3]
 
         # Unpatchify to output channels (16), not input channels (36)
         C_out = self.out_channels
