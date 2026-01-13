@@ -820,7 +820,13 @@ class WanVideoPipeline:
             self.text_encoder.model = self.text_encoder.model.to(self._device)
 
         # Encode using WanTextEncoder interface
-        text_embeds, _ = self.text_encoder.encode(prompt)
+        text_embeds, attention_mask = self.text_encoder.encode(prompt)
+
+        # Zero out embeddings after actual token count
+        # This matches DiffSynth-Studio behavior which zeros padding positions
+        seq_lens = attention_mask.gt(0).sum(dim=1).long()
+        for i, v in enumerate(seq_lens):
+            text_embeds[i, v:] = 0
 
         # Offload if needed
         if self.config.enable_cpu_offload:

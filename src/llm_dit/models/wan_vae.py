@@ -127,20 +127,26 @@ class Resample(nn.Module):
                 x = self.time_conv(x)
 
         # Temporal upsampling (2x) - interleave frames from doubled channels
+        # On first frame: skip temporal upsample (no prior context)
+        # On subsequent frames: apply temporal upsample with cached context
         if self.mode == "upsample3d":
             if feat_cache is not None:
-                key = id(self.time_conv)
-                if key not in feat_cache:
-                    # First call: just mark for subsequent calls
-                    feat_cache[key] = "initialized"
+                time_key = ("time_conv", id(self.time_conv))
+                if time_key not in feat_cache:
+                    # First latent frame: no temporal upsample, but cache for next
+                    feat_cache[time_key] = x[:, :, -CACHE_T:, :, :].clone()
+                    # x stays as [B, C, 1, H, W] -> spatial upsample only
                 else:
-                    # Apply temporal upsampling via time_conv
-                    # time_conv: [b, c, t, h, w] -> [b, c*2, t, h, w]
-                    x = self.time_conv(x)
+                    # Subsequent frames: apply temporal upsample with cache
+                    cache_x = feat_cache[time_key]
+                    # time_conv needs cache for causal convolution
+                    x_out = self.time_conv(x, cache_x)
+                    # Update cache
+                    feat_cache[time_key] = x[:, :, -CACHE_T:, :, :].clone()
                     # Reshape to interleave: [b, c*2, t, h, w] -> [b, c, t*2, h, w]
-                    x = rearrange(x, "b (k c) t h w -> b c (t k) h w", k=2)
+                    x = rearrange(x_out, "b (k c) t h w -> b c (t k) h w", k=2)
             else:
-                # No caching - always apply
+                # No caching - always apply temporal upsample
                 x = self.time_conv(x)
                 x = rearrange(x, "b (k c) t h w -> b c (t k) h w", k=2)
 
@@ -461,16 +467,39 @@ class VideoVAE(nn.Module):
         return mu
 
     def decode(self, z: torch.Tensor, scale: Tuple[float, float] = None) -> torch.Tensor:
-        """Decode latents to video."""
+        """
+        Decode latents to video using frame-by-frame causal decoding.
+
+        This matches the DiffSynth-Studio reference implementation which processes
+        one latent frame at a time with feature caching for causal convolutions.
+        """
         if scale is not None:
             mean, inv_std = scale
             if isinstance(mean, torch.Tensor):
+                mean = mean.to(dtype=z.dtype, device=z.device)
+                inv_std = inv_std.to(dtype=z.dtype, device=z.device)
                 z = z / inv_std.view(1, self.z_dim, 1, 1, 1) + mean.view(1, self.z_dim, 1, 1, 1)
             else:
                 z = z / inv_std + mean
 
-        z = self.conv2(z)
-        return self.decoder(z)
+        # Apply conv2 to all frames at once
+        x = self.conv2(z)
+
+        # Frame-by-frame causal decoding with feature caching
+        # This is critical for causal convolutions to work correctly
+        num_latent_frames = x.shape[2]
+        feat_cache = {}
+
+        for i in range(num_latent_frames):
+            frame_input = x[:, :, i:i+1, :, :]
+
+            if i == 0:
+                out = self.decoder(frame_input, feat_cache=feat_cache)
+            else:
+                out_frame = self.decoder(frame_input, feat_cache=feat_cache)
+                out = torch.cat([out, out_frame], dim=2)
+
+        return out
 
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Encode then decode (for training)."""
