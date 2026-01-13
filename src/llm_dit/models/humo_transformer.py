@@ -593,16 +593,17 @@ class TransformerBlock(nn.Module):
         # Unpack modulation values (all [B, 1, D] in float32)
         shift_sa, scale_sa, gate_sa, shift_ffn, scale_ffn, gate_ffn = mod
 
-        # Self-attention: norm1 -> modulate -> self_attn -> gated residual
-        # Input to self-attn is modulated: norm(x) * (1 + scale) + shift
-        y = self.self_attn(
-            self.norm1(x).float() * (1 + scale_sa) + shift_sa,
-            freqs
-        )
+        # Get model dtype from context for conversions
+        model_dtype = context.dtype
+
+        # Self-attention: norm1 -> modulate (float32) -> convert dtype -> self_attn -> gated residual
+        # Modulation computed in float32 for numerical stability
+        sa_input = (self.norm1(x).float() * (1 + scale_sa) + shift_sa).to(model_dtype)
+        y = self.self_attn(sa_input, freqs)
         # Gated residual in float32
         with torch.amp.autocast(device_type='cuda', enabled=False):
             x = x.float() + y.float() * gate_sa
-        x = x.to(context.dtype)  # Back to model dtype
+        x = x.to(model_dtype)  # Back to model dtype
 
         # Cross-attention: norm3 -> cross_attn -> direct residual (no modulation!)
         x = x + self.cross_attn(self.norm3(x), context)
@@ -611,12 +612,13 @@ class TransformerBlock(nn.Module):
         if self.has_audio and audio is not None and audio_scale > 0:
             x = self.audio_cross_attn_wrapper(x, audio, audio_scale)
 
-        # FFN: norm2 -> modulate -> ffn -> gated residual
-        y = self.ffn(self.norm2(x).float() * (1 + scale_ffn) + shift_ffn)
+        # FFN: norm2 -> modulate (float32) -> convert dtype -> ffn -> gated residual
+        ffn_input = (self.norm2(x).float() * (1 + scale_ffn) + shift_ffn).to(model_dtype)
+        y = self.ffn(ffn_input)
         # Gated residual in float32
         with torch.amp.autocast(device_type='cuda', enabled=False):
             x = x.float() + y.float() * gate_ffn
-        x = x.to(context.dtype)  # Back to model dtype
+        x = x.to(model_dtype)  # Back to model dtype
 
         return x
 
@@ -647,6 +649,7 @@ class OutputHead(nn.Module):
         Returns:
             Output predictions [B, N, out_features]
         """
+        model_dtype = x.dtype
         # CRITICAL: All modulation operations in float32
         # time_emb: [B, D] -> unsqueeze to [B, 1, D]
         # self.modulation: [1, 2, D]
@@ -655,8 +658,9 @@ class OutputHead(nn.Module):
             mod = (self.modulation.float() + time_emb.float().unsqueeze(1)).chunk(2, dim=1)
             # mod is 2 tensors of shape [B, 1, D]
             shift, scale = mod
-            x = self.head(self.norm(x).float() * (1 + scale) + shift)
-        return x
+            # Compute modulated input, then convert to model dtype for linear layer
+            head_input = (self.norm(x).float() * (1 + scale) + shift).to(model_dtype)
+        return self.head(head_input)
 
 
 class HuMoTransformer(nn.Module):
@@ -832,11 +836,14 @@ class HuMoTransformer(nn.Module):
         x = self.patch_embedding(hidden_states)
         x = rearrange(x, "b d t h w -> b (t h w) d")
 
-        # Time embedding - MUST be computed and stored in float32 for modulation
-        with torch.amp.autocast(device_type='cuda', enabled=False):
-            t_emb = self._get_sinusoidal_embedding(timestep.float())  # [B, freq_dim]
-            t_emb = self.time_embedding(t_emb.float()).float()  # [B, D] - stays float32 for head
-            t_mod = self.time_projection(t_emb).unflatten(1, (6, self.hidden_size)).float()  # [B, 6, D]
+        # Time embedding - computed in model dtype but results STORED in float32 for modulation
+        # Sinusoidal computed in float32, then passed through model layers, then converted to float32
+        t_emb_sin = self._get_sinusoidal_embedding(timestep)  # [B, freq_dim] - computed in float32 internally
+        t_emb = self.time_embedding(t_emb_sin.to(hidden_states.dtype))  # [B, D] in model dtype
+        # Convert to float32 for modulation operations (critical for numerical stability)
+        t_emb = t_emb.float()  # [B, D] in float32 for head
+        t_mod = self.time_projection(t_emb.to(hidden_states.dtype)).float()  # [B, 6*D] -> float32
+        t_mod = t_mod.unflatten(1, (6, self.hidden_size))  # [B, 6, D] in float32
 
         # Project text context
         context = self.text_embedding(encoder_hidden_states)  # [B, S, D]
