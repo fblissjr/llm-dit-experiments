@@ -141,21 +141,27 @@ class Resample(nn.Module):
             if feat_cache is not None:
                 time_key = ("time_conv", id(self.time_conv))
                 if time_key not in feat_cache:
-                    # First latent frame: mark as skipped, no temporal upsample
-                    feat_cache[time_key] = "SKIP"
-                    # x stays as [B, C, 1, H, W] -> spatial upsample only
-                elif feat_cache[time_key] == "SKIP":
-                    # Second latent frame: apply time_conv WITHOUT cache
-                    # CausalConv3d will pad with zeros internally
-                    x_out = self.time_conv(x)  # No cache!
-                    # Build cache for next frame: pad with zeros to get 2 frames
+                    # First latent frame: store as history for Frame 1, but skip time_conv
+                    # This preserves frame count (Frame 0 stays 1 frame) while providing
+                    # Frame 1 with real data instead of zeros for better continuity
+                    # Replicate Frame 0 to fill CACHE_T slots
+                    initial_cache = x.repeat(1, 1, CACHE_T, 1, 1)[:, :, :CACHE_T, :, :]
+                    feat_cache[time_key] = initial_cache
+                    # x stays as [B, C, 1, H, W] -> spatial upsample only (no temporal)
+                elif feat_cache[time_key].shape[2] == CACHE_T and feat_cache.get(("frame1_done", time_key)) is None:
+                    # Second latent frame: apply time_conv WITH Frame 0 as history
+                    # This uses replicated Frame 0 instead of zero padding
+                    cache_x = feat_cache[time_key]
+                    x_out = self.time_conv(x, cache_x)  # Use Frame 0 as history!
+                    # Build cache for next frame
                     cache_x = x[:, :, -CACHE_T:, :, :].clone()
                     if cache_x.shape[2] < CACHE_T:
                         cache_x = torch.cat([
-                            torch.zeros_like(cache_x),
+                            feat_cache[time_key][:, :, -1:, :, :].to(dtype=cache_x.dtype),
                             cache_x
                         ], dim=2)
                     feat_cache[time_key] = cache_x
+                    feat_cache[("frame1_done", time_key)] = True  # Mark Frame 1 as processed
                     # Temporal stack: [b, c*2, t, h, w] -> [b, c, t*2, h, w]
                     b, _, t, h, w = x_out.shape
                     x = x_out.reshape(b, 2, -1, t, h, w)
