@@ -136,6 +136,11 @@ class FlowMatchScheduler:
         """
         Set the discrete timesteps for inference.
 
+        Matches DiffSynth-Engine scheduler behavior:
+        1. Create num_inference_steps sigmas from sigma_max to sigma_min
+        2. Apply shift transformation
+        3. Append 0 as final sigma (target for last step)
+
         Args:
             num_inference_steps: Number of denoising steps
             device: Device for tensors
@@ -144,28 +149,30 @@ class FlowMatchScheduler:
         if mu is not None:
             self.shift = mu
 
-        # Linear spacing in sigma space: 1.0 -> 0.0
+        # Linear spacing: sigma_max -> sigma_min (NOT including final 0)
+        # DiffSynth-Engine uses num_inference_steps, not num_inference_steps + 1
         sigmas = torch.linspace(
             self.sigma_max,
             self.sigma_min,
-            num_inference_steps + 1,
+            num_inference_steps,
             device=device,
         )
 
-        # Apply Z-Image shift transformation
-        # This "bakes in" the CFG-like behavior from Decoupled-DMD training
+        # Apply shift transformation
         # Formula: sigma' = shift * sigma / (1 + (shift - 1) * sigma)
         sigmas = self.shift * sigmas / (1 + (self.shift - 1) * sigmas)
 
         # Apply shift_terminal stretching if configured
-        # This ensures the final sigma ends at shift_terminal instead of 0
         if self.shift_terminal is not None:
             sigmas = self._stretch_shift_to_terminal(sigmas)
+
+        # Append 0 as final sigma (target for last denoising step)
+        # This matches DiffSynth-Engine: sigmas = append(sigmas, 0)
+        sigmas = torch.cat([sigmas, sigmas.new_zeros(1)])
 
         self.sigmas = sigmas
 
         # Timesteps are sigma * num_train_timesteps, excluding final sigma (0)
-        # Z-Image uses timesteps in [0, 1000] range
         self.timesteps = sigmas[:-1] * self.num_train_timesteps
 
         self._step_index = None

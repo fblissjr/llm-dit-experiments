@@ -126,11 +126,14 @@ class Resample(nn.Module):
             else:
                 x = self.time_conv(x)
 
-        # Temporal upsampling (2x) - interleave frames from doubled channels
-        # Matches DiffSynth-Studio behavior exactly:
+        # Temporal upsampling (2x) - stack frames from doubled channels
+        # Matches DiffSynth-Studio/ComfyUI behavior exactly:
         # - Frame 0: skip time_conv entirely (no temporal upsample)
         # - Frame 1: apply time_conv WITHOUT cache (zeros padding internally)
         # - Frame 2+: apply time_conv WITH cache from previous frame
+        #
+        # CRITICAL: Use reshape+stack, NOT einops rearrange!
+        # rearrange interleaves incorrectly, stack preserves temporal order
         if self.mode == "upsample3d":
             if feat_cache is not None:
                 time_key = ("time_conv", id(self.time_conv))
@@ -150,8 +153,11 @@ class Resample(nn.Module):
                             cache_x
                         ], dim=2)
                     feat_cache[time_key] = cache_x
-                    # Reshape to interleave: [b, c*2, t, h, w] -> [b, c, t*2, h, w]
-                    x = rearrange(x_out, "b (k c) t h w -> b c (t k) h w", k=2)
+                    # Temporal stack: [b, c*2, t, h, w] -> [b, c, t*2, h, w]
+                    b, _, t, h, w = x_out.shape
+                    x = x_out.reshape(b, 2, -1, t, h, w)
+                    x = torch.stack((x[:, 0], x[:, 1]), dim=3)
+                    x = x.reshape(b, -1, t * 2, h, w)
                 else:
                     # Subsequent frames: apply time_conv WITH cache
                     cache_x = feat_cache[time_key]
@@ -164,12 +170,18 @@ class Resample(nn.Module):
                             new_cache
                         ], dim=2)
                     feat_cache[time_key] = new_cache
-                    # Reshape to interleave: [b, c*2, t, h, w] -> [b, c, t*2, h, w]
-                    x = rearrange(x_out, "b (k c) t h w -> b c (t k) h w", k=2)
+                    # Temporal stack: [b, c*2, t, h, w] -> [b, c, t*2, h, w]
+                    b, _, t, h, w = x_out.shape
+                    x = x_out.reshape(b, 2, -1, t, h, w)
+                    x = torch.stack((x[:, 0], x[:, 1]), dim=3)
+                    x = x.reshape(b, -1, t * 2, h, w)
             else:
                 # No caching - always apply temporal upsample
-                x = self.time_conv(x)
-                x = rearrange(x, "b (k c) t h w -> b c (t k) h w", k=2)
+                x_out = self.time_conv(x)
+                b, _, t, h, w = x_out.shape
+                x = x_out.reshape(b, 2, -1, t, h, w)
+                x = torch.stack((x[:, 0], x[:, 1]), dim=3)
+                x = x.reshape(b, -1, t * 2, h, w)
 
         # Spatial resampling (2x up or down)
         t = x.shape[2]
@@ -493,6 +505,9 @@ class VideoVAE(nn.Module):
 
         This matches the DiffSynth-Studio reference implementation which processes
         one latent frame at a time with feature caching for causal convolutions.
+
+        The first frame output is trimmed by 3 frames to remove boundary effects
+        from causal padding (factor_t=4 temporal compression means 3 padded frames).
         """
         if scale is not None:
             mean, inv_std = scale
@@ -516,6 +531,8 @@ class VideoVAE(nn.Module):
 
             if i == 0:
                 out = self.decoder(frame_input, feat_cache=feat_cache)
+                # Frame 0 outputs only 1 pixel frame (no temporal upsample due to SKIP)
+                # No trimming needed
             else:
                 out_frame = self.decoder(frame_input, feat_cache=feat_cache)
                 out = torch.cat([out, out_frame], dim=2)

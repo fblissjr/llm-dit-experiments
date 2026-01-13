@@ -27,7 +27,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import torch
@@ -623,14 +623,14 @@ class WanVideoPipeline:
         """Create Wan-specific flow match scheduler."""
         from llm_dit.schedulers.flow_match import FlowMatchScheduler
 
-        # Wan uses shift=5.0, sigma_min=0.0, sigma_max=1.0
-        # Our FlowMatchScheduler already has the correct formula:
-        # sigma' = shift * sigma / (1 + (shift - 1) * sigma)
+        # DiffSynth-Engine uses sigma_min=0.001, sigma_max=0.999
+        # NOT 0.0 and 1.0 - the boundaries prevent numerical instability
+        # Formula: sigma' = shift * sigma / (1 + (shift - 1) * sigma)
         scheduler = FlowMatchScheduler(
             num_train_timesteps=1000,
             shift=5.0,
-            sigma_min=0.0,
-            sigma_max=1.0,
+            sigma_min=0.001,
+            sigma_max=0.999,
         )
         return scheduler
 
@@ -768,7 +768,7 @@ class WanVideoPipeline:
         )
         logger.info(f"  scale_t={guidance_scale}, scale_a={audio_scale}")
 
-        # Encode text
+        # Encode text (embeddings with padding positions zeroed)
         text_embeds = self._encode_text(prompt)
         if negative_prompt:
             negative_embeds = self._encode_text(negative_prompt)
@@ -814,7 +814,17 @@ class WanVideoPipeline:
         )
 
     def _encode_text(self, prompt: str) -> torch.Tensor:
-        """Encode text prompt with UMT5."""
+        """
+        Encode text prompt with UMT5.
+
+        Returns:
+            text_embeds: [B, S, text_dim] with zeros after actual tokens
+
+        Note:
+            Following DiffSynth-Studio, we zero out padding embeddings but don't use
+            explicit attention masks. This is sufficient because V=0 means the
+            softmax-weighted sum contributes zero from padding positions.
+        """
         # Move encoder to device if needed
         if self.config.enable_cpu_offload:
             self.text_encoder.model = self.text_encoder.model.to(self._device)
@@ -836,7 +846,7 @@ class WanVideoPipeline:
         return text_embeds
 
     def _encode_image(self, image) -> torch.Tensor:
-        """Encode reference image with VAE."""
+        """Encode reference image with VAE for Image-to-Video conditioning."""
         # Convert to tensor if needed
         if not isinstance(image, torch.Tensor):
             from PIL import Image
@@ -844,7 +854,11 @@ class WanVideoPipeline:
                 image = Image.fromarray(image)
             # Assume PIL Image
             image = torch.from_numpy(np.array(image)).float() / 255.0
-            image = image.permute(2, 0, 1).unsqueeze(0)  # [1, 3, H, W]
+            # Create 5D tensor: [B, C, T, H, W] with T=1 for single image
+            image = image.permute(2, 0, 1).unsqueeze(0).unsqueeze(2)  # [1, 3, 1, H, W]
+        elif image.ndim == 4:
+            # 4D tensor [B, C, H, W] -> add temporal dim -> [B, C, 1, H, W]
+            image = image.unsqueeze(2)
 
         image = image.to(self._device, self._dtype)
 
@@ -977,6 +991,9 @@ class WanVideoPipeline:
             timestep = t.expand(transformer_input.shape[0]).to(device=self._device, dtype=self._dtype)
 
             # Prepare text embeddings for CFG
+            # Note: We zero out padding embeddings in _encode_text() which is sufficient
+            # for cross-attention (V=0 means zero contribution). Explicit attention masks
+            # are NOT used because the model wasn't trained with them.
             if guidance_scale > 1.0:
                 text_input = torch.cat([negative_embeds, text_embeds])
             else:
@@ -986,6 +1003,7 @@ class WanVideoPipeline:
             with torch.no_grad():
                 if is_wan_mode:
                     # Wan forward (16 channels)
+                    # Note: encoder_attention_mask=None because zeroed embeddings are sufficient
                     noise_pred = self.transformer(
                         hidden_states=transformer_input,
                         timestep=timestep,
