@@ -1,10 +1,10 @@
 """
 Wan UMT5-XXL Text Encoder.
 
-Last Updated: 2026-01-12
+Last Updated: 2026-01-13
 
 Custom T5 encoder implementation matching Wan's weight format.
-Based on Wan2GP/models/wan/modules/t5.py
+Based on DiffSynth-Studio reference implementation.
 """
 
 import math
