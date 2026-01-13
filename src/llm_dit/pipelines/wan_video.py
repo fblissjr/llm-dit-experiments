@@ -280,8 +280,30 @@ class WanVideoPipeline:
         return self.vae.encode(video.to(self.dtype))
 
     def decode_video(self, latents: torch.Tensor) -> torch.Tensor:
-        """Decode latents to video."""
-        return self.vae.decode(latents.to(self.dtype))
+        """Decode latents to video in float32 for temporal stability.
+
+        The VAE uses causal convolutions with feat_cache passed between frames.
+        Running in bfloat16 causes quantization noise to accumulate frame-over-frame,
+        causing flickering. Float32 decode prevents this drift.
+
+        This matches DiffSynth-Engine which defaults VAE to float32.
+        """
+        # Store original dtype (both model weights and autocast control)
+        original_dtype = self.vae.dtype
+        device = latents.device
+
+        # Convert VAE to float32 - both weights AND autocast dtype
+        self.vae.to(dtype=torch.float32)
+        self.vae.dtype = torch.float32  # Controls internal autocast
+
+        # Run decode in float32
+        video = self.vae.decode(latents.float())
+
+        # Restore VAE to original dtype to save VRAM
+        self.vae.to(dtype=original_dtype)
+        self.vae.dtype = original_dtype
+
+        return video
 
     # =========================================================================
     # Main Generation
