@@ -127,22 +127,43 @@ class Resample(nn.Module):
                 x = self.time_conv(x)
 
         # Temporal upsampling (2x) - interleave frames from doubled channels
-        # On first frame: skip temporal upsample (no prior context)
-        # On subsequent frames: apply temporal upsample with cached context
+        # Matches DiffSynth-Studio behavior exactly:
+        # - Frame 0: skip time_conv entirely (no temporal upsample)
+        # - Frame 1: apply time_conv WITHOUT cache (zeros padding internally)
+        # - Frame 2+: apply time_conv WITH cache from previous frame
         if self.mode == "upsample3d":
             if feat_cache is not None:
                 time_key = ("time_conv", id(self.time_conv))
                 if time_key not in feat_cache:
-                    # First latent frame: no temporal upsample, but cache for next
-                    feat_cache[time_key] = x[:, :, -CACHE_T:, :, :].clone()
+                    # First latent frame: mark as skipped, no temporal upsample
+                    feat_cache[time_key] = "SKIP"
                     # x stays as [B, C, 1, H, W] -> spatial upsample only
+                elif feat_cache[time_key] == "SKIP":
+                    # Second latent frame: apply time_conv WITHOUT cache
+                    # CausalConv3d will pad with zeros internally
+                    x_out = self.time_conv(x)  # No cache!
+                    # Build cache for next frame: pad with zeros to get 2 frames
+                    cache_x = x[:, :, -CACHE_T:, :, :].clone()
+                    if cache_x.shape[2] < CACHE_T:
+                        cache_x = torch.cat([
+                            torch.zeros_like(cache_x),
+                            cache_x
+                        ], dim=2)
+                    feat_cache[time_key] = cache_x
+                    # Reshape to interleave: [b, c*2, t, h, w] -> [b, c, t*2, h, w]
+                    x = rearrange(x_out, "b (k c) t h w -> b c (t k) h w", k=2)
                 else:
-                    # Subsequent frames: apply temporal upsample with cache
+                    # Subsequent frames: apply time_conv WITH cache
                     cache_x = feat_cache[time_key]
-                    # time_conv needs cache for causal convolution
                     x_out = self.time_conv(x, cache_x)
-                    # Update cache
-                    feat_cache[time_key] = x[:, :, -CACHE_T:, :, :].clone()
+                    # Update cache with current frame (pad if needed)
+                    new_cache = x[:, :, -CACHE_T:, :, :].clone()
+                    if new_cache.shape[2] < CACHE_T:
+                        new_cache = torch.cat([
+                            cache_x[:, :, -1:, :, :],
+                            new_cache
+                        ], dim=2)
+                    feat_cache[time_key] = new_cache
                     # Reshape to interleave: [b, c*2, t, h, w] -> [b, c, t*2, h, w]
                     x = rearrange(x_out, "b (k c) t h w -> b c (t k) h w", k=2)
             else:
