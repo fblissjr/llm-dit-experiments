@@ -204,33 +204,31 @@ class WanVideoPipeline:
     # =========================================================================
 
     def set_timesteps(self, num_inference_steps: int):
-        """Set scheduler timesteps - matches DiffSynth-Engine."""
+        """Set scheduler timesteps - matches DiffSynth-Studio."""
         shift = self.config.shift
         sigma_min = 0.001
         sigma_max = 0.999
 
-        # Linear spacing
-        sigmas = torch.linspace(sigma_max, sigma_min, num_inference_steps)
+        # Linear spacing - DiffSynth-Studio pattern: n+1 points, drop last
+        # This gives different step distribution than linspace(max, min, n)
+        sigmas = torch.linspace(sigma_max, sigma_min, num_inference_steps + 1)[:-1]
 
         # Apply shift
         sigmas = shift * sigmas / (1 + (shift - 1) * sigmas)
 
-        # Append 0 at end
-        sigmas = torch.cat([sigmas, sigmas.new_zeros(1)])
+        # Timesteps computed BEFORE appending 0 (DiffSynth-Studio pattern)
+        self.timesteps = (sigmas * 1000).to(self.device)
 
+        # Append 0 at end for final step
+        sigmas = torch.cat([sigmas, sigmas.new_zeros(1)])
         self.sigmas = sigmas.to(self.device)
-        self.timesteps = sigmas[:-1] * 1000
 
     def step(self, latents: torch.Tensor, noise_pred: torch.Tensor, step_idx: int) -> torch.Tensor:
-        """Euler step - matches DiffSynth-Engine exactly."""
-        dt = self.sigmas[step_idx + 1] - self.sigmas[step_idx]
-
-        # DiffSynth pattern: only latents to float32, keep noise_pred in original dtype
-        latents = latents.to(dtype=torch.float32)
-        latents = latents + noise_pred * dt
-        latents = latents.to(dtype=noise_pred.dtype)
-
-        return latents
+        """Euler step - matches DiffSynth-Studio exactly."""
+        sigma = self.sigmas[step_idx]
+        sigma_next = self.sigmas[step_idx + 1]
+        # No dtype conversion - DiffSynth-Studio does arithmetic in original dtype
+        return latents + noise_pred * (sigma_next - sigma)
 
     # =========================================================================
     # Noise Prediction
