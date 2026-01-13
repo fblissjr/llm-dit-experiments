@@ -538,20 +538,25 @@ class TransformerBlock(nn.Module):
         self.hidden_size = hidden_size
 
         # AdaLN modulation: produces 6 values from time embedding
-        # Shape [1, 6, D] - the leading 1 is for broadcasting
-        self.modulation = nn.Parameter(torch.zeros(1, 6, hidden_size))
+        # Shape [1, 6, D] - initialized with randn/sqrt(dim) like official HuMo
+        self.modulation = nn.Parameter(torch.randn(1, 6, hidden_size) / (hidden_size ** 0.5))
 
-        # Only norm3 exists (applied before FFN)
-        self.norm3 = nn.LayerNorm(hidden_size, eps=eps)
+        # Layer norms following official HuMo:
+        # - norm1: pre-norm for self-attention (no parameters - elementwise_affine=False)
+        # - norm2: pre-norm for FFN (no parameters)
+        # - norm3: pre-norm for cross-attention (WITH parameters - elementwise_affine=True)
+        self.norm1 = nn.LayerNorm(hidden_size, eps=eps, elementwise_affine=False)
+        self.norm2 = nn.LayerNorm(hidden_size, eps=eps, elementwise_affine=False)
+        self.norm3 = nn.LayerNorm(hidden_size, eps=eps, elementwise_affine=True)
 
         # Attention layers
         self.self_attn = SelfAttention(hidden_size, num_heads, eps)
         self.cross_attn = CrossAttention(hidden_size, text_dim, num_heads, eps)
 
-        # FFN as Sequential with indices 0, 2 (Linear, SiLU, Linear)
+        # FFN with GELU(tanh) like official HuMo (not SiLU)
         self.ffn = nn.Sequential(
             nn.Linear(hidden_size, ffn_dim),  # [0]
-            nn.SiLU(),  # [1] - not saved
+            nn.GELU(approximate='tanh'),  # [1] - not saved
             nn.Linear(ffn_dim, hidden_size),  # [2]
         )
 
@@ -571,40 +576,47 @@ class TransformerBlock(nn.Module):
         audio_scale: float = 0.0,
         freqs: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        # Get modulation values
-        # time_mod: [B, 6, D] from time_projection
+        """
+        Forward pass following official HuMo implementation.
+
+        Key: All modulation operations happen in float32 for numerical stability.
+        Modulation order: shift_sa, scale_sa, gate_sa, shift_ffn, scale_ffn, gate_ffn
+        """
+        # CRITICAL: Modulation must be computed in float32
+        # time_mod: [B, 6, D] from time_projection (should already be float32)
         # self.modulation: [1, 6, D] per-block learned modulation
-        # Combine: element-wise ADD (not multiply!)
-        # Interpretation: shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp
-        mod = self.modulation + time_mod  # [B, 6, D]
+        with torch.amp.autocast(device_type='cuda', enabled=False):
+            # Ensure float32 for modulation computation
+            mod = (self.modulation.float() + time_mod.float()).chunk(6, dim=1)
+            # mod is now 6 tensors of shape [B, 1, D] in float32
 
-        shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = mod.unbind(dim=1)
-        # Add sequence dim for broadcasting: [B, D] -> [B, 1, D]
-        shift_msa = shift_msa.unsqueeze(1)
-        scale_msa = scale_msa.unsqueeze(1)
-        gate_msa = gate_msa.unsqueeze(1)
-        shift_mlp = shift_mlp.unsqueeze(1)
-        scale_mlp = scale_mlp.unsqueeze(1)
-        gate_mlp = gate_mlp.unsqueeze(1)
+        # Unpack modulation values (all [B, 1, D] in float32)
+        shift_sa, scale_sa, gate_sa, shift_ffn, scale_ffn, gate_ffn = mod
 
-        # Self-attention with gated residual
-        h = self.self_attn(x, freqs)
-        h = h * (1 + scale_msa) + shift_msa
-        x = x + gate_msa * h
+        # Self-attention: norm1 -> modulate -> self_attn -> gated residual
+        # Input to self-attn is modulated: norm(x) * (1 + scale) + shift
+        y = self.self_attn(
+            self.norm1(x).float() * (1 + scale_sa) + shift_sa,
+            freqs
+        )
+        # Gated residual in float32
+        with torch.amp.autocast(device_type='cuda', enabled=False):
+            x = x.float() + y.float() * gate_sa
+        x = x.to(context.dtype)  # Back to model dtype
 
-        # Text cross-attention (no modulation, direct residual)
-        h = self.cross_attn(self.norm3(x), context)
-        x = x + h
+        # Cross-attention: norm3 -> cross_attn -> direct residual (no modulation!)
+        x = x + self.cross_attn(self.norm3(x), context)
 
         # Audio cross-attention (if audio provided and scale > 0)
         if self.has_audio and audio is not None and audio_scale > 0:
             x = self.audio_cross_attn_wrapper(x, audio, audio_scale)
 
-        # FFN with gated residual (pre-norm already applied via norm3 for cross-attn path)
-        h = self.norm3(x)
-        h = h * (1 + scale_mlp) + shift_mlp
-        h = self.ffn(h)
-        x = x + gate_mlp * h
+        # FFN: norm2 -> modulate -> ffn -> gated residual
+        y = self.ffn(self.norm2(x).float() * (1 + scale_ffn) + shift_ffn)
+        # Gated residual in float32
+        with torch.amp.autocast(device_type='cuda', enabled=False):
+            x = x.float() + y.float() * gate_ffn
+        x = x.to(context.dtype)  # Back to model dtype
 
         return x
 
@@ -746,15 +758,15 @@ class HuMoTransformer(nn.Module):
         self.head = OutputHead(hidden_size, out_features, eps)
 
         # 3D RoPE for positional encoding
-        # axes_dim splits head_dim across frame/height/width axes
+        # axes_dim follows official HuMo formula: (d - 4*(d//6), 2*(d//6), 2*(d//6))
+        # For head_dim=64: (24, 20, 20)
+        # For head_dim=128: (44, 42, 42)
         head_dim = hidden_size // num_heads
-        if head_dim == 128:  # HuMo-17B (5120/40)
-            axes_dim = (16, 56, 56)
-        elif head_dim == 64:  # HuMo-1.7B (1536/24)
-            axes_dim = (8, 28, 28)
-        else:
-            # Fallback: proportional split (1/8 temporal, 7/16 each spatial)
-            axes_dim = (head_dim // 8, (head_dim * 7) // 16, (head_dim * 7) // 16)
+        axes_dim = (
+            head_dim - 4 * (head_dim // 6),  # temporal
+            2 * (head_dim // 6),              # height
+            2 * (head_dim // 6),              # width
+        )
         self.rope = HuMo3DRoPE(
             theta=10000.0,
             axes_dim=axes_dim,
