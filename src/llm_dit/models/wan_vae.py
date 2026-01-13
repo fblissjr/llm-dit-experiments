@@ -113,6 +113,7 @@ class Resample(nn.Module):
     def forward(self, x: torch.Tensor, feat_cache: dict = None) -> torch.Tensor:
         b, c, t, h, w = x.size()
 
+        # Temporal downsampling (2x)
         if self.mode == "downsample3d":
             if feat_cache is not None:
                 key = id(self.time_conv)
@@ -125,6 +126,25 @@ class Resample(nn.Module):
             else:
                 x = self.time_conv(x)
 
+        # Temporal upsampling (2x) - interleave frames from doubled channels
+        if self.mode == "upsample3d":
+            if feat_cache is not None:
+                key = id(self.time_conv)
+                if key not in feat_cache:
+                    # First call: just mark for subsequent calls
+                    feat_cache[key] = "initialized"
+                else:
+                    # Apply temporal upsampling via time_conv
+                    # time_conv: [b, c, t, h, w] -> [b, c*2, t, h, w]
+                    x = self.time_conv(x)
+                    # Reshape to interleave: [b, c*2, t, h, w] -> [b, c, t*2, h, w]
+                    x = rearrange(x, "b (k c) t h w -> b c (t k) h w", k=2)
+            else:
+                # No caching - always apply
+                x = self.time_conv(x)
+                x = rearrange(x, "b (k c) t h w -> b c (t k) h w", k=2)
+
+        # Spatial resampling (2x up or down)
         t = x.shape[2]
         x = rearrange(x, "b c t h w -> (b t) c h w")
         x = self.resample(x)
@@ -491,6 +511,7 @@ class WanVAE(nn.Module):
             -0.2921,
         ]
     )
+    # STD values from DiffSynth-Engine reference (official Wan normalization)
     STD = torch.tensor(
         [
             2.8184,
@@ -498,17 +519,17 @@ class WanVAE(nn.Module):
             2.3275,
             2.6558,
             1.2196,
-            2.6780,
-            2.4944,
-            2.3565,
-            2.1346,
-            2.3635,
-            1.6543,
-            1.7366,
-            2.5187,
-            2.0825,
-            2.7897,
-            2.1521,
+            1.7708,
+            2.6052,
+            2.0743,
+            3.2687,
+            2.1526,
+            2.8652,
+            1.5579,
+            1.6382,
+            1.1253,
+            2.8251,
+            1.9160,
         ]
     )
 

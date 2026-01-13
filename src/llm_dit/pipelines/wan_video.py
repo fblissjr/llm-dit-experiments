@@ -1,39 +1,25 @@
 """
-Wan Video Pipeline with HuMo audio conditioning support.
+Wan Video Pipeline for text-to-video generation.
 
-Last Updated: 2026-01-11
+Last Updated: 2026-01-13
 
-This pipeline uses HuMo's transformer as the base, which supports:
-- Text-to-video (T2V): scale_a=0, text prompt only
-- Text-Audio (TA): scale_a>0, audio-synchronized video
-- Text-Image-Audio (TIA): scale_a>0, audio + reference image
+**Wan T2V**:
+    pipe = WanVideoPipeline.from_wan_pretrained("~/Storage/Wan2.1-T2V-1.3B")
+    video = pipe(prompt="A cat sleeping on a windowsill")
 
-Architecture:
-- Transformer: HuMo-17B or HuMo-1.7B (DiT with audio cross-attention)
-- VAE: From Wan2.1-T2V-1.3B
-- Text encoder: UMT5-XXL from Wan2.1-T2V-1.3B
-- Audio encoder: Whisper-large-v3 (lazy-loaded)
-
-Example:
-    from llm_dit.pipelines.wan_video import WanVideoPipeline
-
-    # Load pipeline
+**HuMo (audio-conditioned)**:
     pipe = WanVideoPipeline.from_pretrained(
-        humo_path="~/Storage/HuMo/HuMo-17B",
+        humo_path="~/Storage/HuMo",
         wan_path="~/Storage/Wan2.1-T2V-1.3B",
     )
+    video = pipe(prompt="A person dancing", audio="music.wav")
 
-    # T2V mode (no audio)
-    video = pipe(prompt="A woman dancing gracefully")
-
-    # TA mode (audio-conditioned)
-    video = pipe(
-        prompt="A person dancing",
-        audio="music.wav",
-        audio_scale=1.0,
-    )
-
-    pipe.save_video(video, "output.mp4")
+Architectures:
+- Wan DiT: Text-to-video transformer (1.3B or 14B)
+- HuMo: Wan + audio cross-attention (17B or 1.7B)
+- VAE: Wan 2.1 video VAE (16 latent channels)
+- Text encoder: UMT5-XXL (4096 dim)
+- Audio encoder: Whisper-large-v3 (lazy-loaded for HuMo)
 """
 
 import gc
@@ -172,19 +158,23 @@ class ProgressCallback:
 class WanConfig:
     """Configuration for Wan/HuMo video pipeline."""
 
+    # Model type: "wan" for Wan DiT, "humo" for HuMo with audio
+    model_type: str = "wan"  # "wan" or "humo"
+
     # Model paths
-    humo_path: str = ""  # Path to HuMo transformer weights
-    wan_path: str = ""  # Path to Wan2.1-T2V for VAE/text encoder
+    wan_path: str = ""  # Path to Wan checkpoint (for DiT, VAE, text encoder)
+    humo_path: str = ""  # Path to HuMo transformer weights (only for humo mode)
     whisper_path: str = ""  # Path to Whisper (optional, for audio)
 
     # Model variant
-    humo_variant: str = "17B"  # "17B" or "1.7B"
+    wan_variant: str = "t2v-1.3b"  # "t2v-1.3b" or "t2v-14b" or "i2v-14b"
+    humo_variant: str = "17B"  # "17B" or "1.7B" (only for humo mode)
 
     # Generation defaults
-    num_frames: int = 97  # HuMo trained at 97 frames
-    height: int = 720
-    width: int = 1280
-    fps: float = 25.0  # HuMo trained at 25 FPS
+    num_frames: int = 17  # Default for testing (Wan supports up to 97 at 25fps)
+    height: int = 480
+    width: int = 832
+    fps: float = 25.0  # Wan trained at 25 FPS
     num_inference_steps: int = 50
 
     # Guidance scales
@@ -289,8 +279,9 @@ class WanVideoPipeline:
 
         # Build config
         config = WanConfig(
-            humo_path=humo_path,
+            model_type="humo",
             wan_path=wan_path,
+            humo_path=humo_path,
             whisper_path=whisper_path or "",
             humo_variant=humo_variant,
             enable_cpu_offload=enable_cpu_offload,
@@ -318,6 +309,133 @@ class WanVideoPipeline:
         instance._dtype = torch_dtype
 
         return instance
+
+    @classmethod
+    def from_wan_pretrained(
+        cls,
+        wan_path: str,
+        wan_variant: str = "t2v-1.3b",
+        torch_dtype: torch.dtype = torch.bfloat16,
+        device: str = "cuda",
+        enable_cpu_offload: bool = True,
+        **kwargs,
+    ) -> "WanVideoPipeline":
+        """
+        Load Wan pipeline for text-to-video generation.
+
+        This is the recommended method for T2V generation.
+        Faster loading, smaller memory footprint than HuMo.
+
+        Args:
+            wan_path: Path to Wan2.1-T2V checkpoint directory
+            wan_variant: Model variant: "t2v-1.3b", "t2v-14b", or "i2v-14b"
+            torch_dtype: Model dtype (bfloat16 recommended)
+            device: Target device
+            enable_cpu_offload: Enable CPU offload for memory efficiency
+            **kwargs: Additional arguments
+
+        Returns:
+            Initialized WanVideoPipeline in Wan-only mode
+
+        Example:
+            pipe = WanVideoPipeline.from_wan_pretrained("~/Storage/Wan2.1-T2V-1.3B")
+            video = pipe(prompt="A cat sleeping on a sunny windowsill")
+            pipe.save_video(video, "cat.mp4")
+        """
+        # Expand path
+        wan_path = str(Path(wan_path).expanduser())
+
+        logger.info("=" * 60)
+        logger.info("LOADING WAN VIDEO PIPELINE")
+        logger.info("=" * 60)
+        logger.info(f"  Wan path: {wan_path}")
+        logger.info(f"  Variant: {wan_variant}")
+        logger.info(f"  Device: {device}")
+        logger.info(f"  Dtype: {torch_dtype}")
+        logger.info(f"  CPU offload: {enable_cpu_offload}")
+        logger.info("-" * 60)
+
+        start_time = time.time()
+
+        # Build config
+        config = WanConfig(
+            model_type="wan",
+            wan_path=wan_path,
+            wan_variant=wan_variant,
+            enable_cpu_offload=enable_cpu_offload,
+        )
+
+        # Load components
+        transformer = cls._load_wan_transformer(wan_path, wan_variant, torch_dtype, device, enable_cpu_offload)
+        vae = cls._load_wan_vae(wan_path, torch_dtype, device, enable_cpu_offload)
+        text_encoder, tokenizer = cls._load_text_encoder(wan_path, torch_dtype, device, enable_cpu_offload)
+        scheduler = cls._create_scheduler()
+
+        load_time = time.time() - start_time
+        logger.info(f"Pipeline loaded in {load_time:.1f}s")
+        logger.info("=" * 60)
+
+        instance = cls(
+            transformer=transformer,
+            vae=vae,
+            text_encoder=text_encoder,
+            tokenizer=tokenizer,
+            scheduler=scheduler,
+            config=config,
+        )
+        instance._device = torch.device(device)
+        instance._dtype = torch_dtype
+
+        return instance
+
+    @staticmethod
+    def _load_wan_transformer(
+        wan_path: str,
+        variant: str,
+        dtype: torch.dtype,
+        device: str,
+        cpu_offload: bool,
+    ) -> nn.Module:
+        """Load Wan DiT transformer."""
+        from llm_dit.models.wan_dit import WanDiT
+
+        # Map variant string to config name
+        config_map = {
+            "t2v-1.3b": "wan2.1-t2v-1.3b",
+            "t2v-14b": "wan2.1-t2v-14b",
+            "i2v-14b": "wan2.1-i2v-14b",
+            "1.3b": "wan2.1-t2v-1.3b",  # Alias
+            "14b": "wan2.1-t2v-14b",  # Alias
+        }
+        config_name = config_map.get(variant.lower(), variant)
+
+        # Find weights file
+        wan_path = Path(wan_path)
+        weights_file = wan_path / "diffusion_pytorch_model.safetensors"
+
+        if not weights_file.exists():
+            raise FileNotFoundError(
+                f"Wan DiT weights not found at {weights_file}. "
+                f"Download with: huggingface-cli download Wan-AI/Wan2.1-T2V-1.3B --local-dir {wan_path}"
+            )
+
+        logger.info(f"Loading Wan DiT ({config_name}) from {weights_file}")
+
+        # Load model
+        transformer = WanDiT.from_pretrained(
+            str(weights_file),
+            config_name=config_name,
+            device="cpu" if cpu_offload else device,
+            dtype=dtype,
+        )
+
+        if not cpu_offload:
+            transformer = transformer.to(device)
+
+        params_b = sum(p.numel() for p in transformer.parameters()) / 1e9
+        logger.info(f"  Wan DiT loaded: {params_b:.2f}B params")
+
+        return transformer
 
     @staticmethod
     def _load_humo_transformer(
@@ -502,12 +620,17 @@ class WanVideoPipeline:
 
     @staticmethod
     def _create_scheduler():
-        """Create diffusion scheduler."""
-        from diffusers import FlowMatchEulerDiscreteScheduler
+        """Create Wan-specific flow match scheduler."""
+        from llm_dit.schedulers.flow_match import FlowMatchScheduler
 
-        scheduler = FlowMatchEulerDiscreteScheduler(
+        # Wan uses shift=5.0, sigma_min=0.0, sigma_max=1.0
+        # Our FlowMatchScheduler already has the correct formula:
+        # sigma' = shift * sigma / (1 + (shift - 1) * sigma)
+        scheduler = FlowMatchScheduler(
             num_train_timesteps=1000,
-            shift=5.0,  # Wan 2.1 uses shift=5.0 (not 3.0 like FLUX)
+            shift=5.0,
+            sigma_min=0.0,
+            sigma_max=1.0,
         )
         return scheduler
 
@@ -681,6 +804,10 @@ class WanVideoPipeline:
         # Decode latents to video
         frames = self._decode_latents(latents)
 
+        # Trim to requested frame count (VAE may output slightly more due to causal conv)
+        if frames.shape[1] > num_frames:
+            frames = frames[:, :num_frames]
+
         return VideoOutput(
             frames=frames,
             fps=self.config.fps,
@@ -794,14 +921,12 @@ class WanVideoPipeline:
     ) -> torch.Tensor:
         """Run the diffusion denoising loop."""
         # Calculate latent dimensions
-        # Wan VAE: spatial 8x downscale
-        # NOTE: VAE should have 4x temporal compression, but temporal upsampling in
-        # wan_vae.py Resample class is not implemented. Using latent_frames = num_frames
-        # so users get exactly the frames they request.
-        # TODO: Fix VAE temporal upsampling (see DiffSynth-Engine reference)
+        # Wan VAE: 8x spatial downscale, 4x temporal compression
+        # Formula: latent_frames = (num_frames - 1) // 4 + 1
+        # Example: 17 frames -> 5 latent frames -> decode back to 17 frames
         latent_height = height // 8
         latent_width = width // 8
-        latent_frames = num_frames
+        latent_frames = (num_frames - 1) // 4 + 1
 
         # Initialize latents (16 channels for noise)
         # Generate on CPU for reproducibility, then move to device
@@ -820,6 +945,9 @@ class WanVideoPipeline:
         if self.config.enable_cpu_offload:
             self.transformer = self.transformer.to(self._device)
 
+        # Check if using Wan or HuMo mode
+        is_wan_mode = self.config.model_type == "wan"
+
         # Denoising loop
         for i, t in enumerate(timesteps):
             # Prepare noise latents for CFG (duplicate if using guidance)
@@ -828,13 +956,17 @@ class WanVideoPipeline:
             else:
                 latent_for_cfg = latents
 
-            # Assemble 36-channel transformer input
-            # For CFG: both unconditional and conditional use same image (or zeros)
-            if guidance_scale > 1.0:
-                img_for_cfg = torch.cat([image_latents, image_latents]) if image_latents is not None else None
+            # Prepare transformer input based on mode
+            if is_wan_mode:
+                # Wan: use 16-channel noise latents directly
+                transformer_input = latent_for_cfg
             else:
-                img_for_cfg = image_latents
-            transformer_input = self._prepare_transformer_input(latent_for_cfg, img_for_cfg)
+                # HuMo: assemble 36-channel input
+                if guidance_scale > 1.0:
+                    img_for_cfg = torch.cat([image_latents, image_latents]) if image_latents is not None else None
+                else:
+                    img_for_cfg = image_latents
+                transformer_input = self._prepare_transformer_input(latent_for_cfg, img_for_cfg)
 
             timestep = t.expand(transformer_input.shape[0]).to(device=self._device, dtype=self._dtype)
 
@@ -844,24 +976,31 @@ class WanVideoPipeline:
             else:
                 text_input = text_embeds
 
-            # Prepare audio embeddings
-            audio_input = None
-            if audio_embeds is not None and audio_scale > 0:
-                if guidance_scale > 1.0:
-                    # Duplicate for CFG
-                    audio_input = torch.cat([audio_embeds, audio_embeds])
-                else:
-                    audio_input = audio_embeds
-
-            # Forward pass through transformer (expects 36-channel input)
+            # Forward pass through transformer
             with torch.no_grad():
-                noise_pred = self.transformer(
-                    hidden_states=transformer_input,  # Now 36 channels
-                    timestep=timestep,
-                    encoder_hidden_states=text_input,
-                    audio_hidden_states=audio_input,
-                    audio_scale=audio_scale,
-                )
+                if is_wan_mode:
+                    # Wan forward (16 channels)
+                    noise_pred = self.transformer(
+                        hidden_states=transformer_input,
+                        timestep=timestep,
+                        encoder_hidden_states=text_input,
+                    )
+                else:
+                    # HuMo forward (36 channels, audio optional)
+                    audio_input = None
+                    if audio_embeds is not None and audio_scale > 0:
+                        if guidance_scale > 1.0:
+                            audio_input = torch.cat([audio_embeds, audio_embeds])
+                        else:
+                            audio_input = audio_embeds
+
+                    noise_pred = self.transformer(
+                        hidden_states=transformer_input,
+                        timestep=timestep,
+                        encoder_hidden_states=text_input,
+                        audio_hidden_states=audio_input,
+                        audio_scale=audio_scale,
+                    )
 
             # CFG
             if guidance_scale > 1.0:
@@ -897,7 +1036,9 @@ class WanVideoPipeline:
             torch.cuda.empty_cache()
 
         # Convert to numpy uint8
+        # VAE outputs [-1, 1] range - remap to [0, 1] first
         video = video.cpu().float().numpy()
+        video = (video + 1.0) / 2.0  # [-1, 1] -> [0, 1]
         video = (video * 255).clip(0, 255).astype(np.uint8)
 
         # Reshape: [1, 3, F, H, W] -> [1, F, H, W, 3]
