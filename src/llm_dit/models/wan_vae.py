@@ -130,42 +130,56 @@ class Resample(nn.Module):
                 x = self.time_conv(x)
 
         # Temporal upsampling (2x) - stack frames from doubled channels
+        # Matches DiffSynth-Studio/ComfyUI behavior exactly:
+        # - Frame 0: skip time_conv entirely (no temporal upsample)
+        # - Frame 1: apply time_conv WITHOUT cache (zeros padding internally)
+        # - Frame 2+: apply time_conv WITH cache from previous frame
         #
-        # NUCLEAR FIX: "Replicate & Run" - all frames go through time_conv
-        # This ensures Frame 0 has same feature statistics as other frames,
-        # preventing the "pop" discontinuity at Frame 0→1 transition.
-        #
-        # Frame count will increase (5 latent → 20 output instead of 17),
-        # but the pipeline trims to requested count.
+        # Note: "Nuclear fix" (running conv on Frame 0) was tested but made
+        # flickering WORSE (9.37 vs 7.82 mean diff). SKIP is correct behavior.
         #
         # CRITICAL: Use reshape+stack, NOT einops rearrange!
         # rearrange interleaves incorrectly, stack preserves temporal order
         if self.mode == "upsample3d":
             if feat_cache is not None:
                 time_key = ("time_conv", id(self.time_conv))
-
                 if time_key not in feat_cache:
-                    # Frame 0: Create replicated history [F0, F0] and run conv
-                    # This ensures Frame 0 goes through same weights as other frames
-                    cache_x = x.repeat(1, 1, CACHE_T, 1, 1)[:, :, :CACHE_T, :, :]
+                    # First latent frame: mark as skipped, no temporal upsample
+                    feat_cache[time_key] = "SKIP"
+                    # x stays as [B, C, 1, H, W] -> spatial upsample only
+                elif feat_cache[time_key] == "SKIP":
+                    # Second latent frame: apply time_conv WITHOUT cache
+                    # CausalConv3d will pad with zeros internally
+                    x_out = self.time_conv(x)  # No cache!
+                    # Build cache for next frame: pad with zeros to get 2 frames
+                    cache_x = x[:, :, -CACHE_T:, :, :].clone()
+                    if cache_x.shape[2] < CACHE_T:
+                        cache_x = torch.cat([
+                            torch.zeros_like(cache_x),
+                            cache_x
+                        ], dim=2)
                     feat_cache[time_key] = cache_x
+                    # Temporal stack: [b, c*2, t, h, w] -> [b, c, t*2, h, w]
+                    b, _, t, h, w = x_out.shape
+                    x = x_out.reshape(b, 2, -1, t, h, w)
+                    x = torch.stack((x[:, 0], x[:, 1]), dim=3)
+                    x = x.reshape(b, -1, t * 2, h, w)
                 else:
-                    # Frame 1+: Use previous cache
+                    # Subsequent frames: apply time_conv WITH cache
                     cache_x = feat_cache[time_key]
-
-                # ALWAYS run time_conv (no SKIP)
-                x_out = self.time_conv(x, cache_x)
-
-                # Update cache: sliding window of last CACHE_T frames
-                effective_input = torch.cat([cache_x.to(dtype=x.dtype), x], dim=2)
-                new_cache = effective_input[:, :, -CACHE_T:, :, :].clone()
-                feat_cache[time_key] = new_cache
-
-                # Temporal stack: [b, c*2, t, h, w] -> [b, c, t*2, h, w]
-                b, c2, t_out, h, w = x_out.shape
-                x = x_out.reshape(b, 2, c2 // 2, t_out, h, w)
-                x = torch.stack((x[:, 0], x[:, 1]), dim=3)
-                x = x.reshape(b, c2 // 2, t_out * 2, h, w)
+                    x_out = self.time_conv(x, cache_x)
+                    # Update cache with current frame (pad if needed)
+                    new_cache = x[:, :, -CACHE_T:, :, :].clone()
+                    if new_cache.shape[2] < CACHE_T:
+                        # Ensure dtype consistency when padding cache
+                        cache_slice = cache_x[:, :, -1:, :, :].to(dtype=new_cache.dtype)
+                        new_cache = torch.cat([cache_slice, new_cache], dim=2)
+                    feat_cache[time_key] = new_cache
+                    # Temporal stack: [b, c*2, t, h, w] -> [b, c, t*2, h, w]
+                    b, _, t, h, w = x_out.shape
+                    x = x_out.reshape(b, 2, -1, t, h, w)
+                    x = torch.stack((x[:, 0], x[:, 1]), dim=3)
+                    x = x.reshape(b, -1, t * 2, h, w)
             else:
                 # Batch mode (no caching) - always apply temporal upsample
                 x_out = self.time_conv(x)
