@@ -274,10 +274,11 @@ class Gemma3Encoder:
             self._tokenizer.pad_token = self._tokenizer.eos_token
 
         # Initialize feature extractor projection
+        # Keep on CPU when using auto device_map - will be moved on first use
         self._feature_extractor = FeatureExtractorLinear(dtype=self._dtype)
-        if self._device_str != "cpu":
+        if self._device_str not in ("cpu", "auto"):
             self._feature_extractor = self._feature_extractor.to(
-                device=torch.device(self._device_str if self._device_str != "auto" else "cuda")
+                device=torch.device(self._device_str)
             )
 
         # Set model to mode without gradients
@@ -328,9 +329,19 @@ class Gemma3Encoder:
         """Return model device."""
         if self._model is None:
             return torch.device("cpu")
-        # Handle device_map="auto" case
+        # Handle device_map="auto" case - model may be spread across devices
         if hasattr(self._model, "device"):
-            return self._model.device
+            dev = self._model.device
+            if dev is not None:
+                return dev
+        # For auto device_map with accelerate, get device from first parameter
+        if hasattr(self._model, "hf_device_map"):
+            # Model is spread across devices, use first available GPU
+            try:
+                first_param = next(self._model.parameters())
+                return first_param.device
+            except StopIteration:
+                pass
         return torch.device(self._device_str if self._device_str != "auto" else "cuda")
 
     @property
@@ -426,18 +437,127 @@ class Gemma3Encoder:
 
         normalized = _norm_and_concat_layers(stacked, attention_mask)
 
+        # Ensure feature extractor is on same device as data
+        if feature_extractor.aggregate_embed.weight.device != normalized.device:
+            feature_extractor = feature_extractor.to(normalized.device)
+
         # Project to output dimension
         embeddings = feature_extractor(normalized)
 
         # Apply attention mask
         embeddings = embeddings * attention_mask[:, :, None].to(embeddings.dtype)
 
+        # Get sequence lengths for unpadding
+        seq_lengths = attention_mask.sum(dim=1).tolist()
+        batch_size = len(texts)
+
+        # Build per-sample outputs (EncodingOutput expects List[Tensor])
+        embedding_list = [embeddings[i, :int(seq_lengths[i])] for i in range(batch_size)]
+        mask_list = [attention_mask[i, :int(seq_lengths[i])].bool() for i in range(batch_size)]
+
         return EncodingOutput(
-            embeddings=embeddings,
-            attention_mask=attention_mask,
-            pooled_output=None,  # Gemma3 doesn't use pooled output
-            hidden_states=outputs.hidden_states if return_padded else None,
+            embeddings=embedding_list,
+            attention_masks=mask_list,
+            padded_embeddings=embeddings if return_padded else None,
+            padded_mask=attention_mask if return_padded else None,
+            token_counts=[int(s) for s in seq_lengths],
         )
+
+    def encode_multilayer(
+        self,
+        texts: Union[str, List[str]],
+        layer_indices: Optional[List[int]] = None,
+        return_projected: bool = True,
+    ) -> dict:
+        """
+        Encode text and return multi-layer hidden states for routing experiments.
+
+        This method exposes the full layer stack before projection, enabling
+        per-token layer routing experiments for LTX-2 research.
+
+        Args:
+            texts: Input text(s) to encode.
+            layer_indices: Which layers to extract (default: all 49).
+                          Example: [10, 20, 30, 40, 48] for 5-layer routing.
+            return_projected: Also return the projected embeddings.
+
+        Returns:
+            Dict with:
+            - 'layer_stack': [B, T, 3840, num_layers] - raw hidden states
+            - 'attention_mask': [B, T] - valid token mask
+            - 'projected': [B, T, 3840] - after feature extractor (if requested)
+            - 'seq_lengths': List[int] - valid sequence lengths
+        """
+        if not self._is_loaded:
+            self._load_model()
+
+        if self._is_offloaded:
+            self._model.to(self.device)
+            self._is_offloaded = False
+
+        if isinstance(texts, str):
+            texts = [texts]
+
+        # Tokenize
+        encoded = self._tokenizer(
+            texts,
+            padding="max_length",
+            max_length=self._max_sequence_length,
+            truncation=True,
+            return_tensors="pt",
+        )
+        input_ids = encoded.input_ids.to(self.device)
+        attention_mask = encoded.attention_mask.to(self.device)
+
+        # Forward pass with all hidden states
+        with torch.no_grad():
+            outputs = self._model(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                output_hidden_states=True,
+                return_dict=True,
+            )
+
+        # Stack hidden states: [B, T, D, L]
+        hidden_states = outputs.hidden_states[1:]  # Skip embedding layer
+        num_layers = min(len(hidden_states), GEMMA3_NUM_LAYERS)
+        hidden_states = hidden_states[:num_layers]
+        stacked = torch.stack(hidden_states, dim=-1)  # [B, T, 3840, 49]
+
+        # Select specific layers if requested
+        if layer_indices is not None:
+            stacked = stacked[..., layer_indices]
+
+        # Compute projection if requested
+        projected = None
+        if return_projected:
+            normalized = _norm_and_concat_layers(stacked, attention_mask)
+            # Always compute actual feature dimension from the stacked tensor
+            actual_feature_dim = stacked.shape[2] * stacked.shape[3]
+
+            # Use adjusted feature extractor if dimensions don't match default
+            if actual_feature_dim != GEMMA3_FEATURE_DIM:
+                fe = FeatureExtractorLinear(
+                    input_dim=actual_feature_dim,
+                    output_dim=GEMMA3_OUTPUT_DIM,
+                    dtype=self._dtype,
+                ).to(normalized.device)
+            else:
+                fe = self._feature_extractor
+                # Ensure feature extractor is on same device as data
+                if fe.aggregate_embed.weight.device != normalized.device:
+                    fe = fe.to(normalized.device)
+            projected = fe(normalized)
+            projected = projected * attention_mask[:, :, None].to(projected.dtype)
+
+        seq_lengths = attention_mask.sum(dim=1).tolist()
+
+        return {
+            'layer_stack': stacked,
+            'attention_mask': attention_mask,
+            'projected': projected,
+            'seq_lengths': [int(s) for s in seq_lengths],
+        }
 
     def encode_image(
         self,

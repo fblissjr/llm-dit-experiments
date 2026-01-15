@@ -44,6 +44,8 @@ class EncodingOutput:
     padded_mask: torch.Tensor | None = None
     formatted_prompts: List[str] | None = None
     token_counts: List[int] | None = None
+    # For multi-layer experiments (LTX-2 routing research)
+    layer_stack: torch.Tensor | None = None  # [B, T, D, L] - all hidden states stacked
 
     @property
     def batch_size(self) -> int:
@@ -67,6 +69,11 @@ class EncodingOutput:
             ),
             padded_mask=(
                 self.padded_mask.to(device) if self.padded_mask is not None else None
+            ),
+            formatted_prompts=self.formatted_prompts,
+            token_counts=self.token_counts,
+            layer_stack=(
+                self.layer_stack.to(device) if self.layer_stack is not None else None
             ),
         )
 

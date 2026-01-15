@@ -853,6 +853,124 @@ class LTX2Pipeline:
         else:
             return video, audio if enable_audio else None
 
+    def generate_with_embeddings(
+        self,
+        prompt_embeds: torch.Tensor,
+        attention_mask: torch.Tensor,
+        negative_prompt_embeds: Optional[torch.Tensor] = None,
+        negative_attention_mask: Optional[torch.Tensor] = None,
+        height: int = 768,
+        width: int = 512,
+        num_frames: int = 33,
+        fps: float = 24.0,
+        num_inference_steps: int = 12,
+        guidance_scale: float = 3.5,
+        generator: Optional[torch.Generator] = None,
+        enable_audio: bool = False,
+        callback_on_step_end: Optional[Callable] = None,
+        **kwargs,
+    ) -> VideoOutput:
+        """
+        Generate video using pre-computed text embeddings.
+
+        This bypasses the text encoder, allowing custom routing/modification
+        of embeddings before they enter the DiT. Essential for LTX-2 routing
+        experiments where you want to inject custom layer-routed embeddings.
+
+        Args:
+            prompt_embeds: [B, T, 3840] - Pre-computed text embeddings
+                          (after feature extraction, before connector)
+            attention_mask: [B, T] - Attention mask for embeddings
+            negative_prompt_embeds: Optional negative embeddings for CFG
+            negative_attention_mask: Optional negative mask
+            height: Video height (multiple of 32)
+            width: Video width (multiple of 32)
+            num_frames: Number of frames to generate
+            fps: Output framerate
+            num_inference_steps: Diffusion steps
+            guidance_scale: CFG scale (3.0-4.0 recommended)
+            generator: Optional torch Generator for reproducibility
+            enable_audio: Generate audio (default False for experiments)
+            callback_on_step_end: Callback for progress tracking
+            **kwargs: Additional arguments for diffusers pipeline
+
+        Returns:
+            VideoOutput with generated frames.
+
+        Example:
+            # Custom routing experiment
+            encoder = Gemma3Encoder.from_pretrained(...)
+            result = encoder.encode_multilayer(["A cat"], layer_indices=[30, 40, 48])
+
+            # Your custom router
+            routed = my_router(result['layer_stack'], result['attention_mask'])
+
+            # Generate with custom embeddings
+            output = pipe.generate_with_embeddings(
+                prompt_embeds=routed,
+                attention_mask=result['attention_mask'],
+            )
+        """
+        if self._pipe is None:
+            raise RuntimeError("Pipeline not loaded. Call from_pretrained() first.")
+
+        # Ensure embeddings are on correct device/dtype
+        device = self.device
+        dtype = self.dtype
+
+        prompt_embeds = prompt_embeds.to(device=device, dtype=dtype)
+        attention_mask = attention_mask.to(device=device)
+
+        # Handle negative embeddings for CFG
+        if negative_prompt_embeds is None:
+            # Use zeros for unconditioned - diffusers will handle CFG
+            negative_prompt_embeds = torch.zeros_like(prompt_embeds)
+            negative_attention_mask = torch.zeros_like(attention_mask)
+        else:
+            negative_prompt_embeds = negative_prompt_embeds.to(device=device, dtype=dtype)
+            negative_attention_mask = negative_attention_mask.to(device=device)
+
+        logger.info(
+            f"Generating video with custom embeddings: {width}x{height}, "
+            f"{num_frames} frames, {num_inference_steps} steps"
+        )
+
+        # Call pipeline with pre-computed embeddings
+        # Note: diffusers LTX2Pipeline accepts prompt_embeds to bypass text encoding
+        result = self._pipe(
+            prompt_embeds=prompt_embeds,
+            prompt_attention_mask=attention_mask,
+            negative_prompt_embeds=negative_prompt_embeds,
+            negative_prompt_attention_mask=negative_attention_mask,
+            height=height,
+            width=width,
+            num_frames=num_frames,
+            frame_rate=fps,
+            num_inference_steps=num_inference_steps,
+            guidance_scale=guidance_scale,
+            generator=generator,
+            output_type="np",
+            return_dict=False,
+            callback_on_step_end=callback_on_step_end,
+            **kwargs,
+        )
+
+        video, audio = result
+
+        # Get audio sample rate
+        audio_sample_rate = getattr(
+            self._pipe.vocoder.config if hasattr(self._pipe, "vocoder") else None,
+            "output_sampling_rate",
+            24000,
+        )
+
+        return VideoOutput(
+            frames=video,
+            audio=audio if enable_audio else None,
+            fps=fps,
+            audio_sample_rate=audio_sample_rate,
+        )
+
     def save_video(
         self,
         output: Union[VideoOutput, np.ndarray],
