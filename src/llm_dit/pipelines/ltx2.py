@@ -866,20 +866,25 @@ class LTX2Pipeline:
         num_inference_steps: int = 12,
         guidance_scale: float = 3.5,
         generator: Optional[torch.Generator] = None,
-        enable_audio: bool = False,
+        enable_audio: bool = True,
         callback_on_step_end: Optional[Callable] = None,
         **kwargs,
     ) -> VideoOutput:
         """
-        Generate video using pre-computed text embeddings.
+        Generate video (and optionally audio) using pre-computed text embeddings.
 
         This bypasses the text encoder, allowing custom routing/modification
         of embeddings before they enter the DiT. Essential for LTX-2 routing
         experiments where you want to inject custom layer-routed embeddings.
 
+        The embeddings are passed through the text connectors internally by
+        diffusers, which produces both video-conditioned and audio-conditioned
+        representations. Both video and audio streams use these embeddings.
+
         Args:
             prompt_embeds: [B, T, 3840] - Pre-computed text embeddings
-                          (after feature extraction, before connector)
+                          (after feature extraction, before connector).
+                          These go through both video and audio connectors.
             attention_mask: [B, T] - Attention mask for embeddings
             negative_prompt_embeds: Optional negative embeddings for CFG
             negative_attention_mask: Optional negative mask
@@ -890,26 +895,28 @@ class LTX2Pipeline:
             num_inference_steps: Diffusion steps
             guidance_scale: CFG scale (3.0-4.0 recommended)
             generator: Optional torch Generator for reproducibility
-            enable_audio: Generate audio (default False for experiments)
+            enable_audio: Generate synchronized audio (default True)
             callback_on_step_end: Callback for progress tracking
             **kwargs: Additional arguments for diffusers pipeline
 
         Returns:
-            VideoOutput with generated frames.
+            VideoOutput with generated frames and audio (if enabled).
 
         Example:
-            # Custom routing experiment
+            # Custom routing experiment with audio
             encoder = Gemma3Encoder.from_pretrained(...)
-            result = encoder.encode_multilayer(["A cat"], layer_indices=[30, 40, 48])
+            result = encoder.encode_multilayer(["A man singing"], layer_indices=[30, 40, 47])
 
             # Your custom router
             routed = my_router(result['layer_stack'], result['attention_mask'])
 
-            # Generate with custom embeddings
+            # Generate video + audio with custom embeddings
             output = pipe.generate_with_embeddings(
                 prompt_embeds=routed,
                 attention_mask=result['attention_mask'],
+                enable_audio=True,  # Get synchronized audio
             )
+            pipe.save_video(output, "output.mp4")  # Saves video with audio
         """
         if self._pipe is None:
             raise RuntimeError("Pipeline not loaded. Call from_pretrained() first.")
