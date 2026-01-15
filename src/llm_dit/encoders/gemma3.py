@@ -153,6 +153,7 @@ class Gemma3Encoder:
         max_sequence_length: int = 256,
         load_in_4bit: bool = False,
         load_in_8bit: bool = False,
+        max_memory: Optional[dict] = None,
     ):
         """
         Initialize Gemma3 encoder.
@@ -164,6 +165,8 @@ class Gemma3Encoder:
             max_sequence_length: Maximum sequence length for encoding.
             load_in_4bit: Apply additional 4-bit quantization (on top of QAT).
             load_in_8bit: Apply additional 8-bit quantization.
+            max_memory: Memory limits per device for CPU offloading.
+                       Example: {0: "18GiB", "cpu": "32GiB"} limits GPU 0 to 18GB.
         """
         self._model_id = model_id
         self._device_str = device
@@ -171,6 +174,7 @@ class Gemma3Encoder:
         self._max_sequence_length = max_sequence_length
         self._load_in_4bit = load_in_4bit
         self._load_in_8bit = load_in_8bit
+        self._max_memory = max_memory
 
         # Model components (lazy loaded)
         self._model = None
@@ -187,6 +191,7 @@ class Gemma3Encoder:
         dtype: str = "bfloat16",
         max_sequence_length: int = 256,
         quantization: Optional[str] = None,
+        max_memory: Optional[dict] = None,
         **kwargs,
     ) -> "Gemma3Encoder":
         """
@@ -198,6 +203,7 @@ class Gemma3Encoder:
             dtype: Model dtype as string.
             max_sequence_length: Max sequence length.
             quantization: Additional quantization ("4bit", "8bit", or None).
+            max_memory: Memory limits for CPU offloading. Example: {0: "18GiB", "cpu": "32GiB"}.
             **kwargs: Additional arguments.
 
         Returns:
@@ -217,6 +223,7 @@ class Gemma3Encoder:
             max_sequence_length=max_sequence_length,
             load_in_4bit=(quantization == "4bit"),
             load_in_8bit=(quantization == "8bit"),
+            max_memory=max_memory,
         )
 
         # Load model immediately
@@ -262,6 +269,7 @@ class Gemma3Encoder:
             device_map=device_map,
             quantization_config=quantization_config,
             low_cpu_mem_usage=True,
+            max_memory=self._max_memory,
         )
 
         # Load tokenizer
