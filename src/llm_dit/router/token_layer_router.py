@@ -46,13 +46,26 @@ import torch.nn.functional as F
 
 
 # Valid router input extraction modes
-RouterInputMode = Literal["layer_0", "layer_24", "layer_47", "layer_48", "mean", "weighted"]
+# Standard modes extract from layer_stack (post-MLP hidden states)
+# Attention/MLP modes require SubLayerExtractor output from encode_multilayer(extract_sub_layers=True)
+RouterInputMode = Literal[
+    "layer_0",      # First decoder layer (after embedding)
+    "layer_24",     # Middle layer
+    "layer_47",     # High-contribution layer
+    "layer_48",     # Final layer (may be LM-biased)
+    "mean",         # Average across all layers (recommended per LTX-2 paper)
+    "weighted",     # Weighted average using pre-computed weights
+    "attention",    # Attention outputs only (requires SubLayerExtractor)
+    "mlp",          # MLP outputs only (requires SubLayerExtractor)
+]
 
 
 def extract_router_input(
     hidden_states: torch.Tensor,
     mode: RouterInputMode = "mean",
     layer_weights: torch.Tensor | None = None,
+    attention_stack: torch.Tensor | None = None,
+    mlp_stack: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """Extract router input from stacked Gemma hidden states.
 
@@ -62,20 +75,28 @@ def extract_router_input(
     Args:
         hidden_states: Stacked hidden states [B, T, D, L] where L=49
         mode: Extraction mode:
-            - "layer_0": Embedding layer (index 0, before transformer blocks)
+            - "layer_0": First decoder layer (index 0)
             - "layer_24": Middle layer (index 24)
             - "layer_47": High-contribution layer (index 47)
             - "layer_48": Final layer (index 48, may be LM-biased)
-            - "mean": Average across all layers
+            - "mean": Average across all layers (recommended)
             - "weighted": Weighted average using layer_weights
+            - "attention": Average of attention outputs (requires attention_stack)
+            - "mlp": Average of MLP outputs (requires mlp_stack)
         layer_weights: Required for "weighted" mode, shape [L] or [1, 1, 1, L]
+        attention_stack: Attention outputs [B, T, D, L] from SubLayerExtractor
+        mlp_stack: MLP outputs [B, T, D, L] from SubLayerExtractor
 
     Returns:
         Router input tensor [B, T, D]
 
     Note:
-        Per LTX-2 paper: early layers capture phonetics, late layers capture
-        semantics. The optimal choice depends on your task - test empirically.
+        Per LTX-2 paper Section 3.2.1: early layers capture phonetics, late layers
+        capture semantics. "Aggregating information across all decoder layers yields
+        richer representation." The optimal choice depends on your task - test empirically.
+
+        For sub-layer modes ("attention", "mlp"), use encode_multilayer(extract_sub_layers=True)
+        to get the required attention_stack and mlp_stack tensors.
     """
     if mode == "layer_0":
         return hidden_states[:, :, :, 0]
@@ -94,6 +115,20 @@ def extract_router_input(
         w = layer_weights.view(1, 1, 1, -1)
         w = w / w.sum()
         return (hidden_states * w).sum(dim=-1)
+    elif mode == "attention":
+        if attention_stack is None:
+            raise ValueError(
+                "'attention' mode requires attention_stack from SubLayerExtractor. "
+                "Use encode_multilayer(extract_sub_layers=True) to get it."
+            )
+        return attention_stack.mean(dim=-1)
+    elif mode == "mlp":
+        if mlp_stack is None:
+            raise ValueError(
+                "'mlp' mode requires mlp_stack from SubLayerExtractor. "
+                "Use encode_multilayer(extract_sub_layers=True) to get it."
+            )
+        return mlp_stack.mean(dim=-1)
     else:
         raise ValueError(f"Unknown router input mode: {mode}")
 

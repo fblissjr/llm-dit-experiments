@@ -303,8 +303,9 @@ def main():
         "--router-input-mode",
         type=str,
         default="mean",
-        choices=["layer_0", "layer_24", "layer_47", "layer_48", "mean"],
-        help="Which layer(s) to use as router input. Default: mean (all layers averaged)"
+        choices=["layer_0", "layer_24", "layer_47", "layer_48", "mean", "attention", "mlp"],
+        help="Which layer(s) to use as router input. Default: mean (all layers averaged). "
+             "attention/mlp modes require SubLayerExtractor hooks."
     )
     parser.add_argument("--quick", action="store_true", help="Quick test mode")
     parser.add_argument("--resume", type=str, help="Resume from checkpoint")
