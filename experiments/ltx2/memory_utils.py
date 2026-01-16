@@ -255,6 +255,7 @@ def load_pipeline_with_offloading(
     model_path: str,
     num_blocks_per_group: int = 1,
     use_stream: bool = True,
+    enable_audio: bool = False,
 ) -> "LTX2Pipeline":
     """
     Load LTX2Pipeline with group offloading for memory efficiency.
@@ -269,6 +270,8 @@ def load_pipeline_with_offloading(
         num_blocks_per_group: Number of transformer blocks per offload group.
                               1 = minimum memory, higher = faster but more VRAM
         use_stream: Use CUDA streams for async prefetching
+        enable_audio: Whether to enable audio generation. Default False to save VRAM.
+                      If True, audio_vae will be moved to CUDA.
 
     Returns:
         LTX2Pipeline with offloading configured
@@ -299,6 +302,13 @@ def load_pipeline_with_offloading(
     pipe.vae.to("cuda")
     if pipe.connectors is not None:
         pipe.connectors.to("cuda")
+
+    # Handle audio VAE - disable by default to save VRAM
+    if enable_audio and hasattr(pipe, "audio_vae") and pipe.audio_vae is not None:
+        pipe.audio_vae.to("cuda")
+    elif hasattr(pipe, "audio_vae"):
+        # Disable audio generation by removing audio_vae
+        pipe.audio_vae = None
 
     return pipe
 
