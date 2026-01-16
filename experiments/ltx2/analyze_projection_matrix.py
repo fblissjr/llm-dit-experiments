@@ -223,7 +223,7 @@ def analyze_projection_matrix(
 
     # Check hypothesis: U-shaped curve (high for early + late, low for middle)
     is_u_shaped = (early_norm > middle_norm) and (late_norm > middle_norm)
-    analysis["summary"]["is_u_shaped"] = is_u_shaped
+    analysis["summary"]["is_u_shaped"] = bool(is_u_shaped)  # Convert numpy bool to Python bool
     print(f"\nU-shaped pattern detected: {is_u_shaped}")
 
     # Create visualizations
@@ -304,7 +304,7 @@ def analyze_projection_matrix(
     print(f"Saved norms to: {norms_path}")
 
     # Cleanup
-    del pipe, transformer, W, W_reshaped
+    del pipe, W, W_reshaped
 
     print("\n" + "=" * 60)
     print("ANALYSIS COMPLETE")
