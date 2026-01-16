@@ -33,6 +33,10 @@ Usage:
     weighted_embeds = token_embeds.unsqueeze(-1) * layer_weights.unsqueeze(2)
 """
 
-from llm_dit.router.token_layer_router import TokenLayerRouter
+from llm_dit.router.token_layer_router import (
+    TokenLayerRouter,
+    RouterInputMode,
+    extract_router_input,
+)
 
-__all__ = ["TokenLayerRouter"]
+__all__ = ["TokenLayerRouter", "RouterInputMode", "extract_router_input"]

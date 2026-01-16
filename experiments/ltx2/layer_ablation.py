@@ -15,12 +15,15 @@ Usage:
 
 import argparse
 import gc
+import sys
 import time
 from pathlib import Path
 
 import torch
 import numpy as np
 
+# Add project root to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 # Import prompts from centralized module
 # These match the official LTX-2 prompting guide format (100+ words, dialogue, etc.)

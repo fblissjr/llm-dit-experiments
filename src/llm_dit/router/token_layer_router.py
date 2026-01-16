@@ -13,6 +13,19 @@ Architecture:
 
 Total parameters: ~250K (negligible vs Gemma's 2.6B)
 
+Router Input Selection (empirically configurable):
+    The router needs a [B, T, D] input to predict layer weights. Options:
+    - "layer_0": Embedding layer (before any transformer blocks)
+    - "layer_24": Middle layer
+    - "layer_47": High-contribution layer (per projection analysis)
+    - "layer_48": Final layer (LM head biased - may not transfer to DiT)
+    - "mean": Average across all layers
+    - "weighted": Weighted average (requires pre-computed weights)
+
+    Per LTX-2 paper Section 3.2.1: "intermediate representations capture a
+    hierarchy of linguistic meaning—from raw phonetics in early layers to
+    complex semantics in later ones." Don't assume - test empirically.
+
 Training strategy:
     1. Freeze Gemma + LTX-2 DiT
     2. Train router to maximize SigLIP score on (prompt, generated_image) pairs
@@ -30,6 +43,59 @@ from typing import Literal
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+
+# Valid router input extraction modes
+RouterInputMode = Literal["layer_0", "layer_24", "layer_47", "layer_48", "mean", "weighted"]
+
+
+def extract_router_input(
+    hidden_states: torch.Tensor,
+    mode: RouterInputMode = "mean",
+    layer_weights: torch.Tensor | None = None,
+) -> torch.Tensor:
+    """Extract router input from stacked Gemma hidden states.
+
+    The router needs [B, T, D] but Gemma provides [B, T, D, L] with all 49 layers.
+    This function extracts the appropriate representation based on mode.
+
+    Args:
+        hidden_states: Stacked hidden states [B, T, D, L] where L=49
+        mode: Extraction mode:
+            - "layer_0": Embedding layer (index 0, before transformer blocks)
+            - "layer_24": Middle layer (index 24)
+            - "layer_47": High-contribution layer (index 47)
+            - "layer_48": Final layer (index 48, may be LM-biased)
+            - "mean": Average across all layers
+            - "weighted": Weighted average using layer_weights
+        layer_weights: Required for "weighted" mode, shape [L] or [1, 1, 1, L]
+
+    Returns:
+        Router input tensor [B, T, D]
+
+    Note:
+        Per LTX-2 paper: early layers capture phonetics, late layers capture
+        semantics. The optimal choice depends on your task - test empirically.
+    """
+    if mode == "layer_0":
+        return hidden_states[:, :, :, 0]
+    elif mode == "layer_24":
+        return hidden_states[:, :, :, 24]
+    elif mode == "layer_47":
+        return hidden_states[:, :, :, 47]
+    elif mode == "layer_48":
+        return hidden_states[:, :, :, 48]
+    elif mode == "mean":
+        return hidden_states.mean(dim=-1)
+    elif mode == "weighted":
+        if layer_weights is None:
+            raise ValueError("layer_weights required for 'weighted' mode")
+        # Normalize weights
+        w = layer_weights.view(1, 1, 1, -1)
+        w = w / w.sum()
+        return (hidden_states * w).sum(dim=-1)
+    else:
+        raise ValueError(f"Unknown router input mode: {mode}")
 
 
 class TokenLayerRouter(nn.Module):

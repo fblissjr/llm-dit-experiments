@@ -60,7 +60,7 @@ from llm_dit.encoders.factory import (
 # Low-level protocol implementations
 from llm_dit.encoders.qwen3 import Qwen3Encoder
 from llm_dit.encoders.qwen25_vl import Qwen25VLEncoder
-from llm_dit.encoders.gemma3 import Gemma3Encoder, LTX2Encoder
+from llm_dit.encoders.gemma3 import Gemma3Encoder, LTX2Encoder, SubLayerExtractor
 
 __all__ = [
     # High-level encoder (existing)
@@ -85,4 +85,5 @@ __all__ = [
     "Qwen25VLEncoder",
     "Gemma3Encoder",
     "LTX2Encoder",
+    "SubLayerExtractor",
 ]

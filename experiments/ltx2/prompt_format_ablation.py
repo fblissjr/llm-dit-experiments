@@ -39,6 +39,7 @@ Usage:
 import argparse
 import gc
 import json
+import sys
 import time
 from datetime import datetime
 from pathlib import Path
@@ -47,6 +48,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from PIL import Image
+
+# Add project root to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 # Import prompts from centralized module
 from experiments.ltx2.prompts import STRUCTURED_PROMPTS, get_structured_prompts

@@ -37,6 +37,171 @@ from llm_dit.encoders.protocol import (
 logger = logging.getLogger(__name__)
 
 
+class SubLayerExtractor:
+    """
+    Extract attention and MLP outputs from Gemma3 using forward hooks.
+
+    Last Updated: 2026-01-16
+
+    Gemma3 uses a pre-norm architecture with 4 extraction points per layer:
+    1. Attention output (after post_attention_layernorm, before residual)
+    2. Post-attention state (after first residual, before MLP)
+    3. MLP output (after post_feedforward_layernorm, before residual)
+    4. Layer output (after second residual) - this is what output_hidden_states returns
+
+    This extractor captures points 1 and 3, enabling sub-layer routing experiments.
+
+    Important Model Notes:
+    - Use full/quantized models (google/gemma-3-12b-it-qat-q4_0-unquantized), NOT distilled
+    - Distilled/LoRA models may have different layer behaviors - avoid for experiments
+    - Q4 QAT model preserves layer structure while reducing memory (~6GB)
+
+    Memory overhead for full extraction (49 layers):
+    - Attention outputs: ~92MB per batch (B=1, T=256, D=3840, L=49, bf16)
+    - MLP outputs: ~92MB per batch
+    - Total: ~184MB additional (acceptable for RTX 4090's 24GB)
+
+    Usage:
+        extractor = SubLayerExtractor(model, layer_indices=[0, 10, 20, 30, 40, 48])
+        extractor.register()
+
+        outputs = model(input_ids, attention_mask, output_hidden_states=True)
+
+        sub_layers = extractor.get_stacked_outputs()
+        # sub_layers['attention']: [B, T, 3840, num_selected_layers]
+        # sub_layers['mlp']: [B, T, 3840, num_selected_layers]
+
+        extractor.unregister()
+    """
+
+    def __init__(
+        self,
+        model,
+        layer_indices: Optional[List[int]] = None,
+    ):
+        """
+        Initialize sub-layer extractor.
+
+        Args:
+            model: Gemma3 model instance
+            layer_indices: Which layers to extract from (default: all 49)
+                          Example: [0, 10, 20, 30, 40, 48] for sparse extraction
+        """
+        self.model = model
+        # Get layer count from model
+        if hasattr(model, 'model') and hasattr(model.model, 'layers'):
+            num_model_layers = len(model.model.layers)
+        else:
+            num_model_layers = GEMMA3_NUM_LAYERS
+
+        self.layer_indices = layer_indices if layer_indices is not None else list(range(num_model_layers))
+
+        # Storage for captured outputs
+        self.attention_outputs: dict[int, torch.Tensor] = {}
+        self.mlp_outputs: dict[int, torch.Tensor] = {}
+        self.hooks: List = []
+
+    def _make_attention_hook(self, layer_idx: int):
+        """Create hook to capture attention output (after post_attention_layernorm)."""
+        def hook(module, input, output):
+            # Output of post_attention_layernorm is normalized attention output
+            # Clone to avoid modification by subsequent operations
+            self.attention_outputs[layer_idx] = output.detach().clone()
+        return hook
+
+    def _make_mlp_hook(self, layer_idx: int):
+        """Create hook to capture MLP output (after post_feedforward_layernorm)."""
+        def hook(module, input, output):
+            # Output of post_feedforward_layernorm is normalized MLP output
+            self.mlp_outputs[layer_idx] = output.detach().clone()
+        return hook
+
+    def register(self):
+        """Register hooks on specified layers."""
+        # Access layers through model.model.layers (Gemma3 structure)
+        if hasattr(self.model, 'model') and hasattr(self.model.model, 'layers'):
+            layers = self.model.model.layers
+        else:
+            raise RuntimeError("Cannot find decoder layers in model. Expected model.model.layers")
+
+        for idx in self.layer_indices:
+            if idx >= len(layers):
+                logger.warning(f"Layer index {idx} exceeds model layers ({len(layers)}), skipping")
+                continue
+
+            layer = layers[idx]
+
+            # Hook after post_attention_layernorm (captures attention output)
+            if hasattr(layer, 'post_attention_layernorm'):
+                attn_hook = layer.post_attention_layernorm.register_forward_hook(
+                    self._make_attention_hook(idx)
+                )
+                self.hooks.append(attn_hook)
+            else:
+                logger.warning(f"Layer {idx} missing post_attention_layernorm")
+
+            # Hook after post_feedforward_layernorm (captures MLP output)
+            if hasattr(layer, 'post_feedforward_layernorm'):
+                mlp_hook = layer.post_feedforward_layernorm.register_forward_hook(
+                    self._make_mlp_hook(idx)
+                )
+                self.hooks.append(mlp_hook)
+            else:
+                logger.warning(f"Layer {idx} missing post_feedforward_layernorm")
+
+        logger.debug(f"Registered {len(self.hooks)} sub-layer hooks for layers {self.layer_indices}")
+
+    def unregister(self):
+        """Remove all hooks and clear stored outputs."""
+        for hook in self.hooks:
+            hook.remove()
+        self.hooks.clear()
+        self.attention_outputs.clear()
+        self.mlp_outputs.clear()
+
+    def get_stacked_outputs(self) -> dict:
+        """
+        Stack captured outputs into tensors.
+
+        Returns:
+            Dict with:
+            - 'attention': [B, T, D, L] - Attention outputs (after layernorm, before residual)
+            - 'mlp': [B, T, D, L] - MLP outputs (after layernorm, before residual)
+            - 'layer_indices': List[int] - Which layers were extracted
+        """
+        if not self.attention_outputs:
+            raise RuntimeError(
+                "No outputs captured. Did you call register() and run a forward pass?"
+            )
+
+        # Stack in sorted order
+        sorted_indices = sorted(self.attention_outputs.keys())
+
+        attention_stack = torch.stack([
+            self.attention_outputs[i] for i in sorted_indices
+        ], dim=-1)  # [B, T, 3840, L]
+
+        mlp_stack = torch.stack([
+            self.mlp_outputs[i] for i in sorted_indices
+        ], dim=-1)  # [B, T, 3840, L]
+
+        return {
+            'attention': attention_stack,
+            'mlp': mlp_stack,
+            'layer_indices': sorted_indices,
+        }
+
+    def __enter__(self):
+        """Context manager entry - register hooks."""
+        self.register()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit - unregister hooks."""
+        self.unregister()
+        return False
+
+
 # LTX-2 Architecture Constants
 GEMMA3_HIDDEN_DIM = 3840  # Hidden dimension per layer
 GEMMA3_NUM_LAYERS = 49  # Number of decoder layers to aggregate
@@ -476,6 +641,7 @@ class Gemma3Encoder:
         texts: Union[str, List[str]],
         layer_indices: Optional[List[int]] = None,
         return_projected: bool = True,
+        extract_sub_layers: bool = False,
     ) -> dict:
         """
         Encode text and return multi-layer hidden states for routing experiments.
@@ -488,13 +654,24 @@ class Gemma3Encoder:
             layer_indices: Which layers to extract (default: all 49).
                           Example: [10, 20, 30, 40, 48] for 5-layer routing.
             return_projected: Also return the projected embeddings.
+            extract_sub_layers: If True, also extract attention/MLP outputs
+                               separately via SubLayerExtractor hooks.
+                               Adds ~184MB overhead for full extraction.
 
         Returns:
             Dict with:
-            - 'layer_stack': [B, T, 3840, num_layers] - raw hidden states
+            - 'layer_stack': [B, T, 3840, num_layers] - post-MLP layer outputs
             - 'attention_mask': [B, T] - valid token mask
             - 'projected': [B, T, 3840] - after feature extractor (if requested)
             - 'seq_lengths': List[int] - valid sequence lengths
+            - 'attention_stack': [B, T, 3840, L] - attention outputs (if extract_sub_layers)
+            - 'mlp_stack': [B, T, 3840, L] - MLP outputs (if extract_sub_layers)
+
+        Note:
+            For routing experiments, prefer using full/quantized Gemma3 models
+            (google/gemma-3-12b-it-qat-q4_0-unquantized), NOT distilled variants.
+            Distilled models may have compressed intermediate representations that
+            don't represent true layer specialization.
         """
         if not self._is_loaded:
             self._load_model()
@@ -517,55 +694,76 @@ class Gemma3Encoder:
         input_ids = encoded.input_ids.to(self.device)
         attention_mask = encoded.attention_mask.to(self.device)
 
-        # Forward pass with all hidden states
-        with torch.no_grad():
-            outputs = self._model(
-                input_ids=input_ids,
-                attention_mask=attention_mask,
-                output_hidden_states=True,
-                return_dict=True,
-            )
+        # Set up sub-layer extractor if requested
+        extractor = None
+        if extract_sub_layers:
+            extractor = SubLayerExtractor(self._model, layer_indices)
+            extractor.register()
 
-        # Stack hidden states: [B, T, D, L]
-        hidden_states = outputs.hidden_states[1:]  # Skip embedding layer
-        num_layers = min(len(hidden_states), GEMMA3_NUM_LAYERS)
-        hidden_states = hidden_states[:num_layers]
-        stacked = torch.stack(hidden_states, dim=-1)  # [B, T, 3840, 49]
+        try:
+            # Forward pass with all hidden states
+            with torch.no_grad():
+                outputs = self._model(
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
+                    output_hidden_states=True,
+                    return_dict=True,
+                )
 
-        # Select specific layers if requested
-        if layer_indices is not None:
-            stacked = stacked[..., layer_indices]
+            # Stack hidden states: [B, T, D, L]
+            hidden_states = outputs.hidden_states[1:]  # Skip embedding layer
+            num_layers = min(len(hidden_states), GEMMA3_NUM_LAYERS)
+            hidden_states = hidden_states[:num_layers]
+            stacked = torch.stack(hidden_states, dim=-1)  # [B, T, 3840, 49]
 
-        # Compute projection if requested
-        projected = None
-        if return_projected:
-            normalized = _norm_and_concat_layers(stacked, attention_mask)
-            # Always compute actual feature dimension from the stacked tensor
-            actual_feature_dim = stacked.shape[2] * stacked.shape[3]
+            # Select specific layers if requested
+            if layer_indices is not None:
+                stacked = stacked[..., layer_indices]
 
-            # Use adjusted feature extractor if dimensions don't match default
-            if actual_feature_dim != GEMMA3_FEATURE_DIM:
-                fe = FeatureExtractorLinear(
-                    input_dim=actual_feature_dim,
-                    output_dim=GEMMA3_OUTPUT_DIM,
-                    dtype=self._dtype,
-                ).to(normalized.device)
-            else:
-                fe = self._feature_extractor
-                # Ensure feature extractor is on same device as data
-                if fe.aggregate_embed.weight.device != normalized.device:
-                    fe = fe.to(normalized.device)
-            projected = fe(normalized)
-            projected = projected * attention_mask[:, :, None].to(projected.dtype)
+            # Compute projection if requested
+            projected = None
+            if return_projected:
+                normalized = _norm_and_concat_layers(stacked, attention_mask)
+                # Always compute actual feature dimension from the stacked tensor
+                actual_feature_dim = stacked.shape[2] * stacked.shape[3]
 
-        seq_lengths = attention_mask.sum(dim=1).tolist()
+                # Use adjusted feature extractor if dimensions don't match default
+                if actual_feature_dim != GEMMA3_FEATURE_DIM:
+                    fe = FeatureExtractorLinear(
+                        input_dim=actual_feature_dim,
+                        output_dim=GEMMA3_OUTPUT_DIM,
+                        dtype=self._dtype,
+                    ).to(normalized.device)
+                else:
+                    fe = self._feature_extractor
+                    # Ensure feature extractor is on same device as data
+                    if fe.aggregate_embed.weight.device != normalized.device:
+                        fe = fe.to(normalized.device)
+                projected = fe(normalized)
+                projected = projected * attention_mask[:, :, None].to(projected.dtype)
 
-        return {
-            'layer_stack': stacked,
-            'attention_mask': attention_mask,
-            'projected': projected,
-            'seq_lengths': [int(s) for s in seq_lengths],
-        }
+            seq_lengths = attention_mask.sum(dim=1).tolist()
+
+            result = {
+                'layer_stack': stacked,
+                'attention_mask': attention_mask,
+                'projected': projected,
+                'seq_lengths': [int(s) for s in seq_lengths],
+            }
+
+            # Add sub-layer outputs if requested
+            if extract_sub_layers and extractor is not None:
+                sub_outputs = extractor.get_stacked_outputs()
+                result['attention_stack'] = sub_outputs['attention']
+                result['mlp_stack'] = sub_outputs['mlp']
+                result['sublayer_indices'] = sub_outputs['layer_indices']
+
+            return result
+
+        finally:
+            # Always clean up hooks
+            if extractor is not None:
+                extractor.unregister()
 
     def encode_image(
         self,

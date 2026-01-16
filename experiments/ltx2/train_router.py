@@ -46,6 +46,8 @@ import torch.nn as nn
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR
 
+from llm_dit.router import RouterInputMode, extract_router_input
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
@@ -149,10 +151,12 @@ class RouterTrainer:
         router: nn.Module,
         tokenizer,
         text_encoder,
+        router_input_mode: RouterInputMode = "mean",
         learning_rate: float = 1e-4,
         sparsity_weight: float = 0.01,
         device: str = "cuda",
     ):
+        self.router_input_mode = router_input_mode
         self.router = router.to(device)
         self.tokenizer = tokenizer
         self.text_encoder = text_encoder.to(device)
@@ -218,9 +222,10 @@ class RouterTrainer:
             self.device,
         )
 
-        # Use last layer hidden state as input to router
-        # (could also use pooled or average across layers)
-        router_input = hidden_states[:, :, :, -1]  # [B, T, D]
+        # Extract router input based on configured mode
+        # Options: layer_0, layer_24, layer_47, layer_48, mean, weighted
+        # Per LTX-2 paper: "aggregating across all decoder layers yields richer representation"
+        router_input = extract_router_input(hidden_states, mode=self.router_input_mode)
 
         # Get layer weights from router
         layer_weights = self.router(router_input, attention_mask)  # [B, T, L]
@@ -294,6 +299,13 @@ def main():
     parser.add_argument("--batch-size", type=int, default=4, help="Batch size")
     parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate")
     parser.add_argument("--sparsity-weight", type=float, default=0.01, help="Sparsity loss weight")
+    parser.add_argument(
+        "--router-input-mode",
+        type=str,
+        default="mean",
+        choices=["layer_0", "layer_24", "layer_47", "layer_48", "mean"],
+        help="Which layer(s) to use as router input. Default: mean (all layers averaged)"
+    )
     parser.add_argument("--quick", action="store_true", help="Quick test mode")
     parser.add_argument("--resume", type=str, help="Resume from checkpoint")
     parser.add_argument("--device", default="cuda", help="Device")
@@ -322,10 +334,12 @@ def main():
         router=router,
         tokenizer=tokenizer,
         text_encoder=text_encoder,
+        router_input_mode=args.router_input_mode,
         learning_rate=args.lr,
         sparsity_weight=args.sparsity_weight,
         device=args.device,
     )
+    logger.info(f"Router input mode: {args.router_input_mode}")
 
     # Resume if specified
     start_epoch = 0
@@ -384,7 +398,7 @@ def main():
         hidden_states, attention_mask = get_token_embeddings(
             tokenizer, text_encoder, test_prompts, args.device
         )
-        router_input = hidden_states[:, :, :, -1]
+        router_input = extract_router_input(hidden_states, mode=args.router_input_mode)
         weights = router.to(args.device)(router_input, attention_mask)
         stats = router.get_routing_stats(weights)
 
