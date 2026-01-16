@@ -251,6 +251,30 @@ def run_layer_profile_sweep(
     # Structure: embeddings_cache[(layer_idx, prompt_id)] = (prompt_embeds, prompt_text)
     embeddings_cache = {}
 
+    # Encode negative prompt once (empty string for CFG)
+    # This is required when using guidance_scale > 1.0 with pre-computed embeddings
+    logger.info("\n  Encoding negative prompt (empty string for CFG)")
+    neg_inputs = tokenizer("", return_tensors="pt", padding="max_length", max_length=512, truncation=True)
+    neg_input_ids = neg_inputs["input_ids"].to(text_encoder.device)
+    neg_attention_mask = neg_inputs["attention_mask"].to(text_encoder.device)
+
+    with torch.no_grad():
+        neg_outputs = text_encoder(
+            input_ids=neg_input_ids,
+            attention_mask=neg_attention_mask,
+            output_hidden_states=True,
+        )
+
+    # Include ALL hidden states (embedding + 48 layers = 49 total)
+    neg_hidden_states = torch.stack(neg_outputs.hidden_states[:49], dim=-1)
+    neg_seq_len = neg_attention_mask.sum().item()
+    negative_prompt_embeds = pack_text_embeds(
+        neg_hidden_states,
+        neg_seq_len,
+        device=torch.device("cuda"),
+    ).cpu()
+    negative_attention_mask = neg_attention_mask.cpu()
+
     encode_idx = 0
     for layer_idx in layers_to_test:
         logger.info(f"\n  Layer {layer_idx} (single layer active)")
@@ -275,14 +299,16 @@ def run_layer_profile_sweep(
                 device=torch.device("cuda"),
             )
 
-            # Cache on CPU to free VRAM
+            # Cache on CPU to free VRAM (include negative embeds for CFG)
             embeddings_cache[(layer_idx, prompt_id)] = {
                 "prompt_embeds": prompt_embeds.cpu(),
                 "attention_mask": attention_mask.cpu(),
+                "negative_prompt_embeds": negative_prompt_embeds,
+                "negative_prompt_attention_mask": negative_attention_mask,
                 "prompt": prompt_text,
             }
 
-    logger.info(f"\nEncoded {len(embeddings_cache)} layer/prompt combinations")
+    logger.info(f"\nEncoded {len(embeddings_cache)} layer/prompt combinations (+ negative prompt for CFG)")
 
     # ==========================================================================
     # PHASE 2: Offload Text Encoder
@@ -341,6 +367,8 @@ def run_layer_profile_sweep(
             cached = embeddings_cache[(layer_idx, prompt_id)]
             prompt_embeds = cached["prompt_embeds"].to("cuda")
             prompt_attention_mask = cached["attention_mask"].to("cuda")
+            negative_prompt_embeds = cached["negative_prompt_embeds"].to("cuda")
+            negative_prompt_attention_mask = cached["negative_prompt_attention_mask"].to("cuda")
 
             start_time = time.time()
 
@@ -351,6 +379,8 @@ def run_layer_profile_sweep(
                 output = pipe(
                     prompt_embeds=prompt_embeds,
                     prompt_attention_mask=prompt_attention_mask,
+                    negative_prompt_embeds=negative_prompt_embeds,
+                    negative_prompt_attention_mask=negative_prompt_attention_mask,
                     height=height,
                     width=width,
                     num_frames=num_frames,
@@ -424,7 +454,8 @@ def run_layer_profile_sweep(
                 })
 
             # Memory cleanup
-            del prompt_embeds
+            del prompt_embeds, prompt_attention_mask
+            del negative_prompt_embeds, negative_prompt_attention_mask
             cleanup_memory()
 
     # Save summary

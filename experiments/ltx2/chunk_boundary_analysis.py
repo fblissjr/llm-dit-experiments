@@ -418,7 +418,9 @@ def run_chunk_boundary_analysis(
             output_hidden_states=True,
         )
 
-    neg_hidden_states = torch.stack(neg_outputs.hidden_states[1:], dim=-1)
+    # Stack ALL 49 hidden states (embedding + 48 transformer layers)
+    # The projection matrix expects 49 layers (188160 = 49 × 3840)
+    neg_hidden_states = torch.stack(neg_outputs.hidden_states[:49], dim=-1)
     neg_seq_len = neg_attention_mask.sum().item()
     negative_prompt_embeds = pack_text_embeds(
         neg_hidden_states,
@@ -449,8 +451,9 @@ def run_chunk_boundary_analysis(
                 output_hidden_states=True,
             )
 
-        # Stack all 49 layers (skip embedding layer at index 0)
-        hidden_states = torch.stack(outputs.hidden_states[1:], dim=-1)  # [B, T, D, 49]
+        # Stack ALL 49 hidden states (embedding + 48 transformer layers)
+        # The projection matrix expects 49 layers (188160 = 49 × 3840)
+        hidden_states = torch.stack(outputs.hidden_states[:49], dim=-1)  # [B, T, D, 49]
         seq_len = attention_mask.sum().item()
 
         # Pack to create prompt_embeds

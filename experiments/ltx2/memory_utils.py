@@ -20,12 +20,17 @@ Usage:
     from experiments.ltx2.memory_utils import (
         load_text_encoder_8bit,
         encode_prompts_with_layer_weights,
+        encode_negative_prompt,
         load_pipeline_with_offloading,
         cleanup_memory,
     )
 
     # Phase 1: Encode prompts
     text_encoder, tokenizer = load_text_encoder_8bit("models/LTX-2")
+
+    # For CFG (guidance_scale > 1.0), encode negative prompt
+    neg_embeds, neg_mask = encode_negative_prompt(text_encoder, tokenizer)
+
     embeddings = encode_prompts_with_layer_weights(
         text_encoder, tokenizer, prompts, layer_weights
     )
@@ -35,7 +40,12 @@ Usage:
     # Phase 2: Generate
     pipe = load_pipeline_with_offloading("models/LTX-2")
     for prompt_embeds in embeddings:
-        output = pipe(prompt_embeds=prompt_embeds, ...)
+        output = pipe(
+            prompt_embeds=prompt_embeds,
+            negative_prompt_embeds=neg_embeds,
+            negative_prompt_attention_mask=neg_mask,
+            ...
+        )
 """
 
 import gc
@@ -143,8 +153,9 @@ def encode_prompt_with_layer_weights(
         )
 
     # Stack hidden states: [B, T, hidden_dim, num_layers]
-    # Skip the embedding layer (index 0), use layers 1-49
-    hidden_states = torch.stack(outputs.hidden_states[1 : num_layers + 1], dim=-1)
+    # Include ALL hidden states (embedding + 48 transformer layers = 49 total)
+    # The projection matrix expects 49 layers (188160 = 49 × 3840)
+    hidden_states = torch.stack(outputs.hidden_states[:num_layers], dim=-1)
 
     # Apply layer weights if provided
     if layer_weights is not None:
@@ -328,6 +339,63 @@ def create_layer_weights(
     return layer_weights
 
 
+def encode_negative_prompt(
+    text_encoder: Gemma3ForConditionalGeneration,
+    tokenizer: AutoTokenizer,
+    max_length: int = 512,
+    num_layers: int = 49,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Encode negative prompt (empty string) for CFG.
+
+    This is required when using guidance_scale > 1.0 with pre-computed prompt_embeds.
+    If you pass prompt_embeds to the pipeline without negative_prompt_embeds,
+    the pipeline will try to encode the negative prompt using the text encoder,
+    which will fail if the text encoder has been offloaded.
+
+    Args:
+        text_encoder: The Gemma3 text encoder
+        tokenizer: The tokenizer
+        max_length: Maximum sequence length (must match positive prompt encoding)
+        num_layers: Number of Gemma layers (49 for LTX-2)
+
+    Returns:
+        Tuple of (negative_prompt_embeds, negative_prompt_attention_mask)
+        Both are on CPU and ready to cache.
+    """
+    # Tokenize empty string
+    neg_inputs = tokenizer(
+        "",
+        return_tensors="pt",
+        padding="max_length",
+        max_length=max_length,
+        truncation=True,
+    )
+    neg_input_ids = neg_inputs["input_ids"].to(text_encoder.device)
+    neg_attention_mask = neg_inputs["attention_mask"].to(text_encoder.device)
+
+    # Encode
+    with torch.no_grad():
+        neg_outputs = text_encoder(
+            input_ids=neg_input_ids,
+            attention_mask=neg_attention_mask,
+            output_hidden_states=True,
+        )
+
+    # Stack and pack
+    # Include ALL hidden states (embedding + 48 layers = 49 total)
+    neg_hidden_states = torch.stack(neg_outputs.hidden_states[:num_layers], dim=-1)
+    neg_seq_len = neg_attention_mask.sum().item()
+    negative_prompt_embeds = pack_text_embeds(
+        neg_hidden_states,
+        neg_seq_len,
+        device=torch.device("cuda"),
+    ).cpu()
+    negative_attention_mask = neg_attention_mask.cpu()
+
+    return negative_prompt_embeds, negative_attention_mask
+
+
 def encode_prompt_with_layer_masking(
     text_encoder: Gemma3ForConditionalGeneration,
     tokenizer: AutoTokenizer,
@@ -383,7 +451,8 @@ def encode_prompt_with_layer_masking(
         )
 
     # Stack hidden states: [B, T, hidden_dim, num_layers]
-    hidden_states = torch.stack(outputs.hidden_states[1 : num_layers + 1], dim=-1)
+    # Include ALL hidden states (embedding + 48 layers = 49 total)
+    hidden_states = torch.stack(outputs.hidden_states[:num_layers], dim=-1)
 
     # Apply masking based on mode
     if masking_mode == "soft":

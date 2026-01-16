@@ -80,16 +80,16 @@ LTX-2 does NOT use Gemma-3 as a traditional text encoder (final layer only). Ins
 │  Embedding layer                                                    │
 │         ↓                                                           │
 │  ┌─────────────────────────────────────────────────────────────┐   │
-│  │  49 Transformer Layers (output_hidden_states=True)          │   │
+│  │  48 Transformer Layers + Embedding (output_hidden_states=True) │   │
 │  │                                                             │   │
 │  │  Layer 0  → hidden_state_0  [B, T, 3840]  (embeddings)     │   │
-│  │  Layer 1  → hidden_state_1  [B, T, 3840]                   │   │
+│  │  Layer 1  → hidden_state_1  [B, T, 3840]  (transformer 1)  │   │
 │  │  ...                                                        │   │
 │  │  Layer 47 → hidden_state_47 [B, T, 3840]  (low norm!)      │   │
-│  │  Layer 48 → hidden_state_48 [B, T, 3840]  (final)          │   │
+│  │  Layer 48 → hidden_state_48 [B, T, 3840]  (final output)   │   │
 │  └─────────────────────────────────────────────────────────────┘   │
 │                                                                     │
-│  Output: tuple of 49 hidden states                                  │
+│  Output: tuple of 49 hidden states (ALL are used, including embeddings)
 └─────────────────────────────────────────────────────────────────────┘
                               ↓
                     torch.stack(dim=-1)
