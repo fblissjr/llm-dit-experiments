@@ -92,10 +92,16 @@ def compute_robust_stats(
     if dim is None:
         flat = x.flatten()
     else:
+        # Normalize negative indices to positive
+        normalized_dim = tuple(d % x.ndim for d in dim)
         # Move specified dims to end and flatten
-        other_dims = [i for i in range(x.ndim) if i not in dim]
-        permuted = x.permute(*other_dims, *dim)
-        flat = permuted.reshape(*permuted.shape[: len(other_dims)], -1)
+        other_dims = [i for i in range(x.ndim) if i not in normalized_dim]
+        if len(other_dims) == 0:
+            # All dims specified - just flatten
+            flat = x.flatten().unsqueeze(0)
+        else:
+            permuted = x.permute(*other_dims, *normalized_dim)
+            flat = permuted.reshape(*permuted.shape[: len(other_dims)], -1)
 
     # Compute percentile bounds
     lower_pct = (100 - percentile) / 2 / 100
