@@ -399,6 +399,34 @@ def run_chunk_boundary_analysis(
     # Structure: embeddings_cache[prompt_id] = (prompt_embeds, prompt_text)
     embeddings_cache = {}
 
+    # First encode the negative prompt (empty string for CFG)
+    logger.info("  Encoding: negative prompt (empty)")
+    neg_inputs = tokenizer(
+        "",
+        return_tensors="pt",
+        padding="max_length",
+        max_length=256,
+        truncation=True,
+    )
+    neg_input_ids = neg_inputs["input_ids"].to(text_encoder.device)
+    neg_attention_mask = neg_inputs["attention_mask"].to(text_encoder.device)
+
+    with torch.no_grad():
+        neg_outputs = text_encoder(
+            input_ids=neg_input_ids,
+            attention_mask=neg_attention_mask,
+            output_hidden_states=True,
+        )
+
+    neg_hidden_states = torch.stack(neg_outputs.hidden_states[1:], dim=-1)
+    neg_seq_len = neg_attention_mask.sum().item()
+    negative_prompt_embeds = pack_text_embeds(
+        neg_hidden_states,
+        neg_seq_len,
+        device=torch.device("cuda"),
+    ).cpu()
+    negative_attention_mask = neg_attention_mask.cpu()
+
     for prompt_id, prompt_text in prompts.items():
         logger.info(f"  Encoding: {prompt_id}")
 
@@ -432,14 +460,16 @@ def run_chunk_boundary_analysis(
             device=torch.device("cuda"),
         )
 
-        # Cache on CPU
+        # Cache on CPU (include negative embeds for CFG)
         embeddings_cache[prompt_id] = {
             "prompt_embeds": prompt_embeds.cpu(),
-            "attention_mask": attention_mask.cpu(),
+            "prompt_attention_mask": attention_mask.cpu(),
+            "negative_prompt_embeds": negative_prompt_embeds,
+            "negative_prompt_attention_mask": negative_attention_mask,
             "prompt": prompt_text,
         }
 
-    logger.info(f"\nEncoded {len(embeddings_cache)} prompts")
+    logger.info(f"\nEncoded {len(embeddings_cache)} prompts (+ negative prompt for CFG)")
 
     # ==========================================================================
     # PHASE 2: Offload Text Encoder
@@ -500,7 +530,9 @@ def run_chunk_boundary_analysis(
             # Get cached embeddings
             cached = embeddings_cache[prompt_id]
             prompt_embeds = cached["prompt_embeds"].to("cuda")
-            prompt_attention_mask = cached["attention_mask"].to("cuda")
+            prompt_attention_mask = cached["prompt_attention_mask"].to("cuda")
+            negative_prompt_embeds = cached["negative_prompt_embeds"].to("cuda")
+            negative_prompt_attention_mask = cached["negative_prompt_attention_mask"].to("cuda")
 
             start_time = time.time()
 
@@ -511,6 +543,8 @@ def run_chunk_boundary_analysis(
                 output = pipe(
                     prompt_embeds=prompt_embeds,
                     prompt_attention_mask=prompt_attention_mask,
+                    negative_prompt_embeds=negative_prompt_embeds,
+                    negative_prompt_attention_mask=negative_prompt_attention_mask,
                     height=height,
                     width=width,
                     num_frames=num_frames,
@@ -596,7 +630,8 @@ def run_chunk_boundary_analysis(
                 })
 
             # Memory cleanup
-            del prompt_embeds
+            del prompt_embeds, prompt_attention_mask
+            del negative_prompt_embeds, negative_prompt_attention_mask
             cleanup_memory()
 
     # Save summary
