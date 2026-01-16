@@ -44,6 +44,12 @@ from typing import Any, Callable, Iterator, List, Optional, Tuple, Union
 import torch
 import numpy as np
 
+from llm_dit.pipelines.utils.latent_norm import (
+    PerStepNormalizer,
+    statistical_normalize,
+    NormalizationConfig,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -718,6 +724,12 @@ class LTX2Pipeline:
         output_type: str = "np",
         return_dict: bool = True,
         callback_on_step_end: Optional[Callable] = None,
+        # ComfyUI-style enhancements
+        enable_latent_normalization: bool = False,
+        normalization_factors: str = "0.9, 0.75, 0.5, 0.25, 0.0",
+        normalization_target_mean: float = 0.0,
+        normalization_target_std: float = 1.0,
+        normalization_percentile: float = 95.0,
         **kwargs,
     ) -> Union[VideoOutput, Tuple[np.ndarray, Optional[np.ndarray]]]:
         """
@@ -738,6 +750,14 @@ class LTX2Pipeline:
             output_type: "np" for numpy, "pt" for torch, "pil" for PIL.
             return_dict: Return VideoOutput dataclass.
             callback_on_step_end: Callback for progress tracking.
+            enable_latent_normalization: Apply post-CFG latent normalization
+                to prevent overbaking artifacts. Ported from ComfyUI-LTXVideo.
+            normalization_factors: Comma-separated interpolation factors for
+                each step. Higher = more aggressive normalization. Typical:
+                "0.9, 0.75, 0.5, 0.25, 0.0" (aggressive early, none late).
+            normalization_target_mean: Target mean for normalized latents.
+            normalization_target_std: Target std for normalized latents.
+            normalization_percentile: Percentile for robust statistics (0-100).
             **kwargs: Additional arguments for diffusers pipeline.
 
         Returns:
@@ -816,6 +836,43 @@ class LTX2Pipeline:
             self._pipe.text_encoder = text_encoder
             self._pipe.enable_sequential_cpu_offload()
 
+        # Create normalizing callback wrapper if enabled
+        # Note: This applies normalization to latents after each scheduler step.
+        # Ideally, normalization should be applied post-CFG before the scheduler
+        # step, but this requires deeper diffusers integration. The callback
+        # approach provides a working approximation.
+        actual_callback = callback_on_step_end
+        if enable_latent_normalization:
+            logger.info(
+                f"Latent normalization enabled: factors={normalization_factors}, "
+                f"target_mean={normalization_target_mean}, target_std={normalization_target_std}"
+            )
+
+            normalizer = PerStepNormalizer(
+                factors=normalization_factors,
+                target_mean=normalization_target_mean,
+                target_std=normalization_target_std,
+                percentile=normalization_percentile,
+                method="statistical",
+            )
+
+            def normalizing_callback(pipe, step, timestep, callback_kwargs):
+                # Apply normalization to latents
+                if "latents" in callback_kwargs:
+                    latents = callback_kwargs["latents"]
+                    normalized = normalizer(latents, step=step)
+                    callback_kwargs["latents"] = normalized
+
+                # Call original callback if provided
+                if callback_on_step_end is not None:
+                    callback_kwargs = callback_on_step_end(
+                        pipe, step, timestep, callback_kwargs
+                    )
+
+                return callback_kwargs
+
+            actual_callback = normalizing_callback
+
         # Standard generation
         result = self._pipe(
             prompt=prompt,
@@ -829,7 +886,7 @@ class LTX2Pipeline:
             generator=generator,
             output_type=output_type,
             return_dict=False,
-            callback_on_step_end=callback_on_step_end,
+            callback_on_step_end=actual_callback,
             **kwargs,
         )
 
