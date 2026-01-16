@@ -308,14 +308,15 @@ def load_pipeline_with_offloading(
         pipe.audio_vae.to("cuda")
     elif hasattr(pipe, "audio_vae") and pipe.audio_vae is not None:
         # Create a dummy audio VAE that provides required attributes but skips processing
-        # The pipeline accesses latents_mean/std before checking output_type
+        # The pipeline accesses latents_mean/std and config before checking output_type
         class DummyAudioVAE:
             """Dummy audio VAE to skip audio generation while satisfying pipeline checks."""
             def __init__(self, real_vae):
-                # Copy essential attributes for denormalization
+                # Copy essential attributes for denormalization and config
                 self.latents_mean = real_vae.latents_mean
                 self.latents_std = real_vae.latents_std
                 self.dtype = real_vae.dtype
+                self.config = real_vae.config  # Pipeline accesses config.mel_bins
 
             def decode(self, latents, return_dict=False):
                 # Return zeros matching expected shape
@@ -325,6 +326,10 @@ def load_pipeline_with_offloading(
                 if return_dict:
                     return type('obj', (object,), {'sample': zeros})()
                 return (zeros,)
+
+            def to(self, *args, **kwargs):
+                # No-op for device transfers
+                return self
 
         pipe.audio_vae = DummyAudioVAE(pipe.audio_vae)
 
