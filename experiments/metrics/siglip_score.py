@@ -32,19 +32,44 @@ logger = logging.getLogger(__name__)
 # Type aliases
 ImageInput = Union[str, Path, Image.Image]
 
+# Local model paths (symlinked to Storage)
+LOCAL_MODELS_DIR = Path(__file__).parent.parent.parent / "models"
+
 # Available SigLIP2 models (in order of quality/speed tradeoff)
+# Values are (local_dirname, huggingface_id) tuples
 SIGLIP2_MODELS = {
     # Best quality (2B params)
-    "giant-384": "google/siglip2-giant-opt-patch16-384",
+    "giant-384": ("google_siglip2-giant-opt-patch16-384", "google/siglip2-giant-opt-patch16-384"),
     # Good quality (400M params)
-    "so400m-512": "google/siglip2-so400m-patch16-512",
-    "so400m-384": "google/siglip2-so400m-patch14-384",
+    "so400m-512": (None, "google/siglip2-so400m-patch16-512"),
+    "so400m-384": ("google_siglip2-so400m-patch14-384", "google/siglip2-so400m-patch14-384"),
     # Faster, smaller
-    "base-384": "google/siglip2-base-patch16-384",
-    "base-256": "google/siglip2-base-patch16-256",
+    "base-384": (None, "google/siglip2-base-patch16-384"),
+    "base-256": (None, "google/siglip2-base-patch16-256"),
+    "base-224": ("google_siglip2-base-patch16-224", "google/siglip2-base-patch16-224"),
 }
 
 DEFAULT_MODEL = "giant-384"  # Best quality, 2B params
+
+
+def _resolve_model_path(model_key: str) -> str:
+    """Resolve model key to local path or HuggingFace ID.
+
+    Prefers local models to avoid network requests.
+    """
+    if model_key not in SIGLIP2_MODELS:
+        return model_key  # Assume it's already a full path/ID
+
+    local_name, hf_id = SIGLIP2_MODELS[model_key]
+
+    # Check for local model first
+    if local_name:
+        local_path = LOCAL_MODELS_DIR / local_name
+        if local_path.exists():
+            logger.info("Using local SigLIP2 model: %s", local_path)
+            return str(local_path)
+
+    return hf_id
 
 
 class SigLIPScorer:
@@ -72,11 +97,8 @@ class SigLIPScorer:
             model_name: Model variant key or full HuggingFace path
             device: Device for computation (auto-detected if None)
         """
-        # Resolve model name
-        if model_name in SIGLIP2_MODELS:
-            self.model_id = SIGLIP2_MODELS[model_name]
-        else:
-            self.model_id = model_name
+        # Resolve model name to local path or HuggingFace ID
+        self.model_id = _resolve_model_path(model_name)
 
         if device is None:
             device = "cuda" if torch.cuda.is_available() else "cpu"

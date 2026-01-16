@@ -81,6 +81,13 @@ def run_layer_extraction_experiment(
 
     Tests which layer subsets contribute most to generation quality
     by masking out contributions from excluded layers.
+
+    Architecture insight (LTX-2):
+    - text_encoder(output_hidden_states=True) → 49-tuple of [B, T, 3840]
+    - torch.stack(dim=-1) → [B, T, 3840, 49]
+    - _pack_text_embeds() → normalize per-layer, flatten → [B, T, 188160]
+
+    We hook into _get_gemma_prompt_embeds to mask specific layers.
     """
     from diffusers import LTX2Pipeline
     from diffusers.utils import export_to_video
@@ -103,10 +110,6 @@ def run_layer_extraction_experiment(
     )
     pipe.enable_sequential_cpu_offload()
 
-    # Get the text encoder connector for layer masking
-    # LTX-2's connector handles the layer combination
-    connector = pipe.transformer.transformer.text_encoder_connector
-
     results = {}
 
     for config_name in configs_to_test:
@@ -122,22 +125,72 @@ def run_layer_extraction_experiment(
 
         config_results = []
 
-        # Store original projection weights
-        original_proj = {}
-        if hasattr(connector, "per_layer_proj"):
+        # Create layer masking hook
+        original_get_embeds = pipe._get_gemma_prompt_embeds
+
+        def masked_get_embeds(*args, **kwargs):
+            """Hook to mask specific layers after text encoder."""
+            # Call original method's internal logic
+            prompt = kwargs.get("prompt", args[0] if args else None)
+            num_videos_per_prompt = kwargs.get("num_videos_per_prompt", 1)
+            max_sequence_length = kwargs.get("max_sequence_length", 1024)
+            scale_factor = kwargs.get("scale_factor", 8)
+            device = kwargs.get("device", pipe._execution_device)
+            dtype = kwargs.get("dtype", pipe.text_encoder.dtype)
+
+            prompt = [prompt] if isinstance(prompt, str) else prompt
+            batch_size = len(prompt)
+
+            # Tokenize
+            text_inputs = pipe.tokenizer(
+                prompt,
+                padding="max_length",
+                max_length=max_sequence_length,
+                truncation=True,
+                return_tensors="pt",
+            )
+            text_input_ids = text_inputs.input_ids.to(device)
+            prompt_attention_mask = text_inputs.attention_mask.to(device)
+
+            # Get hidden states from all layers
+            text_encoder_outputs = pipe.text_encoder(
+                input_ids=text_input_ids,
+                attention_mask=prompt_attention_mask,
+                output_hidden_states=True,
+            )
+            text_encoder_hidden_states = text_encoder_outputs.hidden_states
+            text_encoder_hidden_states = torch.stack(text_encoder_hidden_states, dim=-1)
+            # Shape: [batch, seq, hidden_dim, num_layers] = [B, T, 3840, 49]
+
+            # LAYER MASKING: Zero out excluded layers
             for layer_idx in range(49):
                 if layer_idx not in active_layers:
-                    # Zero out excluded layers
-                    proj_name = f"layer_{layer_idx}"
-                    if hasattr(connector.per_layer_proj, proj_name):
-                        proj = getattr(connector.per_layer_proj, proj_name)
-                        original_proj[proj_name] = {
-                            "weight": proj.weight.data.clone(),
-                            "bias": proj.bias.data.clone() if proj.bias is not None else None,
-                        }
-                        proj.weight.data.zero_()
-                        if proj.bias is not None:
-                            proj.bias.data.zero_()
+                    text_encoder_hidden_states[:, :, :, layer_idx] = 0.0
+
+            sequence_lengths = prompt_attention_mask.sum(dim=-1)
+
+            # Pack text embeds (normalize and flatten)
+            prompt_embeds = pipe._pack_text_embeds(
+                text_encoder_hidden_states,
+                sequence_lengths,
+                device=device,
+                padding_side=pipe.tokenizer.padding_side,
+                scale_factor=scale_factor,
+            )
+            prompt_embeds = prompt_embeds.to(dtype=dtype)
+
+            # Duplicate for multiple videos per prompt
+            _, seq_len, _ = prompt_embeds.shape
+            prompt_embeds = prompt_embeds.repeat(1, num_videos_per_prompt, 1)
+            prompt_embeds = prompt_embeds.view(batch_size * num_videos_per_prompt, seq_len, -1)
+
+            prompt_attention_mask = prompt_attention_mask.view(batch_size, -1)
+            prompt_attention_mask = prompt_attention_mask.repeat(num_videos_per_prompt, 1)
+
+            return prompt_embeds, prompt_attention_mask
+
+        # Install hook
+        pipe._get_gemma_prompt_embeds = masked_get_embeds
 
         for i, prompt in enumerate(TEST_PROMPTS):
             print(f"\n  [{i+1}/{len(TEST_PROMPTS)}] {prompt[:50]}...")
@@ -185,14 +238,8 @@ def run_layer_extraction_experiment(
             gc.collect()
             torch.cuda.empty_cache()
 
-        # Restore original weights
-        if hasattr(connector, "per_layer_proj"):
-            for proj_name, data in original_proj.items():
-                if hasattr(connector.per_layer_proj, proj_name):
-                    proj = getattr(connector.per_layer_proj, proj_name)
-                    proj.weight.data.copy_(data["weight"])
-                    if data["bias"] is not None:
-                        proj.bias.data.copy_(data["bias"])
+        # Restore original method
+        pipe._get_gemma_prompt_embeds = original_get_embeds
 
         results[config_name] = config_results
 
