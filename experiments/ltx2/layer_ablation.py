@@ -281,8 +281,7 @@ def run_ablation(
     np.savez(results_file, **{k: str(v) for k, v in results.items()})
     print(f"\nResults saved to {results_file}")
 
-    # Cleanup
-    del pipe
+    # Final cleanup (pipe already deleted per-config in loop)
     gc.collect()
     torch.cuda.empty_cache()
 
