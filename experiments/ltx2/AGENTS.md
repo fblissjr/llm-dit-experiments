@@ -45,7 +45,8 @@ experiments/
 │   ├── analyze_projection_matrix.py    # Zero-cost W analysis
 │   ├── analyze_projection_deeper.py    # Activation-weighted contribution
 │   ├── thinking_token_analysis.py      # Register token analysis
-│   └── dimension_analysis.py
+│   ├── dimension_analysis.py
+│   └── chunk_boundary_analysis.py      # VAE temporal chunk boundary hypothesis test
 ├── metrics/                 # Scoring modules
 │   ├── siglip_score.py      # SigLIP2 text-image alignment (local models supported)
 │   └── image_reward.py      # Human preference alignment
