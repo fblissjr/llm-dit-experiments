@@ -16,6 +16,11 @@ Method:
 3. Extract first frame as PNG for viewer
 4. Compute SigLIP2 + ImageReward per sample
 
+Memory-optimized for 24GB GPUs (RTX 4090):
+- Text encoder: 8-bit quantized (~13GB instead of ~54GB)
+- Pipeline: Group offloading for transformer blocks
+- Sequential loading: Encode first, then offload, then generate
+
 Output Structure (viewer-compatible):
     experiments/results/ltx2_layer_profile_{timestamp}/
     ├── images/           # First frames as PNG
@@ -49,7 +54,6 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Callable
 
 import numpy as np
 import torch
@@ -76,6 +80,16 @@ from experiments.ltx2.prompts import (
     QUICK_CATEGORY,
 )
 
+# Import memory-efficient utilities for 24GB GPUs
+from experiments.ltx2.memory_utils import (
+    load_text_encoder_8bit,
+    encode_prompt_with_layer_masking,
+    pack_text_embeds,
+    load_pipeline_with_offloading,
+    cleanup_memory,
+    get_gpu_memory,
+)
+
 # Full test prompts (official + category)
 TEST_PROMPTS = get_all_prompts(quick=False)
 
@@ -85,122 +99,9 @@ QUICK_PROMPTS = get_all_prompts(quick=True)
 QUICK_LAYERS = [0, 24, 48]  # Early, middle, late
 
 
-def create_layer_masking_hook(
-    pipe,
-    active_layers: list[int],
-    masking_mode: str = "soft",
-) -> Callable:
-    """
-    Create a hook that masks inactive layers in Gemma embeddings.
-
-    The hook replaces _get_gemma_prompt_embeds to modify contributions
-    from layers not in active_layers.
-
-    Args:
-        pipe: LTX2Pipeline instance
-        active_layers: List of layer indices (0-48) to keep active
-        masking_mode: How to handle inactive layers:
-            - "soft": Replace with per-layer mean (maintains distribution)
-            - "zero": Zero out (creates OOD inputs - NOT RECOMMENDED)
-            - "weighted": Weight active layers to preserve total norm
-
-    Returns:
-        Hook function to install via pipe._get_gemma_prompt_embeds = hook
-
-    Note:
-        Zeroing creates out-of-distribution inputs because the projection W
-        expects all 49 layers with proper variance. Soft masking preserves
-        the expected input distribution while isolating layer contributions.
-    """
-    active_set = set(active_layers)
-
-    def masked_get_embeds(*args, **kwargs):
-        """Hook that masks specific layers after text encoder."""
-        prompt = kwargs.get("prompt", args[0] if args else None)
-        num_videos_per_prompt = kwargs.get("num_videos_per_prompt", 1)
-        max_sequence_length = kwargs.get("max_sequence_length", 1024)
-        scale_factor = kwargs.get("scale_factor", 8)
-        device = kwargs.get("device", pipe._execution_device)
-        dtype = kwargs.get("dtype", pipe.text_encoder.dtype)
-
-        prompt = [prompt] if isinstance(prompt, str) else prompt
-        batch_size = len(prompt)
-
-        # Tokenize
-        text_inputs = pipe.tokenizer(
-            prompt,
-            padding="max_length",
-            max_length=max_sequence_length,
-            truncation=True,
-            return_tensors="pt",
-        )
-        text_input_ids = text_inputs.input_ids.to(device)
-        prompt_attention_mask = text_inputs.attention_mask.to(device)
-
-        # Get hidden states from all layers
-        text_encoder_outputs = pipe.text_encoder(
-            input_ids=text_input_ids,
-            attention_mask=prompt_attention_mask,
-            output_hidden_states=True,
-        )
-        text_encoder_hidden_states = text_encoder_outputs.hidden_states
-        text_encoder_hidden_states = torch.stack(text_encoder_hidden_states, dim=-1)
-        # Shape: [batch, seq, hidden_dim, num_layers] = [B, T, 3840, 49]
-
-        # LAYER MASKING based on mode
-        if masking_mode == "soft":
-            # Soft masking: Replace inactive layers with per-layer mean
-            # This maintains the expected input distribution for projection W
-            for layer_idx in range(NUM_GEMMA_LAYERS):
-                if layer_idx not in active_set:
-                    # Replace with mean across sequence (preserves layer statistics)
-                    layer_mean = text_encoder_hidden_states[:, :, :, layer_idx].mean(dim=1, keepdim=True)
-                    text_encoder_hidden_states[:, :, :, layer_idx] = layer_mean
-
-        elif masking_mode == "zero":
-            # Zero masking: Creates OOD inputs (not recommended)
-            for layer_idx in range(NUM_GEMMA_LAYERS):
-                if layer_idx not in active_set:
-                    text_encoder_hidden_states[:, :, :, layer_idx] = 0.0
-
-        elif masking_mode == "weighted":
-            # Weighted masking: Scale active layers to preserve total norm
-            # Inactive layers get zeroed, active get scaled up to compensate
-            num_active = len(active_layers)
-            scale = NUM_GEMMA_LAYERS / num_active if num_active > 0 else 1.0
-
-            for layer_idx in range(NUM_GEMMA_LAYERS):
-                if layer_idx in active_set:
-                    text_encoder_hidden_states[:, :, :, layer_idx] *= scale
-                else:
-                    text_encoder_hidden_states[:, :, :, layer_idx] = 0.0
-
-        else:
-            raise ValueError(f"Unknown masking_mode: {masking_mode}")
-
-        sequence_lengths = prompt_attention_mask.sum(dim=-1)
-
-        # Pack text embeds (normalize and flatten)
-        prompt_embeds = pipe._pack_text_embeds(
-            text_encoder_hidden_states,
-            sequence_lengths,
-            device=device,
-            padding_side=pipe.tokenizer.padding_side,
-            scale_factor=scale_factor,
-        )
-        prompt_embeds = prompt_embeds.to(dtype=dtype)
-
-        # Duplicate for multiple videos per prompt
-        _, seq_len, _ = prompt_embeds.shape
-        prompt_embeds = prompt_embeds.repeat(1, num_videos_per_prompt, 1)
-        prompt_embeds = prompt_embeds.view(batch_size * num_videos_per_prompt, seq_len, -1)
-
-        prompt_attention_mask = prompt_attention_mask.view(batch_size, -1)
-        prompt_attention_mask = prompt_attention_mask.repeat(num_videos_per_prompt, 1)
-
-        return prompt_embeds, prompt_attention_mask
-
-    return masked_get_embeds
+# NOTE: create_layer_masking_hook was removed in favor of memory-efficient
+# encode_prompt_with_layer_masking() from memory_utils.py which applies
+# masking during encoding phase before offloading the text encoder.
 
 
 def compute_frame_statistics(frames: list) -> dict:
@@ -268,9 +169,15 @@ def run_layer_profile_sweep(
     num_inference_steps: int = 25,
     guidance_scale: float = 3.0,
     masking_mode: str = "soft",
+    num_blocks_per_group: int = 1,
 ):
     """
     Run the full layer profile sweep experiment.
+
+    Memory-optimized for 24GB GPUs using:
+    - 8-bit quantized text encoder (~13GB)
+    - Group offloading for transformer blocks
+    - Sequential loading: encode → offload → generate
 
     Args:
         output_base: Base directory for results
@@ -289,12 +196,17 @@ def run_layer_profile_sweep(
             - "soft" (recommended): Replace inactive with per-layer mean
             - "zero": Zero out (creates OOD artifacts)
             - "weighted": Scale active layers to preserve norm
+        num_blocks_per_group: Transformer blocks per offload group (1=min VRAM)
 
     Returns:
         Path to results directory
     """
-    from diffusers import LTX2Pipeline
     from diffusers.utils import export_to_video
+
+    # Clear GPU memory before starting
+    cleanup_memory()
+    if torch.cuda.is_available():
+        torch.cuda.reset_peak_memory_stats()
 
     # Setup
     if layers_to_test is None:
@@ -315,27 +227,88 @@ def run_layer_profile_sweep(
         videos_dir.mkdir(exist_ok=True)
 
     logger.info("=" * 60)
-    logger.info("LTX-2 Layer Profile Sweep")
+    logger.info("LTX-2 Layer Profile Sweep (Memory-Optimized)")
     logger.info("=" * 60)
     logger.info(f"Output: {output_dir}")
     logger.info(f"Layers: {len(layers_to_test)} ({min(layers_to_test)}-{max(layers_to_test)})")
     logger.info(f"Prompts: {len(prompts)}")
     logger.info(f"Masking mode: {masking_mode}")
-    logger.info(f"Total generations: {len(layers_to_test) * len(prompts)}")
+    total = len(layers_to_test) * len(prompts)
+    logger.info(f"Total generations: {total}")
 
-    # Load pipeline
-    logger.info("\nLoading LTX-2 pipeline...")
-    pipe = LTX2Pipeline.from_pretrained(
+    # ==========================================================================
+    # PHASE 1: Text Encoding (8-bit quantized, ~13GB VRAM)
+    # ==========================================================================
+    logger.info("\n" + "=" * 60)
+    logger.info("PHASE 1: Text Encoding (8-bit quantized)")
+    logger.info("=" * 60)
+
+    logger.info(f"Loading text encoder... (GPU: {get_gpu_memory():.2f}GB)")
+    text_encoder, tokenizer = load_text_encoder_8bit(model_path)
+    logger.info(f"Text encoder loaded (GPU: {get_gpu_memory():.2f}GB)")
+
+    # Pre-encode all (layer, prompt) combinations
+    # Structure: embeddings_cache[(layer_idx, prompt_id)] = (prompt_embeds, prompt_text)
+    embeddings_cache = {}
+
+    encode_idx = 0
+    for layer_idx in layers_to_test:
+        logger.info(f"\n  Layer {layer_idx} (single layer active)")
+
+        for prompt_id, prompt_text in prompts.items():
+            encode_idx += 1
+            logger.info(f"    [{encode_idx}/{total}] Encoding: layer_{layer_idx:02d} × {prompt_id}")
+
+            # Encode with layer masking applied
+            hidden_states, attention_mask, seq_len = encode_prompt_with_layer_masking(
+                text_encoder,
+                tokenizer,
+                prompt_text,
+                active_layers=[layer_idx],
+                masking_mode=masking_mode,
+            )
+
+            # Pack to create prompt_embeds
+            prompt_embeds = pack_text_embeds(
+                hidden_states,
+                seq_len,
+                device=torch.device("cuda"),
+            )
+
+            # Cache on CPU to free VRAM
+            embeddings_cache[(layer_idx, prompt_id)] = {
+                "prompt_embeds": prompt_embeds.cpu(),
+                "prompt": prompt_text,
+            }
+
+    logger.info(f"\nEncoded {len(embeddings_cache)} layer/prompt combinations")
+
+    # ==========================================================================
+    # PHASE 2: Offload Text Encoder
+    # ==========================================================================
+    logger.info("\n" + "=" * 60)
+    logger.info("PHASE 2: Offloading Text Encoder")
+    logger.info("=" * 60)
+
+    logger.info(f"Before offload (GPU: {get_gpu_memory():.2f}GB)")
+    del text_encoder, tokenizer
+    cleanup_memory()
+    logger.info(f"After offload (GPU: {get_gpu_memory():.2f}GB)")
+
+    # ==========================================================================
+    # PHASE 3: Generation (Group Offloading, ~5GB VRAM)
+    # ==========================================================================
+    logger.info("\n" + "=" * 60)
+    logger.info("PHASE 3: Video Generation (Group Offloading)")
+    logger.info("=" * 60)
+
+    logger.info("Loading pipeline with group offloading...")
+    pipe = load_pipeline_with_offloading(
         model_path,
-        torch_dtype=torch.bfloat16,
+        num_blocks_per_group=num_blocks_per_group,
+        use_stream=True,
     )
-    # Use model_cpu_offload instead of sequential_cpu_offload for 2-3x speedup
-    # Sequential offload moves each layer individually (slowest)
-    # Model offload keeps the whole model on GPU while active (faster)
-    pipe.enable_model_cpu_offload()
-
-    # Store original method
-    original_get_embeds = pipe._get_gemma_prompt_embeds
+    logger.info(f"Pipeline loaded (GPU: {get_gpu_memory():.2f}GB)")
 
     # Load SigLIP scorer (the only meaningful metric)
     siglip_scorer = None
@@ -351,8 +324,7 @@ def run_layer_profile_sweep(
     # Results accumulator
     all_results = []
 
-    # Main sweep loop
-    total = len(layers_to_test) * len(prompts)
+    # Main generation loop
     count = 0
 
     for layer_idx in layers_to_test:
@@ -360,13 +332,13 @@ def run_layer_profile_sweep(
         logger.info(f"Layer {layer_idx} (single layer active)")
         logger.info("=" * 50)
 
-        # Install layer masking hook for this single layer
-        hook = create_layer_masking_hook(pipe, active_layers=[layer_idx], masking_mode=masking_mode)
-        pipe._get_gemma_prompt_embeds = hook
-
         for prompt_id, prompt_text in prompts.items():
             count += 1
-            logger.info(f"\n  [{count}/{total}] {prompt_id}: {prompt_text[:40]}...")
+            logger.info(f"\n  [{count}/{total}] layer_{layer_idx:02d} × {prompt_id}")
+
+            # Get cached embeddings
+            cached = embeddings_cache[(layer_idx, prompt_id)]
+            prompt_embeds = cached["prompt_embeds"].to("cuda")
 
             start_time = time.time()
 
@@ -375,7 +347,7 @@ def run_layer_profile_sweep(
                 generator = torch.Generator(device="cpu").manual_seed(seed)
 
                 output = pipe(
-                    prompt=prompt_text,
+                    prompt_embeds=prompt_embeds,
                     height=height,
                     width=width,
                     num_frames=num_frames,
@@ -400,7 +372,7 @@ def run_layer_profile_sweep(
                     video_path = videos_dir / video_filename
                     export_to_video(frames, str(video_path), fps=24)
 
-                # Compute frame statistics
+                # Compute frame statistics (empty - kept for API compat)
                 frame_stats = compute_frame_statistics(frames)
 
                 # Compute SigLIP score (only meaningful metric)
@@ -434,9 +406,9 @@ def run_layer_profile_sweep(
                 }
                 all_results.append(result)
 
-                # Log progress - only SigLIP matters
+                # Log progress
                 siglip_str = f"{siglip_score:.4f}" if siglip_score is not None else "N/A"
-                logger.info(f"  Time: {gen_time:.1f}s | SigLIP: {siglip_str}")
+                logger.info(f"  Time: {gen_time:.1f}s | SigLIP: {siglip_str} | GPU: {get_gpu_memory():.1f}GB")
 
             except Exception as e:
                 logger.error(f"  ERROR: {e}")
@@ -449,11 +421,8 @@ def run_layer_profile_sweep(
                 })
 
             # Memory cleanup
-            gc.collect()
-            torch.cuda.empty_cache()
-
-        # Restore original method between layers for clean state
-        pipe._get_gemma_prompt_embeds = original_get_embeds
+            del prompt_embeds
+            cleanup_memory()
 
     # Save summary
     summary = {
@@ -469,6 +438,7 @@ def run_layer_profile_sweep(
             "num_inference_steps": num_inference_steps,
             "guidance_scale": guidance_scale,
             "model_path": model_path,
+            "masking_mode": masking_mode,
         },
         "results": all_results,
         "statistics": compute_sweep_statistics(all_results),
@@ -493,8 +463,7 @@ def run_layer_profile_sweep(
     del pipe
     if siglip_scorer:
         del siglip_scorer
-    gc.collect()
-    torch.cuda.empty_cache()
+    cleanup_memory()
 
     return output_dir
 
@@ -684,6 +653,12 @@ def main():
              "zero=zero out (creates OOD artifacts), "
              "weighted=scale to preserve norm",
     )
+    parser.add_argument(
+        "--blocks-per-group",
+        type=int,
+        default=1,
+        help="Transformer blocks per offload group (1=min VRAM, higher=faster)",
+    )
 
     args = parser.parse_args()
 
@@ -709,6 +684,7 @@ def main():
         num_inference_steps=args.steps,
         guidance_scale=args.cfg,
         masking_mode=args.masking_mode,
+        num_blocks_per_group=args.blocks_per_group,
     )
 
 

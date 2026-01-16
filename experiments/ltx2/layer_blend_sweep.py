@@ -21,6 +21,11 @@ Blends tested:
 5. u_shaped: Early (0-16) + Late (40-48), skip middle (traditional hypothesis)
 6. anti_u: Middle only (15-35), exclude early and late
 
+Memory-optimized for 24GB GPUs (RTX 4090):
+- Text encoder: 8-bit quantized (~13GB instead of ~54GB)
+- Pipeline: Group offloading for transformer blocks
+- Sequential loading: Encode first, then offload, then generate
+
 Usage:
     # Quick test (3 blends × 2 prompts)
     uv run python experiments/ltx2/layer_blend_sweep.py --quick
@@ -51,6 +56,17 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 # Import prompts from centralized module
 # These match the official LTX-2 prompting guide format (100+ words, dialogue, etc.)
 from experiments.ltx2.prompts import get_category_prompts, QUICK_CATEGORY
+
+# Import memory-efficient utilities for 24GB GPUs
+from experiments.ltx2.memory_utils import (
+    load_text_encoder_8bit,
+    encode_prompt_with_layer_weights,
+    pack_text_embeds,
+    load_pipeline_with_offloading,
+    create_layer_weights,
+    cleanup_memory,
+    get_gpu_memory,
+)
 
 # Category prompts for layer blend experiments
 TEST_PROMPTS = get_category_prompts(quick=False)
@@ -145,15 +161,19 @@ def run_layer_blend_sweep(
     height: int = 512,
     width: int = 768,
     num_frames: int = 33,
-    low_memory: bool = False,
+    num_blocks_per_group: int = 1,
 ):
-    """Run layer blend sweep experiment."""
-    from diffusers import LTX2Pipeline
+    """Run layer blend sweep experiment.
+
+    Memory-optimized for 24GB GPUs using:
+    - 8-bit quantized text encoder (~13GB)
+    - Group offloading for transformer blocks
+    - Sequential loading: encode → offload → generate
+    """
     from diffusers.utils import export_to_video
 
     # Clear GPU memory before starting
-    gc.collect()
-    torch.cuda.empty_cache()
+    cleanup_memory()
     if torch.cuda.is_available():
         torch.cuda.reset_peak_memory_stats()
 
@@ -166,7 +186,7 @@ def run_layer_blend_sweep(
     (output_path / "metadata").mkdir(exist_ok=True)
 
     print("=" * 60)
-    print("LTX-2 Layer Blend Sweep")
+    print("LTX-2 Layer Blend Sweep (Memory-Optimized)")
     print("=" * 60)
     print(f"Output: {output_path}")
     print(f"Seed: {seed}")
@@ -179,18 +199,89 @@ def run_layer_blend_sweep(
     total_gens = len(configs) * len(prompts)
     print(f"Generations: {len(configs)} configs × {len(prompts)} prompts = {total_gens}")
 
-    # Load pipeline
-    print("\nLoading pipeline...")
-    pipe = LTX2Pipeline.from_pretrained(
-        model_path,
-        torch_dtype=torch.bfloat16,
-    )
+    # ==========================================================================
+    # PHASE 1: Text Encoding (8-bit quantized, ~13GB VRAM)
+    # ==========================================================================
+    print("\n" + "=" * 60)
+    print("PHASE 1: Text Encoding (8-bit quantized)")
+    print("=" * 60)
 
-    if low_memory:
-        print("Using sequential CPU offload (low memory mode)...")
-        pipe.enable_sequential_cpu_offload()
-    else:
-        pipe.enable_model_cpu_offload()  # 2-3x faster than sequential
+    print(f"Loading text encoder... (GPU: {get_gpu_memory():.2f}GB)")
+    text_encoder, tokenizer = load_text_encoder_8bit(model_path)
+    print(f"Text encoder loaded (GPU: {get_gpu_memory():.2f}GB)")
+
+    # Pre-encode all (config, prompt) combinations
+    # Structure: embeddings_cache[(config_name, prompt_id)] = (prompt_embeds, attention_mask, seq_len)
+    embeddings_cache = {}
+
+    encode_idx = 0
+    for config_name in configs:
+        config = BLEND_CONFIGS[config_name]
+
+        # Build layer weights for this config
+        layer_weights = create_layer_weights(
+            active_layers=config["active_layers"],
+            weights=config["weights"],
+            num_layers=49,
+            normalize=True,
+        )
+
+        for prompt_id in prompts:
+            encode_idx += 1
+            prompt_text = TEST_PROMPTS[prompt_id]
+            print(f"  [{encode_idx}/{total_gens}] Encoding: {config_name} × {prompt_id}")
+
+            # Encode with layer weights applied
+            hidden_states, attention_mask, seq_len = encode_prompt_with_layer_weights(
+                text_encoder,
+                tokenizer,
+                prompt_text,
+                layer_weights=layer_weights,
+            )
+
+            # Pack to create prompt_embeds (same as pipeline._pack_text_embeds)
+            prompt_embeds = pack_text_embeds(
+                hidden_states,
+                seq_len,
+                device=torch.device("cuda"),
+            )
+
+            # Cache on CPU to free VRAM
+            embeddings_cache[(config_name, prompt_id)] = {
+                "prompt_embeds": prompt_embeds.cpu(),
+                "attention_mask": attention_mask.cpu(),
+                "sequence_length": seq_len,
+                "prompt": prompt_text,
+            }
+
+    print(f"\nEncoded {len(embeddings_cache)} prompt/config combinations")
+
+    # ==========================================================================
+    # PHASE 2: Offload Text Encoder
+    # ==========================================================================
+    print("\n" + "=" * 60)
+    print("PHASE 2: Offloading Text Encoder")
+    print("=" * 60)
+
+    print(f"Before offload (GPU: {get_gpu_memory():.2f}GB)")
+    del text_encoder, tokenizer
+    cleanup_memory()
+    print(f"After offload (GPU: {get_gpu_memory():.2f}GB)")
+
+    # ==========================================================================
+    # PHASE 3: Generation (Group Offloading, ~5GB VRAM)
+    # ==========================================================================
+    print("\n" + "=" * 60)
+    print("PHASE 3: Video Generation (Group Offloading)")
+    print("=" * 60)
+
+    print(f"Loading pipeline with group offloading...")
+    pipe = load_pipeline_with_offloading(
+        model_path,
+        num_blocks_per_group=num_blocks_per_group,
+        use_stream=True,
+    )
+    print(f"Pipeline loaded (GPU: {get_gpu_memory():.2f}GB)")
 
     # Results storage
     all_results = []
@@ -209,85 +300,28 @@ def run_layer_blend_sweep(
 
         for prompt_id in prompts:
             gen_idx += 1
-            prompt_text = TEST_PROMPTS[prompt_id]
             print(f"\n[{gen_idx}/{total_gens}] {config_name} × {prompt_id}")
+
+            # Get cached embeddings
+            cached = embeddings_cache[(config_name, prompt_id)]
+            prompt_embeds = cached["prompt_embeds"].to("cuda")
+            prompt_text = cached["prompt"]
 
             start_time = time.time()
 
-            # Generate with layer blending
+            # Generate with pre-computed embeddings
             generator = torch.Generator(device="cpu").manual_seed(seed)
 
-            # Strategy: Temporarily override _pack_text_embeds to apply layer weighting
-            # before the normalization step. This is the cleanest hook point.
-            from diffusers.pipelines.ltx2.pipeline_ltx2 import LTX2Pipeline as DiffusersLTX2Pipeline
-
-            original_pack = DiffusersLTX2Pipeline._pack_text_embeds
-
-            # Build weight tensor for this config FIRST (before defining closure)
-            num_layers = 49
-            config_layer_weights = torch.zeros(num_layers)
-
-            if config["weights"] is None:
-                for layer_idx in config["active_layers"]:
-                    config_layer_weights[layer_idx] = 1.0
-            else:
-                for layer_idx in config["active_layers"]:
-                    config_layer_weights[layer_idx] = config["weights"].get(layer_idx, 1.0)
-
-            # Normalize weights to preserve signal magnitude
-            weight_sum = config_layer_weights.sum()
-            if weight_sum > 0:
-                config_layer_weights = config_layer_weights / weight_sum * num_layers
-
-            # Create closure that captures the weights
-            def make_pack_with_blend(weights_tensor, orig_pack):
-                """Factory to create pack function with captured weights."""
-                @staticmethod
-                def pack_with_blend(
-                    text_hidden_states,
-                    sequence_lengths,
-                    device,
-                    padding_side="left",
-                    scale_factor=8,
-                    eps=1e-6,
-                ):
-                    """Pack with layer weighting applied first."""
-                    # text_hidden_states: [B, T, 3840, 49]
-
-                    # Apply layer weights (captured via closure)
-                    w = weights_tensor.to(text_hidden_states.device).view(1, 1, 1, -1)
-                    weighted = text_hidden_states * w
-
-                    # Call original pack
-                    return orig_pack(
-                        weighted,
-                        sequence_lengths,
-                        device,
-                        padding_side,
-                        scale_factor,
-                        eps,
-                    )
-                return pack_with_blend
-
-            # Apply patched method
-            DiffusersLTX2Pipeline._pack_text_embeds = make_pack_with_blend(
-                config_layer_weights, original_pack
+            output = pipe(
+                prompt_embeds=prompt_embeds,
+                height=height,
+                width=width,
+                num_frames=num_frames,
+                num_inference_steps=num_inference_steps,
+                guidance_scale=guidance_scale,
+                generator=generator,
             )
-
-            try:
-                output = pipe(
-                    prompt=prompt_text,
-                    height=height,
-                    width=width,
-                    num_frames=num_frames,
-                    num_inference_steps=num_inference_steps,
-                    guidance_scale=guidance_scale,
-                    generator=generator,
-                )
-                frames = output.frames[0]
-            finally:
-                # Restore original method
-                DiffusersLTX2Pipeline._pack_text_embeds = original_pack
+            frames = output.frames[0]
 
             gen_time = time.time() - start_time
 
@@ -330,12 +364,11 @@ def run_layer_blend_sweep(
             config_results.append(result)
 
             siglip_str = f"{metrics['siglip_score']:.4f}" if metrics.get("siglip_score") is not None else "N/A"
-            print(f"  Time: {gen_time:.1f}s | SigLIP: {siglip_str}")
+            print(f"  Time: {gen_time:.1f}s | SigLIP: {siglip_str} | GPU: {get_gpu_memory():.1f}GB")
 
             # Cleanup between generations
-            del frames, output, first_frame
-            gc.collect()
-            torch.cuda.empty_cache()
+            del frames, output, first_frame, prompt_embeds
+            cleanup_memory()
 
         # Summarize config - only SigLIP matters
         siglip_scores = [r["siglip_score"] for r in config_results if r.get("siglip_score") is not None]
@@ -431,7 +464,7 @@ def run_layer_blend_sweep(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="LTX-2 Layer Blend Sweep")
+    parser = argparse.ArgumentParser(description="LTX-2 Layer Blend Sweep (Memory-Optimized)")
     parser.add_argument("--model-path", default="models/LTX-2", help="Path to LTX-2 model")
     parser.add_argument("--output-dir", default="experiments/results", help="Output directory")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
@@ -441,7 +474,12 @@ def main():
     parser.add_argument("--height", type=int, default=512, help="Video height")
     parser.add_argument("--width", type=int, default=768, help="Video width")
     parser.add_argument("--frames", type=int, default=33, help="Number of frames")
-    parser.add_argument("--low-memory", action="store_true", help="Use sequential CPU offload (slower but less VRAM)")
+    parser.add_argument(
+        "--blocks-per-group",
+        type=int,
+        default=1,
+        help="Transformer blocks per offload group (1=min VRAM, higher=faster)",
+    )
     args = parser.parse_args()
 
     run_layer_blend_sweep(
@@ -454,7 +492,7 @@ def main():
         height=args.height,
         width=args.width,
         num_frames=args.frames,
-        low_memory=args.low_memory,
+        num_blocks_per_group=args.blocks_per_group,
     )
 
 
