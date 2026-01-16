@@ -2,14 +2,17 @@
 name = "llm-dit-experiments"
 version = "0.5.0"
 description = "LLM-DiT experimentation platform with pluggable backends"
+authors = [
+  { name = "Fred Bliss" }
+]
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     # PyTorch with CUDA 13.0 - see [tool.uv.sources] for index config
     "torch",
     "torchvision",
-    # Z-Image-Turbo requires diffusers 0.36+ with ZImagePipeline
-    "diffusers @ git+https://github.com/huggingface/diffusers",
+    # LTX-2 requires diffusers 0.37+ with LTX2Pipeline (local coderef build)
+    "diffusers",
     # transformers v5 compatible (uses quantization_config instead of load_in_8bit/load_in_4bit)
     # Works with both v4.40+ and v5.0+
     "transformers>=4.40.0",
@@ -32,6 +35,7 @@ dependencies = [
     "sentencepiece>=0.2.1",
     "imageio>=2.37.2",
     "imageio-ffmpeg>=0.6.0",
+    "spacy>=3.8.11",
 ]
 
 [project.optional-dependencies]
