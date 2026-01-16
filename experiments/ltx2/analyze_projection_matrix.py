@@ -61,48 +61,67 @@ def analyze_projection_matrix(
     )
 
     # Find the projection matrix
-    # Look for text_proj_in in the transformer's connector
-    transformer = pipe.transformer
+    # The text_proj_in is in pipe.connectors, NOT pipe.transformer
+    # pipe.transformer = DiT model
+    # pipe.connectors = LTX2TextConnectors with text_proj_in
 
-    # The connector structure varies - let's explore
     print("\nExploring model structure...")
 
-    # Try common locations
     W = None
     W_name = None
 
-    # Try: transformer.text_proj_in
-    if hasattr(transformer, "text_proj_in"):
-        W = transformer.text_proj_in.weight.data
-        W_name = "transformer.text_proj_in"
-        print(f"Found: {W_name}")
-
-    # Try: transformer.connector.text_proj_in
-    elif hasattr(transformer, "connector"):
-        if hasattr(transformer.connector, "text_proj_in"):
-            W = transformer.connector.text_proj_in.weight.data
-            W_name = "transformer.connector.text_proj_in"
+    # Primary location: pipe.connectors.text_proj_in
+    if hasattr(pipe, "connectors") and pipe.connectors is not None:
+        if hasattr(pipe.connectors, "text_proj_in"):
+            W = pipe.connectors.text_proj_in.weight.data
+            W_name = "connectors.text_proj_in"
             print(f"Found: {W_name}")
 
-    # Try: Looking in state dict
-    if W is None:
-        print("\nSearching state dict for text projection...")
-        for name, param in transformer.named_parameters():
-            if "text" in name.lower() and "proj" in name.lower():
-                print(f"  Found: {name} - shape {param.shape}")
-                # Look for the main projection (188160 → something)
+    # Fallback: Search in connectors state dict
+    if W is None and hasattr(pipe, "connectors") and pipe.connectors is not None:
+        print("\nSearching connectors state dict...")
+        for name, param in pipe.connectors.named_parameters():
+            print(f"  {name}: {param.shape}")
+            if "text_proj_in" in name or ("text" in name.lower() and "proj" in name.lower()):
                 if param.dim() == 2 and 188160 in param.shape:
                     W = param.data
-                    W_name = name
-                    print(f"  Selected: {name}")
+                    W_name = f"connectors.{name}"
+                    print(f"  Selected: {W_name}")
                     break
 
+    # Fallback: Try transformer (older diffusers versions)
     if W is None:
-        # Fallback: Try to find any large linear layer
-        print("\nCould not find text_proj_in directly. Listing all large linear layers:")
-        for name, param in transformer.named_parameters():
-            if param.dim() == 2 and max(param.shape) > 10000:
-                print(f"  {name}: {param.shape}")
+        transformer = pipe.transformer
+        if hasattr(transformer, "text_proj_in"):
+            W = transformer.text_proj_in.weight.data
+            W_name = "transformer.text_proj_in"
+            print(f"Found: {W_name}")
+
+    # Last resort: Search entire pipeline
+    if W is None:
+        print("\nSearching entire pipeline for text projection...")
+        for component_name in ["connectors", "transformer", "text_encoder"]:
+            component = getattr(pipe, component_name, None)
+            if component is None:
+                continue
+            for name, param in component.named_parameters():
+                if param.dim() == 2 and 188160 in param.shape:
+                    W = param.data
+                    W_name = f"{component_name}.{name}"
+                    print(f"  Found 188160-dim projection: {W_name}")
+                    break
+            if W is not None:
+                break
+
+    if W is None:
+        # Debug: List all available components and their large params
+        print("\nCould not find text_proj_in (188160 → 3840). Listing pipeline structure:")
+        print(f"  pipe.connectors exists: {hasattr(pipe, 'connectors') and pipe.connectors is not None}")
+        if hasattr(pipe, "connectors") and pipe.connectors is not None:
+            print(f"  connectors type: {type(pipe.connectors)}")
+            print("  connectors parameters:")
+            for name, param in pipe.connectors.named_parameters():
+                print(f"    {name}: {param.shape}")
 
         print("\nPlease specify the correct parameter name manually.")
         return None
