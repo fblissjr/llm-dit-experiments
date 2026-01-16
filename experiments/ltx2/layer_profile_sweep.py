@@ -68,79 +68,19 @@ logger = logging.getLogger(__name__)
 NUM_GEMMA_LAYERS = 49  # Layers 0-48
 GEMMA_HIDDEN_DIM = 3840
 
-# Test prompts covering different visual attributes
-# LTX-2 requires detailed, paragraph-style prompts (4-8 sentences)
-# See experiments/ltx2/prompting_guide.md for details
-# NOTE: Avoid text/logos (doesn't work), internal states (use physical cues)
-TEST_PROMPTS = {
-    "static_interior": (
-        "A close-up shot of an antique wooden desk in a sunlit study, dust motes floating through warm afternoon light. "
-        "An old leather-bound book lies open next to a brass inkwell and feather quill. "
-        "The camera slowly pushes in as golden rays stream through lace curtains, casting intricate shadow patterns across the worn wood grain. "
-        "A cup of tea steams gently beside the book, wisps curling upward into the light."
-    ),
-    "simple_obj": (
-        "A medium shot of a bright red rubber ball resting on a pristine white surface in a minimalist studio. "
-        "Soft diffused lighting from above creates gentle shadows beneath the sphere. "
-        "The camera holds steady as dust particles drift through a warm beam of afternoon sunlight. "
-        "The ball's glossy surface catches subtle reflections, its vibrant color contrasting sharply with the clean background."
-    ),
-    "animal": (
-        "A golden retriever runs through a sun-dappled park, its fur gleaming in warm afternoon light. "
-        "The camera tracks alongside as the dog bounds across lush green grass, tongue out and tail wagging energetically. "
-        "Birds chirp softly in the background as leaves rustle in a gentle breeze. "
-        "The dog's paws kick up small tufts of grass with each stride, ears flopping with the motion."
-    ),
-    "complex_scene": (
-        "A bustling city street at night comes alive with neon signs reflecting off rain-slicked pavement. "
-        "Crowds of people in dark coats hurry past storefronts while taxis honk in the distance. "
-        "The camera slowly pans across the scene, capturing reflections dancing in puddles and steam rising from grates. "
-        "Streetlights cast long shadows as umbrellas bob through the crowd, their colors muted in the wet urban glow."
-    ),
-    "abstract": (
-        "A dreamlike surreal landscape unfolds with floating islands suspended in a pink and purple sky. "
-        "Ethereal mist swirls around ancient stone structures as bioluminescent plants pulse with soft rhythmic light. "
-        "The camera drifts slowly through this otherworldly realm with smooth floating movement. "
-        "Crystalline formations catch and refract light in rainbow patterns, casting prismatic shadows on the clouds below."
-    ),
-    "spatial": (
-        "A tabby cat sits regally on top of a weathered wooden crate in front of a cozy cottage at golden hour. "
-        "Warm light bathes the scene as the cat surveys its domain, eyes half-closed and tail curled around its paws. "
-        "The camera holds a static medium shot capturing ivy climbing the cottage walls and terracotta flower pots lining the entrance. "
-        "A gentle breeze stirs the cat's whiskers as shadows lengthen across the cobblestone path."
-    ),
-    "lighting": (
-        "A person's face emerges from complete darkness, dramatically illuminated by a single flickering candle held at chest level. "
-        "The warm orange glow dances across their features, creating deep shadows in the eye sockets and under the chin. "
-        "The camera holds a tight close-up as the flame gently sways, casting shifting patterns across weathered skin. "
-        "Wisps of smoke curl upward, catching the light before dissolving into shadow above."
-    ),
-    "color": (
-        "Three apples arranged in a row on a marble countertop, each a different vibrant color against the pale stone. "
-        "A red apple on the left gleams with moisture droplets, a green Granny Smith sits in the middle, and a golden yellow apple rests on the right. "
-        "Soft diffused lighting from above creates subtle reflections on the polished surface as the camera slowly dollies across the arrangement. "
-        "The color temperature shifts subtly from warm to cool as the camera moves, highlighting each fruit's unique hue."
-    ),
-    "motion": (
-        "A sleek sports car races down an empty desert highway at high speed, its red paint catching the harsh midday sun. "
-        "Motion blur streaks the background as the car cuts through the frame, wheels kicking up small dust clouds. "
-        "The camera tracks alongside in a dynamic side shot, capturing heat waves shimmering off the asphalt. "
-        "The engine roars as the car accelerates, sunlight glinting off chrome details and tinted windows."
-    ),
-    "person": (
-        "A lone figure walks slowly through heavy rain on a city sidewalk, shoulders hunched against the cold, holding a bright red umbrella. "
-        "Raindrops splash against the pavement creating small ripples in growing puddles as streetlights cast golden halos in the downpour. "
-        "The camera follows from behind, capturing their silhouette reflected in the wet pavement below. "
-        "Their coat collar is pulled up, free hand tucked in a pocket as they navigate between puddles with careful steps."
-    ),
-}
+# Import prompts from centralized module
+# These match the official LTX-2 prompting guide format (100+ words, dialogue, etc.)
+from experiments.ltx2.prompts import (
+    get_all_prompts,
+    QUICK_OFFICIAL,
+    QUICK_CATEGORY,
+)
 
-# Quick test subset
-QUICK_PROMPTS = {
-    "static_interior": TEST_PROMPTS["static_interior"],
-    "animal": TEST_PROMPTS["animal"],
-    "abstract": TEST_PROMPTS["abstract"],
-}
+# Full test prompts (official + category)
+TEST_PROMPTS = get_all_prompts(quick=False)
+
+# Quick test subset (3 official + 2 category = 5 prompts)
+QUICK_PROMPTS = get_all_prompts(quick=True)
 
 QUICK_LAYERS = [0, 24, 48]  # Early, middle, late
 
@@ -264,17 +204,15 @@ def create_layer_masking_hook(
 
 
 def compute_frame_statistics(frames: list) -> dict:
-    """Compute statistics on generated frames."""
-    frame_arrays = [np.array(f) for f in frames]
-    stacked = np.stack(frame_arrays, axis=0)  # [T, H, W, C]
+    """Compute statistics on generated frames.
 
-    return {
-        "mean_brightness": float(stacked.mean()),
-        "std": float(stacked.std()),
-        "min": float(stacked.min()),
-        "max": float(stacked.max()),
-        "temporal_variance": float(stacked.var(axis=0).mean()),
-    }
+    NOTE: Brightness/pixel statistics are NOT useful for understanding
+    layer contributions. This function exists for backwards compatibility
+    but only returns an empty dict. Use SigLIP score for meaningful analysis.
+    """
+    # Brightness metrics removed - they tell us nothing about layer contribution
+    # or text-image alignment. Keep function for API compatibility.
+    return {}
 
 
 def save_metadata(
@@ -288,7 +226,6 @@ def save_metadata(
     generation_time: float,
     frame_stats: dict,
     siglip_score: float | None = None,
-    image_reward: float | None = None,
 ):
     """Save viewer-compatible metadata JSON."""
     metadata_dir = output_dir / "metadata"
@@ -306,11 +243,9 @@ def save_metadata(
             "prompt_text": prompt_text,
         },
         "siglip_score": siglip_score,
-        "image_reward": image_reward,
         "generation_time_seconds": generation_time,
         "output_path": str(image_path.relative_to(output_dir.parent.parent.parent)),
         "video_path": str(video_path.relative_to(output_dir.parent.parent.parent)) if video_path else None,
-        "frame_stats": frame_stats,
     }
 
     with open(filepath, "w") as f:
@@ -402,24 +337,16 @@ def run_layer_profile_sweep(
     # Store original method
     original_get_embeds = pipe._get_gemma_prompt_embeds
 
-    # Load metric scorers if needed
+    # Load SigLIP scorer (the only meaningful metric)
     siglip_scorer = None
-    imgreward_scorer = None
 
     if compute_metrics:
         try:
             from experiments.metrics.siglip_score import SigLIPScorer
             siglip_scorer = SigLIPScorer()
-            logger.info("SigLIP2 scorer loaded")
+            logger.info("SigLIP2 scorer loaded (text-image alignment metric)")
         except ImportError as e:
             logger.warning(f"Could not load SigLIP scorer: {e}")
-
-        try:
-            from experiments.metrics.image_reward import ImageRewardScorer
-            imgreward_scorer = ImageRewardScorer()
-            logger.info("ImageReward scorer loaded")
-        except ImportError as e:
-            logger.warning(f"Could not load ImageReward scorer: {e}")
 
     # Results accumulator
     all_results = []
@@ -476,21 +403,14 @@ def run_layer_profile_sweep(
                 # Compute frame statistics
                 frame_stats = compute_frame_statistics(frames)
 
-                # Compute metrics
+                # Compute SigLIP score (only meaningful metric)
                 siglip_score = None
-                image_reward = None
 
                 if siglip_scorer:
                     try:
                         siglip_score = siglip_scorer.score(prompt_text, first_frame)
                     except Exception as e:
                         logger.warning(f"SigLIP scoring failed: {e}")
-
-                if imgreward_scorer:
-                    try:
-                        image_reward = imgreward_scorer.score(prompt_text, first_frame)
-                    except Exception as e:
-                        logger.warning(f"ImageReward scoring failed: {e}")
 
                 # Save metadata
                 meta_path = save_metadata(
@@ -504,7 +424,6 @@ def run_layer_profile_sweep(
                     generation_time=gen_time,
                     frame_stats=frame_stats,
                     siglip_score=siglip_score,
-                    image_reward=image_reward,
                 )
 
                 result = {
@@ -512,24 +431,12 @@ def run_layer_profile_sweep(
                     "prompt_id": prompt_id,
                     "generation_time": gen_time,
                     "siglip_score": siglip_score,
-                    "image_reward": image_reward,
-                    **frame_stats,
                 }
                 all_results.append(result)
 
-                # Log progress
-                metrics_str = ""
-                if siglip_score is not None:
-                    metrics_str += f" SL:{siglip_score:.3f}"
-                if image_reward is not None:
-                    metrics_str += f" IR:{image_reward:.2f}"
-
-                logger.info(
-                    f"  Time: {gen_time:.1f}s | "
-                    f"Mean: {frame_stats['mean_brightness']:.1f} | "
-                    f"Std: {frame_stats['std']:.1f}"
-                    f"{metrics_str}"
-                )
+                # Log progress - only SigLIP matters
+                siglip_str = f"{siglip_score:.4f}" if siglip_score is not None else "N/A"
+                logger.info(f"  Time: {gen_time:.1f}s | SigLIP: {siglip_str}")
 
             except Exception as e:
                 logger.error(f"  ERROR: {e}")
@@ -586,8 +493,6 @@ def run_layer_profile_sweep(
     del pipe
     if siglip_scorer:
         del siglip_scorer
-    if imgreward_scorer:
-        del imgreward_scorer
     gc.collect()
     torch.cuda.empty_cache()
 
@@ -595,43 +500,41 @@ def run_layer_profile_sweep(
 
 
 def compute_sweep_statistics(results: list[dict]) -> dict:
-    """Compute aggregate statistics from sweep results."""
+    """Compute aggregate statistics from sweep results.
+
+    Only computes SigLIP statistics - the only meaningful metric for
+    understanding layer contributions to text-image alignment.
+    """
     valid = [r for r in results if "error" not in r]
 
     if not valid:
         return {"error": "No valid results"}
 
-    # Per-layer statistics
+    # Per-layer statistics - SigLIP only
     layer_stats = {}
     layers = sorted(set(r["layer_idx"] for r in valid))
 
     for layer_idx in layers:
         layer_results = [r for r in valid if r["layer_idx"] == layer_idx]
+        siglip_scores = [r["siglip_score"] for r in layer_results if r.get("siglip_score") is not None]
+
         layer_stats[f"layer_{layer_idx:02d}"] = {
-            "mean_brightness": np.mean([r["mean_brightness"] for r in layer_results]),
-            "mean_std": np.mean([r["std"] for r in layer_results]),
-            "mean_temporal_var": np.mean([r["temporal_variance"] for r in layer_results]),
-            "mean_gen_time": np.mean([r["generation_time"] for r in layer_results]),
+            "mean_gen_time": float(np.mean([r["generation_time"] for r in layer_results])),
+            "mean_siglip": float(np.mean(siglip_scores)) if siglip_scores else None,
+            "std_siglip": float(np.std(siglip_scores)) if len(siglip_scores) > 1 else None,
+            "num_samples": len(siglip_scores),
         }
 
-        # Metrics if available
-        siglip_scores = [r["siglip_score"] for r in layer_results if r.get("siglip_score") is not None]
-        if siglip_scores:
-            layer_stats[f"layer_{layer_idx:02d}"]["mean_siglip"] = np.mean(siglip_scores)
-
-        imgreward_scores = [r["image_reward"] for r in layer_results if r.get("image_reward") is not None]
-        if imgreward_scores:
-            layer_stats[f"layer_{layer_idx:02d}"]["mean_imgreward"] = np.mean(imgreward_scores)
-
-    # Per-prompt statistics
+    # Per-prompt statistics - SigLIP only
     prompt_stats = {}
     prompt_ids = sorted(set(r["prompt_id"] for r in valid))
 
     for prompt_id in prompt_ids:
         prompt_results = [r for r in valid if r["prompt_id"] == prompt_id]
+        siglip_scores = [r["siglip_score"] for r in prompt_results if r.get("siglip_score") is not None]
         prompt_stats[prompt_id] = {
-            "mean_brightness": np.mean([r["mean_brightness"] for r in prompt_results]),
-            "std_across_layers": np.std([r["mean_brightness"] for r in prompt_results]),
+            "mean_siglip": float(np.mean(siglip_scores)) if siglip_scores else None,
+            "std_siglip": float(np.std(siglip_scores)) if len(siglip_scores) > 1 else None,
         }
 
     return {
@@ -643,44 +546,55 @@ def compute_sweep_statistics(results: list[dict]) -> dict:
 
 
 def print_analysis_summary(results: list[dict], layers: list[int], prompts: dict):
-    """Print a quick analysis summary."""
+    """Print a quick analysis summary - SigLIP scores only."""
     valid = [r for r in results if "error" not in r]
 
     if not valid:
         return
 
     print("\n" + "=" * 60)
-    print("QUICK ANALYSIS")
+    print("LAYER CONTRIBUTION ANALYSIS (SigLIP)")
     print("=" * 60)
 
-    # Find layers with highest/lowest mean brightness
-    layer_brightness = {}
-    for layer_idx in layers:
-        layer_results = [r for r in valid if r["layer_idx"] == layer_idx]
-        if layer_results:
-            layer_brightness[layer_idx] = np.mean([r["mean_brightness"] for r in layer_results])
-
-    if layer_brightness:
-        sorted_layers = sorted(layer_brightness.items(), key=lambda x: x[1])
-        print("\nLayers by mean brightness (low to high):")
-        for layer_idx, brightness in sorted_layers[:5]:
-            print(f"  Layer {layer_idx:2d}: {brightness:.1f}")
-        print("  ...")
-        for layer_idx, brightness in sorted_layers[-5:]:
-            print(f"  Layer {layer_idx:2d}: {brightness:.1f}")
-
-    # Find layers with highest SigLIP if available
+    # Calculate SigLIP scores per layer
     layer_siglip = {}
     for layer_idx in layers:
         layer_results = [r for r in valid if r["layer_idx"] == layer_idx and r.get("siglip_score")]
         if layer_results:
-            layer_siglip[layer_idx] = np.mean([r["siglip_score"] for r in layer_results])
+            scores = [r["siglip_score"] for r in layer_results]
+            layer_siglip[layer_idx] = {
+                "mean": np.mean(scores),
+                "std": np.std(scores) if len(scores) > 1 else 0,
+                "n": len(scores),
+            }
 
     if layer_siglip:
-        sorted_siglip = sorted(layer_siglip.items(), key=lambda x: x[1], reverse=True)
-        print("\nTop 10 layers by SigLIP score:")
-        for layer_idx, score in sorted_siglip[:10]:
-            print(f"  Layer {layer_idx:2d}: {score:.3f}")
+        sorted_siglip = sorted(layer_siglip.items(), key=lambda x: x[1]["mean"], reverse=True)
+
+        print("\nTop 10 layers by SigLIP score (best text-image alignment):")
+        print(f"  {'Layer':<8} {'SigLIP':<10} {'Std':<10}")
+        print("  " + "-" * 28)
+        for layer_idx, stats in sorted_siglip[:10]:
+            print(f"  Layer {layer_idx:2d}  {stats['mean']:.4f}    {stats['std']:.4f}")
+
+        print("\nBottom 10 layers:")
+        print(f"  {'Layer':<8} {'SigLIP':<10} {'Std':<10}")
+        print("  " + "-" * 28)
+        for layer_idx, stats in sorted_siglip[-10:]:
+            print(f"  Layer {layer_idx:2d}  {stats['mean']:.4f}    {stats['std']:.4f}")
+
+        # Layer regions analysis
+        early = [layer_siglip[i]["mean"] for i in range(0, 17) if i in layer_siglip]
+        middle = [layer_siglip[i]["mean"] for i in range(17, 35) if i in layer_siglip]
+        late = [layer_siglip[i]["mean"] for i in range(35, 49) if i in layer_siglip]
+
+        print("\nRegion averages:")
+        if early:
+            print(f"  Early (0-16):   {np.mean(early):.4f}")
+        if middle:
+            print(f"  Middle (17-34): {np.mean(middle):.4f}")
+        if late:
+            print(f"  Late (35-48):   {np.mean(late):.4f}")
 
     print("\nView results in the experiment viewer:")
     print("  uv run experiments/viewer/server.py")

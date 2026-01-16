@@ -22,11 +22,16 @@ import torch
 import numpy as np
 
 
+# Import prompts from centralized module
+# These match the official LTX-2 prompting guide format (100+ words, dialogue, etc.)
+from experiments.ltx2.prompts import CATEGORY_PROMPTS
+
 # Test prompts covering different categories
+# Uses properly formatted prompts instead of short out-of-distribution ones
 TEST_PROMPTS = [
-    "A cat walking through a sunny garden",
-    "Ocean waves crashing on rocky shore at sunset",
-    "A person typing on a laptop in a coffee shop",
+    CATEGORY_PROMPTS["animal"],   # Animal motion
+    CATEGORY_PROMPTS["nature"],   # Natural scene (replaces ocean waves)
+    CATEGORY_PROMPTS["human"],    # Human activity (replaces laptop typing)
 ]
 
 

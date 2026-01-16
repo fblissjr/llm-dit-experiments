@@ -172,10 +172,15 @@ def main():
     OUTPUT_DIR = Path("experiments/outputs/activation_steering")
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    # Test prompts
+    # Import prompts from centralized module
+    from experiments.ltx2.prompts import CATEGORY_PROMPTS, LEGACY_SHORT_PROMPTS
+
+    # Test prompts for embedding extraction (one short reference, one full format)
+    # Using short prompt for vague baseline is acceptable here since we're testing
+    # the steering direction, not generation quality
     test_prompts = [
-        "a cat",
-        "a fluffy orange tabby cat with green eyes, soft fur catching sunlight",
+        LEGACY_SHORT_PROMPTS["animal_short"],  # Vague baseline
+        CATEGORY_PROMPTS["animal"],             # Detailed version
     ]
 
     print("\nAttempting embedding extraction...")

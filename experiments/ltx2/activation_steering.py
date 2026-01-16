@@ -2,7 +2,7 @@
 """
 LTX-2 Activation Steering Experiment
 
-Last Updated: 2026-01-15
+Last Updated: 2026-01-16
 
 Zero-training technique: steer encoder hidden states toward "detailed description"
 directions without any model training.
@@ -22,11 +22,17 @@ Usage:
 
 import argparse
 import gc
+import sys
 import time
 from pathlib import Path
 
 import numpy as np
 import torch
+
+# Add project root to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
+from experiments.ltx2.prompts import CATEGORY_PROMPTS
 
 
 # Contrastive prompt pairs for direction extraction
@@ -81,12 +87,8 @@ VISUAL_SHARPNESS_PAIRS = [
 # Default (legacy compatibility)
 DIRECTION_PAIRS = SEMANTIC_DIRECTION_PAIRS
 
-# Test prompts for generation
-TEST_PROMPTS = [
-    "A dog playing in a park",
-    "A mountain landscape",
-    "Someone cooking in a kitchen",
-]
+# Test prompts for generation (using standardized LTX-2 format prompts)
+TEST_PROMPTS = list(CATEGORY_PROMPTS.values())[:3]  # animal, urban, nature prompts
 
 
 def extract_embeddings_via_generation(pipe, prompt: str, device="cuda"):

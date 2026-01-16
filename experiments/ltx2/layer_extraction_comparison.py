@@ -33,31 +33,16 @@ import numpy as np
 import torch
 
 
-# LTX-2 requires detailed, paragraph-style prompts (4-8 sentences)
-# See experiments/ltx2/prompting_guide.md for format requirements
-# NOTE: Text rendering ("HELLO") doesn't work reliably in LTX-2
+# Import prompts from centralized module
+# These match the official LTX-2 prompting guide format (100+ words, dialogue, etc.)
+from experiments.ltx2.prompts import CATEGORY_PROMPTS
+
+# Use category prompts for layer extraction comparison
+# Map to prompt types: semantic (animal), spatial (urban), abstract (abstract)
 TEST_PROMPTS = [
-    # Semantic/concrete prompt - should benefit from middle layers
-    (
-        "A golden retriever runs through a sun-dappled park, its fur gleaming in warm afternoon light. "
-        "The camera tracks alongside as the dog bounds across lush green grass, tongue out and tail wagging energetically. "
-        "Birds chirp softly in the background as leaves rustle in a gentle breeze. "
-        "The dog's paws kick up small tufts of grass with each stride, ears flopping with the motion."
-    ),
-    # Spatial/compositional prompt
-    (
-        "A tabby cat sits regally on top of a weathered wooden crate in front of a cozy cottage at golden hour. "
-        "Warm light bathes the scene as the cat surveys its domain, eyes half-closed and tail curled around its paws. "
-        "The camera holds a static medium shot capturing ivy climbing the cottage walls and terracotta flower pots lining the entrance. "
-        "A gentle breeze stirs the cat's whiskers as shadows lengthen across the cobblestone path."
-    ),
-    # Abstract/style prompt - should benefit from late layers
-    (
-        "A dreamlike surreal landscape unfolds with floating islands suspended in a pink and purple sky. "
-        "Ethereal mist swirls around ancient stone structures as bioluminescent plants pulse with soft rhythmic light. "
-        "The camera drifts slowly through this otherworldly realm with smooth floating movement. "
-        "Crystalline formations catch and refract light in rainbow patterns, casting prismatic shadows on the clouds below."
-    ),
+    CATEGORY_PROMPTS["animal"],    # Semantic/concrete - should benefit from middle layers
+    CATEGORY_PROMPTS["urban"],     # Spatial/compositional
+    CATEGORY_PROMPTS["abstract"],  # Abstract/style - should benefit from late layers
 ]
 
 PROMPT_TYPES = ["semantic", "spatial", "abstract"]

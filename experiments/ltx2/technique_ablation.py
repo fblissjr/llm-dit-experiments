@@ -34,6 +34,7 @@ Usage:
 import argparse
 import gc
 import json
+import sys
 import time
 from dataclasses import dataclass, asdict
 from datetime import datetime
@@ -43,6 +44,10 @@ from typing import Optional
 
 import torch
 
+# Add project root to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
+from experiments.ltx2.prompts import CATEGORY_PROMPTS
 from llm_dit.config import EnhancementConfig
 from llm_dit.pipelines.ltx2 import LTX2Pipeline
 
@@ -273,8 +278,8 @@ def main():
     parser.add_argument(
         "--prompt",
         type=str,
-        default="A cat walking through a sunny garden, realistic",
-        help="Text prompt for video generation",
+        default=list(CATEGORY_PROMPTS.values())[0],  # animal prompt (143 words)
+        help="Text prompt for video generation (default: standardized LTX-2 format prompt)",
     )
     parser.add_argument("--height", type=int, default=512, help="Video height")
     parser.add_argument("--width", type=int, default=768, help="Video width")

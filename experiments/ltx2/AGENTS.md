@@ -2,9 +2,32 @@
 
 Last updated: 2026-01-16
 
+---
+
+## CRITICAL: Prompt Standardization (2026-01-16)
+
+**All experiment prompts have been centralized.** Do NOT define inline prompts.
+
+```python
+# REQUIRED - import from centralized module
+from experiments.ltx2.prompts import CATEGORY_PROMPTS, get_all_prompts
+
+TEST_PROMPTS = CATEGORY_PROMPTS  # 8 prompts, 100+ words each
+# or
+TEST_PROMPTS = get_all_prompts(quick=True)  # 5 prompts for fast testing
+```
+
+**Why?** Prior experiments used short 60-80 word prompts that are out-of-distribution for LTX-2's training data (which uses 100-300 word prose with dialogue, scene headings, and camera directions).
+
+**Full details**: [prompting_fix_summary.md](prompting_fix_summary.md)
+
+---
+
 ## Quick Links
 
-- **LTX-2 Prompting Guide**: [prompting_guide.md](prompting_guide.md) - Required reading before running LTX-2 experiments
+- **Prompts Module**: [prompts.py](prompts.py) - ALL experiment prompts (MUST USE)
+- **Prompting Fix Summary**: [prompting_fix_summary.md](prompting_fix_summary.md) - Why prompts changed
+- **LTX-2 Prompting Guide**: [prompting_guide.md](prompting_guide.md) - Format requirements
 - **Official Repo Analysis**: `internal/research/ltx2/official_repo_analysis.md` - Infrastructure we discovered in the official LTX-2 repo
 
 ## Directory Structure
@@ -12,10 +35,13 @@ Last updated: 2026-01-16
 ```
 experiments/
 ├── ltx2/                    # LTX-2 specific experiments
+│   ├── prompts.py                # CENTRALIZED PROMPTS (MUST USE)
 │   ├── prompting_guide.md        # How to write prompts for LTX-2
+│   ├── prompting_fix_summary.md  # Why prompts were standardized
 │   ├── layer_profile_sweep.py    # Full 49-layer sweep with soft masking
 │   ├── layer_extraction_comparison.py  # Layer subset comparison
 │   ├── layer_blend_sweep.py      # Weighted layer blending experiments
+│   ├── prompt_format_ablation.py # Test structured formats vs prose
 │   ├── analyze_projection_matrix.py    # Zero-cost W analysis
 │   ├── analyze_projection_deeper.py    # Activation-weighted contribution
 │   ├── thinking_token_analysis.py      # Register token analysis

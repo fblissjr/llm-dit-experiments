@@ -44,29 +44,58 @@ Every prompt must include:
 
 ---
 
-## Experiment Prompts
+## Official Example Prompts (VERBATIM)
 
-### For Layer Analysis Experiments
+These are the official LTX-2 example prompts from the prompting guide. **Use these verbatim** in experiments - do not summarize or simplify. They match LTX-2's training data distribution.
 
-Use these prompts that cover different visual categories:
+### Action / Cinematic
 
-**Simple Object (Static)**
-> "A medium shot of a bright red rubber ball resting on a pristine white surface. The lighting is soft and even, creating gentle shadows beneath the ball. The camera holds steady as dust particles drift through a warm beam of afternoon sunlight. The ball's glossy surface catches subtle reflections from the ambient light."
+> "An action packed, cinematic shot of a monster truck driving fast towards the camera, the truck passes the cameras it pans left to follow the trucks reckless drive. dust and motion blur is around the truck, hand held feel to the camera as it tries to track its ride into the distance. the truck then drifts and turns around, then drives back towards the camera until seen in extreme close up."
 
-**Animal (Motion)**
-> "A golden retriever runs joyfully through a sun-dappled park, its fur gleaming in the warm afternoon light. The camera tracks alongside as the dog bounds across lush green grass, tongue out and tail wagging energetically. Birds chirp softly in the background as leaves rustle in a gentle breeze. The scene captures natural motion with shallow depth of field."
+### News Broadcast (Live Event)
 
-**Person (Emotion via Physical Cues)**
-> "A lone figure walks slowly through heavy rain on a city sidewalk, holding a bright red umbrella. Their shoulders are hunched against the cold, coat collar pulled up. The camera follows from behind as streetlights create golden halos in the downpour. Raindrops splash against the pavement creating small ripples in growing puddles."
+> "EXT. SMALL TOWN STREET – MORNING – LIVE NEWS BROADCAST. The shot opens on a news reporter standing in front of a row of cordoned-off cars, yellow caution tape fluttering behind him. The light is warm, early sun reflecting off the camera lens. The faint hum of chatter and distant drilling fills the air. The reporter, composed but visibly excited, looks directly into the camera, microphone in hand.
+> Reporter (live): "Thank you, Sylvia. And yes — this is a sentence I never thought I'd say on live television — but this morning, here in the quiet town of New Castle, Vermont… black gold has been found!"
+> He gestures slightly toward the field behind him. Reporter (grinning): "If my cameraman can pan over, you'll see what all the excitement's about."
+> The camera pans right, slowly revealing a construction site surrounded by workers in hard hats. A beat of silence — then, with a sudden roar, a geyser of oil erupts from the ground, blasting upward in a violent plume. Workers cheer and scramble, the black stream glistening in the morning light. The camera shakes slightly, trying to stay focused through the chaos.
+> Reporter (off-screen, shouting over the noise): "There it is, folks — the moment New Castle will never forget!"
+> The camera catches the sunlight gleaming off the oil mist before pulling back, revealing the entire scene — the small-town skyline silhouetted against the wild fountain of oil."
 
-**Complex Scene (Multiple Elements)**
-> "A bustling city street at night comes alive with neon signs reflecting off rain-slicked pavement. Crowds of people in dark coats hurry past storefronts while taxis honk in the distance. The camera slowly pans across the scene, capturing the vibrant energy of urban nightlife. Steam rises from a nearby food cart as colored lights dance across wet surfaces."
+### Comedy / Dialogue (Script Style)
 
-**Abstract/Stylized**
-> "A dreamlike surreal landscape unfolds with floating islands suspended in a pink and purple sky. Ethereal mist swirls around ancient stone structures as bioluminescent plants pulse with soft rhythmic light. The camera drifts slowly through this otherworldly realm with smooth, floating movement. Crystalline formations catch and refract light in rainbow patterns."
+> "A warm sunny backyard. The camera starts in a tight cinematic close-up of a woman and a man in their 30s, facing each other with serious expressions. The woman, emotional and dramatic, says softly, "That's it... Dad's lost it. And we've lost Dad."
+> The man exhales, slightly annoyed: "Stop being so dramatic, Jess." A beat. He glances aside, then mutters defensively, "He's just having fun."
+> The camera slowly pans right, revealing the grandfather in the garden wearing enormous butterfly wings, waving his arms in the air like he's trying to take off. He shouts, "Wheeeew!" as he flaps his wings with full commitment.
+> The woman covers her face, on the verge of tears. The tone is deadpan, absurd, and quietly tragic."
 
-**Dramatic Lighting**
-> "A person's face emerges from complete darkness, dramatically illuminated by a single flickering candle held at chest level. The warm orange glow dances across their features, creating deep shadows in the eye sockets and under the chin. The camera holds a tight close-up as the flame gently sways. Wisps of smoke curl upward, catching the light before dissolving into shadow."
+### Animation (Pixar Style - Baker)
+
+> "INT. OVEN – DAY. Static camera from inside the oven, looking outward through the slightly fogged glass door. Warm golden light glows around freshly baked cookies. The baker's face fills the frame, eyes wide with focus, his breath fogging the glass as he leans in. Subtle reflections move across the glass as steam rises.
+> Baker (whispering dramatically): "Today… I achieve perfection." He leans even closer, nose nearly touching the glass. "Golden edges. Soft center. The gods themselves will smell these cookies and weep."
+> Baker: "Wait—" (beat) "Did I… forget the chocolate chips?"
+> Cut to side view — coworker pops into frame, chewing casually. Coworker (mouth full): "Nope. You forgot the sugar."
+> Quick zoom back to the baker's horrified face, pressed against the oven door, as cookies deflate behind the glass. Steam drifts upward in slow motion. pixar style acting and timing"
+
+### Animation (Frog Yoga)
+
+> "The camera opens in a calm, sunlit frog yoga studio. Warm morning light washes over the wooden floor as incense smoke drifts lazily in the air. The senior frog instructor sits cross-legged at the center, eyes closed, voice deep and calm. "We are one with the pond." All the frogs answer softly: "Ommm…" "We are one with the mud." "Ommm…" He smiles faintly. "We are one with the flies." A pause.
+> The camera pans to the side towards one frog who twitches, eyes darting. Suddenly its tongue snaps out, catching a fly mid-air and pulling it into its mouth.
+> The master exhales slowly, still serene. "But we do not chase the flies…" Beat. "not during class."
+> The guilty frog lowers its head in shame, folding its hands back into a meditative pose. The other frogs resume their chant: "Ommm…" Camera holds for a moment on the embarrassed frog, eyes closed too tightly, pretending nothing happened."
+
+### Documentary / Drama
+
+> "INT. DAYTIME TALK SHOW SET – AFTERNOON Soft studio lighting glows across a warm-toned set. The audience murmurs faintly as the camera pans to reveal three guests seated on a couch — a middle-aged couple and the show's host sitting across from them.
+> The host leans forward, voice steady but probing: Host: "When did you first notice that your daughter, Missy, started to spiral?"
+> The woman's face crumples; she takes a shaky breath and begins to cry. Her husband places a comforting hand on her shoulder, looking down before turning back toward the host. Father (quietly, with guilt): "We… we don't know what we did wrong."
+> The studio falls silent for a moment. The camera cuts to the host, who looks gravely into the lens. Host (to camera): "Let's take a look at a short piece our team prepared — chronicling Missy's downward path."
+> The lights dim slightly as the camera pushes in on the mother's tear-streaked face. The studio monitors flicker to life, beginning to play the segment as the audience holds its breath."
+
+### Sci-Fi / Stylized
+
+> "The young african american woman wearing a futuristic transparent visor and a bodysuit with a tube attached to her neck. she is soldering a robotic arm. she stops and looks to her right as she hears a suspicious strong hit sound from a distance. she gets up slowly from her chair and says with an angry african american accent: "Rick I told you to close that goddamn door after you!".
+> then, a futuristic blue alien explorer with dreadlocks wearing a rugged outfit walks into the scene excitedly holding a futuristic device and says with a low robotic voice: "Fuck the door look what I found!".
+> the alien hands the woman the device, she looks down at it excitedly as the camera zooms in on her intrigued illuminated face. she then says: "is this what I think it is?" she smiles excitedly. sci-fi style cinematic scene"
 
 ---
 
@@ -104,8 +133,13 @@ cinematic, film noir, documentary, painterly, pixel art, surreal, minimalist, ha
 
 ---
 
+## Related Documentation
+
+- **Complete Reference**: [ltx2_official_prompting_guide.md](./ltx2_official_prompting_guide.md) - Full official guide with vocabulary lists and expanded examples
+- **Code Implementation**: [prompts.py](./prompts.py) - Centralized prompt module (import from here in experiments)
+- **Standardization Summary**: [prompting_fix_summary.md](./prompting_fix_summary.md) - Why prompts were standardized
+- **Research Context**: [internal/research/ltx2/ltx2_captioning_research.md](../../internal/research/ltx2/ltx2_captioning_research.md) - Training data caption format analysis
+
 ## Source
 
 Based on the official LTX-2 prompting guide from [ltx.io](https://ltx.io/model/model-blog/prompting-guide-for-ltx-2).
-
-See `ltx2_prompting_guide_written_by_gemini.md` for the complete reference with extensive examples.

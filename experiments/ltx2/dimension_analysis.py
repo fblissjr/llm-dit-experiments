@@ -57,6 +57,8 @@ import torch
 # Add project root to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
+from experiments.ltx2.prompts import CATEGORY_PROMPTS, LEGACY_SHORT_PROMPTS, QUICK_CATEGORY
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
@@ -75,42 +77,11 @@ TRACKED_DIMENSIONS = [0, 4, 396, 1000, 1920, 3839]
 OUTLIER_THRESHOLDS = [10, 50, 100]
 
 # Default diverse prompts for statistical stability
-DEFAULT_PROMPTS = [
-    # Simple subjects (baseline)
-    "A cat",
-    "A mountain",
-    "A house",
-    "A tree",
-    "A flower",
-    # Detailed descriptions
-    "A tabby cat with green eyes sleeping on a red velvet cushion",
-    "A snow-capped mountain at sunset with orange and purple clouds",
-    "A Victorian house with a wraparound porch and white picket fence",
-    # Abstract concepts
-    "The concept of freedom",
-    "Mathematical beauty",
-    "Peaceful serenity",
-    # Technical/specific
-    "A 1967 Ford Mustang Fastback in Highland Green",
-    "A detailed cross-section of a human heart",
-    # Style prompts
-    "In the style of Monet, impressionist water lilies",
-    "Cyberpunk neon cityscape, rain-soaked streets",
-    "Ukiyo-e woodblock print of a great wave",
-    # Long prompts
-    "A highly detailed photograph of an elderly craftsman in his workshop, warm afternoon light streaming through dusty windows, tools hanging on pegboard walls",
-    # Culturally-charged
-    "A peaceful protest for civil rights",
-    "A sacred temple at dawn",
-]
+# Using standardized LTX-2 format prompts (100-300 words each)
+DEFAULT_PROMPTS = list(CATEGORY_PROMPTS.values())
 
 # Quick mode uses fewer prompts
-QUICK_PROMPTS = [
-    "A cat",
-    "A mountain landscape at sunset",
-    "A 1967 Ford Mustang in green",
-    "Cyberpunk neon cityscape",
-]
+QUICK_PROMPTS = [CATEGORY_PROMPTS[k] for k in QUICK_CATEGORY]
 
 
 @dataclass

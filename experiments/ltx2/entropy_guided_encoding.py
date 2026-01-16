@@ -30,10 +30,14 @@ import numpy as np
 import torch
 
 
+# Import prompts from centralized module
+# These match the official LTX-2 prompting guide format (100+ words, dialogue, etc.)
+from experiments.ltx2.prompts import CATEGORY_PROMPTS
+
 TEST_PROMPTS = [
-    "A dog playing in a park with a ball",
-    "A mountain landscape at sunset with clouds",
-    "Someone cooking in a modern kitchen",
+    CATEGORY_PROMPTS["animal"],   # Animal motion (replaces "dog playing")
+    CATEGORY_PROMPTS["nature"],   # Natural scene (replaces "mountain landscape")
+    CATEGORY_PROMPTS["human"],    # Human activity (replaces "cooking")
 ]
 
 

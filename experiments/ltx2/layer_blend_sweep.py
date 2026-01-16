@@ -44,40 +44,12 @@ import numpy as np
 import torch
 from PIL import Image
 
-# LTX-2 prompts following official guidelines (4-8 sentences)
-TEST_PROMPTS = {
-    "animal": (
-        "A golden retriever runs joyfully through a sun-dappled park, its fur gleaming in "
-        "warm afternoon light. The camera tracks alongside as the dog bounds across lush green "
-        "grass, tongue out and tail wagging energetically. Birds chirp softly in the background "
-        "as leaves rustle in a gentle breeze. The scene captures the pure happiness of a pet "
-        "enjoying a perfect day outdoors."
-    ),
-    "urban": (
-        "A bustling city street at night comes alive with neon signs reflecting off rain-slicked "
-        "pavement. Crowds of people in dark coats hurry past storefronts while taxis honk in the "
-        "distance. The camera slowly pans across the scene capturing the vibrant energy of urban "
-        "nightlife. Steam rises from subway grates as streetlights cast long shadows."
-    ),
-    "nature": (
-        "A serene mountain lake reflects the surrounding pine forest under a clear blue sky. "
-        "The water is perfectly still, creating a mirror image of snow-capped peaks in the "
-        "distance. A gentle breeze causes subtle ripples near the shoreline where wildflowers "
-        "bloom. The camera holds steady on this peaceful landscape as a bird flies across frame."
-    ),
-    "abstract": (
-        "A dreamlike surreal landscape unfolds with floating islands suspended in a pink and "
-        "purple sky. Ethereal mist swirls around ancient stone structures as bioluminescent "
-        "plants pulse with soft light. The camera drifts slowly through this otherworldly realm "
-        "revealing impossible geometries and cascading waterfalls that flow upward."
-    ),
-    "human": (
-        "A skilled artisan carefully shapes clay on a pottery wheel in a sunlit workshop. "
-        "Their hands move with practiced precision as the form emerges from the spinning clay. "
-        "Dust motes float in shafts of golden afternoon light streaming through tall windows. "
-        "The camera captures the meditative focus on the artist's face as they work."
-    ),
-}
+# Import prompts from centralized module
+# These match the official LTX-2 prompting guide format (100+ words, dialogue, etc.)
+from experiments.ltx2.prompts import get_category_prompts, QUICK_CATEGORY
+
+# Category prompts for layer blend experiments
+TEST_PROMPTS = get_category_prompts(quick=False)
 
 # Layer blend configurations
 # Each config specifies layer weights (non-active layers get 0 weight)
@@ -136,35 +108,25 @@ BLEND_CONFIGS = {
 }
 
 QUICK_CONFIGS = ["baseline", "late_heavy", "top_contributors"]
-QUICK_PROMPTS = ["animal", "urban"]
+QUICK_PROMPTS = QUICK_CATEGORY  # Use centralized quick category subset
 
 
 def compute_metrics(frame: Image.Image, prompt: str) -> dict:
-    """Compute quality metrics for a frame."""
+    """Compute quality metrics for a frame.
+
+    Only computes SigLIP score - the only meaningful metric for understanding
+    layer contributions to text-image alignment. Brightness/pixel statistics
+    are meaningless for this analysis.
+    """
     metrics = {}
 
-    # Basic statistics
-    frame_array = np.array(frame)
-    metrics["mean_brightness"] = float(frame_array.mean())
-    metrics["std"] = float(frame_array.std())
-    metrics["min"] = float(frame_array.min())
-    metrics["max"] = float(frame_array.max())
-
-    # Try SigLIP score
+    # SigLIP score - measures text-image alignment (the only metric that matters)
     try:
         from experiments.metrics.siglip_score import compute_siglip_score
         metrics["siglip_score"] = compute_siglip_score(prompt, frame)
     except Exception as e:
         metrics["siglip_score"] = None
         metrics["siglip_error"] = str(e)
-
-    # Try ImageReward
-    try:
-        from experiments.metrics.image_reward import compute_image_reward
-        metrics["image_reward"] = compute_image_reward(prompt, frame)
-    except Exception as e:
-        metrics["image_reward"] = None
-        metrics["image_reward_error"] = str(e)
 
     return metrics
 
@@ -363,25 +325,22 @@ def run_layer_blend_sweep(
             all_results.append(result)
             config_results.append(result)
 
-            print(f"  Time: {gen_time:.1f}s | Brightness: {metrics['mean_brightness']:.1f}")
-            if metrics.get("siglip_score") is not None:
-                print(f"  SigLIP: {metrics['siglip_score']:.4f}", end="")
-            if metrics.get("image_reward") is not None:
-                print(f" | ImageReward: {metrics['image_reward']:.4f}", end="")
-            print()
+            siglip_str = f"{metrics['siglip_score']:.4f}" if metrics.get("siglip_score") is not None else "N/A"
+            print(f"  Time: {gen_time:.1f}s | SigLIP: {siglip_str}")
 
             # Cleanup between generations
             del frames, output, first_frame
             gc.collect()
             torch.cuda.empty_cache()
 
-        # Summarize config
+        # Summarize config - only SigLIP matters
+        siglip_scores = [r["siglip_score"] for r in config_results if r.get("siglip_score") is not None]
         config_summaries[config_name] = {
             "description": config["description"],
             "num_active_layers": len(config["active_layers"]),
-            "mean_brightness": np.mean([r["mean_brightness"] for r in config_results]),
-            "mean_siglip": np.mean([r["siglip_score"] for r in config_results if r.get("siglip_score") is not None]) if any(r.get("siglip_score") is not None for r in config_results) else None,
-            "mean_image_reward": np.mean([r["image_reward"] for r in config_results if r.get("image_reward") is not None]) if any(r.get("image_reward") is not None for r in config_results) else None,
+            "mean_siglip": float(np.mean(siglip_scores)) if siglip_scores else None,
+            "std_siglip": float(np.std(siglip_scores)) if len(siglip_scores) > 1 else None,
+            "num_samples": len(siglip_scores),
         }
 
     # Save summary
@@ -406,49 +365,49 @@ def run_layer_blend_sweep(
 
     # Generate comparison visualization
     print("\n" + "=" * 60)
-    print("SUMMARY")
+    print("SUMMARY - SigLIP Scores by Layer Configuration")
     print("=" * 60)
 
-    print(f"\n{'Config':<20} {'Layers':<8} {'Brightness':<12} {'SigLIP':<10} {'ImgReward':<10}")
-    print("-" * 60)
+    print(f"\n{'Config':<20} {'Layers':<8} {'SigLIP':<12} {'Std':<10} {'N':<5}")
+    print("-" * 55)
 
-    for config_name, stats in config_summaries.items():
+    # Sort by SigLIP score (descending) for easier analysis
+    sorted_configs = sorted(
+        config_summaries.items(),
+        key=lambda x: x[1].get('mean_siglip') or 0,
+        reverse=True
+    )
+
+    for config_name, stats in sorted_configs:
         siglip_str = f"{stats['mean_siglip']:.4f}" if stats.get('mean_siglip') is not None else "N/A"
-        reward_str = f"{stats['mean_image_reward']:.4f}" if stats.get('mean_image_reward') is not None else "N/A"
-        print(f"{config_name:<20} {stats['num_active_layers']:<8} {stats['mean_brightness']:<12.1f} {siglip_str:<10} {reward_str:<10}")
+        std_str = f"{stats['std_siglip']:.4f}" if stats.get('std_siglip') is not None else "N/A"
+        print(f"{config_name:<20} {stats['num_active_layers']:<8} {siglip_str:<12} {std_str:<10} {stats['num_samples']:<5}")
 
-    # Create visualization
-    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+    # Create visualization - SigLIP only with error bars
+    fig, ax = plt.subplots(figsize=(12, 6))
 
-    config_names = list(config_summaries.keys())
-    x = range(len(config_names))
+    # Sort by SigLIP for visual clarity
+    sorted_names = [c[0] for c in sorted_configs]
+    x = range(len(sorted_names))
 
-    # Brightness
-    ax1 = axes[0]
-    brightness_values = [config_summaries[c]["mean_brightness"] for c in config_names]
-    ax1.bar(x, brightness_values)
-    ax1.set_xticks(x)
-    ax1.set_xticklabels(config_names, rotation=45, ha="right")
-    ax1.set_ylabel("Mean Brightness")
-    ax1.set_title("Brightness by Blend Config")
+    siglip_values = [config_summaries[c].get("mean_siglip") or 0 for c in sorted_names]
+    siglip_stds = [config_summaries[c].get("std_siglip") or 0 for c in sorted_names]
+    layer_counts = [config_summaries[c]["num_active_layers"] for c in sorted_names]
 
-    # SigLIP
-    ax2 = axes[1]
-    siglip_values = [config_summaries[c].get("mean_siglip") or 0 for c in config_names]
-    ax2.bar(x, siglip_values)
-    ax2.set_xticks(x)
-    ax2.set_xticklabels(config_names, rotation=45, ha="right")
-    ax2.set_ylabel("SigLIP Score")
-    ax2.set_title("Text-Image Alignment by Blend Config")
+    # Color bars by layer count (fewer = more compute efficient)
+    colors = plt.cm.viridis([count / 49 for count in layer_counts])
 
-    # ImageReward
-    ax3 = axes[2]
-    reward_values = [config_summaries[c].get("mean_image_reward") or 0 for c in config_names]
-    ax3.bar(x, reward_values)
-    ax3.set_xticks(x)
-    ax3.set_xticklabels(config_names, rotation=45, ha="right")
-    ax3.set_ylabel("ImageReward Score")
-    ax3.set_title("Human Preference by Blend Config")
+    bars = ax.bar(x, siglip_values, yerr=siglip_stds, capsize=4, color=colors, edgecolor='black', linewidth=0.5)
+    ax.set_xticks(x)
+    ax.set_xticklabels([f"{n}\n({layer_counts[i]}L)" for i, n in enumerate(sorted_names)], rotation=45, ha="right")
+    ax.set_ylabel("SigLIP Score (text-image alignment)")
+    ax.set_xlabel("Layer Configuration (active layers)")
+    ax.set_title("LTX-2 Layer Blend Sweep: Text-Image Alignment by Configuration")
+
+    # Add baseline reference line
+    if "baseline" in config_summaries and config_summaries["baseline"].get("mean_siglip"):
+        ax.axhline(y=config_summaries["baseline"]["mean_siglip"], color='red', linestyle='--', label='Baseline', alpha=0.7)
+        ax.legend()
 
     plt.tight_layout()
     plot_path = output_path / "layer_blend_comparison.png"

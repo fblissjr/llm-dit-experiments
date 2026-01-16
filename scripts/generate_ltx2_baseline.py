@@ -25,10 +25,16 @@ Usage:
 
 import argparse
 import gc
+import sys
 import time
 from pathlib import Path
 
 import torch
+
+# Add project root to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from experiments.ltx2.prompts import CATEGORY_PROMPTS
 
 
 def main():
@@ -42,8 +48,8 @@ def main():
     parser.add_argument(
         "--prompt",
         type=str,
-        default="A cat walking through a sunny garden",
-        help="Text prompt for video generation",
+        default=list(CATEGORY_PROMPTS.values())[0],  # animal prompt (143 words)
+        help="Text prompt for video generation (default: standardized LTX-2 format prompt)",
     )
     parser.add_argument(
         "--negative-prompt",
