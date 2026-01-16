@@ -30,7 +30,8 @@ import torch
 
 
 # Contrastive prompt pairs for direction extraction
-DIRECTION_PAIRS = [
+# Semantic pairs: "detailed" vs "vague" descriptions (original)
+SEMANTIC_DIRECTION_PAIRS = [
     {
         "vague": "a cat",
         "detailed": "a fluffy orange tabby cat with green eyes, soft fur catching sunlight",
@@ -44,6 +45,41 @@ DIRECTION_PAIRS = [
         "detailed": "a young woman with curly brown hair wearing a red dress, smiling warmly",
     },
 ]
+
+# Visual pairs: explicit visual properties (brightness-focused)
+VISUAL_BRIGHTNESS_PAIRS = [
+    {
+        "vague": "a dark moody night scene, low light, shadows, dimly lit",
+        "detailed": "a bright sunny day, well-lit scene, vibrant lighting, sunlight",
+    },
+    {
+        "vague": "dark rainy evening, overcast sky, gloomy atmosphere",
+        "detailed": "bright clear morning, blue sky, cheerful lighting, sunshine",
+    },
+    {
+        "vague": "nighttime cityscape, dark streets, neon lights in darkness",
+        "detailed": "daytime cityscape, bright streets, sunlit buildings, clear day",
+    },
+]
+
+# Visual pairs: sharpness-focused
+VISUAL_SHARPNESS_PAIRS = [
+    {
+        "vague": "blurry soft image, out of focus, low resolution, hazy",
+        "detailed": "sharp crisp image, high detail, crystal clear, 4K quality",
+    },
+    {
+        "vague": "motion blur, unfocused, grainy footage, soft edges",
+        "detailed": "perfectly focused, sharp edges, high definition, detailed",
+    },
+    {
+        "vague": "dreamy soft focus, gaussian blur, misty, ethereal",
+        "detailed": "razor sharp focus, tack sharp, professional clarity, HD",
+    },
+]
+
+# Default (legacy compatibility)
+DIRECTION_PAIRS = SEMANTIC_DIRECTION_PAIRS
 
 # Test prompts for generation
 TEST_PROMPTS = [
@@ -407,12 +443,23 @@ def run_steering_experiment(
     output_dir: str = "experiments/outputs/activation_steering",
     model_path: str = "models/LTX-2",
     save_videos: bool = True,
+    direction_pairs: list = None,
 ):
     """
     Run activation steering experiment with various alpha values.
+
+    Args:
+        alphas: List of steering strength values to test
+        output_dir: Directory for output files
+        model_path: Path to LTX-2 model
+        save_videos: Whether to save output videos
+        direction_pairs: Custom direction pairs for steering. If None, uses default semantic pairs.
     """
     from diffusers import LTX2Pipeline
     from diffusers.utils import export_to_video
+
+    # Use provided direction pairs or default
+    pairs = direction_pairs if direction_pairs is not None else DIRECTION_PAIRS
 
     print("=" * 60)
     print("LTX-2 Activation Steering Experiment")
@@ -444,7 +491,7 @@ def run_steering_experiment(
         print("  Using generation hook method (runs minimal generations to extract embeddings)")
 
         steering_direction, magnitude = extract_direction_via_generation(
-            pipe, DIRECTION_PAIRS
+            pipe, pairs
         )
 
         if steering_direction is None:
@@ -455,7 +502,7 @@ def run_steering_experiment(
         torch.save({
             "direction": steering_direction.cpu() if steering_direction.is_cuda else steering_direction,
             "magnitude": magnitude,
-            "direction_pairs": DIRECTION_PAIRS,
+            "direction_pairs": pairs,
         }, direction_file)
         print(f"  Saved steering direction to {direction_file}")
 
@@ -554,7 +601,7 @@ def run_steering_experiment(
     torch.save({
         "direction": steering_direction.cpu(),
         "magnitude": magnitude,
-        "direction_pairs": DIRECTION_PAIRS,
+        "direction_pairs": pairs,
     }, output_path / "steering_direction.pt")
 
     # Cleanup
@@ -585,12 +632,29 @@ def main():
         action="store_true",
         help="Don't save output videos",
     )
+    parser.add_argument(
+        "--direction-type",
+        type=str,
+        choices=["semantic", "brightness", "sharpness"],
+        default="semantic",
+        help="Type of contrastive pairs: semantic (detailed vs vague), brightness (bright vs dark), sharpness (sharp vs blurry)",
+    )
     args = parser.parse_args()
+
+    # Select direction pairs based on type
+    direction_pairs_map = {
+        "semantic": SEMANTIC_DIRECTION_PAIRS,
+        "brightness": VISUAL_BRIGHTNESS_PAIRS,
+        "sharpness": VISUAL_SHARPNESS_PAIRS,
+    }
+    direction_pairs = direction_pairs_map[args.direction_type]
+    print(f"Using {args.direction_type} direction pairs")
 
     run_steering_experiment(
         alphas=args.alpha,
         output_dir=args.output_dir,
         save_videos=not args.no_save_videos,
+        direction_pairs=direction_pairs,
     )
 
 
