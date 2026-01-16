@@ -2,7 +2,7 @@
 """
 LTX-2 Layer Extraction Comparison Experiment
 
-Last Updated: 2026-01-15
+Last Updated: 2026-01-16
 
 Zero-training technique: Test which Gemma-3 layers matter for which visual attributes.
 
@@ -33,14 +33,34 @@ import numpy as np
 import torch
 
 
+# LTX-2 requires detailed, paragraph-style prompts (4-8 sentences)
+# See experiments/ltx2/prompting_guide.md for format requirements
+# NOTE: Text rendering ("HELLO") doesn't work reliably in LTX-2
 TEST_PROMPTS = [
-    # Literal/concrete prompt - should benefit from early layers
-    "The word HELLO written in red on a white background",
-    # Semantic prompt - should benefit from middle layers
-    "A golden retriever playing fetch with a tennis ball in a park",
+    # Semantic/concrete prompt - should benefit from middle layers
+    (
+        "A golden retriever runs through a sun-dappled park, its fur gleaming in warm afternoon light. "
+        "The camera tracks alongside as the dog bounds across lush green grass, tongue out and tail wagging energetically. "
+        "Birds chirp softly in the background as leaves rustle in a gentle breeze. "
+        "The dog's paws kick up small tufts of grass with each stride, ears flopping with the motion."
+    ),
+    # Spatial/compositional prompt
+    (
+        "A tabby cat sits regally on top of a weathered wooden crate in front of a cozy cottage at golden hour. "
+        "Warm light bathes the scene as the cat surveys its domain, eyes half-closed and tail curled around its paws. "
+        "The camera holds a static medium shot capturing ivy climbing the cottage walls and terracotta flower pots lining the entrance. "
+        "A gentle breeze stirs the cat's whiskers as shadows lengthen across the cobblestone path."
+    ),
     # Abstract/style prompt - should benefit from late layers
-    "A dreamlike surreal landscape, ethereal atmosphere, abstract composition",
+    (
+        "A dreamlike surreal landscape unfolds with floating islands suspended in a pink and purple sky. "
+        "Ethereal mist swirls around ancient stone structures as bioluminescent plants pulse with soft rhythmic light. "
+        "The camera drifts slowly through this otherworldly realm with smooth floating movement. "
+        "Crystalline formations catch and refract light in rainbow patterns, casting prismatic shadows on the clouds below."
+    ),
 ]
+
+PROMPT_TYPES = ["semantic", "spatial", "abstract"]
 
 # Layer configurations to test
 # LTX-2 uses 49 Gemma layers (0-48)
@@ -108,7 +128,8 @@ def run_layer_extraction_experiment(
         model_path,
         torch_dtype=torch.bfloat16,
     )
-    pipe.enable_sequential_cpu_offload()
+    # Use model_cpu_offload instead of sequential_cpu_offload for 2-3x speedup
+    pipe.enable_model_cpu_offload()
 
     results = {}
 
@@ -162,10 +183,13 @@ def run_layer_extraction_experiment(
             text_encoder_hidden_states = torch.stack(text_encoder_hidden_states, dim=-1)
             # Shape: [batch, seq, hidden_dim, num_layers] = [B, T, 3840, 49]
 
-            # LAYER MASKING: Zero out excluded layers
+            # LAYER MASKING: Soft masking (replace with mean, not zero)
+            # Zeroing creates OOD inputs; soft masking preserves distribution
             for layer_idx in range(49):
                 if layer_idx not in active_layers:
-                    text_encoder_hidden_states[:, :, :, layer_idx] = 0.0
+                    # Replace with mean across sequence (preserves layer statistics)
+                    layer_mean = text_encoder_hidden_states[:, :, :, layer_idx].mean(dim=1, keepdim=True)
+                    text_encoder_hidden_states[:, :, :, layer_idx] = layer_mean
 
             sequence_lengths = prompt_attention_mask.sum(dim=-1)
 
@@ -217,7 +241,7 @@ def run_layer_extraction_experiment(
                 stats = compute_frame_statistics(frames)
                 stats["generation_time"] = gen_time
                 stats["prompt"] = prompt
-                stats["prompt_type"] = ["literal", "semantic", "abstract"][i]
+                stats["prompt_type"] = PROMPT_TYPES[i]
                 config_results.append(stats)
 
                 print(f"  Time: {gen_time:.1f}s | Mean: {stats['mean']:.1f} | Std: {stats['std']:.1f}")
@@ -264,9 +288,8 @@ def run_layer_extraction_experiment(
 
     # Per-prompt-type analysis
     print("\n## Layer Effects by Prompt Type\n")
-    prompt_types = ["literal", "semantic", "abstract"]
 
-    for ptype in prompt_types:
+    for ptype in PROMPT_TYPES:
         print(f"\n### {ptype.capitalize()} prompt")
         print("| Config | Mean | Std |")
         print("|--------|------|-----|")

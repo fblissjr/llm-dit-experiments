@@ -71,72 +71,73 @@ GEMMA_HIDDEN_DIM = 3840
 # Test prompts covering different visual attributes
 # LTX-2 requires detailed, paragraph-style prompts (4-8 sentences)
 # See experiments/ltx2/prompting_guide.md for details
+# NOTE: Avoid text/logos (doesn't work), internal states (use physical cues)
 TEST_PROMPTS = {
-    "text_render": (
-        "A close-up shot of a white wall with the word HELLO painted in bold red letters. "
-        "The camera slowly zooms in as warm afternoon sunlight casts soft shadows across the textured surface. "
-        "The letters appear hand-painted with visible brush strokes. "
-        "Dust particles float gently through the beam of light."
+    "static_interior": (
+        "A close-up shot of an antique wooden desk in a sunlit study, dust motes floating through warm afternoon light. "
+        "An old leather-bound book lies open next to a brass inkwell and feather quill. "
+        "The camera slowly pushes in as golden rays stream through lace curtains, casting intricate shadow patterns across the worn wood grain. "
+        "A cup of tea steams gently beside the book, wisps curling upward into the light."
     ),
     "simple_obj": (
-        "A medium shot of a bright red rubber ball resting on a pristine white surface. "
-        "The lighting is soft and even, creating gentle shadows beneath the ball. "
-        "The camera holds steady as dust particles float through a beam of sunlight. "
-        "The ball's glossy surface reflects the ambient light with a subtle sheen."
+        "A medium shot of a bright red rubber ball resting on a pristine white surface in a minimalist studio. "
+        "Soft diffused lighting from above creates gentle shadows beneath the sphere. "
+        "The camera holds steady as dust particles drift through a warm beam of afternoon sunlight. "
+        "The ball's glossy surface catches subtle reflections, its vibrant color contrasting sharply with the clean background."
     ),
     "animal": (
-        "A golden retriever runs joyfully through a sun-dappled park, its fur gleaming in the warm afternoon light. "
-        "The camera tracks alongside as the dog bounds across lush green grass, tongue out and tail wagging. "
-        "Birds chirp in the background as leaves rustle in a gentle breeze. "
-        "The scene captures the pure happiness of a dog at play."
+        "A golden retriever runs through a sun-dappled park, its fur gleaming in warm afternoon light. "
+        "The camera tracks alongside as the dog bounds across lush green grass, tongue out and tail wagging energetically. "
+        "Birds chirp softly in the background as leaves rustle in a gentle breeze. "
+        "The dog's paws kick up small tufts of grass with each stride, ears flopping with the motion."
     ),
     "complex_scene": (
         "A bustling city street at night comes alive with neon signs reflecting off rain-slicked pavement. "
         "Crowds of people in dark coats hurry past storefronts while taxis honk in the distance. "
-        "The camera slowly pans across the scene capturing the vibrant energy of urban nightlife. "
-        "Steam rises from a nearby food cart as streetlights cast long shadows."
+        "The camera slowly pans across the scene, capturing reflections dancing in puddles and steam rising from grates. "
+        "Streetlights cast long shadows as umbrellas bob through the crowd, their colors muted in the wet urban glow."
     ),
     "abstract": (
         "A dreamlike surreal landscape unfolds with floating islands suspended in a pink and purple sky. "
-        "Ethereal mist swirls around ancient stone structures as bioluminescent plants pulse with soft light. "
-        "The camera drifts slowly through this otherworldly realm. "
-        "Crystalline formations catch and refract light in rainbow patterns."
+        "Ethereal mist swirls around ancient stone structures as bioluminescent plants pulse with soft rhythmic light. "
+        "The camera drifts slowly through this otherworldly realm with smooth floating movement. "
+        "Crystalline formations catch and refract light in rainbow patterns, casting prismatic shadows on the clouds below."
     ),
     "spatial": (
-        "A tabby cat sits regally on top of a weathered wooden crate in front of a cozy cottage. "
-        "Warm golden hour light bathes the scene as the cat surveys its domain with half-closed eyes. "
-        "The camera holds a static medium shot capturing the peaceful rural atmosphere. "
-        "Ivy climbs the cottage walls while flower pots line the entrance."
+        "A tabby cat sits regally on top of a weathered wooden crate in front of a cozy cottage at golden hour. "
+        "Warm light bathes the scene as the cat surveys its domain, eyes half-closed and tail curled around its paws. "
+        "The camera holds a static medium shot capturing ivy climbing the cottage walls and terracotta flower pots lining the entrance. "
+        "A gentle breeze stirs the cat's whiskers as shadows lengthen across the cobblestone path."
     ),
     "lighting": (
-        "A person's face is dramatically illuminated by a single flickering candle in otherwise complete darkness. "
-        "The warm orange glow dances across their features creating deep shadows and highlights. "
-        "The camera holds a close-up shot as the flame gently sways. "
-        "Wisps of smoke curl upward catching the light."
+        "A person's face emerges from complete darkness, dramatically illuminated by a single flickering candle held at chest level. "
+        "The warm orange glow dances across their features, creating deep shadows in the eye sockets and under the chin. "
+        "The camera holds a tight close-up as the flame gently sways, casting shifting patterns across weathered skin. "
+        "Wisps of smoke curl upward, catching the light before dissolving into shadow above."
     ),
     "color": (
-        "Three apples arranged in a row on a marble countertop, each a different vibrant color. "
-        "A red apple on the left gleams with moisture, a green Granny Smith sits in the middle, and a golden yellow apple rests on the right. "
-        "Soft diffused lighting from above creates subtle reflections on the polished surface. "
-        "The camera slowly dollies across the arrangement."
+        "Three apples arranged in a row on a marble countertop, each a different vibrant color against the pale stone. "
+        "A red apple on the left gleams with moisture droplets, a green Granny Smith sits in the middle, and a golden yellow apple rests on the right. "
+        "Soft diffused lighting from above creates subtle reflections on the polished surface as the camera slowly dollies across the arrangement. "
+        "The color temperature shifts subtly from warm to cool as the camera moves, highlighting each fruit's unique hue."
     ),
     "motion": (
-        "A sleek sports car races down an empty highway at high speed, its red paint catching the sunlight. "
-        "Motion blur streaks the background as the car cuts through the frame. "
-        "The camera tracks alongside in a dynamic side shot capturing the sense of velocity. "
-        "Heat waves shimmer off the asphalt as the engine roars."
+        "A sleek sports car races down an empty desert highway at high speed, its red paint catching the harsh midday sun. "
+        "Motion blur streaks the background as the car cuts through the frame, wheels kicking up small dust clouds. "
+        "The camera tracks alongside in a dynamic side shot, capturing heat waves shimmering off the asphalt. "
+        "The engine roars as the car accelerates, sunlight glinting off chrome details and tinted windows."
     ),
     "person": (
-        "A lone figure walks slowly through heavy rain on a city sidewalk, holding a bright red umbrella. "
-        "Raindrops splash against the pavement creating small ripples in puddles. "
-        "The camera follows from behind as streetlights create golden halos in the downpour. "
-        "Their silhouette is reflected in the wet pavement below."
+        "A lone figure walks slowly through heavy rain on a city sidewalk, shoulders hunched against the cold, holding a bright red umbrella. "
+        "Raindrops splash against the pavement creating small ripples in growing puddles as streetlights cast golden halos in the downpour. "
+        "The camera follows from behind, capturing their silhouette reflected in the wet pavement below. "
+        "Their coat collar is pulled up, free hand tucked in a pocket as they navigate between puddles with careful steps."
     ),
 }
 
 # Quick test subset
 QUICK_PROMPTS = {
-    "text_render": TEST_PROMPTS["text_render"],
+    "static_interior": TEST_PROMPTS["static_interior"],
     "animal": TEST_PROMPTS["animal"],
     "abstract": TEST_PROMPTS["abstract"],
 }
@@ -147,19 +148,29 @@ QUICK_LAYERS = [0, 24, 48]  # Early, middle, late
 def create_layer_masking_hook(
     pipe,
     active_layers: list[int],
+    masking_mode: str = "soft",
 ) -> Callable:
     """
     Create a hook that masks inactive layers in Gemma embeddings.
 
-    The hook replaces _get_gemma_prompt_embeds to zero out contributions
+    The hook replaces _get_gemma_prompt_embeds to modify contributions
     from layers not in active_layers.
 
     Args:
         pipe: LTX2Pipeline instance
         active_layers: List of layer indices (0-48) to keep active
+        masking_mode: How to handle inactive layers:
+            - "soft": Replace with per-layer mean (maintains distribution)
+            - "zero": Zero out (creates OOD inputs - NOT RECOMMENDED)
+            - "weighted": Weight active layers to preserve total norm
 
     Returns:
         Hook function to install via pipe._get_gemma_prompt_embeds = hook
+
+    Note:
+        Zeroing creates out-of-distribution inputs because the projection W
+        expects all 49 layers with proper variance. Soft masking preserves
+        the expected input distribution while isolating layer contributions.
     """
     active_set = set(active_layers)
 
@@ -196,10 +207,36 @@ def create_layer_masking_hook(
         text_encoder_hidden_states = torch.stack(text_encoder_hidden_states, dim=-1)
         # Shape: [batch, seq, hidden_dim, num_layers] = [B, T, 3840, 49]
 
-        # LAYER MASKING: Zero out excluded layers
-        for layer_idx in range(NUM_GEMMA_LAYERS):
-            if layer_idx not in active_set:
-                text_encoder_hidden_states[:, :, :, layer_idx] = 0.0
+        # LAYER MASKING based on mode
+        if masking_mode == "soft":
+            # Soft masking: Replace inactive layers with per-layer mean
+            # This maintains the expected input distribution for projection W
+            for layer_idx in range(NUM_GEMMA_LAYERS):
+                if layer_idx not in active_set:
+                    # Replace with mean across sequence (preserves layer statistics)
+                    layer_mean = text_encoder_hidden_states[:, :, :, layer_idx].mean(dim=1, keepdim=True)
+                    text_encoder_hidden_states[:, :, :, layer_idx] = layer_mean
+
+        elif masking_mode == "zero":
+            # Zero masking: Creates OOD inputs (not recommended)
+            for layer_idx in range(NUM_GEMMA_LAYERS):
+                if layer_idx not in active_set:
+                    text_encoder_hidden_states[:, :, :, layer_idx] = 0.0
+
+        elif masking_mode == "weighted":
+            # Weighted masking: Scale active layers to preserve total norm
+            # Inactive layers get zeroed, active get scaled up to compensate
+            num_active = len(active_layers)
+            scale = NUM_GEMMA_LAYERS / num_active if num_active > 0 else 1.0
+
+            for layer_idx in range(NUM_GEMMA_LAYERS):
+                if layer_idx in active_set:
+                    text_encoder_hidden_states[:, :, :, layer_idx] *= scale
+                else:
+                    text_encoder_hidden_states[:, :, :, layer_idx] = 0.0
+
+        else:
+            raise ValueError(f"Unknown masking_mode: {masking_mode}")
 
         sequence_lengths = prompt_attention_mask.sum(dim=-1)
 
@@ -295,6 +332,7 @@ def run_layer_profile_sweep(
     num_frames: int = 33,
     num_inference_steps: int = 25,
     guidance_scale: float = 3.0,
+    masking_mode: str = "soft",
 ):
     """
     Run the full layer profile sweep experiment.
@@ -312,6 +350,10 @@ def run_layer_profile_sweep(
         num_frames: Number of frames to generate
         num_inference_steps: Diffusion steps
         guidance_scale: CFG scale
+        masking_mode: How to mask inactive layers: "soft", "zero", or "weighted"
+            - "soft" (recommended): Replace inactive with per-layer mean
+            - "zero": Zero out (creates OOD artifacts)
+            - "weighted": Scale active layers to preserve norm
 
     Returns:
         Path to results directory
@@ -343,6 +385,7 @@ def run_layer_profile_sweep(
     logger.info(f"Output: {output_dir}")
     logger.info(f"Layers: {len(layers_to_test)} ({min(layers_to_test)}-{max(layers_to_test)})")
     logger.info(f"Prompts: {len(prompts)}")
+    logger.info(f"Masking mode: {masking_mode}")
     logger.info(f"Total generations: {len(layers_to_test) * len(prompts)}")
 
     # Load pipeline
@@ -351,7 +394,10 @@ def run_layer_profile_sweep(
         model_path,
         torch_dtype=torch.bfloat16,
     )
-    pipe.enable_sequential_cpu_offload()
+    # Use model_cpu_offload instead of sequential_cpu_offload for 2-3x speedup
+    # Sequential offload moves each layer individually (slowest)
+    # Model offload keeps the whole model on GPU while active (faster)
+    pipe.enable_model_cpu_offload()
 
     # Store original method
     original_get_embeds = pipe._get_gemma_prompt_embeds
@@ -388,7 +434,7 @@ def run_layer_profile_sweep(
         logger.info("=" * 50)
 
         # Install layer masking hook for this single layer
-        hook = create_layer_masking_hook(pipe, active_layers=[layer_idx])
+        hook = create_layer_masking_hook(pipe, active_layers=[layer_idx], masking_mode=masking_mode)
         pipe._get_gemma_prompt_embeds = hook
 
         for prompt_id, prompt_text in prompts.items():
@@ -715,6 +761,15 @@ def main():
         default=3.0,
         help="Guidance scale (default: 3.0)",
     )
+    parser.add_argument(
+        "--masking-mode",
+        choices=["soft", "zero", "weighted"],
+        default="soft",
+        help="How to mask inactive layers (default: soft). "
+             "soft=replace with mean (recommended), "
+             "zero=zero out (creates OOD artifacts), "
+             "weighted=scale to preserve norm",
+    )
 
     args = parser.parse_args()
 
@@ -739,6 +794,7 @@ def main():
         num_frames=args.num_frames,
         num_inference_steps=args.steps,
         guidance_scale=args.cfg,
+        masking_mode=args.masking_mode,
     )
 
 

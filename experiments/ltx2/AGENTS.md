@@ -11,7 +11,7 @@ Last updated: 2026-01-16
 ```
 experiments/
 ├── ltx2/                    # LTX-2 specific experiments
-│   ├── prompting_guide.md   # How to write prompts for LTX-2
+│   ├── ltx2_prompting_guide.md   # How to write prompts for LTX-2 and what to avoid
 │   ├── layer_profile_sweep.py
 │   ├── dimension_analysis.py
 │   └── layer_extraction_comparison.py
