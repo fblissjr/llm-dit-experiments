@@ -48,7 +48,10 @@ from llm_dit.pipelines.utils.latent_norm import (
     PerStepNormalizer,
     statistical_normalize,
     NormalizationConfig,
+    AudioLatentNormalizer,
 )
+from llm_dit.pipelines.utils.ffn_chunking import patch_ffn_chunking, unpatch_ffn_chunking
+from llm_dit.config import EnhancementConfig
 
 logger = logging.getLogger(__name__)
 
@@ -724,12 +727,21 @@ class LTX2Pipeline:
         output_type: str = "np",
         return_dict: bool = True,
         callback_on_step_end: Optional[Callable] = None,
-        # ComfyUI-style enhancements
+        # Enhancement config (preferred way to enable multiple techniques)
+        enhancement_config: Optional[EnhancementConfig] = None,
+        # Individual enhancement flags (override enhancement_config if set)
         enable_latent_normalization: bool = False,
         normalization_factors: str = "0.9, 0.75, 0.5, 0.25, 0.0",
         normalization_target_mean: float = 0.0,
         normalization_target_std: float = 1.0,
         normalization_percentile: float = 95.0,
+        # Audio latent normalization
+        enable_audio_normalization: bool = False,
+        audio_normalization_factors: str = "1,1,0.25,1,1,0.25",
+        # FFN chunking for memory efficiency
+        enable_ffn_chunking: bool = False,
+        ffn_chunk_count: int = 4,
+        ffn_dim_threshold: int = 4096,
         **kwargs,
     ) -> Union[VideoOutput, Tuple[np.ndarray, Optional[np.ndarray]]]:
         """
@@ -750,18 +762,49 @@ class LTX2Pipeline:
             output_type: "np" for numpy, "pt" for torch, "pil" for PIL.
             return_dict: Return VideoOutput dataclass.
             callback_on_step_end: Callback for progress tracking.
-            enable_latent_normalization: Apply post-CFG latent normalization
-                to prevent overbaking artifacts. Ported from ComfyUI-LTXVideo.
+
+            Enhancement Config (recommended for multiple techniques):
+            enhancement_config: EnhancementConfig object with all technique
+                settings. If provided, individual flags below are ignored
+                unless explicitly set to True (which overrides).
+
+            Latent Normalization (prevents CFG overbaking):
+            enable_latent_normalization: Apply post-CFG latent normalization.
+                Ported from ComfyUI-LTXVideo.
             normalization_factors: Comma-separated interpolation factors for
                 each step. Higher = more aggressive normalization. Typical:
                 "0.9, 0.75, 0.5, 0.25, 0.0" (aggressive early, none late).
             normalization_target_mean: Target mean for normalized latents.
             normalization_target_std: Target std for normalized latents.
             normalization_percentile: Percentile for robust statistics (0-100).
+
+            Audio Latent Normalization (LTX-2 specific):
+            enable_audio_normalization: Apply per-step audio latent scaling.
+            audio_normalization_factors: Per-step multipliers for audio latents.
+                E.g., "1,1,0.25,1,1,0.25" reduces at steps 2 and 5.
+
+            FFN Chunking (memory efficiency):
+            enable_ffn_chunking: Chunk FFN layers to reduce peak VRAM.
+            ffn_chunk_count: Number of chunks (more = less memory, slower).
+            ffn_dim_threshold: Only chunk if sequence dim > threshold.
+
             **kwargs: Additional arguments for diffusers pipeline.
 
         Returns:
             VideoOutput with frames and optional audio, or tuple.
+
+        Example:
+            # Using enhancement config (recommended)
+            from llm_dit.config import EnhancementConfig
+            config = EnhancementConfig.quality_preset()
+            output = pipe(prompt="...", enhancement_config=config)
+
+            # Using individual flags
+            output = pipe(
+                prompt="...",
+                enable_latent_normalization=True,
+                enable_ffn_chunking=True,
+            )
         """
         # Use config defaults if not specified
         if self._config is not None:
@@ -783,14 +826,44 @@ class LTX2Pipeline:
             guidance_scale = guidance_scale or 3.5
             enable_audio = enable_audio if enable_audio is not None else False
 
+        # Resolve enhancement settings from config or individual flags
+        # Individual flags override enhancement_config if explicitly set to True
+        if enhancement_config is not None:
+            if not enable_latent_normalization:
+                enable_latent_normalization = enhancement_config.latent_norm_enabled
+                normalization_factors = enhancement_config.latent_norm_factors
+                normalization_target_mean = enhancement_config.latent_norm_target_mean
+                normalization_target_std = enhancement_config.latent_norm_target_std
+                normalization_percentile = enhancement_config.latent_norm_percentile
+
+            if not enable_audio_normalization:
+                enable_audio_normalization = enhancement_config.audio_norm_enabled
+                audio_normalization_factors = enhancement_config.audio_norm_factors
+
+            if not enable_ffn_chunking:
+                enable_ffn_chunking = enhancement_config.ffn_chunking_enabled
+                ffn_chunk_count = enhancement_config.ffn_chunk_count
+                ffn_dim_threshold = enhancement_config.ffn_dim_threshold
+
         # Create generator from seed if provided
         if seed is not None and generator is None:
             generator = torch.Generator(device="cuda").manual_seed(seed)
+
+        # Log generation parameters
+        enhancements_active = []
+        if enable_latent_normalization:
+            enhancements_active.append("latent_norm")
+        if enable_audio_normalization:
+            enhancements_active.append("audio_norm")
+        if enable_ffn_chunking:
+            enhancements_active.append("ffn_chunk")
 
         logger.info(
             f"Generating video: {width}x{height}, {num_frames} frames @ {fps}fps, "
             f"{num_inference_steps} steps, guidance={guidance_scale}"
         )
+        if enhancements_active:
+            logger.info(f"Enhancements enabled: {', '.join(enhancements_active)}")
 
         # Fast mode: Lazy loading with pre-encoding
         if getattr(self, '_fast_mode', False) and self._pipe is None:
@@ -836,19 +909,38 @@ class LTX2Pipeline:
             self._pipe.text_encoder = text_encoder
             self._pipe.enable_sequential_cpu_offload()
 
-        # Create normalizing callback wrapper if enabled
+        # Apply FFN chunking if enabled (model-level patch)
+        ffn_patched = False
+        if enable_ffn_chunking and self._pipe is not None:
+            try:
+                num_patched = patch_ffn_chunking(
+                    self._pipe.transformer,
+                    num_chunks=ffn_chunk_count,
+                    dim_threshold=ffn_dim_threshold,
+                )
+                if num_patched > 0:
+                    logger.info(f"FFN chunking: patched {num_patched} modules (chunks={ffn_chunk_count})")
+                    ffn_patched = True
+            except Exception as e:
+                logger.warning(f"FFN chunking failed: {e}")
+
+        # Create enhancement callback wrapper
         # Note: This applies normalization to latents after each scheduler step.
         # Ideally, normalization should be applied post-CFG before the scheduler
         # step, but this requires deeper diffusers integration. The callback
         # approach provides a working approximation.
         actual_callback = callback_on_step_end
+
+        # Set up normalizers if any normalization is enabled
+        latent_normalizer = None
+        audio_normalizer = None
+
         if enable_latent_normalization:
             logger.info(
                 f"Latent normalization enabled: factors={normalization_factors}, "
                 f"target_mean={normalization_target_mean}, target_std={normalization_target_std}"
             )
-
-            normalizer = PerStepNormalizer(
+            latent_normalizer = PerStepNormalizer(
                 factors=normalization_factors,
                 target_mean=normalization_target_mean,
                 target_std=normalization_target_std,
@@ -856,12 +948,28 @@ class LTX2Pipeline:
                 method="statistical",
             )
 
-            def normalizing_callback(pipe, step, timestep, callback_kwargs):
-                # Apply normalization to latents
-                if "latents" in callback_kwargs:
+        if enable_audio_normalization:
+            logger.info(f"Audio normalization enabled: factors={audio_normalization_factors}")
+            audio_normalizer = AudioLatentNormalizer(
+                factors=audio_normalization_factors,
+            )
+
+        # Create combined callback if any enhancement is enabled
+        if latent_normalizer is not None or audio_normalizer is not None:
+            def enhancement_callback(pipe, step, timestep, callback_kwargs):
+                # Apply latent normalization
+                if latent_normalizer is not None and "latents" in callback_kwargs:
                     latents = callback_kwargs["latents"]
-                    normalized = normalizer(latents, step=step)
+                    normalized = latent_normalizer(latents, step=step)
                     callback_kwargs["latents"] = normalized
+
+                # Apply audio normalization
+                if audio_normalizer is not None and "latents" in callback_kwargs:
+                    latents = callback_kwargs["latents"]
+                    # Only apply if latents have audio channels
+                    if latents.shape[1] > 16:  # Has audio channels
+                        normalized = audio_normalizer(latents, step=step)
+                        callback_kwargs["latents"] = normalized
 
                 # Call original callback if provided
                 if callback_on_step_end is not None:
@@ -871,24 +979,33 @@ class LTX2Pipeline:
 
                 return callback_kwargs
 
-            actual_callback = normalizing_callback
+            actual_callback = enhancement_callback
 
         # Standard generation
-        result = self._pipe(
-            prompt=prompt,
-            negative_prompt=negative_prompt,
-            height=height,
-            width=width,
-            num_frames=num_frames,
-            frame_rate=fps,
-            num_inference_steps=num_inference_steps,
-            guidance_scale=guidance_scale,
-            generator=generator,
-            output_type=output_type,
-            return_dict=False,
-            callback_on_step_end=actual_callback,
-            **kwargs,
-        )
+        try:
+            result = self._pipe(
+                prompt=prompt,
+                negative_prompt=negative_prompt,
+                height=height,
+                width=width,
+                num_frames=num_frames,
+                frame_rate=fps,
+                num_inference_steps=num_inference_steps,
+                guidance_scale=guidance_scale,
+                generator=generator,
+                output_type=output_type,
+                return_dict=False,
+                callback_on_step_end=actual_callback,
+                **kwargs,
+            )
+        finally:
+            # Clean up FFN chunking patches
+            if ffn_patched:
+                try:
+                    unpatch_ffn_chunking(self._pipe.transformer)
+                    logger.debug("FFN chunking patches removed")
+                except Exception as e:
+                    logger.warning(f"FFN unpatch failed: {e}")
 
         # Unpack results (video, audio)
         video, audio = result

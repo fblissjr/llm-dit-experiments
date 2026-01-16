@@ -111,7 +111,63 @@ def main():
         action="store_true",
         help="Use our LTX2Pipeline wrapper instead of raw diffusers",
     )
+    # Audio normalization arguments
+    parser.add_argument(
+        "--audio-normalize",
+        action="store_true",
+        help="Enable audio latent normalization",
+    )
+    parser.add_argument(
+        "--audio-norm-factors",
+        type=str,
+        default="1,1,0.25,1,1,0.25",
+        help="Per-step audio normalization factors (default: 1,1,0.25,1,1,0.25)",
+    )
+    # FFN chunking for memory efficiency
+    parser.add_argument(
+        "--ffn-chunk",
+        action="store_true",
+        help="Enable FFN chunking for memory efficiency",
+    )
+    parser.add_argument(
+        "--ffn-chunks",
+        type=int,
+        default=4,
+        help="Number of FFN chunks (default: 4)",
+    )
+    parser.add_argument(
+        "--ffn-threshold",
+        type=int,
+        default=4096,
+        help="FFN chunking sequence length threshold (default: 4096)",
+    )
+    # Preset flags for common combinations
+    parser.add_argument(
+        "--quality",
+        action="store_true",
+        help="Enable quality preset: latent normalization",
+    )
+    parser.add_argument(
+        "--memory",
+        action="store_true",
+        help="Enable memory preset: FFN chunking",
+    )
+    parser.add_argument(
+        "--all-enhancements",
+        action="store_true",
+        help="Enable all enhancement techniques",
+    )
     args = parser.parse_args()
+
+    # Apply presets
+    if args.quality:
+        args.normalize = True
+    if args.memory:
+        args.ffn_chunk = True
+    if args.all_enhancements:
+        args.normalize = True
+        args.audio_normalize = True
+        args.ffn_chunk = True
 
     print("=" * 60)
     print("LTX-2 Baseline Generation Test")
@@ -123,9 +179,22 @@ def main():
     print(f"Steps: {args.steps}, Guidance: {args.guidance_scale}")
     if args.lora_path:
         print(f"LoRA: {args.lora_path} @ scale {args.lora_scale}")
+
+    # Print enabled enhancements
+    enhancements = []
     if args.normalize:
-        print(f"Normalization: enabled (factors={args.norm_factors})")
-    if args.use_wrapper:
+        enhancements.append(f"latent_norm (factors={args.norm_factors})")
+    if args.audio_normalize:
+        enhancements.append(f"audio_norm (factors={args.audio_norm_factors})")
+    if args.ffn_chunk:
+        enhancements.append(f"ffn_chunk (chunks={args.ffn_chunks})")
+
+    if enhancements:
+        print(f"Enhancements: {', '.join(enhancements)}")
+    else:
+        print("Enhancements: none")
+
+    if args.use_wrapper or enhancements:
         print("Using: llm_dit.pipelines.LTX2Pipeline wrapper")
     else:
         print("Using: diffusers.LTX2Pipeline (raw)")
@@ -140,8 +209,8 @@ def main():
         free_mem = torch.cuda.get_device_properties(0).total_memory - torch.cuda.memory_allocated(0)
         print(f"Available VRAM: {free_mem / 1e9:.1f} GB")
 
-    # Determine whether to use our wrapper (required for normalization)
-    use_wrapper = args.use_wrapper or args.normalize
+    # Determine whether to use our wrapper (required for enhancements)
+    use_wrapper = args.use_wrapper or args.normalize or args.audio_normalize or args.ffn_chunk
 
     if use_wrapper:
         from llm_dit.pipelines.ltx2 import LTX2Pipeline as WrappedLTX2Pipeline
@@ -192,12 +261,19 @@ def main():
             num_inference_steps=args.steps,
             guidance_scale=args.guidance_scale,
             generator=generator,
-            # Normalization settings
+            # Latent normalization settings
             enable_latent_normalization=args.normalize,
             normalization_factors=args.norm_factors,
             normalization_target_mean=args.norm_target_mean,
             normalization_target_std=args.norm_target_std,
             normalization_percentile=args.norm_percentile,
+            # Audio normalization settings
+            enable_audio_normalization=args.audio_normalize,
+            audio_normalization_factors=args.audio_norm_factors,
+            # FFN chunking settings
+            enable_ffn_chunking=args.ffn_chunk,
+            ffn_chunk_count=args.ffn_chunks,
+            ffn_dim_threshold=args.ffn_threshold,
             return_dict=False,
         )
         video_frames, audio = output

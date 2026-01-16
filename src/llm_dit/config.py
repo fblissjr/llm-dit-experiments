@@ -14,7 +14,7 @@ Transformers v5 Migration:
 Example config (config.toml):
 
     [default]
-    model_path = "/path/to/z-image"
+    model_path = "/path/to/model"
     templates_dir = "templates/z_image"
     torch_dtype = "bfloat16"
 
@@ -27,7 +27,7 @@ Example config (config.toml):
     device = "cuda"
 
     [low_vram]
-    model_path = "/path/to/z-image"
+    model_path = "/path/to/model"
 
     [low_vram.encoder]
     device = "cpu"
@@ -145,16 +145,14 @@ class EncoderConfig:
         # Migrate legacy fields if used
         if self.load_in_8bit and self.quantization == "none":
             warnings.warn(
-                "load_in_8bit is deprecated in transformers v5. "
-                "Use quantization='8bit' instead.",
+                "load_in_8bit is deprecated in transformers v5. Use quantization='8bit' instead.",
                 DeprecationWarning,
                 stacklevel=2,
             )
             self.quantization = "8bit"
         elif self.load_in_4bit and self.quantization == "none":
             warnings.warn(
-                "load_in_4bit is deprecated in transformers v5. "
-                "Use quantization='4bit' instead.",
+                "load_in_4bit is deprecated in transformers v5. Use quantization='4bit' instead.",
                 DeprecationWarning,
                 stacklevel=2,
             )
@@ -385,7 +383,9 @@ class VLConfig:
 
     model_path: str = ""  # Path to Qwen3-VL model (empty = disabled)
     device: str = "cpu"  # Device for Qwen3-VL (cpu recommended to save VRAM)
-    default_alpha: float = 0.3  # Default interpolation ratio (0.0=text, 1.0=VL) - research validated
+    default_alpha: float = (
+        0.3  # Default interpolation ratio (0.0=text, 1.0=VL) - research validated
+    )
     default_hidden_layer: int = -6  # Layer -6 produces best results (research validated)
     text_tokens_only: bool = True  # Use only text token positions (image tokens cause artifacts)
     auto_unload: bool = True  # Unload after extraction to save VRAM
@@ -725,8 +725,7 @@ class QwenImageConfig:
         ]:
             if value not in valid_quant:
                 raise ValueError(
-                    f"Invalid {field}='{value}'. "
-                    f"Valid options: {', '.join(valid_quant)}"
+                    f"Invalid {field}='{value}'. Valid options: {', '.join(valid_quant)}"
                 )
 
         if self.quantize_vae not in valid_vae_quant:
@@ -744,12 +743,12 @@ class QwenImageConfig:
         # Check FP8 hardware compatibility
         fp8_options = ("fp8", "fp8-filtered", "diffsynth-fp8")
         uses_fp8 = (
-            self.quantize_text_encoder in fp8_options
-            or self.quantize_transformer in fp8_options
+            self.quantize_text_encoder in fp8_options or self.quantize_transformer in fp8_options
         )
         if uses_fp8:
             try:
                 from llm_dit.quantization import check_fp8_support
+
                 if not check_fp8_support():
                     logger.warning(
                         "FP8 quantization requires RTX 4090+ (compute 8.9+) or AMD MI300. "
@@ -777,9 +776,7 @@ class QwenImageConfig:
         """
         if preset_name not in QWEN_IMAGE_PRESETS:
             valid = list(QWEN_IMAGE_PRESETS.keys())
-            raise ValueError(
-                f"Unknown preset: {preset_name}. Valid presets: {valid}"
-            )
+            raise ValueError(f"Unknown preset: {preset_name}. Valid presets: {valid}")
 
         preset = QWEN_IMAGE_PRESETS[preset_name]
         for key, value in preset.items():
@@ -1017,6 +1014,126 @@ class FMTTConfig:
 
 
 @dataclass
+class EnhancementConfig:
+    """Configuration for LTX-2 generation enhancement techniques.
+
+    Collects all enhancement techniques ported from ComfyUI-LTXVideo and
+    ComfyUI-KJNodes into a single config object for easy experimentation.
+
+    These techniques are algorithm-level optimizations (pure PyTorch tensor
+    operations) that can be enabled independently or in combination:
+
+    1. Latent Normalization: Prevents CFG-induced drift ("overbaking")
+    2. NAG: Normalized Attention Guidance for better CFG quality
+    3. FETA: Feature Temporal Attention for temporal consistency
+    4. TeaCache: Inference speedup via temporal caching
+    5. FFN Chunking: Memory reduction via chunked feedforward
+    6. Audio Normalization: Per-step audio latent normalization
+
+    Example:
+        config = EnhancementConfig(
+            latent_norm_enabled=True,
+            nag_enabled=True,
+            tea_cache_enabled=True,
+        )
+        output = pipe(prompt="...", enhancement_config=config)
+    """
+
+    # Latent Normalization - prevents CFG overbaking
+    latent_norm_enabled: bool = False
+    latent_norm_factors: str = "0.9, 0.75, 0.5, 0.25, 0.0"
+    latent_norm_target_mean: float = 0.0
+    latent_norm_target_std: float = 1.0
+    latent_norm_percentile: float = 95.0
+
+    # NAG - Normalized Attention Guidance
+    # Improves CFG quality by normalizing attention outputs to prevent divergence
+    nag_enabled: bool = False
+    nag_scale: float = 11.0  # Strength of negative guidance
+    nag_alpha: float = 0.25  # Balance between guided and positive
+    nag_tau: float = 2.5  # Clipping threshold
+
+    # FETA - Feature Temporal Attention
+    # Enhances temporal consistency by boosting cross-frame attention
+    feta_enabled: bool = False
+    feta_weight: float = 4.0  # Enhancement strength (2.0-8.0 typical)
+    feta_start_step: int = 0  # First step to apply
+    feta_end_step: int = -1  # Last step (-1 = all)
+
+    # TeaCache - Temporal Efficient Attention Caching
+    # Skips redundant transformer computations for 4-10x speedup
+    tea_cache_enabled: bool = False
+    tea_cache_threshold: float = 0.275  # L1 distance threshold for skip
+    tea_cache_model_type: str = "14B"  # "14B", "1.3B", "i2v_480", "i2v_720"
+
+    # FFN Chunking - Memory Efficiency
+    # Chunks feedforward to reduce peak VRAM
+    ffn_chunking_enabled: bool = False
+    ffn_chunk_count: int = 4  # Number of chunks
+    ffn_dim_threshold: int = 4096  # Only chunk if dim > threshold
+
+    # Audio Latent Normalization (LTX-2 specific)
+    # Per-step normalization of audio latents
+    audio_norm_enabled: bool = False
+    audio_norm_factors: str = "1,1,0.25,1,1,0.25"  # Per-step multipliers
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary."""
+        return {
+            "latent_norm_enabled": self.latent_norm_enabled,
+            "latent_norm_factors": self.latent_norm_factors,
+            "latent_norm_target_mean": self.latent_norm_target_mean,
+            "latent_norm_target_std": self.latent_norm_target_std,
+            "latent_norm_percentile": self.latent_norm_percentile,
+            "nag_enabled": self.nag_enabled,
+            "nag_scale": self.nag_scale,
+            "nag_alpha": self.nag_alpha,
+            "nag_tau": self.nag_tau,
+            "feta_enabled": self.feta_enabled,
+            "feta_weight": self.feta_weight,
+            "feta_start_step": self.feta_start_step,
+            "feta_end_step": self.feta_end_step,
+            "tea_cache_enabled": self.tea_cache_enabled,
+            "tea_cache_threshold": self.tea_cache_threshold,
+            "tea_cache_model_type": self.tea_cache_model_type,
+            "ffn_chunking_enabled": self.ffn_chunking_enabled,
+            "ffn_chunk_count": self.ffn_chunk_count,
+            "ffn_dim_threshold": self.ffn_dim_threshold,
+            "audio_norm_enabled": self.audio_norm_enabled,
+            "audio_norm_factors": self.audio_norm_factors,
+        }
+
+    @classmethod
+    def quality_preset(cls) -> "EnhancementConfig":
+        """Quality-focused preset: latent norm + FETA."""
+        return cls(
+            latent_norm_enabled=True,
+            feta_enabled=True,
+            feta_weight=4.0,
+        )
+
+    @classmethod
+    def speed_preset(cls) -> "EnhancementConfig":
+        """Speed-focused preset: TeaCache + FFN chunking."""
+        return cls(
+            tea_cache_enabled=True,
+            tea_cache_threshold=0.275,
+            ffn_chunking_enabled=True,
+        )
+
+    @classmethod
+    def all_preset(cls) -> "EnhancementConfig":
+        """All enhancements enabled."""
+        return cls(
+            latent_norm_enabled=True,
+            nag_enabled=True,
+            feta_enabled=True,
+            tea_cache_enabled=True,
+            ffn_chunking_enabled=True,
+        )
+
+
+@dataclass
 class FBCacheRuntimeConfig:
     """Configuration for Forward Block Cache (FBCache).
 
@@ -1112,7 +1229,9 @@ class RewriterConfig:
     # VL rewriter settings
     vl_enabled: bool = True  # Allow VL model selection in rewriter UI
     preload_vl: bool = False  # Load Qwen3-VL at startup for rewriter (uses vl.model_path)
-    vl_api_model: str = ""  # Model ID for VL via API (e.g., "qwen2.5-vl-72b-mlx"). Empty = use local VL
+    vl_api_model: str = (
+        ""  # Model ID for VL via API (e.g., "qwen2.5-vl-72b-mlx"). Empty = use local VL
+    )
     # API timeout settings
     timeout: float = 120.0  # API request timeout in seconds (VL models need longer)
 
@@ -1140,6 +1259,7 @@ class Config:
     slg: SLGConfig = field(default_factory=SLGConfig)
     fmtt: FMTTConfig = field(default_factory=FMTTConfig)
     fbcache: FBCacheRuntimeConfig = field(default_factory=FBCacheRuntimeConfig)
+    enhancement: EnhancementConfig = field(default_factory=EnhancementConfig)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Config":
@@ -1160,6 +1280,7 @@ class Config:
         slg_data = data.pop("slg", {})
         fmtt_data = data.pop("fmtt", {})
         fbcache_data = data.pop("fbcache", {})
+        enhancement_data = data.pop("enhancement", {})
 
         return cls(
             model_path=data.get("model_path", ""),
@@ -1180,6 +1301,7 @@ class Config:
             slg=SLGConfig(**slg_data),
             fmtt=FMTTConfig(**fmtt_data),
             fbcache=FBCacheRuntimeConfig(**fbcache_data),
+            enhancement=EnhancementConfig(**enhancement_data),
         )
 
     @classmethod
@@ -1223,10 +1345,7 @@ class Config:
 
         if profile not in data:
             available = list(data.keys())
-            raise KeyError(
-                f"Profile '{profile}' not found in config. "
-                f"Available: {available}"
-            )
+            raise KeyError(f"Profile '{profile}' not found in config. Available: {available}")
 
         profile_data = data[profile]
         logger.info(f"Loaded config profile: {profile}")
@@ -1337,6 +1456,7 @@ class Config:
             "dype": self.dype.to_dict(),
             "slg": self.slg.to_dict(),
             "fmtt": self.fmtt.to_dict(),
+            "enhancement": self.enhancement.to_dict(),
         }
 
 

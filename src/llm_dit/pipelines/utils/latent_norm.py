@@ -381,3 +381,186 @@ class PerStepNormalizer:
             f"target_mean={self.target_mean}, "
             f"target_std={self.target_std})"
         )
+
+
+# =============================================================================
+# Audio Latent Normalization (LTX-2 specific)
+# =============================================================================
+
+
+@dataclass
+class AudioNormalizationConfig:
+    """Configuration for audio latent normalization.
+
+    LTX-2 generates joint video+audio latents. This config controls
+    per-step normalization of the audio portion of the latents.
+
+    The factors string specifies multipliers for each step. At certain
+    steps, reducing audio latent magnitude (e.g., 0.25) can improve
+    audio quality and prevent artifacts.
+
+    Example factors: "1,1,0.25,1,1,0.25" - reduce at steps 2 and 5
+    """
+
+    enabled: bool = False
+    factors: str = "1,1,0.25,1,1,0.25"
+
+    def get_factors_list(self) -> List[float]:
+        """Parse factors string into list."""
+        return [float(f.strip()) for f in self.factors.split(",")]
+
+
+def separate_audio_video_latents(
+    latents: torch.Tensor,
+    num_audio_channels: int = 16,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """
+    Separate combined latents into video and audio portions.
+
+    LTX-2 uses a combined latent space where audio and video latents
+    are concatenated. This function splits them for independent processing.
+
+    Args:
+        latents: Combined latents [B, C, F, H, W] where C includes both
+        num_audio_channels: Number of channels for audio (typically 16)
+
+    Returns:
+        (video_latents, audio_latents) tuple
+    """
+    total_channels = latents.shape[1]
+    video_channels = total_channels - num_audio_channels
+
+    video_latents = latents[:, :video_channels]
+    audio_latents = latents[:, video_channels:]
+
+    return video_latents, audio_latents
+
+
+def recombine_audio_video_latents(
+    video_latents: torch.Tensor,
+    audio_latents: torch.Tensor,
+) -> torch.Tensor:
+    """
+    Recombine video and audio latents after separate processing.
+
+    Args:
+        video_latents: Video portion of latents
+        audio_latents: Audio portion of latents
+
+    Returns:
+        Combined latents [B, C_video + C_audio, F, H, W]
+    """
+    return torch.cat([video_latents, audio_latents], dim=1)
+
+
+def normalize_audio_latents(
+    latents: torch.Tensor,
+    step: int,
+    factors: Union[str, List[float]] = "1,1,0.25,1,1,0.25",
+    num_audio_channels: int = 16,
+) -> torch.Tensor:
+    """
+    Apply per-step normalization to audio latents.
+
+    Ported from ComfyUI-KJNodes/nodes/ltxv_nodes.py (lines 765-867).
+
+    LTX-2 can benefit from reducing audio latent magnitude at certain
+    diffusion steps. This prevents audio artifacts and improves quality.
+
+    Args:
+        latents: Combined video+audio latents [B, C, F, H, W]
+        step: Current diffusion step (0-indexed)
+        factors: Per-step multipliers as string or list.
+                 Values cycle if steps > len(factors).
+        num_audio_channels: Number of audio channels (typically 16)
+
+    Returns:
+        Latents with audio portion normalized
+    """
+    # Parse factors if string
+    if isinstance(factors, str):
+        factor_list = [float(f.strip()) for f in factors.split(",")]
+    else:
+        factor_list = list(factors)
+
+    # Get factor for this step (cycle if needed)
+    factor = factor_list[step % len(factor_list)]
+
+    # Early exit if no change needed
+    if factor == 1.0:
+        return latents
+
+    # Separate latents
+    video_latents, audio_latents = separate_audio_video_latents(
+        latents, num_audio_channels
+    )
+
+    # Apply factor to audio
+    audio_latents = audio_latents * factor
+
+    # Recombine
+    return recombine_audio_video_latents(video_latents, audio_latents)
+
+
+class AudioLatentNormalizer:
+    """
+    Per-step audio latent normalizer.
+
+    Provides a stateful interface for applying audio latent normalization
+    across diffusion steps.
+
+    Example:
+        normalizer = AudioLatentNormalizer(factors="1,1,0.25,1,1,0.25")
+
+        for step in range(num_steps):
+            latents = scheduler.step(...)
+            latents = normalizer(latents, step)
+    """
+
+    def __init__(
+        self,
+        factors: Union[str, List[float]] = "1,1,0.25,1,1,0.25",
+        num_audio_channels: int = 16,
+    ):
+        """
+        Initialize audio normalizer.
+
+        Args:
+            factors: Per-step multipliers
+            num_audio_channels: Number of audio channels in latents
+        """
+        if isinstance(factors, str):
+            self.factors = [float(f.strip()) for f in factors.split(",")]
+        else:
+            self.factors = list(factors)
+
+        self.num_audio_channels = num_audio_channels
+
+    def get_factor(self, step: int) -> float:
+        """Get factor for given step (cycles if step >= len(factors))."""
+        return self.factors[step % len(self.factors)]
+
+    def __call__(
+        self,
+        latents: torch.Tensor,
+        step: int,
+    ) -> torch.Tensor:
+        """
+        Apply normalization at given step.
+
+        Args:
+            latents: Combined video+audio latents
+            step: Current diffusion step
+
+        Returns:
+            Normalized latents
+        """
+        return normalize_audio_latents(
+            latents,
+            step=step,
+            factors=self.factors,
+            num_audio_channels=self.num_audio_channels,
+        )
+
+    def __repr__(self) -> str:
+        return f"AudioLatentNormalizer(factors={self.factors})"
