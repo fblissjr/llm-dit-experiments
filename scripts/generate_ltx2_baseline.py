@@ -2,7 +2,7 @@
 """
 LTX-2 Baseline Generation Test
 
-Last Updated: 2026-01-15
+Last Updated: 2026-01-16
 
 Tests baseline LTX-2 video generation using diffusers 0.37.0.dev0.
 This script validates that:
@@ -10,10 +10,17 @@ This script validates that:
 2. Text encoder (Gemma3) and connectors work properly
 3. Video generation completes without OOM on RTX 4090 (24GB)
 
+Now includes optional latent normalization (ported from ComfyUI-LTXVideo)
+to prevent CFG-induced overbaking artifacts.
+
 Usage:
     uv run python scripts/generate_ltx2_baseline.py
     uv run python scripts/generate_ltx2_baseline.py --lora-scale 0.75
     uv run python scripts/generate_ltx2_baseline.py --steps 8 --height 384 --width 512
+
+    # With latent normalization (prevents overbaking)
+    uv run python scripts/generate_ltx2_baseline.py --normalize
+    uv run python scripts/generate_ltx2_baseline.py --normalize --norm-factors "0.95,0.8,0.6,0.4,0.2,0.0"
 """
 
 import argparse
@@ -69,6 +76,41 @@ def main():
         default="outputs/ltx2_baseline.mp4",
         help="Output video path",
     )
+    # Latent normalization arguments (ComfyUI-style)
+    parser.add_argument(
+        "--normalize",
+        action="store_true",
+        help="Enable latent normalization to prevent CFG overbaking",
+    )
+    parser.add_argument(
+        "--norm-factors",
+        type=str,
+        default="0.9,0.75,0.5,0.25,0.0",
+        help="Comma-separated normalization factors per step (default: 0.9,0.75,0.5,0.25,0.0)",
+    )
+    parser.add_argument(
+        "--norm-target-mean",
+        type=float,
+        default=0.0,
+        help="Target mean for normalization",
+    )
+    parser.add_argument(
+        "--norm-target-std",
+        type=float,
+        default=1.0,
+        help="Target std for normalization",
+    )
+    parser.add_argument(
+        "--norm-percentile",
+        type=float,
+        default=95.0,
+        help="Percentile for robust statistics (0-100)",
+    )
+    parser.add_argument(
+        "--use-wrapper",
+        action="store_true",
+        help="Use our LTX2Pipeline wrapper instead of raw diffusers",
+    )
     args = parser.parse_args()
 
     print("=" * 60)
@@ -81,6 +123,12 @@ def main():
     print(f"Steps: {args.steps}, Guidance: {args.guidance_scale}")
     if args.lora_path:
         print(f"LoRA: {args.lora_path} @ scale {args.lora_scale}")
+    if args.normalize:
+        print(f"Normalization: enabled (factors={args.norm_factors})")
+    if args.use_wrapper:
+        print("Using: llm_dit.pipelines.LTX2Pipeline wrapper")
+    else:
+        print("Using: diffusers.LTX2Pipeline (raw)")
     print("=" * 60)
 
     # Clear CUDA cache before loading
@@ -92,60 +140,124 @@ def main():
         free_mem = torch.cuda.get_device_properties(0).total_memory - torch.cuda.memory_allocated(0)
         print(f"Available VRAM: {free_mem / 1e9:.1f} GB")
 
-    # Import diffusers
-    from diffusers import LTX2Pipeline
-    from diffusers.utils import export_to_video
+    # Determine whether to use our wrapper (required for normalization)
+    use_wrapper = args.use_wrapper or args.normalize
 
-    # Load pipeline
-    print("\nLoading LTX2Pipeline...")
-    start_load = time.time()
+    if use_wrapper:
+        from llm_dit.pipelines.ltx2 import LTX2Pipeline as WrappedLTX2Pipeline
+        from diffusers.utils import export_to_video
 
-    pipe = LTX2Pipeline.from_pretrained(
-        args.model_path,
-        torch_dtype=torch.bfloat16,
-    )
+        # Load pipeline using our wrapper
+        print("\nLoading LTX2Pipeline (llm_dit wrapper)...")
+        start_load = time.time()
 
-    # Enable CPU offload (required for 24GB)
-    print("Enabling sequential CPU offload...")
-    pipe.enable_sequential_cpu_offload()
+        pipe = WrappedLTX2Pipeline.from_pretrained(
+            args.model_path,
+            torch_dtype=torch.bfloat16,
+            enable_cpu_offload=True,
+        )
 
-    load_time = time.time() - start_load
-    print(f"Pipeline loaded in {load_time:.1f}s")
+        load_time = time.time() - start_load
+        print(f"Pipeline loaded in {load_time:.1f}s")
 
-    # Load LoRA if specified
-    if args.lora_path:
-        lora_path = Path(args.lora_path)
-        if not lora_path.is_absolute():
-            lora_path = Path(args.model_path) / args.lora_path
+        # Load LoRA if specified
+        if args.lora_path:
+            lora_path = Path(args.lora_path)
+            if not lora_path.is_absolute():
+                lora_path = Path(args.model_path) / args.lora_path
 
-        if lora_path.exists():
-            print(f"\nLoading LoRA weights from {lora_path}...")
-            pipe.load_lora_weights(str(lora_path), adapter_name="distilled")
-            pipe.set_adapters(["distilled"], [args.lora_scale])
-            print(f"LoRA loaded with scale {args.lora_scale}")
-        else:
-            print(f"Warning: LoRA path not found: {lora_path}")
+            if lora_path.exists():
+                print(f"\nLoading LoRA weights from {lora_path}...")
+                pipe.load_lora(str(lora_path), scale=args.lora_scale)
+                print(f"LoRA loaded with scale {args.lora_scale}")
+            else:
+                print(f"Warning: LoRA path not found: {lora_path}")
 
-    # Set up generator for reproducibility
-    generator = None
-    if args.seed is not None:
-        generator = torch.Generator(device="cpu").manual_seed(args.seed)
-        print(f"\nUsing seed: {args.seed}")
+        # Set up generator for reproducibility
+        generator = None
+        if args.seed is not None:
+            generator = torch.Generator(device="cuda").manual_seed(args.seed)
+            print(f"\nUsing seed: {args.seed}")
 
-    # Generate video
-    print("\nGenerating video...")
-    start_gen = time.time()
+        # Generate video
+        print("\nGenerating video...")
+        start_gen = time.time()
 
-    output = pipe(
-        prompt=args.prompt,
-        negative_prompt=args.negative_prompt if args.negative_prompt else None,
-        height=args.height,
-        width=args.width,
-        num_frames=args.num_frames,
-        num_inference_steps=args.steps,
-        guidance_scale=args.guidance_scale,
-        generator=generator,
-    )
+        output = pipe(
+            prompt=args.prompt,
+            negative_prompt=args.negative_prompt if args.negative_prompt else "worst quality, blurry, distorted",
+            height=args.height,
+            width=args.width,
+            num_frames=args.num_frames,
+            num_inference_steps=args.steps,
+            guidance_scale=args.guidance_scale,
+            generator=generator,
+            # Normalization settings
+            enable_latent_normalization=args.normalize,
+            normalization_factors=args.norm_factors,
+            normalization_target_mean=args.norm_target_mean,
+            normalization_target_std=args.norm_target_std,
+            normalization_percentile=args.norm_percentile,
+            return_dict=False,
+        )
+        video_frames, audio = output
+
+    else:
+        # Use raw diffusers pipeline
+        from diffusers import LTX2Pipeline
+        from diffusers.utils import export_to_video
+
+        # Load pipeline
+        print("\nLoading LTX2Pipeline (diffusers)...")
+        start_load = time.time()
+
+        pipe = LTX2Pipeline.from_pretrained(
+            args.model_path,
+            torch_dtype=torch.bfloat16,
+        )
+
+        # Enable CPU offload (required for 24GB)
+        print("Enabling sequential CPU offload...")
+        pipe.enable_sequential_cpu_offload()
+
+        load_time = time.time() - start_load
+        print(f"Pipeline loaded in {load_time:.1f}s")
+
+        # Load LoRA if specified
+        if args.lora_path:
+            lora_path = Path(args.lora_path)
+            if not lora_path.is_absolute():
+                lora_path = Path(args.model_path) / args.lora_path
+
+            if lora_path.exists():
+                print(f"\nLoading LoRA weights from {lora_path}...")
+                pipe.load_lora_weights(str(lora_path), adapter_name="distilled")
+                pipe.set_adapters(["distilled"], [args.lora_scale])
+                print(f"LoRA loaded with scale {args.lora_scale}")
+            else:
+                print(f"Warning: LoRA path not found: {lora_path}")
+
+        # Set up generator for reproducibility
+        generator = None
+        if args.seed is not None:
+            generator = torch.Generator(device="cpu").manual_seed(args.seed)
+            print(f"\nUsing seed: {args.seed}")
+
+        # Generate video
+        print("\nGenerating video...")
+        start_gen = time.time()
+
+        output = pipe(
+            prompt=args.prompt,
+            negative_prompt=args.negative_prompt if args.negative_prompt else None,
+            height=args.height,
+            width=args.width,
+            num_frames=args.num_frames,
+            num_inference_steps=args.steps,
+            guidance_scale=args.guidance_scale,
+            generator=generator,
+        )
+        video_frames = output.frames[0]  # First (and only) batch
 
     gen_time = time.time() - start_gen
     print(f"\nGeneration complete in {gen_time:.1f}s ({gen_time / args.steps:.2f}s/step)")
@@ -154,9 +266,17 @@ def main():
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    video_frames = output.frames[0]  # First (and only) batch
-    print(f"Video shape: {len(video_frames)} frames")
+    # Handle different output formats
+    if hasattr(video_frames, 'shape'):
+        # numpy array from wrapper - may have batch dim
+        if video_frames.ndim == 5:
+            video_frames = video_frames[0]  # Remove batch dim
+        print(f"Video shape: {video_frames.shape[0]} frames")
+    else:
+        # List of PIL images from diffusers
+        print(f"Video shape: {len(video_frames)} frames")
 
+    from diffusers.utils import export_to_video
     export_to_video(video_frames, str(output_path), fps=args.fps)
     print(f"\nSaved to: {output_path}")
 

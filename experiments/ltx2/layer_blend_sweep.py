@@ -1,0 +1,499 @@
+#!/usr/bin/env python3
+"""
+LTX-2 Layer Blend Sweep Experiment
+
+Last Updated: 2026-01-16
+
+Informed by projection matrix analysis (Session 27):
+- Late layers (43-47) contribute ~25% of signal when accounting for activations
+- Early layers (0-4) contribute <1% of signal
+- Layer 48 (final) is paradoxically low (0.02%)
+- Projection W is nearly uniform; activation magnitudes create differentiation
+
+This experiment tests weighted layer combinations using proper blending
+(not zeroing, which creates OOD inputs).
+
+Blends tested:
+1. baseline: All 49 layers, uniform weights
+2. late_heavy: Upweight layers 40-47 (where contribution is highest)
+3. early_excluded: Zero weight on layers 0-10 (minimal contribution)
+4. top_contributors: Only layers 43-47 (top 5 by contribution)
+5. u_shaped: Early (0-16) + Late (40-48), skip middle (traditional hypothesis)
+6. anti_u: Middle only (15-35), exclude early and late
+
+Usage:
+    # Quick test (3 blends × 2 prompts)
+    uv run python experiments/ltx2/layer_blend_sweep.py --quick
+
+    # Full sweep
+    uv run python experiments/ltx2/layer_blend_sweep.py
+
+    # With specific seed
+    uv run python experiments/ltx2/layer_blend_sweep.py --seed 42
+"""
+
+import argparse
+import gc
+import json
+import time
+from datetime import datetime
+from pathlib import Path
+
+import matplotlib.pyplot as plt
+import numpy as np
+import torch
+from PIL import Image
+
+# LTX-2 prompts following official guidelines (4-8 sentences)
+TEST_PROMPTS = {
+    "animal": (
+        "A golden retriever runs joyfully through a sun-dappled park, its fur gleaming in "
+        "warm afternoon light. The camera tracks alongside as the dog bounds across lush green "
+        "grass, tongue out and tail wagging energetically. Birds chirp softly in the background "
+        "as leaves rustle in a gentle breeze. The scene captures the pure happiness of a pet "
+        "enjoying a perfect day outdoors."
+    ),
+    "urban": (
+        "A bustling city street at night comes alive with neon signs reflecting off rain-slicked "
+        "pavement. Crowds of people in dark coats hurry past storefronts while taxis honk in the "
+        "distance. The camera slowly pans across the scene capturing the vibrant energy of urban "
+        "nightlife. Steam rises from subway grates as streetlights cast long shadows."
+    ),
+    "nature": (
+        "A serene mountain lake reflects the surrounding pine forest under a clear blue sky. "
+        "The water is perfectly still, creating a mirror image of snow-capped peaks in the "
+        "distance. A gentle breeze causes subtle ripples near the shoreline where wildflowers "
+        "bloom. The camera holds steady on this peaceful landscape as a bird flies across frame."
+    ),
+    "abstract": (
+        "A dreamlike surreal landscape unfolds with floating islands suspended in a pink and "
+        "purple sky. Ethereal mist swirls around ancient stone structures as bioluminescent "
+        "plants pulse with soft light. The camera drifts slowly through this otherworldly realm "
+        "revealing impossible geometries and cascading waterfalls that flow upward."
+    ),
+    "human": (
+        "A skilled artisan carefully shapes clay on a pottery wheel in a sunlit workshop. "
+        "Their hands move with practiced precision as the form emerges from the spinning clay. "
+        "Dust motes float in shafts of golden afternoon light streaming through tall windows. "
+        "The camera captures the meditative focus on the artist's face as they work."
+    ),
+}
+
+# Layer blend configurations
+# Each config specifies layer weights (non-active layers get 0 weight)
+# Weights are normalized to sum to 1 during generation
+BLEND_CONFIGS = {
+    "baseline": {
+        "description": "All 49 layers, uniform weights",
+        "active_layers": list(range(49)),
+        "weights": None,  # None means uniform
+    },
+    "late_heavy": {
+        "description": "Upweight layers 40-47 (2x), others normal",
+        "active_layers": list(range(49)),
+        "weights": {i: (2.0 if 40 <= i <= 47 else 1.0) for i in range(49)},
+    },
+    "early_excluded": {
+        "description": "Exclude layers 0-10 (near-zero contribution)",
+        "active_layers": list(range(11, 49)),
+        "weights": None,
+    },
+    "top_contributors": {
+        "description": "Only layers 43-47 (~25% of baseline contribution)",
+        "active_layers": list(range(43, 48)),
+        "weights": None,
+    },
+    "late_only": {
+        "description": "Only layers 40-48",
+        "active_layers": list(range(40, 49)),
+        "weights": None,
+    },
+    "u_shaped": {
+        "description": "Early (0-16) + Late (40-48), skip middle",
+        "active_layers": list(range(0, 17)) + list(range(40, 49)),
+        "weights": None,
+    },
+    "anti_u": {
+        "description": "Middle only (15-35), exclude early and late",
+        "active_layers": list(range(15, 36)),
+        "weights": None,
+    },
+    "bottom_excluded": {
+        "description": "Exclude bottom 25 layers (0-24)",
+        "active_layers": list(range(25, 49)),
+        "weights": None,
+    },
+    "gradual": {
+        "description": "Linear weight increase 0→1 across layers",
+        "active_layers": list(range(49)),
+        "weights": {i: (i + 1) / 49 for i in range(49)},
+    },
+    "exponential": {
+        "description": "Exponential weight increase toward late layers",
+        "active_layers": list(range(49)),
+        "weights": {i: np.exp(i / 10) for i in range(49)},
+    },
+}
+
+QUICK_CONFIGS = ["baseline", "late_heavy", "top_contributors"]
+QUICK_PROMPTS = ["animal", "urban"]
+
+
+def compute_metrics(frame: Image.Image, prompt: str) -> dict:
+    """Compute quality metrics for a frame."""
+    metrics = {}
+
+    # Basic statistics
+    frame_array = np.array(frame)
+    metrics["mean_brightness"] = float(frame_array.mean())
+    metrics["std"] = float(frame_array.std())
+    metrics["min"] = float(frame_array.min())
+    metrics["max"] = float(frame_array.max())
+
+    # Try SigLIP score
+    try:
+        from experiments.metrics.siglip_score import compute_siglip_score
+        metrics["siglip_score"] = compute_siglip_score(prompt, frame)
+    except Exception as e:
+        metrics["siglip_score"] = None
+        metrics["siglip_error"] = str(e)
+
+    # Try ImageReward
+    try:
+        from experiments.metrics.image_reward import compute_image_reward
+        metrics["image_reward"] = compute_image_reward(prompt, frame)
+    except Exception as e:
+        metrics["image_reward"] = None
+        metrics["image_reward_error"] = str(e)
+
+    return metrics
+
+
+def run_layer_blend_sweep(
+    model_path: str = "models/LTX-2",
+    output_dir: str = "experiments/results",
+    seed: int = 42,
+    quick: bool = False,
+    num_inference_steps: int = 25,
+    guidance_scale: float = 3.0,
+    height: int = 512,
+    width: int = 768,
+    num_frames: int = 33,
+    low_memory: bool = False,
+):
+    """Run layer blend sweep experiment."""
+    from diffusers import LTX2Pipeline
+    from diffusers.utils import export_to_video
+
+    # Clear GPU memory before starting
+    gc.collect()
+    torch.cuda.empty_cache()
+    if torch.cuda.is_available():
+        torch.cuda.reset_peak_memory_stats()
+
+    # Setup output directory
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_path = Path(output_dir) / f"ltx2_layer_blend_{timestamp}"
+    output_path.mkdir(parents=True, exist_ok=True)
+    (output_path / "images").mkdir(exist_ok=True)
+    (output_path / "videos").mkdir(exist_ok=True)
+    (output_path / "metadata").mkdir(exist_ok=True)
+
+    print("=" * 60)
+    print("LTX-2 Layer Blend Sweep")
+    print("=" * 60)
+    print(f"Output: {output_path}")
+    print(f"Seed: {seed}")
+    print(f"Quick mode: {quick}")
+
+    # Select configs and prompts
+    configs = QUICK_CONFIGS if quick else list(BLEND_CONFIGS.keys())
+    prompts = QUICK_PROMPTS if quick else list(TEST_PROMPTS.keys())
+
+    total_gens = len(configs) * len(prompts)
+    print(f"Generations: {len(configs)} configs × {len(prompts)} prompts = {total_gens}")
+
+    # Load pipeline
+    print("\nLoading pipeline...")
+    pipe = LTX2Pipeline.from_pretrained(
+        model_path,
+        torch_dtype=torch.bfloat16,
+    )
+
+    if low_memory:
+        print("Using sequential CPU offload (low memory mode)...")
+        pipe.enable_sequential_cpu_offload()
+    else:
+        pipe.enable_model_cpu_offload()  # 2-3x faster than sequential
+
+    # Results storage
+    all_results = []
+    config_summaries = {}
+
+    gen_idx = 0
+    for config_name in configs:
+        config = BLEND_CONFIGS[config_name]
+        print(f"\n{'='*60}")
+        print(f"Config: {config_name}")
+        print(f"  {config['description']}")
+        print(f"  Active layers: {len(config['active_layers'])}")
+        print("=" * 60)
+
+        config_results = []
+
+        for prompt_id in prompts:
+            gen_idx += 1
+            prompt_text = TEST_PROMPTS[prompt_id]
+            print(f"\n[{gen_idx}/{total_gens}] {config_name} × {prompt_id}")
+
+            start_time = time.time()
+
+            # Generate with layer blending
+            generator = torch.Generator(device="cpu").manual_seed(seed)
+
+            # Strategy: Temporarily override _pack_text_embeds to apply layer weighting
+            # before the normalization step. This is the cleanest hook point.
+            from diffusers.pipelines.ltx2.pipeline_ltx2 import LTX2Pipeline as DiffusersLTX2Pipeline
+
+            original_pack = DiffusersLTX2Pipeline._pack_text_embeds
+
+            # Build weight tensor for this config FIRST (before defining closure)
+            num_layers = 49
+            config_layer_weights = torch.zeros(num_layers)
+
+            if config["weights"] is None:
+                for layer_idx in config["active_layers"]:
+                    config_layer_weights[layer_idx] = 1.0
+            else:
+                for layer_idx in config["active_layers"]:
+                    config_layer_weights[layer_idx] = config["weights"].get(layer_idx, 1.0)
+
+            # Normalize weights to preserve signal magnitude
+            weight_sum = config_layer_weights.sum()
+            if weight_sum > 0:
+                config_layer_weights = config_layer_weights / weight_sum * num_layers
+
+            # Create closure that captures the weights
+            def make_pack_with_blend(weights_tensor, orig_pack):
+                """Factory to create pack function with captured weights."""
+                @staticmethod
+                def pack_with_blend(
+                    text_hidden_states,
+                    sequence_lengths,
+                    device,
+                    padding_side="left",
+                    scale_factor=8,
+                    eps=1e-6,
+                ):
+                    """Pack with layer weighting applied first."""
+                    # text_hidden_states: [B, T, 3840, 49]
+
+                    # Apply layer weights (captured via closure)
+                    w = weights_tensor.to(text_hidden_states.device).view(1, 1, 1, -1)
+                    weighted = text_hidden_states * w
+
+                    # Call original pack
+                    return orig_pack(
+                        weighted,
+                        sequence_lengths,
+                        device,
+                        padding_side,
+                        scale_factor,
+                        eps,
+                    )
+                return pack_with_blend
+
+            # Apply patched method
+            DiffusersLTX2Pipeline._pack_text_embeds = make_pack_with_blend(
+                config_layer_weights, original_pack
+            )
+
+            try:
+                output = pipe(
+                    prompt=prompt_text,
+                    height=height,
+                    width=width,
+                    num_frames=num_frames,
+                    num_inference_steps=num_inference_steps,
+                    guidance_scale=guidance_scale,
+                    generator=generator,
+                )
+                frames = output.frames[0]
+            finally:
+                # Restore original method
+                DiffusersLTX2Pipeline._pack_text_embeds = original_pack
+
+            gen_time = time.time() - start_time
+
+            # Extract first frame
+            first_frame = frames[0]
+
+            # Compute metrics
+            metrics = compute_metrics(first_frame, prompt_text)
+
+            # Save outputs
+            sample_name = f"{config_name}_{prompt_id}"
+            image_path = output_path / "images" / f"{sample_name}.png"
+            video_path = output_path / "videos" / f"{sample_name}.mp4"
+
+            first_frame.save(image_path)
+            export_to_video(frames, str(video_path), fps=24)
+
+            # Build result
+            result = {
+                "config": {
+                    "blend_name": config_name,
+                    "blend_description": config["description"],
+                    "active_layers": config["active_layers"],
+                    "num_active_layers": len(config["active_layers"]),
+                    "prompt_id": prompt_id,
+                    "seed": seed,
+                },
+                "generation_time_seconds": gen_time,
+                "output_path": str(image_path.relative_to(output_path)),
+                "video_path": str(video_path.relative_to(output_path)),
+                **metrics,
+            }
+
+            # Save metadata
+            metadata_path = output_path / "metadata" / f"{sample_name}.json"
+            with open(metadata_path, "w") as f:
+                json.dump(result, f, indent=2)
+
+            all_results.append(result)
+            config_results.append(result)
+
+            print(f"  Time: {gen_time:.1f}s | Brightness: {metrics['mean_brightness']:.1f}")
+            if metrics.get("siglip_score") is not None:
+                print(f"  SigLIP: {metrics['siglip_score']:.4f}", end="")
+            if metrics.get("image_reward") is not None:
+                print(f" | ImageReward: {metrics['image_reward']:.4f}", end="")
+            print()
+
+            # Cleanup between generations
+            del frames, output, first_frame
+            gc.collect()
+            torch.cuda.empty_cache()
+
+        # Summarize config
+        config_summaries[config_name] = {
+            "description": config["description"],
+            "num_active_layers": len(config["active_layers"]),
+            "mean_brightness": np.mean([r["mean_brightness"] for r in config_results]),
+            "mean_siglip": np.mean([r["siglip_score"] for r in config_results if r.get("siglip_score") is not None]) if any(r.get("siglip_score") is not None for r in config_results) else None,
+            "mean_image_reward": np.mean([r["image_reward"] for r in config_results if r.get("image_reward") is not None]) if any(r.get("image_reward") is not None for r in config_results) else None,
+        }
+
+    # Save summary
+    summary = {
+        "experiment": "ltx2_layer_blend_sweep",
+        "timestamp": timestamp,
+        "parameters": {
+            "seed": seed,
+            "num_inference_steps": num_inference_steps,
+            "guidance_scale": guidance_scale,
+            "resolution": f"{height}x{width}",
+            "num_frames": num_frames,
+        },
+        "total_generations": len(all_results),
+        "config_summaries": config_summaries,
+        "results": all_results,
+    }
+
+    summary_path = output_path / "ltx2_layer_blend_summary.json"
+    with open(summary_path, "w") as f:
+        json.dump(summary, f, indent=2)
+
+    # Generate comparison visualization
+    print("\n" + "=" * 60)
+    print("SUMMARY")
+    print("=" * 60)
+
+    print(f"\n{'Config':<20} {'Layers':<8} {'Brightness':<12} {'SigLIP':<10} {'ImgReward':<10}")
+    print("-" * 60)
+
+    for config_name, stats in config_summaries.items():
+        siglip_str = f"{stats['mean_siglip']:.4f}" if stats.get('mean_siglip') is not None else "N/A"
+        reward_str = f"{stats['mean_image_reward']:.4f}" if stats.get('mean_image_reward') is not None else "N/A"
+        print(f"{config_name:<20} {stats['num_active_layers']:<8} {stats['mean_brightness']:<12.1f} {siglip_str:<10} {reward_str:<10}")
+
+    # Create visualization
+    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+
+    config_names = list(config_summaries.keys())
+    x = range(len(config_names))
+
+    # Brightness
+    ax1 = axes[0]
+    brightness_values = [config_summaries[c]["mean_brightness"] for c in config_names]
+    ax1.bar(x, brightness_values)
+    ax1.set_xticks(x)
+    ax1.set_xticklabels(config_names, rotation=45, ha="right")
+    ax1.set_ylabel("Mean Brightness")
+    ax1.set_title("Brightness by Blend Config")
+
+    # SigLIP
+    ax2 = axes[1]
+    siglip_values = [config_summaries[c].get("mean_siglip") or 0 for c in config_names]
+    ax2.bar(x, siglip_values)
+    ax2.set_xticks(x)
+    ax2.set_xticklabels(config_names, rotation=45, ha="right")
+    ax2.set_ylabel("SigLIP Score")
+    ax2.set_title("Text-Image Alignment by Blend Config")
+
+    # ImageReward
+    ax3 = axes[2]
+    reward_values = [config_summaries[c].get("mean_image_reward") or 0 for c in config_names]
+    ax3.bar(x, reward_values)
+    ax3.set_xticks(x)
+    ax3.set_xticklabels(config_names, rotation=45, ha="right")
+    ax3.set_ylabel("ImageReward Score")
+    ax3.set_title("Human Preference by Blend Config")
+
+    plt.tight_layout()
+    plot_path = output_path / "layer_blend_comparison.png"
+    plt.savefig(plot_path, dpi=150)
+    print(f"\nSaved plot to: {plot_path}")
+    plt.close()
+
+    # Cleanup
+    del pipe
+    gc.collect()
+    torch.cuda.empty_cache()
+
+    print(f"\nResults saved to: {output_path}")
+    print("=" * 60)
+
+    return summary
+
+
+def main():
+    parser = argparse.ArgumentParser(description="LTX-2 Layer Blend Sweep")
+    parser.add_argument("--model-path", default="models/LTX-2", help="Path to LTX-2 model")
+    parser.add_argument("--output-dir", default="experiments/results", help="Output directory")
+    parser.add_argument("--seed", type=int, default=42, help="Random seed")
+    parser.add_argument("--quick", action="store_true", help="Quick test (3 configs × 2 prompts)")
+    parser.add_argument("--steps", type=int, default=25, help="Inference steps")
+    parser.add_argument("--cfg", type=float, default=3.0, help="Guidance scale")
+    parser.add_argument("--height", type=int, default=512, help="Video height")
+    parser.add_argument("--width", type=int, default=768, help="Video width")
+    parser.add_argument("--frames", type=int, default=33, help="Number of frames")
+    parser.add_argument("--low-memory", action="store_true", help="Use sequential CPU offload (slower but less VRAM)")
+    args = parser.parse_args()
+
+    run_layer_blend_sweep(
+        model_path=args.model_path,
+        output_dir=args.output_dir,
+        seed=args.seed,
+        quick=args.quick,
+        num_inference_steps=args.steps,
+        guidance_scale=args.cfg,
+        height=args.height,
+        width=args.width,
+        num_frames=args.frames,
+        low_memory=args.low_memory,
+    )
+
+
+if __name__ == "__main__":
+    main()

@@ -15,7 +15,9 @@ experiments/
 │   ├── prompting_guide.md        # How to write prompts for LTX-2
 │   ├── layer_profile_sweep.py    # Full 49-layer sweep with soft masking
 │   ├── layer_extraction_comparison.py  # Layer subset comparison
+│   ├── layer_blend_sweep.py      # Weighted layer blending experiments
 │   ├── analyze_projection_matrix.py    # Zero-cost W analysis
+│   ├── analyze_projection_deeper.py    # Activation-weighted contribution
 │   ├── thinking_token_analysis.py      # Register token analysis
 │   └── dimension_analysis.py
 ├── metrics/                 # Scoring modules
@@ -224,6 +226,40 @@ Key parameters:
 - **128 thinking tokens**: Learnable registers for global context
 - **48 DiT blocks**: Transformer blocks in the diffusion model (14B video + 5B audio)
 
+---
+
+## Key Research Finding: Layer Contribution Analysis
+
+### The Deeper Analysis (analyze_projection_deeper.py)
+
+Initial analysis of projection W showed uniform Frobenius norms (~2% variation). Deeper analysis revealed:
+
+1. **Projection W is nearly uniform** - each layer block has similar weight magnitude
+2. **Hidden state magnitudes vary dramatically** - late layers have much higher norms
+3. **When accounting for activations** (`||W_layer @ h_layer||`):
+
+| Rank | Layer | Contribution |
+|------|-------|--------------|
+| 1 | Layer 45 | **5.60%** |
+| 2 | Layer 46 | **5.42%** |
+| 3 | Layer 47 | **5.03%** |
+| 4 | Layer 44 | **4.98%** |
+| 5 | Layer 43 | **4.75%** |
+| ... | ... | ... |
+| 49 | Layer 0 | **0.00%** |
+
+**Key insight**: Late layers (43-47) contribute ~25% of signal. Early layers (0-4) contribute <1%.
+
+**Layer 48 (final) is paradoxically low (0.02%)** - possibly LM head prediction layer, not semantic.
+
+### Implications for Experiments
+
+- **Layer blending should focus on layers 40-47** for maximum impact
+- **Early layers can likely be downweighted/excluded** with minimal effect
+- **Uniform W suggests** layer importance comes from Gemma activations, not learned projection
+
+---
+
 ## Running Experiments
 
 ```bash
@@ -232,6 +268,17 @@ uv run python experiments/ltx2/layer_profile_sweep.py --quick
 
 # Full sweep (490 generations)
 uv run python experiments/ltx2/layer_profile_sweep.py
+
+# Layer blend sweep (weighted combinations)
+uv run python experiments/ltx2/layer_blend_sweep.py --quick  # 3 blends × 2 prompts
+uv run python experiments/ltx2/layer_blend_sweep.py          # Full: 10 blends × 5 prompts
+
+# Zero-cost projection analysis
+uv run python experiments/ltx2/analyze_projection_matrix.py
+uv run python experiments/ltx2/analyze_projection_deeper.py  # Includes activation-weighted analysis
+
+# Thinking token analysis
+uv run python experiments/ltx2/thinking_token_analysis.py
 
 # View results
 uv run experiments/viewer/server.py
