@@ -108,4 +108,4 @@ cinematic, film noir, documentary, painterly, pixel art, surreal, minimalist, ha
 
 Based on the official LTX-2 prompting guide from [ltx.io](https://ltx.io/model/model-blog/prompting-guide-for-ltx-2).
 
-See `internal/research/ltx2/ltx2_prompting_guide_written_by_gemini.md` for the complete reference with extensive examples.
+See `ltx2_prompting_guide_written_by_gemini.md` for the complete reference with extensive examples.

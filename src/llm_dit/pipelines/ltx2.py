@@ -41,6 +41,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterator, List, Optional, Tuple, Union
 
+# Prevent tokenizers parallelism warning when forking (e.g., during video export)
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
 import torch
 import numpy as np
 
@@ -322,7 +325,7 @@ class LTX2Pipeline:
 
             text_encoder = Gemma3ForConditionalGeneration.from_pretrained(
                 encoder_id,
-                torch_dtype=torch_dtype,
+                dtype=torch_dtype,
                 low_cpu_mem_usage=True,
             )
             logger.info("Text encoder loaded to CPU (bfloat16)")
@@ -419,7 +422,7 @@ class LTX2Pipeline:
 
         text_encoder = Gemma3ForConditionalGeneration.from_pretrained(
             encoder_source,
-            torch_dtype=torch_dtype,
+            dtype=torch_dtype,
             # Start on CPU when offloading, diffusers will manage device placement
             device_map="cpu" if enable_cpu_offload else "auto",
         )
