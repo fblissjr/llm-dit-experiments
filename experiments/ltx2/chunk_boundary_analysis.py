@@ -435,6 +435,7 @@ def run_chunk_boundary_analysis(
         # Cache on CPU
         embeddings_cache[prompt_id] = {
             "prompt_embeds": prompt_embeds.cpu(),
+            "attention_mask": attention_mask.cpu(),
             "prompt": prompt_text,
         }
 
@@ -499,6 +500,7 @@ def run_chunk_boundary_analysis(
             # Get cached embeddings
             cached = embeddings_cache[prompt_id]
             prompt_embeds = cached["prompt_embeds"].to("cuda")
+            prompt_attention_mask = cached["attention_mask"].to("cuda")
 
             start_time = time.time()
 
@@ -508,6 +510,7 @@ def run_chunk_boundary_analysis(
 
                 output = pipe(
                     prompt_embeds=prompt_embeds,
+                    prompt_attention_mask=prompt_attention_mask,
                     height=height,
                     width=width,
                     num_frames=num_frames,

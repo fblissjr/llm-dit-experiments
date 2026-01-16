@@ -278,6 +278,7 @@ def run_layer_profile_sweep(
             # Cache on CPU to free VRAM
             embeddings_cache[(layer_idx, prompt_id)] = {
                 "prompt_embeds": prompt_embeds.cpu(),
+                "attention_mask": attention_mask.cpu(),
                 "prompt": prompt_text,
             }
 
@@ -339,6 +340,7 @@ def run_layer_profile_sweep(
             # Get cached embeddings
             cached = embeddings_cache[(layer_idx, prompt_id)]
             prompt_embeds = cached["prompt_embeds"].to("cuda")
+            prompt_attention_mask = cached["attention_mask"].to("cuda")
 
             start_time = time.time()
 
@@ -348,6 +350,7 @@ def run_layer_profile_sweep(
 
                 output = pipe(
                     prompt_embeds=prompt_embeds,
+                    prompt_attention_mask=prompt_attention_mask,
                     height=height,
                     width=width,
                     num_frames=num_frames,

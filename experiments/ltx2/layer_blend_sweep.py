@@ -305,6 +305,7 @@ def run_layer_blend_sweep(
             # Get cached embeddings
             cached = embeddings_cache[(config_name, prompt_id)]
             prompt_embeds = cached["prompt_embeds"].to("cuda")
+            prompt_attention_mask = cached["attention_mask"].to("cuda")
             prompt_text = cached["prompt"]
 
             start_time = time.time()
@@ -314,6 +315,7 @@ def run_layer_blend_sweep(
 
             output = pipe(
                 prompt_embeds=prompt_embeds,
+                prompt_attention_mask=prompt_attention_mask,
                 height=height,
                 width=width,
                 num_frames=num_frames,
