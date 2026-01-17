@@ -1,8 +1,15 @@
 # agent context
 
-*last updated: 2026-01-11*
+*last updated: 2026-01-17*
 
 Quick reference for LLM agents working on this codebase.
+
+## start here
+
+| Doc | Purpose |
+|-----|---------|
+| **[internal/hub.md](internal/hub.md)** | Central documentation hub |
+| **[internal/state/current.md](internal/state/current.md)** | Current project state (read first) |
 
 ## critical rules
 
@@ -12,15 +19,15 @@ Quick reference for LLM agents working on this codebase.
 - **dtype conventions** - libraries differ:
   - transformers: use `dtype=`
   - diffusers: use `torch_dtype=`
-- **max tokens: 1504** (DiT RoPE limit)
+- **max tokens: 1504** (z-image DiT RoPE limit, LTX-2 differs)
 
 ## architecture
 
 ```
-Text Prompt -> Qwen3Formatter -> TextEncoderBackend -> hidden_states[layer] -> DiT -> VAE -> Image
+Text Prompt -> TextEncoder -> hidden_states[layer(s)] -> DiT -> VAE -> Image/Video
 ```
 
-Text encoder extracts embeddings from Qwen3-4B hidden states (default layer -2). DiT uses flow matching to generate latents, VAE decodes to images.
+Models use different text encoders (Qwen3-4B, Gemma3-12B, UMT5-XXL) and DiT variants. See [internal/models/overview.md](internal/models/overview.md) for comparison.
 
 ## key parameters
 
@@ -44,6 +51,20 @@ Text encoder extracts embeddings from Qwen3-4B hidden states (default layer -2).
 | steps | 50 | non-distilled |
 | resolution | 640/1024 | fixed |
 
+### ltx-2 (video, active development)
+
+| param | value | notes |
+|-------|-------|-------|
+| encoder | Gemma3-12B (Q4) | 3840 hidden dim, 49 layers |
+| transformer | LTX-2 19B | 48 blocks, 32 heads |
+| cfg | 3.5-4.0 | with latent normalization |
+| steps | 50 | standard |
+| resolution | 512-1280 | video generation |
+| frames | 121-369 | per ComfyUI workflow |
+| rope | 3D INTERLEAVED | (T, H, W) positions |
+
+**Status:** Pure PyTorch port complete. Verification tests pending.
+
 ### wan (humo video)
 
 | param | value | notes |
@@ -61,17 +82,23 @@ Text encoder extracts embeddings from Qwen3-4B hidden states (default layer -2).
 
 | area | files |
 |------|-------|
-| pipeline | `src/llm_dit/pipelines/z_image.py`, `qwen_image.py`, `wan_video.py` |
+| pipeline | `src/llm_dit/pipelines/z_image.py`, `qwen_image.py`, `ltx2.py`, `wan_video.py` |
 | config | `src/llm_dit/config.py`, `cli.py` |
-| encoder | `src/llm_dit/encoders/z_image_encoder.py` |
-| models | `src/llm_dit/models/humo_transformer.py`, `wan_vae.py` |
+| encoder | `src/llm_dit/encoders/z_image_encoder.py`, `gemma3.py` |
+| models | `src/llm_dit/models/ltx2_transformer.py`, `humo_transformer.py` |
+| router | `src/llm_dit/router/token_layer_router.py` |
+| experiments | `experiments/ltx2/` |
 | web | `web/server.py`, `static/js/`, `static/css/` |
 | tests | `tests/unit/`, `tests/integration/` |
 
 ## navigation
 
+### primary (read first)
+- **[hub.md](internal/hub.md)** - central documentation hub
+- **[current.md](internal/state/current.md)** - current project state
+- [models/](internal/models/) - per-model knowledge base
+
 ### session state
-- [session continuity](internal/state/session_continuity.md) - current focus, blockers, next steps
 - [todos](internal/state/todos.md) - pending work across sessions
 - [lessons learned](internal/state/lessons_learned.md) - aggregated insights
 
