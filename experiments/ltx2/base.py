@@ -733,6 +733,129 @@ class LTX2ExperimentBase(ABC):
             self.scorer.offload()
 
     # =========================================================================
+    # Router Integration (per-token layer routing)
+    # =========================================================================
+
+    def load_router(
+        self,
+        checkpoint_path: Optional[str] = None,
+        routing_mode: str = "soft",
+        temperature: float = 1.0,
+        top_k: int = 8,
+    ) -> "TokenLayerRouter":
+        """
+        Load TokenLayerRouter for per-token layer routing.
+
+        Args:
+            checkpoint_path: Path to trained router checkpoint (if None, uses uniform init)
+            routing_mode: "soft" (differentiable), "topk" (sparse), or "gumbel"
+            temperature: Softmax temperature (lower = sharper selection)
+            top_k: Number of layers for topk mode
+
+        Returns:
+            TokenLayerRouter instance
+        """
+        from llm_dit.router import TokenLayerRouter
+
+        router = TokenLayerRouter(
+            hidden_dim=3840,  # Gemma-2 9B hidden dim
+            num_layers=49,     # Gemma-2 9B layers
+            bottleneck_dim=64,
+            temperature=temperature,
+            routing_mode=routing_mode,
+            top_k=top_k,
+            init_uniform=checkpoint_path is None,  # Uniform if no checkpoint
+        )
+
+        if checkpoint_path is not None:
+            checkpoint = torch.load(checkpoint_path, map_location="cpu")
+            if "router_state_dict" in checkpoint:
+                router.load_state_dict(checkpoint["router_state_dict"])
+            else:
+                router.load_state_dict(checkpoint)
+            logger.info(f"Loaded router from {checkpoint_path}")
+
+        router = router.to(self.device)
+        router.eval()  # Set to inference mode
+        return router
+
+    def encode_with_router(
+        self,
+        prompt: str,
+        router: "TokenLayerRouter",
+        router_input_mode: str = "mean",
+        return_stats: bool = False,
+    ) -> Union[torch.Tensor, Tuple[torch.Tensor, dict]]:
+        """
+        Encode prompt with per-token layer routing.
+
+        Instead of uniform layer blending, uses the router to predict
+        per-token layer weights for dynamic layer selection.
+
+        Flow:
+            1. Get multi-layer hidden states [B, T, D, L] from Gemma
+            2. Extract router input (e.g., mean across layers)
+            3. Router predicts per-token weights [B, T, L]
+            4. Weighted sum: [B, T, D, L] x [B, T, L] -> [B, T, D]
+            5. Normalize and project for DiT
+
+        Args:
+            prompt: Text prompt
+            router: TokenLayerRouter instance
+            router_input_mode: How to extract router input from layer stack.
+                Options: "layer_0", "layer_24", "layer_47", "layer_48", "mean"
+            return_stats: If True, also return routing statistics
+
+        Returns:
+            prompt_embeds: [B, seq_len, 4096] embeddings ready for DiT
+            stats (optional): Dict with routing statistics if return_stats=True
+        """
+        if self.encoder is None:
+            raise RuntimeError("Encoder not loaded. Call load_encoder() first.")
+
+        from llm_dit.router import extract_router_input
+
+        # Step 1: Get multi-layer hidden states from Gemma
+        result = self.encoder.encode_multilayer(
+            prompt,
+            layer_indices=None,  # All 49 layers
+            return_projected=False,
+        )
+
+        layer_stack = result['layer_stack']  # [B, T, D, L]
+        attention_mask = result['attention_mask']  # [B, T]
+        seq_length = result['seq_lengths'][0]
+
+        # Step 2: Extract router input based on mode
+        router_input = extract_router_input(layer_stack, mode=router_input_mode)
+
+        # Step 3: Get per-token layer weights from router
+        with torch.no_grad():
+            layer_weights = router(router_input, attention_mask)  # [B, T, L]
+
+        # Step 4: Apply per-token weighted sum across layers
+        # layer_stack: [B, T, D, L]
+        # layer_weights: [B, T, L]
+        # result: [B, T, D] where D=3840
+        weighted_hidden = torch.einsum('btdl,btl->btd', layer_stack, layer_weights)
+
+        # Step 5: Normalize (match LTX-2 pipeline behavior)
+        # Each position vector is L2-normalized
+        eps = 1e-6
+        prompt_embeds = weighted_hidden / (weighted_hidden.norm(dim=-1, keepdim=True) + eps)
+
+        # Apply scale factor (8.0 to match LTX-2 pack_text_embeds)
+        prompt_embeds = prompt_embeds * 8.0
+
+        # Note: Output is [B, T, 3840] - same as standard encode() output
+        # Pipeline connectors handle the final projection to 4096 for DiT
+
+        if return_stats:
+            stats = router.get_routing_stats(layer_weights)
+            return prompt_embeds, stats
+        return prompt_embeds
+
+    # =========================================================================
     # Extension Points (experiments override)
     # =========================================================================
 

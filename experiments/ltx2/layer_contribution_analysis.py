@@ -110,6 +110,24 @@ class LayerContributionAnalyzer:
         # Zero out this layer
         self.pipeline.connectors.text_proj_in.weight.data[:, start:end] = 0
 
+    def isolate_layer(self, layer_idx: int):
+        """Keep ONLY a single layer's contribution, zero all others.
+
+        This is more informative than ablation because:
+        - Ablation: Remove 2% of signal → minimal effect
+        - Isolation: Keep 2% of signal → reveals layer's standalone contribution
+        """
+        hidden_dim = 3840
+
+        # Start with zeros
+        self.pipeline.connectors.text_proj_in.weight.data.zero_()
+
+        # Copy only the specified layer's weights
+        start = layer_idx * hidden_dim
+        end = (layer_idx + 1) * hidden_dim
+        self.pipeline.connectors.text_proj_in.weight.data[:, start:end] = \
+            self.original_weight[:, start:end]
+
     def restore_weights(self):
         """Restore original projection weights."""
         self.pipeline.connectors.text_proj_in.weight.data.copy_(self.original_weight)
@@ -152,19 +170,28 @@ class LayerContributionAnalyzer:
         layer_indices: Optional[list[int]] = None,
         seed: int = 42,
         output_dir: str = "experiments/results/layer_contributions",
+        mode: str = "isolation",
     ) -> dict:
         """Compute contribution score for each layer.
 
-        For each layer:
-            contribution = baseline_score - ablated_score
+        Two modes available:
 
-        Positive = layer helps; Negative = layer hurts
+        **Isolation mode (recommended):**
+            - Keep ONLY the specified layer, zero all others
+            - Score = how well this layer performs alone
+            - Better for finding which layers carry information
+
+        **Ablation mode:**
+            - Remove one layer, keep 48 others
+            - Delta = baseline - ablated_score
+            - Often shows zero delta due to redundancy
 
         Args:
             prompts: Dict of {name: prompt}
             layer_indices: Layers to analyze (default: all 49)
             seed: Random seed for reproducibility
             output_dir: Where to save results
+            mode: "isolation" (recommended) or "ablation"
 
         Returns:
             Dict with per-layer contribution scores
