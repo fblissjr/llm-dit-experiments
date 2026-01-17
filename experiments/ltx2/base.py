@@ -118,6 +118,8 @@ class LTX2ExperimentBase(ABC):
         self,
         model_path: str = "models/LTX-2/transformer/",
         use_pure_pytorch: bool = True,
+        use_group_offloading: bool = False,
+        num_blocks_per_group: int = 1,
     ) -> None:
         """
         Load LTX2 transformer with memory tracking.
@@ -126,6 +128,10 @@ class LTX2ExperimentBase(ABC):
             model_path: Path to model weights
             use_pure_pytorch: If True, use our pure PyTorch model.
                              If False, use diffusers model.
+            use_group_offloading: If True and use_pure_pytorch=False, apply
+                                 group offloading for memory efficiency (~5GB VRAM).
+                                 Streams transformer blocks from CPU during generation.
+            num_blocks_per_group: Blocks per offload group (1=min VRAM, higher=faster).
         """
         with MemoryTracker("Load transformer"):
             if use_pure_pytorch:
@@ -142,8 +148,32 @@ class LTX2ExperimentBase(ABC):
                 self.pipeline = LTX2VideoPipeline.from_pretrained(
                     "models/LTX-2",
                     torch_dtype=self.dtype,
+                    text_encoder=None,  # We handle encoding separately
+                    tokenizer=None,
                 )
-                self.pipeline.to(self.device)
+
+                if use_group_offloading:
+                    # Apply group offloading for memory-constrained GPUs (e.g., RTX 4090 24GB)
+                    from diffusers.hooks import apply_group_offloading
+                    import torch
+
+                    apply_group_offloading(
+                        self.pipeline.transformer,
+                        onload_device=torch.device("cuda"),
+                        offload_device=torch.device("cpu"),
+                        offload_type="block_level",
+                        num_blocks_per_group=num_blocks_per_group,
+                        use_stream=True,
+                        non_blocking=True,
+                    )
+
+                    # Keep VAE and connectors on GPU (small enough)
+                    self.pipeline.vae.to("cuda")
+                    if self.pipeline.connectors is not None:
+                        self.pipeline.connectors.to("cuda")
+                else:
+                    self.pipeline.to(self.device)
+
                 self.model = self.pipeline.transformer
 
         log_memory_usage("After loading transformer")
@@ -163,7 +193,7 @@ class LTX2ExperimentBase(ABC):
         with MemoryTracker("Load encoder"):
             from llm_dit.encoders import Gemma3Encoder
             self.encoder = Gemma3Encoder(
-                model_path=model_path,
+                model_id=model_path,  # Gemma3Encoder expects model_id
                 load_in_8bit=use_8bit,
                 device=self.device,
             )
@@ -194,38 +224,76 @@ class LTX2ExperimentBase(ABC):
         self,
         prompt: str,
         layer_weights: Optional[torch.Tensor] = None,
-        layer_mask: Optional[torch.Tensor] = None,
+        active_layers: Optional[List[int]] = None,
+        masking_mode: str = "soft",
+        return_packed: bool = True,
         **kwargs,
     ) -> torch.Tensor:
         """
-        Encode prompt to embeddings.
+        Encode prompt to pipeline-ready embeddings.
 
         Args:
             prompt: Text prompt
-            layer_weights: Optional per-layer weights for blending
-            layer_mask: Optional binary mask for layer ablation
+            layer_weights: Optional per-layer weights [49] for weighted blending.
+                          Layers with 0 weight are excluded.
+            active_layers: Optional list of layer indices to keep active (0-48).
+                          Used for layer ablation experiments.
+            masking_mode: How to handle inactive layers ("soft", "zero", "weighted").
+                         Only used when active_layers is set.
+            return_packed: If True, return pipeline-ready packed embeddings.
             **kwargs: Additional encoder arguments
 
         Returns:
-            Prompt embeddings tensor
+            Prompt embeddings tensor ready for pipeline (if return_packed=True)
+            or raw encoding output
         """
         if self.encoder is None:
             raise RuntimeError("Encoder not loaded. Call load_encoder() first.")
 
-        if layer_mask is not None:
-            return self.encoder.encode_with_layer_masking(
+        if active_layers is not None:
+            # Layer ablation: keep only specified layers active
+            result = self.encoder.encode_with_layer_masking(
                 prompt,
-                layer_mask=layer_mask,
-                **kwargs,
+                active_layers=active_layers,
+                masking_mode=masking_mode,
+                return_packed=return_packed,
             )
+            return result['prompt_embeds'] if return_packed else result
+
         elif layer_weights is not None:
-            return self.encoder.encode_with_layer_weights(
+            # Weighted blending: apply per-layer weights
+            # Convert weights to active layers list (non-zero weights)
+            active = [i for i in range(len(layer_weights)) if layer_weights[i] > 0]
+            result = self.encoder.encode_multilayer(
                 prompt,
-                layer_weights=layer_weights,
-                **kwargs,
+                layer_indices=active if len(active) < 49 else None,
+                return_projected=False,
             )
+
+            # Apply weights to layer stack
+            hidden_states = result['layer_stack']
+            weights = layer_weights.to(hidden_states.device).view(1, 1, 1, -1)
+            if len(active) < 49:
+                # Map weights to selected layers
+                weights = layer_weights[active].to(hidden_states.device).view(1, 1, 1, -1)
+            hidden_states = hidden_states * weights
+
+            if return_packed:
+                from llm_dit.encoders.gemma3 import pack_text_embeds
+                return pack_text_embeds(
+                    hidden_states,
+                    sequence_length=result['seq_lengths'][0],
+                    device=self.encoder.device,
+                )
+            return hidden_states
+
         else:
-            return self.encoder.encode(prompt, **kwargs)
+            # Standard encoding
+            result = self.encoder.encode(prompt, return_padded=True, **kwargs)
+            if return_packed:
+                # Return padded embeddings for pipeline
+                return result.padded_embeddings
+            return result
 
     def _create_position_indices(
         self,

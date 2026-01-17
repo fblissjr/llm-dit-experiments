@@ -374,5 +374,242 @@ class TestWithCheckpoint:
         assert info["estimated_size_bf16_gb"] > 30  # Should be ~38GB
 
 
+# ============================================================================
+# Generation Loop Tests
+# ============================================================================
+
+class TestGenerationLoop:
+    """
+    Tests for generation loop helpers in LTX2ExperimentBase.
+
+    These verify the pure PyTorch generation infrastructure:
+    - Position index computation (3D spatiotemporal positions)
+    - Video modality creation (Modality dataclass)
+    - Sigma schedule (monotonic, shifted by resolution)
+    - Latent dimension computation
+
+    Reference: experiments/ltx2/base.py
+    """
+
+    # -------------------------------------------------------------------------
+    # Position Indices Tests
+    # -------------------------------------------------------------------------
+
+    def test_position_indices_shape(self):
+        """Test _create_position_indices returns correct [B, 3, T] shape."""
+        # Import the base class to test its method
+        import sys
+        from pathlib import Path
+        sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+        from experiments.ltx2.base import LTX2ExperimentBase
+
+        # Create a minimal subclass for testing
+        class TestExp(LTX2ExperimentBase):
+            def run_iteration(self, config):
+                return {}
+
+        exp = TestExp("test", device="cpu")
+
+        # Test case 1: Standard 768x512, 33 frames
+        # Latent dims: t=(33-1)//8+1=5, h=512//32=16, w=768//32=24
+        # Token count: 5*16*24 = 1920
+        positions = exp._create_position_indices(1, 33, 512, 768)
+        assert positions.shape == (1, 3, 1920), f"Expected (1, 3, 1920), got {positions.shape}"
+
+        # Test case 2: Smaller 384x256, 17 frames
+        # Latent dims: t=(17-1)//8+1=3, h=256//32=8, w=384//32=12
+        # Token count: 3*8*12 = 288
+        positions = exp._create_position_indices(1, 17, 256, 384)
+        assert positions.shape == (1, 3, 288), f"Expected (1, 3, 288), got {positions.shape}"
+
+    def test_position_indices_values(self):
+        """Test position indices contain correct t, h, w ranges."""
+        import sys
+        from pathlib import Path
+        sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+        from experiments.ltx2.base import LTX2ExperimentBase
+
+        class TestExp(LTX2ExperimentBase):
+            def run_iteration(self, config):
+                return {}
+
+        exp = TestExp("test", device="cpu")
+
+        # 384x256, 17 frames → t=3, h=8, w=12
+        positions = exp._create_position_indices(1, 17, 256, 384)
+
+        # Extract t, h, w indices
+        t_indices = positions[0, 0, :].unique()  # Temporal
+        h_indices = positions[0, 1, :].unique()  # Height
+        w_indices = positions[0, 2, :].unique()  # Width
+
+        # Verify ranges
+        assert t_indices.min().item() == 0 and t_indices.max().item() == 2, \
+            f"Temporal range should be [0, 2], got [{t_indices.min()}, {t_indices.max()}]"
+        assert h_indices.min().item() == 0 and h_indices.max().item() == 7, \
+            f"Height range should be [0, 7], got [{h_indices.min()}, {h_indices.max()}]"
+        assert w_indices.min().item() == 0 and w_indices.max().item() == 11, \
+            f"Width range should be [0, 11], got [{w_indices.min()}, {w_indices.max()}]"
+
+    def test_position_indices_batch(self):
+        """Test position indices work with batch_size > 1."""
+        import sys
+        from pathlib import Path
+        sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+        from experiments.ltx2.base import LTX2ExperimentBase
+
+        class TestExp(LTX2ExperimentBase):
+            def run_iteration(self, config):
+                return {}
+
+        exp = TestExp("test", device="cpu")
+
+        # Batch size 4
+        positions = exp._create_position_indices(4, 17, 256, 384)
+        assert positions.shape == (4, 3, 288), f"Expected (4, 3, 288), got {positions.shape}"
+
+        # All batches should have identical positions
+        assert torch.all(positions[0] == positions[1])
+        assert torch.all(positions[0] == positions[3])
+
+    # -------------------------------------------------------------------------
+    # Video Modality Tests
+    # -------------------------------------------------------------------------
+
+    def test_video_modality_creation(self):
+        """Test _create_video_modality populates Modality fields correctly."""
+        import sys
+        from pathlib import Path
+        sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+        from experiments.ltx2.base import LTX2ExperimentBase
+        from llm_dit.models.ltx2_components import Modality
+
+        class TestExp(LTX2ExperimentBase):
+            def run_iteration(self, config):
+                return {}
+
+        exp = TestExp("test", device="cpu")
+
+        # Create dummy inputs
+        batch_size, num_tokens, latent_dim = 2, 288, 128
+        context_dim, seq_len = 4096, 100
+
+        latent = torch.randn(batch_size, num_tokens, latent_dim)
+        timestep = torch.ones(batch_size, num_tokens) * 500  # Mid-diffusion
+        positions = torch.randint(0, 10, (batch_size, 3, num_tokens))
+        prompt_embeds = torch.randn(batch_size, seq_len, context_dim)
+
+        modality = exp._create_video_modality(latent, timestep, positions, prompt_embeds)
+
+        # Verify it's a Modality instance with correct fields
+        assert isinstance(modality, Modality)
+        assert modality.latent is latent
+        assert modality.timesteps is timestep
+        assert modality.positions is positions
+        assert modality.context is prompt_embeds
+        assert modality.enabled is True
+        assert modality.context_mask is None
+
+    # -------------------------------------------------------------------------
+    # Sigma Schedule Tests
+    # -------------------------------------------------------------------------
+
+    def test_sigma_schedule_monotonic(self):
+        """Test sigma schedule decreases monotonically."""
+        import math
+
+        # Replicate sigma computation from base.py
+        num_inference_steps = 12
+        video_seq_len = 1920  # Standard 768x512, 33 frames
+
+        # Dynamic shift computation
+        base_seq_len, max_seq_len = 1024, 4096
+        base_shift, max_shift = 0.95, 2.05
+        m = (max_shift - base_shift) / (max_seq_len - base_seq_len)
+        mu = base_shift + m * (video_seq_len - base_seq_len)
+        mu = max(min(mu, max_shift), base_shift)
+
+        # Linear sigmas with exponential shift
+        sigmas = torch.linspace(1.0, 1.0 / num_inference_steps, num_inference_steps)
+        exp_mu = math.exp(mu)
+        sigmas = exp_mu / (exp_mu + (1.0 / sigmas - 1.0))
+
+        # Verify monotonically decreasing
+        for i in range(len(sigmas) - 1):
+            assert sigmas[i] > sigmas[i + 1], \
+                f"Sigma not monotonic at step {i}: {sigmas[i]:.4f} <= {sigmas[i+1]:.4f}"
+
+    def test_sigma_schedule_range(self):
+        """Test sigmas are in expected [0.2, 1.0] range after shift."""
+        import math
+
+        num_inference_steps = 12
+        video_seq_len = 1920
+
+        base_seq_len, max_seq_len = 1024, 4096
+        base_shift, max_shift = 0.95, 2.05
+        m = (max_shift - base_shift) / (max_seq_len - base_seq_len)
+        mu = base_shift + m * (video_seq_len - base_seq_len)
+        mu = max(min(mu, max_shift), base_shift)
+
+        sigmas = torch.linspace(1.0, 1.0 / num_inference_steps, num_inference_steps)
+        exp_mu = math.exp(mu)
+        sigmas = exp_mu / (exp_mu + (1.0 / sigmas - 1.0))
+
+        # First sigma should be close to 1.0
+        assert sigmas[0] > 0.9, f"First sigma should be near 1.0, got {sigmas[0]:.4f}"
+        # Last sigma should be small but > 0
+        assert 0 < sigmas[-1] < 0.5, f"Last sigma should be in (0, 0.5), got {sigmas[-1]:.4f}"
+
+    def test_dynamic_shift_computation(self):
+        """Test dynamic shift μ is computed correctly for various resolutions."""
+        import math
+
+        base_seq_len, max_seq_len = 1024, 4096
+        base_shift, max_shift = 0.95, 2.05
+
+        def compute_mu(seq_len):
+            m = (max_shift - base_shift) / (max_seq_len - base_seq_len)
+            mu = base_shift + m * (seq_len - base_seq_len)
+            return max(min(mu, max_shift), base_shift)
+
+        # Test at base resolution (1024 tokens)
+        mu_base = compute_mu(1024)
+        assert abs(mu_base - 0.95) < 0.01, f"μ at base should be ~0.95, got {mu_base:.4f}"
+
+        # Test at max resolution (4096 tokens)
+        mu_max = compute_mu(4096)
+        assert abs(mu_max - 2.05) < 0.01, f"μ at max should be ~2.05, got {mu_max:.4f}"
+
+        # Test at 1920 tokens (standard 768x512x33)
+        # Expected: 0.95 + (2.05-0.95)/(4096-1024) * (1920-1024) ≈ 1.27
+        mu_standard = compute_mu(1920)
+        expected_mu = 0.95 + (2.05 - 0.95) / (4096 - 1024) * (1920 - 1024)
+        assert abs(mu_standard - expected_mu) < 0.01, \
+            f"μ at 1920 tokens should be ~{expected_mu:.2f}, got {mu_standard:.4f}"
+
+    def test_latent_dimension_computation(self):
+        """Test latent dimension computation matches expected token counts."""
+        # LTX-2 compression: 8x temporal, 32x spatial
+
+        test_cases = [
+            # (num_frames, height, width, expected_tokens)
+            (33, 512, 768, 1920),   # Standard: t=5, h=16, w=24
+            (17, 256, 384, 288),    # Small: t=3, h=8, w=12
+            (9, 512, 512, 512),     # Square: t=2, h=16, w=16
+            (49, 768, 1024, 5376),  # Large: t=7, h=24, w=32
+        ]
+
+        for num_frames, height, width, expected in test_cases:
+            t_latent = (num_frames - 1) // 8 + 1
+            h_latent = height // 32
+            w_latent = width // 32
+            actual = t_latent * h_latent * w_latent
+
+            assert actual == expected, \
+                f"Token count mismatch for {num_frames}x{height}x{width}: " \
+                f"expected {expected}, got {actual} (t={t_latent}, h={h_latent}, w={w_latent})"
+
+
 # Run with: uv run pytest tests/unit/test_ltx2_transformer.py -v
 # Run slow tests: uv run pytest tests/unit/test_ltx2_transformer.py -v --slow

@@ -2,9 +2,9 @@
 """
 LTX-2 Layer Blend Sweep Experiment
 
-Last Updated: 2026-01-16
+Last Updated: 2026-01-17
 
-Informed by projection matrix analysis (Session 27):
+Informed by projection matrix analysis:
 - Late layers (43-47) contribute ~25% of signal when accounting for activations
 - Early layers (0-4) contribute <1% of signal
 - Layer 48 (final) is paradoxically low (0.02%)
@@ -18,13 +18,10 @@ Blends tested:
 2. late_heavy: Upweight layers 40-47 (where contribution is highest)
 3. early_excluded: Zero weight on layers 0-10 (minimal contribution)
 4. top_contributors: Only layers 43-47 (top 5 by contribution)
-5. u_shaped: Early (0-16) + Late (40-48), skip middle (traditional hypothesis)
+5. u_shaped: Early (0-16) + Late (40-48), skip middle
 6. anti_u: Middle only (15-35), exclude early and late
 
-Memory-optimized for 24GB GPUs (RTX 4090):
-- Text encoder: 8-bit quantized (~13GB instead of ~54GB)
-- Pipeline: Group offloading for transformer blocks
-- Sequential loading: Encode first, then offload, then generate
+Migrated to use LTX2ExperimentBase for standardized infrastructure.
 
 Usage:
     # Quick test (3 blends × 2 prompts)
@@ -38,42 +35,26 @@ Usage:
 """
 
 import argparse
-import gc
 import json
-import sys
-import time
+import logging
+from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from PIL import Image
 
-# Add project root to path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+from experiments.ltx2.base import LTX2ExperimentBase
+from llm_dit.data import get_all_prompts
 
-# Import prompts from centralized module
-# These match the official LTX-2 prompting guide format (100+ words, dialogue, etc.)
-from experiments.ltx2.prompts import get_category_prompts, QUICK_CATEGORY
-
-# Import memory-efficient utilities for 24GB GPUs
-from experiments.ltx2.memory_utils import (
-    load_text_encoder_8bit,
-    encode_prompt_with_layer_weights,
-    pack_text_embeds,
-    load_pipeline_with_offloading,
-    create_layer_weights,
-    cleanup_memory,
-    get_gpu_memory,
-)
-
-# Category prompts for layer blend experiments
-TEST_PROMPTS = get_category_prompts(quick=False)
+logger = logging.getLogger(__name__)
 
 # Layer blend configurations
 # Each config specifies layer weights (non-active layers get 0 weight)
-# Weights are normalized to sum to 1 during generation
+# Weights are normalized during encoding to preserve signal magnitude
 BLEND_CONFIGS = {
     "baseline": {
         "description": "All 49 layers, uniform weights",
@@ -128,377 +109,309 @@ BLEND_CONFIGS = {
 }
 
 QUICK_CONFIGS = ["baseline", "late_heavy", "top_contributors"]
-QUICK_PROMPTS = QUICK_CATEGORY  # Use centralized quick category subset
 
 
-def compute_metrics(frame: Image.Image, prompt: str) -> dict:
-    """Compute quality metrics for a frame.
-
-    Only computes SigLIP score - the only meaningful metric for understanding
-    layer contributions to text-image alignment. Brightness/pixel statistics
-    are meaningless for this analysis.
+def create_layer_weights(
+    active_layers: List[int],
+    weights: Optional[Dict[int, float]] = None,
+    num_layers: int = 49,
+    normalize: bool = True,
+) -> torch.Tensor:
     """
-    metrics = {}
+    Create layer weight tensor from config.
 
-    # SigLIP score - measures text-image alignment (the only metric that matters)
-    try:
-        from experiments.metrics.siglip_score import compute_siglip_score
-        metrics["siglip_score"] = compute_siglip_score(prompt, frame)
-    except Exception as e:
-        metrics["siglip_score"] = None
-        metrics["siglip_error"] = str(e)
+    Args:
+        active_layers: List of layer indices to activate
+        weights: Optional dict mapping layer index to weight.
+                 If None, active layers get weight 1.0
+        num_layers: Total number of layers
+        normalize: If True, normalize weights to preserve signal magnitude
 
-    return metrics
-
-
-def run_layer_blend_sweep(
-    model_path: str = "models/LTX-2",
-    output_dir: str = "experiments/results",
-    seed: int = 42,
-    quick: bool = False,
-    num_inference_steps: int = 25,
-    guidance_scale: float = 3.0,
-    height: int = 512,
-    width: int = 768,
-    num_frames: int = 33,
-    num_blocks_per_group: int = 1,
-):
-    """Run layer blend sweep experiment.
-
-    Memory-optimized for 24GB GPUs using:
-    - 8-bit quantized text encoder (~13GB)
-    - Group offloading for transformer blocks
-    - Sequential loading: encode → offload → generate
+    Returns:
+        Tensor of shape [num_layers] with layer weights
     """
-    from diffusers.utils import export_to_video
+    layer_weights = torch.zeros(num_layers)
 
-    # Clear GPU memory before starting
-    cleanup_memory()
-    if torch.cuda.is_available():
-        torch.cuda.reset_peak_memory_stats()
+    if weights is None:
+        for idx in active_layers:
+            layer_weights[idx] = 1.0
+    else:
+        for idx in active_layers:
+            layer_weights[idx] = weights.get(idx, 1.0)
 
-    # Setup output directory
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_path = Path(output_dir) / f"ltx2_layer_blend_{timestamp}"
-    output_path.mkdir(parents=True, exist_ok=True)
-    (output_path / "images").mkdir(exist_ok=True)
-    (output_path / "videos").mkdir(exist_ok=True)
-    (output_path / "metadata").mkdir(exist_ok=True)
+    if normalize:
+        weight_sum = layer_weights.sum()
+        if weight_sum > 0:
+            layer_weights = layer_weights / weight_sum * num_layers
 
-    print("=" * 60)
-    print("LTX-2 Layer Blend Sweep (Memory-Optimized)")
-    print("=" * 60)
-    print(f"Output: {output_path}")
-    print(f"Seed: {seed}")
-    print(f"Quick mode: {quick}")
+    return layer_weights
 
-    # Select configs and prompts
-    configs = QUICK_CONFIGS if quick else list(BLEND_CONFIGS.keys())
-    prompts = QUICK_PROMPTS if quick else list(TEST_PROMPTS.keys())
 
-    total_gens = len(configs) * len(prompts)
-    print(f"Generations: {len(configs)} configs × {len(prompts)} prompts = {total_gens}")
+class LayerBlendSweepExperiment(LTX2ExperimentBase):
+    """
+    Sweep over different layer weight configurations.
 
-    # ==========================================================================
-    # PHASE 1: Text Encoding (8-bit quantized, ~13GB VRAM)
-    # ==========================================================================
-    print("\n" + "=" * 60)
-    print("PHASE 1: Text Encoding (8-bit quantized)")
-    print("=" * 60)
+    Tests how different layer blending strategies affect generation quality.
+    Uses memory-optimized two-phase pattern:
+    1. setup(): Load encoder, batch encode ALL (config × prompt) combinations
+    2. run_iteration(): Generate from cache, score, save
+    """
 
-    print(f"Loading text encoder... (GPU: {get_gpu_memory():.2f}GB)")
-    text_encoder, tokenizer = load_text_encoder_8bit(model_path)
-    print(f"Text encoder loaded (GPU: {get_gpu_memory():.2f}GB)")
+    def __init__(
+        self,
+        output_dir: str = "experiments/results",
+        quick: bool = False,
+        seed: int = 42,
+        num_inference_steps: int = 25,
+        guidance_scale: float = 3.0,
+        height: int = 512,
+        width: int = 768,
+        num_frames: int = 33,
+        num_blocks_per_group: int = 1,
+    ):
+        super().__init__("layer_blend_sweep", output_dir)
+        self.quick = quick
+        self.seed = seed
+        self.num_inference_steps = num_inference_steps
+        self.guidance_scale = guidance_scale
+        self.height = height
+        self.width = width
+        self.num_frames = num_frames
+        self.num_blocks_per_group = num_blocks_per_group
 
-    # Pre-encode all (config, prompt) combinations
-    # Structure: embeddings_cache[(config_name, prompt_id)] = (prompt_embeds, attention_mask, seq_len)
-    embeddings_cache = {}
+        # Will be set in setup()
+        self.config_names = []
+        self.prompt_names = []
+        self.prompts = {}
+        self.negative_prompt_embeds = None
+        self.negative_attention_mask = None
 
-    # Encode negative prompt once (empty string for CFG)
-    # This is required when using guidance_scale > 1.0 with pre-computed embeddings
-    print("\n  Encoding negative prompt (empty string for CFG)")
-    neg_inputs = tokenizer("", return_tensors="pt", padding="max_length", max_length=512, truncation=True)
-    neg_input_ids = neg_inputs["input_ids"].to(text_encoder.device)
-    neg_attention_mask = neg_inputs["attention_mask"].to(text_encoder.device)
+    def setup(self) -> None:
+        """
+        Two-phase setup: encode all, then load model.
 
-    with torch.no_grad():
-        neg_outputs = text_encoder(
-            input_ids=neg_input_ids,
-            attention_mask=neg_attention_mask,
-            output_hidden_states=True,
+        Phase 1: Encoder on GPU
+        - Load encoder (8-bit)
+        - Encode negative prompt (for CFG)
+        - Batch encode all prompts with all layer configs
+        - Cache embeddings to CPU
+
+        Phase 2: Model on GPU
+        - Offload encoder
+        - Load transformer pipeline with group offloading
+        """
+        # Select configs and prompts
+        self.config_names = QUICK_CONFIGS if self.quick else list(BLEND_CONFIGS.keys())
+        self.prompts = get_all_prompts(quick=self.quick)
+        self.prompt_names = list(self.prompts.keys())
+
+        total_gens = len(self.config_names) * len(self.prompt_names)
+        logger.info(f"Layer Blend Sweep: {len(self.config_names)} configs × {len(self.prompt_names)} prompts = {total_gens}")
+
+        # Phase 1: Encoding
+        logger.info("Phase 1: Loading encoder and encoding prompts")
+        self.load_encoder()
+
+        # Encode negative prompt for CFG
+        logger.info("  Encoding negative prompt (empty string for CFG)")
+        neg_result = self.encoder.encode_with_layer_masking(
+            "",
+            active_layers=list(range(49)),  # All layers
+            masking_mode="soft",
+            return_packed=True,
+        )
+        self.negative_prompt_embeds = neg_result['prompt_embeds'].cpu()
+        self.negative_attention_mask = neg_result['attention_mask'].cpu()
+
+        # Build configs for encode_batch
+        layer_configs = []
+        for config_name in self.config_names:
+            cfg = BLEND_CONFIGS[config_name]
+            layer_weights = create_layer_weights(
+                active_layers=cfg["active_layers"],
+                weights=cfg["weights"],
+                normalize=True,
+            )
+            layer_configs.append({
+                "name": config_name,
+                "layer_weights": layer_weights,
+                "active_layers": cfg["active_layers"],
+            })
+
+        # Batch encode: configs × prompts
+        self._embeddings_cache = {}
+        encode_idx = 0
+        for ci, config in enumerate(layer_configs):
+            config_name = config["name"]
+            layer_weights = config["layer_weights"]
+
+            for pi, prompt_name in enumerate(self.prompt_names):
+                encode_idx += 1
+                prompt_text = self.prompts[prompt_name]
+                logger.info(f"  [{encode_idx}/{total_gens}] Encoding: {config_name} × {prompt_name}")
+
+                # Encode with layer weights
+                embeds = self.encode(
+                    prompt_text,
+                    layer_weights=layer_weights,
+                    return_packed=True,
+                )
+
+                # Cache on CPU
+                self._embeddings_cache[(ci, pi)] = embeds.cpu()
+
+        logger.info(f"Cached {len(self._embeddings_cache)} embeddings")
+
+        # Phase 2: Generation
+        logger.info("Phase 2: Offloading encoder and loading model")
+        self.offload_encoder()
+        self.load_model(
+            use_pure_pytorch=False,
+            use_group_offloading=True,
+            num_blocks_per_group=self.num_blocks_per_group,
         )
 
-    # Include ALL hidden states (embedding + 48 layers = 49 total)
-    neg_hidden_states = torch.stack(neg_outputs.hidden_states[:49], dim=-1)
-    neg_seq_len = neg_attention_mask.sum().item()
-    negative_prompt_embeds = pack_text_embeds(
-        neg_hidden_states,
-        neg_seq_len,
-        device=torch.device("cuda"),
-    ).cpu()
-    negative_attention_mask = neg_attention_mask.cpu()
+    def run_iteration(self, config: Dict[str, Any]) -> Dict[str, Any]:
+        """Generate video from cached embeddings, score, and save."""
+        config_idx = config["config_idx"]
+        prompt_idx = config["prompt_idx"]
+        config_name = self.config_names[config_idx]
+        prompt_name = self.prompt_names[prompt_idx]
+        prompt_text = self.prompts[prompt_name]
+        blend_config = BLEND_CONFIGS[config_name]
 
-    encode_idx = 0
-    for config_name in configs:
-        config = BLEND_CONFIGS[config_name]
+        logger.info(f"Generating: {config_name} × {prompt_name}")
 
-        # Build layer weights for this config
-        layer_weights = create_layer_weights(
-            active_layers=config["active_layers"],
-            weights=config["weights"],
-            num_layers=49,
-            normalize=True,
+        # Get cached embeddings
+        embeds = self._embeddings_cache[(config_idx, prompt_idx)].to(self.device)
+
+        # Generate
+        generator = torch.Generator(device="cpu").manual_seed(self.seed)
+
+        output = self.pipeline(
+            prompt_embeds=embeds,
+            prompt_attention_mask=None,  # Let pipeline handle
+            negative_prompt_embeds=self.negative_prompt_embeds.to(self.device),
+            negative_prompt_attention_mask=self.negative_attention_mask.to(self.device),
+            height=self.height,
+            width=self.width,
+            num_frames=self.num_frames,
+            num_inference_steps=self.num_inference_steps,
+            guidance_scale=self.guidance_scale,
+            generator=generator,
+        )
+        frames = output.frames[0]
+
+        # Extract first frame for scoring
+        first_frame = frames[0]
+
+        # Score
+        score = self.score_video(
+            torch.tensor(np.array(first_frame)).permute(2, 0, 1).unsqueeze(0),
+            prompt_text,
         )
 
-        for prompt_id in prompts:
-            encode_idx += 1
-            prompt_text = TEST_PROMPTS[prompt_id]
-            print(f"  [{encode_idx}/{total_gens}] Encoding: {config_name} × {prompt_id}")
+        # Save outputs
+        sample_name = f"{config_name}_{prompt_name}"
+        video_path = self.save_video(
+            frames,
+            sample_name,
+            prompt_text,
+            {
+                "config": config_name,
+                "description": blend_config["description"],
+                "active_layers": blend_config["active_layers"],
+                "num_active_layers": len(blend_config["active_layers"]),
+                "score": score,
+                "seed": self.seed,
+            },
+        )
 
-            # Encode with layer weights applied
-            hidden_states, attention_mask, seq_len = encode_prompt_with_layer_weights(
-                text_encoder,
-                tokenizer,
-                prompt_text,
-                layer_weights=layer_weights,
-            )
+        # Also save first frame as PNG
+        image_path = video_path.with_suffix('.png')
+        first_frame.save(image_path)
 
-            # Pack to create prompt_embeds (same as pipeline._pack_text_embeds)
-            prompt_embeds = pack_text_embeds(
-                hidden_states,
-                seq_len,
-                device=torch.device("cuda"),
-            )
-
-            # Cache on CPU to free VRAM (include negative embeds for CFG)
-            embeddings_cache[(config_name, prompt_id)] = {
-                "prompt_embeds": prompt_embeds.cpu(),
-                "attention_mask": attention_mask.cpu(),
-                "negative_prompt_embeds": negative_prompt_embeds,
-                "negative_prompt_attention_mask": negative_attention_mask,
-                "sequence_length": seq_len,
-                "prompt": prompt_text,
-            }
-
-    print(f"\nEncoded {len(embeddings_cache)} prompt/config combinations (+ negative prompt for CFG)")
-
-    # ==========================================================================
-    # PHASE 2: Offload Text Encoder
-    # ==========================================================================
-    print("\n" + "=" * 60)
-    print("PHASE 2: Offloading Text Encoder")
-    print("=" * 60)
-
-    print(f"Before offload (GPU: {get_gpu_memory():.2f}GB)")
-    del text_encoder, tokenizer
-    cleanup_memory()
-    print(f"After offload (GPU: {get_gpu_memory():.2f}GB)")
-
-    # ==========================================================================
-    # PHASE 3: Generation (Group Offloading, ~5GB VRAM)
-    # ==========================================================================
-    print("\n" + "=" * 60)
-    print("PHASE 3: Video Generation (Group Offloading)")
-    print("=" * 60)
-
-    print(f"Loading pipeline with group offloading...")
-    pipe = load_pipeline_with_offloading(
-        model_path,
-        num_blocks_per_group=num_blocks_per_group,
-        use_stream=True,
-    )
-    print(f"Pipeline loaded (GPU: {get_gpu_memory():.2f}GB)")
-
-    # Results storage
-    all_results = []
-    config_summaries = {}
-
-    gen_idx = 0
-    for config_name in configs:
-        config = BLEND_CONFIGS[config_name]
-        print(f"\n{'='*60}")
-        print(f"Config: {config_name}")
-        print(f"  {config['description']}")
-        print(f"  Active layers: {len(config['active_layers'])}")
-        print("=" * 60)
-
-        config_results = []
-
-        for prompt_id in prompts:
-            gen_idx += 1
-            print(f"\n[{gen_idx}/{total_gens}] {config_name} × {prompt_id}")
-
-            # Get cached embeddings
-            cached = embeddings_cache[(config_name, prompt_id)]
-            prompt_embeds = cached["prompt_embeds"].to("cuda")
-            prompt_attention_mask = cached["attention_mask"].to("cuda")
-            negative_prompt_embeds = cached["negative_prompt_embeds"].to("cuda")
-            negative_prompt_attention_mask = cached["negative_prompt_attention_mask"].to("cuda")
-            prompt_text = cached["prompt"]
-
-            start_time = time.time()
-
-            # Generate with pre-computed embeddings
-            generator = torch.Generator(device="cpu").manual_seed(seed)
-
-            output = pipe(
-                prompt_embeds=prompt_embeds,
-                prompt_attention_mask=prompt_attention_mask,
-                negative_prompt_embeds=negative_prompt_embeds,
-                negative_prompt_attention_mask=negative_prompt_attention_mask,
-                height=height,
-                width=width,
-                num_frames=num_frames,
-                num_inference_steps=num_inference_steps,
-                guidance_scale=guidance_scale,
-                generator=generator,
-            )
-            frames = output.frames[0]
-
-            gen_time = time.time() - start_time
-
-            # Extract first frame
-            first_frame = frames[0]
-
-            # Compute metrics
-            metrics = compute_metrics(first_frame, prompt_text)
-
-            # Save outputs
-            sample_name = f"{config_name}_{prompt_id}"
-            image_path = output_path / "images" / f"{sample_name}.png"
-            video_path = output_path / "videos" / f"{sample_name}.mp4"
-
-            first_frame.save(image_path)
-            export_to_video(frames, str(video_path), fps=24)
-
-            # Build result
-            result = {
-                "config": {
-                    "blend_name": config_name,
-                    "blend_description": config["description"],
-                    "active_layers": config["active_layers"],
-                    "num_active_layers": len(config["active_layers"]),
-                    "prompt_id": prompt_id,
-                    "seed": seed,
-                },
-                "generation_time_seconds": gen_time,
-                "output_path": str(image_path.relative_to(output_path)),
-                "video_path": str(video_path.relative_to(output_path)),
-                **metrics,
-            }
-
-            # Save metadata
-            metadata_path = output_path / "metadata" / f"{sample_name}.json"
-            with open(metadata_path, "w") as f:
-                json.dump(result, f, indent=2)
-
-            all_results.append(result)
-            config_results.append(result)
-
-            siglip_str = f"{metrics['siglip_score']:.4f}" if metrics.get("siglip_score") is not None else "N/A"
-            print(f"  Time: {gen_time:.1f}s | SigLIP: {siglip_str} | GPU: {get_gpu_memory():.1f}GB")
-
-            # Cleanup between generations
-            del frames, output, first_frame, prompt_embeds, prompt_attention_mask
-            del negative_prompt_embeds, negative_prompt_attention_mask
-            cleanup_memory()
-
-        # Summarize config - only SigLIP matters
-        siglip_scores = [r["siglip_score"] for r in config_results if r.get("siglip_score") is not None]
-        config_summaries[config_name] = {
-            "description": config["description"],
-            "num_active_layers": len(config["active_layers"]),
-            "mean_siglip": float(np.mean(siglip_scores)) if siglip_scores else None,
-            "std_siglip": float(np.std(siglip_scores)) if len(siglip_scores) > 1 else None,
-            "num_samples": len(siglip_scores),
+        return {
+            "config": config_name,
+            "prompt": prompt_name,
+            "score": score,
+            "num_active_layers": len(blend_config["active_layers"]),
+            "video_path": str(video_path),
         }
 
-    # Save summary
-    summary = {
-        "experiment": "ltx2_layer_blend_sweep",
-        "timestamp": timestamp,
-        "parameters": {
-            "seed": seed,
-            "num_inference_steps": num_inference_steps,
-            "guidance_scale": guidance_scale,
-            "resolution": f"{height}x{width}",
-            "num_frames": num_frames,
-        },
-        "total_generations": len(all_results),
-        "config_summaries": config_summaries,
-        "results": all_results,
-    }
+    def get_run_configs(self) -> List[Dict[str, Any]]:
+        """Generate all (config, prompt) combinations for run()."""
+        configs = []
+        for ci in range(len(self.config_names)):
+            for pi in range(len(self.prompt_names)):
+                configs.append({"config_idx": ci, "prompt_idx": pi})
+        return configs
 
-    summary_path = output_path / "ltx2_layer_blend_summary.json"
-    with open(summary_path, "w") as f:
-        json.dump(summary, f, indent=2)
+    def aggregate_results(self, results: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Group results by config and compute averages."""
+        by_config = defaultdict(list)
+        for r in results:
+            if "error" not in r:
+                by_config[r["config"]].append(r["score"])
 
-    # Generate comparison visualization
-    print("\n" + "=" * 60)
-    print("SUMMARY - SigLIP Scores by Layer Configuration")
-    print("=" * 60)
+        summary = {}
+        for config_name, scores in by_config.items():
+            blend_cfg = BLEND_CONFIGS[config_name]
+            summary[config_name] = {
+                "description": blend_cfg["description"],
+                "num_active_layers": len(blend_cfg["active_layers"]),
+                "mean_score": float(np.mean(scores)) if scores else None,
+                "std_score": float(np.std(scores)) if len(scores) > 1 else None,
+                "n": len(scores),
+            }
 
-    print(f"\n{'Config':<20} {'Layers':<8} {'SigLIP':<12} {'Std':<10} {'N':<5}")
-    print("-" * 55)
+        return {"by_config": summary, "all_results": results}
 
-    # Sort by SigLIP score (descending) for easier analysis
-    sorted_configs = sorted(
-        config_summaries.items(),
-        key=lambda x: x[1].get('mean_siglip') or 0,
-        reverse=True
-    )
+    def create_visualization(self, results: Dict[str, Any]) -> Path:
+        """Create comparison plot of SigLIP scores by config."""
+        summary = results["by_config"]
 
-    for config_name, stats in sorted_configs:
-        siglip_str = f"{stats['mean_siglip']:.4f}" if stats.get('mean_siglip') is not None else "N/A"
-        std_str = f"{stats['std_siglip']:.4f}" if stats.get('std_siglip') is not None else "N/A"
-        print(f"{config_name:<20} {stats['num_active_layers']:<8} {siglip_str:<12} {std_str:<10} {stats['num_samples']:<5}")
+        # Sort by score (descending)
+        sorted_configs = sorted(
+            summary.items(),
+            key=lambda x: x[1].get('mean_score') or 0,
+            reverse=True
+        )
 
-    # Create visualization - SigLIP only with error bars
-    fig, ax = plt.subplots(figsize=(12, 6))
+        fig, ax = plt.subplots(figsize=(12, 6))
 
-    # Sort by SigLIP for visual clarity
-    sorted_names = [c[0] for c in sorted_configs]
-    x = range(len(sorted_names))
+        sorted_names = [c[0] for c in sorted_configs]
+        x = range(len(sorted_names))
 
-    siglip_values = [config_summaries[c].get("mean_siglip") or 0 for c in sorted_names]
-    siglip_stds = [config_summaries[c].get("std_siglip") or 0 for c in sorted_names]
-    layer_counts = [config_summaries[c]["num_active_layers"] for c in sorted_names]
+        scores = [summary[c].get("mean_score") or 0 for c in sorted_names]
+        stds = [summary[c].get("std_score") or 0 for c in sorted_names]
+        layer_counts = [summary[c]["num_active_layers"] for c in sorted_names]
 
-    # Color bars by layer count (fewer = more compute efficient)
-    colors = plt.cm.viridis([count / 49 for count in layer_counts])
+        # Color by layer count
+        colors = plt.cm.viridis([count / 49 for count in layer_counts])
 
-    bars = ax.bar(x, siglip_values, yerr=siglip_stds, capsize=4, color=colors, edgecolor='black', linewidth=0.5)
-    ax.set_xticks(x)
-    ax.set_xticklabels([f"{n}\n({layer_counts[i]}L)" for i, n in enumerate(sorted_names)], rotation=45, ha="right")
-    ax.set_ylabel("SigLIP Score (text-image alignment)")
-    ax.set_xlabel("Layer Configuration (active layers)")
-    ax.set_title("LTX-2 Layer Blend Sweep: Text-Image Alignment by Configuration")
+        ax.bar(x, scores, yerr=stds, capsize=4, color=colors, edgecolor='black', linewidth=0.5)
+        ax.set_xticks(x)
+        ax.set_xticklabels([f"{n}\n({layer_counts[i]}L)" for i, n in enumerate(sorted_names)], rotation=45, ha="right")
+        ax.set_ylabel("SigLIP Score (text-image alignment)")
+        ax.set_xlabel("Layer Configuration (active layers)")
+        ax.set_title("LTX-2 Layer Blend Sweep: Text-Image Alignment by Configuration")
 
-    # Add baseline reference line
-    if "baseline" in config_summaries and config_summaries["baseline"].get("mean_siglip"):
-        ax.axhline(y=config_summaries["baseline"]["mean_siglip"], color='red', linestyle='--', label='Baseline', alpha=0.7)
-        ax.legend()
+        # Baseline reference line
+        if "baseline" in summary and summary["baseline"].get("mean_score"):
+            ax.axhline(y=summary["baseline"]["mean_score"], color='red', linestyle='--', label='Baseline', alpha=0.7)
+            ax.legend()
 
-    plt.tight_layout()
-    plot_path = output_path / "layer_blend_comparison.png"
-    plt.savefig(plot_path, dpi=150)
-    print(f"\nSaved plot to: {plot_path}")
-    plt.close()
+        plt.tight_layout()
+        plot_path = self.run_dir / "layer_blend_comparison.png"
+        plt.savefig(plot_path, dpi=150)
+        plt.close()
 
-    # Cleanup
-    del pipe
-    gc.collect()
-    torch.cuda.empty_cache()
-
-    print(f"\nResults saved to: {output_path}")
-    print("=" * 60)
-
-    return summary
+        return plot_path
 
 
 def main():
-    parser = argparse.ArgumentParser(description="LTX-2 Layer Blend Sweep (Memory-Optimized)")
-    parser.add_argument("--model-path", default="models/LTX-2", help="Path to LTX-2 model")
+    parser = argparse.ArgumentParser(description="LTX-2 Layer Blend Sweep")
     parser.add_argument("--output-dir", default="experiments/results", help="Output directory")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument("--quick", action="store_true", help="Quick test (3 configs × 2 prompts)")
@@ -515,11 +428,17 @@ def main():
     )
     args = parser.parse_args()
 
-    run_layer_blend_sweep(
-        model_path=args.model_path,
+    # Configure logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(levelname)s - %(message)s",
+    )
+
+    # Create and run experiment
+    experiment = LayerBlendSweepExperiment(
         output_dir=args.output_dir,
-        seed=args.seed,
         quick=args.quick,
+        seed=args.seed,
         num_inference_steps=args.steps,
         guidance_scale=args.cfg,
         height=args.height,
@@ -527,6 +446,33 @@ def main():
         num_frames=args.frames,
         num_blocks_per_group=args.blocks_per_group,
     )
+
+    # Run experiment
+    results = experiment.run(experiment.get_run_configs())
+
+    # Create visualization
+    plot_path = experiment.create_visualization(results)
+    logger.info(f"Visualization saved to: {plot_path}")
+
+    # Print summary
+    print("\n" + "=" * 60)
+    print("SUMMARY - SigLIP Scores by Layer Configuration")
+    print("=" * 60)
+    print(f"\n{'Config':<20} {'Layers':<8} {'SigLIP':<12} {'Std':<10} {'N':<5}")
+    print("-" * 55)
+
+    sorted_configs = sorted(
+        results["by_config"].items(),
+        key=lambda x: x[1].get('mean_score') or 0,
+        reverse=True
+    )
+
+    for config_name, stats in sorted_configs:
+        score_str = f"{stats['mean_score']:.4f}" if stats.get('mean_score') is not None else "N/A"
+        std_str = f"{stats['std_score']:.4f}" if stats.get('std_score') is not None else "N/A"
+        print(f"{config_name:<20} {stats['num_active_layers']:<8} {score_str:<12} {std_str:<10} {stats['n']:<5}")
+
+    print(f"\nResults saved to: {experiment.run_dir}")
 
 
 if __name__ == "__main__":

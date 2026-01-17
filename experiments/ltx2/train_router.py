@@ -135,15 +135,14 @@ def get_token_embeddings(
 class RouterTrainer:
     """Training loop for TokenLayerRouter.
 
-    This is a scaffold - the actual reward computation requires generation
-    which is slow. For prototyping, you can:
+    Training strategy:
+    1. Pre-compute layer contributions using layer_contribution_analysis.py
+    2. Use contributions as proxy reward (fast, no generation needed)
+    3. Router learns to assign more weight to high-contribution layers
 
-    1. Pre-compute: Run layer_blend_sweep first, cache (token_embeds, siglip_scores)
-       pairs for different layer configs, then train router as a regressor.
-
-    2. Online: Generate images during training (very slow, but most accurate).
-
-    3. Proxy reward: Use a faster proxy metric during training, validate with SigLIP.
+    Alternative approaches (slower but more accurate):
+    - Online: Generate videos during training with SigLIP scoring
+    - Learned reward: Train a model to predict SigLIP from layer weights
     """
 
     def __init__(
@@ -154,6 +153,7 @@ class RouterTrainer:
         router_input_mode: RouterInputMode = "mean",
         learning_rate: float = 1e-4,
         sparsity_weight: float = 0.01,
+        layer_contributions_path: str | None = None,
         device: str = "cuda",
     ):
         self.router_input_mode = router_input_mode
@@ -165,9 +165,37 @@ class RouterTrainer:
         self.optimizer = AdamW(router.parameters(), lr=learning_rate)
         self.sparsity_weight = sparsity_weight
 
+        # Load pre-computed layer contributions for proxy reward
+        self.layer_contributions = None
+        if layer_contributions_path:
+            self._load_layer_contributions(layer_contributions_path)
+
         # Optional sparsity loss
         from llm_dit.router.token_layer_router import SparsityLoss
         self.sparsity_loss = SparsityLoss(target_sparsity=8.0, loss_weight=sparsity_weight)
+
+    def _load_layer_contributions(self, path: str):
+        """Load pre-computed layer contribution weights."""
+        import json
+        logger.info(f"Loading layer contributions from {path}")
+
+        with open(path) as f:
+            data = json.load(f)
+
+        # Handle both formats: direct weights or full results file
+        if "contribution_weights" in data:
+            weights = data["contribution_weights"]
+        else:
+            weights = data
+
+        # Convert to tensor [L]
+        num_layers = GEMMA_NUM_LAYERS
+        contribution_tensor = torch.zeros(num_layers)
+        for layer_idx, weight in weights.items():
+            contribution_tensor[int(layer_idx)] = float(weight)
+
+        self.layer_contributions = contribution_tensor
+        logger.info(f"Loaded contributions for {len(weights)} layers")
 
     def compute_reward(
         self,
@@ -176,20 +204,14 @@ class RouterTrainer:
     ) -> torch.Tensor:
         """Compute reward for router outputs.
 
-        This is the key function to implement. Options:
+        Uses pre-computed layer contribution scores as a fast proxy reward.
+        The reward is the weighted sum of layer contributions, where the weights
+        come from the router output.
 
-        1. Full generation + SigLIP (slow but accurate):
-           - Generate video with weighted layers
-           - Score with SigLIP
-           - Return as reward
+        Reward = sum(router_weights * layer_contribution_scores)
 
-        2. Proxy reward (fast but approximate):
-           - Use pre-computed layer contribution scores
-           - Reward = sum(weights * layer_contribution_scores)
-
-        3. Learned reward model:
-           - Train a small model to predict SigLIP from layer weights
-           - Use as fast proxy during training
+        This approximates the true reward (SigLIP score) without requiring
+        expensive video generation during training.
 
         Args:
             prompts: List of text prompts
@@ -198,10 +220,36 @@ class RouterTrainer:
         Returns:
             rewards: [B] tensor of rewards (higher is better)
         """
-        # TODO: Implement reward computation
-        # For now, return dummy rewards for scaffolding
-        batch_size = len(prompts)
-        return torch.zeros(batch_size, device=self.device)
+        if self.layer_contributions is None:
+            # No pre-computed contributions - return uniform baseline
+            # This allows training to start but won't learn meaningful routing
+            logger.warning(
+                "No layer contributions loaded. Using uniform reward. "
+                "Run layer_contribution_analysis.py first for meaningful training."
+            )
+            batch_size = len(prompts)
+            return torch.ones(batch_size, device=self.device)
+
+        # Get contribution scores as tensor [L]
+        contributions = self.layer_contributions.to(self.device)
+
+        # Compute reward as weighted sum of contributions
+        # layer_weights: [B, T, L] - router output per token
+        # contributions: [L] - how much each layer helps
+
+        # Average over tokens to get per-sample layer usage [B, L]
+        mean_weights = layer_weights.mean(dim=1)
+
+        # Reward = dot product of usage with contribution
+        # Higher reward if router assigns more weight to high-contribution layers
+        rewards = (mean_weights * contributions).sum(dim=-1)  # [B]
+
+        # Optionally add diversity bonus to prevent collapse
+        # Entropy encourages exploring different routing patterns
+        entropy = -(layer_weights * (layer_weights + 1e-8).log()).sum(dim=-1).mean(dim=-1)
+        diversity_bonus = 0.1 * entropy  # Small bonus for exploration
+
+        return rewards + diversity_bonus
 
     def train_step(
         self,
@@ -310,6 +358,13 @@ def main():
     parser.add_argument("--quick", action="store_true", help="Quick test mode")
     parser.add_argument("--resume", type=str, help="Resume from checkpoint")
     parser.add_argument("--device", default="cuda", help="Device")
+    parser.add_argument(
+        "--layer-contributions",
+        type=str,
+        default=None,
+        help="Path to layer_contributions.json or layer_weights.json from layer_contribution_analysis.py. "
+             "Required for meaningful training - provides proxy reward signal."
+    )
 
     args = parser.parse_args()
 
@@ -338,6 +393,7 @@ def main():
         router_input_mode=args.router_input_mode,
         learning_rate=args.lr,
         sparsity_weight=args.sparsity_weight,
+        layer_contributions_path=args.layer_contributions,
         device=args.device,
     )
     logger.info(f"Router input mode: {args.router_input_mode}")
