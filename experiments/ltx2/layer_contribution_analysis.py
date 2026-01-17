@@ -4,24 +4,36 @@ LTX-2 Layer Contribution Analysis
 
 Last Updated: 2026-01-17
 
-Computes per-layer contribution scores by running single-layer ablations and
-measuring the impact on generation quality. These scores can be used as:
+Computes per-layer contribution scores using two modes:
+
+**Isolation Mode (default, recommended):**
+    - Uses ONLY the specified layer, zeros all others
+    - Reveals which layers can produce coherent output alone
+    - Score = SigLIP alignment when using only that layer
+
+**Ablation Mode:**
+    - Removes one layer, keeps 48 others
+    - Often shows zero delta due to layer redundancy
+    - Delta = baseline_score - ablated_score
+
+Outputs are used as:
 1. Ground truth for router training (proxy reward)
 2. Analysis of layer specialization
 3. Informed layer selection for efficient inference
 
-The analysis uses SigLIP to score text-video alignment for each layer config.
-
 Output:
     layer_contributions.json - Per-layer contribution scores
-    layer_correlation.json - Layer co-occurrence analysis
+    layer_weights.json - Normalized weights for router training
 
 Usage:
-    # Quick test (2 layers, 1 prompt)
+    # Quick test with isolation mode (default)
     uv run python experiments/ltx2/layer_contribution_analysis.py --quick
 
-    # Full analysis (all 49 layers, all prompts)
+    # Full analysis
     uv run python experiments/ltx2/layer_contribution_analysis.py
+
+    # Use ablation mode (original, but often shows zero deltas)
+    uv run python experiments/ltx2/layer_contribution_analysis.py --mode ablation --quick
 
     # Use results in router training
     uv run python experiments/ltx2/train_router.py --layer-contributions results/layer_contributions.json
@@ -210,70 +222,82 @@ class LayerContributionAnalyzer:
                 "num_prompts": len(prompts),
                 "num_layers": len(layer_indices),
                 "seed": seed,
+                "mode": mode,
             },
             "prompts": {},
             "layer_contributions": {},
         }
 
-        # First, compute baseline scores (all layers active)
-        logger.info("Computing baseline scores (all layers)...")
-        self.restore_weights()
-
+        # For ablation mode, compute baseline first
         baseline_scores = {}
-        for name, prompt in prompts.items():
-            logger.info(f"  Baseline: {name}")
-            score = self.generate_and_score(prompt, seed=seed)
-            baseline_scores[name] = score
-            logger.info(f"    Score: {score:.4f}")
-            gc.collect()
-            torch.cuda.empty_cache()
+        if mode == "ablation":
+            logger.info("Computing baseline scores (all layers)...")
+            self.restore_weights()
 
-        results["baseline_scores"] = baseline_scores
+            for name, prompt in prompts.items():
+                logger.info(f"  Baseline: {name}")
+                score = self.generate_and_score(prompt, seed=seed)
+                baseline_scores[name] = score
+                logger.info(f"    Score: {score:.4f}")
+                gc.collect()
+                torch.cuda.empty_cache()
 
-        # Now compute ablated scores for each layer
-        layer_deltas = {i: [] for i in layer_indices}
+            results["baseline_scores"] = baseline_scores
+
+        # Now compute scores for each layer
+        layer_scores = {i: [] for i in layer_indices}
 
         for layer_idx in layer_indices:
-            logger.info(f"\nAnalyzing layer {layer_idx}...")
-            self.ablate_layer(layer_idx)
+            if mode == "isolation":
+                logger.info(f"\nIsolating layer {layer_idx} (using ONLY this layer)...")
+                self.isolate_layer(layer_idx)
+            else:
+                logger.info(f"\nAblating layer {layer_idx}...")
+                self.ablate_layer(layer_idx)
 
             for name, prompt in prompts.items():
                 logger.info(f"  Layer {layer_idx}, prompt: {name}")
-                ablated_score = self.generate_and_score(prompt, seed=seed)
+                layer_score = self.generate_and_score(prompt, seed=seed)
 
-                delta = baseline_scores[name] - ablated_score
-                layer_deltas[layer_idx].append(delta)
+                if mode == "isolation":
+                    # In isolation mode, the score IS the contribution
+                    layer_scores[layer_idx].append(layer_score)
+                    result_key = "isolated"
+                    logger.info(f"    Isolated score: {layer_score:.4f}")
+                else:
+                    # In ablation mode, delta = baseline - ablated
+                    delta = baseline_scores[name] - layer_score
+                    layer_scores[layer_idx].append(delta)
+                    result_key = "ablated"
+                    logger.info(f"    Ablated: {layer_score:.4f}, Delta: {delta:+.4f}")
 
                 if name not in results["prompts"]:
                     results["prompts"][name] = {
-                        "baseline": baseline_scores[name],
-                        "ablated": {},
+                        "baseline": baseline_scores.get(name, 0),
+                        result_key: {},
                     }
-                results["prompts"][name]["ablated"][str(layer_idx)] = {
-                    "score": ablated_score,
-                    "delta": delta,
+                results["prompts"][name][result_key][str(layer_idx)] = {
+                    "score": layer_score,
                 }
-
-                logger.info(f"    Ablated: {ablated_score:.4f}, Delta: {delta:+.4f}")
 
                 gc.collect()
                 torch.cuda.empty_cache()
 
         # Compute aggregate layer contributions
+        metric_name = "mean_score" if mode == "isolation" else "mean_delta"
         for layer_idx in layer_indices:
-            deltas = layer_deltas[layer_idx]
+            scores = layer_scores[layer_idx]
             results["layer_contributions"][str(layer_idx)] = {
-                "mean_delta": float(np.mean(deltas)),
-                "std_delta": float(np.std(deltas)),
-                "min_delta": float(np.min(deltas)),
-                "max_delta": float(np.max(deltas)),
-                "contributes": float(np.mean(deltas)) > 0,
+                metric_name: float(np.mean(scores)),
+                "std": float(np.std(scores)),
+                "min": float(np.min(scores)),
+                "max": float(np.max(scores)),
             }
 
-        # Rank layers by contribution
+        # Rank layers by contribution (higher score = better)
         ranked = sorted(
             results["layer_contributions"].items(),
-            key=lambda x: x[1]["mean_delta"],
+            key=lambda x: x[1][metric_name],
             reverse=True,
         )
         results["layer_ranking"] = [int(layer_idx) for layer_idx, _ in ranked]
@@ -286,24 +310,37 @@ class LayerContributionAnalyzer:
 
         # Print summary
         logger.info("\n" + "=" * 60)
-        logger.info("LAYER CONTRIBUTION SUMMARY")
+        logger.info(f"LAYER CONTRIBUTION SUMMARY (mode={mode})")
         logger.info("=" * 60)
 
-        logger.info("\nTop 10 contributing layers:")
-        for i, (layer_idx, contrib) in enumerate(ranked[:10]):
-            logger.info(
-                f"  {i+1}. Layer {layer_idx}: delta={contrib['mean_delta']:+.4f}"
-            )
+        if mode == "isolation":
+            logger.info("\nTop 10 layers (best standalone performance):")
+            for i, (layer_idx, contrib) in enumerate(ranked[:10]):
+                logger.info(
+                    f"  {i+1}. Layer {layer_idx}: score={contrib['mean_score']:.4f}"
+                )
 
-        logger.info("\nBottom 5 layers (potential for removal):")
-        for i, (layer_idx, contrib) in enumerate(ranked[-5:]):
-            logger.info(
-                f"  Layer {layer_idx}: delta={contrib['mean_delta']:+.4f}"
-            )
+            logger.info("\nBottom 5 layers (worst standalone):")
+            for i, (layer_idx, contrib) in enumerate(ranked[-5:]):
+                logger.info(
+                    f"  Layer {layer_idx}: score={contrib['mean_score']:.4f}"
+                )
+        else:
+            logger.info("\nTop 10 contributing layers:")
+            for i, (layer_idx, contrib) in enumerate(ranked[:10]):
+                logger.info(
+                    f"  {i+1}. Layer {layer_idx}: delta={contrib['mean_delta']:+.4f}"
+                )
+
+            logger.info("\nBottom 5 layers (potential for removal):")
+            for i, (layer_idx, contrib) in enumerate(ranked[-5:]):
+                logger.info(
+                    f"  Layer {layer_idx}: delta={contrib['mean_delta']:+.4f}"
+                )
 
         # Compute normalized contribution weights (for router)
         contributions = np.array([
-            results["layer_contributions"][str(i)]["mean_delta"]
+            results["layer_contributions"][str(i)][metric_name]
             for i in layer_indices
         ])
         # Shift to positive and normalize
@@ -354,6 +391,14 @@ def main():
         default=42,
         help="Random seed",
     )
+    parser.add_argument(
+        "--mode",
+        type=str,
+        default="isolation",
+        choices=["isolation", "ablation"],
+        help="Analysis mode: 'isolation' (use only one layer) or 'ablation' (remove one layer). "
+             "Isolation is recommended as ablation often shows zero deltas due to redundancy.",
+    )
 
     args = parser.parse_args()
 
@@ -375,9 +420,15 @@ def main():
     logger.info("=" * 60)
     logger.info("LTX-2 Layer Contribution Analysis")
     logger.info("=" * 60)
+    logger.info(f"Mode: {args.mode}")
     logger.info(f"Prompts: {len(prompts)}")
     logger.info(f"Layers: {len(layer_indices)}")
-    logger.info(f"Total generations: {len(prompts) * (len(layer_indices) + 1)}")
+
+    # In isolation mode, no baseline needed
+    total_gens = len(prompts) * len(layer_indices)
+    if args.mode == "ablation":
+        total_gens += len(prompts)  # Add baseline generations
+    logger.info(f"Total generations: {total_gens}")
 
     analyzer = LayerContributionAnalyzer(model_path=args.model_path)
     results = analyzer.compute_layer_contributions(
@@ -385,6 +436,7 @@ def main():
         layer_indices=layer_indices,
         seed=args.seed,
         output_dir=args.output_dir,
+        mode=args.mode,
     )
 
     logger.info("\nAnalysis complete!")

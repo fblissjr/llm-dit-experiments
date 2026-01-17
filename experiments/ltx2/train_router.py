@@ -182,17 +182,39 @@ class RouterTrainer:
         with open(path) as f:
             data = json.load(f)
 
-        # Handle both formats: direct weights or full results file
+        # Handle multiple formats:
+        # 1. contribution_weights (flat dict): {"0": 0.2, "1": 0.18, ...}
+        # 2. layer_contributions (nested dict): {"0": {"mean_score": 0.2, ...}, ...}
+        # 3. Direct weights file: {"0": 0.2, ...}
+
         if "contribution_weights" in data:
+            # Preferred format: flat dict of normalized weights
             weights = data["contribution_weights"]
+        elif "layer_contributions" in data:
+            # Full results file: extract mean score/delta from nested dict
+            layer_contribs = data["layer_contributions"]
+            # Determine the metric name based on mode
+            mode = data.get("metadata", {}).get("mode", "ablation")
+            metric_key = "mean_score" if mode == "isolation" else "mean_delta"
+            weights = {
+                k: v[metric_key] if isinstance(v, dict) else v
+                for k, v in layer_contribs.items()
+            }
         else:
+            # Assume direct weights format
             weights = data
 
         # Convert to tensor [L]
         num_layers = GEMMA_NUM_LAYERS
         contribution_tensor = torch.zeros(num_layers)
         for layer_idx, weight in weights.items():
-            contribution_tensor[int(layer_idx)] = float(weight)
+            # Handle both flat values and nested dicts
+            if isinstance(weight, dict):
+                # Try to extract numeric value from dict
+                value = weight.get("mean_score", weight.get("mean_delta", 0.0))
+            else:
+                value = weight
+            contribution_tensor[int(layer_idx)] = float(value)
 
         self.layer_contributions = contribution_tensor
         logger.info(f"Loaded contributions for {len(weights)} layers")
