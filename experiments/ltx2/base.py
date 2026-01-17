@@ -43,6 +43,7 @@ Usage:
 
 import json
 import logging
+import math
 from abc import ABC, abstractmethod
 from datetime import datetime
 from pathlib import Path
@@ -50,6 +51,9 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 import torch
 from tqdm import tqdm
+
+# LTX-2 specific imports
+from llm_dit.models.ltx2_components import Modality
 
 # Core library imports
 from llm_dit.utils.memory import MemoryTracker, cleanup_memory, log_memory_usage
@@ -222,6 +226,85 @@ class LTX2ExperimentBase(ABC):
             )
         else:
             return self.encoder.encode(prompt, **kwargs)
+
+    def _create_position_indices(
+        self,
+        batch_size: int,
+        num_frames: int,
+        height: int,
+        width: int,
+    ) -> torch.Tensor:
+        """
+        Create 3D position indices [B, 3, T] for video (temporal, height, width).
+
+        LTX-2 VAE compression: 32x spatial, 8x temporal.
+        Reference: coderef/LTX-2/ltx-core/components/patchifiers.py
+
+        Args:
+            batch_size: Batch size
+            num_frames: Number of video frames
+            height: Video height in pixels
+            width: Video width in pixels
+
+        Returns:
+            Position indices tensor [B, 3, T] where T = t_latent * h_latent * w_latent
+        """
+        # Compute latent dimensions with LTX-2's compression ratios
+        t_latent = (num_frames - 1) // 8 + 1
+        h_latent = height // 32
+        w_latent = width // 32
+
+        # Create meshgrid of position indices
+        t_indices = torch.arange(t_latent, device=self.device)
+        h_indices = torch.arange(h_latent, device=self.device)
+        w_indices = torch.arange(w_latent, device=self.device)
+
+        # Create 3D grid: [t_latent, h_latent, w_latent]
+        # Order is (t, h, w) matching the official implementation
+        grid_t, grid_h, grid_w = torch.meshgrid(t_indices, h_indices, w_indices, indexing='ij')
+
+        # Flatten and stack to [3, T]
+        positions = torch.stack([
+            grid_t.flatten(),
+            grid_h.flatten(),
+            grid_w.flatten(),
+        ], dim=0)  # [3, T]
+
+        # Expand for batch: [B, 3, T]
+        positions = positions.unsqueeze(0).expand(batch_size, -1, -1)
+
+        return positions
+
+    def _create_video_modality(
+        self,
+        latent: torch.Tensor,
+        timestep: torch.Tensor,
+        positions: torch.Tensor,
+        prompt_embeds: torch.Tensor,
+    ) -> Modality:
+        """
+        Create Modality dataclass for transformer input.
+
+        Bundles the latent tokens, timestep embeddings, positional information,
+        and text conditioning for the diffusion transformer.
+
+        Args:
+            latent: [B, T, D] latent tokens (D=128 for LTX-2)
+            timestep: [B, T] per-token timesteps
+            positions: [B, 3, T] position indices
+            prompt_embeds: [B, seq_len, context_dim] text embeddings
+
+        Returns:
+            Modality dataclass ready for transformer forward pass
+        """
+        return Modality(
+            latent=latent,
+            timesteps=timestep,
+            positions=positions,
+            context=prompt_embeds,
+            enabled=True,
+            context_mask=None,
+        )
 
     def generate_video(
         self,

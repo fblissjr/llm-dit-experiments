@@ -35,7 +35,6 @@ All research documentation uses a consistent status tracking system:
 - **dtype conventions** - libraries differ:
   - transformers: use `dtype=`
   - diffusers: use `torch_dtype=`
-- **max tokens: 1504** (z-image DiT RoPE limit, LTX-2 differs)
 
 ## architecture
 
