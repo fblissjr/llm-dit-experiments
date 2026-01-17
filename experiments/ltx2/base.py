@@ -46,7 +46,7 @@ import logging
 from abc import ABC, abstractmethod
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import torch
 from tqdm import tqdm
@@ -348,6 +348,119 @@ class LTX2ExperimentBase(ABC):
         """Clean up memory between iterations."""
         cleanup_memory()
 
+    # =========================================================================
+    # Batch Operations (for memory-optimized experiments)
+    # =========================================================================
+
+    def encode_batch(
+        self,
+        prompts: List[str],
+        configs: Optional[List[Dict[str, Any]]] = None,
+        cache_to_cpu: bool = True,
+    ) -> Dict[str, torch.Tensor]:
+        """
+        Batch encode all prompts before generation phase.
+
+        Use this in setup() for memory-optimized experiments that need to:
+        1. Load encoder, encode all prompts
+        2. Offload encoder
+        3. Load transformer, generate all videos
+
+        Args:
+            prompts: List of text prompts
+            configs: Optional configs with 'layer_weights' or 'layer_mask' per prompt.
+                     If None, encodes with default settings.
+                     If provided, must match prompts length or be single config for all.
+            cache_to_cpu: Move embeddings to CPU after encoding (frees GPU memory)
+
+        Returns:
+            Dict mapping prompt index (or (config_idx, prompt_idx) tuple) to embeddings
+
+        Example:
+            def setup(self):
+                self.load_encoder()
+                self.embeddings_cache = self.encode_batch(
+                    prompts=self.prompts,
+                    configs=self.layer_configs,
+                )
+                self.offload_encoder()
+                self.load_model()
+        """
+        if self.encoder is None:
+            raise RuntimeError("Encoder not loaded. Call load_encoder() first.")
+
+        cache = {}
+
+        # Handle configs
+        if configs is None:
+            # No configs - encode each prompt once
+            for i, prompt in enumerate(tqdm(prompts, desc="Encoding prompts")):
+                embeds = self.encode(prompt)
+                if cache_to_cpu:
+                    embeds = embeds.cpu()
+                cache[i] = embeds
+        elif len(configs) == 1:
+            # Single config for all prompts
+            config = configs[0]
+            layer_weights = config.get("layer_weights")
+            layer_mask = config.get("layer_mask")
+            for i, prompt in enumerate(tqdm(prompts, desc="Encoding prompts")):
+                embeds = self.encode(prompt, layer_weights=layer_weights, layer_mask=layer_mask)
+                if cache_to_cpu:
+                    embeds = embeds.cpu()
+                cache[i] = embeds
+        elif len(configs) == len(prompts):
+            # One config per prompt
+            for i, (prompt, config) in enumerate(tqdm(
+                zip(prompts, configs), total=len(prompts), desc="Encoding prompts"
+            )):
+                layer_weights = config.get("layer_weights")
+                layer_mask = config.get("layer_mask")
+                embeds = self.encode(prompt, layer_weights=layer_weights, layer_mask=layer_mask)
+                if cache_to_cpu:
+                    embeds = embeds.cpu()
+                cache[i] = embeds
+        else:
+            # Multiple configs × multiple prompts (full sweep)
+            for ci, config in enumerate(configs):
+                layer_weights = config.get("layer_weights")
+                layer_mask = config.get("layer_mask")
+                for pi, prompt in enumerate(tqdm(
+                    prompts, desc=f"Encoding config {ci+1}/{len(configs)}"
+                )):
+                    embeds = self.encode(prompt, layer_weights=layer_weights, layer_mask=layer_mask)
+                    if cache_to_cpu:
+                        embeds = embeds.cpu()
+                    cache[(ci, pi)] = embeds
+
+        self._embeddings_cache = cache
+        logger.info(f"Cached {len(cache)} embeddings")
+        return cache
+
+    def get_cached_embeds(
+        self,
+        key: Union[int, tuple],
+        device: Optional[str] = None,
+    ) -> torch.Tensor:
+        """
+        Retrieve cached embeddings from encode_batch().
+
+        Args:
+            key: Index or (config_idx, prompt_idx) tuple
+            device: Move to this device (default: self.device)
+
+        Returns:
+            Embeddings tensor on specified device
+        """
+        if not hasattr(self, '_embeddings_cache') or self._embeddings_cache is None:
+            raise RuntimeError("No embeddings cache. Call encode_batch() first.")
+
+        embeds = self._embeddings_cache[key]
+        target_device = device or self.device
+        if embeds.device != torch.device(target_device):
+            embeds = embeds.to(target_device)
+        return embeds
+
     def offload_encoder(self) -> None:
         """Offload encoder to CPU to free GPU memory for generation."""
         if self.encoder is not None:
@@ -467,28 +580,91 @@ class LayerBlendSweep(LTX2ExperimentBase):
     Example: Sweep over different layer weight configurations.
 
     Tests how different layer blending strategies affect generation quality.
+
+    Uses memory-optimized two-phase pattern:
+    1. setup(): Load encoder, batch encode ALL (config × prompt) combinations
+    2. run_iteration(): Load from cache, generate, score
+
+    This keeps encoder and transformer from competing for GPU memory.
     """
 
-    def __init__(self, output_dir: str = "outputs"):
+    # Layer blend configurations (module-level for reuse)
+    BLEND_CONFIGS = {
+        "baseline": {"description": "All 49 layers, uniform", "layers": list(range(49))},
+        "late_heavy": {"description": "Upweight layers 40-47", "layers": list(range(49)),
+                      "weights": {i: (2.0 if 40 <= i <= 47 else 1.0) for i in range(49)}},
+        "late_only": {"description": "Only layers 40-48", "layers": list(range(40, 49))},
+        "top_contributors": {"description": "Only layers 43-47", "layers": list(range(43, 48))},
+    }
+
+    def __init__(self, output_dir: str = "outputs", quick: bool = False):
         super().__init__("layer_blend_sweep", output_dir)
+        self.quick = quick
 
     def setup(self) -> None:
-        self.load_model(use_pure_pytorch=False)  # Use diffusers for now
+        """
+        Two-phase setup: encode all, then load model.
+
+        Phase 1: Encoder on GPU
+        - Load encoder (8-bit)
+        - Batch encode all prompts with all layer configs
+        - Cache to CPU
+
+        Phase 2: Model on GPU
+        - Offload encoder
+        - Load transformer pipeline
+        """
+        # Phase 1: Encoding
         self.load_encoder()
-        self.prompts = get_all_prompts(quick=True)
+        self.prompts = get_all_prompts(quick=self.quick)
+
+        # Build layer weight configs
+        configs = []
+        config_names = ["baseline", "late_heavy"] if self.quick else list(self.BLEND_CONFIGS.keys())
+
+        for name in config_names:
+            cfg = self.BLEND_CONFIGS[name]
+            # Build layer weights tensor
+            import numpy as np
+            weights = np.zeros(49)
+            if "weights" in cfg:
+                for i, w in cfg["weights"].items():
+                    weights[i] = w
+            else:
+                for i in cfg["layers"]:
+                    weights[i] = 1.0
+            weights = weights / weights.sum()  # Normalize
+
+            configs.append({
+                "name": name,
+                "layer_weights": torch.tensor(weights, dtype=torch.float32),
+            })
+
+        self.config_names = config_names
+        self.prompt_names = list(self.prompts.keys())
+
+        # Batch encode: configs × prompts
+        self.encode_batch(
+            prompts=[self.prompts[n] for n in self.prompt_names],
+            configs=configs,
+        )
+
+        # Phase 2: Generation
+        self.offload_encoder()
+        self.load_model(use_pure_pytorch=False)
 
     def run_iteration(self, config: Dict[str, Any]) -> Dict[str, Any]:
-        layer_weights = config["layer_weights"]
-        prompt_name = config["prompt_name"]
+        """Generate video from cached embeddings."""
+        config_idx = config["config_idx"]
+        prompt_idx = config["prompt_idx"]
+        config_name = self.config_names[config_idx]
+        prompt_name = self.prompt_names[prompt_idx]
         prompt = self.prompts[prompt_name]
 
-        # Encode with layer weights
-        embeds = self.encode(prompt, layer_weights=layer_weights)
+        # Get cached embeddings
+        embeds = self.get_cached_embeds((config_idx, prompt_idx))
 
-        # Offload encoder before generation
-        self.offload_encoder()
-
-        # Generate video
+        # Generate
         video = self.generate_video(embeds, seed=42)
 
         # Score
@@ -497,16 +673,36 @@ class LayerBlendSweep(LTX2ExperimentBase):
         # Save
         self.save_video(
             video,
-            f"{config['name']}_{prompt_name}",
+            f"{config_name}_{prompt_name}",
             prompt,
-            {"layer_weights": layer_weights.tolist(), "score": score},
+            {"config": config_name, "score": score},
         )
 
-        return {
-            "name": config["name"],
-            "prompt_name": prompt_name,
-            "score": score,
-        }
+        return {"config": config_name, "prompt": prompt_name, "score": score}
+
+    def get_run_configs(self) -> List[Dict[str, Any]]:
+        """Generate all (config, prompt) combinations for run()."""
+        configs = []
+        for ci in range(len(self.config_names)):
+            for pi in range(len(self.prompt_names)):
+                configs.append({"config_idx": ci, "prompt_idx": pi})
+        return configs
+
+    def aggregate_results(self, results: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Group results by config and compute averages."""
+        from collections import defaultdict
+        by_config = defaultdict(list)
+        for r in results:
+            if "error" not in r:
+                by_config[r["config"]].append(r["score"])
+
+        summary = {}
+        for config, scores in by_config.items():
+            summary[config] = {
+                "mean_score": sum(scores) / len(scores) if scores else 0,
+                "n": len(scores),
+            }
+        return {"by_config": summary, "all_results": results}
 
 
 class QuickTest(LTX2ExperimentBase):
