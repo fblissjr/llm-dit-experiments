@@ -71,6 +71,15 @@ from .ffn_chunking import (
     estimate_memory_savings,
 )
 
+# Cross-Attention Extraction
+from .attention import (
+    AttentionExtractor,
+    AttentionExtractorHook,
+    AttentionMapInfo,
+    extract_cross_attention_on_step,
+    visualize_attention_heatmap,
+)
+
 __all__ = [
     # Latent Normalization
     "statistical_normalize",
@@ -110,4 +119,10 @@ __all__ = [
     "unpatch_ffn_chunking",
     "FFNChunkingConfig",
     "estimate_memory_savings",
+    # Cross-Attention Extraction
+    "AttentionExtractor",
+    "AttentionExtractorHook",
+    "AttentionMapInfo",
+    "extract_cross_attention_on_step",
+    "visualize_attention_heatmap",
 ]

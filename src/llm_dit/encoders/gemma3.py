@@ -19,7 +19,7 @@ features from the text encoder.
 import gc
 import logging
 import math
-from typing import List, Optional, Union
+from typing import List, Literal, Optional, Union
 
 import torch
 from torch import nn
@@ -208,6 +208,9 @@ GEMMA3_NUM_LAYERS = 49  # Number of decoder layers to aggregate
 GEMMA3_FEATURE_DIM = GEMMA3_HIDDEN_DIM * GEMMA3_NUM_LAYERS  # 188,160
 GEMMA3_OUTPUT_DIM = 3840  # Final output dimension (DiT projects further)
 
+# Layer masking modes for ablation experiments
+LayerMaskingMode = Literal["soft", "zero", "weighted"]
+
 
 def _norm_and_concat_layers(
     hidden_states: torch.Tensor,
@@ -265,6 +268,55 @@ def _norm_and_concat_layers(
     normed = normed.masked_fill(~mask_flat, 0.0)
 
     return normed.to(dtype)
+
+
+def pack_text_embeds(
+    hidden_states: torch.Tensor,
+    sequence_length: int,
+    device: torch.device,
+    scale_factor: float = 8.0,
+    eps: float = 1e-6,
+) -> torch.Tensor:
+    """
+    Pack text hidden states into prompt embeddings for LTX2Pipeline.
+
+    This matches the LTX2Pipeline._pack_text_embeds method in diffusers,
+    allowing pre-computed embeddings to be passed directly to the pipeline.
+
+    Args:
+        hidden_states: [B, T, hidden_dim, num_layers] - stacked hidden states
+                      from all Gemma layers (e.g., shape [1, 256, 3840, 49])
+        sequence_length: Actual sequence length (excluding padding)
+        device: Target device for output
+        scale_factor: Scale factor for normalization (default 8.0, matches LTX-2)
+        eps: Epsilon for numerical stability
+
+    Returns:
+        Packed prompt embeddings [B, T, hidden_dim * num_layers] ready for the pipeline.
+        Shape example: [1, 256, 188160] for 49 layers of 3840 hidden dim.
+
+    Example:
+        >>> text_encoder, tokenizer = load_text_encoder_8bit("models/LTX-2")
+        >>> outputs = text_encoder(input_ids, output_hidden_states=True)
+        >>> hidden_states = torch.stack(outputs.hidden_states[:49], dim=-1)
+        >>> packed = pack_text_embeds(hidden_states, seq_len, torch.device("cuda"))
+        >>> # Now pass packed to pipeline as prompt_embeds
+    """
+    # Move to target device
+    hidden_states = hidden_states.to(device)
+
+    # Normalize each layer: divide by L2 norm
+    # Shape: [B, T, D, L] -> norm over D dimension
+    normed = hidden_states / (hidden_states.norm(dim=2, keepdim=True) + eps)
+
+    # Flatten layers: [B, T, D, L] -> [B, T, D * L]
+    batch_size, seq_len, hidden_dim, num_layers = normed.shape
+    packed = normed.view(batch_size, seq_len, hidden_dim * num_layers)
+
+    # Apply scale factor
+    packed = packed * scale_factor
+
+    return packed
 
 
 class FeatureExtractorLinear(nn.Module):
@@ -764,6 +816,142 @@ class Gemma3Encoder:
             # Always clean up hooks
             if extractor is not None:
                 extractor.unregister()
+
+    def encode_with_layer_masking(
+        self,
+        texts: Union[str, List[str]],
+        active_layers: List[int],
+        masking_mode: LayerMaskingMode = "soft",
+        return_packed: bool = True,
+    ) -> dict:
+        """
+        Encode text with layer masking for ablation experiments.
+
+        This masks inactive layers according to the specified mode, allowing
+        you to see what a single layer (or subset) contributes in isolation.
+        Useful for understanding layer specialization in Gemma3 for LTX-2.
+
+        Args:
+            texts: Input text(s) to encode.
+            active_layers: List of layer indices to keep active (0-48).
+                          Other layers will be masked according to masking_mode.
+            masking_mode: How to handle inactive layers:
+                - "soft": Replace with per-layer mean (maintains distribution)
+                - "zero": Zero out (creates OOD inputs - NOT RECOMMENDED)
+                - "weighted": Scale active layers to preserve total norm
+            return_packed: If True, return packed embeddings ready for pipeline.
+                          If False, return raw hidden states.
+
+        Returns:
+            Dict with:
+            - 'prompt_embeds': Packed embeddings for pipeline (if return_packed)
+            - 'hidden_states': Raw masked hidden states [B, T, D, L]
+            - 'attention_mask': Attention mask [B, T]
+            - 'seq_lengths': List of sequence lengths
+
+        Example:
+            # Test layer 47 in isolation
+            result = encoder.encode_with_layer_masking(
+                "A cat sleeping on a couch",
+                active_layers=[47],
+                masking_mode="soft"
+            )
+            output = pipe(prompt_embeds=result['prompt_embeds'], ...)
+
+        Note:
+            - "soft" mode is recommended as it maintains the expected input
+              distribution for the projection layer
+            - "zero" mode creates out-of-distribution inputs and may produce
+              unexpected results
+            - "weighted" scales active layers to preserve total signal magnitude
+        """
+        if not self._is_loaded:
+            self._load_model()
+
+        if self._is_offloaded:
+            self._model.to(self.device)
+            self._is_offloaded = False
+
+        if isinstance(texts, str):
+            texts = [texts]
+
+        active_set = set(active_layers)
+
+        # Tokenize
+        encoded = self._tokenizer(
+            texts,
+            padding="max_length",
+            max_length=self._max_sequence_length,
+            truncation=True,
+            return_tensors="pt",
+        )
+        input_ids = encoded.input_ids.to(self.device)
+        attention_mask = encoded.attention_mask.to(self.device)
+
+        # Forward pass with all hidden states
+        with torch.no_grad():
+            outputs = self._model(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                output_hidden_states=True,
+                return_dict=True,
+            )
+
+        # Stack hidden states: [B, T, D, L]
+        hidden_states_list = outputs.hidden_states[1:]  # Skip embedding layer
+        num_layers = min(len(hidden_states_list), GEMMA3_NUM_LAYERS)
+        hidden_states_list = hidden_states_list[:num_layers]
+        hidden_states = torch.stack(hidden_states_list, dim=-1)
+
+        # Apply masking based on mode
+        if masking_mode == "soft":
+            # Soft masking: Replace inactive layers with per-layer mean
+            # Maintains expected input distribution for projection W
+            for layer_idx in range(num_layers):
+                if layer_idx not in active_set:
+                    layer_mean = hidden_states[:, :, :, layer_idx].mean(dim=1, keepdim=True)
+                    hidden_states[:, :, :, layer_idx] = layer_mean
+
+        elif masking_mode == "zero":
+            # Zero masking: Creates OOD inputs (not recommended)
+            for layer_idx in range(num_layers):
+                if layer_idx not in active_set:
+                    hidden_states[:, :, :, layer_idx] = 0.0
+
+        elif masking_mode == "weighted":
+            # Weighted masking: Scale active layers to preserve total norm
+            num_active = len(active_layers)
+            scale = num_layers / num_active if num_active > 0 else 1.0
+
+            for layer_idx in range(num_layers):
+                if layer_idx in active_set:
+                    hidden_states[:, :, :, layer_idx] *= scale
+                else:
+                    hidden_states[:, :, :, layer_idx] = 0.0
+
+        else:
+            raise ValueError(f"Unknown masking_mode: {masking_mode}")
+
+        seq_lengths = attention_mask.sum(dim=1).tolist()
+
+        result = {
+            'hidden_states': hidden_states,
+            'attention_mask': attention_mask,
+            'seq_lengths': [int(s) for s in seq_lengths],
+            'active_layers': active_layers,
+            'masking_mode': masking_mode,
+        }
+
+        # Pack for pipeline if requested
+        if return_packed:
+            packed = pack_text_embeds(
+                hidden_states,
+                sequence_length=int(seq_lengths[0]),
+                device=self.device,
+            )
+            result['prompt_embeds'] = packed
+
+        return result
 
     def encode_image(
         self,
