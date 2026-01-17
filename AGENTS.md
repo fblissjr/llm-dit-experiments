@@ -10,6 +10,22 @@ Quick reference for LLM agents working on this codebase.
 |-----|---------|
 | **[internal/hub.md](internal/hub.md)** | Central documentation hub |
 | **[internal/state/current.md](internal/state/current.md)** | Current project state (read first) |
+| **[experiments/AGENTS.md](experiments/AGENTS.md)** | Research status tracking |
+
+## research status system
+
+All research documentation uses a consistent status tracking system:
+
+| Symbol | Status | Meaning |
+|--------|--------|---------|
+| ✅ | **Validated** | Confirmed through experiments or architecture analysis |
+| 🔬 | **Open** | Hypothesis needs testing or re-testing |
+| ⚠️ | **Needs Verification** | Previous results may have bugs |
+| 🚫 | **Dead-End** | Tested, doesn't work |
+
+**Where to find status tracking:**
+- [experiments/AGENTS.md](experiments/AGENTS.md) - Top-level research navigation
+- [experiments/ltx2/docs/findings/](experiments/ltx2/docs/findings/) - Consolidated research findings
 
 ## critical rules
 

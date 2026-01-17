@@ -1,0 +1,172 @@
+# experiments agent context
+
+*last updated: 2026-01-17*
+
+---
+
+## research status legend
+
+- ✅ **Validated** - Confirmed through experiments or architecture analysis
+- 🔬 **Open** - Hypothesis needs testing or re-testing
+- ⚠️ **Needs Verification** - Previous results may have bugs
+- 🚫 **Dead-End** - Tested, doesn't work
+
+---
+
+## quick navigation
+
+| Area | Entry Point | Status |
+|------|-------------|--------|
+| **LTX-2** | [ltx2/AGENTS.md](ltx2/AGENTS.md) | Active |
+| **Qwen3-VL** | [qwen3_vl/README.md](qwen3_vl/README.md) | 🚫 Dead-end |
+| **Research Findings** | [ltx2/docs/findings/](ltx2/docs/findings/) | Reference |
+| **Metrics** | [metrics/](metrics/) | Active |
+| **Viewer** | [viewer/](viewer/) | Active |
+
+---
+
+## ltx-2 research status
+
+### validated findings ✅
+
+| Finding | Status | Notes |
+|---------|--------|-------|
+| 49 layers extracted from Gemma-3 | ✅ | Architecture confirmed |
+| 8-frame VAE temporal unit | ✅ | Architecture (valid frames: 9, 17, 25...) |
+| Bidirectional connector (not causal) | ✅ | 2 transformer layers + 128 thinking tokens |
+| Prompt ordering doesn't matter for semantics | ✅ | Bidirectional attention handles all orders |
+| SigLIP appropriate for spatial evaluation | ✅ | Apollo paper validates this |
+| Scaling consistency enables small-scale experiments | ✅ | Apollo paper (R² > 0.8) |
+
+### open hypotheses 🔬
+
+| Hypothesis | Status | Notes |
+|------------|--------|-------|
+| Per-token layer routing improves quality | 🔬 | Jan 15 had bugs; needs re-testing |
+| Chunk-aligned prompting improves transitions | 🔬 | Not yet tested |
+| Activation steering can improve quality | 🔬 | Zero-training approach |
+| Thinking tokens capture global context | 🔬 | Connector internals unexplored |
+| Temporal tokens benefit from different layers | 🔬 | Derived from Apollo findings |
+
+### needs verification ⚠️
+
+| Finding | Status | Notes |
+|---------|--------|-------|
+| Late layers (43-47) contribute ~25% | ⚠️ | May be affected by extraction bugs |
+| Layer 47 anomaly (near-zero norm) | ⚠️ | Needs re-verification |
+| Projection weights uniform | ⚠️ | Depends on correct layer extraction |
+
+---
+
+## qwen3-vl research status
+
+> **STATUS: 🚫 RESEARCH DEAD-END (2025-12-12)**
+> Zero-shot VL conditioning corrupts image content. Not viable without training.
+
+### what was learned
+
+| Finding | Status |
+|---------|--------|
+| Layer -2 works best (training alignment) | ✅ |
+| Earlier layers cause "semantic averaging" | ✅ |
+| Zero-shot VL conditioning corrupts content | 🚫 |
+
+### why it's a dead-end
+
+Zero-shot vision-language conditioning to DiT models corrupts the generated image content. The approach requires training an adapter, which is out of scope for inference-time experiments.
+
+See: `internal/state/lessons_learned.md`
+
+---
+
+## directory structure
+
+```
+experiments/
+├── AGENTS.md              # This file (navigation hub)
+├── ltx2/                  # LTX-2 experiments (ACTIVE)
+│   ├── AGENTS.md          # LTX-2 specific context
+│   ├── prompts.py         # CENTRALIZED PROMPTS (MUST USE)
+│   ├── docs/              # Documentation
+│   │   ├── findings/      # Consolidated research findings
+│   │   └── reports/       # Session reports
+│   └── *.py               # Experiment scripts
+├── qwen3_vl/              # Qwen3-VL experiments (DEAD-END)
+│   └── ...
+├── metrics/               # Scoring modules
+│   ├── siglip_score.py    # SigLIP2 text-image alignment
+│   └── image_reward.py    # Human preference alignment
+├── compare/               # Comparison infrastructure
+├── viewer/                # Interactive web viewer
+├── results/               # Experiment outputs (auto-generated)
+└── archive/               # Superseded/dated content
+    ├── dated_reports/     # Historical dated reports
+    ├── drafts/            # Draft versions
+    └── superseded/        # Superseded documents
+```
+
+---
+
+## key documents
+
+### ltx-2 research
+
+| Document | Purpose |
+|----------|---------|
+| [ltx2/docs/findings/apollo_analysis.md](ltx2/docs/findings/apollo_analysis.md) | Apollo paper insights and transfer analysis |
+| [ltx2/docs/findings/research_synthesis.md](ltx2/docs/findings/research_synthesis.md) | Consolidated research status |
+| [ltx2/docs/text_conditioning_architecture.md](ltx2/docs/text_conditioning_architecture.md) | Full architecture reference |
+| [ltx2/prompting_guide.md](ltx2/prompting_guide.md) | How to write prompts for LTX-2 |
+
+### archived content
+
+Historical dated reports: [archive/dated_reports/](archive/dated_reports/)
+
+---
+
+## research priorities
+
+### tier 1: validation (do first)
+
+| Task | Purpose |
+|------|---------|
+| Re-verify layer contribution patterns | Validate with corrected extraction |
+| Layer 47 anomaly verification | Confirm near-zero norm |
+
+### tier 2: high-value experiments
+
+| Task | Expected Impact |
+|------|-----------------|
+| Layer routing with corrected code | 3-10% on complex prompts |
+| Activation steering | Zero-training quality boost |
+| Chunk-aligned prompting | Improved transitions |
+
+---
+
+## critical reminders
+
+### prompt standardization
+
+**All experiment prompts must be imported from centralized module:**
+
+```python
+from experiments.ltx2.prompts import CATEGORY_PROMPTS, get_all_prompts
+
+TEST_PROMPTS = CATEGORY_PROMPTS  # 8 prompts, 100+ words each
+```
+
+**Why?** LTX-2's training data uses 100-300 word prose. Short prompts are out-of-distribution.
+
+### evaluation metrics
+
+- **SigLIP**: Primary spatial quality metric (Apollo-validated)
+- **Temporal metrics**: Needed separately (SigLIP is spatial-focused)
+- **Human preference**: For final validation
+
+---
+
+## related documentation
+
+- **Internal hub**: `internal/hub.md` - Project-wide navigation
+- **LTX-2 paper**: arXiv:2601.03233
+- **Apollo paper**: arXiv:2412.10360

@@ -1,6 +1,6 @@
 # LTX-2 Prompting Behavior Analysis: Bridging LLM Intuitions to DiT Conditioning
 
-Last updated: 2026-01-16
+*last updated: 2026-01-17*
 
 ---
 
