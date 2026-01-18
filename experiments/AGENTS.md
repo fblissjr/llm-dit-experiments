@@ -42,7 +42,7 @@
 
 | Hypothesis | Status | Notes |
 |------------|--------|-------|
-| Per-token layer routing improves quality | 🔬 | Jan 15 had bugs; needs re-testing |
+| Per-token layer routing improves quality | 🔬 | **READY** - layer masking fixed Jan 17; run `train_router.py` |
 | Chunk-aligned prompting improves transitions | 🔬 | Not yet tested |
 | Activation steering can improve quality | 🔬 | Zero-training approach |
 | Thinking tokens capture global context | 🔬 | Connector internals unexplored |
@@ -52,9 +52,18 @@
 
 | Finding | Status | Notes |
 |---------|--------|-------|
-| Late layers (43-47) contribute ~25% | ⚠️ | May be affected by extraction bugs |
-| Layer 47 anomaly (near-zero norm) | ⚠️ | Needs re-verification |
+| Late layers (43-47) contribute ~25% | ✅ | **REFUTED** - Layer 48 contributes ~0% when isolated (Jan 17) |
+| Layer 47 anomaly (near-zero norm) | ⚠️ | Needs re-verification with full 49-layer run |
 | Projection weights uniform | ⚠️ | Depends on correct layer extraction |
+
+### new findings (jan 17)
+
+| Finding | Status | Notes |
+|---------|--------|-------|
+| Layer 0 (embedding) contributes 51% isolated | ✅ | Highest contribution when only layer active |
+| Layer 24 contributes 49% isolated | ✅ | Mid-layers carry semantic content |
+| Layer 48 contributes ~0% isolated | ✅ | Final layer alone contributes nothing |
+| L2 normalization destroys masking info | ✅ | Must use min-max normalization `8*(x-mean)/(max-min)` |
 
 ---
 
@@ -128,18 +137,19 @@ Historical dated reports: [archive/dated_reports/](archive/dated_reports/)
 
 ### tier 1: validation (do first)
 
-| Task | Purpose |
-|------|---------|
-| Re-verify layer contribution patterns | Validate with corrected extraction |
-| Layer 47 anomaly verification | Confirm near-zero norm |
+| Task | Status | Purpose |
+|------|--------|---------|
+| ~~Re-verify layer contribution patterns~~ | ✅ Done | Validated with corrected extraction (Jan 17) |
+| Layer 47 anomaly verification | 🔬 Open | Confirm near-zero norm (needs full 49-layer run) |
+| GPU numerical equivalence test | 🔬 Open | Compare pure PyTorch vs diffusers output |
 
-### tier 2: high-value experiments
+### tier 2: high-value experiments (NOW UNBLOCKED)
 
-| Task | Expected Impact |
-|------|-----------------|
-| Layer routing with corrected code | 3-10% on complex prompts |
-| Activation steering | Zero-training quality boost |
-| Chunk-aligned prompting | Improved transitions |
+| Task | Status | Expected Impact |
+|------|--------|-----------------|
+| Train per-token layer router | 🔬 Ready | 3-10% on complex prompts |
+| Activation steering | 🔬 Open | Zero-training quality boost |
+| Chunk-aligned prompting | 🔬 Open | Improved transitions |
 
 ---
 
