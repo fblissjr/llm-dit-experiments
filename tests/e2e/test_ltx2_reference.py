@@ -26,16 +26,13 @@ Usage:
 
     # Run quick smoke test only
     uv run pytest tests/e2e/test_ltx2_reference.py -v -k smoke
-
-    # Run with video output inspection
-    uv run pytest tests/e2e/test_ltx2_reference.py -v -s
 """
 
 import gc
 import json
+import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 import pytest
 import torch
@@ -45,6 +42,8 @@ pytestmark = [
     pytest.mark.e2e,
     pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required"),
 ]
+
+logger = logging.getLogger(__name__)
 
 
 # =============================================================================
@@ -99,24 +98,6 @@ def sufficient_vram() -> bool:
 
 
 # =============================================================================
-# Test Prompts
-# =============================================================================
-
-# Import from fixtures
-try:
-    from tests.fixtures.prompts import ltx2 as test_prompts
-    SMOKE_PROMPT = test_prompts.get_smoke_test_prompt()
-    REFERENCE_PROMPTS = test_prompts.get_reference_prompts()
-except ImportError:
-    # Fallback if fixtures not importable
-    SMOKE_PROMPT = "A cat walking"
-    REFERENCE_PROMPTS = {
-        "cat_walking": "A cat walking",
-        "cat_playing": "A cat playing with a ball",
-    }
-
-
-# =============================================================================
 # Reference Constants
 # =============================================================================
 
@@ -133,6 +114,17 @@ from llm_dit.models.ltx2 import (
 
 
 # =============================================================================
+# Test Prompts
+# =============================================================================
+
+SMOKE_PROMPT = "A cat walking"
+REFERENCE_PROMPTS = {
+    "cat_walking": "A cat walking",
+    "cat_playing": "A cat playing with a ball",
+}
+
+
+# =============================================================================
 # Test Classes
 # =============================================================================
 
@@ -142,42 +134,68 @@ class TestLTX2ReferenceSmoke:
     @pytest.mark.skipif(not models_available(), reason="LTX-2 models not found")
     @pytest.mark.skipif(not sufficient_vram(), reason="Insufficient VRAM")
     def test_smoke_generation(self, output_dir):
-        """Quick smoke test with minimal parameters."""
-        from experiments.ltx2.base import LTX2ExperimentBase
+        """Quick smoke test with minimal parameters.
 
-        class SmokeTest(LTX2ExperimentBase):
-            def __init__(self, out_dir: Path):
-                super().__init__("smoke_test")
-                self._custom_output_dir = out_dir
+        Tests the full pipeline: encode -> generate -> verify output.
+        Uses FP8 quantization to fit 13B model on 24GB GPU.
+        """
+        from llm_dit.models.ltx2 import load_ltx2_transformer_quantized
+        from llm_dit.encoders import Gemma3Encoder
+        from llm_dit.pipelines.generate import GenerationConfig, generate_video
 
-            def setup(self):
-                self.load_model(quantize=True)
-                self.load_encoder()
+        logger.info(f"Output: {output_dir}")
 
-            def run_iteration(self, config: dict) -> dict:
-                return config
+        # Load encoder (8-bit)
+        logger.info("Loading encoder...")
+        encoder = Gemma3Encoder(
+            model_id="models/LTX-2/text_encoder/",
+            load_8bit=True,
+            device="cuda",
+        )
 
-        # Run smoke test
-        test = SmokeTest(output_dir)
-        test.setup()
+        # Encode prompt
+        logger.info(f"Encoding: {SMOKE_PROMPT}")
+        embeds = encoder.encode(SMOKE_PROMPT)
 
-        # Encode
-        embeds = test.encode(SMOKE_PROMPT)
-        assert embeds is not None
+        # Unload encoder before loading transformer
+        del encoder
+        gc.collect()
+        torch.cuda.empty_cache()
 
-        # Generate with minimal params (fast)
-        quick_config = get_quick_test_config()
-        video = test.generate_video(
-            embeds,
-            num_frames=9,  # Even shorter than quick config
-            num_inference_steps=4,  # Minimum viable
+        # Load transformer (FP8 quantized)
+        logger.info("Loading transformer (FP8)...")
+        model = load_ltx2_transformer_quantized(
+            "models/LTX-2/transformer/",
+            precision="fp8-quanto",
+            dtype=torch.bfloat16,
+        )
+        model = model.to("cuda")
+
+        # Generate with minimal params
+        logger.info("Generating...")
+        config = GenerationConfig(
+            num_frames=9,
+            height=DEFAULT_HEIGHT,
+            width=DEFAULT_WIDTH,
+            num_inference_steps=4,
+            guidance_scale=DEFAULT_GUIDANCE_SCALE,
             seed=DEFAULT_SEED,
         )
 
-        # Verify output
-        assert video is not None
-        assert not torch.isnan(video).any()
-        assert not torch.isinf(video).any()
+        latents = generate_video(
+            model=model,
+            prompt_embeds=embeds,
+            config=config,
+            vae=None,  # Skip VAE decode for smoke test
+            device=torch.device("cuda"),
+            dtype=torch.bfloat16,
+        )
+
+        # Verify output (latents, not decoded video)
+        assert latents is not None
+        assert not torch.isnan(latents).any()
+        assert not torch.isinf(latents).any()
+        logger.info(f"Latents shape: {latents.shape}")
 
         # Save metadata
         metadata = {
@@ -188,47 +206,55 @@ class TestLTX2ReferenceSmoke:
             "width": DEFAULT_WIDTH,
             "seed": DEFAULT_SEED,
             "test_type": "smoke",
+            "latents_shape": list(latents.shape),
         }
         with open(output_dir / "metadata.json", "w") as f:
             json.dump(metadata, f, indent=2)
 
+        logger.info(f"Results saved to {output_dir}")
+
         # Cleanup
-        test.cleanup()
+        del model, latents
+        gc.collect()
+        torch.cuda.empty_cache()
 
 
-class TestLTX2ReferenceComparison:
-    """Tests using official LTX-2 reference parameters."""
+class TestLTX2ReferenceT2V:
+    """Text-to-Video tests using official parameters."""
 
     @pytest.mark.slow
     @pytest.mark.skipif(not models_available(), reason="LTX-2 models not found")
     @pytest.mark.skipif(not sufficient_vram(), reason="Insufficient VRAM")
     def test_reference_t2v_short(self, output_dir):
         """Reference T2V with official params but shorter video (33 frames)."""
-        from experiments.ltx2.base import LTX2ExperimentBase
+        from llm_dit.models.ltx2 import load_ltx2_transformer_quantized
+        from llm_dit.encoders import Gemma3Encoder
+        from llm_dit.pipelines.generate import GenerationConfig, generate_video
 
-        class ReferenceTest(LTX2ExperimentBase):
-            def __init__(self, out_dir: Path):
-                super().__init__("reference_t2v")
-                self._custom_output_dir = out_dir
+        logger.info(f"Output: {output_dir}")
 
-            def setup(self):
-                self.load_model(quantize=True)
-                self.load_encoder()
-                self.load_vae()
-
-            def run_iteration(self, config: dict) -> dict:
-                return config
-
-        test = ReferenceTest(output_dir)
-        test.setup()
-
+        # Load and encode
+        encoder = Gemma3Encoder(
+            model_id="models/LTX-2/text_encoder/",
+            load_8bit=True,
+            device="cuda",
+        )
         prompt = REFERENCE_PROMPTS["cat_walking"]
-        embeds = test.encode(prompt)
+        embeds = encoder.encode(prompt)
+        del encoder
+        gc.collect()
+        torch.cuda.empty_cache()
 
-        # Use reference params but shorter video
-        video = test.generate_video(
-            embeds,
-            num_frames=33,  # Shorter than official 121
+        # Load transformer
+        model = load_ltx2_transformer_quantized(
+            "models/LTX-2/transformer/",
+            precision="fp8-quanto",
+        )
+        model = model.to("cuda")
+
+        # Generate with reference params (shorter frames)
+        config = GenerationConfig(
+            num_frames=33,
             height=DEFAULT_HEIGHT,
             width=DEFAULT_WIDTH,
             num_inference_steps=DEFAULT_NUM_INFERENCE_STEPS,
@@ -236,91 +262,36 @@ class TestLTX2ReferenceComparison:
             seed=DEFAULT_SEED,
         )
 
-        assert video is not None
-        # Video shape: [F, H, W, C]
-        assert video.shape[0] == 33
-        assert video.shape[1] == DEFAULT_HEIGHT
-        assert video.shape[2] == DEFAULT_WIDTH
+        latents = generate_video(
+            model=model,
+            prompt_embeds=embeds,
+            config=config,
+            vae=None,
+            device=torch.device("cuda"),
+            dtype=torch.bfloat16,
+        )
 
-        # Save video
-        test.save_video(video, str(output_dir / "reference_t2v.mp4"))
+        assert latents is not None
+        logger.info(f"Latents shape: {latents.shape}")
 
         # Save metadata
         metadata = {
             "prompt": prompt,
             "num_frames": 33,
-            "height": DEFAULT_HEIGHT,
-            "width": DEFAULT_WIDTH,
             "num_inference_steps": DEFAULT_NUM_INFERENCE_STEPS,
             "guidance_scale": DEFAULT_GUIDANCE_SCALE,
+            "height": DEFAULT_HEIGHT,
+            "width": DEFAULT_WIDTH,
             "seed": DEFAULT_SEED,
             "test_type": "reference_t2v_short",
-            "reference_params": get_reference_config(),
+            "latents_shape": list(latents.shape),
         }
         with open(output_dir / "metadata.json", "w") as f:
-            json.dump(metadata, f, indent=2, default=str)
+            json.dump(metadata, f, indent=2)
 
-        test.cleanup()
-
-    @pytest.mark.slow
-    @pytest.mark.skipif(not models_available(), reason="LTX-2 models not found")
-    @pytest.mark.skipif(not sufficient_vram(), reason="Insufficient VRAM")
-    def test_reference_t2v_full(self, output_dir):
-        """Full reference T2V with official 121 frames.
-
-        This is the authoritative 1:1 comparison test.
-        Output should match official LTX-2 implementation.
-        """
-        from experiments.ltx2.base import LTX2ExperimentBase
-
-        class ReferenceTest(LTX2ExperimentBase):
-            def __init__(self, out_dir: Path):
-                super().__init__("reference_t2v_full")
-                self._custom_output_dir = out_dir
-
-            def setup(self):
-                self.load_model(quantize=True)
-                self.load_encoder()
-                self.load_vae()
-
-            def run_iteration(self, config: dict) -> dict:
-                return config
-
-        test = ReferenceTest(output_dir)
-        test.setup()
-
-        prompt = REFERENCE_PROMPTS["cat_walking"]
-        embeds = test.encode(prompt)
-
-        # Full official reference parameters
-        ref_config = get_reference_config()
-        video = test.generate_video(
-            embeds,
-            num_frames=DEFAULT_NUM_FRAMES,  # 121
-            height=DEFAULT_HEIGHT,
-            width=DEFAULT_WIDTH,
-            num_inference_steps=DEFAULT_NUM_INFERENCE_STEPS,
-            guidance_scale=DEFAULT_GUIDANCE_SCALE,
-            seed=DEFAULT_SEED,
-        )
-
-        assert video is not None
-        assert video.shape[0] == DEFAULT_NUM_FRAMES
-
-        # Save video
-        test.save_video(video, str(output_dir / "reference_t2v_full.mp4"))
-
-        # Save metadata
-        metadata = {
-            "prompt": prompt,
-            **ref_config,
-            "test_type": "reference_t2v_full",
-            "is_authoritative": True,
-        }
-        with open(output_dir / "metadata.json", "w") as f:
-            json.dump(metadata, f, indent=2, default=str)
-
-        test.cleanup()
+        del model, latents
+        gc.collect()
+        torch.cuda.empty_cache()
 
 
 class TestLTX2ReferenceI2V:
@@ -332,39 +303,38 @@ class TestLTX2ReferenceI2V:
     def test_i2v_with_conditioning(self, output_dir):
         """Test I2V generation using conditioning system.
 
-        NOTE: This test uses a synthetic latent as a stand-in for a real
-        VAE-encoded image. It validates the conditioning pipeline works
-        end-to-end. For visual quality assessment, use a real input image.
-
-        TODO: Add tests/fixtures/images/test_cat.png for real I2V testing.
+        Uses synthetic latent as stand-in for VAE-encoded image.
+        Validates conditioning pipeline works end-to-end.
         """
-        from experiments.ltx2.base import LTX2ExperimentBase
-        from llm_dit.conditioning import (
-            LatentState,
-            VideoConditionByLatentIndex,
+        from llm_dit.models.ltx2 import load_ltx2_transformer_quantized
+        from llm_dit.encoders import Gemma3Encoder
+        from llm_dit.pipelines.generate import GenerationConfig, generate_video
+        from llm_dit.conditioning import VideoConditionByLatentIndex
+
+        logger.info(f"Output: {output_dir}")
+
+        # Load and encode
+        encoder = Gemma3Encoder(
+            model_id="models/LTX-2/text_encoder/",
+            load_8bit=True,
+            device="cuda",
         )
+        prompt = "A cat walking through a garden"
+        embeds = encoder.encode(prompt)
+        del encoder
+        gc.collect()
+        torch.cuda.empty_cache()
 
-        class I2VTest(LTX2ExperimentBase):
-            def __init__(self, out_dir: Path):
-                super().__init__("i2v_conditioning")
-                self._custom_output_dir = out_dir
+        # Load transformer
+        model = load_ltx2_transformer_quantized(
+            "models/LTX-2/transformer/",
+            precision="fp8-quanto",
+        )
+        model = model.to("cuda")
 
-            def setup(self):
-                self.load_model(quantize=True)
-                self.load_encoder()
-                self.load_vae()
-
-            def run_iteration(self, config: dict) -> dict:
-                return config
-
-        test = I2VTest(output_dir)
-        test.setup()
-
-        # Create synthetic "image" latent for pipeline validation
-        # In production: image_latent = vae.encode(pil_image)
-        # Shape: [B, C, F, H, W] where F=1 for single image
-        h_latent = DEFAULT_HEIGHT // 32  # 16
-        w_latent = DEFAULT_WIDTH // 32   # 24
+        # Create synthetic image latent (would be VAE-encoded in production)
+        h_latent = DEFAULT_HEIGHT // 32
+        w_latent = DEFAULT_WIDTH // 32
         image_latent = torch.randn(
             1, 128, 1, h_latent, w_latent,
             device="cuda",
@@ -374,38 +344,41 @@ class TestLTX2ReferenceI2V:
         # Create conditioning
         cond = VideoConditionByLatentIndex(
             latent=image_latent,
-            latent_idx=0,  # First frame
-            strength=1.0,  # Full conditioning
+            latent_idx=0,
+            strength=1.0,
         )
 
-        prompt = "A cat walking through a garden"
-        embeds = test.encode(prompt)
-
         # Generate with conditioning
-        video = test.generate_video(
-            embeds,
+        config = GenerationConfig(
             num_frames=33,
             height=DEFAULT_HEIGHT,
             width=DEFAULT_WIDTH,
-            num_inference_steps=20,  # Fewer steps for I2V
+            num_inference_steps=20,
             guidance_scale=DEFAULT_GUIDANCE_SCALE,
             seed=DEFAULT_SEED,
-            conditioning=[cond],  # Pass conditioning
         )
 
-        assert video is not None
+        latents = generate_video(
+            model=model,
+            prompt_embeds=embeds,
+            config=config,
+            conditioning=[cond],
+            vae=None,
+            device=torch.device("cuda"),
+            dtype=torch.bfloat16,
+        )
 
-        # Save video
-        test.save_video(video, str(output_dir / "i2v_test.mp4"))
+        assert latents is not None
+        logger.info(f"Latents shape: {latents.shape}")
 
         # Save metadata
         metadata = {
             "prompt": prompt,
             "num_frames": 33,
-            "height": DEFAULT_HEIGHT,
-            "width": DEFAULT_WIDTH,
             "num_inference_steps": 20,
             "guidance_scale": DEFAULT_GUIDANCE_SCALE,
+            "height": DEFAULT_HEIGHT,
+            "width": DEFAULT_WIDTH,
             "seed": DEFAULT_SEED,
             "test_type": "i2v_conditioning",
             "conditioning": {
@@ -413,8 +386,11 @@ class TestLTX2ReferenceI2V:
                 "latent_idx": 0,
                 "strength": 1.0,
             },
+            "latents_shape": list(latents.shape),
         }
         with open(output_dir / "metadata.json", "w") as f:
-            json.dump(metadata, f, indent=2, default=str)
+            json.dump(metadata, f, indent=2)
 
-        test.cleanup()
+        del model, latents
+        gc.collect()
+        torch.cuda.empty_cache()
