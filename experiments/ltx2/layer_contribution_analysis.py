@@ -4,39 +4,36 @@ LTX-2 Layer Contribution Analysis
 
 Last Updated: 2026-01-17
 
-Computes per-layer contribution scores using two modes:
+Computes per-layer contribution scores by isolating individual layers
+BEFORE the normalization step. This is critical because the normalization
+uses statistics from ALL layers, so modifying weights after encoding has
+no effect.
 
-**Isolation Mode (default, recommended):**
-    - Uses ONLY the specified layer, zeros all others
-    - Reveals which layers can produce coherent output alone
-    - Score = SigLIP alignment when using only that layer
+**How it works:**
+    1. For each layer L, encode the prompt with only layer L active
+    2. Apply soft masking: inactive layers replaced with per-layer mean
+    3. Pass through connectors (text_proj_in + video_connector)
+    4. Generate video and score with SigLIP
+    5. Higher score = layer contributes more semantic content
 
-**Ablation Mode:**
-    - Removes one layer, keeps 48 others
-    - Often shows zero delta due to layer redundancy
-    - Delta = baseline_score - ablated_score
-
-Outputs are used as:
-1. Ground truth for router training (proxy reward)
-2. Analysis of layer specialization
-3. Informed layer selection for efficient inference
+**Memory-optimized flow:**
+    Phase 1: Load encoder, batch encode all (layer × prompt) combinations
+    Phase 2: Offload encoder, load transformer + connectors + VAE
+    Phase 3: Generate videos from cached embeddings
 
 Output:
     layer_contributions.json - Per-layer contribution scores
     layer_weights.json - Normalized weights for router training
 
 Usage:
-    # Quick test with isolation mode (default)
+    # Quick test (5 layers, 2 prompts)
     uv run python experiments/ltx2/layer_contribution_analysis.py --quick
 
-    # Full analysis
+    # Full analysis (all 49 layers, all prompts)
     uv run python experiments/ltx2/layer_contribution_analysis.py
 
-    # Use ablation mode (original, but often shows zero deltas)
-    uv run python experiments/ltx2/layer_contribution_analysis.py --mode ablation --quick
-
-    # Use results in router training
-    uv run python experiments/ltx2/train_router.py --layer-contributions results/layer_contributions.json
+    # Custom layers
+    uv run python experiments/ltx2/layer_contribution_analysis.py --layers 0,10,20,30,40,48
 """
 
 import argparse
@@ -46,7 +43,7 @@ import logging
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Dict, List, Optional
 
 import numpy as np
 import torch
@@ -54,7 +51,8 @@ import torch
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from experiments.ltx2.prompts import get_all_prompts
+from experiments.ltx2.base import LTX2ExperimentBase
+from llm_dit.data import get_all_prompts
 
 logging.basicConfig(
     level=logging.INFO,
@@ -63,301 +61,244 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-class LayerContributionAnalyzer:
-    """Analyzes per-layer contribution to generation quality.
+class LayerContributionAnalyzer(LTX2ExperimentBase):
+    """
+    Analyzes per-layer contribution to video generation quality.
 
-    Strategy:
-        For each layer L, compute:
-        1. Baseline score (all layers) vs ablated score (layer L zeroed)
-        2. Delta = baseline - ablated
-        3. Positive delta = layer contributes; negative = layer hurts
+    Uses layer isolation: for each layer, keep ONLY that layer active
+    and mask all others with their mean values. This reveals which layers
+    carry the most semantic information for video conditioning.
 
-    The resulting contribution scores serve as training signal for the router.
+    Results serve as:
+    1. Ground truth for router training (proxy reward)
+    2. Analysis of layer specialization in Gemma3 for LTX-2
+    3. Guidance for layer selection in efficient inference
     """
 
     def __init__(
         self,
-        model_path: str = "models/LTX-2",
-        device: str = "cuda",
-        dtype: torch.dtype = torch.bfloat16,
-    ):
-        self.model_path = model_path
-        self.device = device
-        self.dtype = dtype
-
-        # Components (lazy loaded)
-        self.pipeline = None
-        self.scorer = None
-        self.original_weight = None
-
-    def load_components(self):
-        """Load pipeline and scorer."""
-        from diffusers import LTX2Pipeline
-        from llm_dit.utils.metrics import SigLIPScorer
-
-        logger.info("Loading LTX-2 pipeline...")
-        self.pipeline = LTX2Pipeline.from_pretrained(
-            self.model_path,
-            torch_dtype=self.dtype,
-        )
-
-        # Store original projection weight for ablation
-        self.original_weight = self.pipeline.connectors.text_proj_in.weight.data.clone()
-
-        # Enable memory-efficient offloading
-        self.pipeline.enable_sequential_cpu_offload()
-
-        logger.info("Loading SigLIP scorer...")
-        self.scorer = SigLIPScorer(device=self.device, dtype=self.dtype)
-
-    def ablate_layer(self, layer_idx: int):
-        """Zero out a single layer's contribution in the projection matrix."""
-        hidden_dim = 3840
-        start = layer_idx * hidden_dim
-        end = (layer_idx + 1) * hidden_dim
-
-        # Restore original weights first
-        self.pipeline.connectors.text_proj_in.weight.data.copy_(self.original_weight)
-
-        # Zero out this layer
-        self.pipeline.connectors.text_proj_in.weight.data[:, start:end] = 0
-
-    def isolate_layer(self, layer_idx: int):
-        """Keep ONLY a single layer's contribution, zero all others.
-
-        This is more informative than ablation because:
-        - Ablation: Remove 2% of signal → minimal effect
-        - Isolation: Keep 2% of signal → reveals layer's standalone contribution
-        """
-        hidden_dim = 3840
-
-        # Start with zeros
-        self.pipeline.connectors.text_proj_in.weight.data.zero_()
-
-        # Copy only the specified layer's weights
-        start = layer_idx * hidden_dim
-        end = (layer_idx + 1) * hidden_dim
-        self.pipeline.connectors.text_proj_in.weight.data[:, start:end] = \
-            self.original_weight[:, start:end]
-
-    def restore_weights(self):
-        """Restore original projection weights."""
-        self.pipeline.connectors.text_proj_in.weight.data.copy_(self.original_weight)
-
-    def generate_and_score(
-        self,
-        prompt: str,
-        seed: int = 42,
-        num_frames: int = 33,
-        height: int = 512,
-        width: int = 768,
-        num_inference_steps: int = 25,
-        guidance_scale: float = 3.0,
-    ) -> float:
-        """Generate video and return SigLIP alignment score."""
-        generator = torch.Generator(device="cpu").manual_seed(seed)
-
-        output = self.pipeline(
-            prompt=prompt,
-            height=height,
-            width=width,
-            num_frames=num_frames,
-            num_inference_steps=num_inference_steps,
-            guidance_scale=guidance_scale,
-            generator=generator,
-        )
-
-        frames = output.frames[0]
-
-        # Score with SigLIP
-        _, mean_score = self.scorer.score_video(
-            frames, prompt, sample_rate=max(1, len(frames) // 8)
-        )
-
-        return mean_score
-
-    def compute_layer_contributions(
-        self,
-        prompts: dict[str, str],
-        layer_indices: Optional[list[int]] = None,
-        seed: int = 42,
         output_dir: str = "experiments/results/layer_contributions",
-        mode: str = "isolation",
-    ) -> dict:
-        """Compute contribution score for each layer.
+        quick: bool = False,
+    ):
+        super().__init__("layer_contribution", output_dir)
+        self.quick = quick
 
-        Two modes available:
+        # Experiment parameters
+        self.layer_indices: List[int] = []
+        self.prompts: Dict[str, str] = {}
+        self.seed = 42
 
-        **Isolation mode (recommended):**
-            - Keep ONLY the specified layer, zero all others
-            - Score = how well this layer performs alone
-            - Better for finding which layers carry information
+        # Cache for pre-encoded embeddings: (layer_idx, prompt_name) -> (embeds, mask)
+        self._layer_embeddings: Dict = {}
 
-        **Ablation mode:**
-            - Remove one layer, keep 48 others
-            - Delta = baseline - ablated_score
-            - Often shows zero delta due to redundancy
+    def configure(
+        self,
+        layer_indices: Optional[List[int]] = None,
+        seed: int = 42,
+    ) -> "LayerContributionAnalyzer":
+        """
+        Configure analysis parameters.
 
         Args:
-            prompts: Dict of {name: prompt}
-            layer_indices: Layers to analyze (default: all 49)
+            layer_indices: Layers to analyze (default: all 49 or 5 for quick)
             seed: Random seed for reproducibility
-            output_dir: Where to save results
-            mode: "isolation" (recommended) or "ablation"
 
         Returns:
-            Dict with per-layer contribution scores
+            self for chaining
         """
-        if layer_indices is None:
-            layer_indices = list(range(49))
+        if layer_indices is not None:
+            self.layer_indices = layer_indices
+        elif self.quick:
+            # Evenly spaced layers for quick test
+            self.layer_indices = [0, 12, 24, 36, 48]
+        else:
+            self.layer_indices = list(range(49))
 
-        output_path = Path(output_dir)
-        output_path.mkdir(parents=True, exist_ok=True)
+        self.seed = seed
+        return self
 
-        self.load_components()
+    def setup(self) -> None:
+        """
+        Two-phase setup for memory efficiency.
 
-        results = {
-            "metadata": {
-                "timestamp": datetime.now().isoformat(),
-                "num_prompts": len(prompts),
-                "num_layers": len(layer_indices),
-                "seed": seed,
-                "mode": mode,
-            },
-            "prompts": {},
-            "layer_contributions": {},
+        Phase 1: Load encoder, batch encode all layer × prompt combinations
+        Phase 2: Offload encoder, load transformer + connectors + VAE
+        """
+        # Get prompts
+        self.prompts = get_all_prompts(quick=self.quick)
+        if self.quick:
+            # Even fewer prompts for quick mode
+            self.prompts = dict(list(self.prompts.items())[:2])
+
+        logger.info(f"Analyzing {len(self.layer_indices)} layers with {len(self.prompts)} prompts")
+        logger.info(f"Total generations: {len(self.layer_indices) * len(self.prompts)}")
+
+        # =====================================================================
+        # Phase 1: Encoding
+        # =====================================================================
+        logger.info("Phase 1: Loading encoder and batch encoding...")
+        self.load_encoder(use_8bit=True)
+
+        # Pre-encode all layer × prompt combinations
+        for layer_idx in self.layer_indices:
+            logger.info(f"Encoding with layer {layer_idx} isolated...")
+            for prompt_name, prompt_text in self.prompts.items():
+                # Get packed embeddings with only this layer active
+                packed_embeds, attn_mask = self.encode_packed(
+                    prompt_text,
+                    active_layers=[layer_idx],
+                    masking_mode="soft",
+                )
+                # Move to CPU to free GPU memory
+                self._layer_embeddings[(layer_idx, prompt_name)] = (
+                    packed_embeds.cpu(),
+                    attn_mask.cpu(),
+                )
+
+        logger.info(f"Cached {len(self._layer_embeddings)} embeddings")
+
+        # =====================================================================
+        # Phase 2: Generation setup
+        # =====================================================================
+        logger.info("Phase 2: Offloading encoder, loading generation components...")
+        self.offload_encoder()
+
+        # Load transformer, connectors, and VAE for pure PyTorch generation
+        self.load_model(use_pure_pytorch=True)
+        self.load_connectors()
+        self.load_vae()
+
+    def run_iteration(self, config: Dict) -> Dict:
+        """
+        Generate video for a single (layer, prompt) configuration.
+
+        Args:
+            config: Dict with 'layer_idx' and 'prompt_name'
+
+        Returns:
+            Dict with layer, prompt, and score
+        """
+        layer_idx = config["layer_idx"]
+        prompt_name = config["prompt_name"]
+        prompt_text = self.prompts[prompt_name]
+
+        # Get cached embeddings
+        packed_embeds, attn_mask = self._layer_embeddings[(layer_idx, prompt_name)]
+        packed_embeds = packed_embeds.to(self.device)
+        attn_mask = attn_mask.to(self.device)
+
+        # Generate video
+        video = self.generate_video(
+            packed_embeds,
+            attention_mask=attn_mask,
+            num_frames=33,
+            height=512,
+            width=768,
+            num_inference_steps=25,  # Reduced for speed
+            guidance_scale=3.0,
+            seed=self.seed,
+        )
+
+        # Score with SigLIP
+        score = self.score_video(video, prompt_text)
+
+        logger.info(f"Layer {layer_idx}, {prompt_name}: score={score:.4f}")
+
+        # Optionally save video
+        if self.run_dir is not None:
+            self.save_video(
+                video,
+                f"layer{layer_idx:02d}_{prompt_name}",
+                prompt_text,
+                {"layer": layer_idx, "score": score},
+            )
+
+        return {
+            "layer": layer_idx,
+            "prompt": prompt_name,
+            "score": float(score),
         }
 
-        # For ablation mode, compute baseline first
-        baseline_scores = {}
-        if mode == "ablation":
-            logger.info("Computing baseline scores (all layers)...")
-            self.restore_weights()
+    def aggregate_results(self, results: List[Dict]) -> Dict:
+        """
+        Compute per-layer statistics and rankings.
 
-            for name, prompt in prompts.items():
-                logger.info(f"  Baseline: {name}")
-                score = self.generate_and_score(prompt, seed=seed)
-                baseline_scores[name] = score
-                logger.info(f"    Score: {score:.4f}")
-                gc.collect()
-                torch.cuda.empty_cache()
+        Args:
+            results: List of iteration results
 
-            results["baseline_scores"] = baseline_scores
+        Returns:
+            Dict with layer contributions, rankings, and normalized weights
+        """
+        # Group scores by layer
+        layer_scores = {i: [] for i in self.layer_indices}
+        for r in results:
+            if "error" not in r:
+                layer_scores[r["layer"]].append(r["score"])
 
-        # Now compute scores for each layer
-        layer_scores = {i: [] for i in layer_indices}
-
-        for layer_idx in layer_indices:
-            if mode == "isolation":
-                logger.info(f"\nIsolating layer {layer_idx} (using ONLY this layer)...")
-                self.isolate_layer(layer_idx)
+        # Compute statistics per layer
+        layer_contributions = {}
+        for layer_idx in self.layer_indices:
+            scores = layer_scores[layer_idx]
+            if scores:
+                layer_contributions[layer_idx] = {
+                    "mean_score": float(np.mean(scores)),
+                    "std": float(np.std(scores)),
+                    "min": float(np.min(scores)),
+                    "max": float(np.max(scores)),
+                    "n": len(scores),
+                }
             else:
-                logger.info(f"\nAblating layer {layer_idx}...")
-                self.ablate_layer(layer_idx)
-
-            for name, prompt in prompts.items():
-                logger.info(f"  Layer {layer_idx}, prompt: {name}")
-                layer_score = self.generate_and_score(prompt, seed=seed)
-
-                if mode == "isolation":
-                    # In isolation mode, the score IS the contribution
-                    layer_scores[layer_idx].append(layer_score)
-                    result_key = "isolated"
-                    logger.info(f"    Isolated score: {layer_score:.4f}")
-                else:
-                    # In ablation mode, delta = baseline - ablated
-                    delta = baseline_scores[name] - layer_score
-                    layer_scores[layer_idx].append(delta)
-                    result_key = "ablated"
-                    logger.info(f"    Ablated: {layer_score:.4f}, Delta: {delta:+.4f}")
-
-                if name not in results["prompts"]:
-                    results["prompts"][name] = {
-                        "baseline": baseline_scores.get(name, 0),
-                        result_key: {},
-                    }
-                results["prompts"][name][result_key][str(layer_idx)] = {
-                    "score": layer_score,
+                layer_contributions[layer_idx] = {
+                    "mean_score": 0.0,
+                    "std": 0.0,
+                    "min": 0.0,
+                    "max": 0.0,
+                    "n": 0,
                 }
 
-                gc.collect()
-                torch.cuda.empty_cache()
-
-        # Compute aggregate layer contributions
-        metric_name = "mean_score" if mode == "isolation" else "mean_delta"
-        for layer_idx in layer_indices:
-            scores = layer_scores[layer_idx]
-            results["layer_contributions"][str(layer_idx)] = {
-                metric_name: float(np.mean(scores)),
-                "std": float(np.std(scores)),
-                "min": float(np.min(scores)),
-                "max": float(np.max(scores)),
-            }
-
-        # Rank layers by contribution (higher score = better)
+        # Rank layers by mean score (higher = better)
         ranked = sorted(
-            results["layer_contributions"].items(),
-            key=lambda x: x[1][metric_name],
+            layer_contributions.items(),
+            key=lambda x: x[1]["mean_score"],
             reverse=True,
         )
-        results["layer_ranking"] = [int(layer_idx) for layer_idx, _ in ranked]
+        layer_ranking = [int(layer_idx) for layer_idx, _ in ranked]
 
-        # Save results
-        results_file = output_path / "layer_contributions.json"
-        with open(results_file, "w") as f:
-            json.dump(results, f, indent=2)
-        logger.info(f"\nResults saved to {results_file}")
-
-        # Print summary
-        logger.info("\n" + "=" * 60)
-        logger.info(f"LAYER CONTRIBUTION SUMMARY (mode={mode})")
-        logger.info("=" * 60)
-
-        if mode == "isolation":
-            logger.info("\nTop 10 layers (best standalone performance):")
-            for i, (layer_idx, contrib) in enumerate(ranked[:10]):
-                logger.info(
-                    f"  {i+1}. Layer {layer_idx}: score={contrib['mean_score']:.4f}"
-                )
-
-            logger.info("\nBottom 5 layers (worst standalone):")
-            for i, (layer_idx, contrib) in enumerate(ranked[-5:]):
-                logger.info(
-                    f"  Layer {layer_idx}: score={contrib['mean_score']:.4f}"
-                )
-        else:
-            logger.info("\nTop 10 contributing layers:")
-            for i, (layer_idx, contrib) in enumerate(ranked[:10]):
-                logger.info(
-                    f"  {i+1}. Layer {layer_idx}: delta={contrib['mean_delta']:+.4f}"
-                )
-
-            logger.info("\nBottom 5 layers (potential for removal):")
-            for i, (layer_idx, contrib) in enumerate(ranked[-5:]):
-                logger.info(
-                    f"  Layer {layer_idx}: delta={contrib['mean_delta']:+.4f}"
-                )
-
-        # Compute normalized contribution weights (for router)
-        contributions = np.array([
-            results["layer_contributions"][str(i)][metric_name]
-            for i in layer_indices
+        # Compute normalized weights for router training
+        scores_array = np.array([
+            layer_contributions[i]["mean_score"] for i in self.layer_indices
         ])
         # Shift to positive and normalize
-        contributions_positive = contributions - contributions.min() + 1e-6
-        contribution_weights = contributions_positive / contributions_positive.sum()
+        scores_positive = scores_array - scores_array.min() + 1e-6
+        contribution_weights = scores_positive / scores_positive.sum()
 
-        results["contribution_weights"] = {
-            str(i): float(w) for i, w in zip(layer_indices, contribution_weights)
+        return {
+            "metadata": {
+                "timestamp": datetime.now().isoformat(),
+                "num_layers": len(self.layer_indices),
+                "num_prompts": len(self.prompts),
+                "seed": self.seed,
+                "mode": "isolation",
+                "masking": "soft",
+            },
+            "layer_contributions": {str(k): v for k, v in layer_contributions.items()},
+            "layer_ranking": layer_ranking,
+            "contribution_weights": {
+                str(i): float(w) for i, w in zip(self.layer_indices, contribution_weights)
+            },
+            "all_results": results,
         }
 
-        # Save normalized weights separately for easy loading
-        weights_file = output_path / "layer_weights.json"
-        with open(weights_file, "w") as f:
-            json.dump(results["contribution_weights"], f, indent=2)
-        logger.info(f"Normalized weights saved to {weights_file}")
-
-        return results
+    def get_run_configs(self) -> List[Dict]:
+        """Generate all (layer, prompt) configurations."""
+        configs = []
+        for layer_idx in self.layer_indices:
+            for prompt_name in self.prompts.keys():
+                configs.append({
+                    "layer_idx": layer_idx,
+                    "prompt_name": prompt_name,
+                })
+        return configs
 
 
 def main():
@@ -365,14 +306,9 @@ def main():
         description="Analyze per-layer contribution to LTX-2 generation quality"
     )
     parser.add_argument(
-        "--model-path",
-        default="models/LTX-2",
-        help="Path to LTX-2 model",
-    )
-    parser.add_argument(
         "--output-dir",
         default="experiments/results/layer_contributions",
-        help="Output directory",
+        help="Output directory for results",
     )
     parser.add_argument(
         "--quick",
@@ -383,61 +319,70 @@ def main():
         "--layers",
         type=str,
         default=None,
-        help="Comma-separated layer indices to analyze (default: all 49)",
+        help="Comma-separated layer indices to analyze (default: all 49 or 5 for quick)",
     )
     parser.add_argument(
         "--seed",
         type=int,
         default=42,
-        help="Random seed",
-    )
-    parser.add_argument(
-        "--mode",
-        type=str,
-        default="isolation",
-        choices=["isolation", "ablation"],
-        help="Analysis mode: 'isolation' (use only one layer) or 'ablation' (remove one layer). "
-             "Isolation is recommended as ablation often shows zero deltas due to redundancy.",
+        help="Random seed for reproducibility",
     )
 
     args = parser.parse_args()
 
-    # Get prompts
-    prompts = get_all_prompts(quick=args.quick)
-    if args.quick:
-        # Even fewer prompts for quick mode
-        prompts = dict(list(prompts.items())[:2])
-
-    # Parse layer indices
+    # Parse layer indices if provided
+    layer_indices = None
     if args.layers:
         layer_indices = [int(x.strip()) for x in args.layers.split(",")]
-    elif args.quick:
-        # Test evenly spaced layers in quick mode
-        layer_indices = [0, 12, 24, 36, 48]
-    else:
-        layer_indices = list(range(49))
 
+    # Create analyzer
+    analyzer = LayerContributionAnalyzer(
+        output_dir=args.output_dir,
+        quick=args.quick,
+    )
+
+    # Configure
+    analyzer.configure(
+        layer_indices=layer_indices,
+        seed=args.seed,
+    )
+
+    # Print summary
     logger.info("=" * 60)
     logger.info("LTX-2 Layer Contribution Analysis")
     logger.info("=" * 60)
-    logger.info(f"Mode: {args.mode}")
-    logger.info(f"Prompts: {len(prompts)}")
-    logger.info(f"Layers: {len(layer_indices)}")
+    logger.info(f"Mode: isolation (layer masking before normalization)")
+    logger.info(f"Layers: {len(analyzer.layer_indices)}")
+    logger.info(f"Quick mode: {args.quick}")
 
-    # In isolation mode, no baseline needed
-    total_gens = len(prompts) * len(layer_indices)
-    if args.mode == "ablation":
-        total_gens += len(prompts)  # Add baseline generations
-    logger.info(f"Total generations: {total_gens}")
+    # Run analysis
+    configs = analyzer.get_run_configs()
+    results = analyzer.run(configs, save_results=True)
 
-    analyzer = LayerContributionAnalyzer(model_path=args.model_path)
-    results = analyzer.compute_layer_contributions(
-        prompts=prompts,
-        layer_indices=layer_indices,
-        seed=args.seed,
-        output_dir=args.output_dir,
-        mode=args.mode,
-    )
+    # Print summary
+    logger.info("\n" + "=" * 60)
+    logger.info("LAYER CONTRIBUTION SUMMARY")
+    logger.info("=" * 60)
+
+    contributions = results["layer_contributions"]
+    ranking = results["layer_ranking"]
+
+    logger.info("\nTop 10 layers (best isolated performance):")
+    for i, layer_idx in enumerate(ranking[:10]):
+        contrib = contributions[str(layer_idx)]
+        logger.info(f"  {i+1}. Layer {layer_idx}: score={contrib['mean_score']:.4f}")
+
+    if len(ranking) > 5:
+        logger.info("\nBottom 5 layers (worst isolated):")
+        for layer_idx in ranking[-5:]:
+            contrib = contributions[str(layer_idx)]
+            logger.info(f"  Layer {layer_idx}: score={contrib['mean_score']:.4f}")
+
+    # Save weights separately for easy loading in router training
+    weights_file = Path(args.output_dir) / "layer_weights.json"
+    with open(weights_file, "w") as f:
+        json.dump(results["contribution_weights"], f, indent=2)
+    logger.info(f"\nNormalized weights saved to {weights_file}")
 
     logger.info("\nAnalysis complete!")
 

@@ -105,6 +105,7 @@ class LTX2ExperimentBase(ABC):
         self.scorer = None
         self.vae = None
         self.pipeline = None
+        self.connectors = None  # LTX2TextConnectors for pure PyTorch path
 
         # Experiment state
         self.run_timestamp = None
@@ -212,6 +213,28 @@ class LTX2ExperimentBase(ABC):
 
         log_memory_usage("After loading VAE")
 
+    def load_connectors(self, model_path: str = "models/LTX-2/connectors/") -> None:
+        """
+        Load LTX2TextConnectors for pure PyTorch path.
+
+        The connectors process packed text embeddings through:
+        1. text_proj_in: Linear(188160 -> 3840)
+        2. video_connector: 2-block transformer with 128 thinking tokens
+        3. (optional) audio_connector for audio generation
+
+        Args:
+            model_path: Path to connector weights directory
+        """
+        with MemoryTracker("Load connectors"):
+            from llm_dit.models import load_ltx2_connectors
+            self.connectors = load_ltx2_connectors(
+                model_path,
+                device=self.device,
+                dtype=self.dtype,
+            )
+
+        log_memory_usage("After loading connectors")
+
     def load_scorer(self) -> None:
         """Load SigLIP scorer for text-video alignment."""
         if self.scorer is not None:
@@ -219,6 +242,56 @@ class LTX2ExperimentBase(ABC):
 
         with MemoryTracker("Load scorer"):
             self.scorer = SigLIPScorer(device=self.device, dtype=self.dtype)
+
+    def encode_packed(
+        self,
+        prompt: str,
+        active_layers: Optional[List[int]] = None,
+        masking_mode: str = "soft",
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Encode prompt to packed multi-layer format [B, T, 188160].
+
+        This format is suitable for passing to the connectors' text_proj_in,
+        which projects to [B, T, 3840] before the video_connector transformer.
+
+        Args:
+            prompt: Text prompt
+            active_layers: Optional list of layer indices to keep active (0-48).
+                          Used for layer ablation experiments.
+            masking_mode: How to handle inactive layers ("soft", "zero", "weighted").
+
+        Returns:
+            Tuple of:
+                - packed_embeds: [B, T, 188160] packed multi-layer embeddings
+                - attention_mask: [B, T] attention mask
+        """
+        if self.encoder is None:
+            raise RuntimeError("Encoder not loaded. Call load_encoder() first.")
+
+        if active_layers is not None:
+            # Layer ablation: keep only specified layers active
+            result = self.encoder.encode_with_layer_masking(
+                prompt,
+                active_layers=active_layers,
+                masking_mode=masking_mode,
+                return_packed=True,
+            )
+            return result['prompt_embeds'], result['attention_mask']
+        else:
+            # Standard encoding - get packed format
+            result = self.encoder.encode_multilayer(
+                prompt,
+                layer_indices=None,  # All layers
+                return_projected=False,
+            )
+            from llm_dit.encoders.gemma3 import pack_text_embeds
+            packed = pack_text_embeds(
+                result['layer_stack'],
+                sequence_length=result['seq_lengths'][0],
+                device=self.encoder.device,
+            )
+            return packed, result['attention_mask']
 
     def encode(
         self,
@@ -377,6 +450,7 @@ class LTX2ExperimentBase(ABC):
     def generate_video(
         self,
         prompt_embeds: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None,
         num_frames: int = 33,
         height: int = 512,
         width: int = 768,
@@ -389,7 +463,10 @@ class LTX2ExperimentBase(ABC):
         Generate video from embeddings.
 
         Args:
-            prompt_embeds: Text embeddings from encode()
+            prompt_embeds: Text embeddings from encode() or encode_packed()
+                          - If [B, T, 188160]: passes through connectors (if loaded)
+                          - If [B, T, 3840]: passes directly to DiT caption_projection
+            attention_mask: Optional attention mask [B, T] for connector processing
             num_frames: Number of video frames
             height: Video height
             width: Video width
@@ -428,6 +505,31 @@ class LTX2ExperimentBase(ABC):
 
             if self.vae is None:
                 raise RuntimeError("VAE not loaded. Call load_vae() first for pure PyTorch mode.")
+
+            # =====================================================================
+            # Step 0: Process embeddings through connectors if available
+            # =====================================================================
+            # Check if embeddings are packed format [B, T, 188160]
+            embed_dim = prompt_embeds.shape[-1]
+            if embed_dim == 188160 and self.connectors is not None:
+                # Process through connectors: text_proj_in + video_connector
+                if attention_mask is None:
+                    # Create all-ones mask if not provided
+                    attention_mask = torch.ones(
+                        prompt_embeds.shape[0], prompt_embeds.shape[1],
+                        device=prompt_embeds.device, dtype=prompt_embeds.dtype
+                    )
+                video_embeds, _, new_mask = self.connectors(
+                    prompt_embeds,
+                    attention_mask,
+                    additive_mask=False,
+                )
+                prompt_embeds = video_embeds
+            elif embed_dim == 188160 and self.connectors is None:
+                raise RuntimeError(
+                    "Packed embeddings [B, T, 188160] require connectors. "
+                    "Call load_connectors() first, or use encode() instead of encode_packed()."
+                )
 
             # =====================================================================
             # Step 1: Compute latent dimensions (32x spatial, 8x temporal compression)

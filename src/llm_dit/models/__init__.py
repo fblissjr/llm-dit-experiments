@@ -37,6 +37,10 @@ __all__ = [
     "LTXModelType",
     "load_ltx2_transformer",
     "Modality",
+    # LTX-2 Connectors (lazy loaded)
+    "LTX2TextConnectors",
+    "LTX2ConnectorTransformer1d",
+    "load_ltx2_connectors",
     # Other models (lazy loaded)
     "QwenImageVAE",
     "QwenImageDiT",
@@ -60,6 +64,17 @@ def __getattr__(name: str):
     if name == "load_ltx2_transformer":
         from llm_dit.models.ltx2_loader import load_ltx2_transformer
         return load_ltx2_transformer
+
+    # LTX-2 Connectors
+    if name == "LTX2TextConnectors":
+        from llm_dit.models.ltx2_connectors import LTX2TextConnectors
+        return LTX2TextConnectors
+    if name == "LTX2ConnectorTransformer1d":
+        from llm_dit.models.ltx2_connectors import LTX2ConnectorTransformer1d
+        return LTX2ConnectorTransformer1d
+    if name == "load_ltx2_connectors":
+        from llm_dit.models.ltx2_connectors import load_ltx2_connectors
+        return load_ltx2_connectors
 
     # Other models
     if name == "QwenImageVAE":
