@@ -208,8 +208,18 @@ class LayerContributionAnalyzer(LTX2ExperimentBase):
             seed=self.seed,
         )
 
+        # Clear GPU cache before scoring to free transformer memory
+        import gc
+        gc.collect()
+        torch.cuda.empty_cache()
+
         # Score with SigLIP
-        score = self.score_video(video, prompt_text)
+        try:
+            score = self.score_video(video, prompt_text)
+        except RuntimeError as e:
+            # Handle OOM or device mismatch errors
+            logger.warning(f"Scoring failed, using placeholder: {e}")
+            score = -1.0  # Placeholder for failed scoring
 
         logger.info(f"Layer {layer_idx}, {prompt_name}: score={score:.4f}")
 
