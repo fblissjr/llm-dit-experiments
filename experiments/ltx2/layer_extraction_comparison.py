@@ -79,7 +79,7 @@ def compute_frame_statistics(frames: list) -> dict:
 
 
 def run_layer_extraction_experiment(
-    output_dir: str = "experiments/outputs/layer_extraction",
+    output_dir: str = "experiments/results/ltx2",
     model_path: str = "models/LTX-2",
     save_videos: bool = True,
     configs_to_test: list = None,
@@ -306,7 +306,7 @@ def main():
     parser.add_argument(
         "--output-dir",
         type=str,
-        default="experiments/outputs/layer_extraction",
+        default="experiments/results/ltx2",
         help="Output directory",
     )
     parser.add_argument(

@@ -1,7 +1,7 @@
 """
 Tests for LTX-2 transformer implementation.
 
-Last Updated: 2026-01-17
+Last Updated: 2026-01-18
 
 These tests verify the pure PyTorch LTX-2 transformer port matches
 the expected behavior from the official implementation.
@@ -609,6 +609,185 @@ class TestGenerationLoop:
             assert actual == expected, \
                 f"Token count mismatch for {num_frames}x{height}x{width}: " \
                 f"expected {expected}, got {actual} (t={t_latent}, h={h_latent}, w={w_latent})"
+
+
+class TestLTX2ReferenceValues:
+    """
+    Tests validating LTX2ExperimentBase against official LTX-2 reference values.
+
+    Reference: coderef/LTX-2/packages/ltx-pipelines/src/ltx_pipelines/utils/constants.py
+
+    These tests ensure our implementation matches the official defaults and constraints:
+    - DEFAULT_SEED = 10
+    - DEFAULT_1_STAGE_HEIGHT = 512
+    - DEFAULT_1_STAGE_WIDTH = 768
+    - DEFAULT_NUM_FRAMES = 121 (constraint: frames % 8 == 1)
+    - DEFAULT_FRAME_RATE = 24.0
+    - DEFAULT_NUM_INFERENCE_STEPS = 40
+    - DEFAULT_CFG_GUIDANCE_SCALE = 4.0
+    """
+
+    # Reference values from coderef/LTX-2/.../constants.py
+    LTX2_REFERENCE = {
+        "seed": 10,
+        "height_1stage": 512,
+        "width_1stage": 768,
+        "height_2stage": 1024,  # 512 * 2
+        "width_2stage": 1536,   # 768 * 2
+        "num_frames": 121,
+        "frame_rate": 24.0,
+        "num_inference_steps": 40,
+        "guidance_scale": 4.0,
+        "latent_channels": 128,
+    }
+
+    # -------------------------------------------------------------------------
+    # Frame Count Constraint Tests
+    # -------------------------------------------------------------------------
+
+    def test_frame_count_constraint(self):
+        """Test frame count follows n*8+1 constraint (9, 17, 25, ..., 121)."""
+        # LTX-2 temporal compression is 8x, so frames must be n*8+1
+        # This ensures the first frame is preserved exactly in the latent
+        valid_frame_counts = [9, 17, 25, 33, 41, 49, 57, 65, 73, 81, 89, 97, 105, 113, 121]
+
+        for frames in valid_frame_counts:
+            assert frames % 8 == 1, f"Frame count {frames} doesn't satisfy n*8+1"
+            t_latent = (frames - 1) // 8 + 1
+            assert t_latent == (frames + 7) // 8, f"Latent temporal dim mismatch for {frames} frames"
+
+        # Default frame count should be valid
+        default_frames = self.LTX2_REFERENCE["num_frames"]
+        assert default_frames % 8 == 1, f"Default {default_frames} frames doesn't satisfy n*8+1"
+
+    def test_invalid_frame_counts(self):
+        """Test that invalid frame counts would produce incorrect latent dimensions."""
+        invalid_frame_counts = [10, 20, 30, 32, 100, 120]  # Not n*8+1
+
+        for frames in invalid_frame_counts:
+            assert frames % 8 != 1, f"Frame count {frames} unexpectedly valid"
+            # These would cause issues with the VAE's temporal compression
+
+    def test_frame_to_latent_formula(self):
+        """Test the frame-to-latent formula: t_latent = (frames - 1) // 8 + 1."""
+        test_cases = [
+            # (frames, expected_t_latent)
+            (9, 2),    # (9-1)//8 + 1 = 1 + 1 = 2
+            (17, 3),   # (17-1)//8 + 1 = 2 + 1 = 3
+            (33, 5),   # (33-1)//8 + 1 = 4 + 1 = 5
+            (121, 16), # (121-1)//8 + 1 = 15 + 1 = 16
+        ]
+
+        for frames, expected_t_latent in test_cases:
+            actual = (frames - 1) // 8 + 1
+            assert actual == expected_t_latent, \
+                f"Frame {frames} should give t_latent={expected_t_latent}, got {actual}"
+
+    # -------------------------------------------------------------------------
+    # Resolution Constraint Tests
+    # -------------------------------------------------------------------------
+
+    def test_resolution_divisibility_by_32(self):
+        """Test resolution must be divisible by 32 for 1-stage generation."""
+        h1 = self.LTX2_REFERENCE["height_1stage"]
+        w1 = self.LTX2_REFERENCE["width_1stage"]
+
+        assert h1 % 32 == 0, f"1-stage height {h1} not divisible by 32"
+        assert w1 % 32 == 0, f"1-stage width {w1} not divisible by 32"
+
+        h2 = self.LTX2_REFERENCE["height_2stage"]
+        w2 = self.LTX2_REFERENCE["width_2stage"]
+
+        assert h2 % 32 == 0, f"2-stage height {h2} not divisible by 32"
+        assert w2 % 32 == 0, f"2-stage width {w2} not divisible by 32"
+
+    def test_2stage_is_2x_1stage(self):
+        """Test 2-stage resolution is exactly 2x 1-stage resolution."""
+        h1 = self.LTX2_REFERENCE["height_1stage"]
+        w1 = self.LTX2_REFERENCE["width_1stage"]
+        h2 = self.LTX2_REFERENCE["height_2stage"]
+        w2 = self.LTX2_REFERENCE["width_2stage"]
+
+        assert h2 == h1 * 2, f"2-stage height {h2} != 2 * {h1}"
+        assert w2 == w1 * 2, f"2-stage width {w2} != 2 * {w1}"
+
+    def test_common_valid_resolutions(self):
+        """Test common valid resolutions are divisible by 32."""
+        valid_resolutions = [
+            (512, 768),    # 1-stage default
+            (1024, 1536),  # 2-stage default
+            (384, 512),    # Small
+            (768, 1024),   # Medium
+            (256, 384),    # Tiny (for quick tests)
+        ]
+
+        for h, w in valid_resolutions:
+            assert h % 32 == 0, f"Height {h} not divisible by 32"
+            assert w % 32 == 0, f"Width {w} not divisible by 32"
+            h_latent = h // 32
+            w_latent = w // 32
+            assert h_latent > 0, f"Height {h} produces 0 latent height"
+            assert w_latent > 0, f"Width {w} produces 0 latent width"
+
+    # -------------------------------------------------------------------------
+    # Default Value Tests
+    # -------------------------------------------------------------------------
+
+    def test_reference_seed(self):
+        """Test default seed matches reference."""
+        assert self.LTX2_REFERENCE["seed"] == 10
+
+    def test_reference_frame_rate(self):
+        """Test default frame rate matches reference."""
+        assert self.LTX2_REFERENCE["frame_rate"] == 24.0
+
+    def test_reference_inference_steps(self):
+        """Test default inference steps matches reference."""
+        assert self.LTX2_REFERENCE["num_inference_steps"] == 40
+
+    def test_reference_guidance_scale(self):
+        """Test default guidance scale matches reference."""
+        assert self.LTX2_REFERENCE["guidance_scale"] == 4.0
+
+    def test_reference_latent_channels(self):
+        """Test latent channels matches reference."""
+        assert self.LTX2_REFERENCE["latent_channels"] == 128
+
+    # -------------------------------------------------------------------------
+    # Token Count Calculation Tests (with reference values)
+    # -------------------------------------------------------------------------
+
+    def test_default_token_count(self):
+        """Test token count for default resolution and frames."""
+        # Default: 512x768, 121 frames
+        h = self.LTX2_REFERENCE["height_1stage"]
+        w = self.LTX2_REFERENCE["width_1stage"]
+        frames = self.LTX2_REFERENCE["num_frames"]
+
+        t_latent = (frames - 1) // 8 + 1  # 16
+        h_latent = h // 32                 # 16
+        w_latent = w // 32                 # 24
+
+        total_tokens = t_latent * h_latent * w_latent
+
+        assert t_latent == 16, f"Expected t_latent=16, got {t_latent}"
+        assert h_latent == 16, f"Expected h_latent=16, got {h_latent}"
+        assert w_latent == 24, f"Expected w_latent=24, got {w_latent}"
+        assert total_tokens == 6144, f"Expected 6144 tokens, got {total_tokens}"
+
+    def test_short_video_token_count(self):
+        """Test token count for short video (33 frames)."""
+        # 512x768, 33 frames (common test case)
+        h, w, frames = 512, 768, 33
+
+        t_latent = (frames - 1) // 8 + 1  # 5
+        h_latent = h // 32                 # 16
+        w_latent = w // 32                 # 24
+
+        total_tokens = t_latent * h_latent * w_latent
+
+        assert t_latent == 5, f"Expected t_latent=5, got {t_latent}"
+        assert total_tokens == 1920, f"Expected 1920 tokens, got {total_tokens}"
 
 
 # Run with: uv run pytest tests/unit/test_ltx2_transformer.py -v

@@ -1,6 +1,6 @@
 # experiments agent context
 
-*last updated: 2026-01-17*
+*last updated: 2026-01-18*
 
 ---
 
@@ -18,7 +18,6 @@
 | Area | Entry Point | Status |
 |------|-------------|--------|
 | **LTX-2** | [ltx2/AGENTS.md](ltx2/AGENTS.md) | Active |
-| **Qwen3-VL** | [qwen3_vl/README.md](qwen3_vl/README.md) | 🚫 Dead-end |
 | **Research Findings** | [ltx2/docs/findings/](ltx2/docs/findings/) | Reference |
 | **Metrics** | [metrics/](metrics/) | Active |
 | **Viewer** | [viewer/](viewer/) | Active |
@@ -65,36 +64,65 @@
 | Layer 48 contributes ~0% isolated | ✅ | Final layer alone contributes nothing |
 | L2 normalization destroys masking info | ✅ | Must use min-max normalization `8*(x-mean)/(max-min)` |
 
+## output organization
+
+*Updated: 2026-01-18*
+
+### directory structure
+
+All experiment outputs go to `experiments/results/{pipeline}/{experiment}_{timestamp}/`:
+
+```
+experiments/results/
+├── ltx2/                                  # LTX-2 video experiments
+│   ├── layer_ablation_20260115_191023/
+│   ├── activation_steering_20260115_214600/
+│   └── ltx2_layer_blend_20260116_105604/
+├── z_image/                               # Z-Image experiments
+│   └── hidden_layer_blend_20260101_172411/
+├── wan/                                   # Wan video experiments (future)
+└── archive/                               # Superseded/analysis files
+```
+
+### naming convention
+
+- **Directories**: `{experiment_name}_{YYYYMMDD_HHMMSS}`
+- **Files**: `{config}_{prompt}.{ext}` or `{variant}_seed{N}.{ext}`
+- **Metadata**: `metadata/{filename}.json` alongside outputs
+
+### discovery
+
+Experiments are auto-discovered by `compare/discovery.py`:
+
+```python
+from experiments.compare.discovery import discover_experiments
+experiments = discover_experiments()  # Returns all experiments
+```
+
+### creating new experiments
+
+Inherit from the appropriate base class to get correct output paths:
+
+```python
+from experiments.ltx2.base import LTX2ExperimentBase
+
+class MyExperiment(LTX2ExperimentBase):
+    def __init__(self):
+        super().__init__("my_experiment")
+        # Output: experiments/results/ltx2/my_experiment_{timestamp}/
+```
+
 ---
 
-## qwen3-vl research status
-
-> **STATUS: 🚫 RESEARCH DEAD-END (2025-12-12)**
-> Zero-shot VL conditioning corrupts image content. Not viable without training.
-
-### what was learned
-
-| Finding | Status |
-|---------|--------|
-| Layer -2 works best (training alignment) | ✅ |
-| Earlier layers cause "semantic averaging" | ✅ |
-| Zero-shot VL conditioning corrupts content | 🚫 |
-
-### why it's a dead-end
-
-Zero-shot vision-language conditioning to DiT models corrupts the generated image content. The approach requires training an adapter, which is out of scope for inference-time experiments.
-
-See: `internal/state/lessons_learned.md`
-
----
-
-## directory structure
+## codebase directory structure
 
 ```
 experiments/
 ├── AGENTS.md              # This file (navigation hub)
+├── base.py                # Shared experiment infrastructure
 ├── ltx2/                  # LTX-2 experiments (ACTIVE)
 │   ├── AGENTS.md          # LTX-2 specific context
+│   ├── base.py            # LTX2ExperimentBase (inherits from experiments/base.py)
 │   ├── prompts.py         # CENTRALIZED PROMPTS (MUST USE)
 │   ├── docs/              # Documentation
 │   │   ├── findings/      # Consolidated research findings
@@ -106,8 +134,13 @@ experiments/
 │   ├── siglip_score.py    # SigLIP2 text-image alignment
 │   └── image_reward.py    # Human preference alignment
 ├── compare/               # Comparison infrastructure
+│   ├── discovery.py       # Auto-discovery (supports pipeline structure)
+│   └── models.py          # ExperimentRun, ExperimentImage dataclasses
 ├── viewer/                # Interactive web viewer
-├── results/               # Experiment outputs (auto-generated)
+├── results/               # Experiment outputs (pipeline-organized)
+│   ├── ltx2/              # LTX-2 experiments
+│   ├── z_image/           # Z-Image experiments
+│   └── archive/           # Superseded content
 └── archive/               # Superseded/dated content
     ├── dated_reports/     # Historical dated reports
     ├── drafts/            # Draft versions

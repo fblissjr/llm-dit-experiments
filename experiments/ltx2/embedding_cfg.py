@@ -205,7 +205,7 @@ def compute_frame_statistics(frames: list) -> dict:
 def run_embedding_cfg_experiment(
     embed_alphas: list = [0.0, 0.5, 1.0, 1.5, 2.0],
     dit_cfg: float = 3.0,
-    output_dir: str = "experiments/outputs/embedding_cfg",
+    output_dir: str = "experiments/results/ltx2",
     model_path: str = "models/LTX-2",
     save_videos: bool = True,
 ):
@@ -349,7 +349,7 @@ def run_embedding_cfg_experiment(
 def compare_cfg_methods(
     dit_cfg_values: list = [1.0, 3.0, 5.0],
     embed_alpha: float = 1.0,
-    output_dir: str = "experiments/outputs/embedding_cfg/comparison",
+    output_dir: str = "experiments/results/ltx2",
     model_path: str = "models/LTX-2",
     save_videos: bool = True,
 ):
@@ -498,7 +498,7 @@ def main():
     parser.add_argument(
         "--output-dir",
         type=str,
-        default="experiments/outputs/embedding_cfg",
+        default="experiments/results/ltx2",
         help="Output directory",
     )
     parser.add_argument(

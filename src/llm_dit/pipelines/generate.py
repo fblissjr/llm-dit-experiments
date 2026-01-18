@@ -19,7 +19,7 @@ Copyright (c) 2025 Lightricks Ltd.
 import gc
 import logging
 from dataclasses import dataclass
-from typing import Callable, Optional, Tuple, Union
+from typing import Callable, List, Optional, Tuple, Union
 from pathlib import Path
 
 import torch
@@ -30,6 +30,12 @@ from llm_dit.models.ltx2 import (
     Modality,
     LTX2TextConnectors,
     VideoDecoder,
+)
+from llm_dit.conditioning import (
+    ConditioningItem,
+    LatentState,
+    timesteps_from_mask,
+    post_process_latent,
 )
 from llm_dit.schedulers import LTX2Scheduler
 
@@ -182,6 +188,7 @@ def generate_video(
     vae: Optional[torch.nn.Module] = None,  # VideoDecoder or diffusers AutoencoderKLLTXVideo
     connectors: Optional[LTX2TextConnectors] = None,
     attention_mask: Optional[torch.Tensor] = None,
+    conditioning: Optional[List[ConditioningItem]] = None,
     callback: Optional[Callable[[int, int, torch.Tensor], None]] = None,
     device: Optional[torch.device] = None,
     dtype: Optional[torch.dtype] = None,
@@ -191,9 +198,9 @@ def generate_video(
 
     This is the main generation entry point that handles:
     1. Connector processing (if embeddings are packed format)
-    2. Noise initialization
+    2. Noise initialization (with optional conditioning)
     3. Sigma schedule computation
-    4. CFG-guided denoising loop
+    4. CFG-guided denoising loop (with per-token timesteps if conditioning)
     5. Optional VAE decoding
 
     Args:
@@ -207,6 +214,9 @@ def generate_video(
         connectors: LTX2TextConnectors for processing packed embeddings.
             Required if prompt_embeds is [B, T, 188160].
         attention_mask: [B, T] attention mask for connector processing
+        conditioning: Optional list of ConditioningItems for I2V or video continuation.
+            - VideoConditionByLatentIndex: Replaces tokens at frame index (I2V)
+            - VideoConditionByKeyframeIndex: Appends keyframe tokens (continuation)
         callback: Optional callback(step, total_steps, latents) for progress
         device: Override device (default: model device)
         dtype: Override dtype (default: model dtype)
@@ -214,6 +224,12 @@ def generate_video(
     Returns:
         If vae provided: Video tensor [B, C, F, H, W] or [F, H, W, C] uint8
         If vae=None: Latent tensor [B, D, T_lat, H_lat, W_lat]
+
+    Example with I2V conditioning:
+        >>> from llm_dit.conditioning import VideoConditionByLatentIndex
+        >>> image_latent = vae.encode(image)
+        >>> cond = VideoConditionByLatentIndex(image_latent, latent_idx=0, strength=1.0)
+        >>> video = generate_video(model, prompt, config, conditioning=[cond])
     """
     # Resolve device and dtype
     if device is None:
@@ -256,21 +272,46 @@ def generate_video(
         prompt_embeds = prompt_embeds.to(device, dtype)
 
     # =========================================================================
-    # Step 1: Initialize noise [B, T, D] where D=128 (VAE latent channels)
+    # Step 1: Initialize LatentState with noise or conditioning
     # =========================================================================
-    latents = torch.randn(
-        (1, num_tokens, 128),
-        generator=generator,
-        device=device,
-        dtype=dtype,
-    )
+    if conditioning:
+        # Use LatentState for conditioning support
+        state = LatentState.create(
+            shape=(1, num_tokens, 128),
+            num_frames=config.num_frames,
+            height=config.height,
+            width=config.width,
+            device=device,
+            dtype=dtype,
+        )
 
-    # =========================================================================
-    # Step 2: Create position indices
-    # =========================================================================
-    positions = create_position_indices(
-        1, config.num_frames, config.height, config.width, device
-    )
+        # Apply all conditioning items
+        for cond_item in conditioning:
+            state = cond_item.apply_to(state)
+
+        # Add noise respecting the denoise mask
+        state = state.add_noise(generator=generator, noise_scale=1.0)
+
+        # Extract for denoising loop
+        latents = state.latent
+        positions = state.positions
+        denoise_mask = state.denoise_mask
+        clean_latent = state.clean_latent
+        # Update num_tokens in case conditioning appended tokens
+        num_tokens = latents.shape[1]
+    else:
+        # Standard T2V path - pure noise
+        latents = torch.randn(
+            (1, num_tokens, 128),
+            generator=generator,
+            device=device,
+            dtype=dtype,
+        )
+        positions = create_position_indices(
+            1, config.num_frames, config.height, config.width, device
+        )
+        denoise_mask = None
+        clean_latent = None
 
     # =========================================================================
     # Step 3: Get sigma schedule from scheduler
@@ -298,7 +339,14 @@ def generate_video(
         sigma_next = sigmas[i + 1]
 
         # Timestep for model in [0, 1000] range (LTX-2 convention)
-        timestep = (sigma * 1000).expand(1, num_tokens)
+        # When conditioning is used, timesteps are per-token scaled by denoise_mask
+        if denoise_mask is not None:
+            # Per-token timesteps: conditioned regions get lower timesteps
+            timestep = timesteps_from_mask(denoise_mask, sigma)
+            timestep = timestep.squeeze(-1)  # [B, T, 1] -> [B, T] for Modality
+        else:
+            # Uniform timesteps for standard T2V
+            timestep = (sigma * 1000).expand(1, num_tokens)
 
         # Classifier-free guidance
         if config.guidance_scale > 1.0:
@@ -327,7 +375,14 @@ def generate_video(
 
         # Euler step: x_{t-1} = x_t + v * dt
         dt = sigma_next - sigma
-        latents = latents + velocity * dt
+        denoised = latents + velocity * dt
+
+        # Post-process: blend with clean_latent based on denoise_mask
+        # This preserves conditioned regions (mask=0) while denoising others
+        if denoise_mask is not None and clean_latent is not None:
+            latents = post_process_latent(denoised, denoise_mask, clean_latent)
+        else:
+            latents = denoised
 
         # Progress callback
         if callback is not None:

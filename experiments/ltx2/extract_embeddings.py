@@ -169,7 +169,7 @@ def main():
         return
 
     MODEL_PATH = "models/LTX-2"
-    OUTPUT_DIR = Path("experiments/outputs/activation_steering")
+    OUTPUT_DIR = Path("experiments/results/ltx2/embeddings")
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     # Import prompts from centralized module

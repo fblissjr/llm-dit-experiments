@@ -59,7 +59,7 @@ def compute_frame_statistics(frames: list) -> dict:
 
 
 def run_entropy_experiment(
-    output_dir: str = "experiments/outputs/entropy_encoding",
+    output_dir: str = "experiments/results/ltx2",
     model_path: str = "models/LTX-2",
     save_videos: bool = True,
     entropy_weights: list = None,
@@ -241,7 +241,7 @@ def main():
     parser.add_argument(
         "--output-dir",
         type=str,
-        default="experiments/outputs/entropy_encoding",
+        default="experiments/results/ltx2",
         help="Output directory",
     )
     parser.add_argument(

@@ -158,7 +158,7 @@ def compute_frame_statistics(frames: list) -> dict:
 def run_ablation(
     prompts: list,
     num_samples: int = 3,
-    output_dir: str = "experiments/outputs/layer_ablation",
+    output_dir: str = "experiments/results/ltx2",
     save_videos: bool = True,
     model_path: str = "models/LTX-2",
 ):
@@ -307,7 +307,7 @@ def main():
     parser.add_argument(
         "--output-dir",
         type=str,
-        default="experiments/outputs/layer_ablation",
+        default="experiments/results/ltx2",
         help="Output directory",
     )
     parser.add_argument(

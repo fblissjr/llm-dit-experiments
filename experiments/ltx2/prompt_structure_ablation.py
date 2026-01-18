@@ -82,7 +82,7 @@ def compute_frame_statistics(frames: list) -> dict:
 
 
 def run_prompt_ablation(
-    output_dir: str = "experiments/outputs/prompt_structure",
+    output_dir: str = "experiments/results/ltx2",
     model_path: str = "models/LTX-2",
     save_videos: bool = True,
     seed: int = 42,
@@ -237,7 +237,7 @@ def main():
     parser.add_argument(
         "--output-dir",
         type=str,
-        default="experiments/outputs/prompt_structure",
+        default="experiments/results/ltx2",
         help="Output directory",
     )
     parser.add_argument(

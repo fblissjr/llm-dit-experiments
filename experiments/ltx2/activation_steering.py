@@ -442,7 +442,7 @@ def compute_frame_statistics(frames: list) -> dict:
 
 def run_steering_experiment(
     alphas: list = [0.0, 0.1, 0.3, 0.5, 1.0],
-    output_dir: str = "experiments/outputs/activation_steering",
+    output_dir: str = "experiments/results/ltx2",
     model_path: str = "models/LTX-2",
     save_videos: bool = True,
     direction_pairs: list = None,
@@ -626,7 +626,7 @@ def main():
     parser.add_argument(
         "--output-dir",
         type=str,
-        default="experiments/outputs/activation_steering",
+        default="experiments/results/ltx2",
         help="Output directory",
     )
     parser.add_argument(
