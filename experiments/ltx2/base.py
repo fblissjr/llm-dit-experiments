@@ -58,7 +58,16 @@ import torch
 from tqdm import tqdm
 
 # LTX-2 specific imports
-from llm_dit.models.ltx2 import Modality
+from llm_dit.models.ltx2 import (
+    Modality,
+    # Reference constants
+    DEFAULT_HEIGHT,
+    DEFAULT_WIDTH,
+    DEFAULT_NUM_INFERENCE_STEPS,
+    DEFAULT_GUIDANCE_SCALE,
+    VAE_TEMPORAL_COMPRESSION,
+    VAE_SPATIAL_COMPRESSION,
+)
 
 # Core library imports
 from llm_dit.utils.memory import MemoryTracker, cleanup_memory, log_memory_usage
@@ -414,9 +423,9 @@ class LTX2ExperimentBase(ExperimentRunnerBase):
             Position indices tensor [B, 3, T] where T = t_latent * h_latent * w_latent
         """
         # Compute latent dimensions with LTX-2's compression ratios
-        t_latent = (num_frames - 1) // 8 + 1
-        h_latent = height // 32
-        w_latent = width // 32
+        t_latent = (num_frames - 1) // VAE_TEMPORAL_COMPRESSION + 1
+        h_latent = height // VAE_SPATIAL_COMPRESSION
+        w_latent = width // VAE_SPATIAL_COMPRESSION
 
         # Create meshgrid of position indices
         t_indices = torch.arange(t_latent, device=self.device)
@@ -474,11 +483,11 @@ class LTX2ExperimentBase(ExperimentRunnerBase):
         self,
         prompt_embeds: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
-        num_frames: int = 33,
-        height: int = 512,
-        width: int = 768,
-        num_inference_steps: int = 50,
-        guidance_scale: float = 3.0,
+        num_frames: int = 33,  # Use 121 for official reference (8*15+1)
+        height: int = DEFAULT_HEIGHT,
+        width: int = DEFAULT_WIDTH,
+        num_inference_steps: int = DEFAULT_NUM_INFERENCE_STEPS,
+        guidance_scale: float = DEFAULT_GUIDANCE_SCALE,
         seed: Optional[int] = None,
         **kwargs,
     ) -> torch.Tensor:
