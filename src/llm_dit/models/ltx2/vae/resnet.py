@@ -159,6 +159,10 @@ class ResnetBlock3D(nn.Module):
 
         hidden_states = self.norm1(hidden_states)
 
+        # Initialize scale/shift for timestep conditioning (will be overwritten if used)
+        scale2: torch.Tensor | None = None
+        shift2: torch.Tensor | None = None
+
         if self.timestep_conditioning:
             if timestep is None:
                 raise ValueError("'timestep' parameter must be provided when 'timestep_conditioning' is True")
@@ -188,6 +192,7 @@ class ResnetBlock3D(nn.Module):
         hidden_states = self.norm2(hidden_states)
 
         if self.timestep_conditioning:
+            assert scale2 is not None and shift2 is not None  # Always set when timestep_conditioning=True
             hidden_states = hidden_states * (1 + scale2) + shift2
 
         hidden_states = self.non_linearity(hidden_states)

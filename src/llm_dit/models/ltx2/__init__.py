@@ -53,6 +53,8 @@ from llm_dit.models.ltx2.attention import (
     Attention,
     AttentionFunction,
     AttentionCallable,
+    get_available_attention_backends,
+    get_default_attention_function,
 )
 from llm_dit.models.ltx2.rope import (
     LTXRopeType,
@@ -105,6 +107,8 @@ __all__ = [
     "Attention",
     "AttentionFunction",
     "AttentionCallable",
+    "get_available_attention_backends",
+    "get_default_attention_function",
     # RoPE
     "LTXRopeType",
     "precompute_freqs_cis",

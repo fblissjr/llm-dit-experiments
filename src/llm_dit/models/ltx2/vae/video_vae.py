@@ -599,6 +599,7 @@ class VideoDecoder(nn.Module):
         sample = self.conv_norm_out(sample)
 
         if self.timestep_conditioning:
+            assert scaled_timestep is not None  # Always set when timestep_conditioning=True
             embedded_timestep = self.last_time_embedder(
                 timestep=scaled_timestep.flatten(),
                 hidden_dtype=sample.dtype,
@@ -624,6 +625,33 @@ class VideoDecoder(nn.Module):
         sample = unpatchify(sample, patch_size_hw=self.patch_size, patch_size_t=1)
 
         return sample
+
+    def tiled_decode(
+        self,
+        latent: torch.Tensor,
+        tiling_config: "TilingConfig",
+        generator: Optional[torch.Generator] = None,
+    ) -> Iterator[torch.Tensor]:
+        """
+        Decode video latents using tiled processing for memory efficiency.
+
+        Args:
+            latent: Latent tensor [B, C, F, H, W]
+            tiling_config: Configuration for spatial/temporal tiling
+            generator: Optional random generator for deterministic decoding
+
+        Yields:
+            Decoded video chunks [B, C, F_chunk, H, W]
+
+        Note:
+            This method is not yet implemented. It requires integration with
+            the tiling utilities for large video decoding.
+        """
+        raise NotImplementedError(
+            "tiled_decode is not yet implemented. "
+            "For tiled video decoding, use decode_video() with tiling_config=None "
+            "and process chunks manually, or implement this method."
+        )
 
 
 # Utility functions

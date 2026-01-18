@@ -27,7 +27,7 @@ Usage:
 import json
 import logging
 from pathlib import Path
-from typing import Dict, Optional, Union
+from typing import Dict, Literal, Optional, Union
 
 import torch
 
@@ -330,9 +330,12 @@ def load_ltx2_from_diffusers(
     return load_ltx2_transformer(Path(local_dir) / "transformer", dtype=dtype)
 
 
+QuantizationPrecision = Literal["fp8-quanto", "int8-quanto", "int4-quanto"]
+
+
 def load_ltx2_transformer_quantized(
     path: Union[str, Path],
-    precision: str = "fp8-quanto",
+    precision: QuantizationPrecision = "fp8-quanto",
     dtype: torch.dtype = torch.bfloat16,
     video_only: bool = True,
     verbose: bool = True,
@@ -351,7 +354,10 @@ def load_ltx2_transformer_quantized(
 
     Args:
         path: Path to checkpoint file or directory
-        precision: Quantization precision (fp8-quanto, int8-quanto, int4-quanto)
+        precision: Quantization precision. One of:
+            - "fp8-quanto": FP8 quantization (~13GB, best quality/size tradeoff)
+            - "int8-quanto": INT8 quantization (~13GB)
+            - "int4-quanto": INT4 quantization (~6.5GB, lowest quality)
         dtype: Original dtype before quantization (bf16 recommended)
         video_only: If True, skip audio weights
         verbose: Print progress during quantization
@@ -390,7 +396,7 @@ def load_ltx2_transformer_quantized(
         logger.info(f"Memory: {original_size:.1f}GB (bf16) → {quantized_size:.1f}GB ({precision})")
 
     # Quantize using block-by-block strategy
-    model = quantize_model(
+    quantized_model = quantize_model(
         model,
         precision=precision,
         quantize_activations=False,
@@ -398,7 +404,8 @@ def load_ltx2_transformer_quantized(
         verbose=verbose,
     )
 
-    return model
+    # Cast return type (quantize_model preserves model type)
+    return quantized_model  # type: ignore[return-value]
 
 
 def get_model_info(path: Union[str, Path]) -> dict:

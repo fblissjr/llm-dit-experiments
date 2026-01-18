@@ -41,7 +41,7 @@ Usage:
 
 import logging
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -453,7 +453,7 @@ class LTX2ConnectorTransformer1d(nn.Module):
         hidden_states: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
         attn_mask_binarize_threshold: float = -9000.0,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         """
         Process text embeddings through connector.
 
@@ -465,7 +465,7 @@ class LTX2ConnectorTransformer1d(nn.Module):
         Returns:
             Tuple of:
                 - processed_embeds: [B, T, D] processed text embeddings
-                - new_attn_mask: [B, T] updated attention mask
+                - new_attn_mask: [B, T] updated attention mask (None if no mask provided)
         """
         batch_size, seq_len, _ = hidden_states.shape
 
@@ -647,7 +647,7 @@ class LTX2TextConnectors(nn.Module):
 # =============================================================================
 
 def load_ltx2_connectors(
-    model_path: str,
+    model_path: Union[str, Path],
     device: str = "cuda",
     dtype: torch.dtype = torch.bfloat16,
 ) -> LTX2TextConnectors:
@@ -665,20 +665,20 @@ def load_ltx2_connectors(
     """
     from safetensors.torch import load_file
 
-    model_path = Path(model_path)
+    path = Path(model_path)
 
     # Find weights file
-    if model_path.is_file():
-        weights_path = model_path
+    if path.is_file():
+        weights_path = path
     else:
         # Try common names
         for name in ["model.safetensors", "connectors.safetensors", "diffusion_pytorch_model.safetensors"]:
-            candidate = model_path / name
+            candidate = path / name
             if candidate.exists():
                 weights_path = candidate
                 break
         else:
-            raise FileNotFoundError(f"No safetensors file found in {model_path}")
+            raise FileNotFoundError(f"No safetensors file found in {path}")
 
     logger.info(f"Loading connectors from {weights_path}")
 

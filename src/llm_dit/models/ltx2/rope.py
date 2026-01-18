@@ -125,6 +125,8 @@ def apply_split_rotary_emb(
         Rotated tensor with same shape
     """
     needs_reshape = False
+    b: int = 0
+    t: int = 0
     if input_tensor.ndim != 4 and cos_freqs.ndim == 4:
         b, h, t, _ = cos_freqs.shape
         input_tensor = input_tensor.reshape(b, t, h, -1).swapaxes(1, 2)
@@ -314,8 +316,8 @@ def split_freqs_cis(
         cos_padding = torch.ones_like(cos_freq[:, :, :pad_size])
         sin_padding = torch.zeros_like(sin_freq[:, :, :pad_size])
 
-        cos_freq = torch.concatenate([cos_padding, cos_freq], axis=-1)
-        sin_freq = torch.concatenate([sin_padding, sin_freq], axis=-1)
+        cos_freq = torch.cat([cos_padding, cos_freq], dim=-1)
+        sin_freq = torch.cat([sin_padding, sin_freq], dim=-1)
 
     # Reshape freqs to be compatible with multi-head attention
     b = cos_freq.shape[0]

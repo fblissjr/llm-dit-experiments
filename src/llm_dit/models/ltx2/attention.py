@@ -6,9 +6,15 @@ Last Updated: 2026-01-18
 Implements attention with support for multiple backends:
 - PyTorch SDPA (default, always available)
 - xFormers memory-efficient attention (optional)
+- FlashAttention2 (optional, for Ampere+ GPUs)
 - FlashAttention3 (optional, for Hopper GPUs)
 
 Includes RoPE position embedding application and Q/K RMSNorm.
+
+torch.compile support:
+    Set LLM_DIT_COMPILE=1 to enable torch.compile for attention kernels.
+    Set LLM_DIT_COMPILE_MODE to control compile mode (default: reduce-overhead).
+    Valid modes: default, reduce-overhead, max-autotune
 
 Ported from: coderef/LTX-2/packages/ltx-core/src/ltx_core/model/transformer/attention.py
 
@@ -25,31 +31,177 @@ Usage:
 
     # Forward pass with RoPE
     out = attn(x, context=encoder_hidden_states, pe=position_embeddings)
+
+    # Enable torch.compile via environment
+    # export LLM_DIT_COMPILE=1
+    # export LLM_DIT_COMPILE_MODE=reduce-overhead
 """
 
+import os
 from enum import Enum
 from typing import Optional, Protocol, Tuple
 
 import torch
 import torch.nn as nn
 
+# torch.compile configuration
+LLM_DIT_COMPILE = os.environ.get("LLM_DIT_COMPILE", "0") == "1"
+LLM_DIT_COMPILE_MODE = os.environ.get("LLM_DIT_COMPILE_MODE", "reduce-overhead")
+
 from llm_dit.models.ltx2.rope import LTXRopeType, apply_rotary_emb
 
 # Try to import optional attention backends
 memory_efficient_attention = None
-flash_attn_interface = None
+HAS_FLASH_ATTN_3 = False
+HAS_FLASH_ATTN_2 = False
 
 try:
     from xformers.ops import memory_efficient_attention
 except ImportError:
     memory_efficient_attention = None
 
+# FlashAttention 3 (Hopper GPUs - H100, etc.)
 try:
-    # FlashAttention3 and XFormersAttention cannot be used together
-    if memory_efficient_attention is None:
-        import flash_attn_interface
+    from flash_attn_interface import flash_attn_func as flash_attn_3_func
+    HAS_FLASH_ATTN_3 = True
 except ImportError:
-    flash_attn_interface = None
+    flash_attn_3_func = None  # type: ignore[misc, assignment]
+
+# FlashAttention 2 (Ampere+ - RTX 3090, 4090, A100, etc.)
+try:
+    from flash_attn import flash_attn_func as flash_attn_2_func
+    HAS_FLASH_ATTN_2 = True
+except ImportError:
+    flash_attn_2_func = None  # type: ignore[misc, assignment]
+
+
+# =============================================================================
+# Compiled Attention Kernels
+# =============================================================================
+# Pure functions that can be compiled with torch.compile for better performance.
+# When LLM_DIT_COMPILE=1, these are compiled at module load time.
+
+
+def _sdpa_attention_kernel(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    heads: int,
+    mask: Optional[torch.Tensor] = None
+) -> torch.Tensor:
+    """
+    Pure SDPA attention kernel suitable for torch.compile.
+
+    Args:
+        q: Query tensor [B, T, H*D]
+        k: Key tensor [B, S, H*D]
+        v: Value tensor [B, S, H*D]
+        heads: Number of attention heads
+        mask: Optional attention mask
+
+    Returns:
+        Output tensor [B, T, H*D]
+    """
+    b, _, dim_head = q.shape
+    dim_head //= heads
+
+    # Reshape to [B, H, T, D]
+    q = q.view(b, -1, heads, dim_head).transpose(1, 2)
+    k = k.view(b, -1, heads, dim_head).transpose(1, 2)
+    v = v.view(b, -1, heads, dim_head).transpose(1, 2)
+
+    if mask is not None:
+        if mask.ndim == 2:
+            mask = mask.unsqueeze(0)
+        if mask.ndim == 3:
+            mask = mask.unsqueeze(1)
+
+    out = torch.nn.functional.scaled_dot_product_attention(
+        q, k, v,
+        attn_mask=mask,
+        dropout_p=0.0,
+        is_causal=False
+    )
+
+    # Reshape back to [B, T, H*D]
+    return out.transpose(1, 2).reshape(b, -1, heads * dim_head)
+
+
+def _fa2_attention_kernel(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    heads: int,
+    mask: Optional[torch.Tensor] = None
+) -> torch.Tensor:
+    """
+    Pure FlashAttention2 kernel suitable for torch.compile.
+
+    Note: mask is not supported but kept in signature for consistency.
+    """
+    if mask is not None:
+        raise NotImplementedError("Mask is not supported for FlashAttention2")
+
+    b, _, dim_head = q.shape
+    dim_head //= heads
+
+    # FA2 expects (B, S, H, D)
+    q = q.view(b, -1, heads, dim_head)
+    k = k.view(b, -1, heads, dim_head)
+    v = v.view(b, -1, heads, dim_head)
+
+    out = flash_attn_2_func(q.to(v.dtype), k.to(v.dtype), v)
+    return out.reshape(b, -1, heads * dim_head)
+
+
+def _fa3_attention_kernel(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    heads: int,
+    mask: Optional[torch.Tensor] = None
+) -> torch.Tensor:
+    """
+    Pure FlashAttention3 kernel suitable for torch.compile.
+
+    Note: mask is not supported but kept in signature for consistency.
+    """
+    if mask is not None:
+        raise NotImplementedError("Mask is not supported for FlashAttention3")
+
+    b, _, dim_head = q.shape
+    dim_head //= heads
+
+    q = q.view(b, -1, heads, dim_head)
+    k = k.view(b, -1, heads, dim_head)
+    v = v.view(b, -1, heads, dim_head)
+
+    out = flash_attn_3_func(q.to(v.dtype), k.to(v.dtype), v)
+    return out.reshape(b, -1, heads * dim_head)
+
+
+# Compile kernels if enabled
+# Note: We use dynamic=True to handle variable sequence lengths in video generation
+if LLM_DIT_COMPILE:
+    _compile_options = {"mode": LLM_DIT_COMPILE_MODE, "dynamic": True}
+
+    sdpa_attention_kernel = torch.compile(_sdpa_attention_kernel, **_compile_options)
+
+    # Only compile FA kernels if available
+    if HAS_FLASH_ATTN_2:
+        fa2_attention_kernel = torch.compile(_fa2_attention_kernel, **_compile_options)
+    else:
+        fa2_attention_kernel = _fa2_attention_kernel
+
+    if HAS_FLASH_ATTN_3:
+        fa3_attention_kernel = torch.compile(_fa3_attention_kernel, **_compile_options)
+    else:
+        fa3_attention_kernel = _fa3_attention_kernel
+else:
+    # No compilation - use raw functions
+    sdpa_attention_kernel = _sdpa_attention_kernel
+    fa2_attention_kernel = _fa2_attention_kernel
+    fa3_attention_kernel = _fa3_attention_kernel
 
 
 class AttentionCallable(Protocol):
@@ -74,6 +226,7 @@ class PytorchAttention(AttentionCallable):
     selects the best available kernel (FlashAttention, Memory-Efficient, or Math).
 
     This is always available and serves as the fallback.
+    When LLM_DIT_COMPILE=1, uses the compiled kernel for better performance.
     """
 
     def __call__(
@@ -84,30 +237,7 @@ class PytorchAttention(AttentionCallable):
         heads: int,
         mask: Optional[torch.Tensor] = None
     ) -> torch.Tensor:
-        b, _, dim_head = q.shape
-        dim_head //= heads
-
-        # Reshape to [B, H, T, D]
-        q, k, v = (t.view(b, -1, heads, dim_head).transpose(1, 2) for t in (q, k, v))
-
-        if mask is not None:
-            # Add batch dimension if missing
-            if mask.ndim == 2:
-                mask = mask.unsqueeze(0)
-            # Add heads dimension if missing
-            if mask.ndim == 3:
-                mask = mask.unsqueeze(1)
-
-        out = torch.nn.functional.scaled_dot_product_attention(
-            q, k, v,
-            attn_mask=mask,
-            dropout_p=0.0,
-            is_causal=False
-        )
-
-        # Reshape back to [B, T, H*D]
-        out = out.transpose(1, 2).reshape(b, -1, heads * dim_head)
-        return out
+        return sdpa_attention_kernel(q, k, v, heads, mask)
 
 
 class XFormersAttention(AttentionCallable):
@@ -169,6 +299,43 @@ class XFormersAttention(AttentionCallable):
         return out
 
 
+class FlashAttention2(AttentionCallable):
+    """
+    FlashAttention2 backend for Ampere+ GPUs.
+
+    Uses flash_attn for maximum performance on RTX 3090/4090, A100, etc.
+    Note: Mask support is not implemented for FA2.
+
+    Raises:
+        RuntimeError: If FlashAttention2 is not installed
+        NotImplementedError: If mask is provided
+    """
+
+    def __call__(
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        heads: int,
+        mask: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        if not HAS_FLASH_ATTN_2:
+            raise RuntimeError("FlashAttention2 was selected but `flash-attn` is not installed.")
+
+        b, _, dim_head = q.shape
+        dim_head //= heads
+
+        # FA2 expects (B, S, H, D), we have (B, S, H*D)
+        q, k, v = (t.view(b, -1, heads, dim_head) for t in (q, k, v))
+
+        if mask is not None:
+            raise NotImplementedError("Mask is not supported for FlashAttention2")
+
+        out = flash_attn_2_func(q.to(v.dtype), k.to(v.dtype), v)
+        out = out.reshape(b, -1, heads * dim_head)
+        return out
+
+
 class FlashAttention3(AttentionCallable):
     """
     FlashAttention3 backend for Hopper GPUs.
@@ -189,8 +356,8 @@ class FlashAttention3(AttentionCallable):
         heads: int,
         mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        if flash_attn_interface is None:
-            raise RuntimeError("FlashAttention3 was selected but `FlashAttention3` is not installed.")
+        if not HAS_FLASH_ATTN_3:
+            raise RuntimeError("FlashAttention3 was selected but `flash_attn_interface` is not installed.")
 
         b, _, dim_head = q.shape
         dim_head //= heads
@@ -200,7 +367,7 @@ class FlashAttention3(AttentionCallable):
         if mask is not None:
             raise NotImplementedError("Mask is not supported for FlashAttention3")
 
-        out = flash_attn_interface.flash_attn_func(q.to(v.dtype), k.to(v.dtype), v)
+        out = flash_attn_3_func(q.to(v.dtype), k.to(v.dtype), v)
         out = out.reshape(b, -1, heads * dim_head)
         return out
 
@@ -211,11 +378,19 @@ class AttentionFunction(Enum):
 
     PYTORCH: Use PyTorch's SDPA (always available)
     XFORMERS: Use xFormers memory-efficient attention
+    FLASH_ATTENTION_2: Use FlashAttention2 (Ampere+ GPUs)
     FLASH_ATTENTION_3: Use FlashAttention3 (Hopper only)
     DEFAULT: Auto-select best available backend
+
+    Priority order for DEFAULT:
+    1. FlashAttention3 (if available)
+    2. FlashAttention2 (if available)
+    3. xFormers (if available)
+    4. PyTorch SDPA (always available)
     """
     PYTORCH = "pytorch"
     XFORMERS = "xformers"
+    FLASH_ATTENTION_2 = "flash_attention_2"
     FLASH_ATTENTION_3 = "flash_attention_3"
     DEFAULT = "default"
 
@@ -231,11 +406,18 @@ class AttentionFunction(Enum):
             return PytorchAttention()(q, k, v, heads, mask)
         elif self is AttentionFunction.XFORMERS:
             return XFormersAttention()(q, k, v, heads, mask)
+        elif self is AttentionFunction.FLASH_ATTENTION_2:
+            return FlashAttention2()(q, k, v, heads, mask)
         elif self is AttentionFunction.FLASH_ATTENTION_3:
             return FlashAttention3()(q, k, v, heads, mask)
         else:
-            # Default: XFormers if available, otherwise PyTorch
-            if memory_efficient_attention is not None:
+            # Default: best available in priority order
+            # FA3 > FA2 > xFormers > PyTorch SDPA
+            if HAS_FLASH_ATTN_3:
+                return FlashAttention3()(q, k, v, heads, mask)
+            elif HAS_FLASH_ATTN_2:
+                return FlashAttention2()(q, k, v, heads, mask)
+            elif memory_efficient_attention is not None:
                 return XFormersAttention()(q, k, v, heads, mask)
             else:
                 return PytorchAttention()(q, k, v, heads, mask)
@@ -354,15 +536,20 @@ def get_available_attention_backends() -> list[str]:
     Get list of available attention backends.
 
     Returns:
-        List of backend names that are available
+        List of backend names that are available, in priority order
     """
-    backends = ["pytorch"]  # Always available
+    backends = []
+
+    if HAS_FLASH_ATTN_3:
+        backends.append("flash_attention_3")
+
+    if HAS_FLASH_ATTN_2:
+        backends.append("flash_attention_2")
 
     if memory_efficient_attention is not None:
         backends.append("xformers")
 
-    if flash_attn_interface is not None:
-        backends.append("flash_attention_3")
+    backends.append("pytorch")  # Always available
 
     return backends
 
@@ -372,15 +559,18 @@ def get_default_attention_function() -> AttentionFunction:
     Get the best available attention backend.
 
     Priority:
-    1. FlashAttention3 (if available and on Hopper GPU)
-    2. xFormers (if available)
-    3. PyTorch SDPA (always available)
+    1. FlashAttention3 (if available - Hopper GPUs)
+    2. FlashAttention2 (if available - Ampere+ GPUs)
+    3. xFormers (if available)
+    4. PyTorch SDPA (always available)
 
     Returns:
         AttentionFunction enum value
     """
-    if flash_attn_interface is not None:
+    if HAS_FLASH_ATTN_3:
         return AttentionFunction.FLASH_ATTENTION_3
+    elif HAS_FLASH_ATTN_2:
+        return AttentionFunction.FLASH_ATTENTION_2
     elif memory_efficient_attention is not None:
         return AttentionFunction.XFORMERS
     else:

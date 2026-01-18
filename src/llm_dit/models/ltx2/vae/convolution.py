@@ -12,6 +12,7 @@ License: LTX-2 Community License
 Copyright (c) 2025 Lightricks Ltd.
 """
 
+import math
 from typing import Tuple, Union
 
 import torch
@@ -27,7 +28,7 @@ def make_conv_nd(
     in_channels: int,
     out_channels: int,
     kernel_size: int,
-    stride: int = 1,
+    stride: Union[int, Tuple[int, int, int]] = 1,
     padding: int = 0,
     dilation: int = 1,
     groups: int = 1,
@@ -60,11 +61,13 @@ def make_conv_nd(
         raise NotImplementedError("spatial and temporal padding modes must be equal")
 
     if dims == 2:
+        # For 2D conv, extract spatial stride if 3D tuple provided
+        stride_2d = stride if isinstance(stride, int) else (stride[1], stride[2]) if len(stride) == 3 else stride
         return nn.Conv2d(
             in_channels=in_channels,
             out_channels=out_channels,
             kernel_size=kernel_size,
-            stride=stride,
+            stride=stride_2d,
             padding=padding,
             dilation=dilation,
             groups=groups,
@@ -109,7 +112,7 @@ def make_conv_nd(
 
 
 def make_linear_nd(
-    dims: int,
+    dims: Union[int, Tuple[int, int]],
     in_channels: int,
     out_channels: int,
     bias: bool = True,
@@ -118,7 +121,7 @@ def make_linear_nd(
     Create a 1x1 convolution (linear projection in conv form).
 
     Args:
-        dims: Number of dimensions (2 or 3).
+        dims: Number of dimensions (2, 3, or (2, 1) for factorized).
         in_channels: Number of input channels.
         out_channels: Number of output channels.
         bias: If True, adds a learnable bias.
@@ -128,7 +131,7 @@ def make_linear_nd(
     """
     if dims == 2:
         return nn.Conv2d(in_channels=in_channels, out_channels=out_channels, kernel_size=1, bias=bias)
-    elif dims in (3, (2, 1)):
+    elif dims == 3 or dims == (2, 1):
         return nn.Conv3d(in_channels=in_channels, out_channels=out_channels, kernel_size=1, bias=bias)
     else:
         raise ValueError(f"unsupported dimensions: {dims}")
@@ -146,7 +149,7 @@ class DualConv3d(nn.Module):
         self,
         in_channels: int,
         out_channels: int,
-        kernel_size: int,
+        kernel_size: Union[int, Tuple[int, int, int]],
         stride: Union[int, Tuple[int, int, int]] = 1,
         padding: Union[int, Tuple[int, int, int]] = 0,
         dilation: Union[int, Tuple[int, int, int]] = 1,
@@ -161,16 +164,12 @@ class DualConv3d(nn.Module):
         self.padding_mode = padding_mode
 
         # Ensure parameters are tuples of length 3
-        if isinstance(kernel_size, int):
-            kernel_size = (kernel_size, kernel_size, kernel_size)
-        if kernel_size == (1, 1, 1):
+        ks: Tuple[int, int, int] = (kernel_size, kernel_size, kernel_size) if isinstance(kernel_size, int) else kernel_size
+        if ks == (1, 1, 1):
             raise ValueError("kernel_size must be greater than 1. Use make_linear_nd instead.")
-        if isinstance(stride, int):
-            stride = (stride, stride, stride)
-        if isinstance(padding, int):
-            padding = (padding, padding, padding)
-        if isinstance(dilation, int):
-            dilation = (dilation, dilation, dilation)
+        st: Tuple[int, int, int] = (stride, stride, stride) if isinstance(stride, int) else stride
+        pd: Tuple[int, int, int] = (padding, padding, padding) if isinstance(padding, int) else padding
+        dl: Tuple[int, int, int] = (dilation, dilation, dilation) if isinstance(dilation, int) else dilation
 
         self.groups = groups
         self.bias = bias
@@ -184,13 +183,13 @@ class DualConv3d(nn.Module):
                 intermediate_channels,
                 in_channels // groups,
                 1,
-                kernel_size[1],
-                kernel_size[2],
+                ks[1],
+                ks[2],
             )
         )
-        self.stride1 = (1, stride[1], stride[2])
-        self.padding1 = (0, padding[1], padding[2])
-        self.dilation1 = (1, dilation[1], dilation[2])
+        self.stride1 = (1, st[1], st[2])
+        self.padding1 = (0, pd[1], pd[2])
+        self.dilation1 = (1, dl[1], dl[2])
         if bias:
             self.bias1 = nn.Parameter(torch.Tensor(intermediate_channels))
         else:
@@ -198,11 +197,11 @@ class DualConv3d(nn.Module):
 
         # Second convolution: temporal (D)
         self.weight2 = nn.Parameter(
-            torch.Tensor(out_channels, intermediate_channels // groups, kernel_size[0], 1, 1)
+            torch.Tensor(out_channels, intermediate_channels // groups, ks[0], 1, 1)
         )
-        self.stride2 = (stride[0], 1, 1)
-        self.padding2 = (padding[0], 0, 0)
-        self.dilation2 = (dilation[0], 1, 1)
+        self.stride2 = (st[0], 1, 1)
+        self.padding2 = (pd[0], 0, 0)
+        self.dilation2 = (dl[0], 1, 1)
         if bias:
             self.bias2 = nn.Parameter(torch.Tensor(out_channels))
         else:
@@ -212,8 +211,8 @@ class DualConv3d(nn.Module):
 
     def reset_parameters(self) -> None:
         """Initialize weights using Kaiming uniform initialization."""
-        nn.init.kaiming_uniform_(self.weight1, a=torch.sqrt(torch.tensor(5.0)))
-        nn.init.kaiming_uniform_(self.weight2, a=torch.sqrt(torch.tensor(5.0)))
+        nn.init.kaiming_uniform_(self.weight1, a=math.sqrt(5.0))
+        nn.init.kaiming_uniform_(self.weight2, a=math.sqrt(5.0))
         if self.bias:
             fan_in1, _ = nn.init._calculate_fan_in_and_fan_out(self.weight1)
             bound1 = 1 / torch.sqrt(torch.tensor(fan_in1, dtype=torch.float32))
@@ -297,7 +296,7 @@ class CausalConv3d(nn.Module):
         in_channels: int,
         out_channels: int,
         kernel_size: int = 3,
-        stride: Union[int, Tuple[int, ...]] = 1,
+        stride: Union[int, Tuple[int, int, int]] = 1,
         dilation: int = 1,
         groups: int = 1,
         bias: bool = True,
@@ -308,22 +307,22 @@ class CausalConv3d(nn.Module):
         self.in_channels = in_channels
         self.out_channels = out_channels
 
-        kernel_size = (kernel_size, kernel_size, kernel_size)
-        self.time_kernel_size = kernel_size[0]
+        ks: Tuple[int, int, int] = (kernel_size, kernel_size, kernel_size)
+        self.time_kernel_size = ks[0]
 
-        dilation = (dilation, 1, 1)
+        dl: Tuple[int, int, int] = (dilation, 1, 1)
 
         # Spatial padding (symmetric)
-        height_pad = kernel_size[1] // 2
-        width_pad = kernel_size[2] // 2
-        padding = (0, height_pad, width_pad)  # No temporal padding in conv
+        height_pad = ks[1] // 2
+        width_pad = ks[2] // 2
+        padding: Tuple[int, int, int] = (0, height_pad, width_pad)  # No temporal padding in conv
 
         self.conv = nn.Conv3d(
             in_channels,
             out_channels,
-            kernel_size,
+            ks,
             stride=stride,
-            dilation=dilation,
+            dilation=dl,
             padding=padding,
             padding_mode=spatial_padding_mode.value,
             groups=groups,

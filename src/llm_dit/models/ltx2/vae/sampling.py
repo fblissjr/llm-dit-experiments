@@ -163,6 +163,7 @@ class DepthToSpaceUpsample(nn.Module):
         Returns:
             Upsampled tensor.
         """
+        x_in: torch.Tensor | None = None
         if self.residual:
             # Reshape and duplicate input for residual
             x_in = rearrange(
@@ -193,6 +194,7 @@ class DepthToSpaceUpsample(nn.Module):
 
         # Add residual if enabled
         if self.residual:
+            assert x_in is not None  # Always set when residual=True
             x = x + x_in
 
         return x
