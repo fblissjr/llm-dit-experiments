@@ -53,7 +53,7 @@ import torch
 from tqdm import tqdm
 
 # LTX-2 specific imports
-from llm_dit.models.ltx2_components import Modality
+from llm_dit.models.ltx2 import Modality
 
 # Core library imports
 from llm_dit.utils.memory import MemoryTracker, cleanup_memory, log_memory_usage

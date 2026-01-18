@@ -1,15 +1,16 @@
 """
 LLM-DiT model components.
 
-Last Updated: 2026-01-17
+Last Updated: 2026-01-18
 
 Provides pure PyTorch implementations of model components that can be used
 standalone or integrated with diffusers pipelines.
 
-LTX-2 Components:
+LTX-2 Components (in llm_dit.models.ltx2):
     - LTX2Transformer: Pure PyTorch LTX-2 diffusion transformer (48 layers, 19B params)
     - LTXModelType: Model variant enum (VideoOnly, AudioVideo, AudioOnly)
     - load_ltx2_transformer: Load from official checkpoints
+    - Modality: Input container for video/audio latents
 
 Other Models:
     - QwenImageVAE, QwenImageDiT: Qwen image generation
@@ -32,7 +33,7 @@ __all__ = [
     "RMSNorm",
     "RotaryEmbedding",
     "GatedFeedForward",
-    # LTX-2 (lazy loaded)
+    # LTX-2 (lazy loaded from ltx2 subpackage)
     "LTX2Transformer",
     "LTXModelType",
     "load_ltx2_transformer",
@@ -51,29 +52,29 @@ __all__ = [
 
 # Lazy imports for heavy models (avoid loading torch unless needed)
 def __getattr__(name: str):
-    # LTX-2 components
+    # LTX-2 components (from ltx2 subpackage)
     if name == "LTX2Transformer":
-        from llm_dit.models.ltx2_transformer import LTX2Transformer
+        from llm_dit.models.ltx2.transformer import LTX2Transformer
         return LTX2Transformer
     if name == "LTXModelType":
-        from llm_dit.models.ltx2_transformer import LTXModelType
+        from llm_dit.models.ltx2.transformer import LTXModelType
         return LTXModelType
     if name == "Modality":
-        from llm_dit.models.ltx2_components import Modality
+        from llm_dit.models.ltx2.components import Modality
         return Modality
     if name == "load_ltx2_transformer":
-        from llm_dit.models.ltx2_loader import load_ltx2_transformer
+        from llm_dit.models.ltx2.loader import load_ltx2_transformer
         return load_ltx2_transformer
 
     # LTX-2 Connectors
     if name == "LTX2TextConnectors":
-        from llm_dit.models.ltx2_connectors import LTX2TextConnectors
+        from llm_dit.models.ltx2.connectors import LTX2TextConnectors
         return LTX2TextConnectors
     if name == "LTX2ConnectorTransformer1d":
-        from llm_dit.models.ltx2_connectors import LTX2ConnectorTransformer1d
+        from llm_dit.models.ltx2.connectors import LTX2ConnectorTransformer1d
         return LTX2ConnectorTransformer1d
     if name == "load_ltx2_connectors":
-        from llm_dit.models.ltx2_connectors import load_ltx2_connectors
+        from llm_dit.models.ltx2.connectors import load_ltx2_connectors
         return load_ltx2_connectors
 
     # Other models

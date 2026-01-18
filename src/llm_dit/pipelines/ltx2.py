@@ -1,7 +1,7 @@
 """
 LTX-2 Pipeline for text-to-video generation.
 
-Last Updated: 2026-01-09
+Last Updated: 2026-01-18
 
 This pipeline wraps the diffusers LTX2Pipeline with our config integration
 and memory management patterns optimized for RTX 4090 (24GB VRAM).
@@ -55,6 +55,7 @@ from llm_dit.pipelines.utils.latent_norm import (
 )
 from llm_dit.pipelines.utils.ffn_chunking import patch_ffn_chunking, unpatch_ffn_chunking
 from llm_dit.config import EnhancementConfig
+from llm_dit.encoders.gemma3 import pack_text_embeds
 
 logger = logging.getLogger(__name__)
 
@@ -869,48 +870,51 @@ class LTX2Pipeline:
             logger.info(f"Enhancements enabled: {', '.join(enhancements_active)}")
 
         # Fast mode: Lazy loading with pre-encoding
+        # Store pre-computed embeddings for use in generation
+        fast_mode_embeds = None
         if getattr(self, '_fast_mode', False) and self._pipe is None:
             logger.info("FAST MODE: Pre-encoding prompts with 8-bit encoder...")
 
-            # Step 1: Load 8-bit encoder and encode prompts
+            # Step 1: Load 8-bit encoder and encode prompts (raw hidden states)
             (
-                prompt_embeds,
+                raw_prompt_embeds,
                 prompt_attention_mask,
-                negative_prompt_embeds,
+                raw_negative_embeds,
                 negative_prompt_attention_mask,
             ) = self._load_8bit_encoder_and_encode(prompt, negative_prompt)
 
-            # Step 2: Load pipeline without encoder
+            # Step 2: Pack the raw hidden states into diffusers-compatible format
+            # Raw shape: [B, T, 3840, 49] -> Packed shape: [B, T, 188160]
+            logger.info("Packing embeddings for diffusers pipeline...")
+            device = torch.device(self._device)
+
+            packed_prompt_embeds = pack_text_embeds(
+                raw_prompt_embeds,
+                sequence_length=int(prompt_attention_mask.sum().item()),
+                device=device,
+            )
+            packed_negative_embeds = pack_text_embeds(
+                raw_negative_embeds,
+                sequence_length=int(negative_prompt_attention_mask.sum().item()),
+                device=device,
+            )
+
+            # Move attention masks to device
+            prompt_attention_mask = prompt_attention_mask.to(device)
+            negative_prompt_attention_mask = negative_prompt_attention_mask.to(device)
+
+            logger.info(f"Packed embeddings shape: {packed_prompt_embeds.shape}")
+
+            # Step 3: Load pipeline without encoder
             self._load_pipeline_without_encoder()
 
-            # Step 3: Generate using pre-computed embeddings
-            # Note: We pass raw hidden states, diffusers will pack them
-            # Actually, we need to use the pipeline's _pack_text_embeds method
-            # But since we loaded without encoder, we need to handle this differently
-
-            # For now, fall back to standard path with the loaded pipeline
-            # The embeddings approach requires more integration with diffusers internals
-            logger.warning(
-                "Fast mode pre-encoding not yet fully integrated with diffusers. "
-                "Falling back to standard generation (will be slower)."
-            )
-
-            # Re-encode with the pipeline (which now has no encoder, so this will fail)
-            # Actually, let's just generate normally since we've loaded the pipeline
-            # but without encoder, we need embeddings
-
-            # TODO: Complete the embeddings integration
-            # For now, reload with encoder for this run
-            logger.info("Reloading with bfloat16 encoder for this generation...")
-            from transformers import Gemma3ForConditionalGeneration
-
-            text_encoder = Gemma3ForConditionalGeneration.from_pretrained(
-                self._encoder_id,
-                torch_dtype=self._torch_dtype,
-                low_cpu_mem_usage=True,
-            )
-            self._pipe.text_encoder = text_encoder
-            self._pipe.enable_sequential_cpu_offload()
+            # Store packed embeddings for use in generation call
+            fast_mode_embeds = {
+                "prompt_embeds": packed_prompt_embeds.to(self._torch_dtype),
+                "prompt_attention_mask": prompt_attention_mask,
+                "negative_prompt_embeds": packed_negative_embeds.to(self._torch_dtype),
+                "negative_prompt_attention_mask": negative_prompt_attention_mask,
+            }
 
         # Apply FFN chunking if enabled (model-level patch)
         ffn_patched = False
@@ -984,23 +988,45 @@ class LTX2Pipeline:
 
             actual_callback = enhancement_callback
 
-        # Standard generation
+        # Generation: use pre-computed embeddings if available (fast_mode), else standard
         try:
-            result = self._pipe(
-                prompt=prompt,
-                negative_prompt=negative_prompt,
-                height=height,
-                width=width,
-                num_frames=num_frames,
-                frame_rate=fps,
-                num_inference_steps=num_inference_steps,
-                guidance_scale=guidance_scale,
-                generator=generator,
-                output_type=output_type,
-                return_dict=False,
-                callback_on_step_end=actual_callback,
-                **kwargs,
-            )
+            if fast_mode_embeds is not None:
+                # Fast mode: use pre-computed embeddings (bypass text encoder)
+                logger.info("Generating with pre-computed embeddings (fast_mode)...")
+                result = self._pipe(
+                    prompt_embeds=fast_mode_embeds["prompt_embeds"],
+                    prompt_attention_mask=fast_mode_embeds["prompt_attention_mask"],
+                    negative_prompt_embeds=fast_mode_embeds["negative_prompt_embeds"],
+                    negative_prompt_attention_mask=fast_mode_embeds["negative_prompt_attention_mask"],
+                    height=height,
+                    width=width,
+                    num_frames=num_frames,
+                    frame_rate=fps,
+                    num_inference_steps=num_inference_steps,
+                    guidance_scale=guidance_scale,
+                    generator=generator,
+                    output_type=output_type,
+                    return_dict=False,
+                    callback_on_step_end=actual_callback,
+                    **kwargs,
+                )
+            else:
+                # Standard generation: let pipeline encode prompts
+                result = self._pipe(
+                    prompt=prompt,
+                    negative_prompt=negative_prompt,
+                    height=height,
+                    width=width,
+                    num_frames=num_frames,
+                    frame_rate=fps,
+                    num_inference_steps=num_inference_steps,
+                    guidance_scale=guidance_scale,
+                    generator=generator,
+                    output_type=output_type,
+                    return_dict=False,
+                    callback_on_step_end=actual_callback,
+                    **kwargs,
+                )
         finally:
             # Clean up FFN chunking patches
             if ffn_patched:

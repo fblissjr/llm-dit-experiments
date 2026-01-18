@@ -36,6 +36,7 @@ dependencies = [
     "imageio>=2.37.2",
     "imageio-ffmpeg>=0.6.0",
     "spacy>=3.8.11",
+    "protobuf>=6.33.2",
 ]
 
 [project.optional-dependencies]
@@ -84,6 +85,8 @@ explicit = true
 [tool.uv.sources]
 torch = { index = "pytorch-cu130" }
 torchvision = { index = "pytorch-cu130" }
+# Local diffusers build with LTX2Pipeline (not in PyPI 0.36.x yet)
+diffusers = { path = "./coderef/diffusers", editable = true }
 
 [tool.ruff]
 line-length = 100

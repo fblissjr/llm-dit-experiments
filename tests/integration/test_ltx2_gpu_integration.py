@@ -2,7 +2,7 @@
 """
 LTX-2 GPU Integration Tests
 
-Last Updated: 2026-01-17
+Last Updated: 2026-01-18
 
 Verifies that our pure PyTorch LTX-2 implementation produces numerically
 equivalent outputs to the diffusers implementation.
@@ -114,7 +114,7 @@ class TestLTX2ForwardPass:
     def test_forward_pass_shape(self):
         """Test that forward pass produces correct output shape."""
         from llm_dit.models import load_ltx2_transformer
-        from llm_dit.models.ltx2_components import Modality
+        from llm_dit.models.ltx2 import Modality
 
         model_path = Path("models/LTX-2/transformer")
         if not model_path.exists():
@@ -147,7 +147,7 @@ class TestLTX2ForwardPass:
             )
 
             # Forward pass
-            output = model([modality])
+            output, _ = model(video=modality)
 
         # Verify output shape matches input (velocity prediction)
         assert output.shape == latent.shape, f"Expected {latent.shape}, got {output.shape}"
@@ -166,7 +166,7 @@ class TestLTX2MemoryProfile:
     def test_memory_profile_forward_pass(self):
         """Profile memory during forward pass."""
         from llm_dit.models import load_ltx2_transformer
-        from llm_dit.models.ltx2_components import Modality
+        from llm_dit.models.ltx2 import Modality
 
         model_path = Path("models/LTX-2/transformer")
         if not model_path.exists():
@@ -212,7 +212,7 @@ class TestLTX2MemoryProfile:
                 context_mask=None,
                 enabled=True,
             )
-            output = model([modality])
+            output, _ = model(video=modality)
 
         after_forward = get_gpu_memory_gb()
         peak_memory = torch.cuda.max_memory_allocated() / 1024**3

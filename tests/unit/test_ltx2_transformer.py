@@ -15,11 +15,11 @@ from pathlib import Path
 from unittest.mock import patch
 
 # Import our implementation
-from llm_dit.models.ltx2_rope import (
+from llm_dit.models.ltx2.rope import (
     LTXRopeType,
     apply_rotary_emb,
 )
-from llm_dit.models.ltx2_components import (
+from llm_dit.models.ltx2.components import (
     GELUApprox,
     FeedForward,
     Timesteps,
@@ -28,17 +28,17 @@ from llm_dit.models.ltx2_components import (
     PixArtAlphaTextProjection,
     rms_norm,
 )
-from llm_dit.models.ltx2_attention import (
+from llm_dit.models.ltx2.attention import (
     Attention,
     AttentionFunction,
 )
-from llm_dit.models.ltx2_transformer import (
+from llm_dit.models.ltx2.transformer import (
     LTX2Transformer,
     LTXModelType,
     TransformerConfig,
     BasicTransformerBlock,
 )
-from llm_dit.models.ltx2_loader import (
+from llm_dit.models.ltx2.loader import (
     map_key,
     is_audio_key,
     load_config,
@@ -482,7 +482,7 @@ class TestGenerationLoop:
         from pathlib import Path
         sys.path.insert(0, str(Path(__file__).parent.parent.parent))
         from experiments.ltx2.base import LTX2ExperimentBase
-        from llm_dit.models.ltx2_components import Modality
+        from llm_dit.models.ltx2 import Modality
 
         class TestExp(LTX2ExperimentBase):
             def run_iteration(self, config):

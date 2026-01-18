@@ -19,7 +19,7 @@ from pathlib import Path
 from unittest.mock import patch, MagicMock
 
 # Import our implementation
-from llm_dit.models.ltx2_connectors import (
+from llm_dit.models.ltx2.connectors import (
     LTX2RotaryPosEmbed1d,
     LTX2Attention1d,
     LTX2FeedForward1d,
