@@ -944,11 +944,14 @@ class Gemma3Encoder:
         }
 
         # Pack for pipeline if requested
+        # Use _norm_and_concat_layers which matches diffusers' normalization:
+        # normalized = 8 * (x - mean) / (max - min)
+        # This preserves layer masking information, unlike L2 normalization
         if return_packed:
-            packed = pack_text_embeds(
+            packed = _norm_and_concat_layers(
                 hidden_states,
-                sequence_length=int(seq_lengths[0]),
-                device=self.device,
+                attention_mask,
+                padding_side=self._tokenizer.padding_side,
             )
             result['prompt_embeds'] = packed
 
