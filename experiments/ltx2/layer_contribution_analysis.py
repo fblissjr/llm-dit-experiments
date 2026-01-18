@@ -159,21 +159,14 @@ class LayerContributionAnalyzer(LTX2ExperimentBase):
         logger.info(f"Cached {len(self._layer_embeddings)} embeddings")
 
         # =====================================================================
-        # Phase 2: Generation setup
+        # Phase 2: Offload encoder (no video generation for now)
         # =====================================================================
-        logger.info("Phase 2: Offloading encoder, loading generation components...")
+        logger.info("Phase 2: Offloading encoder...")
         self.offload_encoder()
 
-        # Use diffusers pipeline with group offloading for memory efficiency
-        # The 13B transformer needs ~24.68GB but GPU only has ~24GB
-        # Group offloading streams blocks from CPU, using only ~5GB VRAM
-        self.load_model(
-            use_pure_pytorch=False,  # Use diffusers pipeline
-            use_group_offloading=True,  # Stream transformer blocks from CPU
-            num_blocks_per_group=1,  # Minimal VRAM usage
-        )
-        # VAE and connectors are loaded as part of the pipeline
-        # Pipeline handles connector processing internally when given packed embeds
+        # Skip video generation - use embedding metrics instead
+        # This verifies layer masking works without GPU memory constraints
+        logger.info("Skipping video generation - using embedding variance as metric")
 
     def run_iteration(self, config: Dict) -> Dict:
         """
@@ -194,41 +187,32 @@ class LayerContributionAnalyzer(LTX2ExperimentBase):
         packed_embeds = packed_embeds.to(self.device, dtype=self.dtype)
         attn_mask = attn_mask.to(self.device)
 
-        # Pass packed embeddings directly to pipeline
-        # The pipeline handles connector processing (text_proj_in + video_connector) internally
-        # Note: guidance_scale=1.0 disables CFG, avoiding need for negative_prompt_embeds
-        video = self.generate_video(
-            packed_embeds,  # Packed format [B, T, 188160], pipeline processes internally
-            attention_mask=attn_mask,
-            num_frames=33,
-            height=512,
-            width=768,
-            num_inference_steps=25,  # Reduced for speed
-            guidance_scale=1.0,  # Disabled CFG (no negative_prompt_embeds needed)
-            seed=self.seed,
+        # For now, skip video generation to verify layer masking works
+        # Use embedding variance as proxy metric
+        # Different layers should produce different embedding distributions
+        embed_variance = packed_embeds.var().item()
+        embed_mean = packed_embeds.mean().item()
+        embed_std = packed_embeds.std().item()
+
+        # Compute L2 norm as another metric
+        embed_norm = packed_embeds.norm().item()
+
+        score = embed_variance  # Use variance as primary metric
+
+        logger.info(
+            f"Layer {layer_idx}, {prompt_name}: "
+            f"var={embed_variance:.4f}, mean={embed_mean:.4f}, "
+            f"std={embed_std:.4f}, norm={embed_norm:.4f}"
         )
-
-        # Skip SigLIP scoring for now due to device conflicts with group offloading
-        # Instead, use a simple metric: video variance (higher = more activity)
-        video_cpu = video.detach().cpu().float()
-        variance = video_cpu.var().item()
-        score = variance  # Use variance as proxy for "interesting" content
-
-        logger.info(f"Layer {layer_idx}, {prompt_name}: variance={score:.6f}")
-
-        # Optionally save video
-        if self.run_dir is not None:
-            self.save_video(
-                video,
-                f"layer{layer_idx:02d}_{prompt_name}",
-                prompt_text,
-                {"layer": layer_idx, "score": score},
-            )
 
         return {
             "layer": layer_idx,
             "prompt": prompt_name,
             "score": float(score),
+            "variance": embed_variance,
+            "mean": embed_mean,
+            "std": embed_std,
+            "norm": embed_norm,
         }
 
     def aggregate_results(self, results: List[Dict]) -> Dict:
