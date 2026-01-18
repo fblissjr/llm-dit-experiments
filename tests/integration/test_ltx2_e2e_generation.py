@@ -118,13 +118,14 @@ class TestPositionIndices:
             batch_size, num_frames, height, width, torch.device("cpu")
         )
 
-        # Should be [B, 3, T] where T = t_latent * h_latent * w_latent
+        # Should be [B, 3, T, 2] where T = t_latent * h_latent * w_latent
+        # Last dim is [start, end] bounds for RoPE interpolation
         t_latent = (num_frames - 1) // 8 + 1  # 5
         h_latent = height // 32  # 16
         w_latent = width // 32  # 24
         num_tokens = t_latent * h_latent * w_latent  # 1920
 
-        assert positions.shape == (batch_size, 3, num_tokens)
+        assert positions.shape == (batch_size, 3, num_tokens, 2)
 
     def test_create_position_indices_values(self):
         """Test position indices have correct value ranges."""
@@ -133,23 +134,34 @@ class TestPositionIndices:
         num_frames = 17
         height = 256
         width = 384
+        fps = 24.0  # Default fps
 
         positions = create_position_indices(
-            1, num_frames, height, width, torch.device("cpu")
+            1, num_frames, height, width, torch.device("cpu"), fps=fps
         )
 
         t_latent = (num_frames - 1) // 8 + 1  # 3
         h_latent = height // 32  # 8
         w_latent = width // 32  # 12
 
-        # Check value ranges
-        t_indices = positions[0, 0, :]
-        h_indices = positions[0, 1, :]
-        w_indices = positions[0, 2, :]
+        # Check value ranges - positions now have shape [B, 3, T, 2] with [start, end] bounds
+        # Temporal is scaled to seconds: [0/fps, 1/fps], [1/fps, 2/fps], etc.
+        t_bounds = positions[0, 0, :, :]  # [T, 2] - start/end in seconds
+        h_bounds = positions[0, 1, :, :]  # [T, 2] - start/end indices
+        w_bounds = positions[0, 2, :, :]  # [T, 2] - start/end indices
 
-        assert t_indices.min() >= 0 and t_indices.max() < t_latent
-        assert h_indices.min() >= 0 and h_indices.max() < h_latent
-        assert w_indices.min() >= 0 and w_indices.max() < w_latent
+        # Temporal: start bounds should be in [0, (t_latent-1)/fps], end bounds in [1/fps, t_latent/fps]
+        assert t_bounds[:, 0].min() >= 0, "Temporal start bounds should be >= 0"
+        assert t_bounds[:, 1].max() <= t_latent / fps, f"Temporal end bounds should be <= {t_latent/fps}"
+
+        # Height and width: bounds should be in range [0, h/w_latent]
+        assert h_bounds[:, 0].min() >= 0 and h_bounds[:, 1].max() <= h_latent
+        assert w_bounds[:, 0].min() >= 0 and w_bounds[:, 1].max() <= w_latent
+
+        # Verify bounds are properly ordered (end > start)
+        assert (t_bounds[:, 1] > t_bounds[:, 0]).all(), "End bounds should exceed start bounds"
+        assert (h_bounds[:, 1] > h_bounds[:, 0]).all()
+        assert (w_bounds[:, 1] > w_bounds[:, 0]).all()
 
 
 class TestVideoModality:
@@ -162,12 +174,13 @@ class TestVideoModality:
         batch_size = 1
         num_tokens = 288
         latent_dim = 128
-        context_dim = 4096
+        context_dim = 3840  # Raw Gemma3 dim (model projects to 4096)
         context_len = 100
 
         latent = torch.randn(batch_size, num_tokens, latent_dim)
         timestep = torch.ones(batch_size, num_tokens) * 500
-        positions = torch.zeros(batch_size, 3, num_tokens, dtype=torch.long)
+        # Positions now have [start, end] bounds: [B, 3, T, 2]
+        positions = torch.zeros(batch_size, 3, num_tokens, 2)
         prompt_embeds = torch.randn(batch_size, context_len, context_dim)
 
         modality = create_video_modality(
@@ -177,7 +190,7 @@ class TestVideoModality:
         assert modality.enabled is True
         assert modality.latent.shape == (batch_size, num_tokens, latent_dim)
         assert modality.timesteps.shape == (batch_size, num_tokens)
-        assert modality.positions.shape == (batch_size, 3, num_tokens)
+        assert modality.positions.shape == (batch_size, 3, num_tokens, 2)
         assert modality.context.shape == (batch_size, context_len, context_dim)
 
 
