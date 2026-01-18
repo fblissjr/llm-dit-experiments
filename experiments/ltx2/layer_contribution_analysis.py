@@ -208,20 +208,13 @@ class LayerContributionAnalyzer(LTX2ExperimentBase):
             seed=self.seed,
         )
 
-        # Clear GPU cache before scoring to free transformer memory
-        import gc
-        gc.collect()
-        torch.cuda.empty_cache()
+        # Skip SigLIP scoring for now due to device conflicts with group offloading
+        # Instead, use a simple metric: video variance (higher = more activity)
+        video_cpu = video.detach().cpu().float()
+        variance = video_cpu.var().item()
+        score = variance  # Use variance as proxy for "interesting" content
 
-        # Score with SigLIP
-        try:
-            score = self.score_video(video, prompt_text)
-        except RuntimeError as e:
-            # Handle OOM or device mismatch errors
-            logger.warning(f"Scoring failed, using placeholder: {e}")
-            score = -1.0  # Placeholder for failed scoring
-
-        logger.info(f"Layer {layer_idx}, {prompt_name}: score={score:.4f}")
+        logger.info(f"Layer {layer_idx}, {prompt_name}: variance={score:.6f}")
 
         # Optionally save video
         if self.run_dir is not None:
