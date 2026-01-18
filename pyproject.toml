@@ -97,6 +97,18 @@ target-version = "py310"
 select = ["E", "F", "I", "W"]
 ignore = ["E501"]  # Line too long handled by formatter
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+log_file = "outputs/tests/pytest.log"
+log_file_level = "DEBUG"
+log_file_format = "%(asctime)s [%(levelname)8s] %(name)s: %(message)s"
+log_cli = true
+log_cli_level = "INFO"
+markers = [
+    "e2e: End-to-end tests requiring GPU and model weights",
+    "slow: Tests that take >30 seconds",
+]
+
 [dependency-groups]
 dev = [
     "pytest>=9.0.1",

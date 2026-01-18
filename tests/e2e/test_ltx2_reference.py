@@ -149,13 +149,16 @@ class TestLTX2ReferenceSmoke:
         logger.info("Loading encoder...")
         encoder = Gemma3Encoder(
             model_id="models/LTX-2/text_encoder/",
-            load_8bit=True,
+            load_in_8bit=True,
             device="cuda",
         )
 
         # Encode prompt
         logger.info(f"Encoding: {SMOKE_PROMPT}")
-        embeds = encoder.encode(SMOKE_PROMPT)
+        encoding_output = encoder.encode(SMOKE_PROMPT)
+        # Extract tensor from EncodingOutput and add batch dim
+        embeds = encoding_output.embeddings[0].unsqueeze(0)  # [1, seq_len, dim]
+        logger.info(f"Embeddings shape: {embeds.shape}")
 
         # Unload encoder before loading transformer
         del encoder
@@ -171,25 +174,30 @@ class TestLTX2ReferenceSmoke:
         )
         model = model.to("cuda")
 
-        # Generate with minimal params
+        # Generate with minimal params (reduced for 24GB VRAM)
         logger.info("Generating...")
         config = GenerationConfig(
-            num_frames=9,
-            height=DEFAULT_HEIGHT,
-            width=DEFAULT_WIDTH,
-            num_inference_steps=4,
-            guidance_scale=DEFAULT_GUIDANCE_SCALE,
+            num_frames=5,  # Minimal: 1 latent frame
+            height=256,    # Reduced for memory
+            width=384,     # Reduced for memory
+            num_inference_steps=2,  # Minimal steps
+            guidance_scale=1.0,  # Disable CFG to save memory
             seed=DEFAULT_SEED,
         )
 
-        latents = generate_video(
-            model=model,
-            prompt_embeds=embeds,
-            config=config,
-            vae=None,  # Skip VAE decode for smoke test
-            device=torch.device("cuda"),
-            dtype=torch.bfloat16,
-        )
+        # Clear any fragmented memory before generation
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
+
+        with torch.inference_mode():
+            latents = generate_video(
+                model=model,
+                prompt_embeds=embeds,
+                config=config,
+                vae=None,  # Skip VAE decode for smoke test
+                device=torch.device("cuda"),
+                dtype=torch.bfloat16,
+            )
 
         # Verify output (latents, not decoded video)
         assert latents is not None
@@ -200,11 +208,12 @@ class TestLTX2ReferenceSmoke:
         # Save metadata
         metadata = {
             "prompt": SMOKE_PROMPT,
-            "num_frames": 9,
-            "num_inference_steps": 4,
-            "height": DEFAULT_HEIGHT,
-            "width": DEFAULT_WIDTH,
-            "seed": DEFAULT_SEED,
+            "num_frames": config.num_frames,
+            "num_inference_steps": config.num_inference_steps,
+            "guidance_scale": config.guidance_scale,
+            "height": config.height,
+            "width": config.width,
+            "seed": config.seed,
             "test_type": "smoke",
             "latents_shape": list(latents.shape),
         }
@@ -236,11 +245,12 @@ class TestLTX2ReferenceT2V:
         # Load and encode
         encoder = Gemma3Encoder(
             model_id="models/LTX-2/text_encoder/",
-            load_8bit=True,
+            load_in_8bit=True,
             device="cuda",
         )
         prompt = REFERENCE_PROMPTS["cat_walking"]
-        embeds = encoder.encode(prompt)
+        encoding_output = encoder.encode(prompt)
+        embeds = encoding_output.embeddings[0].unsqueeze(0)  # [1, seq_len, dim]
         del encoder
         gc.collect()
         torch.cuda.empty_cache()
@@ -316,11 +326,12 @@ class TestLTX2ReferenceI2V:
         # Load and encode
         encoder = Gemma3Encoder(
             model_id="models/LTX-2/text_encoder/",
-            load_8bit=True,
+            load_in_8bit=True,
             device="cuda",
         )
         prompt = "A cat walking through a garden"
-        embeds = encoder.encode(prompt)
+        encoding_output = encoder.encode(prompt)
+        embeds = encoding_output.embeddings[0].unsqueeze(0)  # [1, seq_len, dim]
         del encoder
         gc.collect()
         torch.cuda.empty_cache()
