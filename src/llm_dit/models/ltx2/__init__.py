@@ -55,6 +55,8 @@ from llm_dit.models.ltx2.attention import (
     AttentionCallable,
     get_available_attention_backends,
     get_default_attention_function,
+    is_compile_enabled,
+    get_compile_mode,
 )
 from llm_dit.models.ltx2.rope import (
     LTXRopeType,
@@ -109,6 +111,8 @@ __all__ = [
     "AttentionCallable",
     "get_available_attention_backends",
     "get_default_attention_function",
+    "is_compile_enabled",
+    "get_compile_mode",
     # RoPE
     "LTXRopeType",
     "precompute_freqs_cis",

@@ -150,7 +150,8 @@ def _fa2_attention_kernel(
     k = k.view(b, -1, heads, dim_head)
     v = v.view(b, -1, heads, dim_head)
 
-    out = flash_attn_2_func(q.to(v.dtype), k.to(v.dtype), v)
+    # FA2 is only called via classes that check availability first
+    out = flash_attn_2_func(q.to(v.dtype), k.to(v.dtype), v)  # type: ignore[misc]
     return out.reshape(b, -1, heads * dim_head)
 
 
@@ -176,7 +177,8 @@ def _fa3_attention_kernel(
     k = k.view(b, -1, heads, dim_head)
     v = v.view(b, -1, heads, dim_head)
 
-    out = flash_attn_3_func(q.to(v.dtype), k.to(v.dtype), v)
+    # FA3 is only called via classes that check availability first
+    out = flash_attn_3_func(q.to(v.dtype), k.to(v.dtype), v)  # type: ignore[misc]
     return out.reshape(b, -1, heads * dim_head)
 
 
@@ -305,6 +307,7 @@ class FlashAttention2(AttentionCallable):
 
     Uses flash_attn for maximum performance on RTX 3090/4090, A100, etc.
     Note: Mask support is not implemented for FA2.
+    When LLM_DIT_COMPILE=1, uses the compiled kernel for better performance.
 
     Raises:
         RuntimeError: If FlashAttention2 is not installed
@@ -321,19 +324,7 @@ class FlashAttention2(AttentionCallable):
     ) -> torch.Tensor:
         if not HAS_FLASH_ATTN_2:
             raise RuntimeError("FlashAttention2 was selected but `flash-attn` is not installed.")
-
-        b, _, dim_head = q.shape
-        dim_head //= heads
-
-        # FA2 expects (B, S, H, D), we have (B, S, H*D)
-        q, k, v = (t.view(b, -1, heads, dim_head) for t in (q, k, v))
-
-        if mask is not None:
-            raise NotImplementedError("Mask is not supported for FlashAttention2")
-
-        out = flash_attn_2_func(q.to(v.dtype), k.to(v.dtype), v)
-        out = out.reshape(b, -1, heads * dim_head)
-        return out
+        return fa2_attention_kernel(q, k, v, heads, mask)
 
 
 class FlashAttention3(AttentionCallable):
@@ -342,6 +333,7 @@ class FlashAttention3(AttentionCallable):
 
     Uses flash_attn_interface for maximum performance on H100/H200 GPUs.
     Note: Mask support is not implemented for FA3.
+    When LLM_DIT_COMPILE=1, uses the compiled kernel for better performance.
 
     Raises:
         RuntimeError: If FlashAttention3 is not installed
@@ -358,18 +350,7 @@ class FlashAttention3(AttentionCallable):
     ) -> torch.Tensor:
         if not HAS_FLASH_ATTN_3:
             raise RuntimeError("FlashAttention3 was selected but `flash_attn_interface` is not installed.")
-
-        b, _, dim_head = q.shape
-        dim_head //= heads
-
-        q, k, v = (t.view(b, -1, heads, dim_head) for t in (q, k, v))
-
-        if mask is not None:
-            raise NotImplementedError("Mask is not supported for FlashAttention3")
-
-        out = flash_attn_3_func(q.to(v.dtype), k.to(v.dtype), v)
-        out = out.reshape(b, -1, heads * dim_head)
-        return out
+        return fa3_attention_kernel(q, k, v, heads, mask)
 
 
 class AttentionFunction(Enum):
@@ -575,3 +556,23 @@ def get_default_attention_function() -> AttentionFunction:
         return AttentionFunction.XFORMERS
     else:
         return AttentionFunction.PYTORCH
+
+
+def is_compile_enabled() -> bool:
+    """
+    Check if torch.compile is enabled for attention kernels.
+
+    Returns:
+        True if LLM_DIT_COMPILE=1 is set
+    """
+    return LLM_DIT_COMPILE
+
+
+def get_compile_mode() -> str:
+    """
+    Get the torch.compile mode being used.
+
+    Returns:
+        The compile mode string (e.g., "reduce-overhead", "max-autotune")
+    """
+    return LLM_DIT_COMPILE_MODE
