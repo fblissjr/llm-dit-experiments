@@ -37,6 +37,7 @@ dependencies = [
     "imageio-ffmpeg>=0.6.0",
     "spacy>=3.8.11",
     "protobuf>=6.33.2",
+    "optimum-quanto>=0.2.7",
 ]
 
 [project.optional-dependencies]

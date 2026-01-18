@@ -181,14 +181,34 @@ class TestVideoModality:
         assert modality.context.shape == (batch_size, context_len, context_dim)
 
 
-def sufficient_vram() -> bool:
-    """Check if GPU has enough VRAM for full model (~26GB needed for 13B model in bf16)."""
+def sufficient_vram_bf16() -> bool:
+    """Check if GPU has enough VRAM for full model in bf16 (~26GB needed)."""
     if not torch.cuda.is_available():
         return False
-    # LTX-2 13B model needs ~26GB in bf16, but with offloading can run on 24GB
-    # For now, skip tests that need full model in VRAM
     total_vram = torch.cuda.get_device_properties(0).total_memory / 1024**3
-    return total_vram >= 32  # Conservative: require 32GB for full model tests
+    return total_vram >= 32
+
+
+def sufficient_vram_fp8() -> bool:
+    """Check if GPU has enough VRAM for FP8 quantized model (~13GB needed)."""
+    if not torch.cuda.is_available():
+        return False
+    total_vram = torch.cuda.get_device_properties(0).total_memory / 1024**3
+    return total_vram >= 16  # FP8 model fits on 24GB GPU
+
+
+def quanto_available() -> bool:
+    """Check if optimum-quanto is available for quantization."""
+    try:
+        from optimum.quanto import quantize
+        return True
+    except ImportError:
+        return False
+
+
+# Alias for backwards compatibility
+def sufficient_vram() -> bool:
+    return sufficient_vram_bf16()
 
 
 @pytest.mark.skipif(
@@ -461,6 +481,115 @@ class TestE2EFullPipeline:
         assert not torch.isinf(latents).any()
 
         del model, connectors, latents
+        cleanup_gpu()
+
+
+@pytest.mark.skipif(
+    not models_available(),
+    reason="LTX-2 models not found at models/LTX-2/"
+)
+@pytest.mark.skipif(
+    not sufficient_vram_fp8(),
+    reason="Need at least 16GB VRAM for FP8 model"
+)
+@pytest.mark.skipif(
+    not quanto_available(),
+    reason="optimum-quanto not installed (pip install optimum-quanto)"
+)
+class TestE2ELatentGenerationFP8:
+    """End-to-end latent generation tests using FP8 quantization.
+
+    These tests work on 24GB GPUs like RTX 4090 by using FP8 quantization
+    to reduce the 13B model from ~26GB to ~13GB.
+    """
+
+    @pytest.fixture(autouse=True)
+    def setup_teardown(self):
+        """Setup and cleanup for each test."""
+        cleanup_gpu()
+        yield
+        cleanup_gpu()
+
+    def test_quantized_model_loading(self):
+        """Test that FP8 quantized model loads and fits in VRAM."""
+        from llm_dit.models.ltx2 import load_ltx2_transformer_quantized
+
+        print("\nLoading model with FP8 quantization...")
+        model = load_ltx2_transformer_quantized(
+            "models/LTX-2/transformer",
+            precision="fp8-quanto",
+            dtype=torch.bfloat16,
+            video_only=True,
+            verbose=True,
+        )
+
+        # Move to CUDA
+        print("Moving quantized model to CUDA...")
+        model = model.to("cuda")
+
+        # Check memory usage
+        memory_gb = torch.cuda.memory_allocated() / 1024**3
+        print(f"GPU memory used: {memory_gb:.2f} GB")
+
+        # Should be around 13GB for FP8
+        assert memory_gb < 20, f"Model using too much memory: {memory_gb:.2f} GB"
+
+        # Verify model works
+        num_params = model.get_num_params()
+        print(f"Model parameters: {num_params / 1e9:.2f}B")
+
+        del model
+        cleanup_gpu()
+
+    def test_generate_latents_fp8(self):
+        """Test latent generation with FP8 quantized model."""
+        from llm_dit.models.ltx2 import load_ltx2_transformer_quantized
+        from llm_dit.pipelines.generate import GenerationConfig, generate_video
+
+        # Load and quantize
+        model = load_ltx2_transformer_quantized(
+            "models/LTX-2/transformer",
+            precision="fp8-quanto",
+            dtype=torch.bfloat16,
+            verbose=True,
+        )
+        model = model.to("cuda")
+
+        # Create config for small generation
+        config = GenerationConfig(
+            num_frames=9,  # Minimal: 2 temporal latents
+            height=256,
+            width=384,
+            num_inference_steps=2,  # Minimal steps
+            guidance_scale=1.0,  # No CFG for speed
+            seed=42,
+        )
+
+        # Create dummy prompt embeddings (3840-dim = raw Gemma3 output)
+        # The model's caption_projection transforms 3840 → 4096
+        prompt_embeds = torch.randn(
+            1, 100, 3840,
+            dtype=torch.bfloat16,
+            device="cuda"
+        )
+
+        # Generate
+        latents = generate_video(
+            model=model,
+            prompt_embeds=prompt_embeds,
+            config=config,
+            vae=None,
+        )
+
+        # Verify output
+        t_lat, h_lat, w_lat = config.latent_dims
+        assert latents.shape == (1, 128, t_lat, h_lat, w_lat)
+        assert not torch.isnan(latents).any()
+        assert not torch.isinf(latents).any()
+
+        print(f"Generated latents: {latents.shape}")
+
+        del model, latents
         cleanup_gpu()
 
 

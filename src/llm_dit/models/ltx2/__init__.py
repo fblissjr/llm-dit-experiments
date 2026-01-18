@@ -66,6 +66,7 @@ from llm_dit.models.ltx2.connectors import (
 )
 from llm_dit.models.ltx2.loader import (
     load_ltx2_transformer,
+    load_ltx2_transformer_quantized,
 )
 
 # VAE components
@@ -88,6 +89,7 @@ __all__ = [
     "LTX2Transformer",
     "LTXModelType",
     "load_ltx2_transformer",
+    "load_ltx2_transformer_quantized",
     # Input types
     "Modality",
     "TransformerArgs",

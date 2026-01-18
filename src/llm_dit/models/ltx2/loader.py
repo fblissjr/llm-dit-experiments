@@ -330,6 +330,77 @@ def load_ltx2_from_diffusers(
     return load_ltx2_transformer(Path(local_dir) / "transformer", dtype=dtype)
 
 
+def load_ltx2_transformer_quantized(
+    path: Union[str, Path],
+    precision: str = "fp8-quanto",
+    dtype: torch.dtype = torch.bfloat16,
+    video_only: bool = True,
+    verbose: bool = True,
+) -> LTX2Transformer:
+    """
+    Load and quantize LTX-2 transformer for memory-efficient inference.
+
+    Uses block-by-block quantization strategy from LTX-2 official implementation.
+    This enables loading the 13B model on 24GB GPUs like RTX 4090.
+
+    Memory usage:
+    - bf16 (default): ~26GB (won't fit on 24GB GPU)
+    - fp8-quanto: ~13GB (fits on 24GB GPU with room for activations)
+    - int8-quanto: ~13GB
+    - int4-quanto: ~6.5GB
+
+    Args:
+        path: Path to checkpoint file or directory
+        precision: Quantization precision (fp8-quanto, int8-quanto, int4-quanto)
+        dtype: Original dtype before quantization (bf16 recommended)
+        video_only: If True, skip audio weights
+        verbose: Print progress during quantization
+
+    Returns:
+        Quantized LTX2Transformer model on CPU (call .to('cuda') after)
+
+    Example:
+        >>> model = load_ltx2_transformer_quantized("models/LTX-2/transformer/")
+        >>> model = model.to("cuda")  # Now fits in 24GB VRAM
+
+    Note:
+        Requires optimum-quanto: pip install optimum-quanto
+    """
+    from llm_dit.utils.quantization import quantize_model, estimate_quantized_size
+
+    # Load model to CPU first
+    if verbose:
+        logger.info(f"Loading model to CPU (dtype={dtype})")
+
+    model = load_ltx2_transformer(
+        path,
+        dtype=dtype,
+        device="cpu",
+        video_only=video_only,
+        strict=False,
+    )
+
+    # Estimate memory savings
+    num_params = model.get_num_params()
+    original_size = num_params * 2 / 1e9  # bf16
+    quantized_size = estimate_quantized_size(num_params, precision)
+
+    if verbose:
+        logger.info(f"Model: {num_params / 1e9:.2f}B params")
+        logger.info(f"Memory: {original_size:.1f}GB (bf16) → {quantized_size:.1f}GB ({precision})")
+
+    # Quantize using block-by-block strategy
+    model = quantize_model(
+        model,
+        precision=precision,
+        quantize_activations=False,
+        device="cuda",  # Quantize on GPU (fast)
+        verbose=verbose,
+    )
+
+    return model
+
+
 def get_model_info(path: Union[str, Path]) -> dict:
     """
     Get information about a checkpoint without loading it.

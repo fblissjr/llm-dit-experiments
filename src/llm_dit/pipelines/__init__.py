@@ -29,8 +29,10 @@ except ImportError:
 from llm_dit.pipelines.generate import (
     GenerationConfig,
     generate_video,
+    generate_video_with_offloading,
     create_position_indices,
     create_video_modality,
+    cleanup_memory,
 )
 
 # WanVideoPipeline for Wan 2.1/2.2 video generation
@@ -55,6 +57,8 @@ __all__ = [
     # Pure PyTorch generation utilities
     "GenerationConfig",
     "generate_video",
+    "generate_video_with_offloading",
     "create_position_indices",
     "create_video_modality",
+    "cleanup_memory",
 ]

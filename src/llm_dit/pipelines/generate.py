@@ -16,9 +16,11 @@ License: LTX-2 Community License
 Copyright (c) 2025 Lightricks Ltd.
 """
 
+import gc
 import logging
 from dataclasses import dataclass
-from typing import Callable, Optional, Tuple
+from typing import Callable, Optional, Tuple, Union
+from pathlib import Path
 
 import torch
 from tqdm import tqdm
@@ -32,6 +34,14 @@ from llm_dit.models.ltx2 import (
 from llm_dit.schedulers import LTX2Scheduler
 
 logger = logging.getLogger(__name__)
+
+
+def cleanup_memory() -> None:
+    """Free GPU memory between stages."""
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
 
 
 @dataclass
@@ -77,9 +87,14 @@ def create_position_indices(
     height: int,
     width: int,
     device: torch.device,
+    fps: float = 24.0,
 ) -> torch.Tensor:
     """
-    Create 3D position indices [B, 3, T] for video (temporal, height, width).
+    Create 3D position indices [B, 3, T, 2] for video (temporal, height, width).
+
+    LTX-2 uses position bounds [start, end) for each patch to enable temporal
+    interpolation with use_middle_indices_grid=True. The model computes the
+    middle point of each patch's bounds for RoPE.
 
     LTX-2 VAE compression: 32x spatial, 8x temporal.
     Reference: coderef/LTX-2/ltx-core/components/patchifiers.py
@@ -90,9 +105,13 @@ def create_position_indices(
         height: Video height in pixels
         width: Video width in pixels
         device: Target device
+        fps: Frames per second (for temporal scaling, default 24)
 
     Returns:
-        Position indices tensor [B, 3, T] where T = t_latent * h_latent * w_latent
+        Position indices tensor [B, 3, T, 2] where:
+        - T = t_latent * h_latent * w_latent (flattened patches)
+        - Last dim is [start, end] bounds
+        - Temporal dim (positions[:, 0]) is scaled to seconds
     """
     t_latent = (num_frames - 1) // 8 + 1
     h_latent = height // 32
@@ -107,15 +126,23 @@ def create_position_indices(
     # Order is (t, h, w) matching the official implementation
     grid_t, grid_h, grid_w = torch.meshgrid(t_indices, h_indices, w_indices, indexing='ij')
 
-    # Flatten and stack to [3, T]
-    positions = torch.stack([
-        grid_t.flatten(),
-        grid_h.flatten(),
-        grid_w.flatten(),
-    ], dim=0)
+    # Create start and end positions (each patch spans [start, start+1))
+    # Shape: [3, t_latent, h_latent, w_latent]
+    patch_starts = torch.stack([grid_t, grid_h, grid_w], dim=0).float()
+    patch_ends = patch_starts + 1.0
 
-    # Expand for batch: [B, 3, T]
-    return positions.unsqueeze(0).expand(batch_size, -1, -1)
+    # Stack start/end into bounds: [3, t_latent, h_latent, w_latent, 2]
+    positions = torch.stack([patch_starts, patch_ends], dim=-1)
+
+    # Flatten spatial dims: [3, T, 2] where T = t_latent * h_latent * w_latent
+    positions = positions.view(3, -1, 2)
+
+    # Scale temporal positions to seconds (divide by fps)
+    # This matches official: positions[:, 0, ...] = positions[:, 0, ...] / self.fps
+    positions[0] = positions[0] / fps
+
+    # Expand for batch: [B, 3, T, 2]
+    return positions.unsqueeze(0).expand(batch_size, -1, -1, -1)
 
 
 def create_video_modality(
@@ -347,4 +374,187 @@ def generate_video(
     video = video.squeeze(0).permute(1, 2, 3, 0)  # [B, C, T, H, W] -> [T, H, W, C]
     video = ((video + 1) / 2 * 255).clamp(0, 255).to(torch.uint8)
 
+    return video
+
+
+def generate_video_with_offloading(
+    prompt: str,
+    config: GenerationConfig,
+    model_path: Union[str, Path] = "models/LTX-2",
+    text_encoder_path: Optional[Union[str, Path]] = None,
+    quantize: bool = True,
+    precision: str = "fp8-quanto",
+    dtype: torch.dtype = torch.bfloat16,
+    callback: Optional[Callable[[str, int, int], None]] = None,
+) -> torch.Tensor:
+    """
+    Generate video with sequential component offloading for 24GB GPUs.
+
+    This function implements the LTX-2 memory strategy:
+    1. Load text encoder -> encode prompt -> unload
+    2. Load transformer (+ optional quantization) -> denoise -> unload
+    3. Load VAE -> decode latents -> unload
+
+    Each component is loaded and unloaded sequentially to stay within 24GB VRAM.
+    With FP8 quantization, the 13B model fits with room for activations.
+
+    Args:
+        prompt: Text prompt for generation
+        config: Generation configuration
+        model_path: Path to LTX-2 model directory (contains transformer/, text_encoder/, vae/)
+        text_encoder_path: Optional separate path for text encoder
+        quantize: If True, quantize transformer to FP8 for memory efficiency
+        precision: Quantization precision (fp8-quanto recommended)
+        dtype: Base dtype for loading (bf16 recommended)
+        callback: Optional callback(stage, step, total) for progress
+
+    Returns:
+        Video tensor [F, H, W, C] in uint8 format
+
+    Example:
+        video = generate_video_with_offloading(
+            "A cat walking",
+            GenerationConfig(num_frames=33, height=512, width=768),
+            model_path="models/LTX-2",
+            quantize=True,
+        )
+
+    Memory usage (RTX 4090, 24GB):
+        - Text encoder (Gemma3): ~8GB peak
+        - Transformer (FP8): ~13GB
+        - VAE: ~2GB
+        - Total per stage: <24GB
+    """
+    model_path = Path(model_path)
+    if text_encoder_path is None:
+        text_encoder_path = model_path / "text_encoder"
+
+    # Stage 1: Text Encoding
+    if callback:
+        callback("text_encoder", 0, 1)
+
+    logger.info("Stage 1: Loading text encoder...")
+    from llm_dit.encoders.gemma3 import Gemma3TextEncoder
+
+    text_encoder = Gemma3TextEncoder(
+        model_path=str(text_encoder_path),
+        device="cuda",
+        dtype=dtype,
+    )
+
+    logger.info("Encoding prompt...")
+    prompt_embeds, attention_mask = text_encoder.encode([prompt])
+    logger.info(f"Prompt embeddings: {prompt_embeds.shape}")
+
+    # Keep embeddings on GPU, unload encoder
+    prompt_embeds = prompt_embeds.to("cuda", dtype)
+    attention_mask = attention_mask.to("cuda")
+
+    del text_encoder
+    cleanup_memory()
+    logger.info("Text encoder unloaded")
+
+    if callback:
+        callback("text_encoder", 1, 1)
+
+    # Stage 2: Transformer Denoising
+    if callback:
+        callback("transformer", 0, config.num_inference_steps)
+
+    logger.info("Stage 2: Loading transformer...")
+
+    if quantize:
+        from llm_dit.models.ltx2 import load_ltx2_transformer_quantized
+
+        model = load_ltx2_transformer_quantized(
+            model_path / "transformer",
+            precision=precision,
+            dtype=dtype,
+            video_only=True,
+            verbose=True,
+        )
+        model = model.to("cuda")
+    else:
+        from llm_dit.models.ltx2 import load_ltx2_transformer
+
+        model = load_ltx2_transformer(
+            model_path / "transformer",
+            dtype=dtype,
+            device="cpu",
+            video_only=True,
+        )
+        model = model.to("cuda")
+
+    # Load connectors
+    connectors = LTX2TextConnectors.from_pretrained(
+        str(model_path / "transformer"),
+        dtype=dtype,
+        device="cpu",
+    )
+    connectors = connectors.to("cuda")
+
+    logger.info(f"Transformer loaded: {model.get_num_params() / 1e9:.2f}B params")
+
+    # Generate latents (no VAE decode yet)
+    def progress_callback(step, total, _latents):
+        if callback:
+            callback("transformer", step, total)
+
+    latents = generate_video(
+        model=model,
+        prompt_embeds=prompt_embeds,
+        config=config,
+        vae=None,  # Don't decode yet
+        connectors=connectors,
+        attention_mask=attention_mask,
+        callback=progress_callback,
+    )
+
+    # Unload transformer and connectors
+    del model, connectors, prompt_embeds, attention_mask
+    cleanup_memory()
+    logger.info("Transformer unloaded")
+
+    if callback:
+        callback("transformer", config.num_inference_steps, config.num_inference_steps)
+
+    # Stage 3: VAE Decoding
+    if callback:
+        callback("vae", 0, 1)
+
+    logger.info("Stage 3: Loading VAE decoder...")
+
+    # Use diffusers VAE (our ported VAE doesn't have weight loader yet)
+    from diffusers import AutoencoderKLLTXVideo
+
+    vae = AutoencoderKLLTXVideo.from_pretrained(
+        str(model_path / "vae"),
+        torch_dtype=dtype,
+    ).to("cuda")
+
+    logger.info("Decoding latents to video...")
+
+    # Denormalize latents
+    if hasattr(vae, 'latents_mean') and vae.latents_mean is not None:
+        latents_mean = vae.latents_mean.view(1, -1, 1, 1, 1).to("cuda", dtype)
+        latents_std = vae.latents_std.view(1, -1, 1, 1, 1).to("cuda", dtype)
+        scaling_factor = getattr(vae.config, 'scaling_factor', 1.0)
+        latents = latents * latents_std / scaling_factor + latents_mean
+
+    with torch.no_grad():
+        video = vae.decode(latents).sample
+
+    # Convert to [F, H, W, C] uint8
+    video = video.squeeze(0).permute(1, 2, 3, 0)
+    video = ((video + 1) / 2 * 255).clamp(0, 255).to(torch.uint8)
+
+    # Unload VAE
+    del vae, latents
+    cleanup_memory()
+    logger.info("VAE unloaded")
+
+    if callback:
+        callback("vae", 1, 1)
+
+    logger.info(f"Generation complete: {video.shape}")
     return video

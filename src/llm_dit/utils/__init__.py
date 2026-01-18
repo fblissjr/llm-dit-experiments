@@ -141,6 +141,14 @@ from llm_dit.utils.metrics import (
     compute_video_siglip_score,
 )
 
+from llm_dit.utils.quantization import (
+    QuantizationPrecision,
+    quantize_model,
+    estimate_quantized_size,
+    EXCLUDE_PATTERNS,
+    SKIP_ROOT_MODULES,
+)
+
 __all__ = [
     # LoRA
     "LoRALoader",
@@ -248,4 +256,10 @@ __all__ = [
     "SigLIPScorer",
     "compute_siglip_score",
     "compute_video_siglip_score",
+    # Quantization
+    "QuantizationPrecision",
+    "quantize_model",
+    "estimate_quantized_size",
+    "EXCLUDE_PATTERNS",
+    "SKIP_ROOT_MODULES",
 ]
