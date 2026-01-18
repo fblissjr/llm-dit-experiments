@@ -33,8 +33,14 @@ from functools import lru_cache
 from typing import Protocol, runtime_checkable
 
 import numpy
-import scipy.stats
 import torch
+
+# scipy is optional - only needed for BetaScheduler
+try:
+    import scipy.stats
+    HAS_SCIPY = True
+except ImportError:
+    HAS_SCIPY = False
 
 
 # =============================================================================
@@ -237,6 +243,8 @@ class BetaScheduler:
     Note: The number of steps in the output may be less than steps+1 due to
     deduplication of identical timesteps.
 
+    Requires: scipy (pip install scipy)
+
     Ported from: ltx_core.components.schedulers.BetaScheduler
     """
 
@@ -245,6 +253,13 @@ class BetaScheduler:
 
     timesteps_length = 10000
     """Resolution of the precomputed sigma table."""
+
+    def __init__(self):
+        """Initialize BetaScheduler, checking for scipy dependency."""
+        if not HAS_SCIPY:
+            raise ImportError(
+                "BetaScheduler requires scipy. Install with: pip install scipy"
+            )
 
     def execute(
         self,

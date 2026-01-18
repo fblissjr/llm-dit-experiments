@@ -43,7 +43,6 @@ Usage:
 
 import json
 import logging
-import math
 from abc import ABC, abstractmethod
 from datetime import datetime
 from pathlib import Path
@@ -506,144 +505,35 @@ class LTX2ExperimentBase(ABC):
             output = self.pipeline(**pipeline_kwargs)
             return output.frames[0]
         else:
-            # Pure PyTorch generation loop
-            # Reference: coderef/LTX-2/ltx-core/components/ for scheduler & diffusion steps
+            # Pure PyTorch generation using shared module
+            # Uses properly ported LTX2Scheduler (no incorrect clamping)
+            from llm_dit.pipelines.generate import GenerationConfig, generate_video
 
             if self.vae is None:
                 raise RuntimeError("VAE not loaded. Call load_vae() first for pure PyTorch mode.")
 
-            # =====================================================================
-            # Step 0: Process embeddings through connectors if available
-            # =====================================================================
-            # Check if embeddings are packed format [B, T, 188160]
-            embed_dim = prompt_embeds.shape[-1]
-            if embed_dim == 188160 and self.connectors is not None:
-                # Process through connectors: text_proj_in + video_connector
-                if attention_mask is None:
-                    # Create all-ones mask if not provided
-                    attention_mask = torch.ones(
-                        prompt_embeds.shape[0], prompt_embeds.shape[1],
-                        device=prompt_embeds.device, dtype=prompt_embeds.dtype
-                    )
-                video_embeds, _, new_mask = self.connectors(
-                    prompt_embeds,
-                    attention_mask,
-                    additive_mask=False,
-                )
-                prompt_embeds = video_embeds
-            elif embed_dim == 188160 and self.connectors is None:
-                raise RuntimeError(
-                    "Packed embeddings [B, T, 188160] require connectors. "
-                    "Call load_connectors() first, or use encode() instead of encode_packed()."
-                )
-
-            # =====================================================================
-            # Step 1: Compute latent dimensions (32x spatial, 8x temporal compression)
-            # =====================================================================
-            t_latent = (num_frames - 1) // 8 + 1
-            h_latent = height // 32
-            w_latent = width // 32
-            num_tokens = t_latent * h_latent * w_latent
-
-            # =====================================================================
-            # Step 2: Initialize noise [B, T, D] where D=128 (VAE latent channels)
-            # =====================================================================
-            latents = torch.randn(
-                (1, num_tokens, 128),
-                generator=generator,
-                device=self.device,
-                dtype=self.dtype,
+            # Create generation config
+            config = GenerationConfig(
+                num_frames=num_frames,
+                height=height,
+                width=width,
+                num_inference_steps=num_inference_steps,
+                guidance_scale=guidance_scale,
+                seed=seed,
             )
 
-            # =====================================================================
-            # Step 3: Create position indices
-            # =====================================================================
-            positions = self._create_position_indices(1, num_frames, height, width)
-
-            # =====================================================================
-            # Step 4: Set up sigma schedule with dynamic shift
-            # LTX-2 uses resolution-dependent shift for better results
-            # Reference: coderef/LTX-2/ltx-core/components/schedulers.py
-            # =====================================================================
-            video_seq_len = num_tokens
-            base_seq_len, max_seq_len = 1024, 4096
-            base_shift, max_shift = 0.95, 2.05
-
-            # Linear interpolation for shift based on resolution
-            m = (max_shift - base_shift) / (max_seq_len - base_seq_len)
-            mu = base_shift + m * (video_seq_len - base_seq_len)
-            mu = max(min(mu, max_shift), base_shift)  # Clamp to valid range
-
-            # Linear sigmas with exponential shift (time warping)
-            sigmas = torch.linspace(1.0, 1.0 / num_inference_steps, num_inference_steps)
-            exp_mu = math.exp(mu)
-            sigmas = exp_mu / (exp_mu + (1.0 / sigmas - 1.0))
-            sigmas = sigmas.to(self.device, dtype=self.dtype)
-
-            # =====================================================================
-            # Step 5: Denoising loop (Euler method with velocity prediction)
-            # Reference: coderef/LTX-2/ltx-core/components/diffusion_steps.py
-            # =====================================================================
-            for i in tqdm(range(len(sigmas)), desc="Denoising"):
-                sigma = sigmas[i]
-                sigma_next = sigmas[i + 1] if i + 1 < len(sigmas) else torch.tensor(0.0, device=self.device, dtype=self.dtype)
-
-                # Timestep for model in [0, 1000] range (LTX-2 convention)
-                timestep = (sigma * 1000).expand(1, num_tokens)
-
-                # Classifier-free guidance: compute both conditional and unconditional
-                if guidance_scale > 1.0:
-                    # Unconditional pass (zero embeddings)
-                    uncond_embeds = torch.zeros_like(prompt_embeds)
-                    uncond_modality = self._create_video_modality(latents, timestep, positions, uncond_embeds)
-                    velocity_uncond, _ = self.model(video=uncond_modality)
-
-                    # Conditional pass
-                    cond_modality = self._create_video_modality(latents, timestep, positions, prompt_embeds)
-                    velocity_cond, _ = self.model(video=cond_modality)
-
-                    # CFG blend: LTX-2 uses cond + (scale - 1) * (cond - uncond)
-                    # This is equivalent to: uncond + scale * (cond - uncond)
-                    velocity = velocity_cond + (guidance_scale - 1.0) * (velocity_cond - velocity_uncond)
-                else:
-                    modality = self._create_video_modality(latents, timestep, positions, prompt_embeds)
-                    velocity, _ = self.model(video=modality)
-
-                # Euler step: x_{t-1} = x_t + v * dt where dt = sigma_next - sigma
-                # Note: dt is negative (moving toward clean), so this subtracts noise
-                dt = sigma_next - sigma
-                latents = latents + velocity * dt
-
-            # =====================================================================
-            # Step 6: Reshape latents for VAE decode
-            # From [B, T, D] to [B, D, T_lat, H_lat, W_lat]
-            # =====================================================================
-            latents = latents.transpose(1, 2)  # [B, D, T]
-            latents = latents.reshape(1, 128, t_latent, h_latent, w_latent)
-
-            # =====================================================================
-            # Step 7: CRITICAL - Denormalize latents before VAE decode
-            # The VAE has learned normalization parameters that must be reversed
-            # Reference: diffusers/pipelines/ltx2/pipeline_ltx2.py:588-601
-            # =====================================================================
-            latents_mean = self.vae.latents_mean.view(1, -1, 1, 1, 1).to(latents.device, latents.dtype)
-            latents_std = self.vae.latents_std.view(1, -1, 1, 1, 1).to(latents.device, latents.dtype)
-            scaling_factor = self.vae.config.scaling_factor
-            latents = latents * latents_std / scaling_factor + latents_mean
-
-            # =====================================================================
-            # Step 8: VAE decode to pixel space
-            # =====================================================================
-            with torch.no_grad():
-                video = self.vae.decode(latents).sample
-
-            # =====================================================================
-            # Step 9: Convert to uint8 [F, H, W, C] format for export_to_video
-            # =====================================================================
-            video = video.squeeze(0).permute(1, 2, 3, 0)  # [B, C, T, H, W] -> [T, H, W, C]
-            video = ((video + 1) / 2 * 255).clamp(0, 255).to(torch.uint8)
-
-            return video
+            # Generate video using shared module
+            # This uses the properly ported scheduler and handles both our VAE and diffusers VAE
+            return generate_video(
+                model=self.model,
+                prompt_embeds=prompt_embeds,
+                config=config,
+                vae=self.vae,
+                connectors=self.connectors,
+                attention_mask=attention_mask,
+                device=torch.device(self.device),
+                dtype=self.dtype,
+            )
 
     def score_video(
         self,

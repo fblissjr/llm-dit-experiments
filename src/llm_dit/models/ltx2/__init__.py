@@ -20,6 +20,7 @@ Primary Exports:
     LTXModelType: Model variant enum (VideoOnly, AudioVideo, AudioOnly)
     load_ltx2_transformer: Load from official checkpoints
     Modality: Input container for video/audio latents
+    VideoEncoder, VideoDecoder: VAE for latent ↔ pixel conversion
 
 Components:
     transformer.py: Main transformer model
@@ -28,6 +29,7 @@ Components:
     rope.py: Rotary position embeddings
     connectors.py: Text conditioning connectors
     loader.py: Weight loading utilities
+    vae/: Video VAE (encoder/decoder) for latent ↔ pixel conversion
 """
 
 from llm_dit.models.ltx2.transformer import (
@@ -66,6 +68,21 @@ from llm_dit.models.ltx2.loader import (
     load_ltx2_transformer,
 )
 
+# VAE components
+from llm_dit.models.ltx2.vae import (
+    VideoEncoder,
+    VideoDecoder,
+    TilingConfig,
+    SpatialTilingConfig,
+    TemporalTilingConfig,
+    decode_video,
+    patchify,
+    unpatchify,
+    PerChannelStatistics,
+    SpatioTemporalScaleFactors,
+    VideoLatentShape,
+)
+
 __all__ = [
     # Main model
     "LTX2Transformer",
@@ -97,4 +114,16 @@ __all__ = [
     # Utilities
     "to_velocity",
     "to_denoised",
+    # VAE
+    "VideoEncoder",
+    "VideoDecoder",
+    "TilingConfig",
+    "SpatialTilingConfig",
+    "TemporalTilingConfig",
+    "decode_video",
+    "patchify",
+    "unpatchify",
+    "PerChannelStatistics",
+    "SpatioTemporalScaleFactors",
+    "VideoLatentShape",
 ]

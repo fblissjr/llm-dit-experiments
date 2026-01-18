@@ -720,7 +720,7 @@ wheels = [
 [[package]]
 name = "diffusers"
 version = "0.37.0.dev0"
-source = { directory = "coderef/diffusers" }
+source = { editable = "coderef/diffusers" }
 dependencies = [
     { name = "filelock" },
     { name = "httpx" },
@@ -1451,6 +1451,7 @@ dependencies = [
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "pillow" },
+    { name = "protobuf" },
     { name = "python-multipart" },
     { name = "pyyaml" },
     { name = "safetensors" },
@@ -1494,7 +1495,7 @@ dev = [
 requires-dist = [
     { name = "accelerate" },
     { name = "bitsandbytes", marker = "sys_platform != 'darwin'" },
-    { name = "diffusers", directory = "coderef/diffusers" },
+    { name = "diffusers", editable = "coderef/diffusers" },
     { name = "einops" },
     { name = "fastapi", specifier = ">=0.123.4" },
     { name = "httpx" },
@@ -1507,6 +1508,7 @@ requires-dist = [
     { name = "pandas", marker = "extra == 'training'", specifier = ">=2.0.0" },
     { name = "peft", marker = "extra == 'training'", specifier = ">=0.8.0" },
     { name = "pillow" },
+    { name = "protobuf", specifier = ">=6.33.2" },
     { name = "pytest", marker = "extra == 'dev'" },
     { name = "python-multipart", specifier = ">=0.0.20" },
     { name = "pyyaml" },
