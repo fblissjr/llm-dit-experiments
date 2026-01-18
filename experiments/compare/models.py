@@ -1,4 +1,7 @@
-"""Data models for experiment comparison."""
+"""Data models for experiment comparison.
+
+Last Updated: 2026-01-18
+"""
 
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -7,7 +10,7 @@ from typing import Any
 
 @dataclass
 class ExperimentImage:
-    """Single generated image with metadata."""
+    """Single generated image/video with metadata."""
 
     path: Path
     prompt_id: str
@@ -24,12 +27,14 @@ class ExperimentImage:
 
 @dataclass
 class ExperimentRun:
-    """Collection of images from a single experiment run."""
+    """Collection of images/videos from a single experiment run."""
 
-    name: str  # e.g., "think_block_20251209_163804"
-    experiment_type: str  # e.g., "think_block"
+    name: str  # e.g., "layer_ablation_20260115_191000"
+    experiment_type: str  # e.g., "layer_ablation"
     timestamp: str  # YYYYMMDD_HHMMSS format
     base_path: Path
+    # Pipeline identifier (ltx2, z_image, wan, qwen3_vl) or None for legacy
+    pipeline: str | None = None
     images: list[ExperimentImage] = field(default_factory=list)
     summary: dict = field(default_factory=dict)
 

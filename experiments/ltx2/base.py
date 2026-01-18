@@ -1,7 +1,7 @@
 """
 LTX-2 Experiment Base Class.
 
-Last Updated: 2026-01-17
+Last Updated: 2026-01-18
 
 Provides shared infrastructure for all LTX-2 experiments:
 - Model loading with memory tracking
@@ -10,6 +10,11 @@ Provides shared infrastructure for all LTX-2 experiments:
 - Scoring with SigLIP
 - Output saving with metadata
 - Memory cleanup between iterations
+
+Inherits from ExperimentRunnerBase to get:
+- Consistent output paths: experiments/results/ltx2/{experiment}_{timestamp}/
+- Standard directory structure (videos/, metadata/, tensors/)
+- Auto-discovery compatibility with compare/discovery.py
 
 Experiments should inherit from LTX2ExperimentBase and override:
 - setup(): Experiment-specific initialization
@@ -22,6 +27,7 @@ Usage:
     class MyExperiment(LTX2ExperimentBase):
         def __init__(self):
             super().__init__("my_experiment")
+            # Output: experiments/results/ltx2/my_experiment_{timestamp}/
 
         def setup(self):
             self.load_model()
@@ -59,19 +65,27 @@ from llm_dit.utils.memory import MemoryTracker, cleanup_memory, log_memory_usage
 from llm_dit.utils.metrics import SigLIPScorer
 from llm_dit.data import get_all_prompts
 
+# Shared experiment infrastructure
+from experiments.base import ExperimentRunnerBase, ExperimentConfig, ExperimentResult
+
 logger = logging.getLogger(__name__)
 
 
-class LTX2ExperimentBase(ABC):
+class LTX2ExperimentBase(ExperimentRunnerBase):
     """
     Shared infrastructure for all LTX-2 experiments.
+
+    Inherits from ExperimentRunnerBase to get:
+    - Consistent output paths: experiments/results/ltx2/{experiment}_{timestamp}/
+    - Standard directory structure (videos/, metadata/, tensors/)
+    - Auto-discovery compatibility with compare/discovery.py
 
     Handles model loading, encoding, generation, scoring, and output saving.
     Experiments focus ONLY on their specific logic.
 
     Attributes:
         experiment_name: Name used for output directories
-        output_dir: Path to output directory
+        output_dir: Path to output directory (experiments/results/ltx2/{name}_{timestamp}/)
         model: LTX2Transformer (lazy loaded)
         encoder: Gemma3Encoder (lazy loaded)
         scorer: SigLIPScorer (lazy loaded)
@@ -80,21 +94,31 @@ class LTX2ExperimentBase(ABC):
     def __init__(
         self,
         experiment_name: str,
-        output_dir: str = "outputs",
+        output_base: str = "experiments/results",
         device: str = "cuda",
         dtype: torch.dtype = torch.bfloat16,
+        dry_run: bool = False,
     ):
         """
         Initialize experiment base.
 
         Args:
             experiment_name: Name for this experiment (used in output paths)
-            output_dir: Base output directory
+            output_base: Base output directory (default: experiments/results)
+                        Output will be: {output_base}/ltx2/{experiment_name}_{timestamp}/
             device: Compute device
             dtype: Model dtype
+            dry_run: If True, skip directory creation and model loading
         """
-        self.experiment_name = experiment_name
-        self.output_dir = Path(output_dir) / experiment_name
+        # Initialize parent with pipeline="ltx2"
+        super().__init__(
+            experiment_name=experiment_name,
+            pipeline="ltx2",
+            output_base=output_base,
+            dry_run=dry_run,
+            create_dirs=not dry_run,
+        )
+
         self.device = device
         self.dtype = dtype
 
@@ -106,9 +130,9 @@ class LTX2ExperimentBase(ABC):
         self.pipeline = None
         self.connectors = None  # LTX2TextConnectors for pure PyTorch path
 
-        # Experiment state
-        self.run_timestamp = None
-        self.run_dir = None
+        # Experiment state - use parent's timestamp and output_dir
+        self.run_timestamp = self.timestamp
+        self.run_dir = self.output_dir
 
     # =========================================================================
     # Core Infrastructure (shared)
@@ -867,6 +891,64 @@ class LTX2ExperimentBase(ABC):
         return prompt_embeds
 
     # =========================================================================
+    # ExperimentRunnerBase Abstract Method Implementations
+    # =========================================================================
+
+    def load_pipeline(self) -> None:
+        """
+        Implementation of ExperimentRunnerBase.load_pipeline().
+
+        Delegates to setup() for backward compatibility with existing experiments.
+        Subclasses should override setup() rather than this method.
+        """
+        self.setup()
+
+    def run_single(self, config: ExperimentConfig) -> ExperimentResult:
+        """
+        Implementation of ExperimentRunnerBase.run_single().
+
+        Wraps run_iteration() for backward compatibility with existing experiments.
+        Subclasses should override run_iteration() rather than this method.
+
+        Args:
+            config: ExperimentConfig instance
+
+        Returns:
+            ExperimentResult with output path and timing
+        """
+        import time
+
+        start_time = time.time()
+
+        # Convert ExperimentConfig to dict for backward compatibility
+        config_dict = config.to_dict()
+
+        try:
+            result_dict = self.run_iteration(config_dict)
+            generation_time = time.time() - start_time
+
+            # Extract output path from result if available
+            output_path = result_dict.get("output_path", "")
+            if not output_path and "video_path" in result_dict:
+                output_path = result_dict["video_path"]
+
+            return ExperimentResult(
+                config=config,
+                output_path=str(output_path),
+                generation_time_seconds=generation_time,
+                siglip_score=result_dict.get("siglip_score"),
+                image_reward=result_dict.get("image_reward"),
+                extra=result_dict,
+            )
+        except Exception as e:
+            return ExperimentResult(
+                config=config,
+                output_path="",
+                generation_time_seconds=time.time() - start_time,
+                error=str(e),
+            )
+
+    # =========================================================================
     # Extension Points (experiments override)
     # =========================================================================
 
@@ -884,7 +966,7 @@ class LTX2ExperimentBase(ABC):
         Override: Single experiment iteration.
 
         Args:
-            config: Configuration for this iteration
+            config: Configuration for this iteration (dict format for backward compat)
 
         Returns:
             Results dictionary for this iteration
@@ -956,11 +1038,17 @@ class LTX2ExperimentBase(ABC):
         return aggregated
 
     def _init_run_dir(self) -> None:
-        """Initialize run directory with timestamp."""
-        if self.run_timestamp is None:
-            self.run_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        """
+        Initialize run directory.
 
-        self.run_dir = self.output_dir / self.run_timestamp
+        The parent class (ExperimentRunnerBase) already creates the output directory
+        with the timestamp pattern: experiments/results/ltx2/{experiment}_{timestamp}/
+
+        This method is kept for backward compatibility but now just ensures
+        run_dir points to the parent's output_dir.
+        """
+        # Parent already created output_dir with timestamp
+        self.run_dir = self.output_dir
         self.run_dir.mkdir(parents=True, exist_ok=True)
 
 
@@ -990,8 +1078,8 @@ class LayerBlendSweep(LTX2ExperimentBase):
         "top_contributors": {"description": "Only layers 43-47", "layers": list(range(43, 48))},
     }
 
-    def __init__(self, output_dir: str = "outputs", quick: bool = False):
-        super().__init__("layer_blend_sweep", output_dir)
+    def __init__(self, output_base: str = "experiments/results", quick: bool = False):
+        super().__init__("layer_blend_sweep", output_base=output_base)
         self.quick = quick
 
     def setup(self) -> None:
