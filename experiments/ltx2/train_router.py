@@ -352,7 +352,7 @@ class RouterTrainer:
 
 def load_prompts(quick: bool = False) -> list[str]:
     """Load training prompts."""
-    from experiments.ltx2.prompts import get_all_prompts
+    from llm_dit.data import get_all_prompts
 
     prompts_dict = get_all_prompts(quick=quick)
     return list(prompts_dict.values())
