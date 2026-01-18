@@ -145,8 +145,8 @@ class LTX2ExperimentBase(ABC):
                 self.model = self.model.to(self.device)
             else:
                 # Use diffusers model via pipeline
-                from diffusers import LTX2VideoPipeline
-                self.pipeline = LTX2VideoPipeline.from_pretrained(
+                from diffusers import LTX2Pipeline
+                self.pipeline = LTX2Pipeline.from_pretrained(
                     "models/LTX-2",
                     torch_dtype=self.dtype,
                     text_encoder=None,  # We handle encoding separately
@@ -488,16 +488,22 @@ class LTX2ExperimentBase(ABC):
 
         # Use pipeline if available, otherwise use pure PyTorch model
         if self.pipeline is not None:
-            output = self.pipeline(
-                prompt_embeds=prompt_embeds,
-                num_frames=num_frames,
-                height=height,
-                width=width,
-                num_inference_steps=num_inference_steps,
-                guidance_scale=guidance_scale,
-                generator=generator,
+            # Build pipeline arguments
+            pipeline_kwargs = {
+                "prompt_embeds": prompt_embeds,
+                "num_frames": num_frames,
+                "height": height,
+                "width": width,
+                "num_inference_steps": num_inference_steps,
+                "guidance_scale": guidance_scale,
+                "generator": generator,
                 **kwargs,
-            )
+            }
+            # Add attention mask if provided (required when using prompt_embeds)
+            if attention_mask is not None:
+                pipeline_kwargs["prompt_attention_mask"] = attention_mask
+
+            output = self.pipeline(**pipeline_kwargs)
             return output.frames[0]
         else:
             # Pure PyTorch generation loop

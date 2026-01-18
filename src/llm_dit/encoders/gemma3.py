@@ -898,10 +898,11 @@ class Gemma3Encoder:
             )
 
         # Stack hidden states: [B, T, D, L]
-        hidden_states_list = outputs.hidden_states[1:]  # Skip embedding layer
-        num_layers = min(len(hidden_states_list), GEMMA3_NUM_LAYERS)
-        hidden_states_list = hidden_states_list[:num_layers]
+        # LTX-2 uses ALL hidden states including embedding layer (index 0)
+        # This gives 49 layers: embedding layer + 48 decoder layers = 188160 dims
+        hidden_states_list = outputs.hidden_states[:GEMMA3_NUM_LAYERS]
         hidden_states = torch.stack(hidden_states_list, dim=-1)
+        num_layers = hidden_states.shape[-1]  # Actual number of layers stacked
 
         # Apply masking based on mode
         if masking_mode == "soft":

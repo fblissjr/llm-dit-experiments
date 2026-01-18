@@ -115,6 +115,12 @@ class LayerContributionAnalyzer(LTX2ExperimentBase):
             self.layer_indices = list(range(49))
 
         self.seed = seed
+
+        # Populate prompts now so get_run_configs() works before setup()
+        self.prompts = get_all_prompts(quick=self.quick)
+        if self.quick:
+            self.prompts = dict(list(self.prompts.items())[:2])
+
         return self
 
     def setup(self) -> None:
@@ -124,12 +130,7 @@ class LayerContributionAnalyzer(LTX2ExperimentBase):
         Phase 1: Load encoder, batch encode all layer × prompt combinations
         Phase 2: Offload encoder, load transformer + connectors + VAE
         """
-        # Get prompts
-        self.prompts = get_all_prompts(quick=self.quick)
-        if self.quick:
-            # Even fewer prompts for quick mode
-            self.prompts = dict(list(self.prompts.items())[:2])
-
+        # Prompts are already populated in configure()
         logger.info(f"Analyzing {len(self.layer_indices)} layers with {len(self.prompts)} prompts")
         logger.info(f"Total generations: {len(self.layer_indices) * len(self.prompts)}")
 
@@ -163,10 +164,16 @@ class LayerContributionAnalyzer(LTX2ExperimentBase):
         logger.info("Phase 2: Offloading encoder, loading generation components...")
         self.offload_encoder()
 
-        # Load transformer, connectors, and VAE for pure PyTorch generation
-        self.load_model(use_pure_pytorch=True)
-        self.load_connectors()
-        self.load_vae()
+        # Use diffusers pipeline with group offloading for memory efficiency
+        # The 13B transformer needs ~24.68GB but GPU only has ~24GB
+        # Group offloading streams blocks from CPU, using only ~5GB VRAM
+        self.load_model(
+            use_pure_pytorch=False,  # Use diffusers pipeline
+            use_group_offloading=True,  # Stream transformer blocks from CPU
+            num_blocks_per_group=1,  # Minimal VRAM usage
+        )
+        # VAE and connectors are loaded as part of the pipeline
+        # Pipeline handles connector processing internally when given packed embeds
 
     def run_iteration(self, config: Dict) -> Dict:
         """
@@ -182,20 +189,22 @@ class LayerContributionAnalyzer(LTX2ExperimentBase):
         prompt_name = config["prompt_name"]
         prompt_text = self.prompts[prompt_name]
 
-        # Get cached embeddings
+        # Get cached packed embeddings [B, T, 188160]
         packed_embeds, attn_mask = self._layer_embeddings[(layer_idx, prompt_name)]
-        packed_embeds = packed_embeds.to(self.device)
+        packed_embeds = packed_embeds.to(self.device, dtype=self.dtype)
         attn_mask = attn_mask.to(self.device)
 
-        # Generate video
+        # Pass packed embeddings directly to pipeline
+        # The pipeline handles connector processing (text_proj_in + video_connector) internally
+        # Note: guidance_scale=1.0 disables CFG, avoiding need for negative_prompt_embeds
         video = self.generate_video(
-            packed_embeds,
+            packed_embeds,  # Packed format [B, T, 188160], pipeline processes internally
             attention_mask=attn_mask,
             num_frames=33,
             height=512,
             width=768,
             num_inference_steps=25,  # Reduced for speed
-            guidance_scale=3.0,
+            guidance_scale=1.0,  # Disabled CFG (no negative_prompt_embeds needed)
             seed=self.seed,
         )
 
