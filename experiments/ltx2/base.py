@@ -489,6 +489,7 @@ class LTX2ExperimentBase(ExperimentRunnerBase):
         num_inference_steps: int = DEFAULT_NUM_INFERENCE_STEPS,
         guidance_scale: float = DEFAULT_GUIDANCE_SCALE,
         seed: Optional[int] = None,
+        conditioning: Optional[List[Any]] = None,
         **kwargs,
     ) -> torch.Tensor:
         """
@@ -505,6 +506,9 @@ class LTX2ExperimentBase(ExperimentRunnerBase):
             num_inference_steps: Diffusion steps
             guidance_scale: CFG scale
             seed: Random seed (None for random)
+            conditioning: Optional list of ConditioningItems for I2V or video continuation.
+                         Use VideoConditionByLatentIndex for I2V (first frame conditioning).
+                         Use VideoConditionByKeyframeIndex for video continuation.
             **kwargs: Additional generation arguments
 
         Returns:
@@ -564,6 +568,7 @@ class LTX2ExperimentBase(ExperimentRunnerBase):
                 vae=self.vae,
                 connectors=self.connectors,
                 attention_mask=attention_mask,
+                conditioning=conditioning,
                 device=torch.device(self.device),
                 dtype=self.dtype,
             )

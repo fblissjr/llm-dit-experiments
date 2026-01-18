@@ -330,7 +330,14 @@ class TestLTX2ReferenceI2V:
     @pytest.mark.skipif(not models_available(), reason="LTX-2 models not found")
     @pytest.mark.skipif(not sufficient_vram(), reason="Insufficient VRAM")
     def test_i2v_with_conditioning(self, output_dir):
-        """Test I2V generation using conditioning system."""
+        """Test I2V generation using conditioning system.
+
+        NOTE: This test uses a synthetic latent as a stand-in for a real
+        VAE-encoded image. It validates the conditioning pipeline works
+        end-to-end. For visual quality assessment, use a real input image.
+
+        TODO: Add tests/fixtures/images/test_cat.png for real I2V testing.
+        """
         from experiments.ltx2.base import LTX2ExperimentBase
         from llm_dit.conditioning import (
             LatentState,
@@ -353,10 +360,11 @@ class TestLTX2ReferenceI2V:
         test = I2VTest(output_dir)
         test.setup()
 
-        # For now, create a random "image" latent as placeholder
-        # In real usage, this would be VAE-encoded input image
-        h_latent = DEFAULT_HEIGHT // 32
-        w_latent = DEFAULT_WIDTH // 32
+        # Create synthetic "image" latent for pipeline validation
+        # In production: image_latent = vae.encode(pil_image)
+        # Shape: [B, C, F, H, W] where F=1 for single image
+        h_latent = DEFAULT_HEIGHT // 32  # 16
+        w_latent = DEFAULT_WIDTH // 32   # 24
         image_latent = torch.randn(
             1, 128, 1, h_latent, w_latent,
             device="cuda",

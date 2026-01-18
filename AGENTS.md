@@ -1,6 +1,6 @@
 # agent context
 
-*last updated: 2026-01-17*
+*last updated: 2026-01-18*
 
 Quick reference for LLM agents working on this codebase.
 
@@ -71,14 +71,15 @@ Models use different text encoders (Qwen3-4B, Gemma3-12B, UMT5-XXL) and DiT vari
 | param | value | notes |
 |-------|-------|-------|
 | encoder | Gemma3-12B (Q4) | 3840 hidden dim, 49 layers |
-| transformer | LTX-2 19B | 48 blocks, 32 heads |
-| cfg | 3.5-4.0 | with latent normalization |
-| steps | 50 | standard |
-| resolution | 512-1280 | video generation |
-| frames | 121-369 | per ComfyUI workflow |
+| transformer | LTX-2 13B | 48 blocks, 32 heads |
+| cfg | 4.0 | default with latent normalization |
+| steps | 40 | T2V default |
+| resolution | 512x768 | default, up to 1280 |
+| frames | 121 | default (8*15+1), 33 for quick tests |
 | rope | 3D INTERLEAVED | (T, H, W) positions |
+| quantization | FP8-quanto | 26GB->12GB, fits 24GB GPU |
 
-**Status:** Pure PyTorch port complete. Verification tests pending.
+**Status:** Core implementation complete. FP8 quantization, conditioning, upsampler all working. E2E video generation tests pending.
 
 ### wan (humo video)
 
@@ -97,14 +98,15 @@ Models use different text encoders (Qwen3-4B, Gemma3-12B, UMT5-XXL) and DiT vari
 
 | area | files |
 |------|-------|
-| pipeline | `src/llm_dit/pipelines/z_image.py`, `qwen_image.py`, `ltx2.py`, `wan_video.py` |
+| pipeline | `src/llm_dit/pipelines/z_image.py`, `qwen_image.py`, `ltx2.py`, `generate.py` |
 | config | `src/llm_dit/config.py`, `cli.py` |
 | encoder | `src/llm_dit/encoders/z_image_encoder.py`, `gemma3.py` |
-| models | `src/llm_dit/models/ltx2_transformer.py`, `humo_transformer.py` |
+| ltx2 models | `src/llm_dit/models/ltx2/` (transformer, vae, upsampler, connectors) |
+| ltx2 constants | `src/llm_dit/models/ltx2/constants.py` |
+| conditioning | `src/llm_dit/conditioning/` (I2V, keyframe) |
 | router | `src/llm_dit/router/token_layer_router.py` |
-| experiments | `experiments/ltx2/` |
-| web | `web/server.py`, `static/js/`, `static/css/` |
-| tests | `tests/unit/`, `tests/integration/` |
+| experiments | `experiments/ltx2/`, `experiments/base.py` |
+| tests | `tests/unit/`, `tests/integration/`, `tests/e2e/` |
 
 ## navigation
 
