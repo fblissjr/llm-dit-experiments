@@ -823,9 +823,22 @@ class LTX2ExperimentBase(ABC):
         return embeds
 
     def offload_encoder(self) -> None:
-        """Offload encoder to CPU to free GPU memory for generation."""
+        """Offload encoder to CPU to free GPU memory for generation.
+
+        Note: 8-bit quantized models cannot be moved between devices,
+        so we delete them entirely instead.
+        """
         if self.encoder is not None:
-            self.encoder.to("cpu")
+            try:
+                self.encoder.to("cpu")
+            except ValueError as e:
+                # 8-bit models can't be moved - delete instead
+                if "8-bit" in str(e) or "bitsandbytes" in str(e):
+                    logger.info("8-bit model detected, deleting encoder instead of moving to CPU")
+                    del self.encoder
+                    self.encoder = None
+                else:
+                    raise
             cleanup_memory()
             log_memory_usage("After offloading encoder")
 
