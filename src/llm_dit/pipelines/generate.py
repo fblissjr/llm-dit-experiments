@@ -582,11 +582,12 @@ def generate_video_with_offloading(
     logger.info("Stage 3: Loading VAE decoder...")
 
     # Use diffusers VAE (our ported VAE doesn't have weight loader yet)
-    from diffusers import AutoencoderKLLTXVideo
+    # LTX-2 uses AutoencoderKLLTX2Video (note the "2"), not AutoencoderKLLTXVideo
+    from diffusers import AutoencoderKLLTX2Video
 
-    vae = AutoencoderKLLTXVideo.from_pretrained(
+    vae = AutoencoderKLLTX2Video.from_pretrained(
         str(model_path / "vae"),
-        dtype=dtype,
+        torch_dtype=dtype,
     ).to("cuda")
 
     logger.info("Decoding latents to video...")
