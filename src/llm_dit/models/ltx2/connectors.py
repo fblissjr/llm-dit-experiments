@@ -663,27 +663,52 @@ def load_ltx2_connectors(
     Returns:
         Loaded LTX2TextConnectors module
     """
+    import json
     from safetensors.torch import load_file
 
     path = Path(model_path)
 
-    # Find weights file
+    # Find weights - handle both single file and sharded checkpoints
+    state_dict = {}
+
     if path.is_file():
-        weights_path = path
+        logger.info(f"Loading connectors from {path}")
+        state_dict = load_file(str(path))
     else:
-        # Try common names
-        for name in ["model.safetensors", "connectors.safetensors", "diffusion_pytorch_model.safetensors"]:
-            candidate = path / name
-            if candidate.exists():
-                weights_path = candidate
-                break
+        # Check for sharded checkpoint (index file)
+        index_file = path / "diffusion_pytorch_model.safetensors.index.json"
+        if index_file.exists():
+            logger.info(f"Loading connectors from sharded checkpoint in {path}")
+            with open(index_file) as f:
+                index = json.load(f)
+
+            # Find which shards contain connector keys
+            weight_map = index.get("weight_map", {})
+            connector_keys = [k for k in weight_map.keys()
+                            if k.startswith(("video_connector.", "audio_connector.", "text_proj_in."))]
+
+            # Get unique shard files needed
+            shard_files = set(weight_map[k] for k in connector_keys)
+            logger.info(f"Loading {len(connector_keys)} connector keys from {len(shard_files)} shards")
+
+            # Load only the needed shards
+            for shard_file in shard_files:
+                shard_path = path / shard_file
+                shard_dict = load_file(str(shard_path))
+                # Only keep connector keys from this shard
+                for key in connector_keys:
+                    if weight_map.get(key) == shard_file and key in shard_dict:
+                        state_dict[key] = shard_dict[key]
         else:
-            raise FileNotFoundError(f"No safetensors file found in {path}")
-
-    logger.info(f"Loading connectors from {weights_path}")
-
-    # Load state dict
-    state_dict = load_file(str(weights_path))
+            # Try common single-file names
+            for name in ["model.safetensors", "connectors.safetensors", "diffusion_pytorch_model.safetensors"]:
+                candidate = path / name
+                if candidate.exists():
+                    logger.info(f"Loading connectors from {candidate}")
+                    state_dict = load_file(str(candidate))
+                    break
+            else:
+                raise FileNotFoundError(f"No safetensors file found in {path}")
 
     # Create model with default config (matches LTX-2 official)
     model = LTX2TextConnectors()
