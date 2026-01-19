@@ -549,7 +549,8 @@ class Gemma3Encoder:
             )
             if self._embeddings_connector is not None:
                 self._embeddings_connector = self._embeddings_connector.to(
-                    device=torch.device(self._device_str)
+                    device=torch.device(self._device_str),
+                    dtype=self._dtype,  # Match encoder dtype (bfloat16)
                 )
 
         # Set model to mode without gradients
@@ -792,7 +793,7 @@ class Gemma3Encoder:
             # Input mask: [B, T] with 1=valid, 0=padding
             # Connector expects: [B, 1, 1, T] with 0=valid, -10000=padding
             additive_mask = (1.0 - attention_mask.float()) * -10000.0
-            additive_mask = additive_mask[:, None, None, :]  # [B, 1, 1, T]
+            additive_mask = additive_mask[:, None, None, :].to(embeddings.dtype)  # Match embedding dtype
 
             # Ensure connector is on same device
             if next(self._embeddings_connector.parameters()).device != embeddings.device:
