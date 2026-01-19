@@ -89,6 +89,9 @@ from .video_vae import (
     get_video_chunks_number,
 )
 
+# Loader
+from .loader import load_ltx2_vae_decoder
+
 __all__ = [
     # Enums
     "LogVarianceType",
@@ -137,4 +140,6 @@ __all__ = [
     "VideoDecoder",
     "decode_video",
     "get_video_chunks_number",
+    # Loader
+    "load_ltx2_vae_decoder",
 ]

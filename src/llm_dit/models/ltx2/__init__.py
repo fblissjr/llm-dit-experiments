@@ -109,6 +109,7 @@ from llm_dit.models.ltx2.vae import (
     PerChannelStatistics,
     SpatioTemporalScaleFactors,
     VideoLatentShape,
+    load_ltx2_vae_decoder,
 )
 
 __all__ = [
