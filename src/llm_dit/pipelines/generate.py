@@ -540,11 +540,12 @@ def generate_video_with_offloading(
         )
         model = model.to("cuda")
 
-    # Load connectors (these are in the text_encoder checkpoint, not transformer)
+    # Load connectors from dedicated connectors/ directory
     from llm_dit.models.ltx2.connectors import load_ltx2_connectors
 
+    connectors_path = model_path / "connectors"
     connectors = load_ltx2_connectors(
-        text_encoder_path,  # Connectors are part of text encoder weights
+        connectors_path,
         device="cuda",
         dtype=dtype,
     )
