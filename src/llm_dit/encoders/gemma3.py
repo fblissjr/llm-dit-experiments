@@ -1,7 +1,7 @@
 """
 Gemma3 Encoder implementation for LTX-2.
 
-Last Updated: 2026-01-09
+Last Updated: 2026-01-19
 
 Gemma 3-12B is used as the text encoder for LTX-2 video generation.
 Architecture based on LTX-2 reference implementation.
@@ -9,16 +9,23 @@ Architecture based on LTX-2 reference implementation.
 Key Architecture:
 - 49 decoder layers, each 3840-dimensional hidden states
 - Multi-layer feature extraction: Stack -> Normalize -> Concatenate -> Project
+- Embeddings1DConnector: 2-layer bidirectional transformer with RoPE
 - Output: 3840-dimensional embeddings (DiT projects to 4096/2048 internally)
 
-Note: The 4096 (video) and 2048 (audio) dimensions are applied by the DiT's
-internal projection layers, not by this encoder. We output the raw 3840-dim
-features from the text encoder.
+Pipeline stages:
+1. Tokenize text
+2. Gemma3 forward -> extract all 49 hidden states
+3. Stack and normalize hidden states
+4. Feature extractor linear projection (188160 -> 3840)
+5. Embeddings1DConnector (2 transformer blocks + learnable registers)
+6. Output to DiT
 """
 
 import gc
+import json
 import logging
 import math
+from pathlib import Path
 from typing import List, Literal, Optional, Union
 
 import torch
@@ -33,8 +40,17 @@ from llm_dit.encoders.protocol import (
     GenerativeEncoderProtocol,
     VisionLanguageEncoderProtocol,
 )
+from llm_dit.encoders.embeddings_connector import (
+    Embeddings1DConnector,
+    RopeType,
+    load_connector_weights,
+)
 
 logger = logging.getLogger(__name__)
+
+# Default path to LTX-2 model connectors checkpoint
+DEFAULT_CONNECTORS_PATH = "models/LTX-2/connectors/diffusion_pytorch_model.safetensors"
+DEFAULT_CONNECTORS_CONFIG = "models/LTX-2/connectors/config.json"
 
 
 class SubLayerExtractor:
@@ -379,6 +395,8 @@ class Gemma3Encoder:
         load_in_4bit: bool = False,
         load_in_8bit: bool = False,
         max_memory: Optional[dict] = None,
+        connectors_path: Optional[str] = None,
+        use_connector: bool = True,
     ):
         """
         Initialize Gemma3 encoder.
@@ -392,6 +410,10 @@ class Gemma3Encoder:
             load_in_8bit: Apply additional 8-bit quantization.
             max_memory: Memory limits per device for CPU offloading.
                        Example: {0: "18GiB", "cpu": "32GiB"} limits GPU 0 to 18GB.
+            connectors_path: Path to connectors checkpoint (safetensors).
+                            Defaults to models/LTX-2/connectors/.
+            use_connector: Whether to use the Embeddings1DConnector (default True).
+                          Set False for debugging feature extractor only.
         """
         self._model_id = model_id
         self._device_str = device
@@ -400,11 +422,14 @@ class Gemma3Encoder:
         self._load_in_4bit = load_in_4bit
         self._load_in_8bit = load_in_8bit
         self._max_memory = max_memory
+        self._connectors_path = connectors_path or DEFAULT_CONNECTORS_PATH
+        self._use_connector = use_connector
 
         # Model components (lazy loaded)
         self._model = None
         self._tokenizer = None
         self._feature_extractor = None
+        self._embeddings_connector: Optional[Embeddings1DConnector] = None
         self._is_loaded = False
         self._is_offloaded = False
 
@@ -417,6 +442,8 @@ class Gemma3Encoder:
         max_sequence_length: int = 256,
         quantization: Optional[str] = None,
         max_memory: Optional[dict] = None,
+        connectors_path: Optional[str] = None,
+        use_connector: bool = True,
         **kwargs,
     ) -> "Gemma3Encoder":
         """
@@ -429,6 +456,8 @@ class Gemma3Encoder:
             max_sequence_length: Max sequence length.
             quantization: Additional quantization ("4bit", "8bit", or None).
             max_memory: Memory limits for CPU offloading. Example: {0: "18GiB", "cpu": "32GiB"}.
+            connectors_path: Path to connectors safetensors checkpoint.
+            use_connector: Whether to use Embeddings1DConnector (default True).
             **kwargs: Additional arguments.
 
         Returns:
@@ -439,16 +468,18 @@ class Gemma3Encoder:
             "float16": torch.float16,
             "float32": torch.float32,
         }
-        dtype = dtype_map.get(dtype, torch.bfloat16)
+        dtype_torch = dtype_map.get(dtype, torch.bfloat16)
 
         encoder = cls(
             model_id=model_path,
             device=device,
-            dtype=dtype,
+            dtype=dtype_torch,
             max_sequence_length=max_sequence_length,
             load_in_4bit=(quantization == "4bit"),
             load_in_8bit=(quantization == "8bit"),
             max_memory=max_memory,
+            connectors_path=connectors_path,
+            use_connector=use_connector,
         )
 
         # Load model immediately
@@ -508,13 +539,18 @@ class Gemma3Encoder:
         if self._tokenizer.pad_token is None:
             self._tokenizer.pad_token = self._tokenizer.eos_token
 
-        # Initialize feature extractor projection
-        # Keep on CPU when using auto device_map - will be moved on first use
+        # Initialize and load feature extractor from checkpoint
         self._feature_extractor = FeatureExtractorLinear(dtype=self._dtype)
+        self._load_connector_weights()
+
         if self._device_str not in ("cpu", "auto"):
             self._feature_extractor = self._feature_extractor.to(
                 device=torch.device(self._device_str)
             )
+            if self._embeddings_connector is not None:
+                self._embeddings_connector = self._embeddings_connector.to(
+                    device=torch.device(self._device_str)
+                )
 
         # Set model to mode without gradients
         self._model.requires_grad_(False)
@@ -522,6 +558,77 @@ class Gemma3Encoder:
         self._is_loaded = True
         self._is_offloaded = False
         logger.info(f"Gemma 3 encoder loaded: {self._model.device}")
+
+    def _load_connector_weights(self) -> None:
+        """
+        Load feature extractor and embeddings connector weights from checkpoint.
+
+        The checkpoint (connectors/diffusion_pytorch_model.safetensors) contains:
+        - text_proj_in.weight: [3840, 188160] - feature extractor linear
+        - video_connector.*: embeddings connector weights
+        - audio_connector.*: audio connector weights (unused for video-only)
+        """
+        from safetensors import safe_open
+
+        connectors_path = Path(self._connectors_path)
+        if not connectors_path.exists():
+            logger.warning(
+                f"Connectors checkpoint not found at {connectors_path}. "
+                "Feature extractor will have random weights (BROKEN OUTPUT)."
+            )
+            return
+
+        logger.info(f"Loading connector weights from {connectors_path}")
+
+        # Load weights from safetensors
+        with safe_open(connectors_path, framework="pt") as f:
+            # 1. Load feature extractor weight
+            if "text_proj_in.weight" in f.keys():
+                fe_weight = f.get_tensor("text_proj_in.weight")
+                # Feature extractor: [3840, 188160] -> [3840, 188160]
+                self._feature_extractor.aggregate_embed.weight.data = fe_weight.to(
+                    dtype=self._dtype
+                )
+                logger.info(
+                    f"Loaded feature extractor weight: {fe_weight.shape}, "
+                    f"mean={fe_weight.float().mean():.4f}, std={fe_weight.float().std():.4f}"
+                )
+            else:
+                logger.error(
+                    "text_proj_in.weight not found in checkpoint! "
+                    "Feature extractor will have random weights."
+                )
+
+            # 2. Create and load embeddings connector
+            if self._use_connector:
+                # Load config for connector parameters
+                config_path = connectors_path.parent / "config.json"
+                if config_path.exists():
+                    with open(config_path) as cfg_file:
+                        config = json.load(cfg_file)
+                else:
+                    # Default config matching LTX-2
+                    config = {
+                        "video_connector_attention_head_dim": 128,
+                        "video_connector_num_attention_heads": 30,
+                        "video_connector_num_layers": 2,
+                        "video_connector_num_learnable_registers": 128,
+                        "rope_type": "split",
+                        "rope_theta": 10000.0,
+                        "rope_double_precision": True,
+                        "connector_rope_base_seq_len": 4096,
+                    }
+
+                # Create connector from config
+                self._embeddings_connector = Embeddings1DConnector.from_config(config)
+
+                # Load connector weights
+                load_connector_weights(
+                    self._embeddings_connector,
+                    connectors_path,
+                    prefix="video_connector.",
+                )
+                logger.info("Loaded embeddings connector weights")
 
     @property
     def info(self) -> EncoderInfo:
@@ -679,7 +786,26 @@ class Gemma3Encoder:
         # Project to output dimension
         embeddings = feature_extractor(normalized)
 
-        # Apply attention mask
+        # Run through embeddings connector (2-layer bidirectional transformer)
+        if self._embeddings_connector is not None:
+            # Convert attention mask to additive format for connector
+            # Input mask: [B, T] with 1=valid, 0=padding
+            # Connector expects: [B, 1, 1, T] with 0=valid, -10000=padding
+            additive_mask = (1.0 - attention_mask.float()) * -10000.0
+            additive_mask = additive_mask[:, None, None, :]  # [B, 1, 1, T]
+
+            # Ensure connector is on same device
+            if next(self._embeddings_connector.parameters()).device != embeddings.device:
+                self._embeddings_connector = self._embeddings_connector.to(embeddings.device)
+
+            # Process through connector
+            embeddings, _ = self._embeddings_connector(embeddings, additive_mask)
+            logger.debug(
+                f"Connector output: shape={embeddings.shape}, "
+                f"mean={embeddings.float().mean():.4f}, std={embeddings.float().std():.4f}"
+            )
+
+        # Apply attention mask (note: after connector, mask may have changed)
         embeddings = embeddings * attention_mask[:, :, None].to(embeddings.dtype)
 
         # Get sequence lengths for unpadding
@@ -1066,6 +1192,8 @@ class Gemma3Encoder:
             self._model.to("cpu")
         if self._feature_extractor is not None:
             self._feature_extractor.to("cpu")
+        if self._embeddings_connector is not None:
+            self._embeddings_connector.to("cpu")
         self._is_offloaded = True
 
         gc.collect()
@@ -1080,6 +1208,8 @@ class Gemma3Encoder:
             self._model.to(device)
         if self._feature_extractor is not None:
             self._feature_extractor.to(device)
+        if self._embeddings_connector is not None:
+            self._embeddings_connector.to(device)
         self._is_offloaded = device.type == "cpu"
         return self
 
