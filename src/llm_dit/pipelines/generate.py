@@ -356,15 +356,20 @@ def generate_video(
             uncond_embeds = torch.zeros_like(prompt_embeds)
             uncond_modality = create_video_modality(latents, timestep, positions, uncond_embeds)
             velocity_uncond, _ = model(video=uncond_modality)
+            del uncond_modality, uncond_embeds  # Free memory before conditional pass
+            torch.cuda.synchronize()
+            torch.cuda.empty_cache()
 
             # Conditional pass
             cond_modality = create_video_modality(latents, timestep, positions, prompt_embeds)
             velocity_cond, _ = model(video=cond_modality)
+            del cond_modality  # Free modality tensor
 
             # CFG blend
             velocity = velocity_cond + (config.guidance_scale - 1.0) * (
                 velocity_cond - velocity_uncond
             )
+            del velocity_uncond, velocity_cond  # Free after blend
         else:
             modality = create_video_modality(latents, timestep, positions, prompt_embeds)
             velocity, _ = model(video=modality)
@@ -379,6 +384,11 @@ def generate_video(
             latents = post_process_latent(denoised, denoise_mask, clean_latent)
         else:
             latents = denoised
+
+        # Clear memory between steps to prevent fragmentation
+        del velocity
+        if i % 2 == 0:  # Every other step to balance speed vs memory
+            torch.cuda.empty_cache()
 
         # Progress callback
         if callback is not None:

@@ -36,24 +36,23 @@ if str(_experiments_path) not in sys.path:
 
 # Re-export from experiments/ltx2/prompts.py
 from ltx2.prompts import (
+    CATEGORY_PROMPTS,
+    LEGACY_SHORT_PROMPTS,
     # Prompt dictionaries
     OFFICIAL_PROMPTS,
-    CATEGORY_PROMPTS,
-    STRUCTURED_PROMPTS,
-    LEGACY_SHORT_PROMPTS,
+    QUICK_CATEGORY,
     # Quick subsets
     QUICK_OFFICIAL,
-    QUICK_CATEGORY,
     QUICK_STRUCTURED,
+    STRUCTURED_PROMPTS,
+    get_all_prompts,
+    get_category_prompts,
     # Helper functions
     get_official_prompts,
-    get_category_prompts,
-    get_all_prompts,
     get_structured_prompts,
-    word_count,
     validate_prompts,
+    word_count,
 )
-
 
 # =============================================================================
 # Test-Specific Prompts
@@ -68,12 +67,14 @@ REFERENCE_PROMPTS = {
     "cat_walking": "A cat walking",
     "cat_playing": "A cat playing with a ball",
     "sunset": "A beautiful sunset over the ocean",
+    "expanded_cat_backrooms": "Style: cinematic-realistic. In a vast, empty room characterized by repetitive yellow wallpaper and a damp-looking beige carpet, a ginger tabby cat stands in the center of the frame. The ceiling consists of industrial grid tiles with recessed fluorescent panels that emit a steady, low-frequency electrical hum. The cat crouches low to the floor, its muscles tensing as it prepares for movement. It leaps upward, tucking its body into a tight rotation and performing a complete backflip in mid-air. The cat's fur ripples slightly during the turn, and its tail swishes to maintain balance. As it descends, the cat extends its paws and lands silently on the soft carpet. The constant buzzing of the overhead lights remains the only sound in the sterile environment as the cat stands still, looking down the endless, repeating hallway.",
 }
 
 
 # =============================================================================
 # Test Helper Functions
 # =============================================================================
+
 
 def get_smoke_test_prompt() -> str:
     """Get single prompt for fastest possible validation."""
