@@ -632,9 +632,9 @@ class Gemma3Encoder:
             )
 
         # Stack hidden states: tuple of [B, T, D] -> [B, T, D, L]
-        # Note: outputs.hidden_states includes embedding layer + decoder layers
-        # Skip embedding layer (index 0), use decoder layers only
-        hidden_states = outputs.hidden_states[1:]  # Skip embedding layer
+        # Note: outputs.hidden_states includes embedding layer (index 0) + decoder layers
+        # LTX-2 uses ALL hidden states including embedding layer: 1 + 48 = 49 layers
+        hidden_states = outputs.hidden_states  # Include embedding layer
 
         # Limit to expected number of layers (model may have different count)
         num_layers = min(len(hidden_states), GEMMA3_NUM_LAYERS)
@@ -763,7 +763,8 @@ class Gemma3Encoder:
                 )
 
             # Stack hidden states: [B, T, D, L]
-            hidden_states = outputs.hidden_states[1:]  # Skip embedding layer
+            # LTX-2 uses ALL hidden states including embedding layer: 1 + 48 = 49 layers
+            hidden_states = outputs.hidden_states  # Include embedding layer
             num_layers = min(len(hidden_states), GEMMA3_NUM_LAYERS)
             hidden_states = hidden_states[:num_layers]
             stacked = torch.stack(hidden_states, dim=-1)  # [B, T, 3840, 49]
