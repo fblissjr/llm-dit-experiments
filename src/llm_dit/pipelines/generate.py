@@ -581,26 +581,21 @@ def generate_video_with_offloading(
 
     logger.info("Stage 3: Loading VAE decoder...")
 
-    # Use diffusers VAE (our ported VAE doesn't have weight loader yet)
-    # LTX-2 uses AutoencoderKLLTX2Video (note the "2"), not AutoencoderKLLTXVideo
-    from diffusers import AutoencoderKLLTX2Video
+    # Pure PyTorch VAE decoder (no diffusers dependency)
+    from llm_dit.models.ltx2.vae import load_ltx2_vae_decoder
 
-    vae = AutoencoderKLLTX2Video.from_pretrained(
-        str(model_path / "vae"),
-        torch_dtype=dtype,
+    vae = load_ltx2_vae_decoder(
+        model_path / "vae",
+        dtype=dtype,
+        device="cpu",
     ).to("cuda")
 
     logger.info("Decoding latents to video...")
 
-    # Denormalize latents
-    if hasattr(vae, "latents_mean") and vae.latents_mean is not None:
-        latents_mean = vae.latents_mean.view(1, -1, 1, 1, 1).to("cuda", dtype)
-        latents_std = vae.latents_std.view(1, -1, 1, 1, 1).to("cuda", dtype)
-        scaling_factor = getattr(vae.config, "scaling_factor", 1.0)
-        latents = latents * latents_std / scaling_factor + latents_mean
-
+    # Decode latents to video
+    # Note: our VideoDecoder handles denormalization internally via per_channel_statistics
     with torch.no_grad():
-        video = vae.decode(latents).sample
+        video = vae(latents)
 
     # Convert to [F, H, W, C] uint8
     video = video.squeeze(0).permute(1, 2, 3, 0)

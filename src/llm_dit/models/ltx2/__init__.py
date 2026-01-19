@@ -160,6 +160,7 @@ __all__ = [
     "PerChannelStatistics",
     "SpatioTemporalScaleFactors",
     "VideoLatentShape",
+    "load_ltx2_vae_decoder",
     # Constants
     "DEFAULT_HEIGHT",
     "DEFAULT_WIDTH",
