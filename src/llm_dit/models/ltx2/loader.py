@@ -476,12 +476,17 @@ def load_ltx2_transformer_fp8_native(
             f"[{savings['savings_percent']:.0f}% reduction]"
         )
 
-    # Move to GPU then apply FP8
+    # Apply FP8 on CPU first (reduces memory before GPU transfer)
     if verbose:
-        logger.info(f"Moving to {device} and applying native FP8...")
+        logger.info("Applying native FP8 on CPU...")
+
+    model, stats = apply_fp8_native(model, verbose=verbose)
+
+    # Now move quantized model to GPU (much smaller: ~13GB instead of ~26GB)
+    if verbose:
+        logger.info(f"Moving FP8 model to {device}...")
 
     model = model.to(device)
-    model, stats = apply_fp8_native(model, verbose=verbose)
 
     if verbose:
         logger.info(
