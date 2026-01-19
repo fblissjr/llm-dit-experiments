@@ -30,9 +30,9 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root / "src"))
 
+import numpy as np
 import torch
 import torch.nn.functional as F
-import numpy as np
 
 logging.basicConfig(
     level=logging.INFO,
@@ -46,9 +46,7 @@ QWEN3_4B_PATH = os.environ.get("QWEN3_PATH")
 QWEN3_EMBEDDING_PATH = os.environ.get("QWEN3_EMBEDDING_PATH")
 
 if not all([QWEN3_4B_PATH, QWEN3_EMBEDDING_PATH]):
-    raise ValueError(
-        "Set environment variables: QWEN3_PATH, QWEN3_EMBEDDING_PATH"
-    )
+    raise ValueError("Set environment variables: QWEN3_PATH, QWEN3_EMBEDDING_PATH")
 
 # Test prompts - diverse set to capture various semantic patterns
 DEFAULT_PROMPTS = [
@@ -75,7 +73,7 @@ def compute_per_dimension_stats(embeddings: torch.Tensor) -> dict:
 
     # Per-dimension statistics across all tokens
     dim_means = flat.mean(dim=0)  # (2560,)
-    dim_stds = flat.std(dim=0)    # (2560,)
+    dim_stds = flat.std(dim=0)  # (2560,)
     dim_mins = flat.min(dim=0).values
     dim_maxs = flat.max(dim=0).values
     dim_ranges = dim_maxs - dim_mins
@@ -90,8 +88,8 @@ def compute_per_dimension_stats(embeddings: torch.Tensor) -> dict:
         col = flat_np[:, i]
         if dim_stds[i].item() > 1e-6:  # Avoid division by zero
             centered = col - dim_means[i].item()
-            dim_kurtosis[i] = np.mean(centered**4) / (dim_stds[i].item()**4) - 3
-            dim_skewness[i] = np.mean(centered**3) / (dim_stds[i].item()**3)
+            dim_kurtosis[i] = np.mean(centered**4) / (dim_stds[i].item() ** 4) - 3
+            dim_skewness[i] = np.mean(centered**3) / (dim_stds[i].item() ** 3)
         else:
             dim_kurtosis[i] = 0.0
             dim_skewness[i] = 0.0
@@ -178,14 +176,8 @@ def compare_dimension_distributions(
             "max": std_ratios.max().item(),
         },
         "outlier_dimensions": {
-            "high_variance": [
-                {"dim": int(d), "ratio": float(std_ratios[d])}
-                for d in outlier_high
-            ],
-            "low_variance": [
-                {"dim": int(d), "ratio": float(std_ratios[d])}
-                for d in outlier_low
-            ],
+            "high_variance": [{"dim": int(d), "ratio": float(std_ratios[d])} for d in outlier_high],
+            "low_variance": [{"dim": int(d), "ratio": float(std_ratios[d])} for d in outlier_low],
         },
         "top_different_dimensions": {
             "highest_std_ratio": [
@@ -228,14 +220,27 @@ def compare_dimension_distributions(
             ],
         },
         "dead_dimensions": {
-            "emb_only": list(set(emb_stats["dead_dimensions"]) - set(qwen3_stats["dead_dimensions"])),
-            "qwen3_only": list(set(qwen3_stats["dead_dimensions"]) - set(emb_stats["dead_dimensions"])),
+            "emb_only": list(
+                set(emb_stats["dead_dimensions"]) - set(qwen3_stats["dead_dimensions"])
+            ),
+            "qwen3_only": list(
+                set(qwen3_stats["dead_dimensions"]) - set(emb_stats["dead_dimensions"])
+            ),
             "common": list(set(emb_stats["dead_dimensions"]) & set(qwen3_stats["dead_dimensions"])),
         },
         "hyperactive_dimensions": {
-            "emb_only": list(set(emb_stats["hyperactive_dimensions"]) - set(qwen3_stats["hyperactive_dimensions"])),
-            "qwen3_only": list(set(qwen3_stats["hyperactive_dimensions"]) - set(emb_stats["hyperactive_dimensions"])),
-            "common": list(set(emb_stats["hyperactive_dimensions"]) & set(qwen3_stats["hyperactive_dimensions"])),
+            "emb_only": list(
+                set(emb_stats["hyperactive_dimensions"])
+                - set(qwen3_stats["hyperactive_dimensions"])
+            ),
+            "qwen3_only": list(
+                set(qwen3_stats["hyperactive_dimensions"])
+                - set(emb_stats["hyperactive_dimensions"])
+            ),
+            "common": list(
+                set(emb_stats["hyperactive_dimensions"])
+                & set(qwen3_stats["hyperactive_dimensions"])
+            ),
         },
     }
 
@@ -302,7 +307,9 @@ def main():
         description="Analyze per-dimension differences between Qwen3-Embedding-4B and Qwen3-4B"
     )
     parser.add_argument("--prompts", nargs="+", default=DEFAULT_PROMPTS, help="Prompts to analyze")
-    parser.add_argument("--output", type=Path, default=Path("experiments/results/embedding_perdim_analysis.json"))
+    parser.add_argument(
+        "--output", type=Path, default=Path("experiments/results/embedding_perdim_analysis.json")
+    )
     parser.add_argument("--quick", action="store_true", help="Quick test with one prompt")
     parser.add_argument("--hidden-layer", type=int, default=-2, help="Hidden layer to extract")
     args = parser.parse_args()
@@ -314,8 +321,8 @@ def main():
 
     logger.info("Loading models...")
 
-    from llm_dit.embedding import EmbeddingExtractor
     from llm_dit.backends.transformers import TransformersBackend
+    from llm_dit.embedding import EmbeddingExtractor
 
     # Results storage
     all_results = {
@@ -338,7 +345,7 @@ def main():
     qwen3_backend = TransformersBackend.from_pretrained(
         QWEN3_4B_PATH,
         device_map="cuda",
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
         model_subfolder="",
         tokenizer_subfolder="",
     )
@@ -360,7 +367,7 @@ def main():
     embedding_extractor = EmbeddingExtractor.from_pretrained(
         QWEN3_EMBEDDING_PATH,
         device="cuda",
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
     )
 
     logger.info("Encoding prompts with Qwen3-Embedding-4B...")
@@ -382,9 +389,9 @@ def main():
     # -------------------------------------------------------------------------
     # Phase 2: Per-prompt analysis
     # -------------------------------------------------------------------------
-    logger.info("\n" + "="*60)
+    logger.info("\n" + "=" * 60)
     logger.info("Per-Prompt Analysis")
-    logger.info("="*60)
+    logger.info("=" * 60)
 
     for prompt in args.prompts:
         logger.info(f"\nAnalyzing: {prompt}")
@@ -439,26 +446,32 @@ def main():
         logger.info(f"    Global cosine similarity: {global_cosine:.4f}")
         logger.info(f"    Mean correlation: {comparison['mean_correlation']:.4f}")
         logger.info(f"    Std correlation: {comparison['std_correlation']:.4f}")
-        logger.info(f"    Std ratio range: {comparison['std_ratios']['min']:.2f} - {comparison['std_ratios']['max']:.2f}")
-        logger.info(f"    High variance outliers: {len(comparison['outlier_dimensions']['high_variance'])}")
-        logger.info(f"    Low variance outliers: {len(comparison['outlier_dimensions']['low_variance'])}")
+        logger.info(
+            f"    Std ratio range: {comparison['std_ratios']['min']:.2f} - {comparison['std_ratios']['max']:.2f}"
+        )
+        logger.info(
+            f"    High variance outliers: {len(comparison['outlier_dimensions']['high_variance'])}"
+        )
+        logger.info(
+            f"    Low variance outliers: {len(comparison['outlier_dimensions']['low_variance'])}"
+        )
 
-        if comparison['outlier_dimensions']['high_variance']:
+        if comparison["outlier_dimensions"]["high_variance"]:
             logger.info("    Top high-variance outliers:")
-            for item in comparison['outlier_dimensions']['high_variance'][:5]:
+            for item in comparison["outlier_dimensions"]["high_variance"][:5]:
                 logger.info(f"      Dim {item['dim']}: {item['ratio']:.2f}x")
 
-        if comparison['outlier_dimensions']['low_variance']:
+        if comparison["outlier_dimensions"]["low_variance"]:
             logger.info("    Top low-variance outliers:")
-            for item in comparison['outlier_dimensions']['low_variance'][:5]:
+            for item in comparison["outlier_dimensions"]["low_variance"][:5]:
                 logger.info(f"      Dim {item['dim']}: {item['ratio']:.2f}x")
 
     # -------------------------------------------------------------------------
     # Phase 3: Aggregated analysis across all prompts
     # -------------------------------------------------------------------------
-    logger.info("\n" + "="*60)
+    logger.info("\n" + "=" * 60)
     logger.info("Aggregated Analysis (All Prompts)")
-    logger.info("="*60)
+    logger.info("=" * 60)
 
     # Concatenate all embeddings
     all_qwen3 = torch.cat([prompt_embeddings[p]["qwen3"] for p in args.prompts])
@@ -504,17 +517,27 @@ def main():
     logger.info(f"\nAggregated Results:")
     logger.info(f"  Mean correlation: {agg_comparison['mean_correlation']:.4f}")
     logger.info(f"  Std correlation: {agg_comparison['std_correlation']:.4f}")
-    logger.info(f"  Std ratio range: {agg_comparison['std_ratios']['min']:.2f} - {agg_comparison['std_ratios']['max']:.2f}")
-    logger.info(f"  High variance outliers: {len(agg_comparison['outlier_dimensions']['high_variance'])}")
-    logger.info(f"  Low variance outliers: {len(agg_comparison['outlier_dimensions']['low_variance'])}")
+    logger.info(
+        f"  Std ratio range: {agg_comparison['std_ratios']['min']:.2f} - {agg_comparison['std_ratios']['max']:.2f}"
+    )
+    logger.info(
+        f"  High variance outliers: {len(agg_comparison['outlier_dimensions']['high_variance'])}"
+    )
+    logger.info(
+        f"  Low variance outliers: {len(agg_comparison['outlier_dimensions']['low_variance'])}"
+    )
 
     logger.info("\n  Top 10 dimensions by std ratio (high):")
-    for item in agg_comparison['top_different_dimensions']['highest_std_ratio']:
-        logger.info(f"    Dim {item['dim']}: {item['ratio']:.3f}x (emb={item['emb_std']:.2f}, qwen3={item['qwen3_std']:.2f})")
+    for item in agg_comparison["top_different_dimensions"]["highest_std_ratio"]:
+        logger.info(
+            f"    Dim {item['dim']}: {item['ratio']:.3f}x (emb={item['emb_std']:.2f}, qwen3={item['qwen3_std']:.2f})"
+        )
 
     logger.info("\n  Top 10 dimensions by std ratio (low):")
-    for item in agg_comparison['top_different_dimensions']['lowest_std_ratio']:
-        logger.info(f"    Dim {item['dim']}: {item['ratio']:.3f}x (emb={item['emb_std']:.2f}, qwen3={item['qwen3_std']:.2f})")
+    for item in agg_comparison["top_different_dimensions"]["lowest_std_ratio"]:
+        logger.info(
+            f"    Dim {item['dim']}: {item['ratio']:.3f}x (emb={item['emb_std']:.2f}, qwen3={item['qwen3_std']:.2f})"
+        )
 
     logger.info("\n  Dead dimensions:")
     logger.info(f"    Embedding-only: {len(agg_comparison['dead_dimensions']['emb_only'])}")
@@ -527,14 +550,14 @@ def main():
     logger.info(f"    Common: {len(agg_comparison['hyperactive_dimensions']['common'])}")
 
     logger.info("\n  Top 10 attention-weighted differences:")
-    for item in agg_attention['top_weighted_diff_dimensions'][:10]:
+    for item in agg_attention["top_weighted_diff_dimensions"][:10]:
         logger.info(f"    Dim {item['dim']}: diff={item['diff']:.3f}")
 
     # -------------------------------------------------------------------------
     # Phase 4: Save results
     # -------------------------------------------------------------------------
     logger.info(f"\nSaving results to {args.output}...")
-    with open(args.output, 'w') as f:
+    with open(args.output, "w") as f:
         json.dump(all_results, f, indent=2)
 
     logger.info("Done!")

@@ -17,9 +17,9 @@ from PIL import Image
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parents[3]))
 
-from src.llm_dit.vl import VLEmbeddingExtractor, blend_embeddings
-from src.llm_dit import ZImagePipeline
 from experiments.qwen3_vl.scripts.grid_utils import make_grid
+from src.llm_dit import ZImagePipeline
+from src.llm_dit.vl import VLEmbeddingExtractor, blend_embeddings
 
 
 def parse_args():
@@ -107,7 +107,7 @@ def main():
     vl_extractor = VLEmbeddingExtractor.from_pretrained(
         args.vl_model_path,
         device="cuda",
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
     )
 
     vl_cache = {}  # (set_name, prompt_idx) -> embeddings
@@ -115,7 +115,7 @@ def main():
     for set_name, prompts in all_prompt_sets:
         print(f"\nExtracting VL for {set_name} prompts...")
         for i, prompt in enumerate(prompts):
-            print(f"  {i+1}: {prompt[:50]}...")
+            print(f"  {i + 1}: {prompt[:50]}...")
             vl_result = vl_extractor.extract(
                 reference,
                 text=prompt,
@@ -136,7 +136,7 @@ def main():
     print("\n=== PHASE 2: Loading Z-Image Pipeline ===")
     pipe = ZImagePipeline.from_pretrained(
         args.model_path,
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
         device="cuda",
     )
 
@@ -146,7 +146,7 @@ def main():
         print(f"\n--- {set_name.upper()} Prompts ---")
 
         for i, prompt in enumerate(prompts):
-            print(f"\nPrompt {i+1}: {prompt}")
+            print(f"\nPrompt {i + 1}: {prompt}")
             vl_emb = vl_cache[(set_name, i)].to("cuda")
 
             for alpha in ALPHAS:
@@ -165,10 +165,10 @@ def main():
                     num_inference_steps=9,
                     generator=generator,
                 )
-                image = result.images[0] if hasattr(result, 'images') else result
+                image = result.images[0] if hasattr(result, "images") else result
 
                 # Save
-                filename = f"{set_name}_{i+1}_a{int(alpha*10)}.png"
+                filename = f"{set_name}_{i + 1}_a{int(alpha * 10)}.png"
                 image.save(output_dir / filename)
 
     # Generate baselines (pure text, no VL)
@@ -187,7 +187,7 @@ def main():
             num_inference_steps=9,
             generator=generator,
         )
-        image = result.images[0] if hasattr(result, 'images') else result
+        image = result.images[0] if hasattr(result, "images") else result
         image.save(output_dir / f"baseline_{name}.png")
 
     # Create comparison grids
@@ -199,12 +199,13 @@ def main():
         labels = []
         for i in range(len(prompts)):
             for alpha in ALPHAS:
-                filename = f"{set_name}_{i+1}_a{int(alpha*10)}.png"
+                filename = f"{set_name}_{i + 1}_a{int(alpha * 10)}.png"
                 images.append(Image.open(output_dir / filename))
-                labels.append(f"P{i+1} a={alpha}")
+                labels.append(f"P{i + 1} a={alpha}")
 
         make_grid(
-            images, labels,
+            images,
+            labels,
             cols=len(ALPHAS),
             output_path=output_dir / f"grid_{set_name}.png",
             cell_size=256,
@@ -226,7 +227,8 @@ def main():
         comparison_labels.append(f"{set_name.title()} a=0.5")
 
     make_grid(
-        comparison_images, comparison_labels,
+        comparison_images,
+        comparison_labels,
         cols=4,
         output_path=output_dir / "grid_comparison.png",
         cell_size=256,
@@ -238,11 +240,12 @@ def main():
     prog_labels = []
     for set_name, _ in all_prompt_sets:
         for alpha in ALPHAS:
-            prog_images.append(Image.open(output_dir / f"{set_name}_1_a{int(alpha*10)}.png"))
+            prog_images.append(Image.open(output_dir / f"{set_name}_1_a{int(alpha * 10)}.png"))
             prog_labels.append(f"{set_name} a={alpha}")
 
     make_grid(
-        prog_images, prog_labels,
+        prog_images,
+        prog_labels,
         cols=len(ALPHAS),
         output_path=output_dir / "grid_alpha_progression.png",
         cell_size=256,
@@ -252,13 +255,13 @@ def main():
     with open(output_dir / "prompts.txt", "w") as f:
         f.write("=== Edit-Style Prompts ===\n")
         for i, p in enumerate(EDIT_PROMPTS):
-            f.write(f"E{i+1}: {p}\n")
+            f.write(f"E{i + 1}: {p}\n")
         f.write("\n=== Descriptive Prompts ===\n")
         for i, p in enumerate(DESCRIPTIVE_PROMPTS):
-            f.write(f"D{i+1}: {p}\n")
+            f.write(f"D{i + 1}: {p}\n")
         f.write("\n=== Hybrid Prompts ===\n")
         for i, p in enumerate(HYBRID_PROMPTS):
-            f.write(f"H{i+1}: {p}\n")
+            f.write(f"H{i + 1}: {p}\n")
 
     print(f"\nResults saved to {output_dir}")
     print("Grids created:")

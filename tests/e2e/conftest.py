@@ -238,11 +238,12 @@ def pytest_configure(config):
 
 
 def pytest_sessionfinish(session, exitstatus):
-    """Save session summary at end."""
+    """Save session summary at end and print output locations."""
     log_dir = _get_session_log_dir()
+    timestamp = _get_session_timestamp()
 
     summary = {
-        "timestamp": _get_session_timestamp(),
+        "timestamp": timestamp,
         "exit_status": exitstatus,
         "total_tests": session.testscollected,
         "passed": session.testscollected - session.testsfailed - getattr(session, "testsskipped", 0),
@@ -253,6 +254,32 @@ def pytest_sessionfinish(session, exitstatus):
         json.dump(summary, f, indent=2)
 
     logger.info(f"Session complete: {summary['passed']} passed, {summary['failed']} failed")
+
+    # Print clear output summary to console
+    print("\n" + "=" * 60)
+    print("OUTPUT SUMMARY")
+    print("=" * 60)
+    print(f"Session logs:  {log_dir}/")
+
+    # Find test output directories for this session
+    backend_name = _backend_module.get_backend_name() if _backends_imported else "unknown"
+    baseline_dir = Path(f"outputs/tests/baseline/{backend_name}/{timestamp}")
+
+    if baseline_dir.exists():
+        print(f"Test outputs:  {baseline_dir}/")
+        # List test directories and their contents
+        for test_dir in sorted(baseline_dir.iterdir()):
+            if test_dir.is_dir():
+                files = list(test_dir.iterdir())
+                file_list = ", ".join(f.name for f in files[:5])
+                if len(files) > 5:
+                    file_list += f", ... (+{len(files)-5} more)"
+                print(f"  └── {test_dir.name}/")
+                print(f"      {file_list}")
+    else:
+        print(f"Test outputs:  (none created)")
+
+    print("=" * 60)
 
 
 # =============================================================================

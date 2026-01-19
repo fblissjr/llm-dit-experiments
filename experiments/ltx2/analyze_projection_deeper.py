@@ -42,7 +42,7 @@ def analyze_projection_structure(
 
     # Load pipeline
     print("\nLoading model...")
-    pipe = LTX2Pipeline.from_pretrained(model_path, torch_dtype=torch.float32)
+    pipe = LTX2Pipeline.from_pretrained(model_path, dtype=torch.float32)
 
     # Get projection W
     W = pipe.connectors.text_proj_in.weight.data
@@ -106,10 +106,14 @@ def analyze_projection_structure(
     print(f"\n{'Layer':<8} {'Frob Norm':<12} {'Spectral':<12} {'Std':<12} {'Mean':<12}")
     print("-" * 56)
     for s in layer_stats[:5]:
-        print(f"{s['layer']:<8} {s['frobenius']:<12.4f} {s['spectral']:<12.4f} {s['std']:<12.6f} {s['mean']:<12.6f}")
+        print(
+            f"{s['layer']:<8} {s['frobenius']:<12.4f} {s['spectral']:<12.4f} {s['std']:<12.6f} {s['mean']:<12.6f}"
+        )
     print("...")
     for s in layer_stats[-5:]:
-        print(f"{s['layer']:<8} {s['frobenius']:<12.4f} {s['spectral']:<12.4f} {s['std']:<12.6f} {s['mean']:<12.6f}")
+        print(
+            f"{s['layer']:<8} {s['frobenius']:<12.4f} {s['spectral']:<12.4f} {s['std']:<12.6f} {s['mean']:<12.6f}"
+        )
 
     # Check variance in spectral norms (more informative than Frobenius)
     spectral_norms = [s["spectral"] for s in layer_stats]
@@ -135,7 +139,7 @@ def analyze_projection_structure(
         # SVD
         U, S, Vh = torch.linalg.svd(block)
         # Effective rank: sum(S)^2 / sum(S^2) (how many singular values contribute)
-        eff_rank = (S.sum() ** 2 / (S ** 2).sum()).item()
+        eff_rank = (S.sum() ** 2 / (S**2).sum()).item()
         effective_ranks.append(eff_rank)
 
     print(f"Effective rank range: {min(effective_ranks):.1f} - {max(effective_ranks):.1f}")
@@ -151,7 +155,11 @@ def analyze_projection_structure(
     print("=" * 60)
 
     # Flatten each layer's block and compute cosine similarity
-    flattened = W_reshaped.reshape(hidden_dim, num_layers, hidden_dim).permute(1, 0, 2).reshape(num_layers, -1)
+    flattened = (
+        W_reshaped.reshape(hidden_dim, num_layers, hidden_dim)
+        .permute(1, 0, 2)
+        .reshape(num_layers, -1)
+    )
     # Normalize
     flattened_norm = flattened / (torch.norm(flattened, dim=1, keepdim=True) + 1e-8)
     # Cosine similarity matrix
@@ -298,7 +306,12 @@ def analyze_projection_structure(
     ax2.set_xlabel("Layer")
     ax2.set_ylabel("Effective Rank")
     ax2.set_title("Effective Rank per Layer Block")
-    ax2.axhline(y=np.mean(effective_ranks), color="r", linestyle="--", label=f"Mean: {np.mean(effective_ranks):.1f}")
+    ax2.axhline(
+        y=np.mean(effective_ranks),
+        color="r",
+        linestyle="--",
+        label=f"Mean: {np.mean(effective_ranks):.1f}",
+    )
     ax2.legend()
 
     # Plot 3: Cross-layer similarity heatmap
@@ -316,7 +329,9 @@ def analyze_projection_structure(
     ax4.set_xlabel("Layer")
     ax4.set_ylabel("Contribution (%)")
     ax4.set_title("Per-Layer Contribution (with actual activations)")
-    ax4.axhline(y=100/num_layers, color="r", linestyle="--", label=f"Uniform: {100/num_layers:.2f}%")
+    ax4.axhline(
+        y=100 / num_layers, color="r", linestyle="--", label=f"Uniform: {100 / num_layers:.2f}%"
+    )
     ax4.legend()
 
     plt.tight_layout()

@@ -73,6 +73,7 @@ def extract_embeddings_direct(model_path: str, prompts: list):
     Uses PYTORCH_CUDA_ALLOC_CONF for better memory handling.
     """
     import os
+
     os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
     from diffusers import LTX2Pipeline
@@ -80,7 +81,7 @@ def extract_embeddings_direct(model_path: str, prompts: list):
     embeddings = {}
 
     for i, prompt in enumerate(prompts):
-        print(f"\nProcessing prompt {i+1}/{len(prompts)}: {prompt[:40]}...")
+        print(f"\nProcessing prompt {i + 1}/{len(prompts)}: {prompt[:40]}...")
 
         # Clear memory before loading
         gc.collect()
@@ -95,7 +96,7 @@ def extract_embeddings_direct(model_path: str, prompts: list):
         print("  Loading pipeline...")
         pipe = LTX2Pipeline.from_pretrained(
             model_path,
-            torch_dtype=torch.bfloat16,
+            dtype=torch.bfloat16,
         )
 
         # Try different offload strategies
@@ -127,7 +128,7 @@ def extract_embeddings_direct(model_path: str, prompts: list):
             # Second try: sequential offload
             pipe = LTX2Pipeline.from_pretrained(
                 model_path,
-                torch_dtype=torch.bfloat16,
+                dtype=torch.bfloat16,
             )
             pipe.enable_sequential_cpu_offload()
 
@@ -180,7 +181,7 @@ def main():
     # the steering direction, not generation quality
     test_prompts = [
         LEGACY_SHORT_PROMPTS["animal_short"],  # Vague baseline
-        CATEGORY_PROMPTS["animal"],             # Detailed version
+        CATEGORY_PROMPTS["animal"],  # Detailed version
     ]
 
     print("\nAttempting embedding extraction...")
@@ -199,12 +200,15 @@ def main():
             print(f"\nDirection magnitude: {magnitude:.4f}")
 
             # Save
-            torch.save({
-                "direction": direction,
-                "magnitude": magnitude,
-                "vague_embed": vague,
-                "detailed_embed": detailed,
-            }, OUTPUT_DIR / "steering_direction.pt")
+            torch.save(
+                {
+                    "direction": direction,
+                    "magnitude": magnitude,
+                    "vague_embed": vague,
+                    "detailed_embed": detailed,
+                },
+                OUTPUT_DIR / "steering_direction.pt",
+            )
             print(f"Saved to {OUTPUT_DIR / 'steering_direction.pt'}")
     else:
         print("\nFailed to extract any embeddings. GPU memory insufficient.")

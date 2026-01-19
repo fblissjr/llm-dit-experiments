@@ -93,7 +93,9 @@ def main():
         ],
         help="Prompts to test",
     )
-    parser.add_argument("--seeds", type=int, nargs="+", default=[42, 123, 456], help="Seeds to test")
+    parser.add_argument(
+        "--seeds", type=int, nargs="+", default=[42, 123, 456], help="Seeds to test"
+    )
     parser.add_argument("--width", type=int, default=1024, help="Image width")
     parser.add_argument("--height", type=int, default=1024, help="Image height")
     parser.add_argument(
@@ -124,7 +126,9 @@ def main():
         sys.exit(1)
 
     print(f"Model path: {model_path}")
-    print(f"Testing {len(args.prompts)} prompts x {len(args.seeds)} seeds = {len(args.prompts) * len(args.seeds)} comparisons")
+    print(
+        f"Testing {len(args.prompts)} prompts x {len(args.seeds)} seeds = {len(args.prompts) * len(args.seeds)} comparisons"
+    )
     print()
 
     results = []
@@ -135,7 +139,7 @@ def main():
         # Build pipeline kwargs
         pipeline_kwargs = {
             "model_path": model_path,
-            "torch_dtype": torch.bfloat16,
+            "dtype": torch.bfloat16,
             "quantization": quant_mode,
         }
 
@@ -152,7 +156,9 @@ def main():
 
         for prompt_idx, prompt in enumerate(args.prompts):
             for seed in args.seeds:
-                print(f"  [{quant_mode}] Prompt {prompt_idx + 1}/{len(args.prompts)}, seed {seed}...")
+                print(
+                    f"  [{quant_mode}] Prompt {prompt_idx + 1}/{len(args.prompts)}, seed {seed}..."
+                )
 
                 generator = torch.Generator(device="cpu").manual_seed(seed)
 
@@ -171,13 +177,15 @@ def main():
                 filename = f"{quant_mode}_{safe_prompt}_seed{seed}.png"
                 image.save(output_dir / filename)
 
-                results.append({
-                    "quantization": quant_mode,
-                    "prompt": prompt,
-                    "seed": seed,
-                    "time": elapsed,
-                    "filename": filename,
-                })
+                results.append(
+                    {
+                        "quantization": quant_mode,
+                        "prompt": prompt,
+                        "seed": seed,
+                        "time": elapsed,
+                        "filename": filename,
+                    }
+                )
 
         # Free memory before loading next pipeline
         del pipeline
@@ -193,7 +201,11 @@ def main():
     for none_r in none_results:
         # Find matching int8 result
         int8_r = next(
-            (r for r in int8_results if r["prompt"] == none_r["prompt"] and r["seed"] == none_r["seed"]),
+            (
+                r
+                for r in int8_results
+                if r["prompt"] == none_r["prompt"] and r["seed"] == none_r["seed"]
+            ),
             None,
         )
         if not int8_r:
@@ -206,18 +218,22 @@ def main():
         psnr = compute_psnr(img_none, img_int8)
         mae = compute_mae(img_none, img_int8)
 
-        metrics.append({
-            "prompt": none_r["prompt"],
-            "seed": none_r["seed"],
-            "ssim": ssim,
-            "psnr": psnr,
-            "mae": mae,
-            "time_none": none_r["time"],
-            "time_int8": int8_r["time"],
-            "time_ratio": int8_r["time"] / none_r["time"],
-        })
+        metrics.append(
+            {
+                "prompt": none_r["prompt"],
+                "seed": none_r["seed"],
+                "ssim": ssim,
+                "psnr": psnr,
+                "mae": mae,
+                "time_none": none_r["time"],
+                "time_int8": int8_r["time"],
+                "time_ratio": int8_r["time"] / none_r["time"],
+            }
+        )
 
-        print(f"  {none_r['prompt'][:40]}... seed={none_r['seed']}: SSIM={ssim:.4f}, PSNR={psnr:.1f}dB, MAE={mae:.2f}")
+        print(
+            f"  {none_r['prompt'][:40]}... seed={none_r['seed']}: SSIM={ssim:.4f}, PSNR={psnr:.1f}dB, MAE={mae:.2f}"
+        )
 
     # Compute summary statistics
     avg_ssim = sum(m["ssim"] for m in metrics) / len(metrics)

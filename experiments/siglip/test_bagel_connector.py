@@ -19,9 +19,8 @@ DIFFUSERS_PR_PATH = Path(__file__).parent.parent.parent / "coderef/diffusers/src
 sys.path.insert(0, str(DIFFUSERS_PR_PATH))
 
 import torch
-from safetensors import safe_open
 from PIL import Image
-
+from safetensors import safe_open
 
 # Paths
 BAGEL_PATH = Path.home() / "Storage/ByteDance-Seed_BAGEL-7B-MoT/ema.safetensors"
@@ -34,11 +33,11 @@ def load_bagel_connector():
     """Load Bagel's trained connector weights."""
     print("Loading Bagel connector weights...")
 
-    with safe_open(str(BAGEL_PATH), framework='pt', device='cpu') as f:
-        fc1_weight = f.get_tensor('connector.fc1.weight')  # (3584, 1152)
-        fc1_bias = f.get_tensor('connector.fc1.bias')      # (3584,)
-        fc2_weight = f.get_tensor('connector.fc2.weight')  # (3584, 3584)
-        fc2_bias = f.get_tensor('connector.fc2.bias')      # (3584,)
+    with safe_open(str(BAGEL_PATH), framework="pt", device="cpu") as f:
+        fc1_weight = f.get_tensor("connector.fc1.weight")  # (3584, 1152)
+        fc1_bias = f.get_tensor("connector.fc1.bias")  # (3584,)
+        fc2_weight = f.get_tensor("connector.fc2.weight")  # (3584, 3584)
+        fc2_bias = f.get_tensor("connector.fc2.bias")  # (3584,)
 
     print(f"  fc1_weight: {fc1_weight.shape}")
     print(f"  fc1_bias: {fc1_bias.shape}")
@@ -46,10 +45,10 @@ def load_bagel_connector():
     print(f"  fc2_bias: {fc2_bias.shape}")
 
     return {
-        'fc1_weight': fc1_weight,
-        'fc1_bias': fc1_bias,
-        'fc2_weight': fc2_weight,
-        'fc2_bias': fc2_bias,
+        "fc1_weight": fc1_weight,
+        "fc1_bias": fc1_bias,
+        "fc2_weight": fc2_weight,
+        "fc2_bias": fc2_bias,
     }
 
 
@@ -59,8 +58,8 @@ def adapt_to_zimage(bagel_weights, target_dim=3840):
 
     Strategy: Pad the output dimension with learned extension.
     """
-    fc1_weight = bagel_weights['fc1_weight']  # (3584, 1152)
-    fc1_bias = bagel_weights['fc1_bias']      # (3584,)
+    fc1_weight = bagel_weights["fc1_weight"]  # (3584, 1152)
+    fc1_bias = bagel_weights["fc1_bias"]  # (3584,)
 
     current_out = fc1_weight.shape[0]  # 3584
     pad_size = target_dim - current_out  # 256
@@ -79,7 +78,7 @@ def adapt_to_zimage(bagel_weights, target_dim=3840):
 
     # Concatenate
     adapted_weight = torch.cat([fc1_weight, pad_weight], dim=0)  # (3840, 1152)
-    adapted_bias = torch.cat([fc1_bias, pad_bias], dim=0)        # (3840,)
+    adapted_bias = torch.cat([fc1_bias, pad_bias], dim=0)  # (3840,)
 
     print(f"  Adapted weight: {adapted_weight.shape}")
     print(f"  Adapted bias: {adapted_bias.shape}")
@@ -104,7 +103,7 @@ def test_siglip_projection(adapted_weight, adapted_bias):
     # Get SigLIP embeddings
     inputs = processor(images=[test_image], return_tensors="pt")
     with torch.no_grad():
-        outputs = siglip(pixel_values=inputs['pixel_values'])
+        outputs = siglip(pixel_values=inputs["pixel_values"])
         siglip_emb = outputs.last_hidden_state  # (1, num_patches, 1152)
 
     print(f"  SigLIP output: {siglip_emb.shape}")
@@ -115,9 +114,7 @@ def test_siglip_projection(adapted_weight, adapted_bias):
 
     # Apply projection: out = x @ W.T + b
     projected = torch.nn.functional.linear(
-        siglip_flat.float(),
-        adapted_weight.float(),
-        adapted_bias.float()
+        siglip_flat.float(), adapted_weight.float(), adapted_bias.float()
     )
 
     print(f"  Projected shape: {projected.shape}")  # Should be (num_patches, 3840)
@@ -156,16 +153,16 @@ def compare_to_text_embeddings(projected_emb):
     print(f"\n  Comparison:")
     print(f"    Projected SigLIP: mean={proj_mean:.4f}, std={proj_std:.4f}")
     print(f"    Qwen3 text:       mean={text_mean:.4f}, std={text_std:.4f}")
-    print(f"    Std ratio: {proj_std/text_std:.2f}x")
+    print(f"    Std ratio: {proj_std / text_std:.2f}x")
 
     return text_emb
 
 
 def test_full_generation():
     """Test full Z-Image generation with Bagel's adapted connector."""
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("Testing full Z-Image generation with Bagel connector")
-    print("="*60)
+    print("=" * 60)
 
     # Load Bagel connector
     bagel_weights = load_bagel_connector()
@@ -180,9 +177,9 @@ def test_full_generation():
     compare_to_text_embeddings(projected)
 
     # Now try loading into Z-Image transformer
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("Loading Z-Image transformer with Bagel connector...")
-    print("="*60)
+    print("=" * 60)
 
     from diffusers.models.transformers.transformer_z_image import ZImageTransformer2DModel
 
@@ -190,7 +187,7 @@ def test_full_generation():
     transformer = ZImageTransformer2DModel.from_pretrained(
         str(ZIMAGE_PATH),
         subfolder="transformer",
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
     )
 
     # Check if siglip components exist, if not create them
@@ -229,26 +226,31 @@ def test_full_generation():
     print("  Weights injected!")
 
     # Verify
-    print(f"  New weight stats: mean={siglip_linear.weight.float().mean():.4f}, std={siglip_linear.weight.float().std():.4f}")
+    print(
+        f"  New weight stats: mean={siglip_linear.weight.float().mean():.4f}, std={siglip_linear.weight.float().std():.4f}"
+    )
 
     # Save the adapted weights for later use
     save_path = Path(__file__).parent / "bagel_adapted_siglip_embedder.pt"
-    torch.save({
-        'weight': adapted_weight,
-        'bias': adapted_bias,
-        'source': 'bagel_connector_fc1',
-        'original_dim': 3584,
-        'target_dim': 3840,
-    }, save_path)
+    torch.save(
+        {
+            "weight": adapted_weight,
+            "bias": adapted_bias,
+            "source": "bagel_connector_fc1",
+            "original_dim": 3584,
+            "target_dim": 3840,
+        },
+        save_path,
+    )
     print(f"\nSaved adapted weights to {save_path}")
 
     return transformer
 
 
 def main():
-    print("="*60)
+    print("=" * 60)
     print("Bagel Connector -> Z-Image Omni Test")
-    print("="*60)
+    print("=" * 60)
 
     # Check paths
     if not BAGEL_PATH.exists():
@@ -258,9 +260,9 @@ def main():
     # Run tests
     transformer = test_full_generation()
 
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("SUCCESS - Bagel connector weights loaded into Z-Image!")
-    print("="*60)
+    print("=" * 60)
     print("""
 Next steps:
 1. Run full generation with a reference image

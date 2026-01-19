@@ -12,13 +12,14 @@ Tests cover:
 from dataclasses import dataclass
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+
 import pytest
 import torch
-
 
 # ============================================================================
 # LoadResult Tests
 # ============================================================================
+
 
 class TestLoadResult:
     """Test LoadResult dataclass."""
@@ -63,6 +64,7 @@ class TestLoadResult:
 # ============================================================================
 # build_dype_config Tests
 # ============================================================================
+
 
 class TestBuildDyPEConfig:
     """Test build_dype_config function."""
@@ -121,6 +123,7 @@ class TestBuildDyPEConfig:
 # PipelineLoader Tests
 # ============================================================================
 
+
 class TestPipelineLoader:
     """Test PipelineLoader class."""
 
@@ -131,7 +134,7 @@ class TestPipelineLoader:
         config.model_path = "/path/to/model"
         config.text_encoder_path = None
         config.templates_dir = None
-        config.torch_dtype = "bfloat16"
+        config.dtype = "bfloat16"
         config.encoder_device_resolved = "cpu"
         config.dit_device_resolved = "cpu"
         config.vae_device_resolved = "cpu"
@@ -155,7 +158,7 @@ class TestPipelineLoader:
         config.shift = 3.0
         config.dype_enabled = False
         config.model_type = "zimage"
-        config.get_torch_dtype = MagicMock(return_value=torch.bfloat16)
+        config.get_dtype = MagicMock(return_value=torch.bfloat16)
         return config
 
     def test_pipeline_loader_init(self, mock_runtime_config):
@@ -198,7 +201,7 @@ class TestPipelineLoader:
         templates = tmp_path / "templates" / "z_image"
         templates.mkdir(parents=True)
 
-        with patch.object(Path, 'cwd', return_value=tmp_path):
+        with patch.object(Path, "cwd", return_value=tmp_path):
             result = loader._resolve_templates_dir()
             assert result == str(templates)
 
@@ -209,7 +212,7 @@ class TestPipelineLoader:
         mock_runtime_config.templates_dir = None
         loader = PipelineLoader(mock_runtime_config)
 
-        with patch.object(Path, 'cwd', return_value=Path("/nonexistent")):
+        with patch.object(Path, "cwd", return_value=Path("/nonexistent")):
             result = loader._resolve_templates_dir()
             # Should return None if no templates found
             # (actual behavior depends on implementation)
@@ -275,7 +278,7 @@ class TestPipelineLoaderApplyOptimizations:
         mock_config.compile = True
         loader = PipelineLoader(mock_config)
 
-        with patch('torch.compile', return_value=mock_pipeline.transformer) as mock_compile:
+        with patch("torch.compile", return_value=mock_pipeline.transformer) as mock_compile:
             loader._apply_optimizations(mock_pipeline)
             mock_compile.assert_called_once()
 
@@ -383,26 +386,27 @@ class TestPipelineLoaderAutoLoad:
 # Integration-style Tests (with mocks)
 # ============================================================================
 
+
 class TestPipelineLoaderLoadEncoder:
     """Test PipelineLoader.load_encoder method."""
 
     def test_load_encoder_returns_result(self):
         """Test load_encoder returns LoadResult."""
-        from llm_dit.startup import PipelineLoader, LoadResult
+        from llm_dit.startup import LoadResult, PipelineLoader
 
         config = MagicMock()
         config.model_path = "/path/to/model"
         config.templates_dir = None
         config.encoder_device_resolved = "cpu"
-        config.torch_dtype = "bfloat16"
+        config.dtype = "bfloat16"
         config.quantization = "none"
         config.embedding_cache = False
         config.cache_size = 100
-        config.get_torch_dtype = MagicMock(return_value=torch.bfloat16)
+        config.get_dtype = MagicMock(return_value=torch.bfloat16)
 
         loader = PipelineLoader(config)
 
-        with patch('llm_dit.startup.ZImageTextEncoder') as MockEncoder:
+        with patch("llm_dit.startup.ZImageTextEncoder") as MockEncoder:
             mock_encoder = MagicMock()
             mock_encoder.device = "cpu"
             MockEncoder.from_pretrained = MagicMock(return_value=mock_encoder)
@@ -419,7 +423,7 @@ class TestQwenImageModes:
 
     def test_qwenimage_t2i_ondemand(self):
         """Test Qwen-Image T2I returns on-demand mode."""
-        from llm_dit.startup import PipelineLoader, LoadResult
+        from llm_dit.startup import LoadResult, PipelineLoader
 
         config = MagicMock()
         config.model_type = "qwenimage-t2i"
@@ -439,7 +443,7 @@ class TestQwenImageModes:
 
     def test_qwenimage_edit_ondemand(self):
         """Test Qwen-Image Edit returns on-demand mode."""
-        from llm_dit.startup import PipelineLoader, LoadResult
+        from llm_dit.startup import LoadResult, PipelineLoader
 
         config = MagicMock()
         config.model_type = "qwenimage-edit"

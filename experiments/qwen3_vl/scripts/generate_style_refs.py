@@ -35,6 +35,7 @@ def main():
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     import os
+
     model_path = os.environ.get("ZIMAGE_PATH")
     if not model_path:
         raise ValueError("Set ZIMAGE_PATH environment variable")
@@ -42,7 +43,7 @@ def main():
     print("Loading Z-Image pipeline...")
     pipe = ZImagePipeline.from_pretrained(
         model_path,
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
         device="cuda",
     )
 
@@ -56,7 +57,7 @@ def main():
             num_inference_steps=9,
             generator=generator,
         )
-        image = result.images[0] if hasattr(result, 'images') else result
+        image = result.images[0] if hasattr(result, "images") else result
 
         output_path = OUTPUT_DIR / f"style_{name}.png"
         image.save(output_path)

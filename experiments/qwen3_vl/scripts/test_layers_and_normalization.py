@@ -8,16 +8,17 @@ Hypothesis 2: Per-dimension normalization may align distributions better than gl
 Memory management: Extract all VL embeddings first, unload VL, then generate.
 """
 
+import gc
 import sys
 from pathlib import Path
-import gc
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "src"))
 
+import json
+from dataclasses import dataclass
+
 import torch
 from PIL import Image
-from dataclasses import dataclass
-import json
 
 
 @dataclass
@@ -31,8 +32,9 @@ def normalize_global(emb: torch.Tensor, target_std: float) -> torch.Tensor:
     """Scale to match target std (current approach)."""
     return emb * (target_std / emb.std())
 
-
-def normalize_per_dim(emb: torch.Tensor, target_mean: torch.Tensor, target_std: torch.Tensor) -> torch.Tensor:
+def normalize_per_dim(
+    emb: torch.Tensor, target_mean: torch.Tensor, target_std: torch.Tensor
+) -> torch.Tensor:
     """Normalize each dimension independently to match target distribution."""
     emb_mean = emb.mean(dim=0, keepdim=True)
     emb_std = emb.std(dim=0, keepdim=True) + 1e-8
@@ -54,23 +56,65 @@ def main():
     # Load config
     class ConfigArgs:
         pass
+
     config_args = ConfigArgs()
     config_args.config = "config.toml"
     config_args.profile = "rtx4090"
-    for attr in ['model_path', 'text_encoder_device', 'dit_device', 'vae_device',
-                 'cpu_offload', 'flash_attn', 'compile', 'debug', 'verbose',
-                 'attention_backend', 'use_custom_scheduler', 'tiled_vae',
-                 'embedding_cache', 'long_prompt_mode', 'hidden_layer', 'shift',
-                 'lora', 'api_url', 'api_model', 'local_encoder', 'templates_dir',
-                 'torch_dtype', 'text_encoder_path', 'tile_size', 'tile_overlap',
-                 'cache_size', 'steps', 'rewriter_use_api', 'rewriter_api_url',
-                 'rewriter_api_model', 'rewriter_temperature', 'rewriter_top_p',
-                 'rewriter_top_k', 'rewriter_min_p', 'rewriter_presence_penalty',
-                 'rewriter_max_tokens', 'width', 'height', 'guidance_scale',
-                 'negative_prompt', 'seed', 'embeddings_file', 'template',
-                 'system_prompt', 'thinking_content', 'assistant_content',
-                 'enable_thinking', 'vl_model_path', 'vl_device', 'vl_hidden_layer',
-                 'vl_alpha', 'vl_blend_mode', 'vl_auto_unload']:
+    for attr in [
+        "model_path",
+        "text_encoder_device",
+        "dit_device",
+        "vae_device",
+        "cpu_offload",
+        "flash_attn",
+        "compile",
+        "debug",
+        "verbose",
+        "attention_backend",
+        "use_custom_scheduler",
+        "tiled_vae",
+        "embedding_cache",
+        "long_prompt_mode",
+        "hidden_layer",
+        "shift",
+        "lora",
+        "api_url",
+        "api_model",
+        "local_encoder",
+        "templates_dir",
+        "dtype",
+        "text_encoder_path",
+        "tile_size",
+        "tile_overlap",
+        "cache_size",
+        "steps",
+        "rewriter_use_api",
+        "rewriter_api_url",
+        "rewriter_api_model",
+        "rewriter_temperature",
+        "rewriter_top_p",
+        "rewriter_top_k",
+        "rewriter_min_p",
+        "rewriter_presence_penalty",
+        "rewriter_max_tokens",
+        "width",
+        "height",
+        "guidance_scale",
+        "negative_prompt",
+        "seed",
+        "embeddings_file",
+        "template",
+        "system_prompt",
+        "thinking_content",
+        "assistant_content",
+        "enable_thinking",
+        "vl_model_path",
+        "vl_device",
+        "vl_hidden_layer",
+        "vl_alpha",
+        "vl_blend_mode",
+        "vl_auto_unload",
+    ]:
         if not hasattr(config_args, attr):
             setattr(config_args, attr, None)
     z_config = load_runtime_config(config_args)
@@ -129,7 +173,7 @@ def main():
     extractor = VLEmbeddingExtractor.from_pretrained(
         str(Path.home() / "Storage" / "Qwen3-VL-4B-Instruct"),
         device="cuda",
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
     )
 
     # Layers to test
@@ -229,13 +273,16 @@ def main():
         result.save(output_path)
         print(f"  Saved to {output_path}")
 
-        results.append({
-            "name": config.name,
-            "layer": config.hidden_layer,
-            "normalization": config.normalization,
-            "raw_std": vl_emb.std().item(),
-            "final_std": emb.std().item(),
-            "final_mean": emb.mean().item(),
+        results.append(
+            {
+                "name": config.name,
+                "layer": config.hidden_layer,
+                "normalization": config.normalization,
+                "raw_std": vl_emb.std().item(),
+                "final_std": emb.std().item(),
+                "final_mean": emb.mean().item(),
+            }
+        )
         })
 
     # Save results summary

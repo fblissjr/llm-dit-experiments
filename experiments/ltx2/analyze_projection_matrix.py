@@ -57,7 +57,7 @@ def analyze_projection_matrix(
     print("\nLoading model weights...")
     pipe = LTX2Pipeline.from_pretrained(
         model_path,
-        torch_dtype=torch.float32,  # Full precision for analysis
+        dtype=torch.float32,  # Full precision for analysis
     )
 
     # Find the projection matrix
@@ -116,7 +116,9 @@ def analyze_projection_matrix(
     if W is None:
         # Debug: List all available components and their large params
         print("\nCould not find text_proj_in (188160 → 3840). Listing pipeline structure:")
-        print(f"  pipe.connectors exists: {hasattr(pipe, 'connectors') and pipe.connectors is not None}")
+        print(
+            f"  pipe.connectors exists: {hasattr(pipe, 'connectors') and pipe.connectors is not None}"
+        )
         if hasattr(pipe, "connectors") and pipe.connectors is not None:
             print(f"  connectors type: {type(pipe.connectors)}")
             print("  connectors parameters:")
@@ -186,7 +188,9 @@ def analyze_projection_matrix(
             "max_abs": float(layer_max_abs[i]),
             "variance": float(layer_var[i]),
         }
-        print(f"{i:<8} {layer_norms[i]:<12.4f} {layer_mean_abs[i]:<12.6f} {layer_max_abs[i]:<12.4f} {layer_var[i]:<12.6f}")
+        print(
+            f"{i:<8} {layer_norms[i]:<12.4f} {layer_mean_abs[i]:<12.6f} {layer_max_abs[i]:<12.4f} {layer_var[i]:<12.6f}"
+        )
 
     # Summary statistics
     print("\n" + "=" * 60)
@@ -259,8 +263,13 @@ def analyze_projection_matrix(
     ax3.set_ylabel("Mean Frobenius Norm")
     ax3.set_title("Layer Group Weight Comparison")
     for bar, val in zip(bars, group_norms):
-        ax3.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.001,
-                 f"{val:.4f}", ha="center", va="bottom")
+        ax3.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height() + 0.001,
+            f"{val:.4f}",
+            ha="center",
+            va="bottom",
+        )
 
     # Plot 4: Cumulative contribution
     ax4 = axes[1, 1]

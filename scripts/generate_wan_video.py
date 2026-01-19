@@ -101,7 +101,7 @@ def main():
     print(f"Loading model from {args.model_path}...")
     pipe = WanVideoPipeline.from_pretrained(
         args.model_path,
-        torch_dtype=dtype,
+        dtype=dtype,
     )
     # Override shift if specified
     pipe.config.shift = args.shift

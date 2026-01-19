@@ -48,11 +48,11 @@ logger = logging.getLogger(__name__)
 MAX_TEXT_SEQ_LEN = 1504
 DEFAULT_TARGET_LENGTHS = [50, 150, 300, 600, 1000, 1504]
 DEFAULT_FILL_MODES = [
-    "content_only",     # Just caption truncated to target (variable length, capped)
-    "pad_end_zero",     # Content + zero padding to exact target length
-    "pad_end_mean",     # Content + mean-embedding padding to exact target length
+    "content_only",  # Just caption truncated to target (variable length, capped)
+    "pad_end_zero",  # Content + zero padding to exact target length
+    "pad_end_mean",  # Content + mean-embedding padding to exact target length
     "pad_middle_zero",  # Content split with zeros in middle
-    "filler_repeat",    # Repeat content tokens to reach target length
+    "filler_repeat",  # Repeat content tokens to reach target length
 ]
 DEFAULT_COMPRESSION_MODES = ["truncate", "interpolate", "pool", "attention_pool"]
 
@@ -413,7 +413,7 @@ class CaptionLengthStudy:
         self.vl_extractor = VLEmbeddingExtractor.from_pretrained(
             vl_path,
             device=vl_device,
-            torch_dtype=torch.bfloat16,
+            dtype=torch.bfloat16,
         )
         logger.info(f"VL extractor loaded on {vl_device}")
 
@@ -444,7 +444,7 @@ class CaptionLengthStudy:
             encoder_device=self.text_encoder_device,
             dit_device=self.dit_device,
             vae_device=self.vae_device,
-            torch_dtype=torch.bfloat16,
+            dtype=torch.bfloat16,
         )
 
         # Get tokenizer for truncation
@@ -512,12 +512,14 @@ class CaptionLengthStudy:
         if "<think>" in caption and "</think>" in caption:
             think_start = caption.find("<think>")
             think_end = caption.find("</think>")
-            thinking = caption[think_start + len("<think>"):think_end].strip()
+            thinking = caption[think_start + len("<think>") : think_end].strip()
             logger.debug(f"[Caption] Thinking content ({len(thinking)} chars): {thinking[:200]}...")
-            caption = caption[think_end + len("</think>"):].strip()
+            caption = caption[think_end + len("</think>") :].strip()
 
         # Count tokens
-        token_count = len(self.vl_extractor.processor.tokenizer.encode(caption, add_special_tokens=False))
+        token_count = len(
+            self.vl_extractor.processor.tokenizer.encode(caption, add_special_tokens=False)
+        )
 
         # Save caption
         caption_path = image_path.with_suffix(".txt")
@@ -602,8 +604,12 @@ class CaptionLengthStudy:
         start_time = time.time()
 
         try:
-            logger.info(f"[Variant] target_length={target_length}, fill_mode={fill_mode}, compression={compression_mode}")
-            logger.info(f"[Variant] hidden_layer={hidden_layer}, use_vl={use_vl_embeddings}, vl_layer={vl_hidden_layer}, token_mode={token_mode}")
+            logger.info(
+                f"[Variant] target_length={target_length}, fill_mode={fill_mode}, compression={compression_mode}"
+            )
+            logger.info(
+                f"[Variant] hidden_layer={hidden_layer}, use_vl={use_vl_embeddings}, vl_layer={vl_hidden_layer}, token_mode={token_mode}"
+            )
             logger.debug(f"[Variant] Caption ({caption_token_count} tokens): {caption[:100]}...")
 
             if use_vl_embeddings:
@@ -629,7 +635,9 @@ class CaptionLengthStudy:
                 )
                 embeddings = vl_result.embeddings
                 actual_count = embeddings.shape[0]
-                logger.info(f"[Variant] VL embeddings: shape={embeddings.shape}, scaled_std={vl_result.scaled_std:.2f}")
+                logger.info(
+                    f"[Variant] VL embeddings: shape={embeddings.shape}, scaled_std={vl_result.scaled_std:.2f}"
+                )
             else:
                 # Use text encoding (Qwen3-4B)
                 prompt_output = self.pipeline.encoder.encode(
@@ -640,12 +648,18 @@ class CaptionLengthStudy:
                 embeddings = prompt_output.embeddings[0]
                 actual_count = embeddings.shape[0]
 
-            logger.info(f"[Variant] Raw embeddings: shape={embeddings.shape}, dtype={embeddings.dtype}")
-            logger.debug(f"[Variant] Raw stats: min={embeddings.min():.2f}, max={embeddings.max():.2f}, mean={embeddings.mean():.4f}, std={embeddings.std():.2f}")
+            logger.info(
+                f"[Variant] Raw embeddings: shape={embeddings.shape}, dtype={embeddings.dtype}"
+            )
+            logger.debug(
+                f"[Variant] Raw stats: min={embeddings.min():.2f}, max={embeddings.max():.2f}, mean={embeddings.mean():.4f}, std={embeddings.std():.2f}"
+            )
 
             # Apply compression if raw embeddings >1504 and compression mode specified
             if embeddings.shape[0] > MAX_TEXT_SEQ_LEN and compression_mode:
-                logger.info(f"[Variant] Compressing {embeddings.shape[0]} -> {MAX_TEXT_SEQ_LEN} using {compression_mode}")
+                logger.info(
+                    f"[Variant] Compressing {embeddings.shape[0]} -> {MAX_TEXT_SEQ_LEN} using {compression_mode}"
+                )
                 embeddings = compress_embeddings(
                     embeddings, MAX_TEXT_SEQ_LEN, mode=compression_mode
                 )
@@ -655,8 +669,12 @@ class CaptionLengthStudy:
             pre_fill_shape = embeddings.shape
             embeddings = apply_fill_mode(embeddings, target_length, mode=fill_mode)
             final_length = embeddings.shape[0]
-            logger.info(f"[Variant] After fill ({fill_mode}): {pre_fill_shape} -> {embeddings.shape}")
-            logger.debug(f"[Variant] Final stats: min={embeddings.min():.2f}, max={embeddings.max():.2f}, mean={embeddings.mean():.4f}, std={embeddings.std():.2f}")
+            logger.info(
+                f"[Variant] After fill ({fill_mode}): {pre_fill_shape} -> {embeddings.shape}"
+            )
+            logger.debug(
+                f"[Variant] Final stats: min={embeddings.min():.2f}, max={embeddings.max():.2f}, mean={embeddings.mean():.4f}, std={embeddings.std():.2f}"
+            )
 
             # Move to device
             device = self.pipeline.device
@@ -734,19 +752,25 @@ class CaptionLengthStudy:
 
         # Phase 3: Run variants
         for prompt, seed, source_path, caption, token_count in source_data:
-            logger.info(f"\n{'='*60}")
+            logger.info(f"\n{'=' * 60}")
             logger.info(f"Processing: {prompt} (seed={seed}, caption_tokens={token_count})")
-            logger.info(f"use_vl_embeddings={self.use_vl_embeddings}, hidden_layers={self.hidden_layers}")
+            logger.info(
+                f"use_vl_embeddings={self.use_vl_embeddings}, hidden_layers={self.hidden_layers}"
+            )
             if self.use_vl_embeddings:
-                logger.info(f"vl_hidden_layers={self.vl_hidden_layers}, token_modes={self.token_modes}")
-            logger.info(f"{'='*60}")
+                logger.info(
+                    f"vl_hidden_layers={self.vl_hidden_layers}, token_modes={self.token_modes}"
+                )
+            logger.info(f"{'=' * 60}")
 
             # Run each target_length x fill_mode x hidden_layer combination
             for target_length in self.target_lengths:
                 for fill_mode in self.fill_modes:
                     # Determine if compression is needed (when raw embeddings > target AND > 1504)
                     needs_compression = token_count > MAX_TEXT_SEQ_LEN
-                    compression_modes_to_test = self.compression_modes if needs_compression else [None]
+                    compression_modes_to_test = (
+                        self.compression_modes if needs_compression else [None]
+                    )
 
                     for compression_mode in compression_modes_to_test:
                         if self.use_vl_embeddings:
@@ -804,7 +828,9 @@ class CaptionLengthStudy:
         source_image = Image.open(source_path)
 
         # Helper to build label with layer info
-        def build_label(r: ExperimentResult, include_length: bool = True, include_fill: bool = True) -> str:
+        def build_label(
+            r: ExperimentResult, include_length: bool = True, include_fill: bool = True
+        ) -> str:
             parts = []
             if include_length:
                 parts.append(f"len={r.config.target_length}")
@@ -827,7 +853,12 @@ class CaptionLengthStudy:
         for r in source_results:
             if r.config.fill_mode == "content_only" and r.error is None:
                 # Only include first layer to avoid duplicates
-                if r.config.hidden_layer == first_layer or r.config.vl_hidden_layer == self.vl_hidden_layers[0] if self.vl_hidden_layers else True:
+                if (
+                    r.config.hidden_layer == first_layer
+                    or r.config.vl_hidden_layer == self.vl_hidden_layers[0]
+                    if self.vl_hidden_layers
+                    else True
+                ):
                     label = build_label(r, include_fill=False)
                     try:
                         img = Image.open(r.config.output_path)
@@ -858,7 +889,11 @@ class CaptionLengthStudy:
         # Grid 3: Hidden layer comparison (content_only, fixed length 300)
         layer_images = [("Source", source_image)]
         for r in source_results:
-            if r.config.fill_mode == "content_only" and r.config.target_length == 300 and r.error is None:
+            if (
+                r.config.fill_mode == "content_only"
+                and r.config.target_length == 300
+                and r.error is None
+            ):
                 if r.config.use_vl_embeddings:
                     label = f"VL L{r.config.vl_hidden_layer}\n{r.config.token_mode}"
                 else:
@@ -957,9 +992,7 @@ def main():
         default=["A cat", "A mountain landscape", "A woman portrait"],
         help="Simple prompts for source image generation",
     )
-    parser.add_argument(
-        "--seeds", type=str, default="42", help="Comma-separated seeds"
-    )
+    parser.add_argument("--seeds", type=str, default="42", help="Comma-separated seeds")
     parser.add_argument(
         "--target-lengths",
         type=str,
@@ -1139,7 +1172,7 @@ def main():
     ssim_scores = [r.ssim_vs_source for r in results if r.ssim_vs_source is not None]
     if ssim_scores:
         print(f"SSIM range: {min(ssim_scores):.3f} - {max(ssim_scores):.3f}")
-        print(f"SSIM mean: {sum(ssim_scores)/len(ssim_scores):.3f}")
+        print(f"SSIM mean: {sum(ssim_scores) / len(ssim_scores):.3f}")
 
 
 if __name__ == "__main__":

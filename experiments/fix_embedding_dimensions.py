@@ -52,9 +52,7 @@ QWEN3_EMBEDDING_PATH = os.environ.get("QWEN3_EMBEDDING_PATH")
 ZIMAGE_PATH = os.environ.get("ZIMAGE_PATH")
 
 if not all([QWEN3_4B_PATH, QWEN3_EMBEDDING_PATH, ZIMAGE_PATH]):
-    raise ValueError(
-        "Set environment variables: QWEN3_PATH, QWEN3_EMBEDDING_PATH, ZIMAGE_PATH"
-    )
+    raise ValueError("Set environment variables: QWEN3_PATH, QWEN3_EMBEDDING_PATH, ZIMAGE_PATH")
 
 
 def compute_dimension_stats(embeddings: torch.Tensor) -> dict:
@@ -108,7 +106,9 @@ def identify_problematic_dimensions(
     }
 
 
-def fix_rescale_outliers(embeddings: torch.Tensor, problematic: dict, emb_stats: dict, qwen3_stats: dict) -> torch.Tensor:
+def fix_rescale_outliers(
+    embeddings: torch.Tensor, problematic: dict, emb_stats: dict, qwen3_stats: dict
+) -> torch.Tensor:
     """Rescale outlier dimensions to match Qwen3-4B distribution."""
     fixed = embeddings.clone()
     emb_stds = emb_stats["stds"]
@@ -137,7 +137,9 @@ def fix_mask_dead(embeddings: torch.Tensor, problematic: dict) -> torch.Tensor:
     return fixed
 
 
-def fix_clamp_hyperactive(embeddings: torch.Tensor, problematic: dict, qwen3_stats: dict) -> torch.Tensor:
+def fix_clamp_hyperactive(
+    embeddings: torch.Tensor, problematic: dict, qwen3_stats: dict
+) -> torch.Tensor:
     """Clamp embedding-only hyperactive dimensions."""
     fixed = embeddings.clone()
     emb_only_hyper = problematic["emb_only_hyper"]
@@ -152,7 +154,9 @@ def fix_clamp_hyperactive(embeddings: torch.Tensor, problematic: dict, qwen3_sta
     return fixed
 
 
-def fix_full_distribution_matching(embeddings: torch.Tensor, emb_stats: dict, qwen3_stats: dict) -> torch.Tensor:
+def fix_full_distribution_matching(
+    embeddings: torch.Tensor, emb_stats: dict, qwen3_stats: dict
+) -> torch.Tensor:
     """Match full per-dimension distribution to Qwen3-4B."""
     fixed = embeddings.clone()
     emb_means = emb_stats["means"]
@@ -209,27 +213,27 @@ def main():
         "--fix-modes",
         nargs="+",
         default=["none", "rescale", "mask", "clamp", "full"],
-        help="Fix modes to test"
+        help="Fix modes to test",
     )
     parser.add_argument(
         "--output",
         type=Path,
         default=Path("experiments/results/dimension_fix_test"),
-        help="Output directory"
+        help="Output directory",
     )
     args = parser.parse_args()
 
     args.output.mkdir(parents=True, exist_ok=True)
 
-    logger.info("="*60)
+    logger.info("=" * 60)
     logger.info("Dimension Fix Test")
-    logger.info("="*60)
+    logger.info("=" * 60)
     logger.info(f"Prompt: {args.prompt}")
     logger.info(f"Fix modes: {args.fix_modes}")
     logger.info("")
 
-    from llm_dit.embedding import EmbeddingExtractor
     from llm_dit.backends.transformers import TransformersBackend
+    from llm_dit.embedding import EmbeddingExtractor
     from llm_dit.pipelines.z_image import ZImagePipeline
 
     # -------------------------------------------------------------------------
@@ -242,7 +246,7 @@ def main():
     qwen3_backend = TransformersBackend.from_pretrained(
         QWEN3_4B_PATH,
         device_map="cuda",
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
         model_subfolder="",
         tokenizer_subfolder="",
     )
@@ -260,7 +264,7 @@ def main():
     embedding_extractor = EmbeddingExtractor.from_pretrained(
         QWEN3_EMBEDDING_PATH,
         device="cuda",
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
     )
 
     emb_emb = embedding_extractor.encode_for_zimage(args.prompt, hidden_layer=-2, scale_factor=1.0)
@@ -279,7 +283,7 @@ def main():
     logger.info("  Loading Z-Image pipeline...")
     pipe = ZImagePipeline.from_pretrained(
         ZIMAGE_PATH,
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
         text_encoder_device="cpu",
         dit_device="cuda",
         vae_device="cuda",
@@ -296,7 +300,7 @@ def main():
         num_inference_steps=args.steps,
         generator=generator,
     )
-    img = result.images[0] if hasattr(result, 'images') else result
+    img = result.images[0] if hasattr(result, "images") else result
     images.append(img)
     labels.append("Qwen3-4B\n(reference)")
     img.save(args.output / "qwen3_4b_reference.png")
@@ -326,7 +330,7 @@ def main():
             num_inference_steps=args.steps,
             generator=generator,
         )
-        img = result.images[0] if hasattr(result, 'images') else result
+        img = result.images[0] if hasattr(result, "images") else result
         images.append(img)
         labels.append(f"Fix: {mode}\nsim={similarity:.3f}")
         img.save(args.output / f"embedding_fix_{mode}.png")
@@ -364,14 +368,14 @@ def main():
         f"Dimension Fix Comparison",
         fill="black",
         font=title_font,
-        anchor="mm"
+        anchor="mm",
     )
     draw.text(
         (grid_width // 2, 50),
         f'Prompt: "{args.prompt}" (seed={args.seed})',
         fill="gray",
         font=font,
-        anchor="mm"
+        anchor="mm",
     )
 
     # Place images
@@ -417,7 +421,7 @@ def main():
         },
     }
 
-    with open(args.output / "dimension_analysis.json", 'w') as f:
+    with open(args.output / "dimension_analysis.json", "w") as f:
         json.dump(analysis, f, indent=2)
 
     logger.info(f"  Saved: {args.output / 'dimension_analysis.json'}")
@@ -426,10 +430,10 @@ def main():
     del pipe
     torch.cuda.empty_cache()
 
-    logger.info("\n" + "="*60)
+    logger.info("\n" + "=" * 60)
     logger.info("Dimension fix test complete!")
     logger.info(f"Results saved to: {args.output}")
-    logger.info("="*60)
+    logger.info("=" * 60)
 
 
 if __name__ == "__main__":

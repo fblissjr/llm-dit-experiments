@@ -17,6 +17,7 @@ MODEL_PATH: Path = None  # Set by parse_args()
 def test_chat_template_formatting():
     """Test how apply_chat_template formats prompts."""
     import pytest
+
     if MODEL_PATH is None:
         pytest.skip("MODEL_PATH not set - run as script with --model-path")
 
@@ -76,6 +77,7 @@ def test_chat_template_formatting():
 def test_generation_with_thinking(tokenizer=None):
     """Test actual generation to see if think tokens appear in output."""
     import pytest
+
     if tokenizer is None or MODEL_PATH is None:
         pytest.skip("Run as script with --model-path --generate")
 
@@ -89,7 +91,7 @@ def test_generation_with_thinking(tokenizer=None):
     print("\nLoading model (this may take a moment)...")
     model = AutoModelForCausalLM.from_pretrained(
         str(MODEL_PATH),
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
         device_map="auto",
     )
 
@@ -172,6 +174,7 @@ def test_generation_with_thinking(tokenizer=None):
 def test_diffsynth_style_encoding(tokenizer=None):
     """Test encoding exactly like DiffSynth does for image generation."""
     import pytest
+
     if tokenizer is None or MODEL_PATH is None:
         pytest.skip("Run as script with --model-path")
 

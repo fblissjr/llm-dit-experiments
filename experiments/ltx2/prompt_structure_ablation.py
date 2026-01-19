@@ -27,7 +27,6 @@ from pathlib import Path
 import numpy as np
 import torch
 
-
 # Test subjects with different prompt structures
 # Each subject has multiple prompt formats to test
 TEST_SUBJECTS = [
@@ -41,6 +40,7 @@ TEST_SUBJECTS = [
             "reasoning": "I want a peaceful scene with a cat. The cat should be fluffy and orange, a tabby pattern. It's sitting on a windowsill with soft natural lighting coming through. Final scene: fluffy orange tabby cat sitting on windowsill.",
             "conclusion_only": "Final output: fluffy orange tabby cat with green eyes sitting on windowsill, soft natural lighting",
         }
+        },
     },
     {
         "name": "ocean",
@@ -51,7 +51,7 @@ TEST_SUBJECTS = [
             "structured": "Subject: ocean waves. Action: crashing on cliffs. Time: golden hour sunset. Style: dramatic cinematic.",
             "reasoning": "I need a dramatic ocean scene. Big waves hitting rocks. The time should be sunset for warm colors. Lots of spray and foam. Final scene: dramatic waves crashing on rocky cliffs at golden hour.",
             "conclusion_only": "Final output: dramatic ocean waves crashing against rocky cliffs at golden hour sunset with foam spray",
-        }
+        },
     },
     {
         "name": "forest",
@@ -62,7 +62,7 @@ TEST_SUBJECTS = [
             "structured": "Subject: pine forest path. Time: misty morning. Lighting: sunbeams through trees. Mood: serene peaceful.",
             "reasoning": "A peaceful forest scene is needed. Morning mist would add atmosphere. Sunlight streaming through pine trees creates dappled patterns. A winding path adds depth. Final scene: misty morning forest with sunbeams and path.",
             "conclusion_only": "Final output: misty morning pine forest with sunlight streaming through trees, dappled light on winding path",
-        }
+        },
     },
 ]
 
@@ -107,7 +107,7 @@ def run_prompt_ablation(
     print("\nLoading pipeline...")
     pipe = LTX2Pipeline.from_pretrained(
         model_path,
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
     )
     pipe.enable_sequential_cpu_offload()
 
@@ -115,7 +115,7 @@ def run_prompt_ablation(
 
     for subject in TEST_SUBJECTS:
         subject_name = subject["name"]
-        print(f"\n{'='*50}")
+        print(f"\n{'=' * 50}")
         print(f"Subject: {subject_name}")
         print("=" * 50)
 
@@ -150,7 +150,9 @@ def run_prompt_ablation(
                 stats["prompt_length"] = len(prompt)
                 subject_results[structure_name] = stats
 
-                print(f"  Time: {gen_time:.1f}s | Mean: {stats['mean']:.1f} | Std: {stats['std']:.1f}")
+                print(
+                    f"  Time: {gen_time:.1f}s | Mean: {stats['mean']:.1f} | Std: {stats['std']:.1f}"
+                )
 
                 # Save video
                 if save_videos:
@@ -162,6 +164,7 @@ def run_prompt_ablation(
             except Exception as e:
                 print(f"  ERROR: {e}")
                 import traceback
+
                 traceback.print_exc()
                 subject_results[structure_name] = {"error": str(e), "prompt": prompt}
 
@@ -183,8 +186,9 @@ def run_prompt_ablation(
     for subject_name, subject_results in results.items():
         for structure, stats in subject_results.items():
             if "mean" in stats:
-                print(f"| {subject_name:7} | {structure:9} | {stats['mean']:5.1f} | {stats['std']:4.1f} | {stats['temporal_variance']:.1f} | {stats['prompt_length']:3} |")
-
+                print(
+                    f"| {subject_name:7} | {structure:9} | {stats['mean']:5.1f} | {stats['std']:4.1f} | {stats['temporal_variance']:.1f} | {stats['prompt_length']:3} |"
+                )
     # Cross-structure comparison
     print("\n## Structure Effects (Averaged Across Subjects)\n")
     structure_averages = {}

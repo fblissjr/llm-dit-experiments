@@ -142,16 +142,16 @@ EXPERIMENTS = {
         "variable": "layer_weights",
         "values": [
             # Baseline: single layers
-            {-2: 1.0},   # Layer 35 - Default (penultimate, what DiT was trained on)
-            {-1: 1.0},   # Layer 36 - Last layer (most abstracted)
-            {-5: 1.0},   # Layer 32 - Slightly deeper
+            {-2: 1.0},  # Layer 35 - Default (penultimate, what DiT was trained on)
+            {-1: 1.0},  # Layer 36 - Last layer (most abstracted)
+            {-5: 1.0},  # Layer 32 - Slightly deeper
             # Two-layer blends within late region
             {-2: 0.7, -5: 0.3},  # Layers 35+32: mostly default
             {-2: 0.5, -5: 0.5},  # Layers 35+32: equal blend
             {-2: 0.3, -5: 0.7},  # Layers 35+32: favor deeper
             # Three-layer blends
             {-1: 0.33, -2: 0.34, -3: 0.33},  # Layers 36+35+34: top-3 equal
-            {-2: 0.5, -5: 0.25, -8: 0.25},   # Layers 35+32+29: weighted spread
+            {-2: 0.5, -5: 0.25, -8: 0.25},  # Layers 35+32+29: weighted spread
         ],
         "defaults": {"shift": 3.0, "steps": 9},
     },
@@ -173,10 +173,10 @@ EXPERIMENTS = {
         "description": "Deep sweep across all 36 layers to find prompt-adherence sweet spot",
         "variable": "hidden_layer",
         "values": [
-            -1,   # Layer 36 (last) - most abstracted, ready for generation
-            -2,   # Layer 35 (Z-Image default)
-            -5,   # Layer 32
-            -9,   # Layer 28
+            -1,  # Layer 36 (last) - most abstracted, ready for generation
+            -2,  # Layer 35 (Z-Image default)
+            -5,  # Layer 32
+            -9,  # Layer 28
             -12,  # Layer 25 - entering late region
             -15,  # Layer 22
             -19,  # Layer 18 (exact middle)
@@ -235,7 +235,7 @@ EXPERIMENTS = {
             -28,  # Layer 9
             -25,  # Layer 12 (entering middle)
             -19,  # Layer 18 (middle baseline)
-            -2,   # Layer 35 (default baseline)
+            -2,  # Layer 35 (default baseline)
         ],
         "defaults": {"shift": 3.0, "steps": 9},
     },
@@ -252,10 +252,10 @@ EXPERIMENTS = {
             -18,  # Layer 19
             -15,  # Layer 22
             -12,  # Layer 25
-            -9,   # Layer 28
-            -6,   # Layer 31
-            -3,   # Layer 34
-            -1,   # Layer 36
+            -9,  # Layer 28
+            -6,  # Layer 31
+            -3,  # Layer 34
+            -1,  # Layer 36
         ],
         "defaults": {"shift": 3.0, "steps": 9},
     },
@@ -265,7 +265,7 @@ EXPERIMENTS = {
         "values": [
             # Baselines
             {-19: 1.0},  # Middle only (layer 18)
-            {-2: 1.0},   # Late only (default, for comparison)
+            {-2: 1.0},  # Late only (default, for comparison)
             # Skip late layers - blend early-middle only
             {-25: 0.5, -19: 0.5},  # Early-middle blend (layers 12, 18)
             {-28: 0.3, -22: 0.4, -16: 0.3},  # Wider early-middle (layers 9, 15, 21)
@@ -279,7 +279,7 @@ EXPERIMENTS = {
         "description": "Test if optimal layer depends on prompt complexity (simple vs detailed)",
         "variable": "hidden_layer",
         "values": [
-            -2,   # Default (late)
+            -2,  # Default (late)
             -10,  # Late-ish
             -19,  # Middle
             -28,  # Early-ish
@@ -293,7 +293,7 @@ EXPERIMENTS = {
         "variable": "layer_weights",
         "values": [
             # DiT was trained on -2 embeddings - does it expect that distribution?
-            {-2: 1.0},   # What DiT was trained on
+            {-2: 1.0},  # What DiT was trained on
             {-19: 1.0},  # Empirically better for prompt adherence?
             # Blend to get both: DiT familiarity + better semantics
             {-19: 0.8, -2: 0.2},  # Mostly middle, hint of trained distribution
@@ -483,7 +483,7 @@ class ExperimentRunner:
             encoder_device=self.text_encoder_device,
             dit_device=self.dit_device,
             vae_device=self.vae_device,
-            torch_dtype=torch.bfloat16,
+            dtype=torch.bfloat16,
         )
         logger.info("Pipeline loaded successfully")
 
@@ -517,7 +517,7 @@ class ExperimentRunner:
         self.vl_extractor = VLEmbeddingExtractor.from_pretrained(
             self.vl_model_path,
             device=device,
-            torch_dtype=torch.bfloat16,
+            dtype=torch.bfloat16,
         )
         logger.info("VL extractor loaded successfully")
 
@@ -531,7 +531,9 @@ class ExperimentRunner:
             return
 
         if not self.vl_image_path:
-            raise ValueError("VL image path not provided. Use --vl-image to specify reference image.")
+            raise ValueError(
+                "VL image path not provided. Use --vl-image to specify reference image."
+            )
 
         from PIL import Image
 

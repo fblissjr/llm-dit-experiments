@@ -19,10 +19,10 @@ from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
-from llm_dit.vl import VLEmbeddingExtractor, blend_embeddings
-from llm_dit.startup import PipelineLoader
-from llm_dit.cli import load_runtime_config
 from experiments.qwen3_vl.scripts.grid_utils import make_grid
+from llm_dit.cli import load_runtime_config
+from llm_dit.startup import PipelineLoader
+from llm_dit.vl import VLEmbeddingExtractor, blend_embeddings
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -34,7 +34,9 @@ def main():
     parser.add_argument("--prompt", "-p", type=str, required=True)
     parser.add_argument("--vl-alphas", type=float, nargs="+", default=[0.0, 0.3, 0.5])
     parser.add_argument("--strengths", type=float, nargs="+", default=[0.7, 0.8, 0.9])
-    parser.add_argument("--output-dir", "-o", type=str, default="experiments/results/vl_img2img_test")
+    parser.add_argument(
+        "--output-dir", "-o", type=str, default="experiments/results/vl_img2img_test"
+    )
     parser.add_argument("--config", type=str, default="config.toml")
     parser.add_argument("--vl-model-path", type=str, required=True, help="Path to Qwen3-VL model")
     parser.add_argument("--hidden-layer", type=int, default=-6)
@@ -53,15 +55,17 @@ def main():
     # Load VL extractor
     logger.info("Loading Qwen3-VL...")
     vl_extractor = VLEmbeddingExtractor.from_pretrained(
-        args.vl_model_path, device="cpu", torch_dtype=torch.bfloat16
+        args.vl_model_path, device="cpu", dtype=torch.bfloat16
     )
 
     # Extract VL embeddings - MUST use text_tokens_only=False to include image info
     logger.info(f"Extracting VL embeddings (layer {args.hidden_layer}, full tokens)...")
     vl_result = vl_extractor.extract(
-        image, text=args.prompt, hidden_layer=args.hidden_layer,
+        image,
+        text=args.prompt,
+        hidden_layer=args.hidden_layer,
         text_tokens_only=False,  # CRITICAL: must be False to include image tokens
-        scale_to_text=True
+        scale_to_text=True,
     )
     vl_emb = vl_result.embeddings
     logger.info(f"  VL: shape={vl_emb.shape}, std={vl_emb.std():.2f}")
@@ -71,9 +75,11 @@ def main():
 
     # Load pipeline
     logger.info("Loading Z-Image pipeline...")
+
     class ConfigArgs:
         config = args.config
         profile = "default"
+
     config = load_runtime_config(ConfigArgs())
     loader = PipelineLoader(config)
     pipe = loader.load_pipeline().pipeline
@@ -106,7 +112,7 @@ def main():
                 generator=generator,
             )
 
-            out_path = output_dir / f"a{int(vl_alpha*10)}_s{int(strength*10)}.png"
+            out_path = output_dir / f"a{int(vl_alpha * 10)}_s{int(strength * 10)}.png"
             result.save(out_path)
             logger.info(f"  Saved: {out_path}")
 
@@ -116,7 +122,7 @@ def main():
     labels = []
     for vl_alpha in args.vl_alphas:
         for strength in args.strengths:
-            images.append(output_dir / f"a{int(vl_alpha*10)}_s{int(strength*10)}.png")
+            images.append(output_dir / f"a{int(vl_alpha * 10)}_s{int(strength * 10)}.png")
             labels.append(f"a={vl_alpha} s={strength}")
 
     grid_path = make_grid(images, labels, len(args.strengths), output_dir / "grid.png")

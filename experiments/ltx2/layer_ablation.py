@@ -19,8 +19,8 @@ import sys
 import time
 from pathlib import Path
 
-import torch
 import numpy as np
+import torch
 
 # Add project root to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -32,9 +32,9 @@ from experiments.ltx2.prompts import CATEGORY_PROMPTS
 # Test prompts covering different categories
 # Uses properly formatted prompts instead of short out-of-distribution ones
 TEST_PROMPTS = [
-    CATEGORY_PROMPTS["animal"],   # Animal motion
-    CATEGORY_PROMPTS["nature"],   # Natural scene (replaces ocean waves)
-    CATEGORY_PROMPTS["human"],    # Human activity (replaces laptop typing)
+    CATEGORY_PROMPTS["animal"],  # Animal motion
+    CATEGORY_PROMPTS["nature"],  # Natural scene (replaces ocean waves)
+    CATEGORY_PROMPTS["human"],  # Human activity (replaces laptop typing)
 ]
 
 
@@ -83,7 +83,7 @@ def create_ablated_pipeline(
     # Load pipeline WITHOUT offload first
     pipe = LTX2Pipeline.from_pretrained(
         model_path,
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
     )
 
     # Modify projection weights BEFORE enabling offload
@@ -176,12 +176,12 @@ def run_ablation(
     # Define layer configurations to test
     # Layer indices are 0-48 (49 total: 48 decoder + 1 embedding)
     configs = {
-        "all_49": list(range(49)),                    # Baseline (all layers)
-        "exclude_L48": list(range(48)),               # Exclude final layer (L48/index 48)
-        "exclude_L47_48": list(range(47)),            # Exclude last two
-        "even_layers": list(range(0, 49, 2)),         # Every other layer (25 layers)
-        "late_only": list(range(32, 49)),             # Late layers only (17 layers)
-        "early_mid_late": [0, 8, 16, 24, 32, 40, 47], # Representative sample (7 layers)
+        "all_49": list(range(49)),  # Baseline (all layers)
+        "exclude_L48": list(range(48)),  # Exclude final layer (L48/index 48)
+        "exclude_L47_48": list(range(47)),  # Exclude last two
+        "even_layers": list(range(0, 49, 2)),  # Every other layer (25 layers)
+        "late_only": list(range(32, 49)),  # Late layers only (17 layers)
+        "early_mid_late": [0, 8, 16, 24, 32, 40, 47],  # Representative sample (7 layers)
     }
 
     output_path = Path(output_dir)
@@ -190,10 +190,14 @@ def run_ablation(
     results = {}
 
     for config_name, layer_indices in configs.items():
-        print(f"\n{'='*40}")
+        print(f"\n{'=' * 40}")
         print(f"Config: {config_name} ({len(layer_indices)} layers)")
-        print(f"Layers: {layer_indices[:5]}...{layer_indices[-3:]}" if len(layer_indices) > 8 else f"Layers: {layer_indices}")
-        print("="*40)
+        print(
+            f"Layers: {layer_indices[:5]}...{layer_indices[-3:]}"
+            if len(layer_indices) > 8
+            else f"Layers: {layer_indices}"
+        )
+        print("=" * 40)
 
         # Create fresh pipeline with ablated weights for this config
         # CRITICAL: Must do this per-config because weight mods must happen
@@ -204,7 +208,7 @@ def run_ablation(
         config_results = []
 
         for i, prompt in enumerate(prompts[:num_samples]):
-            print(f"\n  [{i+1}/{min(len(prompts), num_samples)}] {prompt[:40]}...")
+            print(f"\n  [{i + 1}/{min(len(prompts), num_samples)}] {prompt[:40]}...")
 
             start_time = time.time()
 
@@ -229,7 +233,9 @@ def run_ablation(
                 stats["prompt"] = prompt
                 config_results.append(stats)
 
-                print(f"    Time: {gen_time:.1f}s, Mean: {stats['mean']:.1f}, Std: {stats['std']:.1f}")
+                print(
+                    f"    Time: {gen_time:.1f}s, Mean: {stats['mean']:.1f}, Std: {stats['std']:.1f}"
+                )
 
                 # Save video
                 if save_videos:
@@ -240,6 +246,7 @@ def run_ablation(
             except Exception as e:
                 print(f"    ERROR: {e}")
                 import traceback
+
                 traceback.print_exc()
                 config_results.append({"error": str(e), "prompt": prompt})
 

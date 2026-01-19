@@ -23,11 +23,13 @@ from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
-from llm_dit.vl import VLEmbeddingExtractor, blend_adain, blend_adain_per_dim
-from llm_dit.startup import PipelineLoader
 from llm_dit.cli import load_runtime_config
+from llm_dit.startup import PipelineLoader
+from llm_dit.vl import VLEmbeddingExtractor, blend_adain, blend_adain_per_dim
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger(__name__)
 
 
@@ -41,8 +43,12 @@ def main():
     parser.add_argument("--vl-model-path", type=str, required=True, help="Path to Qwen3-VL model")
     parser.add_argument("--hidden-layer", type=int, default=-6)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--modes", nargs="+", default=["per_token", "per_dim", "global"],
-                        choices=["per_token", "per_dim", "global"])
+    parser.add_argument(
+        "--modes",
+        nargs="+",
+        default=["per_token", "per_dim", "global"],
+        choices=["per_token", "per_dim", "global"],
+    )
 
     args = parser.parse_args()
 
@@ -61,7 +67,7 @@ def main():
     vl_extractor = VLEmbeddingExtractor.from_pretrained(
         args.vl_model_path,
         device="cpu",
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
     )
 
     # Extract VL embeddings

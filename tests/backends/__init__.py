@@ -40,6 +40,7 @@ from typing import TYPE_CHECKING
 from .protocol import (
     Backend,
     GenerationConfig,
+    GenerationInputs,
     GenerationResult,
     GenerationStats,
     # Standard configs (single source of truth)
@@ -57,6 +58,7 @@ __all__ = [
     # Core types
     "Backend",
     "GenerationConfig",
+    "GenerationInputs",
     "GenerationResult",
     "GenerationStats",
     # Standard configs (single source of truth - DO NOT duplicate)

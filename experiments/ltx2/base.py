@@ -57,25 +57,25 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import torch
 from tqdm import tqdm
 
+# Shared experiment infrastructure
+from experiments.base import ExperimentConfig, ExperimentResult, ExperimentRunnerBase
+from llm_dit.data import get_all_prompts
+
 # LTX-2 specific imports
 from llm_dit.models.ltx2 import (
-    Modality,
+    DEFAULT_GUIDANCE_SCALE,
     # Reference constants
     DEFAULT_HEIGHT,
-    DEFAULT_WIDTH,
     DEFAULT_NUM_INFERENCE_STEPS,
-    DEFAULT_GUIDANCE_SCALE,
-    VAE_TEMPORAL_COMPRESSION,
+    DEFAULT_WIDTH,
     VAE_SPATIAL_COMPRESSION,
+    VAE_TEMPORAL_COMPRESSION,
+    Modality,
 )
 
 # Core library imports
 from llm_dit.utils.memory import MemoryTracker, cleanup_memory, log_memory_usage
 from llm_dit.utils.metrics import SigLIPScorer
-from llm_dit.data import get_all_prompts
-
-# Shared experiment infrastructure
-from experiments.base import ExperimentRunnerBase, ExperimentConfig, ExperimentResult
 
 logger = logging.getLogger(__name__)
 
@@ -169,6 +169,7 @@ class LTX2ExperimentBase(ExperimentRunnerBase):
         with MemoryTracker("Load transformer"):
             if use_pure_pytorch:
                 from llm_dit.models import load_ltx2_transformer
+
                 self.model = load_ltx2_transformer(
                     model_path,
                     dtype=self.dtype,
@@ -178,9 +179,10 @@ class LTX2ExperimentBase(ExperimentRunnerBase):
             else:
                 # Use diffusers model via pipeline
                 from diffusers import LTX2Pipeline
+
                 self.pipeline = LTX2Pipeline.from_pretrained(
                     "models/LTX-2",
-                    torch_dtype=self.dtype,
+                    dtype=self.dtype,
                     text_encoder=None,  # We handle encoding separately
                     tokenizer=None,
                 )
@@ -225,6 +227,7 @@ class LTX2ExperimentBase(ExperimentRunnerBase):
         """
         with MemoryTracker("Load encoder"):
             from llm_dit.encoders import Gemma3Encoder
+
             self.encoder = Gemma3Encoder(
                 model_id=model_path,  # Gemma3Encoder expects model_id
                 load_in_8bit=use_8bit,
@@ -237,9 +240,10 @@ class LTX2ExperimentBase(ExperimentRunnerBase):
         """Load VAE for decoding latents to video."""
         with MemoryTracker("Load VAE"):
             from diffusers import AutoencoderKLLTXVideo
+
             self.vae = AutoencoderKLLTXVideo.from_pretrained(
                 model_path,
-                torch_dtype=self.dtype,
+                dtype=self.dtype,
             )
             self.vae = self.vae.to(self.device)
 
@@ -259,6 +263,7 @@ class LTX2ExperimentBase(ExperimentRunnerBase):
         """
         with MemoryTracker("Load connectors"):
             from llm_dit.models import load_ltx2_connectors
+
             self.connectors = load_ltx2_connectors(
                 model_path,
                 device=self.device,
@@ -309,7 +314,7 @@ class LTX2ExperimentBase(ExperimentRunnerBase):
                 masking_mode=masking_mode,
                 return_packed=True,
             )
-            return result['prompt_embeds'], result['attention_mask']
+            return result["prompt_embeds"], result["attention_mask"]
         else:
             # Standard encoding - get packed format
             result = self.encoder.encode_multilayer(
@@ -318,12 +323,13 @@ class LTX2ExperimentBase(ExperimentRunnerBase):
                 return_projected=False,
             )
             from llm_dit.encoders.gemma3 import pack_text_embeds
+
             packed = pack_text_embeds(
-                result['layer_stack'],
-                sequence_length=result['seq_lengths'][0],
+                result["layer_stack"],
+                sequence_length=result["seq_lengths"][0],
                 device=self.encoder.device,
             )
-            return packed, result['attention_mask']
+            return packed, result["attention_mask"]
 
     def encode(
         self,
@@ -363,7 +369,7 @@ class LTX2ExperimentBase(ExperimentRunnerBase):
                 masking_mode=masking_mode,
                 return_packed=return_packed,
             )
-            return result['prompt_embeds'] if return_packed else result
+            return result["prompt_embeds"] if return_packed else result
 
         elif layer_weights is not None:
             # Weighted blending: apply per-layer weights
@@ -376,7 +382,7 @@ class LTX2ExperimentBase(ExperimentRunnerBase):
             )
 
             # Apply weights to layer stack
-            hidden_states = result['layer_stack']
+            hidden_states = result["layer_stack"]
             weights = layer_weights.to(hidden_states.device).view(1, 1, 1, -1)
             if len(active) < 49:
                 # Map weights to selected layers
@@ -385,9 +391,10 @@ class LTX2ExperimentBase(ExperimentRunnerBase):
 
             if return_packed:
                 from llm_dit.encoders.gemma3 import pack_text_embeds
+
                 return pack_text_embeds(
                     hidden_states,
-                    sequence_length=result['seq_lengths'][0],
+                    sequence_length=result["seq_lengths"][0],
                     device=self.encoder.device,
                 )
             return hidden_states
@@ -434,14 +441,17 @@ class LTX2ExperimentBase(ExperimentRunnerBase):
 
         # Create 3D grid: [t_latent, h_latent, w_latent]
         # Order is (t, h, w) matching the official implementation
-        grid_t, grid_h, grid_w = torch.meshgrid(t_indices, h_indices, w_indices, indexing='ij')
+        grid_t, grid_h, grid_w = torch.meshgrid(t_indices, h_indices, w_indices, indexing="ij")
 
         # Flatten and stack to [3, T]
-        positions = torch.stack([
-            grid_t.flatten(),
-            grid_h.flatten(),
-            grid_w.flatten(),
-        ], dim=0)  # [3, T]
+        positions = torch.stack(
+            [
+                grid_t.flatten(),
+                grid_h.flatten(),
+                grid_w.flatten(),
+            ],
+            dim=0,
+        )  # [3, T]
 
         # Expand for batch: [B, 3, T]
         positions = positions.unsqueeze(0).expand(batch_size, -1, -1)
@@ -591,7 +601,9 @@ class LTX2ExperimentBase(ExperimentRunnerBase):
             Mean alignment score across frames
         """
         self.load_scorer()
-        _, mean_score = self.scorer.score_video(video, prompt, sample_rate=len(video) // sample_frames)
+        _, mean_score = self.scorer.score_video(
+            video, prompt, sample_rate=len(video) // sample_frames
+        )
         return mean_score
 
     def save_video(
@@ -622,11 +634,13 @@ class LTX2ExperimentBase(ExperimentRunnerBase):
         # Save video
         try:
             from diffusers.utils import export_to_video
+
             export_to_video(video, str(video_path))
         except ImportError:
             # Fallback: save as numpy
             import numpy as np
-            np.save(str(video_path).replace('.mp4', '.npy'), video.cpu().numpy())
+
+            np.save(str(video_path).replace(".mp4", ".npy"), video.cpu().numpy())
 
         # Save metadata
         meta = {
@@ -634,7 +648,7 @@ class LTX2ExperimentBase(ExperimentRunnerBase):
             "timestamp": datetime.now().isoformat(),
             **(metadata or {}),
         }
-        with open(meta_path, 'w') as f:
+        with open(meta_path, "w") as f:
             json.dump(meta, f, indent=2)
 
         return video_path
@@ -706,9 +720,9 @@ class LTX2ExperimentBase(ExperimentRunnerBase):
                 cache[i] = embeds
         elif len(configs) == len(prompts):
             # One config per prompt
-            for i, (prompt, config) in enumerate(tqdm(
-                zip(prompts, configs), total=len(prompts), desc="Encoding prompts"
-            )):
+            for i, (prompt, config) in enumerate(
+                tqdm(zip(prompts, configs), total=len(prompts), desc="Encoding prompts")
+            ):
                 layer_weights = config.get("layer_weights")
                 layer_mask = config.get("layer_mask")
                 embeds = self.encode(prompt, layer_weights=layer_weights, layer_mask=layer_mask)
@@ -720,9 +734,9 @@ class LTX2ExperimentBase(ExperimentRunnerBase):
             for ci, config in enumerate(configs):
                 layer_weights = config.get("layer_weights")
                 layer_mask = config.get("layer_mask")
-                for pi, prompt in enumerate(tqdm(
-                    prompts, desc=f"Encoding config {ci+1}/{len(configs)}"
-                )):
+                for pi, prompt in enumerate(
+                    tqdm(prompts, desc=f"Encoding config {ci + 1}/{len(configs)}")
+                ):
                     embeds = self.encode(prompt, layer_weights=layer_weights, layer_mask=layer_mask)
                     if cache_to_cpu:
                         embeds = embeds.cpu()
@@ -747,7 +761,7 @@ class LTX2ExperimentBase(ExperimentRunnerBase):
         Returns:
             Embeddings tensor on specified device
         """
-        if not hasattr(self, '_embeddings_cache') or self._embeddings_cache is None:
+        if not hasattr(self, "_embeddings_cache") or self._embeddings_cache is None:
             raise RuntimeError("No embeddings cache. Call encode_batch() first.")
 
         embeds = self._embeddings_cache[key]
@@ -808,7 +822,7 @@ class LTX2ExperimentBase(ExperimentRunnerBase):
 
         router = TokenLayerRouter(
             hidden_dim=3840,  # Gemma-2 9B hidden dim
-            num_layers=49,     # Gemma-2 9B layers
+            num_layers=49,  # Gemma-2 9B layers
             bottleneck_dim=64,
             temperature=temperature,
             routing_mode=routing_mode,
@@ -871,9 +885,9 @@ class LTX2ExperimentBase(ExperimentRunnerBase):
             return_projected=False,
         )
 
-        layer_stack = result['layer_stack']  # [B, T, D, L]
-        attention_mask = result['attention_mask']  # [B, T]
-        seq_length = result['seq_lengths'][0]
+        layer_stack = result["layer_stack"]  # [B, T, D, L]
+        attention_mask = result["attention_mask"]  # [B, T]
+        seq_length = result["seq_lengths"][0]
 
         # Step 2: Extract router input based on mode
         router_input = extract_router_input(layer_stack, mode=router_input_mode)
@@ -886,7 +900,7 @@ class LTX2ExperimentBase(ExperimentRunnerBase):
         # layer_stack: [B, T, D, L]
         # layer_weights: [B, T, L]
         # result: [B, T, D] where D=3840
-        weighted_hidden = torch.einsum('btdl,btl->btd', layer_stack, layer_weights)
+        weighted_hidden = torch.einsum("btdl,btl->btd", layer_stack, layer_weights)
 
         # Step 5: Normalize (match LTX-2 pipeline behavior)
         # Each position vector is L2-normalized
@@ -1045,7 +1059,7 @@ class LTX2ExperimentBase(ExperimentRunnerBase):
         # Save results
         if save_results:
             results_path = self.run_dir / "results.json"
-            with open(results_path, 'w') as f:
+            with open(results_path, "w") as f:
                 json.dump(aggregated, f, indent=2, default=str)
             logger.info(f"Results saved to {results_path}")
 
@@ -1070,6 +1084,7 @@ class LTX2ExperimentBase(ExperimentRunnerBase):
 # Example Experiments
 # =============================================================================
 
+
 class LayerBlendSweep(LTX2ExperimentBase):
     """
     Example: Sweep over different layer weight configurations.
@@ -1086,8 +1101,11 @@ class LayerBlendSweep(LTX2ExperimentBase):
     # Layer blend configurations (module-level for reuse)
     BLEND_CONFIGS = {
         "baseline": {"description": "All 49 layers, uniform", "layers": list(range(49))},
-        "late_heavy": {"description": "Upweight layers 40-47", "layers": list(range(49)),
-                      "weights": {i: (2.0 if 40 <= i <= 47 else 1.0) for i in range(49)}},
+        "late_heavy": {
+            "description": "Upweight layers 40-47",
+            "layers": list(range(49)),
+            "weights": {i: (2.0 if 40 <= i <= 47 else 1.0) for i in range(49)},
+        },
         "late_only": {"description": "Only layers 40-48", "layers": list(range(40, 49))},
         "top_contributors": {"description": "Only layers 43-47", "layers": list(range(43, 48))},
     }
@@ -1121,6 +1139,7 @@ class LayerBlendSweep(LTX2ExperimentBase):
             cfg = self.BLEND_CONFIGS[name]
             # Build layer weights tensor
             import numpy as np
+
             weights = np.zeros(49)
             if "weights" in cfg:
                 for i, w in cfg["weights"].items():
@@ -1130,10 +1149,12 @@ class LayerBlendSweep(LTX2ExperimentBase):
                     weights[i] = 1.0
             weights = weights / weights.sum()  # Normalize
 
-            configs.append({
-                "name": name,
-                "layer_weights": torch.tensor(weights, dtype=torch.float32),
-            })
+            configs.append(
+                {
+                    "name": name,
+                    "layer_weights": torch.tensor(weights, dtype=torch.float32),
+                }
+            )
 
         self.config_names = config_names
         self.prompt_names = list(self.prompts.keys())
@@ -1186,6 +1207,7 @@ class LayerBlendSweep(LTX2ExperimentBase):
     def aggregate_results(self, results: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Group results by config and compute averages."""
         from collections import defaultdict
+
         by_config = defaultdict(list)
         for r in results:
             if "error" not in r:

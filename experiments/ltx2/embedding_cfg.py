@@ -28,7 +28,6 @@ from pathlib import Path
 import numpy as np
 import torch
 
-
 # Prompt pairs for embedding CFG (good = detailed, bad = minimal)
 CFG_PAIRS = [
     {
@@ -159,8 +158,13 @@ def generate_with_embedding_cfg(
                 if dir_seq > emb_seq:
                     dir_on_device = dir_on_device[:, :emb_seq, :]
                 else:
-                    pad = torch.zeros(1, emb_seq - dir_seq, dir_on_device.shape[2],
-                                      device=dir_on_device.device, dtype=dir_on_device.dtype)
+                    pad = torch.zeros(
+                        1,
+                        emb_seq - dir_seq,
+                        dir_on_device.shape[2],
+                        device=dir_on_device.device,
+                        dtype=dir_on_device.dtype,
+                    )
                     dir_on_device = torch.cat([dir_on_device, pad], dim=1)
 
             refined = test_embeds + embed_alpha * dir_on_device
@@ -230,7 +234,7 @@ def run_embedding_cfg_experiment(
     print("\nLoading pipeline...")
     pipe = LTX2Pipeline.from_pretrained(
         model_path,
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
     )
     pipe.enable_sequential_cpu_offload()
 
@@ -239,14 +243,14 @@ def run_embedding_cfg_experiment(
 
     # Test each alpha value
     for embed_alpha in embed_alphas:
-        print(f"\n{'='*40}")
+        print(f"\n{'=' * 40}")
         print(f"Embed Alpha: {embed_alpha}")
         print("=" * 40)
 
         alpha_results = []
 
         for i, pair in enumerate(CFG_PAIRS):
-            print(f"\n  [{i+1}/{len(CFG_PAIRS)}] Test: {pair['test'][:30]}...")
+            print(f"\n  [{i + 1}/{len(CFG_PAIRS)}] Test: {pair['test'][:30]}...")
             print(f"      Good: {pair['good'][:30]}...")
             print(f"      Bad: {pair['bad'][:30]}...")
 
@@ -277,7 +281,9 @@ def run_embedding_cfg_experiment(
                 stats["bad_prompt"] = pair["bad"]
                 alpha_results.append(stats)
 
-                print(f"    Time: {gen_time:.1f}s, Mean: {stats['mean']:.1f}, Std: {stats['std']:.1f}")
+                print(
+                    f"    Time: {gen_time:.1f}s, Mean: {stats['mean']:.1f}, Std: {stats['std']:.1f}"
+                )
 
                 # Save video
                 if save_videos:
@@ -288,6 +294,7 @@ def run_embedding_cfg_experiment(
             except Exception as e:
                 print(f"    ERROR: {e}")
                 import traceback
+
                 traceback.print_exc()
                 alpha_results.append({"error": str(e), "test_prompt": pair["test"]})
 
@@ -376,7 +383,7 @@ def compare_cfg_methods(
     print("\nLoading pipeline...")
     pipe = LTX2Pipeline.from_pretrained(
         model_path,
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
     )
     pipe.enable_sequential_cpu_offload()
 
@@ -384,7 +391,7 @@ def compare_cfg_methods(
     test_pair = CFG_PAIRS[0]  # Use first pair for comparison
 
     for dit_cfg in dit_cfg_values:
-        print(f"\n{'='*40}")
+        print(f"\n{'=' * 40}")
         print(f"DiT CFG: {dit_cfg}")
         print("=" * 40)
 
@@ -407,7 +414,9 @@ def compare_cfg_methods(
         stats_standard["dit_cfg"] = dit_cfg
         stats_standard["embed_alpha"] = 0.0
 
-        print(f"    Time: {gen_time:.1f}s, Mean: {stats_standard['mean']:.1f}, Std: {stats_standard['std']:.1f}")
+        print(
+            f"    Time: {gen_time:.1f}s, Mean: {stats_standard['mean']:.1f}, Std: {stats_standard['std']:.1f}"
+        )
 
         if save_videos:
             video_path = output_path / f"dit_cfg{dit_cfg:.1f}_standard.mp4"
@@ -432,7 +441,9 @@ def compare_cfg_methods(
         stats_combined["dit_cfg"] = dit_cfg
         stats_combined["embed_alpha"] = embed_alpha
 
-        print(f"    Time: {gen_time:.1f}s, Mean: {stats_combined['mean']:.1f}, Std: {stats_combined['std']:.1f}")
+        print(
+            f"    Time: {gen_time:.1f}s, Mean: {stats_combined['mean']:.1f}, Std: {stats_combined['std']:.1f}"
+        )
 
         if save_videos:
             video_path = output_path / f"dit_cfg{dit_cfg:.1f}_combined.mp4"

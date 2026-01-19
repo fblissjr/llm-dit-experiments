@@ -19,23 +19,23 @@ Copyright (c) 2025 Lightricks Ltd.
 import gc
 import logging
 from dataclasses import dataclass
-from typing import Callable, List, Optional, Tuple, Union
 from pathlib import Path
+from typing import Callable, List, Optional, Tuple, Union
 
 import torch
 from tqdm import tqdm
 
-from llm_dit.models.ltx2 import (
-    LTX2Transformer,
-    Modality,
-    LTX2TextConnectors,
-    VideoDecoder,
-)
 from llm_dit.conditioning import (
     ConditioningItem,
     LatentState,
-    timesteps_from_mask,
     post_process_latent,
+    timesteps_from_mask,
+)
+from llm_dit.models.ltx2 import (
+    LTX2TextConnectors,
+    LTX2Transformer,
+    Modality,
+    VideoDecoder,
 )
 from llm_dit.schedulers import LTX2Scheduler
 
@@ -130,7 +130,7 @@ def create_position_indices(
 
     # Create 3D grid: [t_latent, h_latent, w_latent]
     # Order is (t, h, w) matching the official implementation
-    grid_t, grid_h, grid_w = torch.meshgrid(t_indices, h_indices, w_indices, indexing='ij')
+    grid_t, grid_h, grid_w = torch.meshgrid(t_indices, h_indices, w_indices, indexing="ij")
 
     # Create start and end positions (each patch spans [start, start+1))
     # Shape: [3, t_latent, h_latent, w_latent]
@@ -259,8 +259,10 @@ def generate_video(
         # Process through connectors
         if attention_mask is None:
             attention_mask = torch.ones(
-                prompt_embeds.shape[0], prompt_embeds.shape[1],
-                device=prompt_embeds.device, dtype=prompt_embeds.dtype
+                prompt_embeds.shape[0],
+                prompt_embeds.shape[1],
+                device=prompt_embeds.device,
+                dtype=prompt_embeds.dtype,
             )
         video_embeds, _, _ = connectors(
             prompt_embeds.to(device, dtype),
@@ -352,15 +354,11 @@ def generate_video(
         if config.guidance_scale > 1.0:
             # Unconditional pass (zero embeddings)
             uncond_embeds = torch.zeros_like(prompt_embeds)
-            uncond_modality = create_video_modality(
-                latents, timestep, positions, uncond_embeds
-            )
+            uncond_modality = create_video_modality(latents, timestep, positions, uncond_embeds)
             velocity_uncond, _ = model(video=uncond_modality)
 
             # Conditional pass
-            cond_modality = create_video_modality(
-                latents, timestep, positions, prompt_embeds
-            )
+            cond_modality = create_video_modality(latents, timestep, positions, prompt_embeds)
             velocity_cond, _ = model(video=cond_modality)
 
             # CFG blend
@@ -368,9 +366,7 @@ def generate_video(
                 velocity_cond - velocity_uncond
             )
         else:
-            modality = create_video_modality(
-                latents, timestep, positions, prompt_embeds
-            )
+            modality = create_video_modality(latents, timestep, positions, prompt_embeds)
             velocity, _ = model(video=modality)
 
         # Euler step: x_{t-1} = x_t + v * dt
@@ -403,11 +399,11 @@ def generate_video(
 
     # Denormalize latents before VAE decode
     # Check for diffusers VAE (has latents_mean attribute) or our VAE (uses config)
-    if hasattr(vae, 'latents_mean') and vae.latents_mean is not None:
+    if hasattr(vae, "latents_mean") and vae.latents_mean is not None:
         # Diffusers VAE - use its built-in normalization params
         latents_mean = vae.latents_mean.view(1, -1, 1, 1, 1).to(device, dtype)
         latents_std = vae.latents_std.view(1, -1, 1, 1, 1).to(device, dtype)
-        scaling_factor = getattr(vae.config, 'scaling_factor', 1.0)
+        scaling_factor = getattr(vae.config, "scaling_factor", 1.0)
         latents = latents * latents_std / scaling_factor + latents_mean
     elif config.latents_mean is not None and config.latents_std is not None:
         # Our VAE - use config normalization params
@@ -418,7 +414,7 @@ def generate_video(
     # Decode to pixel space
     # Support both diffusers VAE (decode method) and our VAE (direct call)
     with torch.no_grad():
-        if hasattr(vae, 'decode'):
+        if hasattr(vae, "decode"):
             # Diffusers VAE interface
             video = vae.decode(latents).sample
         else:
@@ -489,16 +485,20 @@ def generate_video_with_offloading(
         callback("text_encoder", 0, 1)
 
     logger.info("Stage 1: Loading text encoder...")
-    from llm_dit.encoders.gemma3 import Gemma3TextEncoder
+    from llm_dit.encoders.gemma3 import Gemma3Encoder
 
-    text_encoder = Gemma3TextEncoder(
-        model_path=str(text_encoder_path),
+    text_encoder = Gemma3Encoder(
+        model_id=str(text_encoder_path),
         device="cuda",
         dtype=dtype,
+        load_in_8bit=True,  # 8-bit for memory efficiency
     )
 
     logger.info("Encoding prompt...")
-    prompt_embeds, attention_mask = text_encoder.encode([prompt])
+    encoding_output = text_encoder.encode([prompt])
+    # EncodingOutput has embeddings list and attention_masks list
+    prompt_embeds = encoding_output.embeddings[0].unsqueeze(0)  # [1, seq_len, dim]
+    attention_mask = encoding_output.attention_masks[0].unsqueeze(0)  # [1, seq_len]
     logger.info(f"Prompt embeddings: {prompt_embeds.shape}")
 
     # Keep embeddings on GPU, unload encoder
@@ -584,16 +584,16 @@ def generate_video_with_offloading(
 
     vae = AutoencoderKLLTXVideo.from_pretrained(
         str(model_path / "vae"),
-        torch_dtype=dtype,
+        dtype=dtype,
     ).to("cuda")
 
     logger.info("Decoding latents to video...")
 
     # Denormalize latents
-    if hasattr(vae, 'latents_mean') and vae.latents_mean is not None:
+    if hasattr(vae, "latents_mean") and vae.latents_mean is not None:
         latents_mean = vae.latents_mean.view(1, -1, 1, 1, 1).to("cuda", dtype)
         latents_std = vae.latents_std.view(1, -1, 1, 1, 1).to("cuda", dtype)
-        scaling_factor = getattr(vae.config, 'scaling_factor', 1.0)
+        scaling_factor = getattr(vae.config, "scaling_factor", 1.0)
         latents = latents * latents_std / scaling_factor + latents_mean
 
     with torch.no_grad():

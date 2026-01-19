@@ -8,6 +8,7 @@ This backend is used when tests run in the llm-dit-experiments repo.
 """
 
 import gc
+import json
 import logging
 import time
 from pathlib import Path
@@ -18,6 +19,7 @@ import torch
 from .protocol import (
     Backend,
     GenerationConfig,
+    GenerationInputs,
     GenerationResult,
     GenerationStats,
 )
@@ -94,6 +96,36 @@ class LLMDitBackend(Backend):
         # Validate config
         config.validate()
 
+        # Resolve paths
+        text_encoder_path = self.text_encoder_path or (self.model_path / "text_encoder")
+        transformer_path = self.model_path / "transformer"
+        vae_path = self.model_path / "vae"
+
+        # Log all generation inputs at the start
+        inputs = GenerationInputs(
+            prompt=prompt,
+            negative_prompt="",
+            num_frames=config.num_frames,
+            height=config.height,
+            width=config.width,
+            frame_rate=config.frame_rate,
+            num_inference_steps=config.num_inference_steps,
+            guidance_scale=config.guidance_scale,
+            seed=config.seed,
+            transformer_path=str(transformer_path),
+            text_encoder_path=str(text_encoder_path),
+            vae_path=str(vae_path),
+            transformer_dtype="bfloat16",
+            transformer_quantization="fp8-quanto" if config.fp8 else "bf16",
+            text_encoder_dtype="bfloat16",
+            text_encoder_quantization="8bit",
+            vae_dtype="bfloat16",
+            base_shift=0.95,
+            max_shift=2.05,
+            terminal_sigma=0.1,
+        )
+        inputs.log_summary(logger)
+
         # Track stats
         stats = GenerationStats()
         start_time = time.time()
@@ -129,10 +161,6 @@ class LLMDitBackend(Backend):
         )
 
         # Generate video with offloading
-        text_encoder_path = self.text_encoder_path or (
-            self.model_path / "text_encoder"
-        )
-
         video = generate_video_with_offloading(
             prompt=prompt,
             config=llm_dit_config,
@@ -179,6 +207,12 @@ class LLMDitBackend(Backend):
             metadata_path = output_dir / "metadata.json"
             result.save_metadata(metadata_path)
             logger.info(f"Saved metadata to {metadata_path}")
+
+            # Save full generation inputs
+            inputs_path = output_dir / "inputs.json"
+            with open(inputs_path, "w") as f:
+                json.dump(inputs.to_dict(), f, indent=2)
+            logger.info(f"Saved inputs to {inputs_path}")
 
         return result
 

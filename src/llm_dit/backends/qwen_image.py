@@ -98,7 +98,7 @@ class QwenImageTextEncoderBackend:
         text_encoder_subfolder: str = "text_encoder",
         tokenizer_subfolder: str = "tokenizer",
         device: str | torch.device = "cuda",
-        torch_dtype: torch.dtype = torch.bfloat16,
+        dtype: torch.dtype = torch.bfloat16,
         trust_remote_code: bool = True,
         quantization: str = "none",
         **kwargs,
@@ -111,7 +111,7 @@ class QwenImageTextEncoderBackend:
             text_encoder_subfolder: Subfolder containing text encoder weights
             tokenizer_subfolder: Subfolder containing tokenizer
             device: Device to load model on (default: cuda)
-            torch_dtype: Model dtype (default: bfloat16)
+            dtype: Model dtype (default: bfloat16)
             trust_remote_code: Trust remote code for transformers loading
             quantization: Quantization mode: "none", "4bit", or "8bit"
             **kwargs: Additional arguments passed to model loading
@@ -211,10 +211,11 @@ class QwenImageTextEncoderBackend:
         if quantization in ("4bit", "8bit"):
             try:
                 from transformers import BitsAndBytesConfig
+
                 if quantization == "4bit":
                     quantization_config = BitsAndBytesConfig(
                         load_in_4bit=True,
-                        bnb_4bit_compute_dtype=torch_dtype,
+                        bnb_4bit_compute_dtype=dtype,
                         bnb_4bit_use_double_quant=True,
                         bnb_4bit_quant_type="nf4",
                     )
@@ -282,13 +283,13 @@ class QwenImageTextEncoderBackend:
             # For bitsandbytes quantization, we need to move to CUDA first then quantize
             # This is a simplified approach - full quantization support would use from_pretrained
             logger.info(f"Applying {quantization} quantization...")
-            model = model.to(device=device, dtype=torch_dtype)
+            model = model.to(device=device, dtype=dtype)
             # Note: Full bitsandbytes quantization requires using from_pretrained with
             # quantization_config. For manual loading, we move to device and dtype only.
             # TODO: Implement full quantization support by saving/loading in HF format
         else:
             # Move to device and set dtype
-            model = model.to(device=device, dtype=torch_dtype)
+            model = model.to(device=device, dtype=dtype)
 
         model.eval()
 
@@ -296,10 +297,10 @@ class QwenImageTextEncoderBackend:
             f"Loaded Qwen2.5-VL text encoder: "
             f"hidden_size={config.hidden_size}, "
             f"num_layers={config.num_hidden_layers}, "
-            f"device={device}, dtype={torch_dtype}"
+            f"device={device}, dtype={dtype}"
         )
 
-        return cls(model, tokenizer, device, torch_dtype)
+        return cls(model, tokenizer, device, dtype)
 
     @property
     def embedding_dim(self) -> int:
@@ -421,8 +422,7 @@ class QwenImageTextEncoderBackend:
             hidden_states = outputs[layer_index]
 
         logger.debug(
-            f"[QwenImageTextEncoder] Extracted layer {layer_index}, "
-            f"shape={hidden_states.shape}"
+            f"[QwenImageTextEncoder] Extracted layer {layer_index}, shape={hidden_states.shape}"
         )
 
         # Extract masked hidden states and drop template tokens
@@ -441,7 +441,9 @@ class QwenImageTextEncoderBackend:
                 valid_embeds = valid_embeds[drop_tokens:]
 
             embeddings_list.append(valid_embeds)
-            masks_list.append(torch.ones(valid_embeds.shape[0], dtype=torch.bool, device=self.device))
+            masks_list.append(
+                torch.ones(valid_embeds.shape[0], dtype=torch.bool, device=self.device)
+            )
             token_counts.append(valid_embeds.shape[0])
 
             if logger.isEnabledFor(logging.DEBUG):
@@ -460,12 +462,10 @@ class QwenImageTextEncoderBackend:
             # Create padded tensors for batch processing
             max_seq_len = max(e.shape[0] for e in embeddings_list)
             padded_embeds = torch.zeros(
-                len(prompts), max_seq_len, self.embedding_dim,
-                dtype=self.dtype, device=self.device
+                len(prompts), max_seq_len, self.embedding_dim, dtype=self.dtype, device=self.device
             )
             padded_mask = torch.zeros(
-                len(prompts), max_seq_len,
-                dtype=torch.bool, device=self.device
+                len(prompts), max_seq_len, dtype=torch.bool, device=self.device
             )
 
             for i, (emb, count) in enumerate(zip(embeddings_list, token_counts)):

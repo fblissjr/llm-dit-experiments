@@ -22,11 +22,13 @@ from PIL import Image
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
-from llm_dit.vl import VLEmbeddingExtractor, compute_style_delta, blend_with_style_delta
+from llm_dit.cli import create_base_parser, load_runtime_config
 from llm_dit.startup import PipelineLoader
-from llm_dit.cli import load_runtime_config, create_base_parser
+from llm_dit.vl import VLEmbeddingExtractor, blend_with_style_delta, compute_style_delta
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger(__name__)
 
 
@@ -38,13 +40,25 @@ def create_neutral_image(size: int = 1024) -> Image.Image:
 def main():
     parser = argparse.ArgumentParser(description="Test style delta VL conditioning")
     parser.add_argument("--styled", type=str, required=True, help="Path to styled image")
-    parser.add_argument("--neutral", type=str, default=None, help="Path to neutral image (default: generate gray)")
+    parser.add_argument(
+        "--neutral", type=str, default=None, help="Path to neutral image (default: generate gray)"
+    )
     parser.add_argument("--prompt", "-p", type=str, required=True, help="Text prompt")
-    parser.add_argument("--alphas", type=float, nargs="+", default=[0.1, 0.3, 0.5, 0.7, 1.0], help="Style alpha values")
-    parser.add_argument("--output-dir", "-o", type=str, default="experiments/results/style_delta_test")
+    parser.add_argument(
+        "--alphas",
+        type=float,
+        nargs="+",
+        default=[0.1, 0.3, 0.5, 0.7, 1.0],
+        help="Style alpha values",
+    )
+    parser.add_argument(
+        "--output-dir", "-o", type=str, default="experiments/results/style_delta_test"
+    )
     parser.add_argument("--config", type=str, default="config.toml")
     parser.add_argument("--vl-model-path", type=str, required=True, help="Path to Qwen3-VL model")
-    parser.add_argument("--hidden-layer", type=int, default=-6, help="Hidden layer for VL extraction")
+    parser.add_argument(
+        "--hidden-layer", type=int, default=-6, help="Hidden layer for VL extraction"
+    )
     parser.add_argument("--seed", type=int, default=42)
 
     args = parser.parse_args()
@@ -72,7 +86,7 @@ def main():
     vl_extractor = VLEmbeddingExtractor.from_pretrained(
         args.vl_model_path,
         device="cpu",
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
     )
 
     # Extract VL embeddings from both images

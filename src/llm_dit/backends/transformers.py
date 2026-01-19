@@ -135,7 +135,7 @@ class TransformersBackend:
             config.quantization = quantization
 
         # Merge kwargs with config
-        torch_dtype = kwargs.pop("torch_dtype", config.get_torch_dtype())
+        dtype = kwargs.pop("dtype", config.get_dtype())
         device_map = kwargs.pop("device_map", config.device)
         trust_remote_code = kwargs.pop("trust_remote_code", config.trust_remote_code)
 
@@ -147,8 +147,12 @@ class TransformersBackend:
             tokenizer_subfolder = model_subfolder
 
         if is_local:
-            tokenizer_path = str(Path(model_path) / tokenizer_subfolder) if tokenizer_subfolder else model_path
-            model_load_path = str(Path(model_path) / model_subfolder) if model_subfolder else model_path
+            tokenizer_path = (
+                str(Path(model_path) / tokenizer_subfolder) if tokenizer_subfolder else model_path
+            )
+            model_load_path = (
+                str(Path(model_path) / model_subfolder) if model_subfolder else model_path
+            )
             hf_subfolder = None  # Don't use subfolder param for local paths
         else:
             tokenizer_path = model_path
@@ -170,7 +174,7 @@ class TransformersBackend:
 
         # Build model kwargs
         model_kwargs = {
-            "dtype": torch_dtype,
+            "dtype": dtype,
             "device_map": device_map,
             "trust_remote_code": trust_remote_code,
             **kwargs,
@@ -181,7 +185,7 @@ class TransformersBackend:
             model_kwargs["quantization_config"] = quantization_config
             logger.info(f"Loading model with quantization: {quantization_config}")
         else:
-            logger.info(f"Loading model from {model_load_path} (dtype={torch_dtype})")
+            logger.info(f"Loading model from {model_load_path} (dtype={dtype})")
 
         # Only add subfolder if it's not None (transformers bugs on subfolder=None)
         if hf_subfolder and not is_local:
@@ -280,8 +284,12 @@ class TransformersBackend:
         if logger.isEnabledFor(logging.DEBUG):
             seq_length = input_ids.shape[1]
             valid_tokens = attention_mask[0].sum().item()
-            logger.debug(f"[TransformersBackend] Tokenized: {valid_tokens} valid tokens, seq_length={seq_length}")
-            logger.debug(f"[TransformersBackend] Token IDs (first 20): {input_ids[0][:20].tolist()}")
+            logger.debug(
+                f"[TransformersBackend] Tokenized: {valid_tokens} valid tokens, seq_length={seq_length}"
+            )
+            logger.debug(
+                f"[TransformersBackend] Token IDs (first 20): {input_ids[0][:20].tolist()}"
+            )
 
         # Encode
         with torch.no_grad():
@@ -294,7 +302,9 @@ class TransformersBackend:
         # Extract specified layer (default: hidden_states[-2] for Z-Image)
         # Negative indices: -1 = last, -2 = penultimate, etc.
         hidden_states = outputs.hidden_states[layer_index]
-        logger.debug(f"[TransformersBackend] Extracting layer {layer_index} of {len(outputs.hidden_states)} layers")
+        logger.debug(
+            f"[TransformersBackend] Extracting layer {layer_index} of {len(outputs.hidden_states)} layers"
+        )
 
         # Filter by attention mask to get variable-length outputs
         # This matches diffusers behavior
@@ -311,10 +321,18 @@ class TransformersBackend:
             # Debug: log embedding stats for comparison with other backends
             # Only compute expensive tensor stats when debug logging is enabled
             if logger.isEnabledFor(logging.DEBUG):
-                logger.debug(f"[TransformersBackend] Embedding [{i}]: shape={valid_embeds.shape}, dtype={valid_embeds.dtype}")
-                logger.debug(f"[TransformersBackend] Embedding [{i}] stats: min={valid_embeds.min().item():.4f}, max={valid_embeds.max().item():.4f}, mean={valid_embeds.mean().item():.4f}, std={valid_embeds.std().item():.4f}")
-                logger.debug(f"[TransformersBackend] Embedding [{i}] first 5 values: {valid_embeds[0, :5].tolist()}")
-                logger.debug(f"[TransformersBackend] Embedding [{i}] last 5 values: {valid_embeds[-1, -5:].tolist()}")
+                logger.debug(
+                    f"[TransformersBackend] Embedding [{i}]: shape={valid_embeds.shape}, dtype={valid_embeds.dtype}"
+                )
+                logger.debug(
+                    f"[TransformersBackend] Embedding [{i}] stats: min={valid_embeds.min().item():.4f}, max={valid_embeds.max().item():.4f}, mean={valid_embeds.mean().item():.4f}, std={valid_embeds.std().item():.4f}"
+                )
+                logger.debug(
+                    f"[TransformersBackend] Embedding [{i}] first 5 values: {valid_embeds[0, :5].tolist()}"
+                )
+                logger.debug(
+                    f"[TransformersBackend] Embedding [{i}] last 5 values: {valid_embeds[-1, -5:].tolist()}"
+                )
 
         result = EncodingOutput(
             embeddings=embeddings_list,
@@ -416,8 +434,12 @@ class TransformersBackend:
             masks_list.append(mask[mask])
             token_counts.append(valid_embeds.shape[0])
 
-            logger.debug(f"[TransformersBackend] Blended embedding [{i}]: shape={valid_embeds.shape}")
-            logger.debug(f"[TransformersBackend] Blended embedding [{i}] stats: min={valid_embeds.min().item():.4f}, max={valid_embeds.max().item():.4f}, mean={valid_embeds.mean().item():.4f}")
+            logger.debug(
+                f"[TransformersBackend] Blended embedding [{i}]: shape={valid_embeds.shape}"
+            )
+            logger.debug(
+                f"[TransformersBackend] Blended embedding [{i}] stats: min={valid_embeds.min().item():.4f}, max={valid_embeds.max().item():.4f}, mean={valid_embeds.mean().item():.4f}"
+            )
 
         result = EncodingOutput(
             embeddings=embeddings_list,
@@ -501,7 +523,9 @@ class TransformersBackend:
             add_generation_prompt=True,
         )
 
-        logger.debug(f"[TransformersBackend.generate] Formatted prompt length: {len(formatted)} chars")
+        logger.debug(
+            f"[TransformersBackend.generate] Formatted prompt length: {len(formatted)} chars"
+        )
 
         # Tokenize
         inputs = self.tokenizer(
@@ -531,7 +555,11 @@ class TransformersBackend:
                 pass
 
         # Use single token or list
-        eos_token_id = eos_token_ids if len(eos_token_ids) > 1 else (eos_token_ids[0] if eos_token_ids else None)
+        eos_token_id = (
+            eos_token_ids
+            if len(eos_token_ids) > 1
+            else (eos_token_ids[0] if eos_token_ids else None)
+        )
         pad_token_id = self.tokenizer.pad_token_id or (eos_token_ids[0] if eos_token_ids else 0)
 
         # Build generation kwargs
@@ -558,7 +586,9 @@ class TransformersBackend:
 
         logger.debug(f"[TransformersBackend.generate] Generation kwargs: {gen_kwargs}")
         logger.debug(f"[TransformersBackend.generate] eos_token_ids: {eos_token_ids}")
-        logger.info(f"[TransformersBackend.generate] Starting generation (max_new_tokens={max_new_tokens})...")
+        logger.info(
+            f"[TransformersBackend.generate] Starting generation (max_new_tokens={max_new_tokens})..."
+        )
 
         # Generate - use use_cache=False to avoid KV cache issues after encoding
         with torch.no_grad():
@@ -596,12 +626,18 @@ class TransformersBackend:
 
             # Extra safety: strip any remaining <think>/<think> tags that might have slipped through
             # (in case these tokens aren't marked as special in the tokenizer)
-            thinking_content = thinking_content.removeprefix("<think>").removesuffix("</think>").strip()
+            thinking_content = (
+                thinking_content.removeprefix("<think>").removesuffix("</think>").strip()
+            )
 
-            logger.info(f"[TransformersBackend.generate] Extracted thinking via token parsing ({len(thinking_content)} chars)")
+            logger.info(
+                f"[TransformersBackend.generate] Extracted thinking via token parsing ({len(thinking_content)} chars)"
+            )
         except ValueError:
             # No </think> token found - model didn't use thinking format
-            logger.debug("[TransformersBackend.generate] No </think> token found, using full output")
+            logger.debug(
+                "[TransformersBackend.generate] No </think> token found, using full output"
+            )
 
         # Decode the content (after </think> or full output if no thinking)
         # Don't skip special tokens initially so we can clean up properly
@@ -610,7 +646,7 @@ class TransformersBackend:
         # Clean up end tokens
         for end_token in ["<|im_end|>", "<|endoftext|>"]:
             if generated_text.endswith(end_token):
-                generated_text = generated_text[:-len(end_token)]
+                generated_text = generated_text[: -len(end_token)]
 
         generated_text = generated_text.strip()
 

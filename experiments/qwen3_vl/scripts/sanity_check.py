@@ -22,11 +22,12 @@ house.save(output_dir / "img2img_source_house.png")
 
 # extract vl from SUNSET with FULL tokens
 import os
+
 vl_model_path = os.environ.get("QWEN3_VL_PATH")
 if not vl_model_path:
     raise ValueError("Set QWEN3_VL_PATH environment variable")
 vl_extractor = VLEmbeddingExtractor.from_pretrained(
-    vl_model_path, device="cpu", torch_dtype=torch.bfloat16
+    vl_model_path, device="cpu", dtype=torch.bfloat16
 )
 vl_emb = vl_extractor.extract(
     sunset,

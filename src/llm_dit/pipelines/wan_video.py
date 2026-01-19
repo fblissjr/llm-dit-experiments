@@ -79,7 +79,7 @@ class WanVideoPipeline:
 
         model_path = Path(model_path).expanduser()
         device = kwargs.get("device", "cuda")
-        dtype = kwargs.get("torch_dtype", torch.bfloat16)
+        dtype = kwargs.get("dtype", torch.bfloat16)
 
         config = WanConfig(
             model_path=str(model_path),
@@ -99,7 +99,9 @@ class WanVideoPipeline:
         config_name = "wan2.1-t2v-1.3b"  # Default, could be detected from path
         if "14B" in str(model_path) or "14b" in str(model_path):
             config_name = "wan2.1-t2v-14b"
-        dit = WanDiT.from_pretrained(str(dit_path), config_name=config_name, device=device, dtype=dtype)
+        dit = WanDiT.from_pretrained(
+            str(dit_path), config_name=config_name, device=device, dtype=dtype
+        )
         dit.eval()
 
         # Load VAE (check multiple possible locations)

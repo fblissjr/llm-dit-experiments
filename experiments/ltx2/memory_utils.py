@@ -95,7 +95,7 @@ def load_text_encoder_8bit(
     text_encoder = Gemma3ForConditionalGeneration.from_pretrained(
         str(text_encoder_path),
         quantization_config=quantization_config,
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
         device_map=device_map,
     )
 
@@ -282,7 +282,7 @@ def load_pipeline_with_offloading(
     # Load pipeline without text encoder (we handle encoding separately)
     pipe = LTX2Pipeline.from_pretrained(
         model_path,
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
         text_encoder=None,
         tokenizer=None,
     )
@@ -311,6 +311,7 @@ def load_pipeline_with_offloading(
         # The pipeline accesses latents_mean/std and config before checking output_type
         class DummyAudioVAE:
             """Dummy audio VAE to skip audio generation while satisfying pipeline checks."""
+
             def __init__(self, real_vae):
                 # Copy essential attributes for denormalization and config
                 self.latents_mean = real_vae.latents_mean
@@ -324,7 +325,7 @@ def load_pipeline_with_offloading(
                 # Just return zeros since we're not using audio
                 zeros = torch.zeros_like(latents)
                 if return_dict:
-                    return type('obj', (object,), {'sample': zeros})()
+                    return type("obj", (object,), {"sample": zeros})()
                 return (zeros,)
 
             def to(self, *args, **kwargs):

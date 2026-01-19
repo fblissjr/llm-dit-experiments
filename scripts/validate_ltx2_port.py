@@ -224,7 +224,7 @@ def test_pipeline_smoke(model_path: str = "models/LTX-2"):
         print("  Loading pipeline (this may take a while)...")
         pipe = LTX2Pipeline.from_pretrained(
             str(model_path),
-            torch_dtype=torch.bfloat16,
+            dtype=torch.bfloat16,
             enable_cpu_offload=True,
         )
 

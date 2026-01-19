@@ -36,7 +36,7 @@ print(f"Prompt: {PROMPT}")
 print("\n1. Loading pipeline...")
 pipe = LTX2Pipeline.from_pretrained(
     MODEL_PATH,
-    torch_dtype=torch.bfloat16,
+    dtype=torch.bfloat16,
 )
 
 # Enable CPU offload for memory management

@@ -107,7 +107,7 @@ class EmbeddingExtractor:
         cls,
         model_path: str,
         device: str = "cuda",
-        torch_dtype: torch.dtype = torch.bfloat16,
+        dtype: torch.dtype = torch.bfloat16,
     ) -> "EmbeddingExtractor":
         """
         Load Qwen3-Embedding-4B from path.
@@ -115,7 +115,7 @@ class EmbeddingExtractor:
         Args:
             model_path: Path to model directory or HuggingFace model ID
             device: Device to load model on (cuda, cpu, auto)
-            torch_dtype: Model precision (default: bfloat16)
+            dtype: Model precision (default: bfloat16)
 
         Returns:
             EmbeddingExtractor instance
@@ -130,7 +130,7 @@ class EmbeddingExtractor:
 
         model = AutoModel.from_pretrained(
             model_path,
-            dtype=torch_dtype,
+            dtype=dtype,
             device_map=device,
         )
         model.eval()
@@ -140,8 +140,7 @@ class EmbeddingExtractor:
 
         if hidden_size != 2560:
             logger.warning(
-                f"Hidden size {hidden_size} != 2560. "
-                "This model may not be compatible with Z-Image."
+                f"Hidden size {hidden_size} != 2560. This model may not be compatible with Z-Image."
             )
 
         return cls(model, tokenizer, device)
@@ -448,8 +447,7 @@ class EmbeddingExtractor:
         emb_centered = emb_mean - emb_mean.mean()
         qwen3_centered = qwen3_mean - qwen3_mean.mean()
         correlation = (
-            (emb_centered * qwen3_centered).sum()
-            / (emb_centered.norm() * qwen3_centered.norm())
+            (emb_centered * qwen3_centered).sum() / (emb_centered.norm() * qwen3_centered.norm())
         ).item()
 
         return {

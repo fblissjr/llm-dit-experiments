@@ -29,6 +29,7 @@ import torch.nn as nn
 @dataclass
 class LayerInfo:
     """Information about a single layer's FP8 compatibility."""
+
     name: str
     shape: tuple[int, int]
     in_features: int
@@ -42,6 +43,7 @@ class LayerInfo:
 @dataclass
 class CompatibilityReport:
     """Summary report of FP8 compatibility analysis."""
+
     total_linear_layers: int = 0
     compatible_layers: int = 0
     incompatible_layers: int = 0
@@ -129,8 +131,16 @@ def print_report(report: CompatibilityReport, verbose: bool = False) -> None:
         print("-" * 70)
         for layer in report.layers:
             if not layer.fp8_compatible:
-                in_status = "OK" if layer.in_aligned else f"BAD ({layer.in_features} % 16 = {layer.in_features % 16})"
-                out_status = "OK" if layer.out_aligned else f"BAD ({layer.out_features} % 16 = {layer.out_features % 16})"
+                in_status = (
+                    "OK"
+                    if layer.in_aligned
+                    else f"BAD ({layer.in_features} % 16 = {layer.in_features % 16})"
+                )
+                out_status = (
+                    "OK"
+                    if layer.out_aligned
+                    else f"BAD ({layer.out_features} % 16 = {layer.out_features % 16})"
+                )
                 print(f"  {layer.name}")
                 print(f"    Shape: {layer.shape}")
                 print(f"    in_features: {in_status}")
@@ -153,7 +163,9 @@ def print_report(report: CompatibilityReport, verbose: bool = False) -> None:
         print(f"RESULT: Model is MOSTLY FP8 compatible ({report.param_coverage:.1f}% of params)")
         print("        Incompatible layers will remain in original precision.")
     else:
-        print(f"RESULT: Model has LIMITED FP8 compatibility ({report.param_coverage:.1f}% of params)")
+        print(
+            f"RESULT: Model has LIMITED FP8 compatibility ({report.param_coverage:.1f}% of params)"
+        )
         print("        Consider using 4bit/8bit quantization instead.")
     print("=" * 70 + "\n")
 
@@ -166,7 +178,7 @@ def load_transformer_from_diffusers(model_path: str) -> Optional[nn.Module]:
         transformer = QwenImageTransformer2DModel.from_pretrained(
             model_path,
             subfolder="transformer",
-            torch_dtype=torch.bfloat16,
+            dtype=torch.bfloat16,
             low_cpu_mem_usage=True,
         )
         return transformer
@@ -183,7 +195,7 @@ def load_text_encoder(model_path: str) -> Optional[nn.Module]:
         text_encoder = Qwen2_5_VLForConditionalGeneration.from_pretrained(
             model_path,
             subfolder="text_encoder",
-            torch_dtype=torch.bfloat16,
+            dtype=torch.bfloat16,
             low_cpu_mem_usage=True,
         )
         return text_encoder
@@ -193,9 +205,7 @@ def load_text_encoder(model_path: str) -> Optional[nn.Module]:
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Check FP8 compatibility for model layers"
-    )
+    parser = argparse.ArgumentParser(description="Check FP8 compatibility for model layers")
     parser.add_argument(
         "--model-path",
         type=str,
@@ -260,9 +270,7 @@ def main():
                 "total_params": report.total_params,
                 "compatible_params": report.compatible_params,
                 "param_coverage": report.param_coverage,
-                "incompatible_layer_names": [
-                    l.name for l in report.layers if not l.fp8_compatible
-                ],
+                "incompatible_layer_names": [l.name for l in report.layers if not l.fp8_compatible],
             }
         print(json.dumps(output, indent=2))
 

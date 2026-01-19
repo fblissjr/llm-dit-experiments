@@ -16,16 +16,16 @@ from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).parents[3]))
 
+from experiments.qwen3_vl.scripts.grid_utils import make_grid
+from src.llm_dit.cli import load_runtime_config
+from src.llm_dit.startup import PipelineLoader
 from src.llm_dit.vl import VLEmbeddingExtractor
 from src.llm_dit.vl.blending import (
-    blend_embeddings,
+    _interpolate_sequence,
     blend_adain,
     blend_adain_per_dim,
-    _interpolate_sequence,
+    blend_embeddings,
 )
-from src.llm_dit.startup import PipelineLoader
-from src.llm_dit.cli import load_runtime_config
-from experiments.qwen3_vl.scripts.grid_utils import make_grid
 
 
 def blend_with_interpolation(vl_emb, text_emb, alpha):
@@ -59,6 +59,7 @@ def main():
 
     # Load VL extractor
     import os
+
     vl_model_path = os.environ.get("QWEN3_VL_PATH")
     if not vl_model_path:
         raise ValueError("Set QWEN3_VL_PATH environment variable")
@@ -66,7 +67,7 @@ def main():
     vl_extractor = VLEmbeddingExtractor.from_pretrained(
         vl_model_path,
         device="cuda",
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
     )
 
     # Extract VL embeddings
@@ -87,9 +88,11 @@ def main():
 
     # Load Z-Image pipeline
     print("Loading Z-Image pipeline...")
+
     class ConfigArgs:
         config = "config.toml"
         profile = "default"
+
     config = load_runtime_config(ConfigArgs())
     loader = PipelineLoader(config)
     pipe = loader.load_pipeline().pipeline

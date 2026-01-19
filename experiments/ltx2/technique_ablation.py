@@ -36,7 +36,7 @@ import gc
 import json
 import sys
 import time
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from datetime import datetime
 from itertools import combinations
 from pathlib import Path
@@ -100,7 +100,9 @@ class AblationStudy:
         lines.append("Ablation Study Summary")
         lines.append("=" * 80)
         lines.append(f"Prompt: {self.prompt}")
-        lines.append(f"Resolution: {self.resolution[0]}x{self.resolution[1]}, {self.num_frames} frames")
+        lines.append(
+            f"Resolution: {self.resolution[0]}x{self.resolution[1]}, {self.num_frames} frames"
+        )
         lines.append("-" * 80)
         lines.append(f"{'Config':<30} {'Time (s)':<12} {'VRAM (GB)':<12} {'Techniques'}")
         lines.append("-" * 80)
@@ -161,10 +163,10 @@ def run_single_ablation(
     if enhancement_config.tea_cache_enabled:
         techniques_enabled.append("tea_cache")
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"Running: {config_name}")
     print(f"Techniques: {', '.join(techniques_enabled) if techniques_enabled else 'none'}")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
     # Reset VRAM tracking
     reset_vram_stats()
@@ -334,7 +336,7 @@ def main():
     print("\nLoading LTX-2 pipeline...")
     pipe = LTX2Pipeline.from_pretrained(
         args.model_path,
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
         enable_cpu_offload=True,
     )
 

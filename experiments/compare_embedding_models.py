@@ -53,9 +53,9 @@ class EmbeddingStats:
     max: float
     # Per-dimension statistics
     dim_mean_mean: float  # Mean of per-dim means
-    dim_mean_std: float   # Std of per-dim means
-    dim_std_mean: float   # Mean of per-dim stds
-    dim_std_std: float    # Std of per-dim stds
+    dim_mean_std: float  # Std of per-dim means
+    dim_std_mean: float  # Mean of per-dim stds
+    dim_std_std: float  # Std of per-dim stds
 
 
 @dataclass
@@ -84,7 +84,7 @@ def compute_stats(embeddings: torch.Tensor, model: str, layer: int, prompt: str)
 
     # Per-dimension stats (across sequence)
     dim_means = embeddings.mean(dim=0)  # (hidden_dim,)
-    dim_stds = embeddings.std(dim=0)    # (hidden_dim,)
+    dim_stds = embeddings.std(dim=0)  # (hidden_dim,)
 
     return EmbeddingStats(
         model=model,
@@ -143,7 +143,8 @@ def compare_embeddings(
     q_std_centered = q_dim_stds - q_dim_stds.mean()
     e_std_centered = e_dim_stds - e_dim_stds.mean()
     std_corr = (
-        (q_std_centered * e_std_centered).sum() / (q_std_centered.norm() * e_std_centered.norm() + 1e-8)
+        (q_std_centered * e_std_centered).sum()
+        / (q_std_centered.norm() * e_std_centered.norm() + 1e-8)
     ).item()
 
     return ComparisonResult(
@@ -173,7 +174,7 @@ def extract_qwen3_embeddings(
 
     model = AutoModelForCausalLM.from_pretrained(
         model_path,
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
         device_map=device,
     )
     model.eval()
@@ -215,7 +216,7 @@ def extract_embedding_model_embeddings(
 
     model = AutoModel.from_pretrained(
         model_path,
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
         device_map=device,
     )
     model.eval()
@@ -258,9 +259,15 @@ def print_comparison_table(results: list[ComparisonResult]):
         print("-" * 80)
         print(f"{'Metric':<30} {'Qwen3-4B':<20} {'Qwen3-Embedding':<20} {'Diff/Ratio':<15}")
         print("-" * 80)
-        print(f"{'Num tokens':<30} {r.qwen3_stats.num_tokens:<20} {r.embedding_stats.num_tokens:<20}")
-        print(f"{'Mean':<30} {r.qwen3_stats.mean:<20.4f} {r.embedding_stats.mean:<20.4f} {r.mean_diff:+.4f}")
-        print(f"{'Std':<30} {r.qwen3_stats.std:<20.4f} {r.embedding_stats.std:<20.4f} {r.std_ratio:.4f}x")
+        print(
+            f"{'Num tokens':<30} {r.qwen3_stats.num_tokens:<20} {r.embedding_stats.num_tokens:<20}"
+        )
+        print(
+            f"{'Mean':<30} {r.qwen3_stats.mean:<20.4f} {r.embedding_stats.mean:<20.4f} {r.mean_diff:+.4f}"
+        )
+        print(
+            f"{'Std':<30} {r.qwen3_stats.std:<20.4f} {r.embedding_stats.std:<20.4f} {r.std_ratio:.4f}x"
+        )
         print(f"{'Min':<30} {r.qwen3_stats.min:<20.4f} {r.embedding_stats.min:<20.4f}")
         print(f"{'Max':<30} {r.qwen3_stats.max:<20.4f} {r.embedding_stats.max:<20.4f}")
         print("-" * 80)
@@ -365,20 +372,22 @@ def main():
     ]
 
     if args.test_instructions:
-        configs.extend([
-            {"layer": -1, "instruction": None, "name": "layer-1_no-inst"},
-            {"layer": -2, "instruction": None, "name": "layer-2_no-inst"},
-            {
-                "layer": -2,
-                "instruction": "Generate a semantic embedding for text-to-image synthesis",
-                "name": "layer-2_image-inst",
-            },
-            {
-                "layer": -2,
-                "instruction": "Encode this text capturing all visual and descriptive details",
-                "name": "layer-2_visual-inst",
-            },
-        ])
+        configs.extend(
+            [
+                {"layer": -1, "instruction": None, "name": "layer-1_no-inst"},
+                {"layer": -2, "instruction": None, "name": "layer-2_no-inst"},
+                {
+                    "layer": -2,
+                    "instruction": "Generate a semantic embedding for text-to-image synthesis",
+                    "name": "layer-2_image-inst",
+                },
+                {
+                    "layer": -2,
+                    "instruction": "Encode this text capturing all visual and descriptive details",
+                    "name": "layer-2_visual-inst",
+                },
+            ]
+        )
 
     all_results = {}
 

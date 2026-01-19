@@ -8,19 +8,17 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root / "src"))
 
+import json
+
+import numpy as np
 import torch
 import torch.nn.functional as F
-import numpy as np
-import json
 
 # Model paths from environment variables
 QWEN3_4B_PATH = os.environ.get("QWEN3_PATH")
 QWEN3_EMBEDDING_PATH = os.environ.get("QWEN3_EMBEDDING_PATH")
 
-if not all([QWEN3_4B_PATH, QWEN3_EMBEDDING_PATH]):
-    raise ValueError(
-        "Set environment variables: QWEN3_PATH, QWEN3_EMBEDDING_PATH"
-    )
+    raise ValueError("Set environment variables: QWEN3_PATH, QWEN3_EMBEDDING_PATH")
 
 print("Loading models...")
 
@@ -35,7 +33,7 @@ print("Loading Qwen3-4B...")
 qwen3_backend = TransformersBackend.from_pretrained(
     QWEN3_4B_PATH,
     device_map="cuda",
-    torch_dtype=torch.bfloat16,
+    dtype=torch.bfloat16,
     model_subfolder="",
     tokenizer_subfolder="",
 )
@@ -52,7 +50,7 @@ print("Loading Qwen3-Embedding-4B...")
 embedding_extractor = EmbeddingExtractor.from_pretrained(
     QWEN3_EMBEDDING_PATH,
     device="cuda",
-    torch_dtype=torch.bfloat16,
+    dtype=torch.bfloat16,
 )
 
 emb_emb = embedding_extractor.encode_for_zimage(prompt, hidden_layer=-2, scale_factor=1.0)
@@ -104,11 +102,15 @@ top_low = torch.argsort(std_ratios, descending=False)[:10]
 
 print(f"\nTop 10 high std ratio dimensions:")
 for dim in top_high:
-    print(f"  Dim {dim}: {std_ratios[dim]:.3f}x (emb={emb_stds[dim]:.2f}, qwen3={qwen3_stds[dim]:.2f})")
+    print(
+        f"  Dim {dim}: {std_ratios[dim]:.3f}x (emb={emb_stds[dim]:.2f}, qwen3={qwen3_stds[dim]:.2f})"
+    )
 
 print(f"\nTop 10 low std ratio dimensions:")
 for dim in top_low:
-    print(f"  Dim {dim}: {std_ratios[dim]:.3f}x (emb={emb_stds[dim]:.2f}, qwen3={qwen3_stds[dim]:.2f})")
+    print(
+        f"  Dim {dim}: {std_ratios[dim]:.3f}x (emb={emb_stds[dim]:.2f}, qwen3={qwen3_stds[dim]:.2f})"
+    )
 
 # Dead dimensions
 qwen3_dead = (qwen3_stds < 0.01).sum().item()
@@ -129,7 +131,9 @@ print(f"  Qwen3-Embedding: {emb_hyper}")
 # Correlations
 mean_corr = F.cosine_similarity(emb_means.unsqueeze(0), qwen3_means.unsqueeze(0)).item()
 std_corr = F.cosine_similarity(emb_stds.unsqueeze(0), qwen3_stds.unsqueeze(0)).item()
-global_corr = F.cosine_similarity(emb_flat.flatten().unsqueeze(0), qwen3_flat.flatten().unsqueeze(0)).item()
+global_corr = F.cosine_similarity(
+    emb_flat.flatten().unsqueeze(0), qwen3_flat.flatten().unsqueeze(0)
+).item()
 
 print(f"\nCorrelations:")
 print(f"  Global cosine similarity: {global_corr:.4f}")
@@ -153,17 +157,28 @@ results = {
         "max": std_ratios.max().item(),
     },
     "top_high_dims": [
-        {"dim": int(d), "ratio": float(std_ratios[d]), "emb_std": float(emb_stds[d]), "qwen3_std": float(qwen3_stds[d])}
+        {
+            "dim": int(d),
+            "ratio": float(std_ratios[d]),
+            "emb_std": float(emb_stds[d]),
+            "qwen3_std": float(qwen3_stds[d]),
+        }
         for d in top_high
     ],
     "top_low_dims": [
-        {"dim": int(d), "ratio": float(std_ratios[d]), "emb_std": float(emb_stds[d]), "qwen3_std": float(qwen3_stds[d])}
+        {
+            "dim": int(d),
+            "ratio": float(std_ratios[d]),
+            "emb_std": float(emb_stds[d]),
+            "qwen3_std": float(qwen3_stds[d]),
+        }
         for d in top_low
     ],
     "dead_dimensions": {"qwen3": qwen3_dead, "embedding": emb_dead},
     "hyperactive_dimensions": {"qwen3": qwen3_hyper, "embedding": emb_hyper},
 }
 
+with open(output_file, "w") as f:
 with open(output_file, 'w') as f:
     json.dump(results, f, indent=2)
 

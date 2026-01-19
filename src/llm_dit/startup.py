@@ -22,7 +22,7 @@ import logging
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 import torch
 
@@ -35,6 +35,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class LoadResult:
     """Result of loading a pipeline or encoder."""
+
     pipeline: Optional["ZImagePipeline"] = None
     encoder: Optional["ZImageTextEncoder"] = None
     load_time: float = 0.0
@@ -56,23 +57,23 @@ def build_dype_config(config: "RuntimeConfig") -> Optional["DyPEConfigType"]:
     from llm_dit.config import DyPEConfig
 
     # Check if DyPE is enabled
-    if not getattr(config, 'dype_enabled', False):
+    if not getattr(config, "dype_enabled", False):
         return None
 
     return DyPEConfig(
         enabled=True,
-        method=getattr(config, 'dype_method', 'vision_yarn'),
-        dype_scale=getattr(config, 'dype_scale', 2.0),
-        dype_exponent=getattr(config, 'dype_exponent', 2.0),
-        dype_start_sigma=getattr(config, 'dype_start_sigma', 1.0),
-        base_shift=getattr(config, 'dype_base_shift', 0.5),
-        max_shift=getattr(config, 'dype_max_shift', 1.15),
-        base_resolution=getattr(config, 'dype_base_resolution', 1024),
-        anisotropic=getattr(config, 'dype_anisotropic', False),
-        multipass=getattr(config, 'dype_multipass', 'single'),
-        pass2_strength=getattr(config, 'dype_pass2_strength', 0.5),
-        pass3_strength=getattr(config, 'dype_pass3_strength', 0.4),
-        frequency_modulation=getattr(config, 'dype_frequency_modulation', False),
+        method=getattr(config, "dype_method", "vision_yarn"),
+        dype_scale=getattr(config, "dype_scale", 2.0),
+        dype_exponent=getattr(config, "dype_exponent", 2.0),
+        dype_start_sigma=getattr(config, "dype_start_sigma", 1.0),
+        base_shift=getattr(config, "dype_base_shift", 0.5),
+        max_shift=getattr(config, "dype_max_shift", 1.15),
+        base_resolution=getattr(config, "dype_base_resolution", 1024),
+        anisotropic=getattr(config, "dype_anisotropic", False),
+        multipass=getattr(config, "dype_multipass", "single"),
+        pass2_strength=getattr(config, "dype_pass2_strength", 0.5),
+        pass3_strength=getattr(config, "dype_pass3_strength", 0.4),
+        frequency_modulation=getattr(config, "dype_frequency_modulation", False),
     )
 
 
@@ -127,7 +128,7 @@ class PipelineLoader:
         if self.config.flash_attn:
             logger.info("Enabling Flash Attention...")
             try:
-                if hasattr(pipeline.transformer, 'set_attention_backend'):
+                if hasattr(pipeline.transformer, "set_attention_backend"):
                     pipeline.transformer.set_attention_backend("flash")
                     logger.info("  Flash Attention enabled")
                 else:
@@ -143,6 +144,7 @@ class PipelineLoader:
                     set_attention_backend,
                     get_available_backends,
                 )
+
                 available = get_available_backends()
                 if self.config.attention_backend in available:
                     set_attention_backend(self.config.attention_backend)
@@ -163,10 +165,12 @@ class PipelineLoader:
                 "xformers": "xformers",
                 "sage": "sage",
             }
-            diffusers_backend = backend_map.get(self.config.attention_backend, self.config.attention_backend)
+            diffusers_backend = backend_map.get(
+                self.config.attention_backend, self.config.attention_backend
+            )
             logger.info(f"Setting diffusers attention backend to: {diffusers_backend}")
             try:
-                if hasattr(pipeline.transformer, 'set_attention_backend'):
+                if hasattr(pipeline.transformer, "set_attention_backend"):
                     pipeline.transformer.set_attention_backend(diffusers_backend)
                     logger.info(f"  Diffusers attention backend set to {diffusers_backend}")
             except Exception as e:
@@ -176,25 +180,24 @@ class PipelineLoader:
         if self.config.compile:
             logger.info("Compiling transformer with torch.compile...")
             try:
-                pipeline.transformer = torch.compile(
-                    pipeline.transformer,
-                    mode="reduce-overhead"
-                )
+                pipeline.transformer = torch.compile(pipeline.transformer, mode="reduce-overhead")
                 logger.info("  Transformer compiled (first run will be slow)")
             except Exception as e:
                 logger.warning(f"  Failed to compile: {e}")
 
         # Tiled VAE for large images
         if self.config.tiled_vae:
-            logger.info(f"Enabling tiled VAE (tile_size={self.config.tile_size}, overlap={self.config.tile_overlap})...")
+            logger.info(
+                f"Enabling tiled VAE (tile_size={self.config.tile_size}, overlap={self.config.tile_overlap})..."
+            )
             try:
-                if hasattr(pipeline, 'enable_tiled_vae'):
+                if hasattr(pipeline, "enable_tiled_vae"):
                     pipeline.enable_tiled_vae(
                         tile_size=self.config.tile_size,
                         tile_overlap=self.config.tile_overlap,
                     )
                     logger.info("  Tiled VAE enabled")
-                elif hasattr(pipeline, 'vae') and hasattr(pipeline.vae, 'enable_tiling'):
+                elif hasattr(pipeline, "vae") and hasattr(pipeline.vae, "enable_tiling"):
                     pipeline.vae.enable_tiling()
                     logger.info("  VAE tiling enabled (basic)")
                 else:
@@ -231,7 +234,7 @@ class PipelineLoader:
         logger.info("=" * 60)
         logger.info(f"  Model: {self.config.model_path}")
         logger.info(f"  Device: {self.config.encoder_device_resolved}")
-        logger.info(f"  Dtype: {self.config.torch_dtype}")
+        logger.info(f"  Dtype: {self.config.dtype}")
         logger.info(f"  Quantization: {self.config.quantization}")
         logger.info(f"  Templates: {templates_dir}")
         logger.info(f"  Hidden layer: {self.config.hidden_layer}")
@@ -245,7 +248,7 @@ class PipelineLoader:
             self.config.model_path,
             templates_dir=templates_dir,
             device_map=self.config.encoder_device_resolved,
-            torch_dtype=self.config.get_torch_dtype(),
+            dtype=self.config.get_dtype(),
             quantization=self.config.quantization,
             enable_cache=self.config.embedding_cache,
             cache_size=self.config.cache_size,
@@ -272,7 +275,7 @@ class PipelineLoader:
             LoadResult with pipeline set
         """
         # Route to correct pipeline based on model_type
-        model_type = getattr(self.config, 'model_type', 'zimage')
+        model_type = getattr(self.config, "model_type", "zimage")
         if model_type == "qwenimage-layered":
             return self._load_qwen_image_pipeline()
         elif model_type == "qwenimage-t2i":
@@ -319,7 +322,7 @@ class PipelineLoader:
         logger.info(f"  Encoder device: {self.config.encoder_device_resolved}")
         logger.info(f"  DiT device: {self.config.dit_device_resolved}")
         logger.info(f"  VAE device: {self.config.vae_device_resolved}")
-        logger.info(f"  Dtype: {self.config.torch_dtype}")
+        logger.info(f"  Dtype: {self.config.dtype}")
         logger.info(f"  Quantization: {self.config.quantization}")
         logger.info(f"  Templates: {templates_dir}")
         logger.info("-" * 60)
@@ -337,12 +340,12 @@ class PipelineLoader:
             logger.info(f"    Cache size: {self.config.cache_size}")
         logger.info(f"  Long prompt mode: {self.config.long_prompt_mode}")
         logger.info(f"  Custom scheduler: {self.config.use_custom_scheduler}")
-        dynamic_shift = getattr(self.config, 'dynamic_shift', False)
+        dynamic_shift = getattr(self.config, "dynamic_shift", False)
         if dynamic_shift:
             logger.info(f"  Scheduler shift: dynamic (base=0.5, max=1.15)")
         else:
             logger.info(f"  Scheduler shift: {self.config.shift}")
-        d_noise = getattr(self.config, 'd_noise', 1.0)
+        d_noise = getattr(self.config, "d_noise", 1.0)
         if d_noise != 1.0:
             logger.info(f"  D-noise: {d_noise:.3f}")
         if self.config.lora_paths:
@@ -351,17 +354,21 @@ class PipelineLoader:
         # Build DyPE config if enabled
         dype_config = build_dype_config(self.config)
         if dype_config is not None:
-            logger.info(f"  DyPE: enabled (method={dype_config.method}, scale={dype_config.dype_scale})")
+            logger.info(
+                f"  DyPE: enabled (method={dype_config.method}, scale={dype_config.dype_scale})"
+            )
         else:
             logger.info("  DyPE: disabled")
 
         # Log SLG (Skip Layer Guidance) config
-        slg_scale = getattr(self.config, 'slg_scale', 0.0)
-        slg_layers = getattr(self.config, 'slg_layers', None)
+        slg_scale = getattr(self.config, "slg_scale", 0.0)
+        slg_layers = getattr(self.config, "slg_layers", None)
         if slg_scale > 0 and slg_layers:
-            slg_start = getattr(self.config, 'slg_start', 0.01)
-            slg_stop = getattr(self.config, 'slg_stop', 0.2)
-            logger.info(f"  SLG: enabled (scale={slg_scale}, layers={slg_layers}, range=[{slg_start:.0%}, {slg_stop:.0%}])")
+            slg_start = getattr(self.config, "slg_start", 0.01)
+            slg_stop = getattr(self.config, "slg_stop", 0.2)
+            logger.info(
+                f"  SLG: enabled (scale={slg_scale}, layers={slg_layers}, range=[{slg_start:.0%}, {slg_stop:.0%}])"
+            )
         else:
             logger.info("  SLG: disabled")
         logger.info("-" * 60)
@@ -372,7 +379,7 @@ class PipelineLoader:
             self.config.model_path,
             text_encoder_path=self.config.text_encoder_path,
             templates_dir=templates_dir,
-            torch_dtype=self.config.get_torch_dtype(),
+            dtype=self.config.get_dtype(),
             encoder_device=self.config.encoder_device_resolved,
             dit_device=self.config.dit_device_resolved,
             vae_device=self.config.vae_device_resolved,
@@ -402,7 +409,9 @@ class PipelineLoader:
         if self._pipeline.encoder is not None:
             logger.info(f"  encoder.device: {self._pipeline.encoder.device}")
         if self._pipeline.transformer is not None:
-            logger.info(f"  transformer.device: {next(self._pipeline.transformer.parameters()).device}")
+            logger.info(
+                f"  transformer.device: {next(self._pipeline.transformer.parameters()).device}"
+            )
         if self._pipeline.vae is not None:
             logger.info(f"  vae.device: {next(self._pipeline.vae.parameters()).device}")
         logger.info("=" * 60)
@@ -412,9 +421,15 @@ class PipelineLoader:
             encoder=self._encoder,
             load_time=load_time,
             mode="full",
-            encoder_device=str(self._pipeline.encoder.device) if self._pipeline.encoder is not None else None,
-            dit_device=str(next(self._pipeline.transformer.parameters()).device) if self._pipeline.transformer is not None else None,
-            vae_device=str(next(self._pipeline.vae.parameters()).device) if self._pipeline.vae is not None else None,
+            encoder_device=str(self._pipeline.encoder.device)
+            if self._pipeline.encoder is not None
+            else None,
+            dit_device=str(next(self._pipeline.transformer.parameters()).device)
+            if self._pipeline.transformer is not None
+            else None,
+            vae_device=str(next(self._pipeline.vae.parameters()).device)
+            if self._pipeline.vae is not None
+            else None,
         )
 
     def _load_qwen_image_pipeline(self) -> LoadResult:
@@ -429,7 +444,7 @@ class PipelineLoader:
         from llm_dit.pipelines.qwen_image_diffusers import QwenImageDiffusersPipeline
 
         # Check if edit_only mode (standalone edit model, no decompose)
-        edit_only = getattr(self.config, 'qwen_image_edit_only', False)
+        edit_only = getattr(self.config, "qwen_image_edit_only", False)
 
         logger.info("=" * 60)
         if edit_only:
@@ -443,9 +458,11 @@ class PipelineLoader:
         logger.info(f"  Edit only: {edit_only}")
         logger.info(f"  Steps: {self.config.get_qwen_image_steps()}")
         logger.info(f"  Resolution: {self.config.get_qwen_image_resolution()}")
-        logger.info(f"  Dtype: {self.config.torch_dtype}")
+        logger.info(f"  Dtype: {self.config.dtype}")
         logger.info(f"  Text encoder quantization: {self.config.qwen_image_quantize_text_encoder}")
-        logger.info(f"  Transformer quantization: {self.config.get_qwen_image_quantize_transformer()}")
+        logger.info(
+            f"  Transformer quantization: {self.config.get_qwen_image_quantize_transformer()}"
+        )
         logger.info(f"  CPU offload: {self.config.qwen_image_cpu_offload}")
         logger.info(f"  torch.compile: {self.config.compile} (mode: {self.config.compile_mode})")
         logger.info("-" * 60)
@@ -455,15 +472,15 @@ class PipelineLoader:
         # Get quantization settings (convert 'none' to None, use variant-aware getter for transformer)
         quant_te = self.config.qwen_image_quantize_text_encoder
         quant_tf = self.config.get_qwen_image_quantize_transformer()
-        quant_te = quant_te if quant_te != 'none' else None
-        quant_tf = quant_tf if quant_tf != 'none' else None
+        quant_te = quant_te if quant_te != "none" else None
+        quant_tf = quant_tf if quant_tf != "none" else None
 
         # Load pipeline
         self._pipeline = QwenImageDiffusersPipeline.from_pretrained(
             self.config.model_path,
             edit_model_path=self.config.qwen_image_edit_model_path or None,
             edit_only=edit_only,
-            torch_dtype=self.config.get_torch_dtype(),
+            dtype=self.config.get_dtype(),
             cpu_offload=self.config.qwen_image_cpu_offload,
             quantize_text_encoder=quant_te,
             quantize_transformer=quant_tf,
@@ -492,15 +509,15 @@ class PipelineLoader:
             LoadResult with mode set for on-demand loading
         """
         # Get LTX-2 config
-        ltx2_model_path = getattr(self.config, 'ltx2_model_path', '')
-        ltx2_num_frames = getattr(self.config, 'ltx2_num_frames', 33)
-        ltx2_fps = getattr(self.config, 'ltx2_fps', 24)
-        ltx2_steps = getattr(self.config, 'ltx2_steps', None)
-        ltx2_guidance_scale = getattr(self.config, 'ltx2_guidance_scale', 3.5)
-        ltx2_offload_mode = getattr(self.config, 'ltx2_offload_mode', 'model')
-        ltx2_lora_path = getattr(self.config, 'ltx2_lora_path', '')
-        ltx2_lora_scale = getattr(self.config, 'ltx2_lora_scale', 1.0)
-        ltx2_audio = getattr(self.config, 'ltx2_audio', False)
+        ltx2_model_path = getattr(self.config, "ltx2_model_path", "")
+        ltx2_num_frames = getattr(self.config, "ltx2_num_frames", 33)
+        ltx2_fps = getattr(self.config, "ltx2_fps", 24)
+        ltx2_steps = getattr(self.config, "ltx2_steps", None)
+        ltx2_guidance_scale = getattr(self.config, "ltx2_guidance_scale", 3.5)
+        ltx2_offload_mode = getattr(self.config, "ltx2_offload_mode", "model")
+        ltx2_lora_path = getattr(self.config, "ltx2_lora_path", "")
+        ltx2_lora_scale = getattr(self.config, "ltx2_lora_scale", 1.0)
+        ltx2_audio = getattr(self.config, "ltx2_audio", False)
 
         logger.info("=" * 60)
         logger.info("LTX-2 VIDEO MODE")
@@ -532,18 +549,18 @@ class PipelineLoader:
         from llm_dit.pipelines import WanVideoPipeline
 
         # Get Wan/HuMo config
-        humo_path = getattr(self.config, 'wan_humo_path', '')
-        wan_path = getattr(self.config, 'wan_base_path', '')
-        whisper_path = getattr(self.config, 'wan_whisper_path', '')
-        humo_variant = getattr(self.config, 'wan_humo_variant', '17B')
-        wan_num_frames = getattr(self.config, 'wan_num_frames', 97)
-        wan_fps = getattr(self.config, 'wan_fps', 25)
-        wan_height = getattr(self.config, 'wan_height', 720)
-        wan_width = getattr(self.config, 'wan_width', 1280)
-        wan_steps = getattr(self.config, 'wan_steps', 50)
-        wan_guidance_scale = getattr(self.config, 'wan_guidance_scale', 5.0)
-        wan_audio_scale = getattr(self.config, 'wan_audio_scale', 0.0)
-        wan_offload_mode = getattr(self.config, 'wan_offload_mode', 'model')
+        humo_path = getattr(self.config, "wan_humo_path", "")
+        wan_path = getattr(self.config, "wan_base_path", "")
+        whisper_path = getattr(self.config, "wan_whisper_path", "")
+        humo_variant = getattr(self.config, "wan_humo_variant", "17B")
+        wan_num_frames = getattr(self.config, "wan_num_frames", 97)
+        wan_fps = getattr(self.config, "wan_fps", 25)
+        wan_height = getattr(self.config, "wan_height", 720)
+        wan_width = getattr(self.config, "wan_width", 1280)
+        wan_steps = getattr(self.config, "wan_steps", 50)
+        wan_guidance_scale = getattr(self.config, "wan_guidance_scale", 5.0)
+        wan_audio_scale = getattr(self.config, "wan_audio_scale", 0.0)
+        wan_offload_mode = getattr(self.config, "wan_offload_mode", "model")
 
         logger.info("=" * 60)
         logger.info("LOADING WAN/HUMO VIDEO PIPELINE")
@@ -553,7 +570,9 @@ class PipelineLoader:
         logger.info(f"  Wan path: {wan_path}")
         logger.info(f"  Whisper path: {whisper_path or 'lazy-load'}")
         logger.info(f"  Resolution: {wan_width}x{wan_height}")
-        logger.info(f"  Frames: {wan_num_frames} (~{wan_num_frames/wan_fps:.1f}s at {wan_fps}fps)")
+        logger.info(
+            f"  Frames: {wan_num_frames} (~{wan_num_frames / wan_fps:.1f}s at {wan_fps}fps)"
+        )
         logger.info(f"  Steps: {wan_steps}")
         logger.info(f"  Text guidance (scale_t): {wan_guidance_scale}")
         logger.info(f"  Audio guidance (scale_a): {wan_audio_scale}")
@@ -563,7 +582,7 @@ class PipelineLoader:
         start = time.time()
 
         # Determine CPU offload setting
-        enable_cpu_offload = wan_offload_mode in ('model', 'sequential')
+        enable_cpu_offload = wan_offload_mode in ("model", "sequential")
 
         # Load HuMo pipeline
         self._pipeline = WanVideoPipeline.from_pretrained(
@@ -571,7 +590,7 @@ class PipelineLoader:
             wan_path=wan_path,
             whisper_path=whisper_path or None,
             humo_variant=humo_variant,
-            torch_dtype=self.config.get_torch_dtype(),
+            dtype=self.config.get_dtype(),
             enable_cpu_offload=enable_cpu_offload,
         )
 
@@ -701,7 +720,7 @@ class PipelineLoader:
         # Load generator-only pipeline
         self._pipeline = ZImagePipeline.from_pretrained_generator_only(
             self.config.model_path,
-            torch_dtype=self.config.get_torch_dtype(),
+            dtype=self.config.get_dtype(),
             enable_cpu_offload=self.config.cpu_offload,
             dit_device=self.config.dit_device_resolved,
             vae_device=self.config.vae_device_resolved,
@@ -728,8 +747,12 @@ class PipelineLoader:
             encoder=self._encoder,
             load_time=load_time,
             mode="distributed",
-            dit_device=str(next(self._pipeline.transformer.parameters()).device) if self._pipeline.transformer else None,
-            vae_device=str(next(self._pipeline.vae.parameters()).device) if self._pipeline.vae else None,
+            dit_device=str(next(self._pipeline.transformer.parameters()).device)
+            if self._pipeline.transformer
+            else None,
+            vae_device=str(next(self._pipeline.vae.parameters()).device)
+            if self._pipeline.vae
+            else None,
         )
 
     def auto_load(self, encoder_only: bool = False, use_api: bool = False) -> LoadResult:
@@ -744,11 +767,15 @@ class PipelineLoader:
             LoadResult with loaded components
         """
         # Check for edit_only mode (Qwen-Image-Edit standalone)
-        edit_only = getattr(self.config, 'qwen_image_edit_only', False)
-        has_edit_model = bool(getattr(self.config, 'qwen_image_edit_model_path', ''))
+        edit_only = getattr(self.config, "qwen_image_edit_only", False)
+        has_edit_model = bool(getattr(self.config, "qwen_image_edit_model_path", ""))
 
         # API encoder only (no local model, and not edit_only mode)
-        if self.config.api_url and not self.config.model_path and not (edit_only and has_edit_model):
+        if (
+            self.config.api_url
+            and not self.config.model_path
+            and not (edit_only and has_edit_model)
+        ):
             return self.load_api_encoder()
 
         # Distributed mode (API encoder + local DiT/VAE)

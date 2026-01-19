@@ -62,6 +62,7 @@ GEMMA_NUM_LAYERS = 49
 def load_router():
     """Load the TokenLayerRouter."""
     from llm_dit.router import TokenLayerRouter
+
     return TokenLayerRouter(
         hidden_dim=GEMMA_HIDDEN_DIM,
         num_layers=GEMMA_NUM_LAYERS,
@@ -82,9 +83,10 @@ def load_text_encoder(model_path: str = "models/LTX-2"):
     # The text encoder is inside the LTX-2 pipeline
     # For training the router, we need direct access to hidden states
     from diffusers import LTX2Pipeline
+
     pipe = LTX2Pipeline.from_pretrained(
         model_path,
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
     )
 
     # Extract components
@@ -172,11 +174,13 @@ class RouterTrainer:
 
         # Optional sparsity loss
         from llm_dit.router.token_layer_router import SparsityLoss
+
         self.sparsity_loss = SparsityLoss(target_sparsity=8.0, loss_weight=sparsity_weight)
 
     def _load_layer_contributions(self, path: str):
         """Load pre-computed layer contribution weights."""
         import json
+
         logger.info(f"Loading layer contributions from {path}")
 
         with open(path) as f:
@@ -197,8 +201,7 @@ class RouterTrainer:
             mode = data.get("metadata", {}).get("mode", "ablation")
             metric_key = "mean_score" if mode == "isolation" else "mean_delta"
             weights = {
-                k: v[metric_key] if isinstance(v, dict) else v
-                for k, v in layer_contribs.items()
+                k: v[metric_key] if isinstance(v, dict) else v for k, v in layer_contribs.items()
             }
         else:
             # Assume direct weights format
@@ -333,12 +336,15 @@ class RouterTrainer:
     def save_checkpoint(self, path: Path, epoch: int, stats: dict):
         """Save training checkpoint."""
         path.parent.mkdir(parents=True, exist_ok=True)
-        torch.save({
-            "epoch": epoch,
-            "router_state_dict": self.router.state_dict(),
-            "optimizer_state_dict": self.optimizer.state_dict(),
-            "stats": stats,
-        }, path)
+        torch.save(
+            {
+                "epoch": epoch,
+                "router_state_dict": self.router.state_dict(),
+                "optimizer_state_dict": self.optimizer.state_dict(),
+                "stats": stats,
+            },
+            path,
+        )
         logger.info(f"Saved checkpoint to {path}")
 
     def load_checkpoint(self, path: Path) -> int:
@@ -364,7 +370,9 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--model-path", default="models/LTX-2", help="Path to LTX-2 model")
-    parser.add_argument("--output-dir", default="experiments/results/router_training", help="Output directory")
+    parser.add_argument(
+        "--output-dir", default="experiments/results/router_training", help="Output directory"
+    )
     parser.add_argument("--epochs", type=int, default=10, help="Number of epochs")
     parser.add_argument("--batch-size", type=int, default=4, help="Batch size")
     parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate")
@@ -375,7 +383,7 @@ def main():
         default="mean",
         choices=["layer_0", "layer_24", "layer_47", "layer_48", "mean", "attention", "mlp"],
         help="Which layer(s) to use as router input. Default: mean (all layers averaged). "
-             "attention/mlp modes require SubLayerExtractor hooks."
+        "attention/mlp modes require SubLayerExtractor hooks.",
     )
     parser.add_argument("--quick", action="store_true", help="Quick test mode")
     parser.add_argument("--resume", type=str, help="Resume from checkpoint")
@@ -385,7 +393,7 @@ def main():
         type=str,
         default=None,
         help="Path to layer_contributions.json or layer_weights.json from layer_contribution_analysis.py. "
-             "Required for meaningful training - provides proxy reward signal."
+        "Required for meaningful training - provides proxy reward signal.",
     )
 
     args = parser.parse_args()
@@ -438,7 +446,7 @@ def main():
         # Simple batching
         epoch_stats = []
         for i in range(0, len(prompts), args.batch_size):
-            batch_prompts = prompts[i:i + args.batch_size]
+            batch_prompts = prompts[i : i + args.batch_size]
             stats = trainer.train_step(batch_prompts)
             epoch_stats.append(stats)
 
@@ -451,8 +459,7 @@ def main():
 
         # Epoch summary
         avg_stats = {
-            k: sum(s[k] for s in epoch_stats) / len(epoch_stats)
-            for k in epoch_stats[0].keys()
+            k: sum(s[k] for s in epoch_stats) / len(epoch_stats) for k in epoch_stats[0].keys()
         }
         all_stats.append({"epoch": epoch + 1, **avg_stats})
 

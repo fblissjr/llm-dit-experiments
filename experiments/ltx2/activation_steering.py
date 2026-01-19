@@ -34,7 +34,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from experiments.ltx2.prompts import CATEGORY_PROMPTS
 
-
 # Contrastive prompt pairs for direction extraction
 # Semantic pairs: "detailed" vs "vague" descriptions (original)
 SEMANTIC_DIRECTION_PAIRS = [
@@ -152,6 +151,7 @@ def extract_steering_direction(pipe, direction_pairs: list, device="cuda"):
 
     for i, pair in enumerate(direction_pairs):
         print(f"  Encoding pair {i+1}/{len(direction_pairs)}...")
+        print(f"  Encoding pair {i + 1}/{len(direction_pairs)}...")
 
         # Encode detailed prompt
         d_embeds, d_mask = pipe.encode_prompt(
@@ -188,10 +188,10 @@ def extract_steering_direction(pipe, direction_pairs: list, device="cuda"):
 
     # Stack and compute means on CPU
     detailed_stack = torch.cat(detailed_embeds, dim=0)  # [N, seq, hidden]
-    vague_stack = torch.cat(vague_embeds, dim=0)        # [N, seq, hidden]
+    vague_stack = torch.cat(vague_embeds, dim=0)  # [N, seq, hidden]
 
     detailed_mean = detailed_stack.mean(dim=0, keepdim=True)  # [1, seq, hidden]
-    vague_mean = vague_stack.mean(dim=0, keepdim=True)        # [1, seq, hidden]
+    vague_mean = vague_stack.mean(dim=0, keepdim=True)  # [1, seq, hidden]
 
     # Compute direction (keep on CPU, will move to device when needed)
     direction = detailed_mean - vague_mean  # [1, seq, hidden]
@@ -263,10 +263,10 @@ def extract_direction_via_generation(pipe, direction_pairs: list):
     vague_embeds = []
 
     for i, pair in enumerate(direction_pairs):
-        print(f"  Pair {i+1}/{len(direction_pairs)}...")
+        print(f"  Pair {i + 1}/{len(direction_pairs)}...")
         print(f"    Detailed: {pair['detailed'][:40]}...")
 
-        d_embeds, _ = extract_embedding_via_generation(pipe, pair["detailed"], seed=42+i)
+        d_embeds, _ = extract_embedding_via_generation(pipe, pair["detailed"], seed=42 + i)
         if d_embeds is not None:
             detailed_embeds.append(d_embeds)
             print(f"    Got detailed embeds: {d_embeds.shape}")
@@ -274,7 +274,7 @@ def extract_direction_via_generation(pipe, direction_pairs: list):
             print(f"    Failed to get detailed embeds!")
 
         print(f"    Vague: {pair['vague'][:40]}...")
-        v_embeds, _ = extract_embedding_via_generation(pipe, pair["vague"], seed=42+i)
+        v_embeds, _ = extract_embedding_via_generation(pipe, pair["vague"], seed=42 + i)
         if v_embeds is not None:
             vague_embeds.append(v_embeds)
             print(f"    Got vague embeds: {v_embeds.shape}")
@@ -313,7 +313,7 @@ def extract_direction_with_reload(model_path: str, direction_pairs: list):
     print("  Using extract_direction_via_generation instead...")
 
     # Load pipeline once
-    pipe = LTX2Pipeline.from_pretrained(model_path, torch_dtype=torch.bfloat16)
+    pipe = LTX2Pipeline.from_pretrained(model_path, dtype=torch.bfloat16)
     pipe.enable_sequential_cpu_offload()
 
     direction, magnitude = extract_direction_via_generation(pipe, direction_pairs)
@@ -371,8 +371,7 @@ def generate_with_steering(
         if alpha != 0.0:
             # Move direction to same device/dtype
             direction_on_device = steering_direction.to(
-                device=prompt_embeds.device,
-                dtype=prompt_embeds.dtype
+                device=prompt_embeds.device, dtype=prompt_embeds.dtype
             )
 
             # Handle sequence length mismatch (pad/truncate direction to match)
@@ -386,9 +385,11 @@ def generate_with_steering(
                 else:
                     # Pad direction with zeros
                     pad = torch.zeros(
-                        1, emb_seq_len - dir_seq_len, direction_on_device.shape[2],
+                        1,
+                        emb_seq_len - dir_seq_len,
+                        direction_on_device.shape[2],
                         device=direction_on_device.device,
-                        dtype=direction_on_device.dtype
+                        dtype=direction_on_device.dtype,
                     )
                     direction_on_device = torch.cat([direction_on_device, pad], dim=1)
 
@@ -477,7 +478,7 @@ def run_steering_experiment(
     print("\nLoading pipeline...")
     pipe = LTX2Pipeline.from_pretrained(
         model_path,
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
     )
     pipe.enable_sequential_cpu_offload()
 
@@ -492,20 +493,23 @@ def run_steering_experiment(
         print("\nExtracting steering direction from contrastive pairs...")
         print("  Using generation hook method (runs minimal generations to extract embeddings)")
 
-        steering_direction, magnitude = extract_direction_via_generation(
-            pipe, pairs
-        )
+        steering_direction, magnitude = extract_direction_via_generation(pipe, pairs)
 
         if steering_direction is None:
             print("  ERROR: Failed to extract steering direction!")
             return {}
 
         # Save for future runs
-        torch.save({
-            "direction": steering_direction.cpu() if steering_direction.is_cuda else steering_direction,
-            "magnitude": magnitude,
-            "direction_pairs": pairs,
-        }, direction_file)
+        torch.save(
+            {
+                "direction": steering_direction.cpu()
+                if steering_direction.is_cuda
+                else steering_direction,
+                "magnitude": magnitude,
+                "direction_pairs": pairs,
+            },
+            direction_file,
+        )
         print(f"  Saved steering direction to {direction_file}")
 
     # Results storage
@@ -513,14 +517,14 @@ def run_steering_experiment(
 
     # Test each alpha value
     for alpha in alphas:
-        print(f"\n{'='*40}")
+        print(f"\n{'=' * 40}")
         print(f"Alpha: {alpha}")
         print("=" * 40)
 
         alpha_results = []
 
         for i, prompt in enumerate(TEST_PROMPTS):
-            print(f"\n  [{i+1}/{len(TEST_PROMPTS)}] {prompt[:40]}...")
+            print(f"\n  [{i + 1}/{len(TEST_PROMPTS)}] {prompt[:40]}...")
 
             start_time = time.time()
 
@@ -546,7 +550,9 @@ def run_steering_experiment(
                 stats["prompt"] = prompt
                 alpha_results.append(stats)
 
-                print(f"    Time: {gen_time:.1f}s, Mean: {stats['mean']:.1f}, Std: {stats['std']:.1f}")
+                print(
+                    f"    Time: {gen_time:.1f}s, Mean: {stats['mean']:.1f}, Std: {stats['std']:.1f}"
+                )
 
                 # Save video
                 if save_videos:
@@ -557,6 +563,7 @@ def run_steering_experiment(
             except Exception as e:
                 print(f"    ERROR: {e}")
                 import traceback
+
                 traceback.print_exc()
                 alpha_results.append({"error": str(e), "prompt": prompt})
 
@@ -600,12 +607,14 @@ def run_steering_experiment(
     print(f"\nResults saved to {results_file}")
 
     # Save steering direction for analysis
-    torch.save({
-        "direction": steering_direction.cpu(),
-        "magnitude": magnitude,
-        "direction_pairs": pairs,
-    }, output_path / "steering_direction.pt")
-
+    torch.save(
+        {
+            "direction": steering_direction.cpu(),
+            "magnitude": magnitude,
+            "direction_pairs": pairs,
+        },
+        output_path / "steering_direction.pt",
+    )
     # Cleanup
     del pipe
     gc.collect()

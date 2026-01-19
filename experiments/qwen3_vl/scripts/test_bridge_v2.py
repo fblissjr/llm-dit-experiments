@@ -19,8 +19,8 @@ import argparse
 import json
 import logging
 import sys
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
 from typing import Callable
 
 project_root = Path(__file__).parent.parent.parent.parent
@@ -42,9 +42,7 @@ QWEN3_4B_PATH = os.environ.get("QWEN3_PATH")
 QWEN3_VL_PATH = os.environ.get("QWEN3_VL_PATH")
 
 if not all([ZIMAGE_PATH, QWEN3_4B_PATH, QWEN3_VL_PATH]):
-    raise ValueError(
-        "Set environment variables: ZIMAGE_PATH, QWEN3_PATH, QWEN3_VL_PATH"
-    )
+    raise ValueError("Set environment variables: ZIMAGE_PATH, QWEN3_PATH, QWEN3_VL_PATH")
 
 
 def gram_matrix(features: torch.Tensor) -> torch.Tensor:
@@ -146,7 +144,7 @@ def create_comparison_grid(
         grid.paste(img, (x, y))
 
         label_y = y + img_height + 8
-        for line in label.split('\n'):
+        for line in label.split("\n"):
             draw.text((x + img_width // 2, label_y), line, fill="black", font=font, anchor="mt")
             label_y += 20
 
@@ -190,7 +188,11 @@ class TimestepBlendingCallback:
         elif self.schedule == "cosine_decay":
             # Smoother decay using cosine
             import math
-            alpha = self.min_alpha + (self.max_alpha - self.min_alpha) * (1 + math.cos(progress * math.pi)) / 2
+
+            alpha = (
+                self.min_alpha
+                + (self.max_alpha - self.min_alpha) * (1 + math.cos(progress * math.pi)) / 2
+            )
         elif self.schedule == "step":
             # High VL for first half, low VL for second half
             alpha = self.max_alpha if progress < 0.5 else self.min_alpha
@@ -202,7 +204,7 @@ class TimestepBlendingCallback:
     def get_embeddings(self, timestep: float, num_steps: int, current_step: int) -> torch.Tensor:
         """Get blended embeddings for current timestep."""
         alpha = self.get_alpha(timestep, num_steps, current_step)
-        blended = (1 - alpha) * self.text_emb[:self.min_len] + alpha * self.vl_emb[:self.min_len]
+        blended = (1 - alpha) * self.text_emb[: self.min_len] + alpha * self.vl_emb[: self.min_len]
         return blended
 
 
@@ -221,7 +223,8 @@ def generate_with_timestep_blending(
 
     # Create blending callback
     callback = TimestepBlendingCallback(
-        text_emb, vl_emb,
+        text_emb,
+        vl_emb,
         schedule=schedule,
         max_alpha=max_alpha,
         min_alpha=min_alpha,
@@ -253,7 +256,7 @@ def generate_with_timestep_blending(
                 encoder_hidden_states=emb,
                 timestep=t.unsqueeze(0).to("cuda"),
             )
-            if hasattr(noise_pred, 'sample'):
+            if hasattr(noise_pred, "sample"):
                 noise_pred = noise_pred.sample
 
         # Step
@@ -281,7 +284,7 @@ def main():
         "--test",
         choices=["gram_sweep", "timestep", "multilayer", "all"],
         default="gram_sweep",
-        help="Which test to run"
+        help="Which test to run",
     )
     args = parser.parse_args()
 
@@ -293,9 +296,9 @@ def main():
     # =========================================================================
     # Phase 1: Extract embeddings
     # =========================================================================
-    logger.info("\n" + "="*60)
+    logger.info("\n" + "=" * 60)
     logger.info("Extracting embeddings...")
-    logger.info("="*60)
+    logger.info("=" * 60)
 
     from llm_dit.backends.transformers import TransformersBackend
     from llm_dit.vl import VLEmbeddingExtractor
@@ -305,7 +308,7 @@ def main():
     text_backend = TransformersBackend.from_pretrained(
         QWEN3_4B_PATH,
         device_map="cuda",
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
         model_subfolder="",
         tokenizer_subfolder="",
     )
@@ -320,7 +323,7 @@ def main():
     vl_extractor = VLEmbeddingExtractor.from_pretrained(
         QWEN3_VL_PATH,
         device="cuda",
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
     )
 
     vl_result = vl_extractor.extract(
@@ -359,7 +362,7 @@ def main():
 
     pipe = ZImagePipeline.from_pretrained(
         ZIMAGE_PATH,
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
         text_encoder_device="cpu",
         dit_device="cuda",
         vae_device="cuda",
@@ -373,9 +376,9 @@ def main():
     # Test 1: Gram Matrix Alpha Sweep
     # =========================================================================
     if args.test in ["gram_sweep", "all"]:
-        logger.info("\n" + "="*60)
+        logger.info("\n" + "=" * 60)
         logger.info("Test 1: Gram Matrix Alpha Sweep")
-        logger.info("="*60)
+        logger.info("=" * 60)
 
         # Baseline: text only
         generator = torch.Generator(device="cpu").manual_seed(args.seed)
@@ -384,7 +387,7 @@ def main():
             num_inference_steps=args.steps,
             generator=generator,
         )
-        img = result.images[0] if hasattr(result, 'images') else result
+        img = result.images[0] if hasattr(result, "images") else result
         img.save(args.output_dir / "gram_text_only.png")
         all_images.append(img)
         all_labels.append("Text Only\n(Baseline)")
@@ -402,7 +405,7 @@ def main():
                 num_inference_steps=args.steps,
                 generator=generator,
             )
-            img = result.images[0] if hasattr(result, 'images') else result
+            img = result.images[0] if hasattr(result, "images") else result
             img.save(args.output_dir / f"gram_alpha_{alpha}.png")
             all_images.append(img)
             all_labels.append(f"Gram\nalpha={alpha}")
@@ -414,7 +417,8 @@ def main():
         gram_images = [ref_resized] + all_images
         gram_labels = ["Reference"] + all_labels
         grid = create_comparison_grid(
-            gram_images, gram_labels,
+            gram_images,
+            gram_labels,
             title=f'Gram Alpha Sweep: "{args.prompt}"',
             cols=4,
         )
@@ -425,9 +429,9 @@ def main():
     # Test 2: Timestep-Dependent Blending
     # =========================================================================
     if args.test in ["timestep", "all"]:
-        logger.info("\n" + "="*60)
+        logger.info("\n" + "=" * 60)
         logger.info("Test 2: Timestep-Dependent Blending")
-        logger.info("="*60)
+        logger.info("=" * 60)
 
         timestep_images = []
         timestep_labels = []
@@ -440,7 +444,7 @@ def main():
                 num_inference_steps=args.steps,
                 generator=generator,
             )
-            img = result.images[0] if hasattr(result, 'images') else result
+            img = result.images[0] if hasattr(result, "images") else result
             timestep_images.append(img)
             timestep_labels.append("Text Only\n(Baseline)")
 
@@ -456,7 +460,9 @@ def main():
             logger.info(f"  {label}...")
             try:
                 img = generate_with_timestep_blending(
-                    pipe, text_emb, vl_emb,
+                    pipe,
+                    text_emb,
+                    vl_emb,
                     schedule=schedule,
                     max_alpha=max_a,
                     min_alpha=min_a,
@@ -484,9 +490,9 @@ def main():
     # Test 3: Multi-Layer Blending
     # =========================================================================
     if args.test in ["multilayer", "all"] and vl_layers:
-        logger.info("\n" + "="*60)
+        logger.info("\n" + "=" * 60)
         logger.info("Test 3: Multi-Layer Blending")
-        logger.info("="*60)
+        logger.info("=" * 60)
 
         ml_images = []
         ml_labels = []
@@ -498,7 +504,7 @@ def main():
             num_inference_steps=args.steps,
             generator=generator,
         )
-        ml_images.append(result.images[0] if hasattr(result, 'images') else result)
+        ml_images.append(result.images[0] if hasattr(result, "images") else result)
         ml_labels.append("Text Only")
 
         # Single layer Gram at alpha=0.15 (our best from sweep)
@@ -514,7 +520,7 @@ def main():
                     num_inference_steps=args.steps,
                     generator=generator,
                 )
-                ml_images.append(result.images[0] if hasattr(result, 'images') else result)
+                ml_images.append(result.images[0] if hasattr(result, "images") else result)
                 ml_labels.append(f"Gram L{layer}\na={best_alpha}")
 
         # Multi-layer blend: average Gram matrices from multiple layers
@@ -533,7 +539,7 @@ def main():
                 num_inference_steps=args.steps,
                 generator=generator,
             )
-            ml_images.append(result.images[0] if hasattr(result, 'images') else result)
+            ml_images.append(result.images[0] if hasattr(result, "images") else result)
             ml_labels.append(f"Multi-Layer\nGram Avg")
 
         ref_resized = reference_image.resize((1024, 1024))

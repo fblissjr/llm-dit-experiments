@@ -22,8 +22,8 @@ import math
 from typing import List, Literal, Optional, Union
 
 import torch
-from torch import nn
 from PIL import Image
+from torch import nn
 
 from llm_dit.encoders.protocol import (
     EncoderCapability,
@@ -89,12 +89,14 @@ class SubLayerExtractor:
         """
         self.model = model
         # Get layer count from model
-        if hasattr(model, 'model') and hasattr(model.model, 'layers'):
+        if hasattr(model, "model") and hasattr(model.model, "layers"):
             num_model_layers = len(model.model.layers)
         else:
             num_model_layers = GEMMA3_NUM_LAYERS
 
-        self.layer_indices = layer_indices if layer_indices is not None else list(range(num_model_layers))
+        self.layer_indices = (
+            layer_indices if layer_indices is not None else list(range(num_model_layers))
+        )
 
         # Storage for captured outputs
         self.attention_outputs: dict[int, torch.Tensor] = {}
@@ -103,23 +105,27 @@ class SubLayerExtractor:
 
     def _make_attention_hook(self, layer_idx: int):
         """Create hook to capture attention output (after post_attention_layernorm)."""
+
         def hook(module, input, output):
             # Output of post_attention_layernorm is normalized attention output
             # Clone to avoid modification by subsequent operations
             self.attention_outputs[layer_idx] = output.detach().clone()
+
         return hook
 
     def _make_mlp_hook(self, layer_idx: int):
         """Create hook to capture MLP output (after post_feedforward_layernorm)."""
+
         def hook(module, input, output):
             # Output of post_feedforward_layernorm is normalized MLP output
             self.mlp_outputs[layer_idx] = output.detach().clone()
+
         return hook
 
     def register(self):
         """Register hooks on specified layers."""
         # Access layers through model.model.layers (Gemma3 structure)
-        if hasattr(self.model, 'model') and hasattr(self.model.model, 'layers'):
+        if hasattr(self.model, "model") and hasattr(self.model.model, "layers"):
             layers = self.model.model.layers
         else:
             raise RuntimeError("Cannot find decoder layers in model. Expected model.model.layers")
@@ -132,7 +138,7 @@ class SubLayerExtractor:
             layer = layers[idx]
 
             # Hook after post_attention_layernorm (captures attention output)
-            if hasattr(layer, 'post_attention_layernorm'):
+            if hasattr(layer, "post_attention_layernorm"):
                 attn_hook = layer.post_attention_layernorm.register_forward_hook(
                     self._make_attention_hook(idx)
                 )
@@ -141,7 +147,7 @@ class SubLayerExtractor:
                 logger.warning(f"Layer {idx} missing post_attention_layernorm")
 
             # Hook after post_feedforward_layernorm (captures MLP output)
-            if hasattr(layer, 'post_feedforward_layernorm'):
+            if hasattr(layer, "post_feedforward_layernorm"):
                 mlp_hook = layer.post_feedforward_layernorm.register_forward_hook(
                     self._make_mlp_hook(idx)
                 )
@@ -149,7 +155,9 @@ class SubLayerExtractor:
             else:
                 logger.warning(f"Layer {idx} missing post_feedforward_layernorm")
 
-        logger.debug(f"Registered {len(self.hooks)} sub-layer hooks for layers {self.layer_indices}")
+        logger.debug(
+            f"Registered {len(self.hooks)} sub-layer hooks for layers {self.layer_indices}"
+        )
 
     def unregister(self):
         """Remove all hooks and clear stored outputs."""
@@ -177,18 +185,18 @@ class SubLayerExtractor:
         # Stack in sorted order
         sorted_indices = sorted(self.attention_outputs.keys())
 
-        attention_stack = torch.stack([
-            self.attention_outputs[i] for i in sorted_indices
-        ], dim=-1)  # [B, T, 3840, L]
+        attention_stack = torch.stack(
+            [self.attention_outputs[i] for i in sorted_indices], dim=-1
+        )  # [B, T, 3840, L]
 
-        mlp_stack = torch.stack([
-            self.mlp_outputs[i] for i in sorted_indices
-        ], dim=-1)  # [B, T, 3840, L]
+        mlp_stack = torch.stack(
+            [self.mlp_outputs[i] for i in sorted_indices], dim=-1
+        )  # [B, T, 3840, L]
 
         return {
-            'attention': attention_stack,
-            'mlp': mlp_stack,
-            'layer_indices': sorted_indices,
+            "attention": attention_stack,
+            "mlp": mlp_stack,
+            "layer_indices": sorted_indices,
         }
 
     def __enter__(self):
@@ -431,12 +439,12 @@ class Gemma3Encoder:
             "float16": torch.float16,
             "float32": torch.float32,
         }
-        torch_dtype = dtype_map.get(dtype, torch.bfloat16)
+        dtype = dtype_map.get(dtype, torch.bfloat16)
 
         encoder = cls(
             model_id=model_path,
             device=device,
-            dtype=torch_dtype,
+            dtype=dtype,
             max_sequence_length=max_sequence_length,
             load_in_4bit=(quantization == "4bit"),
             load_in_8bit=(quantization == "8bit"),
@@ -456,7 +464,8 @@ class Gemma3Encoder:
         try:
             from transformers import AutoTokenizer, Gemma3ForConditionalGeneration
         except ImportError:
-            from transformers import AutoTokenizer, AutoModelForCausalLM
+            from transformers import AutoModelForCausalLM, AutoTokenizer
+
             # Fallback for older transformers without Gemma3ForConditionalGeneration
             Gemma3ForConditionalGeneration = AutoModelForCausalLM
 
@@ -466,6 +475,7 @@ class Gemma3Encoder:
         quantization_config = None
         if self._load_in_4bit or self._load_in_8bit:
             from transformers import BitsAndBytesConfig
+
             quantization_config = BitsAndBytesConfig(
                 load_in_4bit=self._load_in_4bit,
                 load_in_8bit=self._load_in_8bit,
@@ -482,7 +492,7 @@ class Gemma3Encoder:
         # Load model
         self._model = Gemma3ForConditionalGeneration.from_pretrained(
             self._model_id,
-            torch_dtype=self._dtype,
+            dtype=self._dtype,
             device_map=device_map,
             quantization_config=quantization_config,
             low_cpu_mem_usage=True,
@@ -677,8 +687,8 @@ class Gemma3Encoder:
         batch_size = len(texts)
 
         # Build per-sample outputs (EncodingOutput expects List[Tensor])
-        embedding_list = [embeddings[i, :int(seq_lengths[i])] for i in range(batch_size)]
-        mask_list = [attention_mask[i, :int(seq_lengths[i])].bool() for i in range(batch_size)]
+        embedding_list = [embeddings[i, : int(seq_lengths[i])] for i in range(batch_size)]
+        mask_list = [attention_mask[i, : int(seq_lengths[i])].bool() for i in range(batch_size)]
 
         return EncodingOutput(
             embeddings=embedding_list,
@@ -798,18 +808,18 @@ class Gemma3Encoder:
             seq_lengths = attention_mask.sum(dim=1).tolist()
 
             result = {
-                'layer_stack': stacked,
-                'attention_mask': attention_mask,
-                'projected': projected,
-                'seq_lengths': [int(s) for s in seq_lengths],
+                "layer_stack": stacked,
+                "attention_mask": attention_mask,
+                "projected": projected,
+                "seq_lengths": [int(s) for s in seq_lengths],
             }
 
             # Add sub-layer outputs if requested
             if extract_sub_layers and extractor is not None:
                 sub_outputs = extractor.get_stacked_outputs()
-                result['attention_stack'] = sub_outputs['attention']
-                result['mlp_stack'] = sub_outputs['mlp']
-                result['sublayer_indices'] = sub_outputs['layer_indices']
+                result["attention_stack"] = sub_outputs["attention"]
+                result["mlp_stack"] = sub_outputs["mlp"]
+                result["sublayer_indices"] = sub_outputs["layer_indices"]
 
             return result
 
@@ -937,11 +947,11 @@ class Gemma3Encoder:
         seq_lengths = attention_mask.sum(dim=1).tolist()
 
         result = {
-            'hidden_states': hidden_states,
-            'attention_mask': attention_mask,
-            'seq_lengths': [int(s) for s in seq_lengths],
-            'active_layers': active_layers,
-            'masking_mode': masking_mode,
+            "hidden_states": hidden_states,
+            "attention_mask": attention_mask,
+            "seq_lengths": [int(s) for s in seq_lengths],
+            "active_layers": active_layers,
+            "masking_mode": masking_mode,
         }
 
         # Pack for pipeline if requested
@@ -954,7 +964,7 @@ class Gemma3Encoder:
                 attention_mask,
                 padding_side=self._tokenizer.padding_side,
             )
-            result['prompt_embeds'] = packed
+            result["prompt_embeds"] = packed
 
         return result
 
@@ -1045,7 +1055,7 @@ class Gemma3Encoder:
             )
 
         # Decode only new tokens
-        generated_ids = outputs[0, input_ids.shape[1]:]
+        generated_ids = outputs[0, input_ids.shape[1] :]
         generated_text = self._tokenizer.decode(generated_ids, skip_special_tokens=True)
 
         return generated_text.strip()
@@ -1070,7 +1080,7 @@ class Gemma3Encoder:
             self._model.to(device)
         if self._feature_extractor is not None:
             self._feature_extractor.to(device)
-        self._is_offloaded = (device.type == "cpu")
+        self._is_offloaded = device.type == "cpu"
         return self
 
 

@@ -107,6 +107,155 @@ CONFIG_MEMORY_ESTIMATES = {
 
 
 @dataclass
+class GenerationInputs:
+    """Complete record of all generation inputs for reproducibility.
+
+    Captures everything needed to reproduce a generation exactly.
+    Logged at the start of each test run.
+    """
+
+    # Prompt
+    prompt: str = ""
+    negative_prompt: str = ""
+
+    # Video config
+    num_frames: int = 0
+    height: int = 0
+    width: int = 0
+    frame_rate: float = 24.0
+
+    # Inference config
+    num_inference_steps: int = 0
+    guidance_scale: float = 0.0
+    seed: int = 0
+
+    # Model paths
+    transformer_path: str = ""
+    text_encoder_path: str = ""
+    vae_path: str = ""
+
+    # Model config
+    transformer_dtype: str = "bfloat16"
+    transformer_quantization: str = "fp8-quanto"
+    text_encoder_dtype: str = "bfloat16"
+    text_encoder_quantization: str = "8bit"
+    vae_dtype: str = "bfloat16"
+
+    # Scheduler config
+    base_shift: float = 0.95
+    max_shift: float = 2.05
+    terminal_sigma: float = 0.1
+
+    # Conditioning (I2V)
+    conditioning_image_path: Optional[str] = None
+    conditioning_frame_idx: int = 0
+    conditioning_strength: float = 0.0
+
+    # Upsampling
+    upsampling_enabled: bool = False
+    upsampling_scale: float = 1.0
+
+    # Tensor shapes (filled during generation)
+    text_embedding_shape: Optional[tuple] = None  # e.g., (1, 256, 3840)
+    latent_shape: Optional[tuple] = None  # e.g., (1, 128, 15, 12, 16)
+    noise_shape: Optional[tuple] = None
+    position_indices_shape: Optional[tuple] = None
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            "prompt": {
+                "text": self.prompt,
+                "negative": self.negative_prompt,
+            },
+            "video": {
+                "num_frames": self.num_frames,
+                "height": self.height,
+                "width": self.width,
+                "frame_rate": self.frame_rate,
+            },
+            "inference": {
+                "steps": self.num_inference_steps,
+                "guidance_scale": self.guidance_scale,
+                "seed": self.seed,
+            },
+            "models": {
+                "transformer": {
+                    "path": self.transformer_path,
+                    "dtype": self.transformer_dtype,
+                    "quantization": self.transformer_quantization,
+                },
+                "text_encoder": {
+                    "path": self.text_encoder_path,
+                    "dtype": self.text_encoder_dtype,
+                    "quantization": self.text_encoder_quantization,
+                },
+                "vae": {
+                    "path": self.vae_path,
+                    "dtype": self.vae_dtype,
+                },
+            },
+            "scheduler": {
+                "base_shift": self.base_shift,
+                "max_shift": self.max_shift,
+                "terminal_sigma": self.terminal_sigma,
+            },
+            "conditioning": {
+                "image_path": self.conditioning_image_path,
+                "frame_idx": self.conditioning_frame_idx,
+                "strength": self.conditioning_strength,
+            },
+            "upsampling": {
+                "enabled": self.upsampling_enabled,
+                "scale": self.upsampling_scale,
+            },
+            "tensor_shapes": {
+                "text_embedding": list(self.text_embedding_shape) if self.text_embedding_shape else None,
+                "latent": list(self.latent_shape) if self.latent_shape else None,
+                "noise": list(self.noise_shape) if self.noise_shape else None,
+                "position_indices": list(self.position_indices_shape) if self.position_indices_shape else None,
+            },
+        }
+
+    def log_summary(self, logger) -> None:
+        """Log a formatted summary of all inputs."""
+        logger.info("=" * 60)
+        logger.info("GENERATION INPUTS")
+        logger.info("=" * 60)
+        logger.info(f"Prompt: {self.prompt}")
+        if self.negative_prompt:
+            logger.info(f"Negative: {self.negative_prompt}")
+        logger.info("-" * 40)
+        logger.info(f"Video: {self.num_frames} frames @ {self.height}x{self.width}, {self.frame_rate}fps")
+        logger.info(f"Inference: {self.num_inference_steps} steps, CFG {self.guidance_scale}, seed {self.seed}")
+        logger.info("-" * 40)
+        logger.info(f"Transformer: {self.transformer_path}")
+        logger.info(f"  dtype={self.transformer_dtype}, quant={self.transformer_quantization}")
+        logger.info(f"Text Encoder: {self.text_encoder_path}")
+        logger.info(f"  dtype={self.text_encoder_dtype}, quant={self.text_encoder_quantization}")
+        logger.info(f"VAE: {self.vae_path}, dtype={self.vae_dtype}")
+        logger.info("-" * 40)
+        logger.info(f"Scheduler: base_shift={self.base_shift}, max_shift={self.max_shift}, terminal={self.terminal_sigma}")
+        if self.conditioning_image_path:
+            logger.info(f"Conditioning: {self.conditioning_image_path} @ frame {self.conditioning_frame_idx}, strength={self.conditioning_strength}")
+        if self.upsampling_enabled:
+            logger.info(f"Upsampling: {self.upsampling_scale}x")
+        # Tensor shapes (populated during generation)
+        if any([self.text_embedding_shape, self.latent_shape, self.noise_shape, self.position_indices_shape]):
+            logger.info("-" * 40)
+            logger.info("Tensor Shapes:")
+            if self.text_embedding_shape:
+                logger.info(f"  text_embedding: {self.text_embedding_shape}")
+            if self.latent_shape:
+                logger.info(f"  latent: {self.latent_shape}")
+            if self.noise_shape:
+                logger.info(f"  noise: {self.noise_shape}")
+            if self.position_indices_shape:
+                logger.info(f"  position_indices: {self.position_indices_shape}")
+        logger.info("=" * 60)
+
+
+@dataclass
 class GenerationStats:
     """Statistics from video generation.
 
@@ -123,6 +272,12 @@ class GenerationStats:
     text_encoder_peak_memory: float = 0.0
     transformer_peak_memory: float = 0.0
     vae_peak_memory: float = 0.0
+
+    # Memory before/after
+    vram_before_gb: float = 0.0
+    vram_after_gb: float = 0.0
+    ram_before_gb: float = 0.0
+    ram_after_gb: float = 0.0
 
     # Generation metadata
     actual_num_frames: int = 0
@@ -142,6 +297,10 @@ class GenerationStats:
                 "text_encoder_peak": self.text_encoder_peak_memory,
                 "transformer_peak": self.transformer_peak_memory,
                 "vae_peak": self.vae_peak_memory,
+                "vram_before": self.vram_before_gb,
+                "vram_after": self.vram_after_gb,
+                "ram_before": self.ram_before_gb,
+                "ram_after": self.ram_after_gb,
             },
             "output": {
                 "num_frames": self.actual_num_frames,
@@ -195,7 +354,7 @@ class GenerationResult:
             video = video[0].permute(1, 2, 3, 0)  # [F, H, W, C]
 
         frames = video.cpu().numpy()
-        num_frames, height, width, channels = frames.shape
+        _num_frames, height, width, _channels = frames.shape
 
         # Write to temp file then encode
         with tempfile.NamedTemporaryFile(suffix=".raw", delete=False) as f:

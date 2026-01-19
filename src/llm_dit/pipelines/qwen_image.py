@@ -30,18 +30,20 @@ from PIL import Image
 from tqdm import tqdm
 
 from llm_dit.backends.qwen_image import QwenImageTextEncoderBackend
-from llm_dit.models.qwen_image_vae import QwenImageVAE
 from llm_dit.models.qwen_image_dit import QwenImageDiT
-from llm_dit.utils.latent_packing import (
-    pack_latents_2x2,
-    unpack_latents_2x2,
-    pack_multi_layer_latents,
-    unpack_multi_layer_latents,
-    get_img_shapes_for_rope,
-)
+from llm_dit.models.qwen_image_vae import QwenImageVAE
 from llm_dit.utils.cfg import (
     apply_cfg_normalization,
+)
+from llm_dit.utils.cfg import (
     calculate_dynamic_shift_simple as calculate_dynamic_shift,
+)
+from llm_dit.utils.latent_packing import (
+    get_img_shapes_for_rope,
+    pack_latents_2x2,
+    pack_multi_layer_latents,
+    unpack_latents_2x2,
+    unpack_multi_layer_latents,
 )
 
 if TYPE_CHECKING:
@@ -102,7 +104,7 @@ class QwenImagePipeline:
         device: str = "cuda",
         text_encoder_device: str | None = None,
         vae_device: str | None = None,
-        torch_dtype: torch.dtype = torch.bfloat16,
+        dtype: torch.dtype = torch.bfloat16,
         text_encoder_quantization: str = "none",
         dit_quantization: str = "none",
         compile_model: bool = False,
@@ -118,7 +120,7 @@ class QwenImagePipeline:
             device: Device for DiT (primary compute device)
             text_encoder_device: Device for text encoder (defaults to device)
             vae_device: Device for VAE (defaults to device)
-            torch_dtype: Model dtype (default: bfloat16)
+            dtype: Model dtype (default: bfloat16)
             text_encoder_quantization: Quantization for text encoder: "none", "4bit", "8bit"
             dit_quantization: Quantization for DiT: "none", "4bit", "8bit"
             compile_model: If True, compile DiT with torch.compile
@@ -134,7 +136,7 @@ class QwenImagePipeline:
             pipe = QwenImagePipeline.from_pretrained(
                 "/path/to/Qwen_Qwen-Image-Layered",
                 device="cuda",
-                torch_dtype=torch.bfloat16,
+                dtype=torch.bfloat16,
             )
 
             # RTX 4090 optimized (24GB VRAM)
@@ -153,11 +155,13 @@ class QwenImagePipeline:
         logger.info(f"Loading Qwen-Image-Layered from {model_path}")
 
         # Load text encoder (optionally quantized)
-        logger.info(f"Loading text encoder on {text_encoder_device} (quantization={text_encoder_quantization})")
+        logger.info(
+            f"Loading text encoder on {text_encoder_device} (quantization={text_encoder_quantization})"
+        )
         text_encoder = QwenImageTextEncoderBackend.from_pretrained(
             model_path,
             device=text_encoder_device,
-            torch_dtype=torch_dtype,
+            dtype=dtype,
             quantization=text_encoder_quantization,
         )
 
@@ -166,15 +170,17 @@ class QwenImagePipeline:
         vae = QwenImageVAE.from_pretrained(
             model_path,
             device=vae_device,
-            torch_dtype=torch_dtype,
+            dtype=dtype,
         )
 
         # Load DiT (optionally compiled and quantized)
-        logger.info(f"Loading DiT on {device} (quantization={dit_quantization}, compile={compile_model})")
+        logger.info(
+            f"Loading DiT on {device} (quantization={dit_quantization}, compile={compile_model})"
+        )
         dit = QwenImageDiT.from_pretrained(
             model_path,
             device=device,
-            torch_dtype=torch_dtype,
+            dtype=dtype,
             use_layer3d_rope=True,  # Enable layer-aware RoPE for decomposition
             quantization=dit_quantization,
             compile_model=compile_model,
@@ -206,8 +212,7 @@ class QwenImagePipeline:
         # Both dimensions must be divisible by 16 (VAE constraint)
         if height % 16 != 0 or width % 16 != 0:
             raise ValueError(
-                f"Height and width must be divisible by 16. "
-                f"Got height={height}, width={width}"
+                f"Height and width must be divisible by 16. Got height={height}, width={width}"
             )
 
         # Check if resolution matches supported bases
@@ -224,14 +229,20 @@ class QwenImagePipeline:
         # Convert to tensor
         import torchvision.transforms as T
 
-        transform = T.Compose([
-            T.ToTensor(),
-            T.Normalize([0.5], [0.5]),  # Scale to [-1, 1]
-        ])
+        transform = T.Compose(
+            [
+                T.ToTensor(),
+                T.Normalize([0.5], [0.5]),  # Scale to [-1, 1]
+            ]
+        )
 
-        img_tensor = transform(image).unsqueeze(0).to(
-            device=self.vae.device,
-            dtype=self.vae.dtype,
+        img_tensor = (
+            transform(image)
+            .unsqueeze(0)
+            .to(
+                device=self.vae.device,
+                dtype=self.vae.dtype,
+            )
         )
 
         # Encode
@@ -333,8 +344,7 @@ class QwenImagePipeline:
             image = image.convert("RGBA")
 
         logger.info(
-            f"Decomposing image: {width}x{height}, "
-            f"layers={layer_num}, steps={num_inference_steps}"
+            f"Decomposing image: {width}x{height}, layers={layer_num}, steps={num_inference_steps}"
         )
 
         # Prepare VAE for encoding
@@ -375,7 +385,9 @@ class QwenImagePipeline:
 
         # Compute img_shapes for RoPE
         img_shapes = get_img_shapes_for_rope(
-            height, width, layer_num,
+            height,
+            width,
+            layer_num,
             include_condition=True,
             condition_height=height,
             condition_width=width,
@@ -469,9 +481,7 @@ class QwenImagePipeline:
                 progress_callback(i + 1, num_inference_steps)
 
         # Unpack latents
-        unpacked_latents = unpack_multi_layer_latents(
-            latents, height, width, layer_num
-        )
+        unpacked_latents = unpack_multi_layer_latents(latents, height, width, layer_num)
 
         # Prepare VAE for decoding (offload DiT if needed)
         self._prepare_vae()

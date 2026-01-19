@@ -97,7 +97,7 @@ def run_qwen_image_generation(args, config, logger) -> int:
     from PIL import Image
 
     # Validate model path based on mode
-    edit_only = getattr(config, 'qwen_image_edit_only', False)
+    edit_only = getattr(config, "qwen_image_edit_only", False)
     if edit_only:
         # Edit-only mode uses edit_model_path
         if not config.qwen_image_edit_model_path:
@@ -118,17 +118,14 @@ def run_qwen_image_generation(args, config, logger) -> int:
         # Decompose mode requires an input image
         if not args.img2img:
             logger.error(
-                "Qwen-Image-Layered requires an input image. "
-                "Use --img2img /path/to/image.jpg"
+                "Qwen-Image-Layered requires an input image. Use --img2img /path/to/image.jpg"
             )
             return 1
 
     # Validate resolution
     resolution = config.qwen_image_resolution
     if resolution not in (640, 1024):
-        logger.error(
-            f"Qwen-Image only supports 640 or 1024 resolution. Got: {resolution}"
-        )
+        logger.error(f"Qwen-Image only supports 640 or 1024 resolution. Got: {resolution}")
         return 1
 
     # Branch: Edit-only mode vs Decompose mode
@@ -182,7 +179,7 @@ def _run_qwen_image_edit_only(args, config, logger, resolution: int) -> int:
             edit_model_path=config.qwen_image_edit_model_path,
             edit_only=True,
             device=torch.device(config.dit_device_resolved),
-            torch_dtype=config.get_torch_dtype(),
+            dtype=config.get_dtype(),
             quantize_transformer=quant_transformer,
             quantize_text_encoder=quant_text_encoder,
             cpu_offload=config.qwen_image_cpu_offload,
@@ -190,6 +187,7 @@ def _run_qwen_image_edit_only(args, config, logger, resolution: int) -> int:
     except Exception as e:
         logger.error(f"Failed to load Qwen-Image-Edit pipeline: {e}")
         import traceback
+
         traceback.print_exc()
         return 1
 
@@ -197,7 +195,7 @@ def _run_qwen_image_edit_only(args, config, logger, resolution: int) -> int:
     logger.info(f"Pipeline loaded in {load_time:.1f}s")
 
     # Set up seed
-    seed = getattr(args, 'seed', None)
+    seed = getattr(args, "seed", None)
 
     # Detect mode: text-to-image vs image editing
     is_text_to_image = input_image is None
@@ -212,7 +210,7 @@ def _run_qwen_image_edit_only(args, config, logger, resolution: int) -> int:
             # Pure text-to-image generation
             result = pipe.generate(
                 prompt=args.prompt,
-                negative_prompt=getattr(config, 'negative_prompt', ' '),
+                negative_prompt=getattr(config, "negative_prompt", " "),
                 height=resolution,
                 width=resolution,
                 num_inference_steps=config.qwen_image_steps,
@@ -232,6 +230,7 @@ def _run_qwen_image_edit_only(args, config, logger, resolution: int) -> int:
     except Exception as e:
         logger.error(f"Generation failed: {e}")
         import traceback
+
         traceback.print_exc()
         return 1
 
@@ -279,7 +278,7 @@ def _run_qwen_image_decompose(args, config, logger, resolution: int) -> int:
             config.qwen_image_model_path,
             device=config.dit_device_resolved,
             text_encoder_device=config.encoder_device_resolved,
-            torch_dtype=config.get_torch_dtype(),
+            dtype=config.get_dtype(),
         )
     except Exception as e:
         logger.error(f"Failed to load Qwen-Image pipeline: {e}")
@@ -289,7 +288,7 @@ def _run_qwen_image_decompose(args, config, logger, resolution: int) -> int:
     logger.info(f"Pipeline loaded in {load_time:.1f}s")
 
     # Set up seed
-    seed = getattr(args, 'seed', None)
+    seed = getattr(args, "seed", None)
 
     # Progress callback
     def progress_callback(step: int, total: int):
@@ -315,6 +314,7 @@ def _run_qwen_image_decompose(args, config, logger, resolution: int) -> int:
     except Exception as e:
         logger.error(f"Decomposition failed: {e}")
         import traceback
+
         traceback.print_exc()
         return 1
 
@@ -406,6 +406,7 @@ def run_qwen_image_t2i_generation(args, config, logger) -> int:
     except Exception as e:
         logger.error(f"Failed to load Qwen-Image T2I pipeline: {e}")
         import traceback
+
         traceback.print_exc()
         return 1
 
@@ -413,7 +414,7 @@ def run_qwen_image_t2i_generation(args, config, logger) -> int:
     logger.info(f"Pipeline loaded in {load_time:.1f}s")
 
     # Set up seed
-    seed = getattr(args, 'seed', None)
+    seed = getattr(args, "seed", None)
 
     # Generate image
     logger.info("Generating image...")
@@ -436,6 +437,7 @@ def run_qwen_image_t2i_generation(args, config, logger) -> int:
     except Exception as e:
         logger.error(f"Generation failed: {e}")
         import traceback
+
         traceback.print_exc()
         return 1
 
@@ -469,8 +471,7 @@ def run_ltx2_generation(args, config, logger) -> int:
     model_path = config.ltx2_model_path
     if not model_path:
         logger.error(
-            "No LTX-2 model path specified. "
-            "Use --ltx2-model-path or set ltx2.model_path in config."
+            "No LTX-2 model path specified. Use --ltx2-model-path or set ltx2.model_path in config."
         )
         return 1
 
@@ -494,14 +495,14 @@ def run_ltx2_generation(args, config, logger) -> int:
     audio_enabled = config.ltx2_audio
 
     # Output path: prefer --ltx2-output, fall back to --output
-    output_path = getattr(config, 'ltx2_output_path', None) or args.output or 'output.mp4'
+    output_path = getattr(config, "ltx2_output_path", None) or args.output or "output.mp4"
 
     # Use general --width/--height args (landscape default for video: 768x512)
     width = config.width if config.width else 768
     height = config.height if config.height else 512
 
     # Get seed
-    seed = getattr(args, 'seed', None)
+    seed = getattr(args, "seed", None)
 
     logger.info("=" * 60)
     logger.info("LTX-2 VIDEO GENERATION")
@@ -537,7 +538,7 @@ def run_ltx2_generation(args, config, logger) -> int:
             logger.info("  This is slower (~4s/step) but fits in 24GB VRAM")
             pipeline = LTX2Pipeline.from_pretrained(
                 str(model_dir),
-                torch_dtype=torch.bfloat16,
+                dtype=torch.bfloat16,
                 enable_cpu_offload=(offload_mode != "none"),
                 fast_mode=False,  # Use reliable sequential offload
             )
@@ -571,7 +572,7 @@ def run_ltx2_generation(args, config, logger) -> int:
                 pipeline = LTX2Pipeline.from_single_file(
                     checkpoint_file,
                     encoder_model_id=encoder_model_id,
-                    torch_dtype=torch.bfloat16,
+                    dtype=torch.bfloat16,
                     enable_cpu_offload=(offload_mode != "none"),
                 )
             else:
@@ -581,7 +582,7 @@ def run_ltx2_generation(args, config, logger) -> int:
                 logger.info("  This is slower (~4s/step) but fits in 24GB VRAM")
                 pipeline = LTX2Pipeline.from_pretrained(
                     model_path,
-                    torch_dtype=torch.bfloat16,
+                    dtype=torch.bfloat16,
                     enable_cpu_offload=(offload_mode != "none"),
                     fast_mode=False,  # Use reliable sequential offload
                 )
@@ -589,6 +590,7 @@ def run_ltx2_generation(args, config, logger) -> int:
     except Exception as e:
         logger.error(f"Failed to load LTX-2 pipeline: {e}")
         import traceback
+
         traceback.print_exc()
         return 1
 
@@ -605,11 +607,14 @@ def run_ltx2_generation(args, config, logger) -> int:
 
     # Generate video
     prompt = args.prompt
-    negative_prompt = getattr(args, 'negative_prompt', None) or \
-        "worst quality, blurry, distorted, inconsistent motion"
+    negative_prompt = (
+        getattr(args, "negative_prompt", None)
+        or "worst quality, blurry, distorted, inconsistent motion"
+    )
 
     # Clear CUDA cache before generation to maximize available VRAM
     import gc
+
     gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
@@ -623,6 +628,7 @@ def run_ltx2_generation(args, config, logger) -> int:
     # Default to 12 steps for distilled model
     actual_steps = steps if steps else 12
     from llm_dit.pipelines.ltx2 import ProgressCallback
+
     progress = ProgressCallback(total_steps=actual_steps, desc="Diffusion")
 
     try:
@@ -643,6 +649,7 @@ def run_ltx2_generation(args, config, logger) -> int:
         progress.close()  # Ensure newline before error
         logger.error(f"Generation failed: {e}")
         import traceback
+
         traceback.print_exc()
         return 1
 
@@ -760,7 +767,7 @@ def main():
         return 1
 
     # Validate and fix resolution
-    from llm_dit.constants import VAE_MULTIPLE, MIN_RESOLUTION, MAX_RESOLUTION, snap_to_multiple
+    from llm_dit.constants import MAX_RESOLUTION, MIN_RESOLUTION, VAE_MULTIPLE, snap_to_multiple
 
     width_valid = config.width % VAE_MULTIPLE == 0
     height_valid = config.height % VAE_MULTIPLE == 0
@@ -789,7 +796,7 @@ def main():
             logger.info(f"Using default templates: {templates_dir}")
 
     # Set up seed (generator created later based on code path)
-    seed = getattr(args, 'seed', None)
+    seed = getattr(args, "seed", None)
     if seed is not None:
         logger.info(f"Using seed: {seed}")
 
@@ -832,6 +839,7 @@ def main():
         # Save embeddings if requested
         if args.save_embeddings:
             from llm_dit.distributed import save_embeddings
+
             save_path = save_embeddings(
                 embeddings=embeds,
                 path=args.save_embeddings,
@@ -928,6 +936,7 @@ def main():
                 f"Convert with: uv run python scripts/convert_to_safetensors.py {emb_path}"
             )
         from llm_dit.distributed import load_embeddings
+
         emb_file = load_embeddings(args.load_embeddings)
         embeddings = emb_file.embeddings
         source_info = emb_file.metadata.prompt[:50] if emb_file.metadata.prompt else "unknown"
@@ -1014,7 +1023,7 @@ def main():
         logger.info(f"Step {step + 1}/{total}")
 
     # Get negative prompt from CLI
-    negative_prompt = getattr(args, 'negative_prompt', None)
+    negative_prompt = getattr(args, "negative_prompt", None)
 
     # Check for img2img mode
     if args.img2img:
@@ -1028,7 +1037,7 @@ def main():
 
         # Load mask image for differential diffusion if provided
         mask_image = None
-        mask_path = getattr(args, 'mask_image', None)
+        mask_path = getattr(args, "mask_image", None)
         if mask_path:
             mask_image = Image.open(mask_path).convert("L")
             logger.info(f"  Mask image: {mask_path}")
@@ -1082,10 +1091,10 @@ def main():
         start = time.time()
 
         # Check for multipass mode (for high-resolution DyPE generation)
-        multipass_mode = getattr(config, 'dype_multipass', 'single')
-        if multipass_mode != 'single' and config.dype_enabled:
+        multipass_mode = getattr(config, "dype_multipass", "single")
+        if multipass_mode != "single" and config.dype_enabled:
             # Build passes configuration based on mode
-            if multipass_mode == 'twopass':
+            if multipass_mode == "twopass":
                 passes = [
                     {"scale": 0.5, "steps": config.steps},
                     {"scale": 1.0, "steps": config.steps, "strength": config.dype_pass2_strength},

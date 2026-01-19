@@ -26,7 +26,7 @@ class TestFullPipeline:
 
         pipe = ZImagePipeline.from_pretrained(
             z_image_model_path,
-            torch_dtype=torch.bfloat16,
+            dtype=torch.bfloat16,
             encoder_device="cpu",
             dit_device="cuda",
             vae_device="cuda",
@@ -55,7 +55,7 @@ class TestFullPipeline:
 
         pipe = ZImagePipeline.from_pretrained(
             z_image_model_path,
-            torch_dtype=torch.bfloat16,
+            dtype=torch.bfloat16,
             encoder_device="cpu",
             dit_device="cuda",
             vae_device="cuda",
@@ -81,7 +81,7 @@ class TestFullPipeline:
 
         pipe = ZImagePipeline.from_pretrained(
             z_image_model_path,
-            torch_dtype=torch.bfloat16,
+            dtype=torch.bfloat16,
             encoder_device="cpu",
             dit_device="cuda",
             vae_device="cuda",
@@ -108,7 +108,7 @@ class TestFullPipeline:
 
         pipe = ZImagePipeline.from_pretrained(
             z_image_model_path,
-            torch_dtype=torch.bfloat16,
+            dtype=torch.bfloat16,
             encoder_device="cpu",
             dit_device="cuda",
             vae_device="cuda",
@@ -140,7 +140,7 @@ class TestFullPipeline:
 
         pipe = ZImagePipeline.from_pretrained(
             z_image_model_path,
-            torch_dtype=torch.bfloat16,
+            dtype=torch.bfloat16,
             encoder_device="cpu",
             dit_device="cuda",
             vae_device="cuda",
@@ -179,9 +179,7 @@ class TestDistributedInference:
 
     @pytest.mark.requires_api
     @pytest.mark.slow
-    def test_api_encoding_local_generation(
-        self, z_image_model_path, api_server_url, output_dir
-    ):
+    def test_api_encoding_local_generation(self, z_image_model_path, api_server_url, output_dir):
         """Test: API handles encoding, local handles generation."""
         from llm_dit.backends.api import APIBackend, APIBackendConfig
         from llm_dit.encoders import ZImageTextEncoder
@@ -198,7 +196,7 @@ class TestDistributedInference:
         # Load pipeline without encoder
         pipe = ZImagePipeline.from_pretrained_generator_only(
             z_image_model_path,
-            torch_dtype=torch.bfloat16,
+            dtype=torch.bfloat16,
             dit_device="cuda",
             vae_device="cuda",
         )
@@ -229,7 +227,7 @@ class TestLoRAIntegration:
 
         pipe = ZImagePipeline.from_pretrained(
             z_image_model_path,
-            torch_dtype=torch.bfloat16,
+            dtype=torch.bfloat16,
             encoder_device="cpu",
             dit_device="cuda",
             vae_device="cuda",
@@ -255,8 +253,9 @@ class TestLoRAIntegration:
     @pytest.mark.slow
     def test_lora_affects_output(self, z_image_model_path, lora_path):
         """Verify LoRA changes the output."""
-        from llm_dit.pipelines import ZImagePipeline
         import numpy as np
+
+        from llm_dit.pipelines import ZImagePipeline
 
         prompt = "An anime character with blue hair"
         seed = 42
@@ -264,7 +263,7 @@ class TestLoRAIntegration:
         # Generate without LoRA
         pipe1 = ZImagePipeline.from_pretrained(
             z_image_model_path,
-            torch_dtype=torch.bfloat16,
+            dtype=torch.bfloat16,
             encoder_device="cpu",
             dit_device="cuda",
             vae_device="cuda",
@@ -281,7 +280,7 @@ class TestLoRAIntegration:
         # Generate with LoRA
         pipe2 = ZImagePipeline.from_pretrained(
             z_image_model_path,
-            torch_dtype=torch.bfloat16,
+            dtype=torch.bfloat16,
             encoder_device="cpu",
             dit_device="cuda",
             vae_device="cuda",
@@ -312,7 +311,7 @@ class TestSchedulerSettings:
 
         pipe = ZImagePipeline.from_pretrained(
             z_image_model_path,
-            torch_dtype=torch.bfloat16,
+            dtype=torch.bfloat16,
             encoder_device="cpu",
             dit_device="cuda",
             vae_device="cuda",

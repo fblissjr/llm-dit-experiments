@@ -16,7 +16,7 @@ Example config (config.toml):
     [default]
     model_path = "/path/to/model"
     templates_dir = "templates/z_image"
-    torch_dtype = "bfloat16"
+    dtype = "bfloat16"
 
     [default.encoder]
     device = "cuda"
@@ -128,7 +128,7 @@ class EncoderConfig:
     """
 
     device: str = "auto"  # auto, cuda, mps, cpu
-    torch_dtype: str = "bfloat16"  # bfloat16, float16, float32
+    dtype: str = "bfloat16"  # bfloat16, float16, float32
     quantization: str = "none"  # none, 4bit, 8bit, int8_dynamic
     cpu_offload: bool = False  # Offload to CPU after encoding
     trust_remote_code: bool = True
@@ -158,14 +158,14 @@ class EncoderConfig:
             )
             self.quantization = "4bit"
 
-    def get_torch_dtype(self) -> torch.dtype:
+    def get_dtype(self) -> torch.dtype:
         """Convert string dtype to torch.dtype."""
         dtype_map = {
             "bfloat16": torch.bfloat16,
             "float16": torch.float16,
             "float32": torch.float32,
         }
-        return dtype_map.get(self.torch_dtype, torch.bfloat16)
+        return dtype_map.get(self.dtype, torch.bfloat16)
 
     def get_device(self) -> str:
         """Get resolved device string."""
@@ -213,7 +213,7 @@ class EncoderConfig:
         elif self.quantization == "4bit":
             return BitsAndBytesConfig(
                 load_in_4bit=True,
-                bnb_4bit_compute_dtype=self.get_torch_dtype(),
+                bnb_4bit_compute_dtype=self.get_dtype(),
             )
         else:
             raise ValueError(
@@ -271,18 +271,18 @@ class PipelineConfig:
     """Configuration for the diffusers pipeline (transformer + VAE)."""
 
     device: str = "auto"  # auto, cuda, mps, cpu
-    torch_dtype: str = "bfloat16"
+    dtype: str = "bfloat16"
     enable_model_cpu_offload: bool = False  # Sequential CPU offload
     enable_sequential_cpu_offload: bool = False  # More aggressive offload
 
-    def get_torch_dtype(self) -> torch.dtype:
+    def get_dtype(self) -> torch.dtype:
         """Convert string dtype to torch.dtype."""
         dtype_map = {
             "bfloat16": torch.bfloat16,
             "float16": torch.float16,
             "float32": torch.float32,
         }
-        return dtype_map.get(self.torch_dtype, torch.bfloat16)
+        return dtype_map.get(self.dtype, torch.bfloat16)
 
     def get_device(self) -> str:
         """Get resolved device string."""
@@ -469,7 +469,7 @@ class LTX2Config:
     tile_overlap_temporal: int = 4  # Temporal overlap
     tile_overlap_spatial: int = 32  # Spatial overlap
 
-    def get_torch_dtype(self) -> torch.dtype:
+    def get_dtype(self) -> torch.dtype:
         """Get torch dtype for computation.
 
         LTX-2 always uses bfloat16 for computation regardless of weight quantization.
@@ -652,7 +652,7 @@ class QwenImageConfig:
     edit_model_path: str = ""  # Path to Qwen-Image-Edit model (or HuggingFace ID)
     device: str = "cuda"  # Device for DiT and VAE
     text_encoder_device: str = "cuda"  # Device for text encoder (7B model)
-    torch_dtype: str = "bfloat16"  # Model dtype
+    dtype: str = "bfloat16"  # Model dtype
     cpu_offload: bool = True  # Enable sequential CPU offload for memory efficiency
 
     # Quantization (for VRAM-constrained GPUs like RTX 4090)
@@ -684,14 +684,14 @@ class QwenImageConfig:
     # Flow matching scheduler
     shift: float | None = None  # Dynamic shift computed from latent size if None
 
-    def get_torch_dtype(self) -> torch.dtype:
+    def get_dtype(self) -> torch.dtype:
         """Convert string dtype to torch.dtype."""
         dtype_map = {
             "bfloat16": torch.bfloat16,
             "float16": torch.float16,
             "float32": torch.float32,
         }
-        return dtype_map.get(self.torch_dtype, torch.bfloat16)
+        return dtype_map.get(self.dtype, torch.bfloat16)
 
     def get_device(self) -> str:
         """Get resolved device string."""
@@ -1358,7 +1358,7 @@ class Config:
             "templates_dir": self.templates_dir,
             "encoder": {
                 "device": self.encoder.device,
-                "torch_dtype": self.encoder.torch_dtype,
+                "dtype": self.encoder.dtype,
                 "quantization": self.encoder.quantization,
                 "cpu_offload": self.encoder.cpu_offload,
                 "trust_remote_code": self.encoder.trust_remote_code,
@@ -1367,7 +1367,7 @@ class Config:
             },
             "pipeline": {
                 "device": self.pipeline.device,
-                "torch_dtype": self.pipeline.torch_dtype,
+                "dtype": self.pipeline.dtype,
                 "enable_model_cpu_offload": self.pipeline.enable_model_cpu_offload,
                 "enable_sequential_cpu_offload": self.pipeline.enable_sequential_cpu_offload,
             },
@@ -1439,7 +1439,7 @@ class Config:
                 "edit_model_path": self.qwen_image.edit_model_path,
                 "device": self.qwen_image.device,
                 "text_encoder_device": self.qwen_image.text_encoder_device,
-                "torch_dtype": self.qwen_image.torch_dtype,
+                "dtype": self.qwen_image.dtype,
                 "cpu_offload": self.qwen_image.cpu_offload,
                 "quantize_text_encoder": self.qwen_image.quantize_text_encoder,
                 "quantize_transformer": self.qwen_image.quantize_transformer,
@@ -1463,25 +1463,25 @@ class Config:
 # Preset configurations
 PRESETS = {
     "default": Config(
-        encoder=EncoderConfig(device="auto", torch_dtype="bfloat16"),
-        pipeline=PipelineConfig(device="auto", torch_dtype="bfloat16"),
+        encoder=EncoderConfig(device="auto", dtype="bfloat16"),
+        pipeline=PipelineConfig(device="auto", dtype="bfloat16"),
     ),
     "low_vram": Config(
         encoder=EncoderConfig(
             device="cuda",
-            torch_dtype="bfloat16",
+            dtype="bfloat16",
             quantization="8bit",  # v5 API
             cpu_offload=True,
         ),
         pipeline=PipelineConfig(
             device="cuda",
-            torch_dtype="bfloat16",
+            dtype="bfloat16",
             enable_model_cpu_offload=True,
         ),
     ),
     "cpu_only": Config(
-        encoder=EncoderConfig(device="cpu", torch_dtype="float32"),
-        pipeline=PipelineConfig(device="cpu", torch_dtype="float32"),
+        encoder=EncoderConfig(device="cpu", dtype="float32"),
+        pipeline=PipelineConfig(device="cpu", dtype="float32"),
     ),
 }
 

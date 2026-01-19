@@ -200,14 +200,14 @@ templates_dir = "templates/z_image"
 
 [default.encoder]
 device = "cpu"
-torch_dtype = "bfloat16"
+dtype = "bfloat16"
 quantization = "none"
 cpu_offload = false
 max_length = 512
 
 [default.pipeline]
 device = "cpu"
-torch_dtype = "bfloat16"
+dtype = "bfloat16"
 
 [default.generation]
 height = 512

@@ -124,7 +124,7 @@ import json
 import logging
 import sys
 import time
-from dataclasses import dataclass, asdict, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
@@ -156,6 +156,7 @@ def load_prompts_from_file(
     # Default to standard prompts file
     if prompts_file is None:
         from experiments.prompts import STANDARD_PROMPTS_FILE
+
         prompts_file = STANDARD_PROMPTS_FILE
 
     prompts_file = Path(prompts_file)
@@ -196,6 +197,7 @@ BlendMode = Literal["interpolate", "adain_per_dim", "adain", "linear"]
 @dataclass
 class ExperimentConfig:
     """Configuration for a single experiment run."""
+
     name: str  # Human-readable label for grid display
     filename: str = ""  # Filesystem-safe name (auto-generated if empty)
     alpha: float = 1.0
@@ -218,7 +220,14 @@ class ExperimentConfig:
     def __post_init__(self):
         if not self.filename:
             # Generate filesystem-safe name from display name
-            self.filename = self.name.replace(" | ", "_").replace(" ", "_").replace("=", "").replace("%", "pct").replace("(", "").replace(")", "")
+            self.filename = (
+                self.name.replace(" | ", "_")
+                .replace(" ", "_")
+                .replace("=", "")
+                .replace("%", "pct")
+                .replace("(", "")
+                .replace(")", "")
+            )
 
     @property
     def image_tokens_only(self) -> bool:
@@ -284,13 +293,15 @@ def build_configs(
 
     # Add baseline if requested (only for txt2img mode)
     if include_baseline and 0.0 not in alphas and not use_img2img:
-        configs.append(ExperimentConfig(
-            name="Pure Text (no VL)",
-            alpha=0.0,
-            vl_text=None,
-            force_think_block=think_modes[0],  # Use first think mode for baseline
-            system_prompt=system_prompt,
-        ))
+        configs.append(
+            ExperimentConfig(
+                name="Pure Text (no VL)",
+                alpha=0.0,
+                vl_text=None,
+                force_think_block=think_modes[0],  # Use first think mode for baseline
+                system_prompt=system_prompt,
+            )
+        )
 
     # Generate configs for all combinations
     for alpha in alphas:
@@ -354,23 +365,29 @@ def build_configs(
                                             "clamp": "clamp",
                                             "scale": "scale",
                                         }
-                                        name_parts.append(outlier_labels.get(outlier_mode, outlier_mode))
+                                        name_parts.append(
+                                            outlier_labels.get(outlier_mode, outlier_mode)
+                                        )
 
-                                    configs.append(ExperimentConfig(
-                                        name=" | ".join(name_parts) if name_parts else f"a={alpha:.0%} | {mode}",
-                                        alpha=alpha,
-                                        hidden_layer=layer,
-                                        token_mode=mode,
-                                        normalization_mode=norm_mode,
-                                        outlier_masking=outlier_mode,
-                                        outlier_threshold=outlier_threshold,
-                                        blend_mode=blend_mode,
-                                        use_img2img=use_img2img,
-                                        strength=strength,
-                                        vl_text=vl_text,
-                                        force_think_block=think_mode,
-                                        system_prompt=system_prompt,
-                                    ))
+                                    configs.append(
+                                        ExperimentConfig(
+                                            name=" | ".join(name_parts)
+                                            if name_parts
+                                            else f"a={alpha:.0%} | {mode}",
+                                            alpha=alpha,
+                                            hidden_layer=layer,
+                                            token_mode=mode,
+                                            normalization_mode=norm_mode,
+                                            outlier_masking=outlier_mode,
+                                            outlier_threshold=outlier_threshold,
+                                            blend_mode=blend_mode,
+                                            use_img2img=use_img2img,
+                                            strength=strength,
+                                            vl_text=vl_text,
+                                            force_think_block=think_mode,
+                                            system_prompt=system_prompt,
+                                        )
+                                    )
 
     return configs
 
@@ -433,37 +450,45 @@ def get_sweep_configs(sweep_type: str) -> list[ExperimentConfig]:
         # Uses txt2img (not img2img) for fair comparison
         configs = []
         # 1. Pure Qwen3-4B baseline (alpha=0.0)
-        configs.append(ExperimentConfig(
-            name="Pure Qwen3-4B",
-            alpha=0.0,
-            hidden_layer=-6,
-            token_mode="full",
-            vl_text=None,
-        ))
+        configs.append(
+            ExperimentConfig(
+                name="Pure Qwen3-4B",
+                alpha=0.0,
+                hidden_layer=-6,
+                token_mode="full",
+                vl_text=None,
+            )
+        )
         # 2. Pure VL text tokens only (alpha=1.0, text_tokens_only=True)
-        configs.append(ExperimentConfig(
-            name="VL text tokens",
-            alpha=1.0,
-            hidden_layer=-6,
-            token_mode="text_only",
-            vl_text="__PROMPT__",
-        ))
+        configs.append(
+            ExperimentConfig(
+                name="VL text tokens",
+                alpha=1.0,
+                hidden_layer=-6,
+                token_mode="text_only",
+                vl_text="__PROMPT__",
+            )
+        )
         # 3. Pure VL full sequence (alpha=1.0, includes image+text tokens)
-        configs.append(ExperimentConfig(
-            name="VL full (img+text)",
-            alpha=1.0,
-            hidden_layer=-6,
-            token_mode="full",
-            vl_text="__PROMPT__",
-        ))
+        configs.append(
+            ExperimentConfig(
+                name="VL full (img+text)",
+                alpha=1.0,
+                hidden_layer=-6,
+                token_mode="full",
+                vl_text="__PROMPT__",
+            )
+        )
         # 4. Traditional blend (alpha=0.3)
-        configs.append(ExperimentConfig(
-            name="Blend a=0.3",
-            alpha=0.3,
-            hidden_layer=-6,
-            token_mode="full",
-            vl_text="__PROMPT__",
-        ))
+        configs.append(
+            ExperimentConfig(
+                name="Blend a=0.3",
+                alpha=0.3,
+                hidden_layer=-6,
+                token_mode="full",
+                vl_text="__PROMPT__",
+            )
+        )
         return configs
 
     # Style transfer presets
@@ -540,7 +565,8 @@ def generate_comparison_grid(
     Automatically detects if results form a 2D grid (e.g., layers x token_modes)
     and creates appropriate row/column headers.
     """
-    from PIL import Image as PILImage, ImageDraw, ImageFont
+    from PIL import Image as PILImage
+    from PIL import ImageDraw, ImageFont
 
     successful = [r for r in results if r.get("success", False)]
     if not successful:
@@ -677,7 +703,13 @@ def generate_comparison_grid(
 
     # Draw "Reference" header
     ref_x = row_label_width + padding + thumbnail_size // 2
-    draw.text((ref_x, header_height + col_label_height // 2), "Reference", fill=(100, 200, 255), font=font, anchor="mm")
+    draw.text(
+        (ref_x, header_height + col_label_height // 2),
+        "Reference",
+        fill=(100, 200, 255),
+        font=font,
+        anchor="mm",
+    )
 
     # Load reference image
     ref_img = PILImage.open(reference_image_path).convert("RGB")
@@ -703,7 +735,9 @@ def generate_comparison_grid(
         # Draw reference image in first column (only for first row, span all rows visually)
         if row_idx == 0 or n_rows == 1:
             ref_x = row_label_width + padding
-            ref_y = y_start + (n_rows * (thumbnail_size + padding) - padding) // 2 - thumbnail_size // 2
+            ref_y = (
+                y_start + (n_rows * (thumbnail_size + padding) - padding) // 2 - thumbnail_size // 2
+            )
             if n_rows == 1:
                 ref_y = y
             paste_x = ref_x + (thumbnail_size - ref_thumb.width) // 2
@@ -725,9 +759,21 @@ def generate_comparison_grid(
                     canvas.paste(thumb, (paste_x, paste_y))
                 except Exception as e:
                     logger.warning(f"Could not load {result['output_path']}: {e}")
-                    draw.text((x + thumbnail_size // 2, y + thumbnail_size // 2), "Error", fill=(255, 0, 0), font=font, anchor="mm")
+                    draw.text(
+                        (x + thumbnail_size // 2, y + thumbnail_size // 2),
+                        "Error",
+                        fill=(255, 0, 0),
+                        font=font,
+                        anchor="mm",
+                    )
             else:
-                draw.text((x + thumbnail_size // 2, y + thumbnail_size // 2), "N/A", fill=(128, 128, 128), font=font, anchor="mm")
+                draw.text(
+                    (x + thumbnail_size // 2, y + thumbnail_size // 2),
+                    "N/A",
+                    fill=(128, 128, 128),
+                    font=font,
+                    anchor="mm",
+                )
 
     grid_path = output_dir / "comparison_grid.png"
     canvas.save(grid_path)
@@ -759,15 +805,16 @@ def run_experiments(
             Default False to match official Z-Image format (enable_thinking=True = no think block).
         system_prompt: Optional system message for text encoding (official uses none).
     """
+    from blend_and_generate import TextEncodingResult, encode_text_prompt
+
+    from llm_dit.startup import PipelineLoader
     from llm_dit.vl import VLEmbeddingExtractor
     from llm_dit.vl.blending import (
-        blend_embeddings,
-        blend_interpolate,
         blend_adain,
         blend_adain_per_dim,
+        blend_embeddings,
+        blend_interpolate,
     )
-    from llm_dit.startup import PipelineLoader
-    from blend_and_generate import encode_text_prompt, TextEncodingResult
 
     # Blend function lookup - maps blend_mode to function
     # Note: adain functions take (text, vl, alpha) not (vl, text, alpha)
@@ -791,24 +838,65 @@ def run_experiments(
 
     class ConfigArgs:
         pass
+
     config_args = ConfigArgs()
     config_args.config = z_image_config
     config_args.profile = z_image_profile
     config_args.steps = steps
-    for attr in ['model_path', 'text_encoder_device', 'dit_device', 'vae_device',
-                 'cpu_offload', 'flash_attn', 'compile', 'debug', 'verbose',
-                 'attention_backend', 'use_custom_scheduler', 'tiled_vae',
-                 'embedding_cache', 'long_prompt_mode', 'hidden_layer', 'shift',
-                 'lora', 'api_url', 'api_model', 'local_encoder', 'templates_dir',
-                 'torch_dtype', 'text_encoder_path', 'tile_size', 'tile_overlap',
-                 'cache_size', 'rewriter_use_api', 'rewriter_api_url', 'rewriter_api_model',
-                 'rewriter_temperature', 'rewriter_top_p', 'rewriter_top_k',
-                 'rewriter_min_p', 'rewriter_presence_penalty', 'rewriter_max_tokens',
-                 'width', 'height', 'guidance_scale', 'negative_prompt', 'seed',
-                 'embeddings_file', 'template', 'system_prompt', 'thinking_content',
-                 'assistant_content', 'enable_thinking',
-                 'vl_model_path', 'vl_device', 'vl_hidden_layer', 'vl_alpha',
-                 'vl_blend_mode', 'vl_auto_unload']:
+    for attr in [
+        "model_path",
+        "text_encoder_device",
+        "dit_device",
+        "vae_device",
+        "cpu_offload",
+        "flash_attn",
+        "compile",
+        "debug",
+        "verbose",
+        "attention_backend",
+        "use_custom_scheduler",
+        "tiled_vae",
+        "embedding_cache",
+        "long_prompt_mode",
+        "hidden_layer",
+        "shift",
+        "lora",
+        "api_url",
+        "api_model",
+        "local_encoder",
+        "templates_dir",
+        "dtype",
+        "text_encoder_path",
+        "tile_size",
+        "tile_overlap",
+        "cache_size",
+        "rewriter_use_api",
+        "rewriter_api_url",
+        "rewriter_api_model",
+        "rewriter_temperature",
+        "rewriter_top_p",
+        "rewriter_top_k",
+        "rewriter_min_p",
+        "rewriter_presence_penalty",
+        "rewriter_max_tokens",
+        "width",
+        "height",
+        "guidance_scale",
+        "negative_prompt",
+        "seed",
+        "embeddings_file",
+        "template",
+        "system_prompt",
+        "thinking_content",
+        "assistant_content",
+        "enable_thinking",
+        "vl_model_path",
+        "vl_device",
+        "vl_hidden_layer",
+        "vl_alpha",
+        "vl_blend_mode",
+        "vl_auto_unload",
+    ]:
         if not hasattr(config_args, attr):
             setattr(config_args, attr, None)
     z_config = load_runtime_config(config_args)
@@ -828,7 +916,7 @@ def run_experiments(
     logger.debug(f"Text formatted prompt:\n{text_formatted_prompt}")
 
     # Get VL model path - use explicit path or auto-detect based on variant
-    if not vl_model_path and hasattr(z_config, 'vl_model_path'):
+    if not vl_model_path and hasattr(z_config, "vl_model_path"):
         vl_model_path = z_config.vl_model_path
     if not vl_model_path:
         # Use new find_model_path with variant preference
@@ -848,13 +936,13 @@ def run_experiments(
         )
 
     # Load VL extractor
-    vl_device = getattr(z_config, 'vl_device', None) or "cuda"
+    vl_device = getattr(z_config, "vl_device", None) or "cuda"
     vl_dtype = torch.bfloat16 if vl_device == "cuda" else torch.float32
     logger.info(f"Loading VLEmbeddingExtractor from {vl_model_path}")
     vl_extractor = VLEmbeddingExtractor.from_pretrained(
         vl_model_path,
         device=vl_device,
-        torch_dtype=vl_dtype,
+        dtype=vl_dtype,
     )
 
     # Explicit memory cleanup before loading pipeline
@@ -880,12 +968,16 @@ def run_experiments(
     results = []
 
     for i, config in enumerate(configs):
-        logger.info(f"\n{'='*60}")
-        logger.info(f"[{i+1}/{len(configs)}] Running: {config.name}")
-        logger.info(f"  alpha={config.alpha}, layer={config.hidden_layer}, mode={config.token_mode}")
+        logger.info(f"\n{'=' * 60}")
+        logger.info(f"[{i + 1}/{len(configs)}] Running: {config.name}")
+        logger.info(
+            f"  alpha={config.alpha}, layer={config.hidden_layer}, mode={config.token_mode}"
+        )
         if config.outlier_masking != "none":
-            logger.info(f"  outlier_masking={config.outlier_masking}, threshold={config.outlier_threshold}")
-        logger.info(f"{'='*60}")
+            logger.info(
+                f"  outlier_masking={config.outlier_masking}, threshold={config.outlier_threshold}"
+            )
+        logger.info(f"{'=' * 60}")
 
         start_time = time.time()
 
@@ -952,7 +1044,9 @@ def run_experiments(
 
             if config.use_img2img:
                 # img2img: use reference image as VAE latent initialization
-                logger.info(f"  Generating img2img {z_config.width}x{z_config.height} (strength={config.strength})...")
+                logger.info(
+                    f"  Generating img2img {z_config.width}x{z_config.height} (strength={config.strength})..."
+                )
                 result_image = pipe.img2img(
                     prompt_embeds=blended,
                     image=image,  # Reference image as init
@@ -961,7 +1055,7 @@ def run_experiments(
                     generator=generator,
                 )
                 # Handle different return types
-                if hasattr(result_image, 'images'):
+                if hasattr(result_image, "images"):
                     result_image = result_image.images[0]
             else:
                 # txt2img: generate from embeddings only
@@ -984,34 +1078,39 @@ def run_experiments(
 
             elapsed = time.time() - start_time
 
-            results.append({
-                **asdict(config),
-                "output_path": str(output_path),
-                "vl_shape": vl_shape,
-                "vl_original_std": vl_original_std,
-                "vl_scaled_std": vl_scaled_std,
-                "vl_scale_factor": vl_scale_factor,
-                "blended_std": blended.std().item(),
-                "elapsed_seconds": elapsed,
-                "generation_time": gen_time,
-                "success": True,
-                # Full prompt with special tokens for debugging
-                "vl_full_prompt": vl_full_prompt,
-                "vl_model_variant": vl_model_variant_result,
-                # Outlier masking info
-                "vl_masked_dimensions": vl_masked_dimensions,
-                "vl_masked_dim_ratios": vl_masked_dim_ratios,
-            })
+            results.append(
+                {
+                    **asdict(config),
+                    "output_path": str(output_path),
+                    "vl_shape": vl_shape,
+                    "vl_original_std": vl_original_std,
+                    "vl_scaled_std": vl_scaled_std,
+                    "vl_scale_factor": vl_scale_factor,
+                    "blended_std": blended.std().item(),
+                    "elapsed_seconds": elapsed,
+                    "generation_time": gen_time,
+                    "success": True,
+                    # Full prompt with special tokens for debugging
+                    "vl_full_prompt": vl_full_prompt,
+                    "vl_model_variant": vl_model_variant_result,
+                    # Outlier masking info
+                    "vl_masked_dimensions": vl_masked_dimensions,
+                    "vl_masked_dim_ratios": vl_masked_dim_ratios,
+                }
+            )
 
         except Exception as e:
             logger.error(f"Failed: {e}")
             import traceback
+
             traceback.print_exc()
-            results.append({
-                **asdict(config),
-                "success": False,
-                "error": str(e),
-            })
+            results.append(
+                {
+                    **asdict(config),
+                    "success": False,
+                    "error": str(e),
+                }
+            )
 
     # Save model info before cleanup
     vl_model_variant = vl_extractor.model_variant
@@ -1086,111 +1185,172 @@ Examples:
 
     # Prompt source (one of these is required)
     prompt_group = parser.add_argument_group("Prompt source (use ONE of these)")
-    prompt_group.add_argument("--prompt", "-p",
-                              help="Single text prompt (for quick tests)")
-    prompt_group.add_argument("--prompt-ids",
-                              help="Comma-separated prompt IDs from prompts file (e.g., animal_001,scene_002)")
-    prompt_group.add_argument("--prompt-category",
-                              help="Run all prompts in category (e.g., animals, scenes, landscapes)")
-    prompt_group.add_argument("--prompt-difficulty",
-                              choices=["easy", "medium", "hard", "extreme"],
-                              help="Run all prompts of a difficulty level")
+    prompt_group.add_argument("--prompt", "-p", help="Single text prompt (for quick tests)")
+    prompt_group.add_argument(
+        "--prompt-ids",
+        help="Comma-separated prompt IDs from prompts file (e.g., animal_001,scene_002)",
+    )
+    prompt_group.add_argument(
+        "--prompt-category", help="Run all prompts in category (e.g., animals, scenes, landscapes)"
+    )
+    prompt_group.add_argument(
+        "--prompt-difficulty",
+        choices=["easy", "medium", "hard", "extreme"],
+        help="Run all prompts of a difficulty level",
+    )
 
     # Prompts file (optional, defaults to standard_prompts.yaml)
-    parser.add_argument("--prompts-file",
-                        help="Path to prompts YAML file (default: experiments/prompts/standard_prompts.yaml)")
+    parser.add_argument(
+        "--prompts-file",
+        help="Path to prompts YAML file (default: experiments/prompts/standard_prompts.yaml)",
+    )
 
     # Output
-    parser.add_argument("--output-dir", "-o", default=None,
-                        help="Output directory (default: auto-generated)")
+    parser.add_argument(
+        "--output-dir", "-o", default=None, help="Output directory (default: auto-generated)"
+    )
 
     # Sweep presets
-    parser.add_argument("--sweep", "-s",
-                        choices=["alpha", "layer", "token", "normalization", "outlier", "full",
-                                 "vl_only_vs_qwen3",
-                                 "style_transfer", "blend_comparison", "strength_sweep", "think_comparison"],
-                        help="Use predefined sweep configuration. vl_only_vs_qwen3 compares VL vs Qwen3-4B. style_transfer/blend_comparison/strength_sweep/think_comparison use img2img.")
+    parser.add_argument(
+        "--sweep",
+        "-s",
+        choices=[
+            "alpha",
+            "layer",
+            "token",
+            "normalization",
+            "outlier",
+            "full",
+            "vl_only_vs_qwen3",
+            "style_transfer",
+            "blend_comparison",
+            "strength_sweep",
+            "think_comparison",
+        ],
+        help="Use predefined sweep configuration. vl_only_vs_qwen3 compares VL vs Qwen3-4B. style_transfer/blend_comparison/strength_sweep/think_comparison use img2img.",
+    )
 
     # Custom parameters
-    parser.add_argument("--alphas", type=float, nargs="+",
-                        help="Alpha values to test (e.g., 0.0 0.3 0.5 1.0)")
-    parser.add_argument("--layers", type=int, nargs="+",
-                        help="Hidden layers to test (e.g., -2 -8 -16)")
-    parser.add_argument("--token-modes", nargs="+",
-                        choices=["full", "text_only", "image_only", "image_no_markers"],
-                        help="Token selection modes to test")
-    parser.add_argument("--normalization-modes", nargs="+",
-                        choices=["global", "per_dim", "hybrid"],
-                        help="Normalization modes to test")
-    parser.add_argument("--outlier-masking", nargs="+",
-                        choices=["none", "zero", "clamp", "scale"],
-                        help="Outlier masking modes to test (dim 396=617x, dim 4=42x std ratio)")
-    parser.add_argument("--outlier-threshold", type=float, default=10.0,
-                        help="Std ratio threshold for outlier detection (default: 10.0)")
+    parser.add_argument(
+        "--alphas", type=float, nargs="+", help="Alpha values to test (e.g., 0.0 0.3 0.5 1.0)"
+    )
+    parser.add_argument(
+        "--layers", type=int, nargs="+", help="Hidden layers to test (e.g., -2 -8 -16)"
+    )
+    parser.add_argument(
+        "--token-modes",
+        nargs="+",
+        choices=["full", "text_only", "image_only", "image_no_markers"],
+        help="Token selection modes to test",
+    )
+    parser.add_argument(
+        "--normalization-modes",
+        nargs="+",
+        choices=["global", "per_dim", "hybrid"],
+        help="Normalization modes to test",
+    )
+    parser.add_argument(
+        "--outlier-masking",
+        nargs="+",
+        choices=["none", "zero", "clamp", "scale"],
+        help="Outlier masking modes to test (dim 396=617x, dim 4=42x std ratio)",
+    )
+    parser.add_argument(
+        "--outlier-threshold",
+        type=float,
+        default=10.0,
+        help="Std ratio threshold for outlier detection (default: 10.0)",
+    )
 
     # Style transfer parameters (NEW)
-    parser.add_argument("--blend-modes", nargs="+",
-                        choices=["interpolate", "adain_per_dim", "adain", "linear"],
-                        default=["adain_per_dim"],
-                        help="Blend modes to test. adain_per_dim (recommended - preserves text content), "
-                             "adain, linear, interpolate (WARNING: overwrites text content with VL)")
-    parser.add_argument("--img2img", action="store_true",
-                        help="Use img2img (reference image as VAE latent init) for style transfer")
-    parser.add_argument("--strengths", type=float, nargs="+",
-                        default=[0.9],
-                        help="img2img strengths to test (requires --img2img). 0.9 recommended.")
+    parser.add_argument(
+        "--blend-modes",
+        nargs="+",
+        choices=["interpolate", "adain_per_dim", "adain", "linear"],
+        default=["adain_per_dim"],
+        help="Blend modes to test. adain_per_dim (recommended - preserves text content), "
+        "adain, linear, interpolate (WARNING: overwrites text content with VL)",
+    )
+    parser.add_argument(
+        "--img2img",
+        action="store_true",
+        help="Use img2img (reference image as VAE latent init) for style transfer",
+    )
+    parser.add_argument(
+        "--strengths",
+        type=float,
+        nargs="+",
+        default=[0.9],
+        help="img2img strengths to test (requires --img2img). 0.9 recommended.",
+    )
 
     # Think token control
-    parser.add_argument("--think-modes", nargs="+",
-                        choices=["true", "false"],
-                        default=["false"],
-                        help="Think block modes to test. 'false' = minimal chat template (user/assistant only), "
-                             "'true' = include <think></think> block. Use 'true false' to compare both.")
+    parser.add_argument(
+        "--think-modes",
+        nargs="+",
+        choices=["true", "false"],
+        default=["false"],
+        help="Think block modes to test. 'false' = minimal chat template (user/assistant only), "
+        "'true' = include <think></think> block. Use 'true false' to compare both.",
+    )
 
     # Flags
-    parser.add_argument("--no-baseline", action="store_true",
-                        help="Skip pure text baseline")
-    parser.add_argument("--no-vl-text", action="store_true",
-                        help="Don't include prompt text in VL extraction")
+    parser.add_argument("--no-baseline", action="store_true", help="Skip pure text baseline")
+    parser.add_argument(
+        "--no-vl-text", action="store_true", help="Don't include prompt text in VL extraction"
+    )
 
     # Model paths
     parser.add_argument("--vl-model-path", help="Qwen3-VL model path")
-    parser.add_argument("--vl-model-variant",
-                        choices=["instruct", "thinking", "both"],
-                        default="instruct",
-                        help="VL model variant: instruct (VL-4B-Instruct), thinking (VL-4B-Thinking), or both for A/B comparison")
+    parser.add_argument(
+        "--vl-model-variant",
+        choices=["instruct", "thinking", "both"],
+        default="instruct",
+        help="VL model variant: instruct (VL-4B-Instruct), thinking (VL-4B-Thinking), or both for A/B comparison",
+    )
     parser.add_argument("--config", default="config.toml", help="Z-Image config file")
-    parser.add_argument("--profile", default="default", help="Z-Image config profile (use 'default' for consistency with test_all_blend_modes.py)")
+    parser.add_argument(
+        "--profile",
+        default="default",
+        help="Z-Image config profile (use 'default' for consistency with test_all_blend_modes.py)",
+    )
 
     # Generation
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument("--steps", type=int, default=9, help="Inference steps")
 
     # System prompt (optional)
-    parser.add_argument("--system-prompt", type=str, default=None,
-                        help="System prompt for text encoding")
+    parser.add_argument(
+        "--system-prompt", type=str, default=None, help="System prompt for text encoding"
+    )
 
     args = parser.parse_args()
 
     # Validate prompt source - need at least one
-    has_prompt_source = any([
-        args.prompt,
-        args.prompt_ids,
-        args.prompt_category,
-        args.prompt_difficulty,
-    ])
+    has_prompt_source = any(
+        [
+            args.prompt,
+            args.prompt_ids,
+            args.prompt_category,
+            args.prompt_difficulty,
+        ]
+    )
     if not has_prompt_source:
-        parser.error("Must provide a prompt source: --prompt, --prompt-ids, --prompt-category, or --prompt-difficulty")
+        parser.error(
+            "Must provide a prompt source: --prompt, --prompt-ids, --prompt-category, or --prompt-difficulty"
+        )
 
     # Build list of prompts to run
     if args.prompt:
         # Single prompt mode - create a simple dict
-        prompts_to_run = [{
-            "id": "cli_prompt",
-            "prompt": args.prompt,
-            "category": "cli",
-            "difficulty": "unknown",
-        }]
+        prompts_to_run = [
+            {
+                "id": "cli_prompt",
+                "prompt": args.prompt,
+                "category": "cli",
+                "difficulty": "unknown",
+            }
+        ]
     else:
         # Load from prompts file with filters
         prompt_ids = None
@@ -1230,17 +1390,117 @@ Examples:
     # If sweep specified, use as defaults for any unset params (skip for special sweeps)
     if args.sweep and args.sweep not in special_sweeps:
         sweep_defaults = {
-            "alpha": {"alphas": [0.0, 0.1, 0.3, 0.5, 0.7, 1.0], "layers": [-8], "token_modes": ["text_only"], "normalization_modes": ["global"], "outlier_masking_modes": ["none"], "blend_modes": ["interpolate"], "use_img2img": False, "strengths": [0.9], "think_modes": [False]},
-            "layer": {"alphas": [1.0], "layers": [-2, -4, -8, -16, -24], "token_modes": ["text_only"], "normalization_modes": ["global"], "outlier_masking_modes": ["none"], "blend_modes": ["interpolate"], "use_img2img": False, "strengths": [0.9], "think_modes": [False]},
-            "token": {"alphas": [1.0], "layers": [-8], "token_modes": ["full", "text_only", "image_only", "image_no_markers"], "normalization_modes": ["global"], "outlier_masking_modes": ["none"], "blend_modes": ["interpolate"], "use_img2img": False, "strengths": [0.9], "think_modes": [False]},
-            "normalization": {"alphas": [1.0], "layers": [-8], "token_modes": ["image_only"], "normalization_modes": ["global", "per_dim", "hybrid"], "outlier_masking_modes": ["none"], "blend_modes": ["interpolate"], "use_img2img": False, "strengths": [0.9], "think_modes": [False]},
-            "outlier": {"alphas": [1.0], "layers": [-8], "token_modes": ["full"], "normalization_modes": ["global"], "outlier_masking_modes": ["none", "zero", "clamp", "scale"], "blend_modes": ["interpolate"], "use_img2img": False, "strengths": [0.9], "think_modes": [False]},
-            "full": {"alphas": [0.0, 0.3, 0.5, 1.0], "layers": [-2, -8, -16], "token_modes": ["text_only", "image_only"], "normalization_modes": ["global"], "outlier_masking_modes": ["none"], "blend_modes": ["interpolate"], "use_img2img": False, "strengths": [0.9], "think_modes": [False]},
+            "alpha": {
+                "alphas": [0.0, 0.1, 0.3, 0.5, 0.7, 1.0],
+                "layers": [-8],
+                "token_modes": ["text_only"],
+                "normalization_modes": ["global"],
+                "outlier_masking_modes": ["none"],
+                "blend_modes": ["interpolate"],
+                "use_img2img": False,
+                "strengths": [0.9],
+                "think_modes": [False],
+            },
+            "layer": {
+                "alphas": [1.0],
+                "layers": [-2, -4, -8, -16, -24],
+                "token_modes": ["text_only"],
+                "normalization_modes": ["global"],
+                "outlier_masking_modes": ["none"],
+                "blend_modes": ["interpolate"],
+                "use_img2img": False,
+                "strengths": [0.9],
+                "think_modes": [False],
+            },
+            "token": {
+                "alphas": [1.0],
+                "layers": [-8],
+                "token_modes": ["full", "text_only", "image_only", "image_no_markers"],
+                "normalization_modes": ["global"],
+                "outlier_masking_modes": ["none"],
+                "blend_modes": ["interpolate"],
+                "use_img2img": False,
+                "strengths": [0.9],
+                "think_modes": [False],
+            },
+            "normalization": {
+                "alphas": [1.0],
+                "layers": [-8],
+                "token_modes": ["image_only"],
+                "normalization_modes": ["global", "per_dim", "hybrid"],
+                "outlier_masking_modes": ["none"],
+                "blend_modes": ["interpolate"],
+                "use_img2img": False,
+                "strengths": [0.9],
+                "think_modes": [False],
+            },
+            "outlier": {
+                "alphas": [1.0],
+                "layers": [-8],
+                "token_modes": ["full"],
+                "normalization_modes": ["global"],
+                "outlier_masking_modes": ["none", "zero", "clamp", "scale"],
+                "blend_modes": ["interpolate"],
+                "use_img2img": False,
+                "strengths": [0.9],
+                "think_modes": [False],
+            },
+            "full": {
+                "alphas": [0.0, 0.3, 0.5, 1.0],
+                "layers": [-2, -8, -16],
+                "token_modes": ["text_only", "image_only"],
+                "normalization_modes": ["global"],
+                "outlier_masking_modes": ["none"],
+                "blend_modes": ["interpolate"],
+                "use_img2img": False,
+                "strengths": [0.9],
+                "think_modes": [False],
+            },
             # Style transfer presets (use img2img) - adain_per_dim preserves text content better than interpolate
-            "style_transfer": {"alphas": [0.3, 0.5], "layers": [-6], "token_modes": ["full"], "normalization_modes": ["global"], "outlier_masking_modes": ["none"], "blend_modes": ["adain_per_dim"], "use_img2img": True, "strengths": [0.9], "think_modes": [False]},
-            "blend_comparison": {"alphas": [0.3], "layers": [-6], "token_modes": ["full"], "normalization_modes": ["global"], "outlier_masking_modes": ["none"], "blend_modes": ["adain_per_dim", "adain", "linear"], "use_img2img": True, "strengths": [0.9], "think_modes": [False]},
-            "strength_sweep": {"alphas": [0.3], "layers": [-6], "token_modes": ["full"], "normalization_modes": ["global"], "outlier_masking_modes": ["none"], "blend_modes": ["adain_per_dim"], "use_img2img": True, "strengths": [0.5, 0.7, 0.9], "think_modes": [False]},
-            "think_comparison": {"alphas": [0.3], "layers": [-6], "token_modes": ["full"], "normalization_modes": ["global"], "outlier_masking_modes": ["none"], "blend_modes": ["adain_per_dim"], "use_img2img": True, "strengths": [0.9], "think_modes": [False, True]},
+            "style_transfer": {
+                "alphas": [0.3, 0.5],
+                "layers": [-6],
+                "token_modes": ["full"],
+                "normalization_modes": ["global"],
+                "outlier_masking_modes": ["none"],
+                "blend_modes": ["adain_per_dim"],
+                "use_img2img": True,
+                "strengths": [0.9],
+                "think_modes": [False],
+            },
+            "blend_comparison": {
+                "alphas": [0.3],
+                "layers": [-6],
+                "token_modes": ["full"],
+                "normalization_modes": ["global"],
+                "outlier_masking_modes": ["none"],
+                "blend_modes": ["adain_per_dim", "adain", "linear"],
+                "use_img2img": True,
+                "strengths": [0.9],
+                "think_modes": [False],
+            },
+            "strength_sweep": {
+                "alphas": [0.3],
+                "layers": [-6],
+                "token_modes": ["full"],
+                "normalization_modes": ["global"],
+                "outlier_masking_modes": ["none"],
+                "blend_modes": ["adain_per_dim"],
+                "use_img2img": True,
+                "strengths": [0.5, 0.7, 0.9],
+                "think_modes": [False],
+            },
+            "think_comparison": {
+                "alphas": [0.3],
+                "layers": [-6],
+                "token_modes": ["full"],
+                "normalization_modes": ["global"],
+                "outlier_masking_modes": ["none"],
+                "blend_modes": ["adain_per_dim"],
+                "use_img2img": True,
+                "strengths": [0.9],
+                "think_modes": [False, True],
+            },
         }
         defaults = sweep_defaults[args.sweep]
         alphas = alphas or defaults["alphas"]
@@ -1281,6 +1541,7 @@ Examples:
 
     # Generate base output directory
     from datetime import datetime
+
     if args.output_dir is None:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         sweep_name = args.sweep or "custom"
@@ -1295,7 +1556,9 @@ Examples:
         variants_to_run = [args.vl_model_variant]
 
     total_experiments = len(configs) * len(prompts_to_run) * len(variants_to_run)
-    logger.info(f"Running {len(configs)} configs x {len(prompts_to_run)} prompts x {len(variants_to_run)} variants = {total_experiments} total experiments")
+    logger.info(
+        f"Running {len(configs)} configs x {len(prompts_to_run)} prompts x {len(variants_to_run)} variants = {total_experiments} total experiments"
+    )
     logger.info(f"Base output directory: {base_output_dir}")
     logger.info(f"VL model variant(s): {variants_to_run}")
 
@@ -1317,12 +1580,12 @@ Examples:
                 output_dir = base_output_dir
 
             variant_label = f" [{variant}]" if len(variants_to_run) > 1 else ""
-            logger.info(f"\n{'='*60}")
-            logger.info(f"Prompt {i+1}/{len(prompts_to_run)}{variant_label}: {prompt_id}")
+            logger.info(f"\n{'=' * 60}")
+            logger.info(f"Prompt {i + 1}/{len(prompts_to_run)}{variant_label}: {prompt_id}")
             logger.info(f"  Text: {prompt_text[:80]}{'...' if len(prompt_text) > 80 else ''}")
             logger.info(f"  Variant: {variant}")
             logger.info(f"  Output: {output_dir}")
-            logger.info(f"{'='*60}")
+            logger.info(f"{'=' * 60}")
 
             run_experiments(
                 image_path=args.image,
@@ -1339,28 +1602,36 @@ Examples:
                 system_prompt=args.system_prompt,
             )
 
-            all_results.append({
-                "prompt_id": prompt_id,
-                "prompt_text": prompt_text,
-                "variant": variant,
-                "output_dir": output_dir,
-            })
+            all_results.append(
+                {
+                    "prompt_id": prompt_id,
+                    "prompt_text": prompt_text,
+                    "variant": variant,
+                    "output_dir": output_dir,
+                }
+            )
 
     # If multiple prompts or variants, save a summary
     if len(prompts_to_run) > 1 or len(variants_to_run) > 1:
         summary_path = Path(base_output_dir) / "prompts_summary.json"
         with open(summary_path, "w") as f:
-            json.dump({
-                "prompts_file": str(args.prompts_file) if args.prompts_file else "standard_prompts.yaml",
-                "prompt_ids": args.prompt_ids,
-                "prompt_category": args.prompt_category,
-                "prompt_difficulty": args.prompt_difficulty,
-                "total_prompts": len(prompts_to_run),
-                "vl_variants": variants_to_run,
-                "configs_per_prompt": len(configs),
-                "total_experiments": len(configs) * len(prompts_to_run) * len(variants_to_run),
-                "results": all_results,
-            }, f, indent=2)
+            json.dump(
+                {
+                    "prompts_file": str(args.prompts_file)
+                    if args.prompts_file
+                    else "standard_prompts.yaml",
+                    "prompt_ids": args.prompt_ids,
+                    "prompt_category": args.prompt_category,
+                    "prompt_difficulty": args.prompt_difficulty,
+                    "total_prompts": len(prompts_to_run),
+                    "vl_variants": variants_to_run,
+                    "configs_per_prompt": len(configs),
+                    "total_experiments": len(configs) * len(prompts_to_run) * len(variants_to_run),
+                    "results": all_results,
+                },
+                f,
+                indent=2,
+            )
         logger.info(f"\nSummary saved to {summary_path}")
 
     return 0

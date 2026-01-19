@@ -16,10 +16,9 @@ from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).parents[3]))
 
-from src.llm_dit.vl import VLEmbeddingExtractor, blend_embeddings
-from src.llm_dit import ZImagePipeline
 from experiments.qwen3_vl.scripts.grid_utils import make_grid
-
+from src.llm_dit import ZImagePipeline
+from src.llm_dit.vl import VLEmbeddingExtractor, blend_embeddings
 
 # Paths relative to experiments/ directory
 EXPERIMENTS_DIR = Path(__file__).parent.parent.parent
@@ -60,6 +59,7 @@ PROMPT = "Homer Simpson"
 # Parameters to test
 ALPHAS = [0.1, 0.2, 0.3]  # Lower alphas to preserve Homer
 STRENGTHS = [0.5, 0.7]    # img2img strength
+STRENGTHS = [0.5, 0.7]  # img2img strength
 
 
 def main():
@@ -72,7 +72,7 @@ def main():
     vl_extractor = VLEmbeddingExtractor.from_pretrained(
         args.vl_model_path,
         device="cuda",
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
     )
 
     vl_cache = {}
@@ -98,7 +98,7 @@ def main():
     print("\n=== PHASE 2: Loading Pipeline ===")
     pipe = ZImagePipeline.from_pretrained(
         args.model_path,
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
         device="cuda",
     )
 
@@ -107,7 +107,7 @@ def main():
     text_emb = pipe.encode_prompt(PROMPT)
     generator = torch.Generator(device="cpu").manual_seed(args.seed)
     result = pipe(prompt_embeds=text_emb, num_inference_steps=9, generator=generator)
-    baseline = result.images[0] if hasattr(result, 'images') else result
+    baseline = result.images[0] if hasattr(result, "images") else result
     baseline.save(output_dir / "baseline.png")
 
     # PHASE 3: Generate with VL + img2img
@@ -135,9 +135,9 @@ def main():
                     num_inference_steps=9,
                     generator=generator,
                 )
-                image = result.images[0] if hasattr(result, 'images') else result
+                image = result.images[0] if hasattr(result, "images") else result
 
-                filename = f"{style_name}_a{int(alpha*10)}_s{int(strength*10)}.png"
+                filename = f"{style_name}_a{int(alpha * 10)}_s{int(strength * 10)}.png"
                 image.save(output_dir / filename)
 
     # Also test txt2img with VL only (for comparison)
@@ -149,7 +149,7 @@ def main():
 
         generator = torch.Generator(device="cpu").manual_seed(args.seed)
         result = pipe(prompt_embeds=blended, num_inference_steps=9, generator=generator)
-        image = result.images[0] if hasattr(result, 'images') else result
+        image = result.images[0] if hasattr(result, "images") else result
         image.save(output_dir / f"{style_name}_txt2img_a2.png")
 
     # Create grids
@@ -166,10 +166,14 @@ def main():
 
         for strength in STRENGTHS:
             for alpha in ALPHAS:
-                images.append(output_dir / f"{style_name}_a{int(alpha*10)}_s{int(strength*10)}.png")
+                images.append(
+                    output_dir / f"{style_name}_a{int(alpha * 10)}_s{int(strength * 10)}.png"
+                )
                 labels.append(f"a={alpha} s={strength}")
 
-        make_grid(images, labels, cols=3, output_path=output_dir / f"grid_{style_name}.png", cell_size=256)
+        make_grid(
+            images, labels, cols=3, output_path=output_dir / f"grid_{style_name}.png", cell_size=256
+        )
 
     # Overview grid: all styles at alpha=0.2, strength=0.7
     overview_images = [output_dir / "baseline.png"]
@@ -180,8 +184,13 @@ def main():
         overview_images.append(output_dir / f"{style_name}_a2_s7.png")
         overview_labels.append(f"{style_name} a=0.2 s=0.7")
 
-    make_grid(overview_images, overview_labels, cols=3, output_path=output_dir / "grid_overview.png", cell_size=256)
-
+    make_grid(
+        overview_images,
+        overview_labels,
+        cols=3,
+        output_path=output_dir / "grid_overview.png",
+        cell_size=256,
+    )
     print(f"\nResults saved to {output_dir}")
 
 

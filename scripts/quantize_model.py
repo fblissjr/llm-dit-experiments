@@ -63,7 +63,7 @@ def analyze_model(model_path: str, component: str = "both") -> dict:
             transformer = QwenImageTransformer2DModel.from_pretrained(
                 model_path,
                 subfolder="transformer",
-                torch_dtype=torch.bfloat16,
+                dtype=torch.bfloat16,
                 low_cpu_mem_usage=True,
             )
             results["transformer"] = analyze_fp8_compatibility(transformer)
@@ -81,7 +81,7 @@ def analyze_model(model_path: str, component: str = "both") -> dict:
             text_encoder = Qwen2_5_VLForConditionalGeneration.from_pretrained(
                 model_path,
                 subfolder="text_encoder",
-                torch_dtype=torch.bfloat16,
+                dtype=torch.bfloat16,
                 low_cpu_mem_usage=True,
             )
             results["text_encoder"] = analyze_fp8_compatibility(text_encoder)
@@ -136,7 +136,9 @@ def print_analysis_results(results: dict):
         if rate == 100:
             print(f"  {component}: Use 'fp8' (fully compatible)")
         elif rate >= 90:
-            print(f"  {component}: Use 'fp8-filtered' ({rate:.0f}% compatible, skips {analysis['incompatible_layers']} layers)")
+            print(
+                f"  {component}: Use 'fp8-filtered' ({rate:.0f}% compatible, skips {analysis['incompatible_layers']} layers)"
+            )
         else:
             print(f"  {component}: Use '4bit' or '8bit' instead (only {rate:.0f}% FP8-compatible)")
 
@@ -147,13 +149,13 @@ def quantize_transformer(
     model_path: str,
     output_path: str,
     method: str = "fp8",
-    torch_dtype: torch.dtype = torch.bfloat16,
+    dtype: torch.dtype = torch.bfloat16,
     verbose: bool = False,
 ) -> dict:
     """Quantize the DiT transformer component."""
     logger.info(f"Loading transformer from {model_path}")
     logger.info(f"  Method: {method}")
-    logger.info(f"  Dtype: {torch_dtype}")
+    logger.info(f"  Dtype: {dtype}")
 
     from diffusers import QwenImageTransformer2DModel
 
@@ -163,7 +165,7 @@ def quantize_transformer(
         transformer = QwenImageTransformer2DModel.from_pretrained(
             model_path,
             subfolder="transformer",
-            torch_dtype=torch_dtype,
+            dtype=dtype,
             low_cpu_mem_usage=True,
         )
 
@@ -180,7 +182,7 @@ def quantize_transformer(
         )
 
         logger.info(f"Quantized {stats['quantized_layers']}/{stats['total_linear_layers']} layers")
-        if stats['skipped_layers'] > 0:
+        if stats["skipped_layers"] > 0:
             logger.info(f"Skipped {stats['skipped_layers']} incompatible layers")
 
         # TorchAO FP8 requires pickle format (safetensors doesn't support tensor subclasses)
@@ -191,7 +193,7 @@ def quantize_transformer(
         transformer = QwenImageTransformer2DModel.from_pretrained(
             model_path,
             subfolder="transformer",
-            torch_dtype=torch_dtype,
+            dtype=dtype,
             low_cpu_mem_usage=True,
         )
 
@@ -214,7 +216,7 @@ def quantize_transformer(
             quant_config = BitsAndBytesConfig(
                 load_in_4bit=True,
                 bnb_4bit_quant_type="nf4",
-                bnb_4bit_compute_dtype=torch_dtype,
+                bnb_4bit_compute_dtype=dtype,
             )
             logger.info("Loading with BitsAndBytes 4-bit quantization...")
         else:
@@ -225,7 +227,7 @@ def quantize_transformer(
             model_path,
             subfolder="transformer",
             quantization_config=quant_config,
-            torch_dtype=torch_dtype,
+            dtype=dtype,
         )
         stats = {"method": method}
 
@@ -251,13 +253,13 @@ def quantize_text_encoder(
     model_path: str,
     output_path: str,
     method: str = "fp8-filtered",
-    torch_dtype: torch.dtype = torch.bfloat16,
+    dtype: torch.dtype = torch.bfloat16,
     verbose: bool = False,
 ) -> dict:
     """Quantize the text encoder component."""
     logger.info(f"Loading text encoder from {model_path}")
     logger.info(f"  Method: {method}")
-    logger.info(f"  Dtype: {torch_dtype}")
+    logger.info(f"  Dtype: {dtype}")
 
     from transformers import Qwen2_5_VLForConditionalGeneration
 
@@ -267,7 +269,7 @@ def quantize_text_encoder(
         text_encoder = Qwen2_5_VLForConditionalGeneration.from_pretrained(
             model_path,
             subfolder="text_encoder",
-            torch_dtype=torch_dtype,
+            dtype=dtype,
             low_cpu_mem_usage=True,
         )
 
@@ -284,7 +286,7 @@ def quantize_text_encoder(
         )
 
         logger.info(f"Quantized {stats['quantized_layers']}/{stats['total_linear_layers']} layers")
-        if stats['skipped_layers'] > 0:
+        if stats["skipped_layers"] > 0:
             logger.info(f"Skipped {stats['skipped_layers']} incompatible layers")
 
         # TorchAO FP8 requires pickle format
@@ -295,7 +297,7 @@ def quantize_text_encoder(
         text_encoder = Qwen2_5_VLForConditionalGeneration.from_pretrained(
             model_path,
             subfolder="text_encoder",
-            torch_dtype=torch_dtype,
+            dtype=dtype,
             low_cpu_mem_usage=True,
         )
 
@@ -318,7 +320,7 @@ def quantize_text_encoder(
             quant_config = BitsAndBytesConfig(
                 load_in_4bit=True,
                 bnb_4bit_quant_type="nf4",
-                bnb_4bit_compute_dtype=torch_dtype,
+                bnb_4bit_compute_dtype=dtype,
             )
             logger.info("Loading with BitsAndBytes 4-bit quantization...")
         else:
@@ -329,7 +331,7 @@ def quantize_text_encoder(
             model_path,
             subfolder="text_encoder",
             quantization_config=quant_config,
-            torch_dtype=torch_dtype,
+            dtype=dtype,
         )
         stats = {"method": method}
 
@@ -458,7 +460,9 @@ Examples:
         transformer_method = args.transformer_method
         text_encoder_method = args.text_encoder_method
 
-        logger.info(f"Hybrid quantization: transformer={transformer_method}, text_encoder={text_encoder_method}")
+        logger.info(
+            f"Hybrid quantization: transformer={transformer_method}, text_encoder={text_encoder_method}"
+        )
 
         # Quantize transformer
         logger.info("=" * 50)

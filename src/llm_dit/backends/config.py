@@ -30,7 +30,7 @@ class BackendConfig:
         backend_type: Which backend to use ("transformers", "vllm", "sglang", "mlx")
         model_path: Path to model (local or HuggingFace hub ID)
         max_length: Maximum sequence length for tokenization
-        torch_dtype: Model dtype as string ("bfloat16", "float16", "float32")
+        dtype: Model dtype as string ("bfloat16", "float16", "float32")
         device: Target device ("cuda", "cpu", "mps", "auto")
         trust_remote_code: Allow loading custom model code
         use_flash_attention: Enable flash attention if available
@@ -41,7 +41,7 @@ class BackendConfig:
         config = BackendConfig(
             model_path="Tongyi-MAI/Z-Image-Turbo",
             max_length=512,
-            torch_dtype="bfloat16",
+            dtype="bfloat16",
         )
     """
 
@@ -49,7 +49,7 @@ class BackendConfig:
     model_path: str = ""
     subfolder: str = "text_encoder"  # Z-Image stores encoder in subfolder
     max_length: int = 2048  # Increased from 512 - allows longer prompts
-    torch_dtype: str = "bfloat16"
+    dtype: str = "bfloat16"
     device: str = field(default_factory=_detect_best_device)
     trust_remote_code: bool = True
     use_flash_attention: bool = True
@@ -63,21 +63,22 @@ class BackendConfig:
     def _validate_quantization(self):
         """Check for deprecated or incompatible quantization settings."""
         import logging
+
         logger = logging.getLogger(__name__)
 
         # Check for deprecated int8_dynamic with bfloat16
         if self.quantization == "int8_dynamic":
-            dtype = self.get_torch_dtype()
+            dtype = self.get_dtype()
             if dtype != torch.float32:
                 logger.warning(
-                    f"quantization='int8_dynamic' is incompatible with {self.torch_dtype}. "
+                    f"quantization='int8_dynamic' is incompatible with {self.dtype}. "
                     "PyTorch dynamic quantization requires float32. "
                     "Auto-migrating to '8bit' (bitsandbytes). "
                     "Update your config to use 'fp8', 'int8', or '8bit' instead."
                 )
                 self.quantization = "8bit"
 
-    def get_torch_dtype(self) -> torch.dtype:
+    def get_dtype(self) -> torch.dtype:
         """Convert string dtype to torch.dtype."""
         dtype_map = {
             "bfloat16": torch.bfloat16,
@@ -85,7 +86,7 @@ class BackendConfig:
             "float32": torch.float32,
             "float": torch.float32,
         }
-        return dtype_map.get(self.torch_dtype, torch.bfloat16)
+        return dtype_map.get(self.dtype, torch.bfloat16)
 
     def get_device(self) -> torch.device:
         """Get torch device."""
@@ -122,6 +123,7 @@ class BackendConfig:
             )
 
         import logging
+
         import torch.ao.quantization as tq
 
         logger = logging.getLogger(__name__)
@@ -153,7 +155,7 @@ class BackendConfig:
             "model_path": model_path,
             "subfolder": "text_encoder",
             "max_length": 2048,  # Increased from 512 - allows longer prompts
-            "torch_dtype": "bfloat16",
+            "dtype": "bfloat16",
         }
         defaults.update(kwargs)
         return cls(**defaults)

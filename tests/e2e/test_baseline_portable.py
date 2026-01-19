@@ -14,6 +14,7 @@ Output Structure:
     outputs/tests/baseline/{backend}/{test_name}_{timestamp}/
     ├── video.mp4              # Generated video
     ├── metadata.json          # Config + stats
+    ├── inputs.json            # Full generation inputs (models, dtypes, shapes)
     └── generation.log         # Step-by-step logs
 
 Usage:
@@ -207,6 +208,7 @@ class TestBaselineSmoke:
         # Verify files saved
         assert (output_dir / "video.mp4").exists()
         assert (output_dir / "metadata.json").exists()
+        assert (output_dir / "inputs.json").exists()
 
 
 class TestBaselineT2V:

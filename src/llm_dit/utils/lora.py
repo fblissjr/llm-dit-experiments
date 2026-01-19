@@ -37,17 +37,17 @@ class LoRALoader:
     def __init__(
         self,
         device: Union[str, torch.device] = "cpu",
-        torch_dtype: torch.dtype = torch.float32,
+        dtype: torch.dtype = torch.float32,
     ):
         """
         Initialize the LoRA loader.
 
         Args:
             device: Device to load tensors onto
-            torch_dtype: Data type for tensors
+            dtype: Data type for tensors
         """
         self.device = device
-        self.torch_dtype = torch_dtype
+        self.dtype = dtype
 
     def get_name_dict(self, lora_state_dict: Dict[str, torch.Tensor]) -> Dict:
         """
@@ -161,8 +161,8 @@ class LoRALoader:
                 lora_B_key = name + ".lora_B.weight"
                 lora_A_key = name + ".lora_A.weight"
 
-                weight_up = state_dict[lora_B_key].to(device=self.device, dtype=self.torch_dtype)
-                weight_down = state_dict[lora_A_key].to(device=self.device, dtype=self.torch_dtype)
+                weight_up = state_dict[lora_B_key].to(device=self.device, dtype=self.dtype)
+                weight_down = state_dict[lora_A_key].to(device=self.device, dtype=self.dtype)
 
                 # Handle conv2d LoRA (4D tensors)
                 if len(weight_up.shape) == 4:
@@ -175,8 +175,7 @@ class LoRALoader:
                 # Fuse into base model
                 state_dict_base = module.state_dict()
                 state_dict_base["weight"] = (
-                    state_dict_base["weight"].to(device=self.device, dtype=self.torch_dtype)
-                    + weight_lora
+                    state_dict_base["weight"].to(device=self.device, dtype=self.dtype) + weight_lora
                 )
                 module.load_state_dict(state_dict_base)
                 updated_num += 1
@@ -188,7 +187,7 @@ class LoRALoader:
 def _infer_model_device_dtype(
     model: nn.Module,
     device: Optional[Union[str, torch.device]] = None,
-    torch_dtype: Optional[torch.dtype] = None,
+    dtype: Optional[torch.dtype] = None,
 ) -> Tuple[Union[str, torch.device], torch.dtype]:
     """Infer device and dtype from model parameters if not specified."""
     if device is None:
@@ -197,13 +196,13 @@ def _infer_model_device_dtype(
         except StopIteration:
             device = "cpu"
 
-    if torch_dtype is None:
+    if dtype is None:
         try:
-            torch_dtype = next(model.parameters()).dtype
+            dtype = next(model.parameters()).dtype
         except StopIteration:
-            torch_dtype = torch.float32
+            dtype = torch.float32
 
-    return device, torch_dtype
+    return device, dtype
 
 
 def load_lora(
@@ -211,7 +210,7 @@ def load_lora(
     lora_path: Union[str, Path],
     scale: float = 1.0,
     device: Optional[Union[str, torch.device]] = None,
-    torch_dtype: Optional[torch.dtype] = None,
+    dtype: Optional[torch.dtype] = None,
 ) -> int:
     """
     Load and fuse a LoRA into a model.
@@ -221,7 +220,7 @@ def load_lora(
         lora_path: Path to LoRA weights (.safetensors or .bin)
         scale: LoRA scale factor (alpha)
         device: Device for computation (defaults to model device)
-        torch_dtype: Data type (defaults to model dtype)
+        dtype: Data type (defaults to model dtype)
 
     Returns:
         Number of layers updated
@@ -233,7 +232,7 @@ def load_lora(
     if not lora_path.exists():
         raise FileNotFoundError(f"LoRA file not found: {lora_path}")
 
-    device, torch_dtype = _infer_model_device_dtype(model, device, torch_dtype)
+    device, dtype = _infer_model_device_dtype(model, device, dtype)
 
     logger.info(f"Loading LoRA: {lora_path} (scale={scale})")
 
@@ -246,7 +245,7 @@ def load_lora(
     state_dict = load_safetensors(str(lora_path))
 
     # Fuse
-    loader = LoRALoader(device=device, torch_dtype=torch_dtype)
+    loader = LoRALoader(device=device, dtype=dtype)
     return loader.fuse_lora_to_base_model(model, state_dict, alpha=scale)
 
 
@@ -255,7 +254,7 @@ def fuse_lora(
     state_dict: Dict[str, torch.Tensor],
     scale: float = 1.0,
     device: Optional[Union[str, torch.device]] = None,
-    torch_dtype: Optional[torch.dtype] = None,
+    dtype: Optional[torch.dtype] = None,
 ) -> int:
     """
     Fuse LoRA weights from a state dict into a model.
@@ -267,13 +266,13 @@ def fuse_lora(
         state_dict: LoRA state dict
         scale: LoRA scale factor
         device: Device for computation
-        torch_dtype: Data type
+        dtype: Data type
 
     Returns:
         Number of layers updated
     """
-    device, torch_dtype = _infer_model_device_dtype(model, device, torch_dtype)
-    loader = LoRALoader(device=device, torch_dtype=torch_dtype)
+    device, dtype = _infer_model_device_dtype(model, device, dtype)
+    loader = LoRALoader(device=device, dtype=dtype)
     return loader.fuse_lora_to_base_model(model, state_dict, alpha=scale)
 
 

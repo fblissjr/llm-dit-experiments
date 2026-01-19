@@ -89,7 +89,7 @@ def get_encoder(model_path: str, device: str = "auto"):
     encoder = ZImageTextEncoder.from_pretrained(
         model_path,
         device_map=device,
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
     )
     logger.info(f"Encoder loaded on {device}")
     return encoder
@@ -97,7 +97,7 @@ def get_encoder(model_path: str, device: str = "auto"):
 
 def cmd_extract(args):
     """Extract embeddings from prompts."""
-    from llm_dit.utils.embeddings import save_embeddings, compute_stats
+    from llm_dit.utils.embeddings import compute_stats, save_embeddings
 
     encoder = get_encoder(args.model_path, args.device)
 
@@ -145,6 +145,7 @@ def cmd_visualize(args):
 
     import matplotlib.pyplot as plt
     import numpy as np
+
     from llm_dit.utils.embeddings import load_embeddings, prepare_for_visualization
 
     # Load embeddings
@@ -237,10 +238,10 @@ def cmd_visualize(args):
 def cmd_compare(args):
     """Compare two embedding files."""
     from llm_dit.utils.embeddings import (
-        load_embeddings,
         compute_cosine_similarity,
         compute_mse,
         compute_stats,
+        load_embeddings,
     )
 
     # Load both files
@@ -291,7 +292,7 @@ def cmd_compare(args):
 
 def cmd_steer(args):
     """Extract steering vector from prompt pair."""
-    from llm_dit.utils.embeddings import extract_steering_vector, save_embeddings, compute_stats
+    from llm_dit.utils.embeddings import compute_stats, extract_steering_vector, save_embeddings
 
     encoder = get_encoder(args.model_path, args.device)
 
@@ -335,7 +336,7 @@ def cmd_layers(args):
     """Compare embeddings from different layers."""
     from llm_dit.backends import TransformersBackend
     from llm_dit.conversation import Qwen3Formatter
-    from llm_dit.utils.embeddings import compute_stats, compute_cosine_similarity
+    from llm_dit.utils.embeddings import compute_cosine_similarity, compute_stats
 
     # Load backend directly for layer access
     logger.info(f"Loading model from {args.model_path}...")
@@ -370,7 +371,9 @@ def cmd_layers(args):
     print(f"{'Layer':<8} {'Shape':<15} {'Mean':<10} {'Std':<10} {'Norm':<10}")
     print("-" * 55)
     for layer, emb, stats in results:
-        print(f"{layer:<8} {str(stats.shape):<15} {stats.mean:<10.4f} {stats.std:<10.4f} {stats.norm:<10.4f}")
+        print(
+            f"{layer:<8} {str(stats.shape):<15} {stats.mean:<10.4f} {stats.std:<10.4f} {stats.norm:<10.4f}"
+        )
 
     # Cosine similarity matrix
     if len(results) > 1:
@@ -391,6 +394,7 @@ def cmd_layers(args):
     if args.output and check_analysis_deps():
         import matplotlib.pyplot as plt
         import numpy as np
+
         from llm_dit.utils.embeddings import reduce_embeddings
 
         fig, axes = plt.subplots(1, 2, figsize=(14, 5))
@@ -476,8 +480,12 @@ def main():
     p_viz = subparsers.add_parser("visualize", help="Visualize embeddings")
     p_viz.add_argument("--input", required=True, help="Input safetensors file")
     p_viz.add_argument("--output", default="visualization.png", help="Output image")
-    p_viz.add_argument("--method", default="tsne", choices=["tsne", "umap", "pca"], help="Reduction method")
-    p_viz.add_argument("--reduction", default="mean", choices=["mean", "last", "max"], help="Sequence reduction")
+    p_viz.add_argument(
+        "--method", default="tsne", choices=["tsne", "umap", "pca"], help="Reduction method"
+    )
+    p_viz.add_argument(
+        "--reduction", default="mean", choices=["mean", "last", "max"], help="Sequence reduction"
+    )
     p_viz.add_argument("--seed", type=int, default=42, help="Random seed")
     p_viz.set_defaults(func=cmd_visualize)
 
@@ -502,7 +510,9 @@ def main():
     p_layers = subparsers.add_parser("layers", help="Layer-wise analysis")
     p_layers.add_argument("--model-path", required=True, help="Path to Z-Image model")
     p_layers.add_argument("--prompt", required=True, help="Prompt to analyze")
-    p_layers.add_argument("--layers", nargs="+", type=int, default=[-1, -2, -3, -4], help="Layers to compare")
+    p_layers.add_argument(
+        "--layers", nargs="+", type=int, default=[-1, -2, -3, -4], help="Layers to compare"
+    )
     p_layers.add_argument("--output", default=None, help="Output visualization (optional)")
     p_layers.add_argument("--enable-thinking", action="store_true", help="Add thinking block")
     p_layers.set_defaults(func=cmd_layers)

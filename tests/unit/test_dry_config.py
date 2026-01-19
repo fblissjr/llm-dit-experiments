@@ -34,8 +34,8 @@ def parse_toml_keys(toml_path: Path) -> dict[str, set[str]]:
 
     Returns dict like:
         {
-            "encoder": {"device", "torch_dtype", "quantization", ...},
-            "pipeline": {"device", "torch_dtype", ...},
+            "encoder": {"device", "dtype", "quantization", ...},
+            "pipeline": {"device", "dtype", ...},
             ...
         }
     """
@@ -214,14 +214,14 @@ class TestCLIToRuntimeConfig:
 
         # These CLI args don't need RuntimeConfig fields (action-only or script-specific)
         excluded = {
-            "config",      # Used to load config, not stored
-            "config_name", # Used to select modular config, not stored
-            "profile",     # Used to select profile, not stored
-            "lora",        # Parsed specially into lora_paths/lora_scales
-            "loras",       # Alias for lora, same special handling
-            "output",      # Script-specific, not in RuntimeConfig
-            "prompts",     # Script-specific positional
-            "version",     # Just prints version
+            "config",  # Used to load config, not stored
+            "config_name",  # Used to select modular config, not stored
+            "profile",  # Used to select profile, not stored
+            "lora",  # Parsed specially into lora_paths/lora_scales
+            "loras",  # Alias for lora, same special handling
+            "output",  # Script-specific, not in RuntimeConfig
+            "prompts",  # Script-specific positional
+            "version",  # Just prints version
             "embeddings_file",  # Script-specific (generate.py)
         }
 
@@ -268,8 +268,7 @@ class TestKeyParameterWiring:
 
         fields = get_dataclass_fields(APIBackendConfig)
         assert "hidden_layer" in fields, (
-            "APIBackendConfig must have hidden_layer field. "
-            "Add: hidden_layer: int = -2"
+            "APIBackendConfig must have hidden_layer field. Add: hidden_layer: int = -2"
         )
 
     def test_rewriter_params_in_runtime_config(self):
@@ -306,8 +305,7 @@ class TestConfigSerialization:
         data = config.to_dict()
 
         assert "hidden_layer" in data["encoder"], (
-            "Config.to_dict() must include encoder.hidden_layer. "
-            "Update to_dict() in config.py"
+            "Config.to_dict() must include encoder.hidden_layer. Update to_dict() in config.py"
         )
         assert data["encoder"]["hidden_layer"] == -3
 
@@ -349,8 +347,12 @@ def run_consistency_check():
     print("\n[1/4] Checking TOML -> Config dataclasses...")
     try:
         from llm_dit.config import (
-            EncoderConfig, PipelineConfig, GenerationConfig,
-            SchedulerConfig, OptimizationConfig, RewriterConfig
+            EncoderConfig,
+            GenerationConfig,
+            OptimizationConfig,
+            PipelineConfig,
+            RewriterConfig,
+            SchedulerConfig,
         )
 
         toml_sections = parse_toml_keys(CONFIG_EXAMPLE)

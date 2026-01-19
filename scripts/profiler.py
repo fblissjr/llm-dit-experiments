@@ -52,6 +52,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class TestResult:
     """Result of a single test run."""
+
     name: str
     success: bool
     duration_ms: float
@@ -65,6 +66,7 @@ class TestResult:
 @dataclass
 class ProfileResults:
     """Complete profiling session results."""
+
     timestamp: str
     config: dict
     system_info: dict
@@ -88,7 +90,6 @@ def get_system_info() -> dict:
         "platform": platform.platform(),
         "python_version": sys.version.split()[0],
         "python_full": sys.version,
-
         # PyTorch
         "torch_version": torch.__version__,
         "torch_cuda_available": torch.cuda.is_available(),
@@ -99,7 +100,9 @@ def get_system_info() -> dict:
     if torch.cuda.is_available():
         props = torch.cuda.get_device_properties(0)
         info["cuda_version"] = torch.version.cuda
-        info["cudnn_version"] = str(torch.backends.cudnn.version()) if torch.backends.cudnn.is_available() else "N/A"
+        info["cudnn_version"] = (
+            str(torch.backends.cudnn.version()) if torch.backends.cudnn.is_available() else "N/A"
+        )
         info["gpu_name"] = props.name
         info["gpu_compute_capability"] = f"{props.major}.{props.minor}"
         info["gpu_memory_total_gb"] = round(props.total_memory / 1e9, 2)
@@ -109,9 +112,12 @@ def get_system_info() -> dict:
         # Check for CUDA driver version if available
         try:
             import subprocess
+
             result = subprocess.run(
                 ["nvidia-smi", "--query-gpu=driver_version", "--format=csv,noheader"],
-                capture_output=True, text=True, timeout=5
+                capture_output=True,
+                text=True,
+                timeout=5,
             )
             if result.returncode == 0:
                 info["nvidia_driver_version"] = result.stdout.strip().split("\n")[0]
@@ -124,6 +130,7 @@ def get_system_info() -> dict:
     # Flash Attention 2
     try:
         import flash_attn
+
         info["attention_backends"]["flash_attn_2"] = flash_attn.__version__
     except ImportError:
         info["attention_backends"]["flash_attn_2"] = None
@@ -131,23 +138,30 @@ def get_system_info() -> dict:
     # Flash Attention 3
     try:
         import flash_attn_3
-        info["attention_backends"]["flash_attn_3"] = getattr(flash_attn_3, "__version__", "installed")
+
+        info["attention_backends"]["flash_attn_3"] = getattr(
+            flash_attn_3, "__version__", "installed"
+        )
     except ImportError:
         info["attention_backends"]["flash_attn_3"] = None
 
     # xFormers
     try:
         import xformers
+
         info["attention_backends"]["xformers"] = xformers.__version__
     except ImportError:
         info["attention_backends"]["xformers"] = None
 
     # SDPA (always available in recent PyTorch)
-    info["attention_backends"]["sdpa"] = "built-in" if hasattr(torch.nn.functional, "scaled_dot_product_attention") else None
+    info["attention_backends"]["sdpa"] = (
+        "built-in" if hasattr(torch.nn.functional, "scaled_dot_product_attention") else None
+    )
 
     # Sage Attention
     try:
         import sageattention
+
         info["attention_backends"]["sage"] = getattr(sageattention, "__version__", "installed")
     except ImportError:
         info["attention_backends"]["sage"] = None
@@ -155,24 +169,28 @@ def get_system_info() -> dict:
     # ML libraries
     try:
         import transformers
+
         info["transformers_version"] = transformers.__version__
     except ImportError:
         info["transformers_version"] = None
 
     try:
         import diffusers
+
         info["diffusers_version"] = diffusers.__version__
     except ImportError:
         info["diffusers_version"] = None
 
     try:
         import safetensors
+
         info["safetensors_version"] = safetensors.__version__
     except ImportError:
         info["safetensors_version"] = None
 
     try:
         import accelerate
+
         info["accelerate_version"] = accelerate.__version__
     except ImportError:
         info["accelerate_version"] = None
@@ -180,6 +198,7 @@ def get_system_info() -> dict:
     # Memory info
     try:
         import psutil
+
         mem = psutil.virtual_memory()
         info["system_memory_total_gb"] = round(mem.total / 1e9, 2)
         info["system_memory_available_gb"] = round(mem.available / 1e9, 2)
@@ -252,7 +271,9 @@ class Profiler:
         memory_peak = get_gpu_memory_peak_mb()
 
         status = "PASS" if success else "FAIL"
-        print(f"  [{status}] {duration_ms:.1f}ms | Memory: {memory_before:.0f} -> {memory_after:.0f} MB (peak: {memory_peak:.0f} MB)")
+        print(
+            f"  [{status}] {duration_ms:.1f}ms | Memory: {memory_before:.0f} -> {memory_after:.0f} MB (peak: {memory_peak:.0f} MB)"
+        )
         if error:
             print(f"  Error: {error}")
 
@@ -280,7 +301,7 @@ class Profiler:
 
         self.pipeline = ZImagePipeline.from_pretrained(
             self.config.model_path,
-            torch_dtype=self.config.get_torch_dtype(),
+            dtype=self.config.get_dtype(),
             text_encoder_device=self.config.encoder_device_resolved,
             dit_device=self.config.dit_device_resolved,
             vae_device=self.config.vae_device_resolved,
@@ -303,7 +324,7 @@ class Profiler:
             self.config.model_path,
             templates_dir=self.config.templates_dir,
             device_map=self.config.encoder_device_resolved,
-            torch_dtype=self.config.get_torch_dtype(),
+            dtype=self.config.get_dtype(),
         )
 
         return {
@@ -494,7 +515,9 @@ class Profiler:
         }
 
 
-def run_profile(config: RuntimeConfig, tests: list[str] | None = None, verbose: bool = False) -> ProfileResults:
+def run_profile(
+    config: RuntimeConfig, tests: list[str] | None = None, verbose: bool = False
+) -> ProfileResults:
     """Run profiling tests with the given configuration."""
     profiler = Profiler(config, verbose=verbose)
 
@@ -525,7 +548,9 @@ def run_profile(config: RuntimeConfig, tests: list[str] | None = None, verbose: 
         if "pipeline" in test_names or "generate" in test_names:
             # Include pipeline loading and generation
             all_tests = [t for t in all_tests if t[0] in test_names or t[0].startswith("load")]
-            all_tests.extend([t for t in pipeline_tests if t[0] in test_names or "pipeline" in test_names])
+            all_tests.extend(
+                [t for t in pipeline_tests if t[0] in test_names or "pipeline" in test_names]
+            )
         else:
             all_tests = [t for t in all_tests if t[0] in test_names or t[0].startswith("load")]
 
@@ -537,7 +562,7 @@ def run_profile(config: RuntimeConfig, tests: list[str] | None = None, verbose: 
     print(f"Encoder device: {config.encoder_device}")
     print(f"DiT device: {config.dit_device}")
     print(f"VAE device: {config.vae_device}")
-    print(f"Dtype: {config.torch_dtype}")
+    print(f"Dtype: {config.dtype}")
     print("=" * 60)
 
     for name, func in all_tests:
@@ -551,7 +576,7 @@ def run_profile(config: RuntimeConfig, tests: list[str] | None = None, verbose: 
             "encoder_device": config.encoder_device,
             "dit_device": config.dit_device,
             "vae_device": config.vae_device,
-            "torch_dtype": config.torch_dtype,
+            "dtype": config.dtype,
             "flash_attn": config.flash_attn,
             "compile": config.compile,
             "cpu_offload": config.cpu_offload,
@@ -612,16 +637,23 @@ def run_config_sweep(base_config: RuntimeConfig, verbose: bool = False) -> list[
 
     # Add CUDA-specific variations
     if has_cuda:
-        variations.extend([
-            {"name": "cpu_encoder", "changes": {"encoder_device": "cpu"}},
-            {"name": "cuda_encoder", "changes": {"encoder_device": "cuda"}},
-            {"name": "fp16", "changes": {"torch_dtype": "float16"}},
-            {"name": "compile", "changes": {"compile": True}},
-        ])
+        variations.extend(
+            [
+                {"name": "cpu_encoder", "changes": {"encoder_device": "cpu"}},
+                {"name": "cuda_encoder", "changes": {"encoder_device": "cuda"}},
+                {"name": "fp16", "changes": {"dtype": "float16"}},
+                {"name": "compile", "changes": {"compile": True}},
+            ]
+        )
 
     # Add attention backend variations
     if has_fa2:
-        variations.append({"name": "flash_attn_2", "changes": {"flash_attn": True, "attention_backend": "flash_attn_2"}})
+        variations.append(
+            {
+                "name": "flash_attn_2",
+                "changes": {"flash_attn": True, "attention_backend": "flash_attn_2"},
+            }
+        )
     if has_xformers:
         variations.append({"name": "xformers", "changes": {"attention_backend": "xformers"}})
     variations.append({"name": "sdpa", "changes": {"attention_backend": "sdpa"}})
@@ -724,7 +756,8 @@ def main():
         help="Run tests with different device placements (encoder/DiT/VAE on CPU/GPU)",
     )
     parser.add_argument(
-        "--output", "-o",
+        "--output",
+        "-o",
         type=str,
         default=None,
         help="Save results to JSON file",
