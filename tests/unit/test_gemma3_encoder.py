@@ -274,7 +274,7 @@ class TestFeatureExtractorLinear:
 
     def test_feature_extractor_shape(self):
         """Test feature extractor produces correct output shape."""
-        fe = FeatureExtractorLinear()
+        fe = FeatureExtractorLinear(dtype=torch.float32)
 
         # Input: [B, T, 3840 * 49]
         x = torch.randn(2, 256, GEMMA3_FEATURE_DIM)

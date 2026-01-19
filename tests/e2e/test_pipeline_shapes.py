@@ -222,7 +222,7 @@ class TestPipelineShapesGPU:
         load_connector_weights(connector, connectors_path, prefix="video_connector.")
 
         additive_mask = (1.0 - attention_mask.float()) * -10000.0
-        additive_mask = additive_mask[:, None, None, :]
+        additive_mask = additive_mask[:, None, None, :].to(dtype)  # Match model dtype
 
         output, _ = connector(projected, additive_mask)
 

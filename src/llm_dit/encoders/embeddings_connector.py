@@ -75,33 +75,43 @@ def _apply_split_rotary_emb(
     cos_freqs: torch.Tensor,
     sin_freqs: torch.Tensor,
 ) -> torch.Tensor:
-    """Split RoPE: first half and second half rotated separately."""
+    """
+    Split RoPE: first half and second half rotated separately.
+
+    Matches reference implementation from LTX-2:
+    coderef/LTX-2/packages/ltx-core/src/ltx_core/model/transformer/rope.py
+    """
+    from einops import rearrange
+
     needs_reshape = False
     if input_tensor.ndim != 4 and cos_freqs.ndim == 4:
-        b, h, t, _ = cos_freqs.shape
+        # Get batch from input_tensor (not cos_freqs, which may have batch=1 for broadcasting)
+        b = input_tensor.shape[0]
+        _, h, t, _ = cos_freqs.shape
         input_tensor = input_tensor.reshape(b, t, h, -1).swapaxes(1, 2)
         needs_reshape = True
 
-    # Split into halves: [..., 2, d//2]
-    d = input_tensor.shape[-1] // 2
-    split_input = input_tensor.reshape(*input_tensor.shape[:-1], 2, d)
-    first_half = split_input[..., 0, :]
-    second_half = split_input[..., 1, :]
+    # Split into halves using einops: d=2 means first new dim is 2
+    # [..., 128] -> [..., 2, 64]
+    split_input = rearrange(input_tensor, "... (d r) -> ... d r", d=2)
+    first_half_input = split_input[..., :1, :]
+    second_half_input = split_input[..., 1:, :]
 
-    # Apply rotation: expand cos/sin for broadcasting
-    cos_freqs = cos_freqs.unsqueeze(-2)
-    sin_freqs = sin_freqs.unsqueeze(-2)
+    # Apply rotation with in-place operations (matching reference)
+    output = split_input * cos_freqs.unsqueeze(-2)
+    first_half_output = output[..., :1, :]
+    second_half_output = output[..., 1:, :]
 
-    # Output shape matches split_input
-    output = split_input * cos_freqs
-    # Additive rotation
-    output[..., 0, :] = output[..., 0, :] - sin_freqs.squeeze(-2) * second_half
-    output[..., 1, :] = output[..., 1, :] + sin_freqs.squeeze(-2) * first_half
+    # addcmul_: a += value * b * c (in-place)
+    first_half_output.addcmul_(-sin_freqs.unsqueeze(-2), second_half_input)
+    second_half_output.addcmul_(sin_freqs.unsqueeze(-2), first_half_input)
 
-    output = output.reshape(*input_tensor.shape)
+    # Flatten back: [..., 2, 64] -> [..., 128]
+    output = rearrange(output, "... d r -> ... (d r)")
     if needs_reshape:
-        b, h, t, _ = output.shape
-        output = output.swapaxes(1, 2).reshape(b, t, -1)
+        # At this point output is [b, h, t, d] - reshape back to [b, t, h*d]
+        b_out, h_out, t_out, _ = output.shape
+        output = output.swapaxes(1, 2).reshape(b_out, t_out, -1)
 
     return output
 

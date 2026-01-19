@@ -1,6 +1,6 @@
 # agent context
 
-*last updated: 2026-01-18*
+*last updated: 2026-01-19*
 
 Quick reference for LLM agents working on this codebase.
 
@@ -148,6 +148,52 @@ uv run web/server.py --config config.toml --profile default
 
 # tests
 uv run pytest tests/
+```
+
+## testing protocol
+
+**Critical for new encoder/backend work:** See [tests/backends/README.md](tests/backends/README.md) for the testing protocol.
+
+### test structure
+
+| category | purpose | location |
+|----------|---------|----------|
+| **unit** | component-level tests | `tests/unit/` |
+| **integration** | cross-component tests | `tests/integration/` |
+| **e2e** | end-to-end pipeline tests | `tests/e2e/` |
+| **backends** | portable test backends | `tests/backends/` |
+
+### key test files
+
+| file | purpose |
+|------|---------|
+| `tests/backends/README.md` | Backend protocol testing requirements |
+| `tests/e2e/test_pipeline_shapes.py` | Pipeline shape validation (traces tensors through stages) |
+| `tests/e2e/test_ltx2_reference.py` | Reference comparison against official implementation |
+| `tests/e2e/test_baseline_portable.py` | Baseline tests that work with both implementations |
+| `tests/unit/test_gemma3_encoder.py` | Example unit tests for encoder components |
+
+### when adding new encoders/backends
+
+1. **Read the protocol:** `tests/backends/README.md` defines required tests
+2. **Shape validation:** Add tests to verify tensor shapes through the pipeline
+3. **Weight initialization:** Test that weights are non-zero after loading
+4. **Reference comparison:** Compare against official implementation when available
+
+### running tests
+
+```bash
+# Quick smoke test (30s)
+uv run pytest tests/e2e/test_baseline_portable.py::TestBaselineSmoke -v -s
+
+# Shape validation for pipeline stages
+uv run pytest tests/e2e/test_pipeline_shapes.py -v
+
+# Full reference test with slow tests enabled (10min)
+uv run pytest tests/e2e/test_baseline_portable.py --runslow -v -s
+
+# Unit tests for specific component
+uv run pytest tests/unit/test_gemma3_encoder.py -v
 ```
 
 ## adding parameters
