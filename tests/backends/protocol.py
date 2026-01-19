@@ -88,12 +88,13 @@ SHORT_CONFIG = GenerationConfig(
 )
 
 SMOKE_CONFIG = GenerationConfig(
-    # Minimal params for fastest possible validation (~30s)
+    # Minimal params that still produce visible content
+    # LTX-2 DistilledPipeline uses 8 steps minimum, CFG 3.0 is standard
     num_frames=9,             # Minimum valid (1 latent frame)
     height=256,
     width=384,
-    num_inference_steps=2,
-    guidance_scale=1.0,       # Disable CFG for speed
+    num_inference_steps=8,    # Minimum for visible results (was 2)
+    guidance_scale=3.0,       # Standard CFG (was 1.0 = disabled!)
     seed=10,
     fp8=True,
 )

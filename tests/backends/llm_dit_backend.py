@@ -116,7 +116,7 @@ class LLMDitBackend(Backend):
             text_encoder_path=str(text_encoder_path),
             vae_path=str(vae_path),
             transformer_dtype="bfloat16",
-            transformer_quantization="fp8-quanto" if config.fp8 else "bf16",
+            transformer_quantization="fp8-native" if config.fp8 else "bf16",
             text_encoder_dtype="bfloat16",
             text_encoder_quantization="8bit",
             vae_dtype="bfloat16",
@@ -167,7 +167,7 @@ class LLMDitBackend(Backend):
             model_path=self.model_path,
             text_encoder_path=text_encoder_path,
             quantize=config.fp8,
-            precision="fp8-quanto" if config.fp8 else "bf16",
+            precision="fp8-native" if config.fp8 else "bf16",
             dtype=config.dtype,
             callback=progress_callback,
         )

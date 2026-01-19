@@ -160,7 +160,7 @@ REFERENCE_PROMPTS = {
 #
 # | Config           | Frames | Resolution | Steps | CFG | VRAM  | Time    |
 # |------------------|--------|------------|-------|-----|-------|---------|
-# | SMOKE_CONFIG     | 9      | 256x384    | 2     | 1.0 | 14GB  | ~30s    |
+# | SMOKE_CONFIG     | 9      | 256x384    | 8     | 3.0 | 14GB  | ~1min   |
 # | SHORT_CONFIG     | 33     | 384x512    | 10    | 3.0 | 16GB  | ~2min   |
 # | REFERENCE_CONFIG | 121    | 512x768    | 40    | 4.0 | 20GB  | ~10min  |
 
