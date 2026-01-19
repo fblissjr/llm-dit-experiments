@@ -541,12 +541,13 @@ def generate_video_with_offloading(
         model = model.to("cuda")
 
     # Load connectors
-    connectors = LTX2TextConnectors.from_pretrained(
-        str(model_path / "transformer"),
+    from llm_dit.models.ltx2.connectors import load_ltx2_connectors
+
+    connectors = load_ltx2_connectors(
+        model_path / "transformer",
+        device="cuda",
         dtype=dtype,
-        device="cpu",
     )
-    connectors = connectors.to("cuda")
 
     logger.info(f"Transformer loaded: {model.get_num_params() / 1e9:.2f}B params")
 

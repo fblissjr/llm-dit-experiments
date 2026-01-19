@@ -82,17 +82,20 @@ def map_key(diffusers_key: str) -> str:
 
 
 def is_audio_key(key: str) -> bool:
-    """Check if a key is for audio components."""
+    """Check if a key is for audio components.
+
+    Filters out all audio-related weights when loading video-only model.
+    These include cross-modal attention, audio FFN, scale/shift tables, etc.
+    """
+    # Direct audio prefixes
     if key.startswith("audio_"):
         return True
     if key.startswith("av_cross_attn"):
         return True
-    if "audio_attn" in key:
+    # Audio in the key name (catches audio_attn, audio_to_video_attn, etc.)
+    if "audio" in key:
         return True
-    if "audio_ff" in key:
-        return True
-    if "audio_a2v" in key or "audio_v2a" in key:
-        return True
+    # Cross-modal attention variants
     if "a2v_cross_attn" in key or "v2a_cross_attn" in key:
         return True
     return False
@@ -282,9 +285,14 @@ def load_ltx2_transformer(
         logger.info(f"Skipped {len(skipped_keys)} audio keys (video_only=True)")
 
     if load_result.missing_keys:
-        logger.warning(f"Missing keys: {load_result.missing_keys[:10]}...")
+        logger.warning(f"Missing keys in model (weights not loaded): {load_result.missing_keys[:10]}...")
     if load_result.unexpected_keys:
-        logger.warning(f"Unexpected keys: {load_result.unexpected_keys[:10]}...")
+        # These are keys in the state dict that our model doesn't have parameters for
+        # Usually indicates a key mapping issue or model architecture mismatch
+        logger.warning(
+            f"Unexpected keys in checkpoint (ignored): {load_result.unexpected_keys[:10]}... "
+            f"({len(load_result.unexpected_keys)} total)"
+        )
 
     logger.info(f"Loaded LTX-2 transformer: {model.get_num_params() / 1e9:.2f}B parameters")
 

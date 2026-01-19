@@ -263,19 +263,37 @@ def pytest_sessionfinish(session, exitstatus):
 
     # Find test output directories for this session
     backend_name = _backend_module.get_backend_name() if _backends_imported else "unknown"
-    baseline_dir = Path(f"outputs/tests/baseline/{backend_name}/{timestamp}")
+    baseline_dir = Path(f"outputs/tests/baseline/{backend_name}")
 
+    # Look for test outputs matching this session's timestamp
+    # Handles both structures:
+    #   - {backend}/{timestamp}/{test_name}/  (conftest structure)
+    #   - {backend}/{test_name}_{timestamp}/  (portable test structure)
+    found_outputs = []
     if baseline_dir.exists():
+        # Check for session timestamp directory (conftest structure)
+        session_dir = baseline_dir / timestamp
+        if session_dir.exists():
+            for test_dir in sorted(session_dir.iterdir()):
+                if test_dir.is_dir():
+                    found_outputs.append(test_dir)
+        # Check for test_name_timestamp directories (portable structure)
+        for item in sorted(baseline_dir.iterdir()):
+            if item.is_dir() and timestamp in item.name:
+                found_outputs.append(item)
+
+    if found_outputs:
         print(f"Test outputs:  {baseline_dir}/")
-        # List test directories and their contents
-        for test_dir in sorted(baseline_dir.iterdir()):
-            if test_dir.is_dir():
-                files = list(test_dir.iterdir())
-                file_list = ", ".join(f.name for f in files[:5])
-                if len(files) > 5:
-                    file_list += f", ... (+{len(files)-5} more)"
-                print(f"  └── {test_dir.name}/")
+        for test_dir in found_outputs:
+            files = list(test_dir.iterdir())
+            file_list = ", ".join(f.name for f in files[:5])
+            if len(files) > 5:
+                file_list += f", ... (+{len(files)-5} more)"
+            print(f"  └── {test_dir.name}/")
+            if files:
                 print(f"      {file_list}")
+            else:
+                print(f"      (empty - test may have failed before output)")
     else:
         print(f"Test outputs:  (none created)")
 
