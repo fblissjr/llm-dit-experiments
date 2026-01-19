@@ -1,7 +1,7 @@
 """
 LTX-2 Pure PyTorch Generation Module.
 
-Last Updated: 2026-01-18
+Last Updated: 2026-01-19
 
 Pure PyTorch implementation of the LTX-2 diffusion generation loop.
 Used by both the pipeline and experiment infrastructure.
@@ -14,7 +14,17 @@ This module provides the core generation logic without diffusers dependency:
 Original source: https://github.com/Lightricks/LTX-2
 License: LTX-2 Community License
 Copyright (c) 2025 Lightricks Ltd.
+
+Memory Optimization (2026-01-19):
+- PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True reduces fragmentation
+- Native FP8 quantization eliminates quanto's frozen buffer memory leak
+- Periodic cleanup in denoising loop prevents activation accumulation
 """
+
+# CRITICAL: Set CUDA allocator config BEFORE importing torch
+# This reduces memory fragmentation significantly
+import os
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
 import gc
 import logging
@@ -387,7 +397,10 @@ def generate_video(
 
         # Clear memory between steps to prevent fragmentation
         del velocity
-        if i % 2 == 0:  # Every other step to balance speed vs memory
+        # Periodic cleanup every 5 steps (balances speed vs memory)
+        # More frequent cleanup can slow down generation but prevents OOM
+        if (i + 1) % 5 == 0:
+            torch.cuda.synchronize()
             torch.cuda.empty_cache()
 
         # Progress callback
@@ -444,7 +457,7 @@ def generate_video_with_offloading(
     model_path: Union[str, Path] = "models/LTX-2",
     text_encoder_path: Optional[Union[str, Path]] = None,
     quantize: bool = True,
-    precision: str = "fp8-quanto",
+    precision: str = "fp8-native",  # Changed default: native FP8 has no memory leak
     dtype: torch.dtype = torch.bfloat16,
     callback: Optional[Callable[[str, int, int], None]] = None,
 ) -> torch.Tensor:
@@ -464,8 +477,12 @@ def generate_video_with_offloading(
         config: Generation configuration
         model_path: Path to LTX-2 model directory (contains transformer/, text_encoder/, vae/)
         text_encoder_path: Optional separate path for text encoder
-        quantize: If True, quantize transformer to FP8 for memory efficiency
-        precision: Quantization precision (fp8-quanto recommended)
+        quantize: If True, quantize transformer for memory efficiency
+        precision: Quantization method:
+            - "fp8-native" (default): Official LTX-2 approach, no memory leak
+            - "fp8-quanto": Quanto FP8 (legacy, has memory leak issue)
+            - "int8-quanto": Quanto INT8
+            - "int4-quanto": Quanto INT4 (lowest quality)
         dtype: Base dtype for loading (bf16 recommended)
         callback: Optional callback(stage, step, total) for progress
 
@@ -529,16 +546,29 @@ def generate_video_with_offloading(
     logger.info("Stage 2: Loading transformer...")
 
     if quantize:
-        from llm_dit.models.ltx2 import load_ltx2_transformer_quantized
+        if precision == "fp8-native":
+            # Native FP8: official LTX-2 approach with no memory leak
+            from llm_dit.models.ltx2 import load_ltx2_transformer_fp8_native
 
-        model = load_ltx2_transformer_quantized(
-            model_path / "transformer",
-            precision=precision,
-            dtype=dtype,
-            video_only=True,
-            verbose=True,
-        )
-        model = model.to("cuda")
+            model = load_ltx2_transformer_fp8_native(
+                model_path / "transformer",
+                dtype=dtype,
+                device="cuda",  # Load directly to GPU
+                video_only=True,
+                verbose=True,
+            )
+        else:
+            # Legacy quanto quantization (fp8-quanto, int8-quanto, int4-quanto)
+            from llm_dit.models.ltx2 import load_ltx2_transformer_quantized
+
+            model = load_ltx2_transformer_quantized(
+                model_path / "transformer",
+                precision=precision,  # type: ignore[arg-type]
+                dtype=dtype,
+                video_only=True,
+                verbose=True,
+            )
+            model = model.to("cuda")
     else:
         from llm_dit.models.ltx2 import load_ltx2_transformer
 

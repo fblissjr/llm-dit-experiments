@@ -416,6 +416,82 @@ def load_ltx2_transformer_quantized(
     return quantized_model  # type: ignore[return-value]
 
 
+def load_ltx2_transformer_fp8_native(
+    path: Union[str, Path],
+    dtype: torch.dtype = torch.bfloat16,
+    device: str = "cuda",
+    video_only: bool = True,
+    verbose: bool = True,
+) -> LTX2Transformer:
+    """
+    Load LTX-2 transformer with native FP8 quantization (official approach).
+
+    This function uses the same approach as the official LTX-2 implementation:
+    - Weights stored as torch.float8_e4m3fn
+    - Forward pass upcasts to bf16 before computation
+    - No frozen scale buffers = no memory leak
+
+    This is the recommended quantization method for RTX 4090 and similar GPUs.
+
+    Memory usage:
+    - bf16 (default): ~26GB (won't fit on 24GB GPU)
+    - fp8-native: ~13GB (fits on 24GB GPU with room for activations)
+
+    Args:
+        path: Path to checkpoint file or directory
+        dtype: Base dtype for loading before quantization (bf16 recommended)
+        device: Device to load to ("cuda" recommended)
+        video_only: If True, skip audio weights
+        verbose: Print progress during loading
+
+    Returns:
+        FP8-quantized LTX2Transformer model on specified device
+
+    Example:
+        >>> model = load_ltx2_transformer_fp8_native("models/LTX-2/transformer/")
+        >>> # Model is ready for inference, no .to('cuda') needed
+    """
+    from llm_dit.quantization.fp8_native import apply_fp8_native, estimate_memory_savings
+
+    # Load model to CPU first in bf16
+    if verbose:
+        logger.info(f"Loading model to CPU (dtype={dtype})")
+
+    model = load_ltx2_transformer(
+        path,
+        dtype=dtype,
+        device="cpu",
+        video_only=video_only,
+        strict=False,
+    )
+
+    # Estimate memory savings
+    num_params = model.get_num_params()
+    if verbose:
+        savings = estimate_memory_savings(model)
+        logger.info(f"Model: {num_params / 1e9:.2f}B params")
+        logger.info(
+            f"Memory: {savings['original_gb']:.1f}GB (bf16) → "
+            f"{savings['quantized_gb']:.1f}GB (fp8-native) "
+            f"[{savings['savings_percent']:.0f}% reduction]"
+        )
+
+    # Move to GPU then apply FP8
+    if verbose:
+        logger.info(f"Moving to {device} and applying native FP8...")
+
+    model = model.to(device)
+    model, stats = apply_fp8_native(model, verbose=verbose)
+
+    if verbose:
+        logger.info(
+            f"Native FP8 complete: {stats['quantized']} layers quantized, "
+            f"{stats['skipped']} layers kept in bf16"
+        )
+
+    return model
+
+
 def get_model_info(path: Union[str, Path]) -> dict:
     """
     Get information about a checkpoint without loading it.

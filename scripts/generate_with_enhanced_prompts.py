@@ -7,10 +7,23 @@ Last Updated: 2026-01-19
 This script demonstrates prompt enhancement for video generation.
 The enhanced prompts follow LTX-2's official prompt engineering guidelines.
 
+Memory Optimization:
+- Uses PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True for reduced fragmentation
+- Uses native FP8 quantization (official LTX-2 approach) to avoid memory leaks
+- Periodic memory cleanup during denoising prevents OOM
+
 Usage:
     python scripts/generate_with_enhanced_prompts.py "A cat walking"
     python scripts/generate_with_enhanced_prompts.py --list  # Use preset prompts
+
+    # With CFG (needs reduced frames for 24GB GPU):
+    python scripts/generate_with_enhanced_prompts.py "A cat" --cfg 3.0 --frames 17
 """
+
+# CRITICAL: Set CUDA allocator config BEFORE importing torch
+# This reduces memory fragmentation significantly
+import os
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
 import argparse
 import json
@@ -104,6 +117,9 @@ def main():
     parser.add_argument("--cfg", type=float, default=1.0,
                        help="CFG guidance scale (default: 1.0=disabled, >1.0 needs >24GB VRAM)")
     parser.add_argument("--seed", type=int, default=42, help="Random seed (default: 42)")
+    parser.add_argument("--precision", type=str, default="fp8-native",
+                       choices=["fp8-native", "fp8-quanto", "int8-quanto", "int4-quanto"],
+                       help="Quantization precision (default: fp8-native, no memory leak)")
     parser.add_argument("--output-dir", type=str, default="outputs/enhanced_prompts",
                        help="Output directory")
 
@@ -151,7 +167,9 @@ def main():
             "height": args.height,
             "width": args.width,
             "steps": args.steps,
+            "cfg": args.cfg,
             "seed": args.seed,
+            "precision": args.precision,
         }
     }
     with open(output_dir / "prompts.json", "w") as f:
@@ -187,6 +205,7 @@ def main():
             prompt=prompt,
             model_path=model_path,
             config=config,
+            precision=args.precision,
         )
 
         # Save video
