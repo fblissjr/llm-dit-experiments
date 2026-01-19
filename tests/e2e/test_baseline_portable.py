@@ -47,6 +47,10 @@ try:
         GenerationConfig,
         get_backend,
         get_backend_name,
+        # Standard configs (single source of truth)
+        SMOKE_CONFIG,
+        SHORT_CONFIG,
+        REFERENCE_CONFIG,
     )
 except ImportError:
     # Fallback for when running in LTX-2 repo with different structure
@@ -57,6 +61,9 @@ except ImportError:
         GenerationConfig,
         get_backend,
         get_backend_name,
+        SMOKE_CONFIG,
+        SHORT_CONFIG,
+        REFERENCE_CONFIG,
     )
 
 # Skip all tests if CUDA not available
@@ -145,47 +152,16 @@ REFERENCE_PROMPTS = {
 
 
 # =============================================================================
-# Test Configurations (Official LTX-2 Parameters)
+# Test Configurations
 # =============================================================================
-
-
-def get_smoke_config() -> GenerationConfig:
-    """Minimal config for quick smoke tests (~30s)."""
-    return GenerationConfig(
-        num_frames=9,  # Minimum valid (1 latent frame)
-        height=256,
-        width=384,
-        num_inference_steps=2,
-        guidance_scale=1.0,  # Disable CFG for speed
-        seed=10,
-        fp8=True,
-    )
-
-
-def get_short_config() -> GenerationConfig:
-    """Short config for reasonable testing (~2min)."""
-    return GenerationConfig(
-        num_frames=33,  # 4 latent frames
-        height=384,
-        width=512,
-        num_inference_steps=10,
-        guidance_scale=3.0,
-        seed=10,
-        fp8=True,
-    )
-
-
-def get_reference_config() -> GenerationConfig:
-    """Official LTX-2 reference parameters (~5-10min)."""
-    return GenerationConfig(
-        num_frames=121,
-        height=512,
-        width=768,
-        num_inference_steps=40,
-        guidance_scale=4.0,
-        seed=10,
-        fp8=True,
-    )
+# Configs are imported from tests.backends (single source of truth)
+# SMOKE_CONFIG, SHORT_CONFIG, REFERENCE_CONFIG
+#
+# | Config           | Frames | Resolution | Steps | CFG | VRAM  | Time    |
+# |------------------|--------|------------|-------|-----|-------|---------|
+# | SMOKE_CONFIG     | 9      | 256x384    | 2     | 1.0 | 14GB  | ~30s    |
+# | SHORT_CONFIG     | 33     | 384x512    | 10    | 3.0 | 16GB  | ~2min   |
+# | REFERENCE_CONFIG | 121    | 512x768    | 40    | 4.0 | 20GB  | ~10min  |
 
 
 # =============================================================================
@@ -204,7 +180,7 @@ class TestBaselineSmoke:
         Uses smallest valid parameters for fastest iteration.
         Validates: model loads, generation runs, video saved.
         """
-        config = get_smoke_config()
+        config = SMOKE_CONFIG
         prompt = SMOKE_PROMPT
 
         logger.info(f"Backend: {backend.name}")
@@ -244,7 +220,7 @@ class TestBaselineT2V:
         Uses reduced parameters that still produce watchable output.
         Good for iterative debugging.
         """
-        config = get_short_config()
+        config = SHORT_CONFIG
         prompt = REFERENCE_PROMPTS["cat_walking"]
 
         logger.info(f"Backend: {backend.name}")
@@ -280,7 +256,7 @@ class TestBaselineT2V:
 
         This is the primary test for 1:1 baseline comparison.
         """
-        config = get_reference_config()
+        config = REFERENCE_CONFIG
         prompt = REFERENCE_PROMPTS["cat_walking"]
 
         logger.info(f"Backend: {backend.name}")

@@ -42,6 +42,11 @@ from .protocol import (
     GenerationConfig,
     GenerationResult,
     GenerationStats,
+    # Standard configs (single source of truth)
+    REFERENCE_CONFIG,
+    SHORT_CONFIG,
+    SMOKE_CONFIG,
+    CONFIG_MEMORY_ESTIMATES,
 )
 
 if TYPE_CHECKING:
@@ -49,10 +54,17 @@ if TYPE_CHECKING:
     from .ltx2_backend import LTX2Backend
 
 __all__ = [
+    # Core types
     "Backend",
     "GenerationConfig",
     "GenerationResult",
     "GenerationStats",
+    # Standard configs (single source of truth - DO NOT duplicate)
+    "REFERENCE_CONFIG",
+    "SHORT_CONFIG",
+    "SMOKE_CONFIG",
+    "CONFIG_MEMORY_ESTIMATES",
+    # Backend functions
     "get_backend",
     "get_backend_name",
     "is_llm_dit_available",

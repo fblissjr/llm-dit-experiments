@@ -218,50 +218,5 @@ class LLMDitBackend(Backend):
             return False
 
 
-# Convenience functions for tests
-def get_reference_config() -> GenerationConfig:
-    """Get official LTX-2 reference configuration.
-
-    These are the default parameters from the official LTX-2 repo.
-    """
-    return GenerationConfig(
-        num_frames=121,
-        height=512,
-        width=768,
-        num_inference_steps=40,
-        guidance_scale=4.0,
-        seed=10,
-        fp8=True,
-    )
-
-
-def get_smoke_test_config() -> GenerationConfig:
-    """Get minimal configuration for quick smoke tests.
-
-    Uses smallest valid parameters for fast iteration.
-    """
-    return GenerationConfig(
-        num_frames=9,  # Minimum: 1 latent frame
-        height=256,
-        width=384,
-        num_inference_steps=2,
-        guidance_scale=1.0,  # Disable CFG
-        seed=10,
-        fp8=True,
-    )
-
-
-def get_short_test_config() -> GenerationConfig:
-    """Get configuration for short but meaningful tests.
-
-    Balances speed with reasonable quality for debugging.
-    """
-    return GenerationConfig(
-        num_frames=33,  # 4 latent frames
-        height=384,
-        width=512,
-        num_inference_steps=10,
-        guidance_scale=3.0,
-        seed=10,
-        fp8=True,
-    )
+# Standard configs are defined in protocol.py (single source of truth)
+# Import via: from tests.backends import SMOKE_CONFIG, SHORT_CONFIG, REFERENCE_CONFIG

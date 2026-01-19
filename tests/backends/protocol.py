@@ -57,6 +57,55 @@ class GenerationConfig:
             raise ValueError(f"width must be divisible by 32 (got {self.width})")
 
 
+# =============================================================================
+# Standard Configurations (Single Source of Truth)
+# =============================================================================
+# These are the canonical configs used by all tests and backends.
+# DO NOT duplicate these elsewhere - import from here.
+
+# Reference: coderef/LTX-2/packages/ltx-pipelines/src/ltx_pipelines/utils/constants.py
+
+REFERENCE_CONFIG = GenerationConfig(
+    # Official LTX-2 reference parameters for 1:1 comparison
+    num_frames=121,           # 5 seconds at 24fps (15 latent frames)
+    height=512,
+    width=768,
+    num_inference_steps=40,
+    guidance_scale=4.0,
+    seed=10,                  # Official default seed
+    fp8=True,
+)
+
+SHORT_CONFIG = GenerationConfig(
+    # Reasonable quality, faster iteration (~2min on 24GB GPU)
+    num_frames=33,            # ~1.4 seconds (4 latent frames)
+    height=384,
+    width=512,
+    num_inference_steps=10,
+    guidance_scale=3.0,
+    seed=10,
+    fp8=True,
+)
+
+SMOKE_CONFIG = GenerationConfig(
+    # Minimal params for fastest possible validation (~30s)
+    num_frames=9,             # Minimum valid (1 latent frame)
+    height=256,
+    width=384,
+    num_inference_steps=2,
+    guidance_scale=1.0,       # Disable CFG for speed
+    seed=10,
+    fp8=True,
+)
+
+# Memory estimates (RTX 4090 24GB with FP8 transformer)
+CONFIG_MEMORY_ESTIMATES = {
+    "smoke": {"vram_gb": 14, "time_estimate": "~30s"},
+    "short": {"vram_gb": 16, "time_estimate": "~2min"},
+    "reference": {"vram_gb": 20, "time_estimate": "~10min"},
+}
+
+
 @dataclass
 class GenerationStats:
     """Statistics from video generation.

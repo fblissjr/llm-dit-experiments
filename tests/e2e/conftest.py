@@ -6,23 +6,89 @@ Last Updated: 2026-01-19
 Provides shared fixtures and configuration for end-to-end tests.
 This file is designed to be portable - copy to LTX-2 repo along with
 tests/backends/ for 1:1 comparison testing.
+
+Logging Structure:
+    outputs/tests/baseline/{backend}/{test_name}_{timestamp}/
+    ├── video.mp4           # Generated video
+    ├── metadata.json       # Config, stats, params
+    ├── generation.log      # INFO+ generation progress
+    ├── debug.log           # DEBUG+ full trace
+    └── errors.log          # WARNING+ issues only
+
+    outputs/tests/runs/{timestamp}/
+    ├── session.log         # Full session log (all tests)
+    ├── summary.json        # Test results summary
+    └── environment.json    # GPU, backend, versions
 """
 
 import gc
+import json
 import logging
 import os
 import sys
+import warnings
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 import pytest
 import torch
 
-# Setup logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)8s] %(name)s: %(message)s",
-)
+# =============================================================================
+# Session-Level Logging Setup
+# =============================================================================
+
+_session_timestamp: Optional[str] = None
+_session_log_dir: Optional[Path] = None
+_session_file_handler: Optional[logging.FileHandler] = None
+
+
+def _get_session_timestamp() -> str:
+    """Get or create session timestamp (consistent across all tests)."""
+    global _session_timestamp
+    if _session_timestamp is None:
+        _session_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return _session_timestamp
+
+
+def _get_session_log_dir() -> Path:
+    """Get or create session log directory."""
+    global _session_log_dir
+    if _session_log_dir is None:
+        timestamp = _get_session_timestamp()
+        _session_log_dir = Path(f"outputs/tests/runs/{timestamp}")
+        _session_log_dir.mkdir(parents=True, exist_ok=True)
+    return _session_log_dir
+
+
+def _setup_session_logging():
+    """Setup session-level file logging."""
+    global _session_file_handler
+
+    if _session_file_handler is not None:
+        return  # Already setup
+
+    log_dir = _get_session_log_dir()
+    session_log_path = log_dir / "session.log"
+
+    # Create file handler for session log
+    _session_file_handler = logging.FileHandler(session_log_path, mode="w")
+    _session_file_handler.setLevel(logging.DEBUG)
+    _session_file_handler.setFormatter(
+        logging.Formatter("%(asctime)s [%(levelname)8s] %(name)s: %(message)s")
+    )
+
+    # Add to root logger
+    root_logger = logging.getLogger()
+    root_logger.addHandler(_session_file_handler)
+    root_logger.setLevel(logging.DEBUG)
+
+    # Also capture warnings
+    logging.captureWarnings(True)
+
+
+# Setup session logging immediately on import
+_setup_session_logging()
 logger = logging.getLogger(__name__)
 
 
@@ -30,24 +96,19 @@ logger = logging.getLogger(__name__)
 # Backend Import Handling
 # =============================================================================
 
-# Try multiple import paths for portability
 _backends_imported = False
 _backend_module = None
 
 try:
-    # Primary: Standard package import
     from tests import backends as _backend_module
-
     _backends_imported = True
 except ImportError:
     pass
 
 if not _backends_imported:
     try:
-        # Secondary: Relative import (when in LTX-2 repo)
         sys.path.insert(0, str(Path(__file__).parent.parent))
         import backends as _backend_module
-
         _backends_imported = True
     except ImportError:
         pass
@@ -98,6 +159,28 @@ def models_available(model_path_str: str = "models/LTX-2") -> bool:
     return transformer_exists and encoder_exists
 
 
+def _get_environment_info() -> dict:
+    """Collect environment information for reproducibility."""
+    info = {
+        "timestamp": _get_session_timestamp(),
+        "python_version": sys.version,
+        "torch_version": torch.__version__,
+        "cuda_available": has_cuda(),
+    }
+
+    if has_cuda():
+        info["cuda_version"] = torch.version.cuda
+        info["gpu_name"] = torch.cuda.get_device_name(0)
+        info["gpu_vram_gb"] = round(get_vram_gb(), 2)
+
+    if _backends_imported:
+        info["backend"] = _backend_module.get_backend_name()
+
+    info["models_available"] = models_available()
+
+    return info
+
+
 # =============================================================================
 # Pytest Hooks
 # =============================================================================
@@ -106,11 +189,9 @@ def models_available(model_path_str: str = "models/LTX-2") -> bool:
 def pytest_collection_modifyitems(config, items):
     """Auto-skip tests based on available hardware and backends."""
     for item in items:
-        # Skip GPU tests if CUDA not available
         if "e2e" in item.keywords and not has_cuda():
             item.add_marker(pytest.mark.skip(reason="CUDA not available"))
 
-        # Skip slow tests unless explicitly requested
         if "slow" in item.keywords:
             if not config.getoption("--runslow", default=False):
                 item.add_marker(
@@ -139,15 +220,107 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "slow: marks tests as slow")
     config.addinivalue_line("markers", "e2e: marks tests as end-to-end")
 
-    # Set backend override from command line
     backend = config.getoption("--backend")
     if backend:
         os.environ["LLM_DIT_TEST_BACKEND"] = backend
+
+    # Save environment info at session start
+    log_dir = _get_session_log_dir()
+    env_info = _get_environment_info()
+    with open(log_dir / "environment.json", "w") as f:
+        json.dump(env_info, f, indent=2)
+
+    logger.info(f"Test session started: {_get_session_timestamp()}")
+    logger.info(f"Session logs: {log_dir}")
+    logger.info(f"Backend: {env_info.get('backend', 'unknown')}")
+    if has_cuda():
+        logger.info(f"GPU: {env_info.get('gpu_name')} ({env_info.get('gpu_vram_gb')}GB)")
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """Save session summary at end."""
+    log_dir = _get_session_log_dir()
+
+    summary = {
+        "timestamp": _get_session_timestamp(),
+        "exit_status": exitstatus,
+        "total_tests": session.testscollected,
+        "passed": session.testscollected - session.testsfailed - getattr(session, "testsskipped", 0),
+        "failed": session.testsfailed,
+    }
+
+    with open(log_dir / "summary.json", "w") as f:
+        json.dump(summary, f, indent=2)
+
+    logger.info(f"Session complete: {summary['passed']} passed, {summary['failed']} failed")
+
+
+# =============================================================================
+# Per-Test Logging
+# =============================================================================
+
+
+class TestLogHandler:
+    """Manages per-test log files in the output directory."""
+
+    def __init__(self, output_dir: Path, test_name: str):
+        self.output_dir = output_dir
+        self.test_name = test_name
+        self.handlers: list[logging.Handler] = []
+
+    def setup(self):
+        """Setup log handlers for this test."""
+        root_logger = logging.getLogger()
+
+        # generation.log - INFO and above (progress, key events)
+        gen_handler = logging.FileHandler(self.output_dir / "generation.log", mode="w")
+        gen_handler.setLevel(logging.INFO)
+        gen_handler.setFormatter(
+            logging.Formatter("%(asctime)s [%(levelname)8s] %(name)s: %(message)s")
+        )
+        root_logger.addHandler(gen_handler)
+        self.handlers.append(gen_handler)
+
+        # debug.log - DEBUG and above (full trace)
+        debug_handler = logging.FileHandler(self.output_dir / "debug.log", mode="w")
+        debug_handler.setLevel(logging.DEBUG)
+        debug_handler.setFormatter(
+            logging.Formatter("%(asctime)s [%(levelname)8s] %(name)s (%(filename)s:%(lineno)d): %(message)s")
+        )
+        root_logger.addHandler(debug_handler)
+        self.handlers.append(debug_handler)
+
+        # errors.log - WARNING and above (issues only)
+        error_handler = logging.FileHandler(self.output_dir / "errors.log", mode="w")
+        error_handler.setLevel(logging.WARNING)
+        error_handler.setFormatter(
+            logging.Formatter("%(asctime)s [%(levelname)8s] %(name)s (%(filename)s:%(lineno)d): %(message)s")
+        )
+        root_logger.addHandler(error_handler)
+        self.handlers.append(error_handler)
+
+        logger.info(f"Test started: {self.test_name}")
+        logger.info(f"Output dir: {self.output_dir}")
+
+    def teardown(self):
+        """Remove log handlers for this test."""
+        root_logger = logging.getLogger()
+        for handler in self.handlers:
+            handler.flush()
+            handler.close()
+            root_logger.removeHandler(handler)
+        self.handlers.clear()
 
 
 # =============================================================================
 # Shared Fixtures
 # =============================================================================
+
+
+@pytest.fixture(scope="session")
+def session_log_dir() -> Path:
+    """Get session log directory."""
+    return _get_session_log_dir()
 
 
 @pytest.fixture(scope="session")
@@ -167,20 +340,28 @@ def backend():
 @pytest.fixture(scope="module")
 def output_base(backend_name) -> Path:
     """Get output base directory for test results."""
-    base = Path(f"outputs/tests/baseline/{backend_name}")
+    timestamp = _get_session_timestamp()
+    base = Path(f"outputs/tests/baseline/{backend_name}/{timestamp}")
     base.mkdir(parents=True, exist_ok=True)
     return base
 
 
 @pytest.fixture
 def output_dir(output_base, request) -> Path:
-    """Get timestamped output directory for this specific test."""
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    """Get output directory for this specific test with per-test logging."""
     # Sanitize test name for filesystem
     test_name = request.node.name.replace("[", "_").replace("]", "").replace("/", "_")
-    out_dir = output_base / f"{test_name}_{timestamp}"
+    out_dir = output_base / test_name
     out_dir.mkdir(parents=True, exist_ok=True)
-    return out_dir
+
+    # Setup per-test logging
+    log_handler = TestLogHandler(out_dir, test_name)
+    log_handler.setup()
+
+    yield out_dir
+
+    # Teardown per-test logging
+    log_handler.teardown()
 
 
 @pytest.fixture(autouse=True)
@@ -228,47 +409,24 @@ def reference_prompts() -> dict:
 
 @pytest.fixture
 def smoke_config():
-    """Minimal configuration for smoke tests."""
+    """Minimal configuration for smoke tests (~30s, 14GB VRAM)."""
     if not _backends_imported:
         pytest.skip("Backend module not available")
-    return _backend_module.GenerationConfig(
-        num_frames=9,
-        height=256,
-        width=384,
-        num_inference_steps=2,
-        guidance_scale=1.0,
-        seed=10,
-        fp8=True,
-    )
+    # Import from single source of truth
+    return _backend_module.SMOKE_CONFIG
 
 
 @pytest.fixture
 def short_config():
-    """Short configuration for quick but meaningful tests."""
+    """Short configuration for quick but meaningful tests (~2min, 16GB VRAM)."""
     if not _backends_imported:
         pytest.skip("Backend module not available")
-    return _backend_module.GenerationConfig(
-        num_frames=33,
-        height=384,
-        width=512,
-        num_inference_steps=10,
-        guidance_scale=3.0,
-        seed=10,
-        fp8=True,
-    )
+    return _backend_module.SHORT_CONFIG
 
 
 @pytest.fixture
 def reference_config():
-    """Official LTX-2 reference configuration."""
+    """Official LTX-2 reference configuration (~10min, 20GB VRAM)."""
     if not _backends_imported:
         pytest.skip("Backend module not available")
-    return _backend_module.GenerationConfig(
-        num_frames=121,
-        height=512,
-        width=768,
-        num_inference_steps=40,
-        guidance_scale=4.0,
-        seed=10,
-        fp8=True,
-    )
+    return _backend_module.REFERENCE_CONFIG
