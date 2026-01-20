@@ -4,6 +4,7 @@ Verify memory usage during forward pass with FP8.
 Last Updated: 2026-01-19
 
 Tests memory consumption at each stage to identify OOM bottleneck.
+Uses proper Modality API matching LTX-2 reference implementation.
 """
 import gc
 import torch
@@ -42,40 +43,56 @@ def main():
     log_memory("After model load")
 
     # Create minimal test inputs matching smoke test config
-    # 9 frames, 256x384 -> latent: [1, 128, 2, 8, 12] (F/8+1, H/32, W/32)
+    # 9 frames, 256x384 -> latent: [1, 192, 128] in token format (T=2*8*12)
     batch_size = 1
-    channels = 128
-    num_frames_latent = 2  # (9-1)/8 + 1 = 2
-    height_latent = 8  # 256/32
-    width_latent = 12  # 384/32
+    num_frames = 9
+    height = 256
+    width = 384
 
-    # Create inputs
-    hidden_states = torch.randn(
-        batch_size, channels, num_frames_latent, height_latent, width_latent,
+    # Latent dimensions
+    t_latent = (num_frames - 1) // 8 + 1  # 2
+    h_latent = height // 32  # 8
+    w_latent = width // 32  # 12
+    num_tokens = t_latent * h_latent * w_latent  # 192
+    latent_dim = 128
+
+    print(f"\nLatent dims: t={t_latent}, h={h_latent}, w={w_latent}, num_tokens={num_tokens}")
+
+    # Create inputs using Modality format
+    from llm_dit.models.ltx2.components import Modality
+    from llm_dit.pipelines.generate import create_position_indices
+
+    # Latent in token format [B, T, D]
+    latent = torch.randn(
+        batch_size, num_tokens, latent_dim,
         device="cuda", dtype=torch.bfloat16
     )
 
-    # Timestep
-    timestep = torch.tensor([0.5], device="cuda", dtype=torch.bfloat16)
+    # Timestep as [B, T] (per-token for LTX-2)
+    sigma = 0.5
+    timestep = (torch.ones(batch_size, num_tokens, device="cuda", dtype=torch.bfloat16) * sigma * 1000)
 
-    # Text embeddings (minimal)
-    encoder_hidden_states = torch.randn(
-        batch_size, 4, 3840,  # 4 tokens, 3840 dim
+    # Position indices [B, 3, T, 2]
+    positions = create_position_indices(
+        batch_size, num_frames, height, width, torch.device("cuda")
+    )
+
+    # Text embeddings (3840 dim for Gemma3 output)
+    context_len = 128  # Typical context length
+    context = torch.randn(
+        batch_size, context_len, 3840,
         device="cuda", dtype=torch.bfloat16
     )
 
-    # Position indices
-    seq_len = num_frames_latent * height_latent * width_latent
-    indices = torch.arange(seq_len, device="cuda", dtype=torch.float32)
-    frame_indices = indices // (height_latent * width_latent)
-    height_indices = (indices % (height_latent * width_latent)) // width_latent
-    width_indices = indices % width_latent
-
-    indices_grid = torch.stack([
-        frame_indices,
-        height_indices,
-        width_indices
-    ], dim=0).unsqueeze(0)  # [1, 3, seq_len]
+    # Create Modality object
+    video_modality = Modality(
+        latent=latent,
+        timesteps=timestep,
+        positions=positions,
+        context=context,
+        enabled=True,
+        context_mask=None,
+    )
 
     log_memory("After input creation")
 
@@ -85,16 +102,11 @@ def main():
 
     with torch.no_grad():
         try:
-            output = model(
-                hidden_states=hidden_states,
-                timestep=timestep,
-                encoder_hidden_states=encoder_hidden_states,
-                indices_grid=indices_grid,
-            )
+            output, _ = model(video=video_modality)
             log_memory("After forward pass")
             peak = torch.cuda.max_memory_allocated() / 1024**3
             print(f"Peak memory during forward: {peak:.2f}GB")
-            print(f"Output shape: {output.shape if hasattr(output, 'shape') else type(output)}")
+            print(f"Output shape: {output.shape}")
         except RuntimeError as e:
             if "out of memory" in str(e):
                 peak = torch.cuda.max_memory_allocated() / 1024**3
@@ -112,22 +124,25 @@ def main():
     with torch.no_grad():
         try:
             # First forward (conditional)
-            output1 = model(
-                hidden_states=hidden_states,
-                timestep=timestep,
-                encoder_hidden_states=encoder_hidden_states,
-                indices_grid=indices_grid,
-            )
+            output1, _ = model(video=video_modality)
             log_memory("After cond forward")
 
-            # Second forward (unconditional)
-            uncond_embeddings = torch.zeros_like(encoder_hidden_states)
-            output2 = model(
-                hidden_states=hidden_states,
-                timestep=timestep,
-                encoder_hidden_states=uncond_embeddings,
-                indices_grid=indices_grid,
+            # Free intermediate memory
+            del output1
+            torch.cuda.synchronize()
+            torch.cuda.empty_cache()
+            log_memory("After cleanup cond")
+
+            # Second forward (unconditional - zero context)
+            uncond_modality = Modality(
+                latent=latent,
+                timesteps=timestep,
+                positions=positions,
+                context=torch.zeros_like(context),
+                enabled=True,
+                context_mask=None,
             )
+            output2, _ = model(video=uncond_modality)
             log_memory("After uncond forward")
 
             peak = torch.cuda.max_memory_allocated() / 1024**3
@@ -141,7 +156,7 @@ def main():
                 raise
 
     # Cleanup
-    del model, hidden_states, encoder_hidden_states
+    del model, latent, context, positions
     gc.collect()
     torch.cuda.empty_cache()
     log_memory("After cleanup")
