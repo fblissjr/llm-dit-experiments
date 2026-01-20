@@ -109,16 +109,75 @@ class LLMDitBackend(Backend):
 
         return result
 
-    def encode_text(self, prompt: str) -> torch.Tensor:
+    def encode_text(
+        self,
+        prompt: str,
+        output_dir: Optional[Path] = None,
+        debug_trace: bool = False,
+    ) -> torch.Tensor:
+        """
+        Encode text prompt to embeddings.
+
+        Args:
+            prompt: Text prompt to encode
+            output_dir: Optional directory to save diagnostics
+            debug_trace: If True, save detailed connector diagnostics
+
+        Returns:
+            Text embeddings tensor [1, seq_len, dim]
+        """
         from llm_dit.encoders import Gemma3Encoder
 
         encoder = Gemma3Encoder(
-            model_id=str(self.model_path / "text_encoder"), load_in_8bit=True, device="cuda"
-        encoder = Gemma3Encoder(
             model_id=str(self.model_path / "text_encoder"),
-            load_in_8bit=True, device="cuda"
+            load_in_8bit=True,
+            device="cuda",
         )
+
+        # Force model loading to ensure connector is available for hooks
+        # (Gemma3Encoder uses lazy loading)
+        encoder._load_model()
+
+        # Setup diagnostics collector if debug_trace enabled
+        diagnostics_collector = None
+        if debug_trace:
+            from .diagnostics import ConnectorDiagnosticsCollector
+
+            diagnostics_collector = ConnectorDiagnosticsCollector()
+            # Attach hooks to the connector inside the encoder
+            if encoder._embeddings_connector is not None:
+                diagnostics_collector.attach_hooks(encoder._embeddings_connector)
+                logger.debug(
+                    f"Attached diagnostics hooks to connector with "
+                    f"{len(encoder._embeddings_connector.transformer_blocks)} blocks"
+                )
+            else:
+                logger.warning("Connector not available for diagnostics hooks")
+
+        # Run encoding
         out = encoder.encode(prompt)
+
+        # Collect and save diagnostics
+        if diagnostics_collector is not None:
+            diagnostics = diagnostics_collector.collect()
+
+            # Print summary
+            logger.info(diagnostics.summary())
+
+            # Check for anomalies
+            warnings = diagnostics.check_for_anomalies()
+            for w in warnings:
+                logger.warning(f"ANOMALY: {w}")
+
+            # Save to file if output_dir provided
+            if output_dir:
+                output_dir = Path(output_dir)
+                output_dir.mkdir(parents=True, exist_ok=True)
+                diagnostics.save(output_dir / "connector_diagnostics.json")
+
+            # Cleanup hooks
+            diagnostics_collector.remove_hooks()
+
         # [1, seq_len, dim]
         embeddings = out.embeddings[0].unsqueeze(0).cpu()
 

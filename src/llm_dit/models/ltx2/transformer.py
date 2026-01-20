@@ -165,11 +165,12 @@ class TransformerArgsPreprocessor:
         """Prepare context (text conditioning) for transformer blocks."""
         batch_size = x.shape[0]
 
-        # FIX: Center embeddings per-dimension before caption_projection
-        # Our Gemma encoder outputs embeddings with large per-dim mean offsets
-        # (range [-8.7, 12.4]) which causes GELU to crush variance after linear_1
-        # Centering prevents the negative mean shift that triggers GELU's dead zone
-        context = context - context.mean(dim=1, keepdim=True)
+        # NOTE: Do NOT center embeddings before caption_projection!
+        # Testing (2026-01-20) showed centering DESTROYS the signal:
+        #   - Without centering: std=1.0, blurry but has structure
+        #   - With centering: std=0.3, complete noise (deep fried)
+        # The per-dim mean offsets ARE the semantic signal, not noise.
+        # Original hypothesis was wrong - centering removes 70% of variance.
 
         # DEBUG: Check context BEFORE caption_projection
         if hasattr(self, '_debug_context') and self._debug_context:

@@ -96,6 +96,9 @@ class GenerationConfig:
     conditioning_frame_idx: int = 0
     conditioning_strength: float = 0.8
 
+    # Debug options
+    debug_trace: bool = False  # Enable detailed embedding/connector diagnostics
+
     def validate(self) -> None:
         """Validate configuration parameters."""
         # Frame count must be 8k+1
@@ -527,11 +530,18 @@ class Backend(ABC):
         ...
 
     @abstractmethod
-    def encode_text(self, prompt: str) -> torch.Tensor:
+    def encode_text(
+        self,
+        prompt: str,
+        output_dir: Optional[Path] = None,
+        debug_trace: bool = False,
+    ) -> torch.Tensor:
         """Encode text prompt to embeddings.
 
         Args:
             prompt: Text prompt to encode
+            output_dir: Optional directory to save diagnostics
+            debug_trace: If True, save detailed connector diagnostics
 
         Returns:
             Text embeddings tensor [1, seq_len, dim]

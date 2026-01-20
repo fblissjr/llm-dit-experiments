@@ -206,13 +206,29 @@ class LTX2Backend(Backend):
 
         return result
 
-    def encode_text(self, prompt: str) -> torch.Tensor:
+    def encode_text(
+        self,
+        prompt: str,
+        output_dir: Optional[Path] = None,
+        debug_trace: bool = False,
+    ) -> torch.Tensor:
         """Encode text prompt using official Gemma encoder.
+
+        Args:
+            prompt: Text prompt to encode
+            output_dir: Optional directory to save diagnostics (not used for ltx2 backend)
+            debug_trace: If True, save detailed connector diagnostics (not implemented for ltx2)
 
         Returns:
             Text embeddings from official implementation
         """
         from ltx_core.text_encoders.gemma import encode_text
+
+        if debug_trace:
+            logger.warning(
+                "debug_trace is not implemented for ltx2 backend - "
+                "diagnostics only available for llm_dit backend"
+            )
 
         pipeline = self._get_pipeline()
         text_encoder = pipeline.model_ledger.text_encoder()
