@@ -390,6 +390,12 @@ def generate_video(
             # Uniform timesteps for standard T2V - sigma directly, no scaling!
             timestep = sigma.expand(1, num_tokens)
 
+        # DEBUG: Track latent inter-token variation at key steps
+        if i in [0, 20, len(sigmas) - 2]:
+            latent_inter_token = latents.std(dim=1).mean()  # Variation across tokens
+            latent_overall_std = latents.std()
+            print(f"[DEBUG LATENTS Step {i}] inter-token std: {latent_inter_token:.4f}, overall std: {latent_overall_std:.4f}")
+
         # Classifier-free guidance
         if config.guidance_scale > 1.0:
             # Set debug step for attention diagnostics (only on step 0)

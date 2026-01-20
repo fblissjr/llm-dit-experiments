@@ -336,6 +336,15 @@ class BasicTransformerBlock(nn.Module):
             self.scale_shift_table, batch_size, args.timesteps, slice(0, 3)
         )
 
+        # DEBUG: Track AdaLN gate values at block 0
+        if self.idx == 0 and hasattr(self, '_debug_step') and self._debug_step in [0, 20, 39]:
+            gate_mean = gate_msa.mean().item()
+            gate_std = gate_msa.std().item()
+            gate_min = gate_msa.min().item()
+            gate_max = gate_msa.max().item()
+            scale_mean = scale_msa.mean().item()
+            print(f"[AdaLN DEBUG] Block 0, Step {self._debug_step}: gate_msa mean={gate_mean:.4f}, std={gate_std:.4f}, range=[{gate_min:.4f}, {gate_max:.4f}], scale_msa mean={scale_mean:.4f}")
+
         # Self-attention with RoPE
         norm_x = rms_norm(x, eps=self.norm_eps) * (1 + scale_msa) + shift_msa
         self_attn_out = self.attn1(norm_x, pe=args.positional_embeddings) * gate_msa
