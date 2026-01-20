@@ -67,34 +67,33 @@ class GenerationConfig:
 
 REFERENCE_CONFIG = GenerationConfig(
     # Official LTX-2 reference parameters for 1:1 comparison
-    num_frames=121,           # 5 seconds at 24fps (15 latent frames)
+    num_frames=121,  # 5 seconds at 24fps (15 latent frames)
     height=512,
     width=768,
     num_inference_steps=40,
     guidance_scale=4.0,
-    seed=10,                  # Official default seed
+    seed=10,  # Official default seed
     fp8=True,
 )
 
 SHORT_CONFIG = GenerationConfig(
     # Reasonable quality, faster iteration (~2min on 24GB GPU)
-    num_frames=33,            # ~1.4 seconds (4 latent frames)
-    height=384,
-    width=512,
-    num_inference_steps=10,
+    num_frames=33,  # ~1.4 seconds (4 latent frames)
+    height=512,
+    width=768,
+    num_inference_steps=30,
     guidance_scale=3.0,
     seed=10,
     fp8=True,
 )
 
 SMOKE_CONFIG = GenerationConfig(
-    # Minimal params that still produce visible content
-    # LTX-2 DistilledPipeline uses 8 steps minimum, CFG 3.0 is standard
-    num_frames=9,             # Minimum valid (1 latent frame)
-    height=256,
-    width=384,
-    num_inference_steps=8,    # Minimum for visible results (was 2)
-    guidance_scale=3.0,       # Standard CFG (was 1.0 = disabled!)
+    # Reasonable quality, faster iteration (~2min on 24GB GPU)
+    num_frames=33,  # ~1.4 seconds (4 latent frames)
+    height=512,
+    width=768,
+    num_inference_steps=30,
+    guidance_scale=3.0,
     seed=10,
     fp8=True,
 )
@@ -211,10 +210,14 @@ class GenerationInputs:
                 "scale": self.upsampling_scale,
             },
             "tensor_shapes": {
-                "text_embedding": list(self.text_embedding_shape) if self.text_embedding_shape else None,
+                "text_embedding": list(self.text_embedding_shape)
+                if self.text_embedding_shape
+                else None,
                 "latent": list(self.latent_shape) if self.latent_shape else None,
                 "noise": list(self.noise_shape) if self.noise_shape else None,
-                "position_indices": list(self.position_indices_shape) if self.position_indices_shape else None,
+                "position_indices": list(self.position_indices_shape)
+                if self.position_indices_shape
+                else None,
             },
         }
 
@@ -227,22 +230,41 @@ class GenerationInputs:
         if self.negative_prompt:
             logger.info(f"Negative: {self.negative_prompt}")
         logger.info("-" * 40)
-        logger.info(f"Video: {self.num_frames} frames @ {self.height}x{self.width}, {self.frame_rate}fps")
-        logger.info(f"Inference: {self.num_inference_steps} steps, CFG {self.guidance_scale}, seed {self.seed}")
+        logger.info(
+            f"Video: {self.num_frames} frames @ {self.height}x{self.width}, {self.frame_rate}fps"
+        )
+        logger.info(
+            f"Inference: {self.num_inference_steps} steps, CFG {self.guidance_scale}, seed {self.seed}"
+        )
         logger.info("-" * 40)
         logger.info(f"Transformer: {self.transformer_path}")
-        logger.info(f"  dtype={self.transformer_dtype}, quant={self.transformer_quantization}")
+        logger.info(
+            f"  dtype={self.transformer_dtype}, quant={self.transformer_quantization}"
+        )
         logger.info(f"Text Encoder: {self.text_encoder_path}")
-        logger.info(f"  dtype={self.text_encoder_dtype}, quant={self.text_encoder_quantization}")
+        logger.info(
+            f"  dtype={self.text_encoder_dtype}, quant={self.text_encoder_quantization}"
+        )
         logger.info(f"VAE: {self.vae_path}, dtype={self.vae_dtype}")
         logger.info("-" * 40)
-        logger.info(f"Scheduler: base_shift={self.base_shift}, max_shift={self.max_shift}, terminal={self.terminal_sigma}")
+        logger.info(
+            f"Scheduler: base_shift={self.base_shift}, max_shift={self.max_shift}, terminal={self.terminal_sigma}"
+        )
         if self.conditioning_image_path:
-            logger.info(f"Conditioning: {self.conditioning_image_path} @ frame {self.conditioning_frame_idx}, strength={self.conditioning_strength}")
+            logger.info(
+                f"Conditioning: {self.conditioning_image_path} @ frame {self.conditioning_frame_idx}, strength={self.conditioning_strength}"
+            )
         if self.upsampling_enabled:
             logger.info(f"Upsampling: {self.upsampling_scale}x")
         # Tensor shapes (populated during generation)
-        if any([self.text_embedding_shape, self.latent_shape, self.noise_shape, self.position_indices_shape]):
+        if any(
+            [
+                self.text_embedding_shape,
+                self.latent_shape,
+                self.noise_shape,
+                self.position_indices_shape,
+            ]
+        ):
             logger.info("-" * 40)
             logger.info("Tensor Shapes:")
             if self.text_embedding_shape:
