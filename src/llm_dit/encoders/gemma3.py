@@ -564,45 +564,24 @@ class Gemma3Encoder:
             f"num_layers={config.text_config.num_hidden_layers}"
         )
 
-        # Create model from config (no weights loaded yet)
-        logger.info("Creating Gemma3 model from config (weights loaded separately)...")
-        # Use _from_config to create model without loading weights
-        if hasattr(Gemma3ForConditionalGeneration, "_from_config"):
-            self._model = Gemma3ForConditionalGeneration._from_config(config)
-        else:
-            # Fallback: instantiate directly from config
-            self._model = Gemma3ForConditionalGeneration(config)
+        # Create model from config on CPU first (requires ~24GB RAM for 12B params)
+        logger.info("Creating Gemma3 model on CPU from config...")
 
-        # Move to device and set dtype
-        if device_map == "auto":
-            # For auto device map, we need to use accelerate
-            from accelerate import dispatch_model, infer_auto_device_map
+        # Force CPU creation to avoid GPU OOM during init
+        with torch.device("cpu"):
+            if hasattr(Gemma3ForConditionalGeneration, "_from_config"):
+                self._model = Gemma3ForConditionalGeneration._from_config(config)
+            else:
+                self._model = Gemma3ForConditionalGeneration(config)
 
-            device_map_computed = infer_auto_device_map(
-                self._model,
-                max_memory=self._max_memory,
-                dtype=self._dtype,
-            )
-            self._model = dispatch_model(self._model, device_map_computed)
-        elif device_map is not None:
-            # Single device
-            device_name = list(device_map.values())[0] if isinstance(device_map, dict) else device_map
-            self._model = self._model.to(device=device_name, dtype=self._dtype)
-        else:
-            self._model = self._model.to(dtype=self._dtype)
-
-        # Apply quantization if requested (after loading weights)
-        if quantization_config is not None:
-            logger.warning(
-                "Quantization requested but not applied during config-based loading. "
-                "Weights will be loaded in full precision, then quantized if supported."
-            )
+        # Ensure model is on CPU and correct dtype
+        self._model = self._model.to(dtype=self._dtype)
 
         # Step 2: Load LTX-2 weights with key remapping
         logger.info("Loading LTX-2 Gemma weights with key remapping...")
         state_dict = self._load_ltx2_gemma_weights()
 
-        # Step 3: Load remapped weights into model
+        # Step 3: Load remapped weights into model (on CPU)
         if state_dict:
             missing, unexpected = self._model.load_state_dict(state_dict, strict=False)
             logger.info(
@@ -613,8 +592,40 @@ class Gemma3Encoder:
                 logger.warning(f"Missing keys (first 10): {missing[:10]}")
             if unexpected:
                 logger.warning(f"Unexpected keys (first 10): {unexpected[:10]}")
+
+            # Tie weights if lm_head wasn't in checkpoint
+            if "lm_head.weight" in missing and hasattr(self._model, "tie_weights"):
+                logger.info("Tying lm_head weights to embed_tokens")
+                self._model.tie_weights()
         else:
             logger.error("No LTX-2 Gemma weights loaded - model has random weights!")
+            raise RuntimeError("Failed to load LTX-2 Gemma weights")
+
+        # Step 4: Move model to target device(s)
+        if device_map == "auto":
+            from accelerate import dispatch_model, infer_auto_device_map
+
+            logger.info("Computing device map for auto distribution...")
+            device_map_computed = infer_auto_device_map(
+                self._model,
+                max_memory=self._max_memory,
+                dtype=self._dtype,
+            )
+            logger.info(f"Dispatching model to devices: {set(device_map_computed.values())}")
+            self._model = dispatch_model(self._model, device_map_computed)
+        elif device_map is not None:
+            # Single device
+            device_name = list(device_map.values())[0] if isinstance(device_map, dict) else device_map
+            logger.info(f"Moving model to {device_name}...")
+            self._model = self._model.to(device=device_name)
+        # else: keep on CPU
+
+        # Apply quantization if requested
+        if quantization_config is not None:
+            logger.warning(
+                "Quantization requested but not applied during manual loading. "
+                "Model loaded in full precision."
+            )
 
         # Load tokenizer from LOCAL LTX-2 files (AUTHORITATIVE SOURCE)
         # Vocab size analysis (2026-01-20):

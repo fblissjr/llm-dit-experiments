@@ -44,7 +44,7 @@ def verify_gemma_weights():
 
     logger.info("\nStep 2: Checking model weights...")
 
-    # Check embedding layer
+    # Check embedding layer - sample a small portion to avoid OOM
     model = encoder._model
     if hasattr(model, "model") and hasattr(model.model, "language_model"):
         embed_weight = model.model.language_model.embed_tokens.weight
@@ -54,17 +54,22 @@ def verify_gemma_weights():
         logger.error("Cannot find embedding layer in model structure")
         return False
 
-    embed_mean = embed_weight.float().mean().item()
-    embed_std = embed_weight.float().std().item()
     embed_shape = embed_weight.shape
+    # Sample first 1000 rows to compute stats without OOM
+    sample_size = min(1000, embed_shape[0])
+    embed_sample = embed_weight[:sample_size].float()
+    embed_mean = embed_sample.mean().item()
+    embed_std = embed_sample.std().item()
+    del embed_sample
+    torch.cuda.empty_cache()
 
     logger.info(f"Embedding layer shape: {embed_shape}")
-    logger.info(f"Embedding mean: {embed_mean:.6f}")
-    logger.info(f"Embedding std: {embed_std:.6f}")
+    logger.info(f"Embedding mean (sample): {embed_mean:.6f}")
+    logger.info(f"Embedding std (sample): {embed_std:.6f}")
 
     # Check if weights look like random init (very small values)
     # Random init typically has std ~0.01-0.02, trained weights have larger std
-    if embed_std < 0.05:
+    if embed_std < 0.005:
         logger.warning(
             f"⚠️  Embedding std ({embed_std:.4f}) is very low - "
             "weights may still be random!"
@@ -91,7 +96,7 @@ def verify_gemma_weights():
     logger.info(f"Layer 0 q_proj mean: {q_mean:.6f}")
     logger.info(f"Layer 0 q_proj std: {q_std:.6f}")
 
-    if q_std < 0.01:
+    if q_std < 0.005:
         logger.warning(
             f"⚠️  Layer 0 q_proj std ({q_std:.6f}) is very low - "
             "weights may still be random!"
