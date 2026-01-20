@@ -240,7 +240,7 @@ def _norm_and_concat_layers(
     hidden_states: torch.Tensor,
     attention_mask: torch.Tensor,
     padding_side: str = "left",
-    eps: float = 1e-8,
+    eps: float = 1e-6,  # Match reference (was 1e-8)
 ) -> torch.Tensor:
     """
     Normalize and concatenate multi-layer hidden states.
@@ -273,16 +273,18 @@ def _norm_and_concat_layers(
     masked_states = hidden_states.masked_fill(~mask_expanded, 0.0)
 
     # Mean per layer (over valid tokens only)
-    denom = (seq_lengths * d).view(b, 1, 1, 1).clamp(min=eps)
-    mean = masked_states.sum(dim=(1, 2), keepdim=True) / denom
+    # Match reference: (denom + eps) instead of clamp
+    denom = (seq_lengths * d).view(b, 1, 1, 1)
+    mean = masked_states.sum(dim=(1, 2), keepdim=True) / (denom + eps)
 
     # Range per layer (over valid tokens only)
     x_min = hidden_states.masked_fill(~mask_expanded, float("inf")).amin(dim=(1, 2), keepdim=True)
     x_max = hidden_states.masked_fill(~mask_expanded, float("-inf")).amax(dim=(1, 2), keepdim=True)
-    range_val = (x_max - x_min).clamp(min=eps)
+    range_val = x_max - x_min
 
-    # Normalize: 8 * (x - mean) / range
-    normed = 8.0 * (hidden_states - mean) / range_val
+    # Normalize: 8 * (x - mean) / (range + eps)
+    # Match reference: (range + eps) instead of clamp
+    normed = 8.0 * (hidden_states - mean) / (range_val + eps)
 
     # Flatten layers: [B, T, D, L] -> [B, T, D*L]
     normed = normed.reshape(b, t, -1)

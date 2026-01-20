@@ -8,14 +8,12 @@ This file is designed to be portable - copy to LTX-2 repo along with
 tests/backends/ for 1:1 comparison testing.
 
 Logging Structure:
-    outputs/tests/baseline/{backend}/{test_name}_{timestamp}/
+    outputs/tests/runs_{backend}_{test_name}_{timestamp}/
     ├── video.mp4           # Generated video
     ├── metadata.json       # Config, stats, params
     ├── generation.log      # INFO+ generation progress
     ├── debug.log           # DEBUG+ full trace
-    └── errors.log          # WARNING+ issues only
-
-    outputs/tests/runs/{timestamp}/
+    ├── errors.log          # WARNING+ issues only
     ├── session.log         # Full session log (all tests)
     ├── summary.json        # Test results summary
     └── environment.json    # GPU, backend, versions
@@ -101,6 +99,7 @@ _backend_module = None
 
 try:
     from tests import backends as _backend_module
+
     _backends_imported = True
 except ImportError:
     pass
@@ -109,15 +108,13 @@ if not _backends_imported:
     try:
         sys.path.insert(0, str(Path(__file__).parent.parent))
         import backends as _backend_module
+
         _backends_imported = True
     except ImportError:
         pass
 
 if not _backends_imported:
-    logger.warning(
-        "Could not import tests.backends module. "
-        "Backend-based tests will be skipped."
-    )
+    logger.warning("Could not import tests.backends module. Backend-based tests will be skipped.")
 
 
 def get_backend_or_skip():
@@ -194,9 +191,7 @@ def pytest_collection_modifyitems(config, items):
 
         if "slow" in item.keywords:
             if not config.getoption("--runslow", default=False):
-                item.add_marker(
-                    pytest.mark.skip(reason="Need --runslow option to run")
-                )
+                item.add_marker(pytest.mark.skip(reason="Need --runslow option to run"))
 
 
 def pytest_addoption(parser):
@@ -246,7 +241,9 @@ def pytest_sessionfinish(session, exitstatus):
         "timestamp": timestamp,
         "exit_status": exitstatus,
         "total_tests": session.testscollected,
-        "passed": session.testscollected - session.testsfailed - getattr(session, "testsskipped", 0),
+        "passed": session.testscollected
+        - session.testsfailed
+        - getattr(session, "testsskipped", 0),
         "failed": session.testsfailed,
     }
 
@@ -259,43 +256,37 @@ def pytest_sessionfinish(session, exitstatus):
     print("\n" + "=" * 60)
     print("OUTPUT SUMMARY")
     print("=" * 60)
-    print(f"Session logs:  {log_dir}/")
+    print(f"Session logs:   {log_dir}/")
 
-    # Find test output directories for this session
-    backend_name = _backend_module.get_backend_name() if _backends_imported else "unknown"
-    baseline_dir = Path(f"outputs/tests/baseline/{backend_name}")
+    # --- FIXED LOGIC START ---
+    # We look for ANY directory containing this session's timestamp.
+    # This ensures we catch outputs even if a test forced a different backend name
+    # (e.g. 'ltx2_' instead of global 'none_').
+    runs_dir = Path("outputs/tests/runs")
 
-    # Look for test outputs matching this session's timestamp
-    # Handles both structures:
-    #   - {backend}/{timestamp}/{test_name}/  (conftest structure)
-    #   - {backend}/{test_name}_{timestamp}/  (portable test structure)
     found_outputs = []
-    if baseline_dir.exists():
-        # Check for session timestamp directory (conftest structure)
-        session_dir = baseline_dir / timestamp
-        if session_dir.exists():
-            for test_dir in sorted(session_dir.iterdir()):
-                if test_dir.is_dir():
-                    found_outputs.append(test_dir)
-        # Check for test_name_timestamp directories (portable structure)
-        for item in sorted(baseline_dir.iterdir()):
+    if runs_dir.exists():
+        for item in sorted(runs_dir.iterdir()):
             if item.is_dir() and timestamp in item.name:
                 found_outputs.append(item)
+    # --- FIXED LOGIC END ---
 
     if found_outputs:
-        print(f"Test outputs:  {baseline_dir}/")
+        print(f"Test outputs:   {runs_dir}/")
         for test_dir in found_outputs:
             files = list(test_dir.iterdir())
+            # Simple formatter to show first few files
             file_list = ", ".join(f.name for f in files[:5])
             if len(files) > 5:
-                file_list += f", ... (+{len(files)-5} more)"
+                file_list += f", ... (+{len(files) - 5} more)"
+
             print(f"  └── {test_dir.name}/")
             if files:
                 print(f"      {file_list}")
             else:
                 print(f"      (empty - test may have failed before output)")
     else:
-        print(f"Test outputs:  (none created)")
+        print(f"Test outputs:   (none created in {runs_dir})")
 
     print("=" * 60)
 
@@ -330,7 +321,9 @@ class TestLogHandler:
         debug_handler = logging.FileHandler(self.output_dir / "debug.log", mode="w")
         debug_handler.setLevel(logging.DEBUG)
         debug_handler.setFormatter(
-            logging.Formatter("%(asctime)s [%(levelname)8s] %(name)s (%(filename)s:%(lineno)d): %(message)s")
+            logging.Formatter(
+                "%(asctime)s [%(levelname)8s] %(name)s (%(filename)s:%(lineno)d): %(message)s"
+            )
         )
         root_logger.addHandler(debug_handler)
         self.handlers.append(debug_handler)
@@ -339,7 +332,9 @@ class TestLogHandler:
         error_handler = logging.FileHandler(self.output_dir / "errors.log", mode="w")
         error_handler.setLevel(logging.WARNING)
         error_handler.setFormatter(
-            logging.Formatter("%(asctime)s [%(levelname)8s] %(name)s (%(filename)s:%(lineno)d): %(message)s")
+            logging.Formatter(
+                "%(asctime)s [%(levelname)8s] %(name)s (%(filename)s:%(lineno)d): %(message)s"
+            )
         )
         root_logger.addHandler(error_handler)
         self.handlers.append(error_handler)
@@ -382,30 +377,28 @@ def backend():
     return get_backend_or_skip()
 
 
-@pytest.fixture(scope="module")
-def output_base(backend_name) -> Path:
-    """Get output base directory for test results."""
-    timestamp = _get_session_timestamp()
-    base = Path(f"outputs/tests/baseline/{backend_name}/{timestamp}")
-    base.mkdir(parents=True, exist_ok=True)
-    return base
-
-
 @pytest.fixture
-def output_dir(output_base, request) -> Path:
-    """Get output directory for this specific test with per-test logging."""
-    # Sanitize test name for filesystem
+def output_dir(backend_name, request) -> Path:
+    """Get output directory for this specific test (Flat Structure)."""
+    # 1. Get components
+    timestamp = _get_session_timestamp()
+    # Sanitize test name (handle pytest parametrization like [1-2])
     test_name = request.node.name.replace("[", "_").replace("]", "").replace("/", "_")
-    out_dir = output_base / test_name
+
+    # 2. Construct the flat path: outputs/tests/runs/{backend}_{test}_{time}
+    dir_name = f"{backend_name}_{test_name}_{timestamp}"
+    out_dir = Path("outputs/tests/runs") / dir_name
+
+    # 3. Create directory
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # Setup per-test logging
+    # 4. Setup per-test logging
     log_handler = TestLogHandler(out_dir, test_name)
     log_handler.setup()
 
     yield out_dir
 
-    # Teardown per-test logging
+    # 5. Teardown
     log_handler.teardown()
 
 

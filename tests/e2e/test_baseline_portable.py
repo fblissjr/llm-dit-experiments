@@ -11,7 +11,7 @@ Copy this file and tests/backends/ to the LTX-2 repo to run identical
 tests with the official implementation for 1:1 baseline comparison.
 
 Output Structure:
-    outputs/tests/baseline/{backend}/{test_name}_{timestamp}/
+    outputs/tests/runs/{backend}_{test_name}_{timestamp}/
     ├── video.mp4              # Generated video
     ├── metadata.json          # Config + stats
     ├── inputs.json            # Full generation inputs (models, dtypes, shapes)
@@ -45,13 +45,13 @@ import torch
 # This auto-detects which backend is available
 try:
     from tests.backends import (
+        REFERENCE_CONFIG,
+        SHORT_CONFIG,
+        # Standard configs (single source of truth)
+        SMOKE_CONFIG,
         GenerationConfig,
         get_backend,
         get_backend_name,
-        # Standard configs (single source of truth)
-        SMOKE_CONFIG,
-        SHORT_CONFIG,
-        REFERENCE_CONFIG,
     )
 except ImportError:
     # Fallback for when running in LTX-2 repo with different structure
@@ -59,12 +59,12 @@ except ImportError:
 
     sys.path.insert(0, str(Path(__file__).parent.parent))
     from backends import (
+        REFERENCE_CONFIG,
+        SHORT_CONFIG,
+        SMOKE_CONFIG,
         GenerationConfig,
         get_backend,
         get_backend_name,
-        SMOKE_CONFIG,
-        SHORT_CONFIG,
-        REFERENCE_CONFIG,
     )
 
 # Skip all tests if CUDA not available
@@ -81,33 +81,17 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 
 
+# conftest.py already provides backend_name
 @pytest.fixture(scope="module")
 def backend():
     """Get the video generation backend (auto-detected)."""
+    # Keep this if you need the actual backend OBJECT,
+    # but the path generation logic is handled by conftest.py
     backend_name = get_backend_name()
     if backend_name == "none":
         pytest.skip("No video generation backend available")
     logger.info(f"Using backend: {backend_name}")
     return get_backend()
-
-
-@pytest.fixture(scope="module")
-def output_base() -> Path:
-    """Get output base directory for test results."""
-    backend_name = get_backend_name()
-    base = Path(f"outputs/tests/baseline/{backend_name}")
-    base.mkdir(parents=True, exist_ok=True)
-    return base
-
-
-@pytest.fixture
-def output_dir(output_base, request) -> Path:
-    """Get timestamped output directory for this test."""
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    test_name = request.node.name.replace("[", "_").replace("]", "")
-    out_dir = output_base / f"{test_name}_{timestamp}"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    return out_dir
 
 
 @pytest.fixture(autouse=True)

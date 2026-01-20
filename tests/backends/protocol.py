@@ -14,6 +14,57 @@ from typing import Optional
 
 import torch
 
+"""
+Backend protocol for portable LTX-2 tests.
+
+Last Updated: 2026-01-20
+
+Defines the interface that both llm_dit and ltx2 backends must implement.
+This enables writing tests that work with either implementation.
+"""
+
+import json
+from abc import ABC, abstractmethod
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
+from typing import Any, Dict, Optional
+
+import numpy as np
+import torch
+
+
+# --- NEW: JSON Serializer Helper ---
+def json_serializer(obj: Any) -> Any:
+    """JSON serializer for objects not serializable by default json code."""
+    if isinstance(obj, torch.dtype):
+        return str(obj)
+    if isinstance(obj, Path):
+        return str(obj)
+    if isinstance(obj, torch.Tensor):
+        if obj.numel() == 1:
+            return obj.item()
+        return list(obj.shape)
+    if isinstance(
+        obj,
+        (
+            np.int_,
+            np.intc,
+            np.intp,
+            np.int8,
+            np.int16,
+            np.int32,
+            np.int64,
+            np.uint8,
+            np.uint16,
+            np.uint32,
+            np.uint64,
+        ),
+    ):
+        return int(obj)
+    if isinstance(obj, (np.float_, np.float16, np.float32, np.float64)):
+        return float(obj)
+    raise TypeError(f"Type {type(obj)} not serializable")
+
 
 @dataclass
 class GenerationConfig:
@@ -37,7 +88,7 @@ class GenerationConfig:
     seed: int = 10  # Default LTX-2 seed
 
     # Model configuration
-    fp8: bool = True  # Use FP8 quantization for transformer
+    fp8: bool = False  # Use FP8 quantization for transformer
     dtype: torch.dtype = field(default=torch.bfloat16)
 
     # Conditioning (for I2V)
@@ -56,6 +107,14 @@ class GenerationConfig:
         if self.width % 32 != 0:
             raise ValueError(f"width must be divisible by 32 (got {self.width})")
 
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dict, safe for JSON logging."""
+        d = asdict(self)
+        # Remove raw tensor from logs
+        if "conditioning_image" in d:
+            del d["conditioning_image"]
+        return d
+
 
 # =============================================================================
 # Standard Configurations (Single Source of Truth)
@@ -73,7 +132,7 @@ REFERENCE_CONFIG = GenerationConfig(
     num_inference_steps=40,
     guidance_scale=4.0,
     seed=10,  # Official default seed
-    fp8=True,
+    fp8=False,
 )
 
 SHORT_CONFIG = GenerationConfig(
@@ -84,7 +143,7 @@ SHORT_CONFIG = GenerationConfig(
     num_inference_steps=30,
     guidance_scale=3.0,
     seed=10,
-    fp8=True,
+    fp8=False,
 )
 
 SMOKE_CONFIG = GenerationConfig(
@@ -238,13 +297,9 @@ class GenerationInputs:
         )
         logger.info("-" * 40)
         logger.info(f"Transformer: {self.transformer_path}")
-        logger.info(
-            f"  dtype={self.transformer_dtype}, quant={self.transformer_quantization}"
-        )
+        logger.info(f"  dtype={self.transformer_dtype}, quant={self.transformer_quantization}")
         logger.info(f"Text Encoder: {self.text_encoder_path}")
-        logger.info(
-            f"  dtype={self.text_encoder_dtype}, quant={self.text_encoder_quantization}"
-        )
+        logger.info(f"  dtype={self.text_encoder_dtype}, quant={self.text_encoder_quantization}")
         logger.info(f"VAE: {self.vae_path}, dtype={self.vae_dtype}")
         logger.info("-" * 40)
         logger.info(
@@ -416,35 +471,23 @@ class GenerationResult:
 
     def save_metadata(self, path: Path) -> None:
         """Save generation metadata to JSON."""
-        import json
-
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
 
         metadata = {
             "prompt": self.prompt,
             "backend": self.backend_name,
-            "config": {
-                "num_frames": self.config.num_frames if self.config else 0,
-                "height": self.config.height if self.config else 0,
-                "width": self.config.width if self.config else 0,
-                "num_inference_steps": self.config.num_inference_steps
-                if self.config
-                else 0,
-                "guidance_scale": self.config.guidance_scale if self.config else 0,
-                "seed": self.config.seed if self.config else 0,
-                "fp8": self.config.fp8 if self.config else False,
-            },
+            # --- UPDATED: Uses to_dict() to capture ALL fields automatically ---
+            "config": self.config.to_dict() if self.config else None,
+            "stats": self.stats.to_dict() if self.stats else None,
             "text_embedding_shape": list(self.text_embedding_shape)
             if self.text_embedding_shape
             else None,
         }
 
-        if self.stats:
-            metadata["stats"] = self.stats.to_dict()
-
+        # Uses the json_serializer helper defined at the top of protocol.py
         with open(path, "w") as f:
-            json.dump(metadata, f, indent=2)
+            json.dump(metadata, f, indent=2, default=json_serializer)
 
 
 class Backend(ABC):

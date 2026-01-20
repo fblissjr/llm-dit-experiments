@@ -104,13 +104,44 @@ def main():
         dtype=torch.bfloat16,
         max_sequence_length=256,
         connectors_path="models/LTX-2/connectors/diffusion_pytorch_model.safetensors",
-        use_connector=True,
+        use_connector=False,  # Disable connector to see raw feature extractor output
         load_in_8bit=True,  # Use 8-bit for memory efficiency
     )
 
     # Encode test prompt
-    print("\nEncoding prompt...")
+    print("\nEncoding prompt (WITHOUT CONNECTOR)...")
     prompt = "A fluffy orange cat walking through a sunny garden"
+    output = encoder.encode(prompt)
+
+    print("\n--- Raw Feature Extractor Output (no connector) ---")
+    embeddings_raw = output.embeddings[0]
+    print(f"Shape: {embeddings_raw.shape}")
+    print(f"Mean: {embeddings_raw.mean():.6f}")
+    print(f"Std: {embeddings_raw.std():.6f}")
+    embeddings_raw_f = embeddings_raw.to(torch.float32)
+    per_dim_mean_raw = embeddings_raw_f.mean(dim=0)
+    per_dim_std_raw = embeddings_raw_f.std(dim=0)
+    print(f"Per-dim mean range: [{per_dim_mean_raw.min():.4f}, {per_dim_mean_raw.max():.4f}]")
+    print(f"Per-dim std range: [{per_dim_std_raw.min():.4f}, {per_dim_std_raw.max():.4f}]")
+
+    del encoder
+    import gc
+    gc.collect()
+    torch.cuda.empty_cache()
+
+    # Now load WITH connector
+    print("\n\nLoading Gemma3Encoder WITH connector...")
+    encoder = Gemma3Encoder(
+        model_id="models/LTX-2/text_encoder",
+        device="cuda",
+        dtype=torch.bfloat16,
+        max_sequence_length=256,
+        connectors_path="models/LTX-2/connectors/diffusion_pytorch_model.safetensors",
+        use_connector=True,
+        load_in_8bit=True,
+    )
+
+    print("\nEncoding prompt (WITH CONNECTOR)...")
     output = encoder.encode(prompt)
 
     embeddings = output.embeddings[0]  # [seq_len, 3840]

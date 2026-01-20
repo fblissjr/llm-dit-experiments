@@ -49,23 +49,11 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 # Fixtures
 # =============================================================================
-
+# This injects the string "ltx2" into the conftest.py logic so your folders are named ltx2_test_name
 @pytest.fixture(scope="module")
-def output_base() -> Path:
-    """Get output base directory for test results."""
-    base = Path("outputs/tests/ltx2")
-    base.mkdir(parents=True, exist_ok=True)
-    return base
-
-
-@pytest.fixture
-def output_dir(output_base, request) -> Path:
-    """Get timestamped output directory for this test."""
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    test_name = request.node.name.replace("[", "_").replace("]", "")
-    out_dir = output_base / f"{test_name}_{timestamp}"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    return out_dir
+def backend_name():
+    """Force backend name for directory generation in conftest.py."""
+    return "ltx2"
 
 
 @pytest.fixture(autouse=True)
@@ -103,7 +91,6 @@ def sufficient_vram() -> bool:
 
 from llm_dit.models.ltx2 import DEFAULT_SEED
 
-
 # =============================================================================
 # Test Prompts
 # =============================================================================
@@ -119,6 +106,7 @@ REFERENCE_PROMPTS = {
 # Test Classes
 # =============================================================================
 
+
 class TestLTX2ReferenceSmoke:
     """Quick smoke tests with reduced parameters."""
 
@@ -130,8 +118,8 @@ class TestLTX2ReferenceSmoke:
         Tests the full pipeline: encode -> generate -> verify output.
         Uses FP8 quantization to fit 13B model on 24GB GPU.
         """
-        from llm_dit.models.ltx2 import load_ltx2_transformer_quantized
         from llm_dit.encoders import Gemma3Encoder
+        from llm_dit.models.ltx2 import load_ltx2_transformer_quantized
         from llm_dit.pipelines.generate import GenerationConfig, generate_video
 
         logger.info(f"Output: {output_dir}")
@@ -169,8 +157,8 @@ class TestLTX2ReferenceSmoke:
         logger.info("Generating...")
         config = GenerationConfig(
             num_frames=5,  # Minimal: 1 latent frame
-            height=256,    # Reduced for memory
-            width=384,     # Reduced for memory
+            height=256,  # Reduced for memory
+            width=384,  # Reduced for memory
             num_inference_steps=2,  # Minimal steps
             guidance_scale=1.0,  # Disable CFG to save memory
             seed=DEFAULT_SEED,
@@ -227,8 +215,8 @@ class TestLTX2ReferenceT2V:
     @pytest.mark.skipif(not sufficient_vram(), reason="Insufficient VRAM")
     def test_reference_t2v_short(self, output_dir):
         """Reference T2V with official params but shorter video (33 frames)."""
-        from llm_dit.models.ltx2 import load_ltx2_transformer_quantized
         from llm_dit.encoders import Gemma3Encoder
+        from llm_dit.models.ltx2 import load_ltx2_transformer_quantized
         from llm_dit.pipelines.generate import GenerationConfig, generate_video
 
         logger.info(f"Output: {output_dir}")
@@ -257,11 +245,11 @@ class TestLTX2ReferenceT2V:
         # Note: Full reference params (512x768, 33 frames, CFG 4.0) require >24GB VRAM
         # Using reduced params to validate pipeline works; full reference needs 48GB+
         config = GenerationConfig(
-            num_frames=9,           # Reduced: 1 latent frame
-            height=384,             # Reduced for memory
-            width=512,              # Reduced for memory
-            num_inference_steps=10, # Reduced: still reasonable quality
-            guidance_scale=1.0,     # Disable CFG to save memory
+            num_frames=9,  # Reduced: 1 latent frame
+            height=384,  # Reduced for memory
+            width=512,  # Reduced for memory
+            num_inference_steps=10,  # Reduced: still reasonable quality
+            guidance_scale=1.0,  # Disable CFG to save memory
             seed=DEFAULT_SEED,
         )
 
@@ -315,10 +303,10 @@ class TestLTX2ReferenceI2V:
         Uses synthetic latent as stand-in for VAE-encoded image.
         Validates conditioning pipeline works end-to-end.
         """
-        from llm_dit.models.ltx2 import load_ltx2_transformer_quantized
-        from llm_dit.encoders import Gemma3Encoder
-        from llm_dit.pipelines.generate import GenerationConfig, generate_video
         from llm_dit.conditioning import VideoConditionByLatentIndex
+        from llm_dit.encoders import Gemma3Encoder
+        from llm_dit.models.ltx2 import load_ltx2_transformer_quantized
+        from llm_dit.pipelines.generate import GenerationConfig, generate_video
 
         logger.info(f"Output: {output_dir}")
 
@@ -351,7 +339,11 @@ class TestLTX2ReferenceI2V:
         h_latent = test_height // 32
         w_latent = test_width // 32
         image_latent = torch.randn(
-            1, 128, 1, h_latent, w_latent,
+            1,
+            128,
+            1,
+            h_latent,
+            w_latent,
             device="cuda",
             dtype=torch.bfloat16,
         )
@@ -365,12 +357,11 @@ class TestLTX2ReferenceI2V:
 
         # Generate with conditioning (reduced params for 24GB)
         config = GenerationConfig(
-            num_frames=9,           # Reduced: 1 latent frame
-            height=test_height,     # Reduced for memory
-            width=test_width,       # Reduced for memory
-            num_inference_steps=10, # Reduced but reasonable
-            guidance_scale=1.0,     # Disable CFG to save memory
-            seed=DEFAULT_SEED,
+            num_frames=9,  # Reduced: 1 latent frame
+            height=test_height,  # Reduced for memory
+            width=test_width,  # Reduced for memory
+            num_inference_steps=10,  # Reduced but reasonable
+            guidance_scale=1.0,  # Disable CFG to save memory
         )
 
         # Clear memory before generation
