@@ -358,15 +358,15 @@ def generate_video(
         sigma = sigmas[i]
         sigma_next = sigmas[i + 1]
 
-        # Timestep for model in [0, 1000] range (LTX-2 convention)
-        # When conditioning is used, timesteps are per-token scaled by denoise_mask
+        # Timestep for model in [0, 1] range - sigma values directly
+        # LTX-2 uses sigma values in [0, 1] as timesteps, NOT scaled by 1000
         if denoise_mask is not None:
             # Per-token timesteps: conditioned regions get lower timesteps
             timestep = timesteps_from_mask(denoise_mask, sigma)
             timestep = timestep.squeeze(-1)  # [B, T, 1] -> [B, T] for Modality
         else:
-            # Uniform timesteps for standard T2V
-            timestep = (sigma * 1000).expand(1, num_tokens)
+            # Uniform timesteps for standard T2V - sigma directly, no scaling!
+            timestep = sigma.expand(1, num_tokens)
 
         # Classifier-free guidance
         if config.guidance_scale > 1.0:
@@ -393,8 +393,9 @@ def generate_video(
             velocity, _ = model(video=modality)
 
         # Euler step: x_{t-1} = x_t + v * dt
+        # Use float32 for numerical stability (LTX-2 reference does this)
         dt = sigma_next - sigma
-        denoised = latents + velocity * dt
+        denoised = (latents.float() + velocity.float() * dt).to(latents.dtype)
 
         # Post-process: blend with clean_latent based on denoise_mask
         # This preserves conditioned regions (mask=0) while denoising others
