@@ -425,6 +425,7 @@ def generate_video(
                 print(f"[DEBUG COND PASS - Step {i}]")
                 model.transformer_blocks[0].attn2._debug_cross_attn = True  # Re-enable for cond pass
                 model.transformer_blocks[0].attn2._debug_cross_attn_post = True
+                model.args_preprocessor._debug_context = True  # Debug caption projection
             cond_modality = create_video_modality(latents, timestep, positions, prompt_embeds)
             velocity_cond, _ = model(video=cond_modality)
             del cond_modality  # Free modality tensor

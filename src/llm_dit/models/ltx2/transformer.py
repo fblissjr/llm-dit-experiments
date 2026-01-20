@@ -164,7 +164,26 @@ class TransformerArgsPreprocessor:
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         """Prepare context (text conditioning) for transformer blocks."""
         batch_size = x.shape[0]
+
+        # FIX: Center embeddings per-dimension before caption_projection
+        # Our Gemma encoder outputs embeddings with large per-dim mean offsets
+        # (range [-8.7, 12.4]) which causes GELU to crush variance after linear_1
+        # Centering prevents the negative mean shift that triggers GELU's dead zone
+        context = context - context.mean(dim=1, keepdim=True)
+
+        # DEBUG: Check context BEFORE caption_projection
+        if hasattr(self, '_debug_context') and self._debug_context:
+            print(f"[DEBUG CONTEXT] Before projection: mean={context.mean():.4f}, std={context.std():.4f}")
+            per_dim_mean = context.mean(dim=(0, 1))
+            print(f"[DEBUG CONTEXT] Per-dim mean range: [{per_dim_mean.min():.4f}, {per_dim_mean.max():.4f}]")
+
         context = self.caption_projection(context)
+
+        # DEBUG: Check context AFTER caption_projection
+        if hasattr(self, '_debug_context') and self._debug_context:
+            print(f"[DEBUG CONTEXT] After projection: mean={context.mean():.4f}, std={context.std():.4f}")
+            self._debug_context = False  # Only print once
+
         context = context.view(batch_size, -1, x.shape[-1])
         return context, attention_mask
 
@@ -336,23 +355,42 @@ class BasicTransformerBlock(nn.Module):
             self.scale_shift_table, batch_size, args.timesteps, slice(0, 3)
         )
 
-        # DEBUG: Track AdaLN gate values at block 0
-        if self.idx == 0 and hasattr(self, '_debug_step') and self._debug_step in [0, 20, 39]:
-            gate_mean = gate_msa.mean().item()
-            gate_std = gate_msa.std().item()
-            gate_min = gate_msa.min().item()
-            gate_max = gate_msa.max().item()
-            scale_mean = scale_msa.mean().item()
-            print(f"[AdaLN DEBUG] Block 0, Step {self._debug_step}: gate_msa mean={gate_mean:.4f}, std={gate_std:.4f}, range=[{gate_min:.4f}, {gate_max:.4f}], scale_msa mean={scale_mean:.4f}")
+        # DEBUG: Track variance at each stage in block 0
+        _debug_block0 = self.idx == 0 and hasattr(self, '_debug_step') and self._debug_step in [0, 20, 39]
+        if _debug_block0:
+            x_in_inter = x.std(dim=1).mean().item()
+            print(f"[VARIANCE TRACE] Block 0, Step {self._debug_step}:")
+            print(f"  1. x input inter-token std: {x_in_inter:.4f}")
 
         # Self-attention with RoPE
         norm_x = rms_norm(x, eps=self.norm_eps) * (1 + scale_msa) + shift_msa
+
+        if _debug_block0:
+            norm_x_inter = norm_x.std(dim=1).mean().item()
+            print(f"  2. after RMSNorm+AdaLN inter-token std: {norm_x_inter:.4f}")
+
         self_attn_out = self.attn1(norm_x, pe=args.positional_embeddings) * gate_msa
+
+        if _debug_block0:
+            self_attn_inter = self_attn_out.std(dim=1).mean().item()
+            gate_mean = gate_msa.mean().item()
+            print(f"  3. self_attn_out*gate inter-token std: {self_attn_inter:.4f} (gate_mean={gate_mean:.4f})")
+
         x = x + self_attn_out
 
+        if _debug_block0:
+            x_post_self_inter = x.std(dim=1).mean().item()
+            print(f"  4. x after self-attn residual inter-token std: {x_post_self_inter:.4f}")
+
         # Cross-attention with text conditioning
+        norm_x_cross = rms_norm(x, eps=self.norm_eps)
+
+        if _debug_block0:
+            norm_x_cross_inter = norm_x_cross.std(dim=1).mean().item()
+            print(f"  5. after 2nd RMSNorm (cross-attn input) inter-token std: {norm_x_cross_inter:.4f}")
+
         cross_attn_out = self.attn2(
-            rms_norm(x, eps=self.norm_eps),
+            norm_x_cross,
             context=args.context,
             mask=args.context_mask
         )
