@@ -61,15 +61,15 @@ def main():
     from ltx_pipelines.utils.media_io import encode_video
     from ltx_pipelines.utils import ModelLedger
 
-    # Parameters
+    # Parameters - very small for memory testing
     prompt = "A fluffy orange cat sleeping peacefully on a soft red couch"
     negative_prompt = ""
     seed = 42
-    height = 512
-    width = 768
-    num_frames = 65  # Smaller for memory
+    height = 256
+    width = 384
+    num_frames = 17  # Minimum for testing
     frame_rate = 25.0
-    num_inference_steps = 30
+    num_inference_steps = 15
     cfg_guidance_scale = 4.0
     output_path = "outputs/reference_output.mp4"
 
@@ -78,10 +78,13 @@ def main():
 
     # Encode both prompts at once using already-loaded text encoder
     logger.info(f"\nEncoding prompts: '{prompt}' and '{negative_prompt}'")
-    with torch.inference_mode():
+    with torch.no_grad():
         context_p, context_n = encode_text(text_encoder, prompts=[prompt, negative_prompt])
-        v_context_p, a_context_p = context_p
-        v_context_n, a_context_n = context_n
+        # Clone to ensure tensors are not in inference mode
+        v_context_p = context_p[0].clone()
+        a_context_p = context_p[1].clone()
+        v_context_n = context_n[0].clone()
+        a_context_n = context_n[1].clone()
 
     logger.info(f"Positive video context shape: {v_context_p.shape}")
     logger.info(f"Positive video context mean: {v_context_p.float().mean():.4f}")
