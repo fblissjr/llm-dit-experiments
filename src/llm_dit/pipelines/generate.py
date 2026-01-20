@@ -104,16 +104,18 @@ def create_position_indices(
     width: int,
     device: torch.device,
     fps: float = 24.0,
+    scale_factors: tuple[int, int, int] = (8, 32, 32),
+    causal_fix: bool = True,
 ) -> torch.Tensor:
     """
-    Create 3D position indices [B, 3, T, 2] for video (temporal, height, width).
+    Create 3D position indices [B, 3, T, 2] in PIXEL space for RoPE.
 
-    LTX-2 uses position bounds [start, end) for each patch to enable temporal
-    interpolation with use_middle_indices_grid=True. The model computes the
-    middle point of each patch's bounds for RoPE.
+    LTX-2's 3D RoPE requires positions in pixel coordinates, not latent indices.
+    This function creates position bounds [start, end) for each patch, scaled
+    to pixel space by multiplying by scale_factors.
 
     LTX-2 VAE compression: 32x spatial, 8x temporal.
-    Reference: coderef/LTX-2/ltx-core/components/patchifiers.py
+    Reference: coderef/LTX-2/ltx-core/components/patchifiers.py:get_pixel_coords
 
     Args:
         batch_size: Batch size
@@ -122,39 +124,52 @@ def create_position_indices(
         width: Video width in pixels
         device: Target device
         fps: Frames per second (for temporal scaling, default 24)
+        scale_factors: (time, height, width) compression factors (default 8, 32, 32)
+        causal_fix: Apply causal fix for temporal dimension (default True)
 
     Returns:
         Position indices tensor [B, 3, T, 2] where:
         - T = t_latent * h_latent * w_latent (flattened patches)
-        - Last dim is [start, end] bounds
+        - Last dim is [start, end] bounds in PIXEL coordinates
         - Temporal dim (positions[:, 0]) is scaled to seconds
     """
+    # Calculate latent dimensions
     t_latent = (num_frames - 1) // 8 + 1
     h_latent = height // 32
     w_latent = width // 32
 
-    # Create meshgrid of position indices
-    t_indices = torch.arange(t_latent, device=device)
-    h_indices = torch.arange(h_latent, device=device)
-    w_indices = torch.arange(w_latent, device=device)
+    # Create meshgrid of latent position indices (0, 1, 2...)
+    t_indices = torch.arange(t_latent, device=device, dtype=torch.float32)
+    h_indices = torch.arange(h_latent, device=device, dtype=torch.float32)
+    w_indices = torch.arange(w_latent, device=device, dtype=torch.float32)
 
     # Create 3D grid: [t_latent, h_latent, w_latent]
-    # Order is (t, h, w) matching the official implementation
     grid_t, grid_h, grid_w = torch.meshgrid(t_indices, h_indices, w_indices, indexing="ij")
 
-    # Create start and end positions (each patch spans [start, start+1))
+    # Create start and end positions (each patch spans [start, start+1) in latent space)
     # Shape: [3, t_latent, h_latent, w_latent]
-    patch_starts = torch.stack([grid_t, grid_h, grid_w], dim=0).float()
+    patch_starts = torch.stack([grid_t, grid_h, grid_w], dim=0)
     patch_ends = patch_starts + 1.0
 
     # Stack start/end into bounds: [3, t_latent, h_latent, w_latent, 2]
     positions = torch.stack([patch_starts, patch_ends], dim=-1)
 
+    # CRITICAL: Convert to pixel coordinates by multiplying by scale factors
+    # This is the key fix - positions must be in pixel space for RoPE
+    scale_tensor = torch.tensor(scale_factors, device=device, dtype=torch.float32)
+    scale_tensor = scale_tensor.view(3, 1, 1, 1, 1)  # [3, 1, 1, 1, 1] for broadcast
+    positions = positions * scale_tensor
+
+    # Apply causal fix for temporal dimension (matches reference)
+    # This adjusts temporal positions for causal attention
+    if causal_fix:
+        positions[0] = (positions[0] + 1 - scale_factors[0]).clamp(min=0)
+
     # Flatten spatial dims: [3, T, 2] where T = t_latent * h_latent * w_latent
     positions = positions.view(3, -1, 2)
 
     # Scale temporal positions to seconds (divide by fps)
-    # This matches official: positions[:, 0, ...] = positions[:, 0, ...] / self.fps
+    # This must happen AFTER pixel conversion
     positions[0] = positions[0] / fps
 
     # Expand for batch: [B, 3, T, 2]
@@ -320,7 +335,14 @@ def generate_video(
             dtype=dtype,
         )
         positions = create_position_indices(
-            1, config.num_frames, config.height, config.width, device
+            batch_size=1,
+            num_frames=config.num_frames,
+            height=config.height,
+            width=config.width,
+            device=device,
+            fps=24.0,
+            scale_factors=(8, 32, 32),  # LTX-2 VAE compression factors
+            causal_fix=True,
         )
         denoise_mask = None
         clean_latent = None
