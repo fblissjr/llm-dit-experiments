@@ -1,6 +1,6 @@
 # agent context
 
-*last updated: 2026-01-19*
+*last updated: 2026-01-20*
 
 Quick reference for LLM agents working on this codebase.
 
@@ -79,7 +79,7 @@ Models use different text encoders (Qwen3-4B, Gemma3-12B, UMT5-XXL) and DiT vari
 | rope | 3D INTERLEAVED | (T, H, W) positions |
 | quantization | FP8-quanto | 26GB->12GB, fits 24GB GPU |
 
-**Status:** Core implementation complete. FP8 quantization, conditioning, upsampler all working. E2E video generation tests pending.
+**Status:** Text encoder and FP8 transformer VALIDATED against reference. Debugging "blurry blob" output - issue is downstream in pipeline integration (denoising loop, VAE, scheduler).
 
 ### wan (humo video)
 

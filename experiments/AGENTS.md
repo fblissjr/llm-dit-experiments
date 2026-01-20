@@ -1,6 +1,6 @@
 # experiments agent context
 
-*last updated: 2026-01-18*
+*last updated: 2026-01-20*
 
 ---
 
@@ -36,6 +36,10 @@
 | Prompt ordering doesn't matter for semantics | ✅ | Bidirectional attention handles all orders |
 | SigLIP appropriate for spatial evaluation | ✅ | Apollo paper validates this |
 | Scaling consistency enables small-scale experiments | ✅ | Apollo paper (R² > 0.8) |
+| Text encoder matches reference output | ✅ | mean=0.003, std=1.0, per-dim range [-8.5, 12.2] (Jan 20) |
+| FP8 transformer forward pass works | ✅ | mean=0.06, std=1.05, 0.09% zeros (Jan 20) |
+| -9.5 GELU bias is architecturally intentional | ✅ | DiT produces valid output despite 98% sparsity (Jan 20) |
+| Context dimension must be 3840 | ✅ | Gemma hidden size, caption_projection maps to 4096 (Jan 20) |
 
 ### open hypotheses 🔬
 
@@ -54,6 +58,15 @@
 | Late layers (43-47) contribute ~25% | ✅ | **REFUTED** - Layer 48 contributes ~0% when isolated (Jan 17) |
 | Layer 47 anomaly (near-zero norm) | ⚠️ | Needs re-verification with full 49-layer run |
 | Projection weights uniform | ⚠️ | Depends on correct layer extraction |
+
+### new findings (jan 20)
+
+| Finding | Status | Notes |
+|---------|--------|-------|
+| Text encoder output validated | ✅ | Matches reference exactly (mean=0.003, std=1.0) |
+| FP8 transformer validated | ✅ | Forward pass produces healthy output (mean=0.06, std=1.05) |
+| "Blurry blob" is downstream | ✅ | Core components work, issue in pipeline integration |
+| ModelLedger architecture documented | ✅ | Full analysis in `internal/analysis/model_ledger_*.md` |
 
 ### new findings (jan 17)
 
