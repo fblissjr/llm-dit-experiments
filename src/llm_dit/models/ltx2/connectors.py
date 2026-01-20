@@ -609,11 +609,13 @@ class LTX2TextConnectors(nn.Module):
         # Convert to additive attention mask if needed
         if not additive_mask:
             text_dtype = text_encoder_hidden_states.dtype
+            # Ensure mask is float (handles bool tensors)
+            mask_float = attention_mask.to(text_dtype)
             # Binary (0,1) -> Additive (-inf, 0): mask = (mask - 1) * inf
-            attn_mask = (attention_mask - 1).reshape(
+            attn_mask = (mask_float - 1).reshape(
                 attention_mask.shape[0], 1, 1, attention_mask.shape[-1]
             )
-            attn_mask = attn_mask.to(text_dtype) * torch.finfo(text_dtype).max
+            attn_mask = attn_mask * torch.finfo(text_dtype).max
         else:
             attn_mask = attention_mask
 

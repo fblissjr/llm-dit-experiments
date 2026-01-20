@@ -580,15 +580,22 @@ def generate_video_with_offloading(
         )
         model = model.to("cuda")
 
-    # Load connectors from dedicated connectors/ directory
-    from llm_dit.models.ltx2.connectors import load_ltx2_connectors
+    # Only load connectors if embeddings need processing (188160 -> 3840 projection)
+    # Our Gemma3Encoder already outputs 3840-dim via internal Embeddings1DConnector
+    embed_dim = prompt_embeds.shape[-1]
+    connectors = None
+    if embed_dim == 188160:
+        from llm_dit.models.ltx2.connectors import load_ltx2_connectors
 
-    connectors_path = model_path / "connectors"
-    connectors = load_ltx2_connectors(
-        connectors_path,
-        device="cuda",
-        dtype=dtype,
-    )
+        connectors_path = model_path / "connectors"
+        connectors = load_ltx2_connectors(
+            connectors_path,
+            device="cuda",
+            dtype=dtype,
+        )
+        logger.info("Loaded connectors for 188160 -> 3840 projection")
+    else:
+        logger.info(f"Skipping connectors (embed_dim={embed_dim} already projected)")
 
     logger.info(f"Transformer loaded: {model.get_num_params() / 1e9:.2f}B params")
 

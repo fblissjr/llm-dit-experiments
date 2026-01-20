@@ -814,8 +814,14 @@ class Gemma3Encoder:
         batch_size = len(texts)
 
         # Build per-sample outputs (EncodingOutput expects List[Tensor])
-        embedding_list = [embeddings[i, : int(seq_lengths[i])] for i in range(batch_size)]
-        mask_list = [attention_mask[i, : int(seq_lengths[i])].bool() for i in range(batch_size)]
+        # NOTE: Gemma uses LEFT padding, so valid tokens are at the END of the sequence.
+        # We must extract by mask position, not by slicing from start.
+        embedding_list = []
+        mask_list = []
+        for i in range(batch_size):
+            valid_mask = attention_mask[i].bool()
+            embedding_list.append(embeddings[i][valid_mask])
+            mask_list.append(valid_mask[valid_mask])
 
         return EncodingOutput(
             embeddings=embedding_list,
