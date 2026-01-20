@@ -508,8 +508,9 @@ class Embeddings1DConnector(nn.Module):
         self.num_learnable_registers = num_learnable_registers
         if num_learnable_registers:
             # Initialize uniformly in [-1, 1] like LTX-2 reference
+            # Don't hardcode dtype - let .to() calls handle dtype conversion
             self.learnable_registers = nn.Parameter(
-                torch.rand(num_learnable_registers, self.inner_dim, dtype=torch.bfloat16) * 2.0 - 1.0
+                torch.rand(num_learnable_registers, self.inner_dim) * 2.0 - 1.0
             )
 
     def _replace_padded_with_learnable_registers(
