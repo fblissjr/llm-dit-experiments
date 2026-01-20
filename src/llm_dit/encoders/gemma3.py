@@ -507,7 +507,7 @@ class Gemma3Encoder:
         return encoder
 
     def _load_model(self) -> None:
-        """Load Gemma 3 model and tokenizer."""
+        """Load Gemma 3 model and tokenizer from LOCAL LTX-2 files."""
         if self._is_loaded:
             return
 
@@ -519,7 +519,11 @@ class Gemma3Encoder:
             # Fallback for older transformers without Gemma3ForConditionalGeneration
             Gemma3ForConditionalGeneration = AutoModelForCausalLM
 
-        logger.info(f"Loading Gemma 3 encoder from {self._model_id}")
+        # CLEAN SWEEP: Load Gemma model from LOCAL text_encoder shards
+        # The text_encoder folder contains jointly-trained weights that are
+        # the AUTHORITATIVE source. Using HuggingFace weights misses the
+        # ~6k special tokens (Thinking Tokens, BOI, EOI) that drive video generation.
+        logger.info(f"Loading Gemma 3 encoder from LOCAL: {self._tokenizer_path}")
 
         # Build quantization config if needed
         quantization_config = None
@@ -539,9 +543,11 @@ class Gemma3Encoder:
         elif self._device_str != "cpu":
             device_map = {"": self._device_str}
 
-        # Load model
+        # Load model from LOCAL text_encoder path
+        # This loads the jointly-trained Gemma weights with LTX-2 special tokens
         self._model = Gemma3ForConditionalGeneration.from_pretrained(
-            self._model_id,
+            self._tokenizer_path,  # Use local text_encoder path
+            local_files_only=True,  # CRITICAL: Never fall back to HuggingFace
             dtype=self._dtype,
             device_map=device_map,
             quantization_config=quantization_config,
