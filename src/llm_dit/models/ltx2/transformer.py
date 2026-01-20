@@ -338,14 +338,27 @@ class BasicTransformerBlock(nn.Module):
 
         # Self-attention with RoPE
         norm_x = rms_norm(x, eps=self.norm_eps) * (1 + scale_msa) + shift_msa
-        x = x + self.attn1(norm_x, pe=args.positional_embeddings) * gate_msa
+        self_attn_out = self.attn1(norm_x, pe=args.positional_embeddings) * gate_msa
+        x = x + self_attn_out
 
         # Cross-attention with text conditioning
-        x = x + self.attn2(
+        cross_attn_out = self.attn2(
             rms_norm(x, eps=self.norm_eps),
             context=args.context,
             mask=args.context_mask
         )
+        x = x + cross_attn_out
+
+        # DEBUG: Log attention magnitudes for diagnostic blocks
+        if self.idx in [0, 23, 47] and hasattr(self, '_debug_step'):
+            if self._debug_step in [0, 20, 39]:
+                x_inter_token = x.std(dim=1).mean()  # Variation across tokens
+                self_attn_inter = self_attn_out.std(dim=1).mean()
+                print(f"[ATTN DEBUG] Block {self.idx}, Step {self._debug_step}:")
+                print(f"  x inter-token std: {x_inter_token:.6f}")
+                print(f"  self_attn inter-token std: {self_attn_inter:.6f}")
+                print(f"  self_attn: mean={self_attn_out.mean():.6f}, std={self_attn_out.std():.6f}")
+                print(f"  cross_attn: mean={cross_attn_out.mean():.6f}, std={cross_attn_out.std():.6f}")
 
         # Get AdaLN values for FFN
         shift_mlp, scale_mlp, gate_mlp = self.get_ada_values(

@@ -157,7 +157,15 @@ class ResnetBlock3D(nn.Module):
         hidden_states = input_tensor
         batch_size = hidden_states.shape[0]
 
+        # DEBUG: Detailed trace for 128ch blocks
+        debug_128 = hidden_states.shape[1] == 128 and not hasattr(self, '_traced')
+        if debug_128:
+            self._traced = True
+            print(f"[TRACE] Input: mean={hidden_states.mean():.4f}, std={hidden_states.std():.4f}")
+
         hidden_states = self.norm1(hidden_states)
+        if debug_128:
+            print(f"[TRACE] After norm1 (PixelNorm): mean={hidden_states.mean():.4f}, std={hidden_states.std():.4f}")
 
         # Initialize scale/shift for timestep conditioning (will be overwritten if used)
         scale2: torch.Tensor | None = None
@@ -180,7 +188,11 @@ class ResnetBlock3D(nn.Module):
             hidden_states = hidden_states * (1 + scale1) + shift1
 
         hidden_states = self.non_linearity(hidden_states)
+        if debug_128:
+            print(f"[TRACE] After SiLU: mean={hidden_states.mean():.4f}, std={hidden_states.std():.4f}")
         hidden_states = self.conv1(hidden_states, causal=causal)
+        if debug_128:
+            print(f"[TRACE] After conv1: mean={hidden_states.mean():.4f}, std={hidden_states.std():.4f}")
 
         if self.inject_noise:
             hidden_states = self._feed_spatial_noise(
@@ -190,14 +202,20 @@ class ResnetBlock3D(nn.Module):
             )
 
         hidden_states = self.norm2(hidden_states)
+        if debug_128:
+            print(f"[TRACE] After norm2 (PixelNorm): mean={hidden_states.mean():.4f}, std={hidden_states.std():.4f}")
 
         if self.timestep_conditioning:
             assert scale2 is not None and shift2 is not None  # Always set when timestep_conditioning=True
             hidden_states = hidden_states * (1 + scale2) + shift2
 
         hidden_states = self.non_linearity(hidden_states)
+        if debug_128:
+            print(f"[TRACE] After SiLU (2nd): mean={hidden_states.mean():.4f}, std={hidden_states.std():.4f}")
         hidden_states = self.dropout(hidden_states)
         hidden_states = self.conv2(hidden_states, causal=causal)
+        if debug_128:
+            print(f"[TRACE] After conv2 (final hidden): mean={hidden_states.mean():.4f}, std={hidden_states.std():.4f}")
 
         if self.inject_noise:
             hidden_states = self._feed_spatial_noise(
@@ -208,6 +226,11 @@ class ResnetBlock3D(nn.Module):
 
         input_tensor = self.norm3(input_tensor)
         input_tensor = self.conv_shortcut(input_tensor)
+
+        # DEBUG: Trace residual addition
+        if hidden_states.shape[1] == 128:  # Only trace final block (128 channels)
+            print(f"[DEBUG ResnetBlock3D (128ch)] input_tensor: mean={input_tensor.mean():.4f}, range=[{input_tensor.min():.4f}, {input_tensor.max():.4f}]")
+            print(f"[DEBUG ResnetBlock3D (128ch)] hidden_states: mean={hidden_states.mean():.4f}, range=[{hidden_states.min():.4f}, {hidden_states.max():.4f}]")
 
         output_tensor = input_tensor + hidden_states
         return output_tensor
