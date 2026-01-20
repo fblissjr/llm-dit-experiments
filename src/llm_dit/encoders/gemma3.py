@@ -549,18 +549,22 @@ class Gemma3Encoder:
             max_memory=self._max_memory,
         )
 
-        # Load tokenizer from LOCAL LTX-2 files (CRITICAL for correct token IDs)
-        # Using HuggingFace tokenizer causes vocab size mismatch:
-        # - HuggingFace Gemma: 262,144 tokens
-        # - LTX-2 local: 256,000 tokens
-        # - ~92% of token IDs differ between the two!
-        logger.info(f"Loading tokenizer from local path: {self._tokenizer_path}")
+        # Load tokenizer from LOCAL LTX-2 files (AUTHORITATIVE SOURCE)
+        # Vocab size analysis (2026-01-20):
+        # - Standard Gemma base vocab: 256,000 tokens
+        # - LTX-2 model embed_tokens: 262,208 embeddings
+        # - The ~6k extra tokens are LTX-2's special tokens:
+        #   * "Thinking Tokens" for video conditioning
+        #   * BOI (Beginning of Image), EOI (End of Image) markers
+        #   * Other special markers added during joint training
+        # - HuggingFace tokenizer has DIFFERENT special tokens (vision/multimodal)
+        # - Using HF tokenizer strips/mangles LTX-2's conditioning tokens!
+        # - MUST use local tokenizer to preserve LTX-2 special token semantics
+        logger.info(f"Loading tokenizer from LOCAL path: {self._tokenizer_path}")
         self._tokenizer = AutoTokenizer.from_pretrained(
             self._tokenizer_path,
             local_files_only=True,
             model_max_length=self._max_sequence_length,
-            # Fix Mistral regex pattern issue (see HF discussion #84)
-            # This ensures correct tokenization with the local vocabulary
         )
         self._tokenizer.padding_side = "left"  # Gemma prefers left padding
         if self._tokenizer.pad_token is None:
