@@ -48,8 +48,14 @@ from llm_dit.encoders.embeddings_connector import (
 
 logger = logging.getLogger(__name__)
 
-# Default path to LTX-2 model connectors checkpoint
-DEFAULT_CONNECTORS_PATH = "models/LTX-2/connectors/diffusion_pytorch_model.safetensors"
+# Default paths to LTX-2 model components
+# CRITICAL: Use text_encoder/ for tokenizer and connector weights (jointly trained)
+# The connectors/ folder may contain stale weights that cause signal death
+DEFAULT_TOKENIZER_PATH = "models/LTX-2/text_encoder"
+DEFAULT_TEXT_ENCODER_PATH = "models/LTX-2/text_encoder"
+DEFAULT_CONNECTOR_WEIGHTS_SHARD = "models/LTX-2/text_encoder/diffusion_pytorch_model-00011-of-00012.safetensors"
+# Legacy paths (kept for reference, do NOT use)
+_LEGACY_CONNECTORS_PATH = "models/LTX-2/connectors/diffusion_pytorch_model.safetensors"
 DEFAULT_CONNECTORS_CONFIG = "models/LTX-2/connectors/config.json"
 
 
@@ -398,6 +404,7 @@ class Gemma3Encoder:
         load_in_8bit: bool = False,
         max_memory: Optional[dict] = None,
         connectors_path: Optional[str] = None,
+        tokenizer_path: Optional[str] = None,
         use_connector: bool = True,
     ):
         """
@@ -412,8 +419,12 @@ class Gemma3Encoder:
             load_in_8bit: Apply additional 8-bit quantization.
             max_memory: Memory limits per device for CPU offloading.
                        Example: {0: "18GiB", "cpu": "32GiB"} limits GPU 0 to 18GB.
-            connectors_path: Path to connectors checkpoint (safetensors).
-                            Defaults to models/LTX-2/connectors/.
+            connectors_path: Path to connector weights (safetensors).
+                            Defaults to text_encoder shard with jointly-trained weights.
+                            IMPORTANT: Use text_encoder/ shard, NOT connectors/ (stale).
+            tokenizer_path: Path to tokenizer files. Defaults to local LTX-2 tokenizer.
+                           CRITICAL: Must use LTX-2's local tokenizer, NOT HuggingFace.
+                           Wrong tokenizer causes signal death in caption_projection.
             use_connector: Whether to use the Embeddings1DConnector (default True).
                           Set False for debugging feature extractor only.
         """
@@ -424,7 +435,8 @@ class Gemma3Encoder:
         self._load_in_4bit = load_in_4bit
         self._load_in_8bit = load_in_8bit
         self._max_memory = max_memory
-        self._connectors_path = connectors_path or DEFAULT_CONNECTORS_PATH
+        self._connectors_path = connectors_path or DEFAULT_CONNECTOR_WEIGHTS_SHARD
+        self._tokenizer_path = tokenizer_path or DEFAULT_TOKENIZER_PATH
         self._use_connector = use_connector
 
         # Model components (lazy loaded)
@@ -445,6 +457,7 @@ class Gemma3Encoder:
         quantization: Optional[str] = None,
         max_memory: Optional[dict] = None,
         connectors_path: Optional[str] = None,
+        tokenizer_path: Optional[str] = None,
         use_connector: bool = True,
         **kwargs,
     ) -> "Gemma3Encoder":
@@ -458,7 +471,10 @@ class Gemma3Encoder:
             max_sequence_length: Max sequence length.
             quantization: Additional quantization ("4bit", "8bit", or None).
             max_memory: Memory limits for CPU offloading. Example: {0: "18GiB", "cpu": "32GiB"}.
-            connectors_path: Path to connectors safetensors checkpoint.
+            connectors_path: Path to connector weights shard.
+                            Defaults to text_encoder/ jointly-trained weights.
+            tokenizer_path: Path to tokenizer files.
+                           CRITICAL: Defaults to local LTX-2 tokenizer. Do NOT use HuggingFace.
             use_connector: Whether to use Embeddings1DConnector (default True).
             **kwargs: Additional arguments.
 
@@ -481,6 +497,7 @@ class Gemma3Encoder:
             load_in_8bit=(quantization == "8bit"),
             max_memory=max_memory,
             connectors_path=connectors_path,
+            tokenizer_path=tokenizer_path,
             use_connector=use_connector,
         )
 
@@ -532,9 +549,15 @@ class Gemma3Encoder:
             max_memory=self._max_memory,
         )
 
-        # Load tokenizer
+        # Load tokenizer from LOCAL LTX-2 files (CRITICAL for correct token IDs)
+        # Using HuggingFace tokenizer causes signal death in caption_projection:
+        # - Wrong token IDs -> semantically garbage embeddings
+        # - Embeddings don't correlate with trained weights
+        # - 92.7% of GELU activations die, DiT receives no text conditioning
+        logger.info(f"Loading tokenizer from local path: {self._tokenizer_path}")
         self._tokenizer = AutoTokenizer.from_pretrained(
-            self._model_id,
+            self._tokenizer_path,
+            local_files_only=True,
             model_max_length=self._max_sequence_length,
         )
         self._tokenizer.padding_side = "left"  # Gemma prefers left padding
@@ -554,6 +577,10 @@ class Gemma3Encoder:
                     device=torch.device(self._device_str),
                     dtype=self._dtype,  # Match encoder dtype (bfloat16)
                 )
+        else:
+            # For "auto" device, still ensure dtype is correct
+            if self._embeddings_connector is not None:
+                self._embeddings_connector = self._embeddings_connector.to(dtype=self._dtype)
 
         # Set model to mode without gradients
         self._model.requires_grad_(False)
