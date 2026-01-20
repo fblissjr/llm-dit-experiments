@@ -9,13 +9,14 @@ import torch
 def main():
     from llm_dit.pipelines.generate import GenerationConfig, generate_video_with_offloading
 
+    # Official LTX-2 defaults from ltx_pipelines/utils/constants.py
     config = GenerationConfig(
-        num_frames=9,
+        num_frames=9,  # Keep short for testing
         height=256,
         width=384,
-        num_inference_steps=20,  # More steps for better quality
-        guidance_scale=3.0,
-        seed=42,  # Different seed
+        num_inference_steps=40,  # Official default
+        guidance_scale=4.0,      # Official default
+        seed=10,                 # Official default seed
     )
 
     print(f"Config: {config.num_frames} frames @ {config.height}x{config.width}")
@@ -36,12 +37,12 @@ def main():
     # Save frames as images
     from PIL import Image
     import os
-    os.makedirs("outputs/test_quality_20steps", exist_ok=True)
+    os.makedirs("outputs/test_quality_40steps", exist_ok=True)
     for i in range(video.shape[0]):
         frame = video[i].cpu().numpy()
         img = Image.fromarray(frame)
-        img.save(f"outputs/test_quality_20steps/frame_{i:03d}.png")
-    print("Saved frames to outputs/test_quality_20steps/")
+        img.save(f"outputs/test_quality_40steps/frame_{i:03d}.png")
+    print("Saved frames to outputs/test_quality_40steps/")
 
 
 if __name__ == "__main__":

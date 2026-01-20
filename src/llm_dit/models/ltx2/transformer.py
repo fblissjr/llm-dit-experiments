@@ -177,10 +177,11 @@ class TransformerArgsPreprocessor:
         if attention_mask is None or torch.is_floating_point(attention_mask):
             return attention_mask
 
-        # Convert boolean mask to large negative values for attention
+        # Convert boolean mask to additive attention mask: 0=attend, -10000=ignore
+        # Using -10000.0 like official LTX-2 (not finfo.max which can cause precision issues)
         return (attention_mask - 1).to(x_dtype).reshape(
             (attention_mask.shape[0], 1, -1, attention_mask.shape[-1])
-        ) * torch.finfo(x_dtype).max
+        ) * 10000.0  # Results in 0 for valid, -10000 for padding
 
     def _prepare_positional_embeddings(
         self,
@@ -408,8 +409,8 @@ class LTX2Transformer(nn.Module):
         positional_embedding_max_pos: Optional[list[int]] = None,
         timestep_scale_multiplier: int = 1000,
         use_middle_indices_grid: bool = True,
-        rope_type: LTXRopeType = LTXRopeType.INTERLEAVED,
-        double_precision_rope: bool = False,
+        rope_type: LTXRopeType = LTXRopeType.SPLIT,  # Official LTX-2 config.json uses "split"
+        double_precision_rope: bool = True,  # Official LTX-2 config.json uses true
     ):
         super().__init__()
 
