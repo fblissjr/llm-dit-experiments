@@ -800,28 +800,39 @@ class Gemma3Encoder:
                 self._embeddings_connector = self._embeddings_connector.to(embeddings.device)
 
             # Process through connector
-            embeddings, _ = self._embeddings_connector(embeddings, additive_mask)
+            # IMPORTANT: connector replaces padding with learnable registers
+            # After connector, ALL positions are valid (text + registers)
+            embeddings, connector_mask = self._embeddings_connector(embeddings, additive_mask)
             logger.debug(
                 f"Connector output: shape={embeddings.shape}, "
                 f"mean={embeddings.float().mean():.4f}, std={embeddings.float().std():.4f}"
             )
-
-        # Apply attention mask (note: after connector, mask may have changed)
-        embeddings = embeddings * attention_mask[:, :, None].to(embeddings.dtype)
+            # Update attention mask to the connector's output (all-valid)
+            if connector_mask is not None:
+                # Convert additive mask back to binary: 0 means valid, -10000 means invalid
+                # After connector, mask should be all zeros (all valid)
+                attention_mask = (connector_mask.squeeze(1).squeeze(1) >= -9000.0).float()
 
         # Get sequence lengths for unpadding
         seq_lengths = attention_mask.sum(dim=1).tolist()
         batch_size = len(texts)
 
         # Build per-sample outputs (EncodingOutput expects List[Tensor])
-        # NOTE: Gemma uses LEFT padding, so valid tokens are at the END of the sequence.
-        # We must extract by mask position, not by slicing from start.
+        # After connector: ALL positions are valid (original text tokens + learnable registers)
+        # We return the full sequence, not just the original text tokens
         embedding_list = []
         mask_list = []
         for i in range(batch_size):
-            valid_mask = attention_mask[i].bool()
-            embedding_list.append(embeddings[i][valid_mask])
-            mask_list.append(valid_mask[valid_mask])
+            # After connector, use full sequence (all positions valid)
+            if self._embeddings_connector is not None:
+                # Return full sequence - registers are meaningful
+                embedding_list.append(embeddings[i])
+                mask_list.append(attention_mask[i])
+            else:
+                # Without connector, extract only valid tokens (left-padding aware)
+                valid_mask = attention_mask[i].bool()
+                embedding_list.append(embeddings[i][valid_mask])
+                mask_list.append(valid_mask[valid_mask])
 
         return EncodingOutput(
             embeddings=embedding_list,
