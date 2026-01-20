@@ -346,6 +346,10 @@ def generate_video(
     # =========================================================================
     # Step 4: Denoising loop (Euler method with velocity prediction)
     # =========================================================================
+    # Clear memory before starting denoising to maximize available VRAM
+    torch.cuda.synchronize()
+    torch.cuda.empty_cache()
+
     # CRITICAL: torch.no_grad() prevents autograd from holding intermediate tensors
     # Without this, memory usage during forward pass spikes dramatically
     model.eval()  # PyTorch evaluation mode (not Python eval)
