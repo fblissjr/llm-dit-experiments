@@ -1,7 +1,7 @@
 """
 Gemma3 Encoder implementation for LTX-2.
 
-Last Updated: 2026-01-19
+Last Updated: 2026-01-20
 
 Gemma 3-12B is used as the text encoder for LTX-2 video generation.
 Architecture based on LTX-2 reference implementation.
@@ -550,15 +550,17 @@ class Gemma3Encoder:
         )
 
         # Load tokenizer from LOCAL LTX-2 files (CRITICAL for correct token IDs)
-        # Using HuggingFace tokenizer causes signal death in caption_projection:
-        # - Wrong token IDs -> semantically garbage embeddings
-        # - Embeddings don't correlate with trained weights
-        # - 92.7% of GELU activations die, DiT receives no text conditioning
+        # Using HuggingFace tokenizer causes vocab size mismatch:
+        # - HuggingFace Gemma: 262,144 tokens
+        # - LTX-2 local: 256,000 tokens
+        # - ~92% of token IDs differ between the two!
         logger.info(f"Loading tokenizer from local path: {self._tokenizer_path}")
         self._tokenizer = AutoTokenizer.from_pretrained(
             self._tokenizer_path,
             local_files_only=True,
             model_max_length=self._max_sequence_length,
+            # Fix Mistral regex pattern issue (see HF discussion #84)
+            # This ensures correct tokenization with the local vocabulary
         )
         self._tokenizer.padding_side = "left"  # Gemma prefers left padding
         if self._tokenizer.pad_token is None:
@@ -593,22 +595,28 @@ class Gemma3Encoder:
         """
         Load feature extractor and embeddings connector weights from checkpoint.
 
-        The checkpoint (connectors/diffusion_pytorch_model.safetensors) contains:
+        CRITICAL: Load from text_encoder/ shard, NOT connectors/ folder.
+        The text_encoder/ contains jointly-trained weights; connectors/ may be stale.
+
+        Shard 00011 (text_encoder/diffusion_pytorch_model-00011-of-00012.safetensors) contains:
         - text_proj_in.weight: [3840, 188160] - feature extractor linear
         - video_connector.*: embeddings connector weights
         - audio_connector.*: audio connector weights (unused for video-only)
+
+        The connectors/config.json is still used for architecture parameters.
         """
         from safetensors import safe_open
 
         connectors_path = Path(self._connectors_path)
         if not connectors_path.exists():
             logger.warning(
-                f"Connectors checkpoint not found at {connectors_path}. "
+                f"Connector weights not found at {connectors_path}. "
                 "Feature extractor will have random weights (BROKEN OUTPUT)."
             )
             return
 
         logger.info(f"Loading connector weights from {connectors_path}")
+        logger.info("NOTE: Using text_encoder shard (jointly-trained weights)")
 
         # Load weights from safetensors
         with safe_open(connectors_path, framework="pt") as f:
@@ -631,13 +639,16 @@ class Gemma3Encoder:
 
             # 2. Create and load embeddings connector
             if self._use_connector:
-                # Load config for connector parameters
-                config_path = connectors_path.parent / "config.json"
+                # Load config for connector architecture parameters
+                # Config lives in connectors/ folder, weights come from text_encoder/
+                config_path = Path(DEFAULT_CONNECTORS_CONFIG)
                 if config_path.exists():
                     with open(config_path) as cfg_file:
                         config = json.load(cfg_file)
+                    logger.info(f"Loaded connector config from {config_path}")
                 else:
                     # Default config matching LTX-2
+                    logger.warning(f"Connector config not found at {config_path}, using defaults")
                     config = {
                         "video_connector_attention_head_dim": 128,
                         "video_connector_num_attention_heads": 30,
@@ -652,7 +663,7 @@ class Gemma3Encoder:
                 # Create connector from config
                 self._embeddings_connector = Embeddings1DConnector.from_config(config)
 
-                # Load connector weights
+                # Load connector weights (video_connector.* keys in same shard)
                 load_connector_weights(
                     self._embeddings_connector,
                     connectors_path,
