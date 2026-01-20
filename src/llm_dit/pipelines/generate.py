@@ -346,7 +346,11 @@ def generate_video(
     # =========================================================================
     # Step 4: Denoising loop (Euler method with velocity prediction)
     # =========================================================================
-    for i in tqdm(range(len(sigmas) - 1), desc="Denoising"):
+    # CRITICAL: torch.no_grad() prevents autograd from holding intermediate tensors
+    # Without this, memory usage during forward pass spikes dramatically
+    model.eval()  # PyTorch evaluation mode (not Python eval)
+    with torch.no_grad():
+      for i in tqdm(range(len(sigmas) - 1), desc="Denoising"):
         sigma = sigmas[i]
         sigma_next = sigmas[i + 1]
 
