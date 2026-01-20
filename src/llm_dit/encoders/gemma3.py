@@ -507,7 +507,16 @@ class Gemma3Encoder:
         return encoder
 
     def _load_model(self) -> None:
-        """Load Gemma 3 model and tokenizer from LOCAL LTX-2 files."""
+        """Load Gemma 3 model and tokenizer with manual key remapping from LTX-2 checkpoint.
+
+        The LTX-2 checkpoint stores Gemma weights with 'base_text_encoder.*' prefix,
+        but HuggingFace's Gemma3ForConditionalGeneration expects 'model.*'.
+        When from_pretrained() encounters mismatched keys, it silently ignores them
+        and initializes with random weights - causing signal death.
+
+        Solution: Create architecture from HuggingFace, then manually load and remap
+        LTX-2 weights with correct key prefixes.
+        """
         if self._is_loaded:
             return
 
@@ -519,11 +528,7 @@ class Gemma3Encoder:
             # Fallback for older transformers without Gemma3ForConditionalGeneration
             Gemma3ForConditionalGeneration = AutoModelForCausalLM
 
-        # CLEAN SWEEP: Load Gemma model from LOCAL text_encoder shards
-        # The text_encoder folder contains jointly-trained weights that are
-        # the AUTHORITATIVE source. Using HuggingFace weights misses the
-        # ~6k special tokens (Thinking Tokens, BOI, EOI) that drive video generation.
-        logger.info(f"Loading Gemma 3 encoder from LOCAL: {self._tokenizer_path}")
+        logger.info(f"Loading Gemma 3 encoder with key remapping from: {self._tokenizer_path}")
 
         # Build quantization config if needed
         quantization_config = None
@@ -543,17 +548,73 @@ class Gemma3Encoder:
         elif self._device_str != "cpu":
             device_map = {"": self._device_str}
 
-        # Load model from LOCAL text_encoder path
-        # This loads the jointly-trained Gemma weights with LTX-2 special tokens
-        self._model = Gemma3ForConditionalGeneration.from_pretrained(
-            self._tokenizer_path,  # Use local text_encoder path
-            local_files_only=True,  # CRITICAL: Never fall back to HuggingFace
-            dtype=self._dtype,
-            device_map=device_map,
-            quantization_config=quantization_config,
-            low_cpu_mem_usage=True,
-            max_memory=self._max_memory,
+        # Step 1: Create empty model architecture from local config
+        # The config.json defines the correct architecture (vocab_size=262208, etc.)
+        # We skip automatic weight loading and do it manually with key remapping
+        from transformers import Gemma3Config
+
+        logger.info("Loading Gemma3 config from local path...")
+        config = Gemma3Config.from_pretrained(
+            self._tokenizer_path,
+            local_files_only=True,
         )
+        logger.info(
+            f"Config loaded: vocab_size={config.text_config.vocab_size}, "
+            f"hidden_size={config.text_config.hidden_size}, "
+            f"num_layers={config.text_config.num_hidden_layers}"
+        )
+
+        # Create model from config (no weights loaded yet)
+        logger.info("Creating Gemma3 model from config (weights loaded separately)...")
+        # Use _from_config to create model without loading weights
+        if hasattr(Gemma3ForConditionalGeneration, "_from_config"):
+            self._model = Gemma3ForConditionalGeneration._from_config(config)
+        else:
+            # Fallback: instantiate directly from config
+            self._model = Gemma3ForConditionalGeneration(config)
+
+        # Move to device and set dtype
+        if device_map == "auto":
+            # For auto device map, we need to use accelerate
+            from accelerate import dispatch_model, infer_auto_device_map
+
+            device_map_computed = infer_auto_device_map(
+                self._model,
+                max_memory=self._max_memory,
+                dtype=self._dtype,
+            )
+            self._model = dispatch_model(self._model, device_map_computed)
+        elif device_map is not None:
+            # Single device
+            device_name = list(device_map.values())[0] if isinstance(device_map, dict) else device_map
+            self._model = self._model.to(device=device_name, dtype=self._dtype)
+        else:
+            self._model = self._model.to(dtype=self._dtype)
+
+        # Apply quantization if requested (after loading weights)
+        if quantization_config is not None:
+            logger.warning(
+                "Quantization requested but not applied during config-based loading. "
+                "Weights will be loaded in full precision, then quantized if supported."
+            )
+
+        # Step 2: Load LTX-2 weights with key remapping
+        logger.info("Loading LTX-2 Gemma weights with key remapping...")
+        state_dict = self._load_ltx2_gemma_weights()
+
+        # Step 3: Load remapped weights into model
+        if state_dict:
+            missing, unexpected = self._model.load_state_dict(state_dict, strict=False)
+            logger.info(
+                f"Loaded LTX-2 Gemma weights: {len(state_dict)} keys loaded, "
+                f"{len(missing)} missing, {len(unexpected)} unexpected"
+            )
+            if missing:
+                logger.warning(f"Missing keys (first 10): {missing[:10]}")
+            if unexpected:
+                logger.warning(f"Unexpected keys (first 10): {unexpected[:10]}")
+        else:
+            logger.error("No LTX-2 Gemma weights loaded - model has random weights!")
 
         # Load tokenizer from LOCAL LTX-2 files (AUTHORITATIVE SOURCE)
         # Vocab size analysis (2026-01-20):
@@ -680,6 +741,85 @@ class Gemma3Encoder:
                     prefix="video_connector.",
                 )
                 logger.info("Loaded embeddings connector weights")
+
+    def _load_ltx2_gemma_weights(self) -> dict:
+        """Load and remap Gemma weights from LTX-2 checkpoint shards.
+
+        The LTX-2 checkpoint stores weights with 'base_text_encoder.*' prefix,
+        but Gemma3ForConditionalGeneration expects 'model.*'.
+
+        Key remapping:
+        - base_text_encoder.language_model.embed_tokens.weight -> model.language_model.embed_tokens.weight
+        - base_text_encoder.language_model.layers.X.* -> model.language_model.layers.X.*
+        - base_text_encoder.language_model.norm.weight -> model.language_model.norm.weight
+
+        Returns:
+            Dict of remapped state_dict keys/tensors ready for load_state_dict()
+        """
+        from safetensors import safe_open
+
+        index_path = Path(self._tokenizer_path) / "diffusion_pytorch_model.safetensors.index.json"
+        if not index_path.exists():
+            logger.error(f"Index file not found: {index_path}")
+            return {}
+
+        # Parse index to find which shards contain base_text_encoder keys
+        with open(index_path) as f:
+            index = json.load(f)
+
+        weight_map = index.get("weight_map", {})
+
+        # Find all shards that contain base_text_encoder.* keys
+        shards_to_load = set()
+        keys_to_load = []
+        for key, shard in weight_map.items():
+            if key.startswith("base_text_encoder."):
+                shards_to_load.add(shard)
+                keys_to_load.append(key)
+
+        logger.info(
+            f"Found {len(keys_to_load)} base_text_encoder keys across "
+            f"{len(shards_to_load)} shards"
+        )
+
+        # Load weights from each shard and remap keys
+        state_dict = {}
+        for shard_name in sorted(shards_to_load):
+            shard_path = Path(self._tokenizer_path) / shard_name
+            if not shard_path.exists():
+                logger.warning(f"Shard not found: {shard_path}")
+                continue
+
+            logger.debug(f"Loading shard: {shard_name}")
+            with safe_open(shard_path, framework="pt") as f:
+                for key in f.keys():
+                    if key.startswith("base_text_encoder."):
+                        # Remap: base_text_encoder.* -> model.*
+                        new_key = key.replace("base_text_encoder.", "model.", 1)
+                        tensor = f.get_tensor(key)
+                        state_dict[new_key] = tensor.to(self._dtype)
+
+        logger.info(f"Loaded and remapped {len(state_dict)} Gemma weight tensors")
+
+        # Log some statistics for verification
+        if state_dict:
+            sample_key = list(state_dict.keys())[0]
+            sample_tensor = state_dict[sample_key]
+            logger.info(
+                f"Sample key: {sample_key}, shape: {sample_tensor.shape}, "
+                f"dtype: {sample_tensor.dtype}"
+            )
+
+            # Check embed_tokens specifically (critical for tokenizer compatibility)
+            embed_key = "model.language_model.embed_tokens.weight"
+            if embed_key in state_dict:
+                embed = state_dict[embed_key]
+                logger.info(
+                    f"Embedding layer: shape={embed.shape}, "
+                    f"mean={embed.float().mean():.4f}, std={embed.float().std():.4f}"
+                )
+
+        return state_dict
 
     @property
     def info(self) -> EncoderInfo:
