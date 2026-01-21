@@ -180,9 +180,6 @@ class DepthToSpaceUpsample(nn.Module):
 
         # Convolution then depth-to-space
         x = self.conv(x, causal=causal)
-        # DEBUG: Trace DepthToSpaceUpsample conv output
-        if x.shape[1] in [4096, 2048, 1024]:  # Only trace upsample conv outputs
-            print(f"[TRACE D2S] After conv ({x.shape[1]} ch): mean={x.mean():.4f}, std={x.std():.4f}")
         x = rearrange(
             x,
             "b (c p1 p2 p3) d h w -> b c (d p1) (h p2) (w p3)",
@@ -195,18 +192,9 @@ class DepthToSpaceUpsample(nn.Module):
         if self.stride[0] == 2:
             x = x[:, :, 1:, :, :]
 
-        # DEBUG: After depth-to-space rearrange
-        if x.shape[1] in [512, 256, 128]:
-            print(f"[TRACE D2S] After rearrange ({x.shape[1]} ch): mean={x.mean():.4f}, std={x.std():.4f}")
-
         # Add residual if enabled
         if self.residual:
             assert x_in is not None  # Always set when residual=True
-            # DEBUG: Before and after residual
-            if x.shape[1] in [512, 256, 128]:
-                print(f"[TRACE D2S] Residual x_in: mean={x_in.mean():.4f}, std={x_in.std():.4f}")
             x = x + x_in
-            if x.shape[1] in [512, 256, 128]:
-                print(f"[TRACE D2S] After residual: mean={x.mean():.4f}, std={x.std():.4f}")
 
         return x

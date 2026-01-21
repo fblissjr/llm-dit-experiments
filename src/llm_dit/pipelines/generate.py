@@ -498,38 +498,21 @@ def generate_video(
     if vae is None:
         return latents
 
-    # Denormalize latents before VAE decode
-    # Check for diffusers VAE (has latents_mean attribute) or our VAE (uses config)
-    if hasattr(vae, "latents_mean") and vae.latents_mean is not None:
-        # Diffusers VAE - use its built-in normalization params
-        latents_mean = vae.latents_mean.view(1, -1, 1, 1, 1).to(device, dtype)
-        latents_std = vae.latents_std.view(1, -1, 1, 1, 1).to(device, dtype)
-        scaling_factor = getattr(vae.config, "scaling_factor", 1.0)
-        latents = latents * latents_std / scaling_factor + latents_mean
-    elif config.latents_mean is not None and config.latents_std is not None:
-        # Our VAE - use config normalization params
-        latents_mean = config.latents_mean.view(1, -1, 1, 1, 1).to(device, dtype)
-        latents_std = config.latents_std.view(1, -1, 1, 1, 1).to(device, dtype)
-        latents = latents * latents_std / config.scaling_factor + latents_mean
-
     # Decode to pixel space
     # Support both diffusers VAE (decode method) and our VAE (direct call)
     with torch.no_grad():
         if hasattr(vae, "decode"):
-            # Diffusers VAE interface
+            # Diffusers VAE interface - requires external denormalization
+            if hasattr(vae, "latents_mean") and vae.latents_mean is not None:
+                latents_mean = vae.latents_mean.view(1, -1, 1, 1, 1).to(device, dtype)
+                latents_std = vae.latents_std.view(1, -1, 1, 1, 1).to(device, dtype)
+                scaling_factor = getattr(vae.config, "scaling_factor", 1.0)
+                latents = latents * latents_std / scaling_factor + latents_mean
             video = vae.decode(latents).sample
         else:
-            # Our VideoDecoder - direct call
+            # Our VideoDecoder - handles denormalization internally via
+            # per_channel_statistics.un_normalize(), so DO NOT denormalize here
             video = vae(latents)
-
-    # =========================================================================
-    # DEBUG: VAE output statistics
-    # =========================================================================
-    print(f"[DEBUG] VAE output (pre-conversion):")
-    print(f"  Shape: {video.shape}")
-    print(f"  Mean: {video.mean():.4f}, Std: {video.std():.4f}")
-    print(f"  Range: [{video.min():.4f}, {video.max():.4f}]")
-    print(f"  Expected range: [-1, 1] for proper color conversion")
 
     # Convert to [F, H, W, C] uint8 format
     video = video.squeeze(0).permute(1, 2, 3, 0)  # [B, C, T, H, W] -> [T, H, W, C]

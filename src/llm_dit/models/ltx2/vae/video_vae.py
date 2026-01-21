@@ -568,27 +568,14 @@ class VideoDecoder(nn.Module):
             )
             sample = noise + (1.0 - self.decode_noise_scale) * sample
 
-        # Denormalize latents
-        # DEBUG: Print statistics buffers
-        std_buf = self.per_channel_statistics.get_buffer("std-of-means")
-        mean_buf = self.per_channel_statistics.get_buffer("mean-of-means")
-        print(f"[DEBUG] VAE PerChannelStatistics buffers:")
-        print(f"  std-of-means: range=[{std_buf.min():.4f}, {std_buf.max():.4f}], mean={std_buf.mean():.4f}")
-        print(f"  mean-of-means: range=[{mean_buf.min():.4f}, {mean_buf.max():.4f}], mean={mean_buf.mean():.4f}")
-        print(f"[DEBUG] Latents BEFORE un_normalize:")
-        print(f"  Mean: {sample.mean():.4f}, Std: {sample.std():.4f}, Range: [{sample.min():.4f}, {sample.max():.4f}]")
-
+        # Denormalize latents (internal normalization applied by encoder)
         sample = self.per_channel_statistics.un_normalize(sample)
-
-        print(f"[DEBUG] Latents AFTER un_normalize:")
-        print(f"  Mean: {sample.mean():.4f}, Std: {sample.std():.4f}, Range: [{sample.min():.4f}, {sample.max():.4f}]")
 
         # Use default decode_timestep if timestep not provided
         if timestep is None and self.timestep_conditioning:
             timestep = torch.full((batch_size,), self.decode_timestep, device=sample.device, dtype=sample.dtype)
 
         sample = self.conv_in(sample, causal=self.causal)
-        print(f"[DEBUG] After conv_in: mean={sample.mean():.4f}, std={sample.std():.4f}, range=[{sample.min():.4f}, {sample.max():.4f}]")
 
         scaled_timestep = None
         if self.timestep_conditioning:
@@ -608,11 +595,8 @@ class VideoDecoder(nn.Module):
                 sample = up_block(sample, causal=self.causal, generator=generator)
             else:
                 sample = up_block(sample, causal=self.causal)
-            # Print all blocks to trace the issue
-            print(f"[DEBUG] After up_block[{i}] ({type(up_block).__name__}): mean={sample.mean():.4f}, std={sample.std():.4f}, range=[{sample.min():.4f}, {sample.max():.4f}]")
 
         sample = self.conv_norm_out(sample)
-        print(f"[DEBUG] After conv_norm_out: mean={sample.mean():.4f}, std={sample.std():.4f}, range=[{sample.min():.4f}, {sample.max():.4f}]")
 
         if self.timestep_conditioning:
             assert scaled_timestep is not None  # Always set when timestep_conditioning=True
@@ -635,9 +619,7 @@ class VideoDecoder(nn.Module):
             sample = sample * (1 + scale) + shift
 
         sample = self.conv_act(sample)
-        print(f"[DEBUG] After conv_act (SiLU): mean={sample.mean():.4f}, std={sample.std():.4f}, range=[{sample.min():.4f}, {sample.max():.4f}]")
         sample = self.conv_out(sample, causal=self.causal)
-        print(f"[DEBUG] After conv_out (before unpatchify): mean={sample.mean():.4f}, std={sample.std():.4f}, range=[{sample.min():.4f}, {sample.max():.4f}]")
 
         # Final spatial expansion via unpatchify
         sample = unpatchify(sample, patch_size_hw=self.patch_size, patch_size_t=1)

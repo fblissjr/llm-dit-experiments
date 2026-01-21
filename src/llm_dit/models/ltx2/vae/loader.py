@@ -303,4 +303,25 @@ def load_ltx2_vae_decoder(
     num_params = sum(p.numel() for p in decoder.parameters())
     logger.info(f"Loaded VAE decoder: {num_params / 1e6:.1f}M parameters")
 
+    # Validate PerChannelStatistics buffers are loaded correctly
+    std_buffer = decoder.per_channel_statistics.get_buffer("std-of-means")
+    mean_buffer = decoder.per_channel_statistics.get_buffer("mean-of-means")
+
+    # Check buffers are not empty/zero (would indicate failed loading)
+    if std_buffer.abs().max() < 1e-6:
+        logger.warning(
+            "PerChannelStatistics std-of-means buffer appears empty! "
+            "Latent denormalization may not work correctly."
+        )
+    if mean_buffer.abs().max() < 1e-6 and std_buffer.abs().max() > 1e-6:
+        # mean-of-means can legitimately be near zero, only warn if std is also zero
+        pass
+
+    # Log buffer statistics for debugging
+    logger.info(
+        f"PerChannelStatistics loaded: "
+        f"std-of-means range=[{std_buffer.min():.4f}, {std_buffer.max():.4f}], "
+        f"mean-of-means range=[{mean_buffer.min():.4f}, {mean_buffer.max():.4f}]"
+    )
+
     return decoder.to(dtype)
