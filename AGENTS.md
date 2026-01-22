@@ -125,49 +125,45 @@ All research documentation uses a consistent status tracking system:
 
 ## testing protocol
 
-**Critical for new encoder/backend work:** See [tests/backends/README.md](tests/backends/README.md) for the testing protocol.
+**Full testing guide:** See **[tests/AGENTS.md](tests/AGENTS.md)** for comprehensive testing documentation.
+
+| Document | Purpose |
+|----------|---------|
+| **[tests/AGENTS.md](tests/AGENTS.md)** | Complete testing guide for agents |
+| [tests/README.md](tests/README.md) | Test suite overview |
+| [tests/backends/README.md](tests/backends/README.md) | Portable backend system for 1:1 comparison |
 
 ### test structure
 
-| category | purpose | location |
-|----------|---------|----------|
-| **unit** | component-level tests | `tests/unit/` |
-| **integration** | cross-component tests | `tests/integration/` |
-| **e2e** | end-to-end pipeline tests | `tests/e2e/` |
-| **backends** | portable test backends | `tests/backends/` |
+| Category | Purpose | Location | Tests |
+|----------|---------|----------|-------|
+| **unit** | component-level tests | `tests/unit/` | ~500 |
+| **integration** | cross-component tests | `tests/integration/` | ~200 |
+| **e2e** | end-to-end pipeline tests | `tests/e2e/` | ~50 |
+| **backends** | portable test backends | `tests/backends/` | - |
 
-### key test files
+### quick test commands
 
-| file | purpose |
-|------|---------|
-| `tests/backends/README.md` | Backend protocol testing requirements |
-| `tests/e2e/test_pipeline_shapes.py` | Pipeline shape validation (traces tensors through stages) |
-| `tests/e2e/test_ltx2_reference.py` | Reference comparison against official implementation |
-| `tests/e2e/test_baseline_portable.py` | Baseline tests that work with both implementations |
-| `tests/unit/test_gemma3_encoder.py` | Example unit tests for encoder components |
+```bash
+# Quick smoke test (30s, requires GPU)
+uv run pytest tests/e2e/test_baseline_portable.py::TestBaselineSmoke -v -s
+
+# Unit tests only (no GPU)
+uv run pytest tests/unit/ -v
+
+# LTX-2 specific tests
+uv run pytest tests/ -v -k ltx2
+
+# Full test suite with slow tests
+uv run pytest tests/ -v --runslow
+```
 
 ### when adding new encoders/backends
 
-1. **Read the protocol:** `tests/backends/README.md` defines required tests
+1. **Read the guide:** [tests/AGENTS.md](tests/AGENTS.md) for testing patterns
 2. **Shape validation:** Add tests to verify tensor shapes through the pipeline
 3. **Weight initialization:** Test that weights are non-zero after loading
 4. **Reference comparison:** Compare against official implementation when available
-
-### running tests
-
-```bash
-# Quick smoke test (30s)
-uv run pytest tests/e2e/test_baseline_portable.py::TestBaselineSmoke -v -s
-
-# Shape validation for pipeline stages
-uv run pytest tests/e2e/test_pipeline_shapes.py -v
-
-# Full reference test with slow tests enabled (10min)
-uv run pytest tests/e2e/test_baseline_portable.py --runslow -v -s
-
-# Unit tests for specific component
-uv run pytest tests/unit/test_gemma3_encoder.py -v
-```
 
 ## LTX-2 T2V Test Scripts
 
@@ -234,6 +230,54 @@ LLM_DIT_TEST_BACKEND=ltx2 uv run pytest tests/e2e/test_baseline_portable.py::Tes
 ```
 
 **Do not claim "working" until semantic criteria passes.**
+
+## LTX-2 Comprehensive Test Suite
+
+**~150+ tests protecting against regressions.** Run all critical paths with:
+
+```bash
+# All LTX-2 tests (unit + integration + e2e)
+uv run pytest tests/ -v -k ltx2
+
+# Quick smoke test only (~1 min on 24GB GPU)
+uv run pytest tests/e2e/test_baseline_portable.py::TestBaselineSmoke -v -s
+```
+
+### Test Coverage Map
+
+| File | What It Tests | Tests |
+|------|---------------|-------|
+| `tests/unit/test_ltx2_transformer.py` | RoPE, attention, FFN, AdaLN, timesteps, key mapping | ~20 |
+| `tests/unit/test_gemma3_encoder.py` | Connector, feature extractor, pipeline shapes | ~25 |
+| `tests/unit/test_conditioning.py` | LatentState, I2V/keyframe, denoise mask | ~45 |
+| `tests/unit/test_ltx2_video_vae.py` | Video VAE compression, tiling, components | ~15 |
+| `tests/unit/test_scheduler.py` | Sigma schedule, timestep conversion, callbacks | ~8 |
+| `tests/integration/test_ltx2_connectors.py` | RoPE, state dict mapping, layer variance | ~15 |
+| `tests/integration/test_ltx2_gpu_integration.py` | Weight loading, forward pass, memory | ~10 |
+| `tests/integration/test_ltx2_numerical_equivalence.py` | Diffusers vs our impl equivalence | ~12 |
+| `tests/integration/test_ltx2_e2e_generation.py` | Config, positions, modality, full pipeline | ~15 |
+| `tests/integration/test_performance.py` | Timing, memory bounds, no regressions | ~8 |
+| `tests/e2e/test_ltx2_reference.py` | Smoke, T2V reference, I2V conditioning | ~4 |
+| `tests/e2e/test_baseline_portable.py` | Portable backend, 1:1 comparison | ~4 |
+
+### What's Validated
+
+- **Transformer internals** - RoPE, attention, FFN, AdaLN, timestep embedding
+- **Key mapping** - Diffusers state dict to our format
+- **Numerical equivalence** - Against official LTX-2 implementation
+- **Conditioning system** - I2V, keyframe continuation, denoise mask mechanics
+- **Pipeline shapes** - Token counts, latent dimensions, position indices
+- **Memory efficiency** - Leak detection, GPU cleanup verification
+- **VAE components** - Compression ratios, causal convolutions, tiling
+
+### Reference Values
+
+Tests validate against official LTX-2 constants:
+- `DEFAULT_SEED = 10`
+- `LATENT_DIM = 128`
+- `HIDDEN_DIM = 4096`
+- Spatial compression: 32x
+- Temporal compression: 8x
 
 ## adding parameters
 
