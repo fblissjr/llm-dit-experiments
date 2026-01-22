@@ -11,6 +11,7 @@ Comprehensive test suite with **~1030 tests** protecting against regressions.
 uv run pytest tests/ -v
 
 # Quick smoke test (30s, requires GPU)
+# NOTE: LTX-2 only right now
 uv run pytest tests/e2e/test_baseline_portable.py::TestBaselineSmoke -v -s
 
 # Unit tests only (no GPU needed)
