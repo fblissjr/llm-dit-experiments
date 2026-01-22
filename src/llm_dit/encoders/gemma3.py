@@ -601,15 +601,27 @@ class Gemma3Encoder:
                 f"Loaded LTX-2 Gemma weights: {len(state_dict)} keys loaded, "
                 f"{len(missing)} missing, {len(unexpected)} unexpected"
             )
-            if missing:
-                logger.warning(f"Missing keys (first 10): {missing[:10]}")
+
+            # Separate expected missing keys from unexpected ones
+            # LTX-2 uses Gemma as encoder-only (no text generation), so lm_head is not needed
+            expected_missing = {"lm_head.weight"}
+            unexpected_missing = [k for k in missing if k not in expected_missing]
+            expected_found = [k for k in missing if k in expected_missing]
+
+            if expected_found:
+                logger.info(
+                    f"Expected missing keys (encoder-only mode): {expected_found} - "
+                    "will be tied to embed_tokens"
+                )
+            if unexpected_missing:
+                logger.warning(f"Unexpected missing keys (first 10): {unexpected_missing[:10]}")
             if unexpected:
                 logger.warning(f"Unexpected keys (first 10): {unexpected[:10]}")
 
-            # Tie weights if lm_head wasn't in checkpoint
+            # Tie weights if lm_head wasn't in checkpoint (standard practice for encoder-only use)
             if "lm_head.weight" in missing and hasattr(self._model, "tie_weights"):
-                logger.info("Tying lm_head weights to embed_tokens")
                 self._model.tie_weights()
+                logger.info("Tied lm_head weights to embed_tokens")
         else:
             logger.error("No LTX-2 Gemma weights loaded - model has random weights!")
             raise RuntimeError("Failed to load LTX-2 Gemma weights")

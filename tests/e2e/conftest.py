@@ -1,22 +1,21 @@
 """
 Pytest configuration for E2E tests.
 
-Last Updated: 2026-01-19
+Last Updated: 2026-01-22
 
 Provides shared fixtures and configuration for end-to-end tests.
 This file is designed to be portable - copy to LTX-2 repo along with
 tests/backends/ for 1:1 comparison testing.
 
-Logging Structure:
-    outputs/tests/runs_{backend}_{test_name}_{timestamp}/
+Output Structure (consolidated - one directory per test):
+    outputs/tests/runs/{backend}_{test_name}_{timestamp}/
     ├── video.mp4           # Generated video
     ├── metadata.json       # Config, stats, params
     ├── generation.log      # INFO+ generation progress
     ├── debug.log           # DEBUG+ full trace
     ├── errors.log          # WARNING+ issues only
-    ├── session.log         # Full session log (all tests)
-    ├── summary.json        # Test results summary
-    └── environment.json    # GPU, backend, versions
+    ├── summary.json        # Test results summary (written at session end)
+    └── environment.json    # GPU, backend, versions (written at session end)
 """
 
 import gc
@@ -24,7 +23,6 @@ import json
 import logging
 import os
 import sys
-import warnings
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -33,12 +31,12 @@ import pytest
 import torch
 
 # =============================================================================
-# Session-Level Logging Setup
+# Session-Level State
 # =============================================================================
 
 _session_timestamp: Optional[str] = None
-_session_log_dir: Optional[Path] = None
-_session_file_handler: Optional[logging.FileHandler] = None
+_session_environment_info: Optional[dict] = None
+_test_output_dirs: list[Path] = []  # Track all test output directories
 
 
 def _get_session_timestamp() -> str:
@@ -49,44 +47,24 @@ def _get_session_timestamp() -> str:
     return _session_timestamp
 
 
-def _get_session_log_dir() -> Path:
-    """Get or create session log directory."""
-    global _session_log_dir
-    if _session_log_dir is None:
-        timestamp = _get_session_timestamp()
-        _session_log_dir = Path(f"outputs/tests/runs/{timestamp}")
-        _session_log_dir.mkdir(parents=True, exist_ok=True)
-    return _session_log_dir
+def _register_test_output_dir(output_dir: Path) -> None:
+    """Register a test output directory for session file writing."""
+    global _test_output_dirs
+    if output_dir not in _test_output_dirs:
+        _test_output_dirs.append(output_dir)
 
 
-def _setup_session_logging():
-    """Setup session-level file logging."""
-    global _session_file_handler
-
-    if _session_file_handler is not None:
-        return  # Already setup
-
-    log_dir = _get_session_log_dir()
-    session_log_path = log_dir / "session.log"
-
-    # Create file handler for session log
-    _session_file_handler = logging.FileHandler(session_log_path, mode="w")
-    _session_file_handler.setLevel(logging.DEBUG)
-    _session_file_handler.setFormatter(
-        logging.Formatter("%(asctime)s [%(levelname)8s] %(name)s: %(message)s")
-    )
-
-    # Add to root logger
-    root_logger = logging.getLogger()
-    root_logger.addHandler(_session_file_handler)
-    root_logger.setLevel(logging.DEBUG)
-
-    # Also capture warnings
-    logging.captureWarnings(True)
+def _get_test_output_dirs() -> list[Path]:
+    """Get all registered test output directories."""
+    return _test_output_dirs
 
 
-# Setup session logging immediately on import
-_setup_session_logging()
+# Configure root logger at import (console only, files added per-test)
+logging.basicConfig(
+    level=logging.DEBUG,
+    format="%(asctime)s [%(levelname)8s] %(name)s: %(message)s",
+)
+logging.captureWarnings(True)
 logger = logging.getLogger(__name__)
 
 
@@ -157,7 +135,11 @@ def models_available(model_path_str: str = "models/LTX-2") -> bool:
 
 
 def _get_environment_info() -> dict:
-    """Collect environment information for reproducibility."""
+    """Collect and cache environment information for reproducibility."""
+    global _session_environment_info
+    if _session_environment_info is not None:
+        return _session_environment_info
+
     info = {
         "timestamp": _get_session_timestamp(),
         "python_version": sys.version,
@@ -175,6 +157,7 @@ def _get_environment_info() -> dict:
 
     info["models_available"] = models_available()
 
+    _session_environment_info = info
     return info
 
 
@@ -219,23 +202,19 @@ def pytest_configure(config):
     if backend:
         os.environ["LLM_DIT_TEST_BACKEND"] = backend
 
-    # Save environment info at session start
-    log_dir = _get_session_log_dir()
+    # Collect environment info (written to test output dirs at session end)
     env_info = _get_environment_info()
-    with open(log_dir / "environment.json", "w") as f:
-        json.dump(env_info, f, indent=2)
 
     logger.info(f"Test session started: {_get_session_timestamp()}")
-    logger.info(f"Session logs: {log_dir}")
     logger.info(f"Backend: {env_info.get('backend', 'unknown')}")
     if has_cuda():
         logger.info(f"GPU: {env_info.get('gpu_name')} ({env_info.get('gpu_vram_gb')}GB)")
 
 
 def pytest_sessionfinish(session, exitstatus):
-    """Save session summary at end and print output locations."""
-    log_dir = _get_session_log_dir()
+    """Save session summary and environment to test output directories."""
     timestamp = _get_session_timestamp()
+    test_output_dirs = _get_test_output_dirs()
 
     summary = {
         "timestamp": timestamp,
@@ -247,8 +226,15 @@ def pytest_sessionfinish(session, exitstatus):
         "failed": session.testsfailed,
     }
 
-    with open(log_dir / "summary.json", "w") as f:
-        json.dump(summary, f, indent=2)
+    env_info = _get_environment_info()
+
+    # Write summary.json and environment.json to each test output directory
+    for output_dir in test_output_dirs:
+        if output_dir.exists():
+            with open(output_dir / "summary.json", "w") as f:
+                json.dump(summary, f, indent=2)
+            with open(output_dir / "environment.json", "w") as f:
+                json.dump(env_info, f, indent=2)
 
     logger.info(f"Session complete: {summary['passed']} passed, {summary['failed']} failed")
 
@@ -256,27 +242,15 @@ def pytest_sessionfinish(session, exitstatus):
     print("\n" + "=" * 60)
     print("OUTPUT SUMMARY")
     print("=" * 60)
-    print(f"Session logs:   {log_dir}/")
 
-    # --- FIXED LOGIC START ---
-    # We look for ANY directory containing this session's timestamp.
-    # This ensures we catch outputs even if a test forced a different backend name
-    # (e.g. 'ltx2_' instead of global 'none_').
     runs_dir = Path("outputs/tests/runs")
 
-    found_outputs = []
-    if runs_dir.exists():
-        for item in sorted(runs_dir.iterdir()):
-            if item.is_dir() and timestamp in item.name:
-                found_outputs.append(item)
-    # --- FIXED LOGIC END ---
-
-    if found_outputs:
+    if test_output_dirs:
         print(f"Test outputs:   {runs_dir}/")
-        for test_dir in found_outputs:
-            files = list(test_dir.iterdir())
+        for test_dir in test_output_dirs:
+            files = list(test_dir.iterdir()) if test_dir.exists() else []
             # Simple formatter to show first few files
-            file_list = ", ".join(f.name for f in files[:5])
+            file_list = ", ".join(f.name for f in sorted(files)[:5])
             if len(files) > 5:
                 file_list += f", ... (+{len(files) - 5} more)"
 
@@ -358,12 +332,6 @@ class TestLogHandler:
 
 
 @pytest.fixture(scope="session")
-def session_log_dir() -> Path:
-    """Get session log directory."""
-    return _get_session_log_dir()
-
-
-@pytest.fixture(scope="session")
 def backend_name():
     """Get name of the active backend."""
     if not _backends_imported:
@@ -379,7 +347,11 @@ def backend():
 
 @pytest.fixture
 def output_dir(backend_name, request) -> Path:
-    """Get output directory for this specific test (Flat Structure)."""
+    """Get output directory for this specific test.
+
+    All test outputs go to: outputs/tests/runs/{backend}_{test}_{timestamp}/
+    Session files (summary.json, environment.json) are written here at session end.
+    """
     # 1. Get components
     timestamp = _get_session_timestamp()
     # Sanitize test name (handle pytest parametrization like [1-2])
@@ -389,10 +361,11 @@ def output_dir(backend_name, request) -> Path:
     dir_name = f"{backend_name}_{test_name}_{timestamp}"
     out_dir = Path("outputs/tests/runs") / dir_name
 
-    # 3. Create directory
+    # 3. Create directory and register for session file writing
     out_dir.mkdir(parents=True, exist_ok=True)
+    _register_test_output_dir(out_dir)
 
-    # 4. Setup per-test logging
+    # 4. Setup per-test logging (generation.log, debug.log, errors.log)
     log_handler = TestLogHandler(out_dir, test_name)
     log_handler.setup()
 
