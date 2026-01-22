@@ -20,6 +20,26 @@ Quick reference for LLM agents working on this codebase.
 - **dtype conventions** - libraries differ:
   - transformers: use `dtype=`
   - diffusers: use `torch_dtype=`
+- **always update `internal/state/`** after significant work (see below)
+
+## state management (REQUIRED)
+
+After completing significant work, ALWAYS update these files:
+
+| File | When to Update | What to Update |
+|------|----------------|----------------|
+| `internal/state/current.md` | After any milestone or major change | Status, completion %, blockers, recent work |
+| `internal/state/lessons_learned.md` | After debugging sessions, bug fixes | New lessons with full context |
+| `internal/log/log_YYYY-MM-DD.md` | Every session | What was done, decisions made |
+
+**What counts as "significant work":**
+- Bug fixes (especially tricky ones)
+- New features or components
+- Architecture changes
+- Documentation updates
+- Test additions or fixes
+
+**Do not skip this.** Future sessions depend on accurate state to avoid repeating work or missing context.
 
 ## architecture
 
