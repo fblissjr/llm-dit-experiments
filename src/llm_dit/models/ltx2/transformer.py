@@ -30,6 +30,7 @@ Usage:
     )
 """
 
+import logging
 from dataclasses import dataclass, replace
 from enum import Enum
 from typing import Callable, Optional, Tuple, Union
@@ -38,6 +39,8 @@ import torch
 import torch.nn as nn
 
 from llm_dit.models.ltx2.attention import Attention, AttentionCallable, AttentionFunction
+
+logger = logging.getLogger(__name__)
 from llm_dit.models.ltx2.components import (
     AdaLayerNormSingle,
     FeedForward,
@@ -172,18 +175,19 @@ class TransformerArgsPreprocessor:
         # The per-dim mean offsets ARE the semantic signal, not noise.
         # Original hypothesis was wrong - centering removes 70% of variance.
 
-        # DEBUG: Check context BEFORE caption_projection
-        if hasattr(self, '_debug_context') and self._debug_context:
-            print(f"[DEBUG CONTEXT] Before projection: mean={context.mean():.4f}, std={context.std():.4f}")
-            per_dim_mean = context.mean(dim=(0, 1))
-            print(f"[DEBUG CONTEXT] Per-dim mean range: [{per_dim_mean.min():.4f}, {per_dim_mean.max():.4f}]")
+        # Trace context signal before projection
+        logger.debug(
+            f"[TRANSFORMER] Before caption_projection: shape={list(context.shape)}, "
+            f"mean={context.float().mean():.4f}, std={context.float().std():.4f}"
+        )
 
         context = self.caption_projection(context)
 
-        # DEBUG: Check context AFTER caption_projection
-        if hasattr(self, '_debug_context') and self._debug_context:
-            print(f"[DEBUG CONTEXT] After projection: mean={context.mean():.4f}, std={context.std():.4f}")
-            self._debug_context = False  # Only print once
+        # Trace context signal after projection
+        logger.debug(
+            f"[TRANSFORMER] After caption_projection: shape={list(context.shape)}, "
+            f"mean={context.float().mean():.4f}, std={context.float().std():.4f}"
+        )
 
         context = context.view(batch_size, -1, x.shape[-1])
         return context, attention_mask

@@ -1,18 +1,23 @@
 """
 Embeddings 1D Connector for LTX-2 text encoder.
 
-Last Updated: 2026-01-19
+Last Updated: 2026-01-21
 
 Ported from:
   coderef/LTX-2/packages/ltx-core/src/ltx_core/text_encoders/gemma/embeddings_connector.py
 
 This module implements a bidirectional transformer that processes text embeddings
 after the feature extractor linear projection. Key components:
-- 2 transformer layers with RoPE positional encoding (split mode)
+- 2 transformer layers with RoPE positional encoding (INTERLEAVED mode)
 - 128 learnable register tokens that replace padding
 - Self-attention + feed-forward blocks with RMSNorm
 
 The connector refines embeddings before they're passed to the DiT for conditioning.
+
+RoPE Configuration (matching reference):
+- Type: INTERLEAVED (pairs of dimensions rotated together)
+- Max positions: [1] (not [4096])
+- Double precision: False (use float32)
 """
 
 import functools
@@ -41,7 +46,7 @@ class RopeType(Enum):
 def apply_rotary_emb(
     input_tensor: torch.Tensor,
     freqs_cis: Tuple[torch.Tensor, torch.Tensor],
-    rope_type: RopeType = RopeType.SPLIT,
+    rope_type: RopeType = RopeType.INTERLEAVED,
 ) -> torch.Tensor:
     """Apply rotary position embeddings to input tensor."""
     cos_freqs, sin_freqs = freqs_cis
@@ -233,8 +238,8 @@ def precompute_freqs_cis(
     theta: float = 10000.0,
     max_pos: Optional[list[int]] = None,
     num_attention_heads: int = 30,
-    rope_type: RopeType = RopeType.SPLIT,
-    use_double_precision: bool = True,
+    rope_type: RopeType = RopeType.INTERLEAVED,
+    use_double_precision: bool = False,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """
     Precompute RoPE frequencies for given indices.
@@ -250,7 +255,7 @@ def precompute_freqs_cis(
         use_double_precision: Use float64 for frequency computation
     """
     if max_pos is None:
-        max_pos = [4096]  # Default from LTX-2 config
+        max_pos = [1]  # Default from LTX-2 reference (line 109)
 
     indices = _generate_freq_grid(theta, indices_grid.shape[1], dim, use_double_precision)
     freqs = _generate_freqs(indices, indices_grid, max_pos)
@@ -325,7 +330,7 @@ class Attention(nn.Module):
         heads: int = 30,
         dim_head: int = 128,
         norm_eps: float = 1e-6,
-        rope_type: RopeType = RopeType.SPLIT,
+        rope_type: RopeType = RopeType.INTERLEAVED,
     ):
         super().__init__()
         self.rope_type = rope_type
@@ -409,7 +414,7 @@ class BasicTransformerBlock1D(nn.Module):
         dim: int,
         heads: int,
         dim_head: int,
-        rope_type: RopeType = RopeType.SPLIT,
+        rope_type: RopeType = RopeType.INTERLEAVED,
     ):
         super().__init__()
         self.attn1 = Attention(
@@ -480,15 +485,15 @@ class Embeddings1DConnector(nn.Module):
         positional_embedding_theta: float = 10000.0,
         positional_embedding_max_pos: Optional[list[int]] = None,
         num_learnable_registers: int = 128,
-        rope_type: RopeType = RopeType.SPLIT,
-        use_double_precision_rope: bool = True,
+        rope_type: RopeType = RopeType.INTERLEAVED,
+        use_double_precision_rope: bool = False,
     ):
         super().__init__()
         self.num_attention_heads = num_attention_heads
         self.inner_dim = num_attention_heads * attention_head_dim
         self.positional_embedding_theta = positional_embedding_theta
         self.positional_embedding_max_pos = (
-            positional_embedding_max_pos if positional_embedding_max_pos is not None else [4096]
+            positional_embedding_max_pos if positional_embedding_max_pos is not None else [1]
         )
         self.rope_type = rope_type
         self.use_double_precision_rope = use_double_precision_rope
@@ -595,10 +600,20 @@ class Embeddings1DConnector(nn.Module):
             hidden_states: [B, seq_len, 3840] - Processed embeddings
             attention_mask: [B, 1, 1, seq_len] or None - Updated mask (all valid after register insertion)
         """
+        # Trace input
+        logger.debug(
+            f"[CONNECTOR] Input: shape={list(hidden_states.shape)}, "
+            f"mean={hidden_states.float().mean():.4f}, std={hidden_states.float().std():.4f}"
+        )
+
         # Replace padding with learnable registers
         if self.num_learnable_registers and attention_mask is not None:
             hidden_states, attention_mask = self._replace_padded_with_learnable_registers(
                 hidden_states, attention_mask
+            )
+            logger.debug(
+                f"[CONNECTOR] After registers: mean={hidden_states.float().mean():.4f}, "
+                f"std={hidden_states.float().std():.4f}"
             )
 
         # Compute RoPE frequencies
@@ -620,9 +635,18 @@ class Embeddings1DConnector(nn.Module):
             use_double_precision=self.use_double_precision_rope,
         )
 
+        logger.debug(
+            f"[CONNECTOR] RoPE config: type={self.rope_type.value}, "
+            f"max_pos={self.positional_embedding_max_pos}, double_precision={self.use_double_precision_rope}"
+        )
+
         # Process through transformer blocks
-        for block in self.transformer_blocks:
+        for i, block in enumerate(self.transformer_blocks):
             hidden_states = block(hidden_states, attention_mask=attention_mask, pe=freqs_cis)
+            logger.debug(
+                f"[CONNECTOR] After block {i}: mean={hidden_states.float().mean():.4f}, "
+                f"std={hidden_states.float().std():.4f}"
+            )
 
         # Final normalization
         hidden_states = rms_norm(hidden_states)
@@ -632,9 +656,9 @@ class Embeddings1DConnector(nn.Module):
     @classmethod
     def from_config(cls, config: dict) -> "Embeddings1DConnector":
         """Create connector from config dict."""
-        rope_type = RopeType(config.get("rope_type", "split"))
-        use_double_precision = config.get("rope_double_precision", True)
-        max_pos = [config.get("connector_rope_base_seq_len", 4096)]
+        rope_type = RopeType(config.get("rope_type", "interleaved"))
+        use_double_precision = config.get("rope_double_precision", False)
+        max_pos = config.get("connector_positional_embedding_max_pos", [1])
 
         return cls(
             attention_head_dim=config.get("video_connector_attention_head_dim", 128),

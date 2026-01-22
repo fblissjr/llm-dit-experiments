@@ -743,10 +743,10 @@ class Gemma3Encoder:
                         "video_connector_num_attention_heads": 30,
                         "video_connector_num_layers": 2,
                         "video_connector_num_learnable_registers": 128,
-                        "rope_type": "split",
+                        "rope_type": "interleaved",  # Reference uses INTERLEAVED
                         "rope_theta": 10000.0,
-                        "rope_double_precision": True,
-                        "connector_rope_base_seq_len": 4096,
+                        "rope_double_precision": False,  # Reference uses float32
+                        "connector_positional_embedding_max_pos": [1],  # Reference default
                     }
 
                 # Create connector from config
@@ -988,6 +988,10 @@ class Gemma3Encoder:
             feature_extractor = self._feature_extractor
 
         normalized = _norm_and_concat_layers(stacked, attention_mask)
+        logger.debug(
+            f"[TEXT-ENC] After normalization: shape={list(normalized.shape)}, "
+            f"mean={normalized.float().mean():.4f}, std={normalized.float().std():.4f}"
+        )
 
         # Ensure feature extractor is on same device as data
         if feature_extractor.aggregate_embed.weight.device != normalized.device:
@@ -995,6 +999,10 @@ class Gemma3Encoder:
 
         # Project to output dimension
         embeddings = feature_extractor(normalized)
+        logger.debug(
+            f"[TEXT-ENC] After feature extractor: shape={list(embeddings.shape)}, "
+            f"mean={embeddings.float().mean():.4f}, std={embeddings.float().std():.4f}"
+        )
 
         # Run through embeddings connector (2-layer bidirectional transformer)
         if self._embeddings_connector is not None:
