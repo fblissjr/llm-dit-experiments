@@ -1,6 +1,6 @@
 # llm-dit-experiments
 
-Diffusers-based experimentation platform for LLM-DiT image generation. Pluggable backends, quantization, and advanced features for research.
+PyTorch and Diffusers-based (depending on the models / pipeline) experimentation platform for LLM-DiT image generation. Pluggable backends, quantization, and quality of life features for research.
 
 ## Pipelines
 

@@ -30,7 +30,6 @@ class EncoderType(str, Enum):
 
     QWEN3 = "qwen3"  # Qwen3-4B (text-only) for Z-Image
     QWEN3_VL = "qwen3_vl"  # Qwen3-VL (vision-language) future support
-    QWEN25_VL = "qwen25_vl"  # Qwen2.5-VL for QwenImage
     GEMMA3 = "gemma3"  # Gemma 3-12B for LTX-2
 
 

@@ -9,7 +9,6 @@ High-Level Encoders (with template/conversation support):
 
 Low-Level Protocol Encoders (model-agnostic):
 - Qwen3Encoder: Qwen3-4B for Z-Image (text-only, 2560 dim)
-- Qwen25VLEncoder: Qwen2.5-VL for QwenImage (vision-language)
 - Gemma3Encoder: Gemma3-12B for LTX-2 (vision-language, 4096/2048 dim)
 
 Factory:
@@ -59,7 +58,6 @@ from llm_dit.encoders.factory import (
 
 # Low-level protocol implementations
 from llm_dit.encoders.qwen3 import Qwen3Encoder
-from llm_dit.encoders.qwen25_vl import Qwen25VLEncoder
 from llm_dit.encoders.gemma3 import Gemma3Encoder, LTX2Encoder, SubLayerExtractor
 from llm_dit.encoders.embeddings_connector import (
     Embeddings1DConnector,
@@ -87,7 +85,6 @@ __all__ = [
     "PIPELINE_ENCODER_MAP",
     # Low-level implementations
     "Qwen3Encoder",
-    "Qwen25VLEncoder",
     "Gemma3Encoder",
     "LTX2Encoder",
     "SubLayerExtractor",
