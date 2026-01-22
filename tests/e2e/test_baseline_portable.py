@@ -1,7 +1,7 @@
 """
 Portable LTX-2 baseline tests for 1:1 comparison.
 
-Last Updated: 2026-01-19
+Last Updated: 2026-01-22
 
 These tests work with BOTH:
 - llm-dit-experiments repo (uses llm_dit backend)
@@ -271,21 +271,6 @@ class TestBaselineT2V:
             logger.info(f"  Transformer: {result.stats.transformer_time:.1f}s")
             logger.info(f"  VAE: {result.stats.vae_time:.1f}s")
         logger.info(f"Output: {output_dir}/video.mp4")
-
-
-class TestBaselineI2V:
-    """Image-to-Video baseline tests (requires conditioning support)."""
-
-    @pytest.mark.skip(reason="I2V conditioning not yet implemented in portable backend")
-    @pytest.mark.slow
-    @pytest.mark.skipif(not models_available(), reason="LTX-2 models not found")
-    @pytest.mark.skipif(not sufficient_vram(), reason="Insufficient VRAM (<16GB)")
-    def test_i2v_reference(self, backend, output_dir):
-        """Image-to-Video with first frame conditioning.
-
-        TODO: Implement when conditioning is available in both backends.
-        """
-        pass
 
 
 class TestBaselineComparison:
