@@ -34,14 +34,6 @@ from typing import TYPE_CHECKING
 import torch
 from PIL import Image
 
-from .blending import (
-    DEFAULT_TARGET_STD,
-    mask_outlier_dimensions,
-    normalize_hybrid,
-    normalize_per_dimension,
-    scale_embeddings,
-)
-
 # Import token constants from central location
 # Note: THINK_* tokens kept for parsing output from Thinking model variant
 from llm_dit.constants import (
@@ -49,6 +41,14 @@ from llm_dit.constants import (
     THINK_START_TOKEN_ID,
     VISION_END_TOKEN_ID,
     VISION_START_TOKEN_ID,
+)
+
+from .blending import (
+    DEFAULT_TARGET_STD,
+    mask_outlier_dimensions,
+    normalize_hybrid,
+    normalize_per_dimension,
+    scale_embeddings,
 )
 
 if TYPE_CHECKING:
@@ -136,7 +136,7 @@ class VLEmbeddingExtractor:
         cls,
         model_path: str,
         device: str = "cuda",
-        torch_dtype: torch.dtype = torch.bfloat16,
+        dtype: torch.dtype = torch.bfloat16,
     ) -> "VLEmbeddingExtractor":
         """
         Load Qwen3-VL model from path or HuggingFace ID.
@@ -147,7 +147,7 @@ class VLEmbeddingExtractor:
         Args:
             model_path: Path to model directory or HuggingFace model ID
             device: Device to load model on (cuda, cpu, auto)
-            torch_dtype: Model precision (default: bfloat16)
+            dtype: Model precision (default: bfloat16)
 
         Returns:
             VLEmbeddingExtractor instance with model_variant set
@@ -170,7 +170,7 @@ class VLEmbeddingExtractor:
 
         model = Qwen3VLForConditionalGeneration.from_pretrained(
             model_path,
-            dtype=torch_dtype,
+            dtype=dtype,
             device_map=device,
         )
 
@@ -210,7 +210,14 @@ class VLEmbeddingExtractor:
             (Path.home() / "Storage" / "Qwen3-VL-4B-Instruct", "instruct"),
             (Path.home() / "models" / "Qwen3-VL-4B-Instruct", "instruct"),
             (Path("/models/Qwen3-VL-4B-Instruct"), "instruct"),
-            (Path.home() / ".cache" / "huggingface" / "hub" / "models--Qwen--Qwen3-VL-4B-Instruct", "instruct"),
+            (
+                Path.home()
+                / ".cache"
+                / "huggingface"
+                / "hub"
+                / "models--Qwen--Qwen3-VL-4B-Instruct",
+                "instruct",
+            ),
         ]
 
         # If prefer_variant specified, sort to prioritize that variant
@@ -327,15 +334,16 @@ class VLEmbeddingExtractor:
         )
         logger.debug(f"Full prompt with tokens: {repr(full_prompt_with_tokens[:200])}...")
         # Log the prompt ending to verify think block presence for different model variants
-        prompt_ending = full_prompt_with_tokens[-100:] if len(full_prompt_with_tokens) > 100 else full_prompt_with_tokens
+        prompt_ending = (
+            full_prompt_with_tokens[-100:]
+            if len(full_prompt_with_tokens) > 100
+            else full_prompt_with_tokens
+        )
         logger.info(f"Prompt template ending ({self.model_variant}): ...{repr(prompt_ending)}")
 
         # Move to device
         device = next(self.model.parameters()).device
-        inputs = {
-            k: v.to(device) if isinstance(v, torch.Tensor) else v
-            for k, v in inputs.items()
-        }
+        inputs = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in inputs.items()}
 
         logger.debug(f"Input tokens: {inputs['input_ids'].shape[1]}")
 
@@ -404,9 +412,7 @@ class VLEmbeddingExtractor:
             )
             token_selection = "image_only_no_markers"
         elif text_tokens_only:
-            hidden_states = self._filter_text_tokens(
-                hidden_states, inputs["input_ids"][0]
-            )
+            hidden_states = self._filter_text_tokens(hidden_states, inputs["input_ids"][0])
             token_selection = "text_only"
 
         # Scale to match text embedding statistics
@@ -520,7 +526,9 @@ class VLEmbeddingExtractor:
         # when processing vision inputs, so we wrap system prompt in the same format
         messages = []
         if system_prompt:
-            messages.append({"role": "system", "content": [{"type": "text", "text": system_prompt}]})
+            messages.append(
+                {"role": "system", "content": [{"type": "text", "text": system_prompt}]}
+            )
 
         # Build user message content (can have image, text, or both)
         content = []
@@ -545,10 +553,7 @@ class VLEmbeddingExtractor:
 
         # Move to device
         device = next(self.model.parameters()).device
-        inputs = {
-            k: v.to(device) if isinstance(v, torch.Tensor) else v
-            for k, v in inputs.items()
-        }
+        inputs = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in inputs.items()}
 
         # Get proper termination tokens for Qwen3
         tokenizer = self.processor.tokenizer
@@ -566,7 +571,11 @@ class VLEmbeddingExtractor:
                 pass
 
         # Use single token or list
-        eos_token_id = eos_token_ids if len(eos_token_ids) > 1 else (eos_token_ids[0] if eos_token_ids else None)
+        eos_token_id = (
+            eos_token_ids
+            if len(eos_token_ids) > 1
+            else (eos_token_ids[0] if eos_token_ids else None)
+        )
         pad_token_id = tokenizer.pad_token_id or (eos_token_ids[0] if eos_token_ids else 0)
 
         # Build generation kwargs
@@ -590,7 +599,9 @@ class VLEmbeddingExtractor:
             gen_kwargs["do_sample"] = False
 
         logger.debug(f"[VLEmbeddingExtractor.generate] Generation kwargs: {gen_kwargs}")
-        logger.info(f"[VLEmbeddingExtractor.generate] Starting generation (max_new_tokens={max_new_tokens})...")
+        logger.info(
+            f"[VLEmbeddingExtractor.generate] Starting generation (max_new_tokens={max_new_tokens})..."
+        )
 
         # Generate
         with torch.no_grad():
@@ -622,12 +633,18 @@ class VLEmbeddingExtractor:
 
             # Decode thinking
             thinking_content = tokenizer.decode(thinking_ids, skip_special_tokens=True).strip()
-            thinking_content = thinking_content.removeprefix("<think>").removesuffix("</think>").strip()
+            thinking_content = (
+                thinking_content.removeprefix("<think>").removesuffix("</think>").strip()
+            )
 
-            logger.info(f"[VLEmbeddingExtractor.generate] Extracted thinking ({len(thinking_content)} chars)")
+            logger.info(
+                f"[VLEmbeddingExtractor.generate] Extracted thinking ({len(thinking_content)} chars)"
+            )
         except ValueError:
             # No </think> token found - model didn't use thinking format
-            logger.debug("[VLEmbeddingExtractor.generate] No </think> token found, using full output")
+            logger.debug(
+                "[VLEmbeddingExtractor.generate] No </think> token found, using full output"
+            )
 
         # Decode the content
         generated_text = tokenizer.decode(content_ids, skip_special_tokens=False)
@@ -635,7 +652,7 @@ class VLEmbeddingExtractor:
         # Clean up end tokens
         for end_token in ["<|im_end|>", "<|endoftext|>"]:
             if generated_text.endswith(end_token):
-                generated_text = generated_text[:-len(end_token)]
+                generated_text = generated_text[: -len(end_token)]
 
         generated_text = generated_text.strip()
 
@@ -689,7 +706,7 @@ class VLEmbeddingExtractor:
         if start_idx is not None and end_idx is not None:
             # Concatenate tokens before and after image region
             before_image = hidden_states[:start_idx]
-            after_image = hidden_states[end_idx + 1:]
+            after_image = hidden_states[end_idx + 1 :]
             filtered = torch.cat([before_image, after_image], dim=0)
             logger.debug(
                 f"Filtered to text tokens: {hidden_states.shape[0]} -> {filtered.shape[0]} "

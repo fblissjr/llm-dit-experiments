@@ -23,8 +23,8 @@ import argparse
 import json
 import logging
 import sys
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
 
 project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root / "src"))
@@ -45,9 +45,7 @@ QWEN3_4B_PATH = os.environ.get("QWEN3_PATH")
 QWEN3_VL_PATH = os.environ.get("QWEN3_VL_PATH")
 
 if not all([ZIMAGE_PATH, QWEN3_4B_PATH, QWEN3_VL_PATH]):
-    raise ValueError(
-        "Set environment variables: ZIMAGE_PATH, QWEN3_PATH, QWEN3_VL_PATH"
-    )
+    raise ValueError("Set environment variables: ZIMAGE_PATH, QWEN3_PATH, QWEN3_VL_PATH")
 
 # Outlier dimensions identified from per-dimension analysis
 # High std ratio (VL has MORE variance than expected)
@@ -325,7 +323,7 @@ def create_comparison_grid(
 
         # Multi-line label support
         label_y = y + img_height + 10
-        for line in label.split('\n'):
+        for line in label.split("\n"):
             draw.text((x + img_width // 2, label_y), line, fill="black", font=font, anchor="mt")
             label_y += 22
 
@@ -335,7 +333,9 @@ def create_comparison_grid(
 def main():
     parser = argparse.ArgumentParser(description="Test bridge approaches for VL-to-text")
     parser.add_argument("--reference", type=Path, required=True, help="Reference image for style")
-    parser.add_argument("--prompt", type=str, default="Homer Simpson eating a donut", help="Text prompt")
+    parser.add_argument(
+        "--prompt", type=str, default="Homer Simpson eating a donut", help="Text prompt"
+    )
     parser.add_argument("--output-dir", type=Path, default=Path("experiments/results/bridge_test"))
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--steps", type=int, default=9)
@@ -369,9 +369,9 @@ def main():
     # =========================================================================
     # Phase 1: Extract embeddings
     # =========================================================================
-    logger.info("\n" + "="*60)
+    logger.info("\n" + "=" * 60)
     logger.info("Phase 1: Extracting embeddings")
-    logger.info("="*60)
+    logger.info("=" * 60)
 
     from llm_dit.backends.transformers import TransformersBackend
     from llm_dit.vl import VLEmbeddingExtractor
@@ -382,7 +382,7 @@ def main():
     text_backend = TransformersBackend.from_pretrained(
         QWEN3_4B_PATH,
         device_map="cuda",
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
         model_subfolder="",
         tokenizer_subfolder="",
     )
@@ -399,7 +399,7 @@ def main():
     vl_extractor = VLEmbeddingExtractor.from_pretrained(
         QWEN3_VL_PATH,
         device="cuda",
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
     )
 
     vl_result = vl_extractor.extract(
@@ -419,9 +419,9 @@ def main():
     # =========================================================================
     # Phase 2: Apply bridge approaches
     # =========================================================================
-    logger.info("\n" + "="*60)
+    logger.info("\n" + "=" * 60)
     logger.info("Phase 2: Applying bridge approaches")
-    logger.info("="*60)
+    logger.info("=" * 60)
 
     approaches = {}
 
@@ -481,16 +481,16 @@ def main():
     # =========================================================================
     # Phase 3: Generate images
     # =========================================================================
-    logger.info("\n" + "="*60)
+    logger.info("\n" + "=" * 60)
     logger.info("Phase 3: Generating images")
-    logger.info("="*60)
+    logger.info("=" * 60)
 
     from llm_dit.pipelines.z_image import ZImagePipeline
 
     logger.info("Loading Z-Image pipeline...")
     pipe = ZImagePipeline.from_pretrained(
         ZIMAGE_PATH,
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
         text_encoder_device="cpu",
         dit_device="cuda",
         vae_device="cuda",
@@ -512,7 +512,7 @@ def main():
             num_inference_steps=args.steps,
             generator=generator,
         )
-        img = result.images[0] if hasattr(result, 'images') else result
+        img = result.images[0] if hasattr(result, "images") else result
 
         # Save individual image
         img.save(args.output_dir / f"{name}.png")
@@ -535,8 +535,7 @@ def main():
 
     # Create comparison grid
     grid = create_comparison_grid(
-        images, labels,
-        title=f'Bridge Approaches: "{args.prompt}" (alpha={args.alpha})'
+        images, labels, title=f'Bridge Approaches: "{args.prompt}" (alpha={args.alpha})'
     )
     grid.save(args.output_dir / "comparison_grid.png")
     logger.info(f"Saved comparison grid to {args.output_dir / 'comparison_grid.png'}")

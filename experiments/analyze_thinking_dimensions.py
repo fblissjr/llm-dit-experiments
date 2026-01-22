@@ -18,8 +18,8 @@ import argparse
 import sys
 from pathlib import Path
 
-import torch
 import numpy as np
+import torch
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -62,9 +62,11 @@ CONFIDENT_PROMPTS = [
     "A red brick Victorian mansion",
 ]
 
+
 # With and without think block
 def format_with_think(prompt: str) -> str:
     return f"<|im_start|>user\n{prompt}<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"
+
 
 def format_without_think(prompt: str) -> str:
     return f"<|im_start|>user\n{prompt}<|im_end|>\n<|im_start|>assistant\n"
@@ -145,44 +147,52 @@ def main():
     tokenizer = AutoTokenizer.from_pretrained(args.model_path)
     model = AutoModelForCausalLM.from_pretrained(
         args.model_path,
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
         device_map=args.device,
     )
     model.eval()
 
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("TESTING: Simple vs Complex Prompts")
-    print("="*70)
+    print("=" * 70)
 
-    simple_results = analyze_prompt_category(model, tokenizer, SIMPLE_PROMPTS, "simple", args.device)
-    complex_results = analyze_prompt_category(model, tokenizer, COMPLEX_PROMPTS, "complex", args.device)
+    simple_results = analyze_prompt_category(
+        model, tokenizer, SIMPLE_PROMPTS, "simple", args.device
+    )
+    complex_results = analyze_prompt_category(
+        model, tokenizer, COMPLEX_PROMPTS, "complex", args.device
+    )
 
     print(f"\n{'Dimension':<12} {'Simple (mean)':<15} {'Complex (mean)':<15} {'Ratio':<10}")
-    print("-"*55)
+    print("-" * 55)
     for dim in OUTLIER_DIMS:
         simple_val = simple_results[f"dim_{dim}_avg_mean"]
         complex_val = complex_results[f"dim_{dim}_avg_mean"]
-        ratio = complex_val / simple_val if simple_val != 0 else float('inf')
+        ratio = complex_val / simple_val if simple_val != 0 else float("inf")
         print(f"Dim {dim:<7} {simple_val:<15.2f} {complex_val:<15.2f} {ratio:<10.2f}x")
 
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("TESTING: Uncertain vs Confident Prompts")
-    print("="*70)
+    print("=" * 70)
 
-    uncertain_results = analyze_prompt_category(model, tokenizer, UNCERTAIN_PROMPTS, "uncertain", args.device)
-    confident_results = analyze_prompt_category(model, tokenizer, CONFIDENT_PROMPTS, "confident", args.device)
+    uncertain_results = analyze_prompt_category(
+        model, tokenizer, UNCERTAIN_PROMPTS, "uncertain", args.device
+    )
+    confident_results = analyze_prompt_category(
+        model, tokenizer, CONFIDENT_PROMPTS, "confident", args.device
+    )
 
     print(f"\n{'Dimension':<12} {'Uncertain (mean)':<17} {'Confident (mean)':<17} {'Ratio':<10}")
-    print("-"*60)
+    print("-" * 60)
     for dim in OUTLIER_DIMS:
         uncertain_val = uncertain_results[f"dim_{dim}_avg_mean"]
         confident_val = confident_results[f"dim_{dim}_avg_mean"]
-        ratio = uncertain_val / confident_val if confident_val != 0 else float('inf')
+        ratio = uncertain_val / confident_val if confident_val != 0 else float("inf")
         print(f"Dim {dim:<7} {uncertain_val:<17.2f} {confident_val:<17.2f} {ratio:<10.2f}x")
 
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("TESTING: With vs Without Think Block")
-    print("="*70)
+    print("=" * 70)
 
     # Use same prompts, different formatting
     base_prompts = SIMPLE_PROMPTS[:3]
@@ -191,19 +201,21 @@ def main():
     without_think = [format_without_think(p) for p in base_prompts]
 
     think_results = analyze_prompt_category(model, tokenizer, with_think, "with_think", args.device)
-    nothink_results = analyze_prompt_category(model, tokenizer, without_think, "without_think", args.device)
+    nothink_results = analyze_prompt_category(
+        model, tokenizer, without_think, "without_think", args.device
+    )
 
     print(f"\n{'Dimension':<12} {'With Think (mean)':<18} {'No Think (mean)':<18} {'Ratio':<10}")
-    print("-"*65)
+    print("-" * 65)
     for dim in OUTLIER_DIMS:
         think_val = think_results[f"dim_{dim}_avg_mean"]
         nothink_val = nothink_results[f"dim_{dim}_avg_mean"]
-        ratio = think_val / nothink_val if nothink_val != 0 else float('inf')
+        ratio = think_val / nothink_val if nothink_val != 0 else float("inf")
         print(f"Dim {dim:<7} {think_val:<18.2f} {nothink_val:<18.2f} {ratio:<10.2f}x")
 
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("INTERPRETATION")
-    print("="*70)
+    print("=" * 70)
     print("""
 If the 'Thinking Model Hypothesis' is correct:
 - Complex prompts should have HIGHER outlier activations (more reasoning)

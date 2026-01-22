@@ -29,9 +29,9 @@ def load_and_adapt_bagel_connector(target_dim=3840):
     """Load Bagel's connector and adapt to Z-Image dimensions."""
     print("Loading Bagel connector...")
 
-    with safe_open(str(BAGEL_PATH), framework='pt', device='cpu') as f:
-        fc1_weight = f.get_tensor('connector.fc1.weight')  # (3584, 1152)
-        fc1_bias = f.get_tensor('connector.fc1.bias')
+    with safe_open(str(BAGEL_PATH), framework="pt", device="cpu") as f:
+        fc1_weight = f.get_tensor("connector.fc1.weight")  # (3584, 1152)
+        fc1_bias = f.get_tensor("connector.fc1.bias")
 
     current_out = fc1_weight.shape[0]
     pad_size = target_dim - current_out
@@ -58,11 +58,13 @@ def load_pipeline_with_bagel():
 
     # Load VAE
     print("  VAE...")
-    vae = AutoencoderKL.from_pretrained(ZIMAGE_PATH, subfolder="vae", torch_dtype=torch.bfloat16)
+    vae = AutoencoderKL.from_pretrained(ZIMAGE_PATH, subfolder="vae", dtype=torch.bfloat16)
 
     # Load text encoder
     print("  Text encoder...")
-    text_encoder = AutoModel.from_pretrained(QWEN3_PATH, dtype=torch.bfloat16, trust_remote_code=True)
+    text_encoder = AutoModel.from_pretrained(
+        QWEN3_PATH, dtype=torch.bfloat16, trust_remote_code=True
+    )
     tokenizer = AutoTokenizer.from_pretrained(QWEN3_PATH, trust_remote_code=True)
 
     # Load scheduler
@@ -78,7 +80,7 @@ def load_pipeline_with_bagel():
     # Load transformer with siglip support
     print("  Transformer...")
     base_transformer = ZImageTransformer2DModel.from_pretrained(
-        ZIMAGE_PATH, subfolder="transformer", torch_dtype=torch.bfloat16
+        ZIMAGE_PATH, subfolder="transformer", dtype=torch.bfloat16
     )
 
     # Create new transformer with siglip_feat_dim
@@ -127,7 +129,9 @@ def load_pipeline_with_bagel():
 def encode_prompt(tokenizer, text_encoder, prompt, device):
     """Encode text prompt."""
     formatted = f"<|im_start|>user\n{prompt}<|im_end|>\n<|im_start|>assistant\n"
-    inputs = tokenizer(formatted, padding="max_length", max_length=512, truncation=True, return_tensors="pt")
+    inputs = tokenizer(
+        formatted, padding="max_length", max_length=512, truncation=True, return_tensors="pt"
+    )
 
     with torch.no_grad():
         outputs = text_encoder(
@@ -152,7 +156,7 @@ def encode_siglip(siglip, processor, image, device, scale_factor=11.0):
         hidden_state = outputs.last_hidden_state
 
     B, N, C = hidden_state.shape
-    H = W = int(N ** 0.5)
+    H = W = int(N**0.5)
     hidden_state = hidden_state.squeeze(0).view(H, W, C)
 
     # Scale to match text embedding statistics (std ~37 vs ~3.3)
@@ -206,7 +210,7 @@ def generate(
         # For omni mode with siglip, cap_feats is still a list of tensors
         # siglip_feats is list of lists: [[emb1, emb2, ...], ...] per batch
         siglip_feats = [[siglip_emb]]  # One reference image
-        cap_feats_list = [cap_feats]   # Text embeddings as tensor
+        cap_feats_list = [cap_feats]  # Text embeddings as tensor
         cond_latents = None  # No VAE conditioning for now
 
     # Scheduler setup
@@ -244,7 +248,9 @@ def generate(
         noise_pred = -noise_pred.squeeze(1)
 
         latents_for_step = latents.squeeze(1)
-        latents = scheduler.step(noise_pred.float(), t, latents_for_step.float(), return_dict=False)[0]
+        latents = scheduler.step(
+            noise_pred.float(), t, latents_for_step.float(), return_dict=False
+        )[0]
         latents = latents.unsqueeze(1).to(dtype)
 
     # Decode
@@ -262,17 +268,17 @@ def generate(
 
 
 def main():
-    print("="*60)
+    print("=" * 60)
     print("Z-Image Omni with Bagel Connector - Full Generation Test")
-    print("="*60)
+    print("=" * 60)
 
     # Load pipeline
     components = load_pipeline_with_bagel()
 
     # Test 1: Basic generation (no reference)
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("Test 1: Basic generation (text-only)")
-    print("="*60)
+    print("=" * 60)
 
     image = generate(
         components,
@@ -287,9 +293,9 @@ def main():
     print(f"  Saved to {OUTPUT_DIR / 'bagel_test_basic.png'}")
 
     # Test 2: With reference image (omni mode)
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("Test 2: Omni generation (with reference)")
-    print("="*60)
+    print("=" * 60)
 
     # Create a colorful reference image
     ref_image = Image.new("RGB", (384, 384), (255, 100, 50))
@@ -309,9 +315,9 @@ def main():
     # Test 3: With a real image if available
     real_ref_path = OUTPUT_DIR / "test_reference.jpg"
     if real_ref_path.exists():
-        print("\n" + "="*60)
+        print("\n" + "=" * 60)
         print("Test 3: Omni with real reference image")
-        print("="*60)
+        print("=" * 60)
 
         ref_image = Image.open(real_ref_path).convert("RGB")
         image = generate(
@@ -326,9 +332,9 @@ def main():
         image.save(OUTPUT_DIR / "bagel_test_real_ref.png")
         print(f"  Saved to {OUTPUT_DIR / 'bagel_test_real_ref.png'}")
 
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("DONE - Check the output images!")
-    print("="*60)
+    print("=" * 60)
 
 
 if __name__ == "__main__":

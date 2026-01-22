@@ -66,7 +66,7 @@ def parse_thinking_content(text: str) -> tuple[str, str | None]:
     match = re.search(r"<think>\s*(.*?)\s*</think>\s*", text, re.DOTALL)
     if match:
         thinking = match.group(1).strip()
-        caption = text[match.end():].strip()
+        caption = text[match.end() :].strip()
         return caption, thinking
     return text.strip(), None
 
@@ -77,61 +77,44 @@ def count_tokens(text: str, tokenizer) -> int:
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Test VL caption + embedding alignment"
+    parser = argparse.ArgumentParser(description="Test VL caption + embedding alignment")
+    parser.add_argument("-i", "--image", required=True, help="Input image path")
+    parser.add_argument(
+        "-o",
+        "--output-dir",
+        default="experiments/results/caption_embedding_test",
+        help="Output directory",
     )
     parser.add_argument(
-        "-i", "--image", required=True,
-        help="Input image path"
+        "--caption-tokens",
+        type=int,
+        default=1024,
+        help="Target caption length in tokens (actual output will be this + thinking overhead)",
     )
     parser.add_argument(
-        "-o", "--output-dir", default="experiments/results/caption_embedding_test",
-        help="Output directory"
+        "--max-tokens",
+        type=int,
+        default=2500,
+        help="Max tokens for generation (includes thinking block). Should be caption-tokens + ~1000 for thinking + buffer",
     )
+    parser.add_argument("--steps", type=int, default=9, help="Inference steps")
+    parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument(
-        "--caption-tokens", type=int, default=1024,
-        help="Target caption length in tokens (actual output will be this + thinking overhead)"
+        "--vl-model-path",
+        type=str,
+        default=None,
+        help="Path to Qwen3-VL model (auto-detects Thinking variant)",
     )
+    parser.add_argument("--z-image-path", type=str, default=None, help="Path to Z-Image model")
     parser.add_argument(
-        "--max-tokens", type=int, default=2500,
-        help="Max tokens for generation (includes thinking block). Should be caption-tokens + ~1000 for thinking + buffer"
+        "--vl-hidden-layer", type=int, default=-6, help="VL hidden layer for extraction"
     )
+    parser.add_argument("--vl-alpha", type=float, default=0.5, help="VL alpha for blending")
     parser.add_argument(
-        "--steps", type=int, default=9,
-        help="Inference steps"
+        "--config", type=str, default="config.toml", help="Config file for Z-Image settings"
     )
-    parser.add_argument(
-        "--seed", type=int, default=42,
-        help="Random seed"
-    )
-    parser.add_argument(
-        "--vl-model-path", type=str, default=None,
-        help="Path to Qwen3-VL model (auto-detects Thinking variant)"
-    )
-    parser.add_argument(
-        "--z-image-path", type=str, default=None,
-        help="Path to Z-Image model"
-    )
-    parser.add_argument(
-        "--vl-hidden-layer", type=int, default=-6,
-        help="VL hidden layer for extraction"
-    )
-    parser.add_argument(
-        "--vl-alpha", type=float, default=0.5,
-        help="VL alpha for blending"
-    )
-    parser.add_argument(
-        "--config", type=str, default="config.toml",
-        help="Config file for Z-Image settings"
-    )
-    parser.add_argument(
-        "--profile", type=str, default="default",
-        help="Config profile to use"
-    )
-    parser.add_argument(
-        "-v", "--verbose", action="store_true",
-        help="Enable verbose logging"
-    )
+    parser.add_argument("--profile", type=str, default="default", help="Config profile to use")
+    parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose logging")
 
     args = parser.parse_args()
     setup_logging(args.verbose)
@@ -159,12 +142,14 @@ def main():
     vl_extractor = VLEmbeddingExtractor.from_pretrained(
         vl_model_path,
         device="cuda",  # Need CUDA for generation
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
     )
 
     logger.info(f"VL model variant: {vl_extractor.model_variant}")
     if vl_extractor.model_variant != "thinking":
-        logger.warning("Using non-Thinking model variant. For best results, use Qwen3-VL-4B-Thinking")
+        logger.warning(
+            "Using non-Thinking model variant. For best results, use Qwen3-VL-4B-Thinking"
+        )
 
     # System prompt for caption generation - explicitly request very long output
     caption_system_prompt = f"""You are an expert image captioner. Generate an EXTREMELY detailed description of this image.
@@ -226,7 +211,9 @@ This description will be used to recreate this exact image, so EVERY detail matt
     tokenizer = vl_extractor.processor.tokenizer
 
     for attempt in range(max_attempts):
-        logger.info(f"Generating caption attempt {attempt + 1}/{max_attempts} (max_tokens={args.max_tokens}, target >= {min_caption_tokens})...")
+        logger.info(
+            f"Generating caption attempt {attempt + 1}/{max_attempts} (max_tokens={args.max_tokens}, target >= {min_caption_tokens})..."
+        )
 
         raw_caption = vl_extractor.generate(
             image=input_image,
@@ -249,10 +236,14 @@ This description will be used to recreate this exact image, so EVERY detail matt
             logger.info(f"  Caption meets minimum length requirement!")
             break
         else:
-            logger.warning(f"  Caption too short ({caption_token_count} < {min_caption_tokens}), retrying...")
+            logger.warning(
+                f"  Caption too short ({caption_token_count} < {min_caption_tokens}), retrying..."
+            )
 
     if caption_token_count < min_caption_tokens:
-        logger.warning(f"Could not generate caption >= {min_caption_tokens} tokens after {max_attempts} attempts. Proceeding with {caption_token_count} tokens.")
+        logger.warning(
+            f"Could not generate caption >= {min_caption_tokens} tokens after {max_attempts} attempts. Proceeding with {caption_token_count} tokens."
+        )
 
     # Count tokens for reporting
     raw_token_count = count_tokens(raw_caption, tokenizer)
@@ -334,20 +325,60 @@ This description will be used to recreate this exact image, so EVERY detail matt
     config_args.steps = args.steps
 
     # Set defaults for all expected attributes
-    for attr in ['model_path', 'text_encoder_device', 'dit_device', 'vae_device',
-                 'cpu_offload', 'flash_attn', 'compile', 'debug', 'verbose',
-                 'attention_backend', 'use_custom_scheduler', 'tiled_vae',
-                 'embedding_cache', 'long_prompt_mode', 'hidden_layer', 'shift',
-                 'lora', 'api_url', 'api_model', 'local_encoder', 'templates_dir',
-                 'torch_dtype', 'text_encoder_path', 'tile_size', 'tile_overlap',
-                 'cache_size', 'rewriter_use_api', 'rewriter_api_url', 'rewriter_api_model',
-                 'rewriter_temperature', 'rewriter_top_p', 'rewriter_top_k',
-                 'rewriter_min_p', 'rewriter_presence_penalty', 'rewriter_max_tokens',
-                 'width', 'height', 'guidance_scale', 'negative_prompt', 'seed',
-                 'embeddings_file', 'template', 'system_prompt', 'thinking_content',
-                 'assistant_content', 'enable_thinking',
-                 'vl_model_path', 'vl_device', 'vl_hidden_layer', 'vl_alpha',
-                 'vl_blend_mode', 'vl_auto_unload']:
+    for attr in [
+        "model_path",
+        "text_encoder_device",
+        "dit_device",
+        "vae_device",
+        "cpu_offload",
+        "flash_attn",
+        "compile",
+        "debug",
+        "verbose",
+        "attention_backend",
+        "use_custom_scheduler",
+        "tiled_vae",
+        "embedding_cache",
+        "long_prompt_mode",
+        "hidden_layer",
+        "shift",
+        "lora",
+        "api_url",
+        "api_model",
+        "local_encoder",
+        "templates_dir",
+        "dtype",
+        "text_encoder_path",
+        "tile_size",
+        "tile_overlap",
+        "cache_size",
+        "rewriter_use_api",
+        "rewriter_api_url",
+        "rewriter_api_model",
+        "rewriter_temperature",
+        "rewriter_top_p",
+        "rewriter_top_k",
+        "rewriter_min_p",
+        "rewriter_presence_penalty",
+        "rewriter_max_tokens",
+        "width",
+        "height",
+        "guidance_scale",
+        "negative_prompt",
+        "seed",
+        "embeddings_file",
+        "template",
+        "system_prompt",
+        "thinking_content",
+        "assistant_content",
+        "enable_thinking",
+        "vl_model_path",
+        "vl_device",
+        "vl_hidden_layer",
+        "vl_alpha",
+        "vl_blend_mode",
+        "vl_auto_unload",
+    ]:
         if not hasattr(config_args, attr):
             setattr(config_args, attr, None)
 
@@ -408,13 +439,19 @@ This description will be used to recreate this exact image, so EVERY detail matt
     # Interpolate to MAX_TOKENS if too long
     # Note: Pipeline expects 2D embeddings (seq_len, hidden_dim) without batch dimension
     if blended_aligned.shape[0] > MAX_TOKENS:
-        logger.info(f"  Blended aligned: {blended_aligned.shape[0]} -> {MAX_TOKENS} tokens (interpolated)")
-        blended_aligned = torch.nn.functional.interpolate(
-            blended_aligned.T.unsqueeze(0),  # (1, dim, seq)
-            size=MAX_TOKENS,
-            mode="linear",
-            align_corners=False,
-        ).squeeze(0).T  # (seq, dim)
+        logger.info(
+            f"  Blended aligned: {blended_aligned.shape[0]} -> {MAX_TOKENS} tokens (interpolated)"
+        )
+        blended_aligned = (
+            torch.nn.functional.interpolate(
+                blended_aligned.T.unsqueeze(0),  # (1, dim, seq)
+                size=MAX_TOKENS,
+                mode="linear",
+                align_corners=False,
+            )
+            .squeeze(0)
+            .T
+        )  # (seq, dim)
 
     logger.info(f"  Blended aligned shape: {blended_aligned.shape}")
 
@@ -426,13 +463,19 @@ This description will be used to recreate this exact image, so EVERY detail matt
     )
 
     if blended_generic_vl.shape[0] > MAX_TOKENS:
-        logger.info(f"  Blended generic: {blended_generic_vl.shape[0]} -> {MAX_TOKENS} tokens (interpolated)")
-        blended_generic_vl = torch.nn.functional.interpolate(
-            blended_generic_vl.T.unsqueeze(0),
-            size=MAX_TOKENS,
-            mode="linear",
-            align_corners=False,
-        ).squeeze(0).T
+        logger.info(
+            f"  Blended generic: {blended_generic_vl.shape[0]} -> {MAX_TOKENS} tokens (interpolated)"
+        )
+        blended_generic_vl = (
+            torch.nn.functional.interpolate(
+                blended_generic_vl.T.unsqueeze(0),
+                size=MAX_TOKENS,
+                mode="linear",
+                align_corners=False,
+            )
+            .squeeze(0)
+            .T
+        )
 
     logger.info(f"  Blended generic shape: {blended_generic_vl.shape}")
 
@@ -440,12 +483,16 @@ This description will be used to recreate this exact image, so EVERY detail matt
     pure_text_emb = text_emb.to("cuda")
     if pure_text_emb.shape[0] > MAX_TOKENS:
         logger.info(f"  Pure text: {pure_text_emb.shape[0]} -> {MAX_TOKENS} tokens (interpolated)")
-        pure_text_emb = torch.nn.functional.interpolate(
-            pure_text_emb.T.unsqueeze(0),
-            size=MAX_TOKENS,
-            mode="linear",
-            align_corners=False,
-        ).squeeze(0).T
+        pure_text_emb = (
+            torch.nn.functional.interpolate(
+                pure_text_emb.T.unsqueeze(0),
+                size=MAX_TOKENS,
+                mode="linear",
+                align_corners=False,
+            )
+            .squeeze(0)
+            .T
+        )
 
     logger.info(f"  Pure text shape: {pure_text_emb.shape}")
 
@@ -581,10 +628,10 @@ This description will be used to recreate this exact image, so EVERY detail matt
     logger.info(f"  - caption.txt: Generated caption ({caption_token_count} tokens)")
     logger.info(f"  - metadata.json: Full experiment metadata")
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"Experiment complete!")
     print(f"Results: {output_dir}")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
 
 if __name__ == "__main__":

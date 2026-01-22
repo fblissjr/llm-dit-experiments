@@ -37,7 +37,7 @@ from PIL import Image, ImageDraw, ImageFont
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from experiments.fmtt.differentiable_siglip import DifferentiableSigLIP
-from experiments.prompts import get_prompt_by_id, get_categories, get_prompts_by_category
+from experiments.prompts import get_categories, get_prompt_by_id, get_prompts_by_category
 
 
 def create_comparison_image(
@@ -78,13 +78,19 @@ def create_comparison_image(
     improvement = fmtt_reward - baseline_reward
     color = (100, 255, 100) if improvement > 0 else (255, 100, 100)
     draw.text((width + 20, 5), f"FMTT (scale={guidance_scale})", fill=(200, 200, 200), font=font)
-    draw.text((width + 20, 28), f"Reward: {fmtt_reward:.4f} ({improvement:+.4f})", fill=color, font=small_font)
+    draw.text(
+        (width + 20, 28),
+        f"Reward: {fmtt_reward:.4f} ({improvement:+.4f})",
+        fill=color,
+        font=small_font,
+    )
 
     # Truncate prompt for display
     display_prompt = prompt[:80] + "..." if len(prompt) > 80 else prompt
     draw.text((10, 45), display_prompt, fill=(100, 100, 100), font=small_font)
 
     return canvas
+
 
 logging.basicConfig(
     level=logging.INFO,
@@ -362,7 +368,9 @@ def fmtt_sampling(
     logger.info("Decoding final image...")
     with torch.no_grad():
         latents_decoded = latents.to(pipe.vae.dtype)
-        latents_decoded = (latents_decoded / pipe.vae.config.scaling_factor) + pipe.vae.config.shift_factor
+        latents_decoded = (
+            latents_decoded / pipe.vae.config.scaling_factor
+        ) + pipe.vae.config.shift_factor
         image = pipe.vae.decode(latents_decoded).sample[0]
 
     # Convert to PIL
@@ -456,26 +464,60 @@ Examples:
     )
     parser.add_argument("prompt", nargs="?", default=None, help="Text prompt (or use --prompt-id)")
     parser.add_argument("--config", type=str, help="Config file (e.g., config.toml)")
-    parser.add_argument("--profile", type=str, default="default", help="Config profile (default: default)")
-    parser.add_argument("--model-path", type=str, help="Path to Z-Image model (alternative to config)")
-    parser.add_argument("--prompt-id", type=str, help="Prompt ID from standard_prompts.yaml (e.g., technical_001, animal_002)")
-    parser.add_argument("--prompt-category", type=str, choices=get_categories(), help="Run all prompts in category")
+    parser.add_argument(
+        "--profile", type=str, default="default", help="Config profile (default: default)"
+    )
+    parser.add_argument(
+        "--model-path", type=str, help="Path to Z-Image model (alternative to config)"
+    )
+    parser.add_argument(
+        "--prompt-id",
+        type=str,
+        help="Prompt ID from standard_prompts.yaml (e.g., technical_001, animal_002)",
+    )
+    parser.add_argument(
+        "--prompt-category", type=str, choices=get_categories(), help="Run all prompts in category"
+    )
     parser.add_argument("--guidance-scale", type=float, default=1.0, help="FMTT guidance scale")
-    parser.add_argument("--guidance-start", type=float, default=0.0, help="When to start FMTT (0.0-1.0)")
-    parser.add_argument("--guidance-stop", type=float, default=0.5, help="When to stop FMTT (0.0-1.0)")
-    parser.add_argument("--normalize-mode", type=str, default="unit", choices=["unit", "clip", "none"])
+    parser.add_argument(
+        "--guidance-start", type=float, default=0.0, help="When to start FMTT (0.0-1.0)"
+    )
+    parser.add_argument(
+        "--guidance-stop", type=float, default=0.5, help="When to stop FMTT (0.0-1.0)"
+    )
+    parser.add_argument(
+        "--normalize-mode", type=str, default="unit", choices=["unit", "clip", "none"]
+    )
     parser.add_argument("--height", type=int, default=1024)
     parser.add_argument("--width", type=int, default=1024)
     parser.add_argument("--steps", type=int, default=9)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--output", type=str, default="experiments/results/fmtt")
-    parser.add_argument("--compare-baseline", action="store_true", help="Also generate baseline for comparison")
+    parser.add_argument(
+        "--compare-baseline", action="store_true", help="Also generate baseline for comparison"
+    )
     parser.add_argument("--sweep-scale", action="store_true", help="Sweep guidance scale values")
     parser.add_argument("--quiet", action="store_true", help="Less verbose output")
-    parser.add_argument("--siglip-device", type=str, default="cuda", help="Device for SigLIP (cuda/cpu)")
-    parser.add_argument("--encoder-cpu", action="store_true", default=True, help="Run text encoder on CPU (default: True, required for 24GB cards)")
-    parser.add_argument("--encoder-cuda", action="store_true", help="Run text encoder on CUDA (only for 48GB+ cards)")
-    parser.add_argument("--decode-scale", type=float, default=0.5, help="Scale for intermediate VAE decode (0.5=512px, saves VRAM)")
+    parser.add_argument(
+        "--siglip-device", type=str, default="cuda", help="Device for SigLIP (cuda/cpu)"
+    )
+    parser.add_argument(
+        "--encoder-cpu",
+        action="store_true",
+        default=True,
+        help="Run text encoder on CPU (default: True, required for 24GB cards)",
+    )
+    parser.add_argument(
+        "--encoder-cuda",
+        action="store_true",
+        help="Run text encoder on CUDA (only for 48GB+ cards)",
+    )
+    parser.add_argument(
+        "--decode-scale",
+        type=float,
+        default=0.5,
+        help="Scale for intermediate VAE decode (0.5=512px, saves VRAM)",
+    )
 
     args = parser.parse_args()
 
@@ -506,11 +548,17 @@ Examples:
     # For single prompt, log it
     if len(prompts_to_run) == 1:
         prompt_name, prompt = prompts_to_run[0]
-        logger.info(f"Prompt [{prompt_name}]: '{prompt[:80]}...'" if len(prompt) > 80 else f"Prompt [{prompt_name}]: '{prompt}'")
+        logger.info(
+            f"Prompt [{prompt_name}]: '{prompt[:80]}...'"
+            if len(prompt) > 80
+            else f"Prompt [{prompt_name}]: '{prompt}'"
+        )
 
     # Load pipeline - either from config or direct model path
     if args.config:
-        logger.info(f"Loading Z-Image pipeline from config: {args.config} (profile: {args.profile})")
+        logger.info(
+            f"Loading Z-Image pipeline from config: {args.config} (profile: {args.profile})"
+        )
         from llm_dit.config import Config
         from llm_dit.pipelines.z_image import ZImagePipeline
 
@@ -524,13 +572,13 @@ Examples:
         hidden_layer = config.encoder.hidden_layer
 
         # Resolve dtype
-        dtype_str = config.encoder.torch_dtype
+        dtype_str = config.encoder.dtype
         if dtype_str == "bfloat16":
-            torch_dtype = torch.bfloat16
+            dtype = torch.bfloat16
         elif dtype_str == "float16":
-            torch_dtype = torch.float16
+            dtype = torch.float16
         else:
-            torch_dtype = torch.float32
+            dtype = torch.float32
 
         logger.info(f"  Model: {model_path}")
         logger.info(f"  Encoder device: {encoder_device}")
@@ -540,7 +588,7 @@ Examples:
         pipe = ZImagePipeline.from_pretrained(
             model_path,
             templates_dir=templates_dir,
-            torch_dtype=torch_dtype,
+            dtype=dtype,
             encoder_device=encoder_device,
             hidden_layer=hidden_layer,
         )
@@ -559,7 +607,7 @@ Examples:
 
         pipe = ZImagePipeline.from_pretrained(
             args.model_path,
-            torch_dtype=torch.bfloat16,
+            dtype=torch.bfloat16,
         )
     else:
         parser.error("Either --config or --model-path is required")
@@ -576,9 +624,9 @@ Examples:
     all_results = []
 
     for prompt_name, prompt in prompts_to_run:
-        logger.info(f"\n{'='*60}")
+        logger.info(f"\n{'=' * 60}")
         logger.info(f"Processing: {prompt_name}")
-        logger.info(f"{'='*60}")
+        logger.info(f"{'=' * 60}")
 
         if args.sweep_scale:
             # Sweep guidance scale
@@ -612,7 +660,13 @@ Examples:
             # Find best
             best = max(results, key=lambda x: x["reward"])
             logger.info(f"Best scale: {best['scale']} (reward={best['reward']:.4f})")
-            all_results.append({"prompt_id": prompt_name, "best_scale": best["scale"], "best_reward": best["reward"]})
+            all_results.append(
+                {
+                    "prompt_id": prompt_name,
+                    "best_scale": best["scale"],
+                    "best_reward": best["reward"],
+                }
+            )
 
         else:
             # Single generation
@@ -639,7 +693,9 @@ Examples:
             fmtt_image.save(output_dir / f"fmtt_{prompt_name}.png")
             logger.info(f"FMTT saved to: {output_dir / f'fmtt_{prompt_name}.png'}")
             logger.info(f"FMTT final reward: {fmtt_metrics['final_reward']:.4f}")
-            logger.info(f"FMTT mean intermediate reward: {fmtt_metrics['mean_intermediate_reward']:.4f}")
+            logger.info(
+                f"FMTT mean intermediate reward: {fmtt_metrics['mean_intermediate_reward']:.4f}"
+            )
             logger.info(f"FMTT total time: {fmtt_metrics['total_time']:.2f}s")
 
             result = {
@@ -676,7 +732,9 @@ Examples:
                 logger.info("=" * 50)
                 logger.info("COMPARISON:")
                 logger.info(f"  Reward improvement: {improvement:+.4f}")
-                logger.info(f"  FMTT / Baseline time: {fmtt_metrics['total_time']:.2f}s / {baseline_time:.2f}s")
+                logger.info(
+                    f"  FMTT / Baseline time: {fmtt_metrics['total_time']:.2f}s / {baseline_time:.2f}s"
+                )
                 logger.info(f"  Time ratio: {fmtt_metrics['total_time'] / baseline_time:.2f}x")
                 logger.info("=" * 50)
 
@@ -697,14 +755,18 @@ Examples:
 
     # Summary for category runs
     if len(all_results) > 1:
-        logger.info(f"\n{'='*60}")
+        logger.info(f"\n{'=' * 60}")
         logger.info("SUMMARY")
-        logger.info(f"{'='*60}")
+        logger.info(f"{'=' * 60}")
         for r in all_results:
             if "improvement" in r:
-                logger.info(f"{r['prompt_id']}: FMTT={r['fmtt_reward']:.4f}, baseline={r['baseline_reward']:.4f}, delta={r['improvement']:+.4f}")
+                logger.info(
+                    f"{r['prompt_id']}: FMTT={r['fmtt_reward']:.4f}, baseline={r['baseline_reward']:.4f}, delta={r['improvement']:+.4f}"
+                )
             elif "best_scale" in r:
-                logger.info(f"{r['prompt_id']}: best_scale={r['best_scale']}, reward={r['best_reward']:.4f}")
+                logger.info(
+                    f"{r['prompt_id']}: best_scale={r['best_scale']}, reward={r['best_reward']:.4f}"
+                )
             else:
                 logger.info(f"{r['prompt_id']}: FMTT={r['fmtt_reward']:.4f}")
 

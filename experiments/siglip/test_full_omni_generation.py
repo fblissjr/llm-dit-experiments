@@ -24,7 +24,6 @@ sys.path.insert(0, str(DIFFUSERS_PR_PATH))
 import torch
 from PIL import Image
 
-
 # Model paths
 ZIMAGE_PATH = Path.home() / "Storage/Tongyi-MAI_Z-Image-Turbo"
 SIGLIP_PATH = Path.home() / "Storage/google_siglip2-so400m-patch14-384"  # 1152 hidden dim
@@ -35,7 +34,7 @@ def load_pipeline():
     """Load Z-Image Omni pipeline with SigLIP support."""
     from diffusers import AutoencoderKL, FlowMatchEulerDiscreteScheduler
     from diffusers.models.transformers.transformer_z_image import ZImageTransformer2DModel
-    from transformers import AutoModel, AutoTokenizer, AutoProcessor
+    from transformers import AutoModel, AutoProcessor, AutoTokenizer
 
     print("Loading components...")
 
@@ -44,14 +43,14 @@ def load_pipeline():
     vae = AutoencoderKL.from_pretrained(
         ZIMAGE_PATH,
         subfolder="vae",
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
     )
 
     # Load text encoder
     print("  Loading text encoder (Qwen3-4B)...")
     text_encoder = AutoModel.from_pretrained(
         QWEN3_PATH,
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
         trust_remote_code=True,
     )
     tokenizer = AutoTokenizer.from_pretrained(QWEN3_PATH, trust_remote_code=True)
@@ -76,7 +75,7 @@ def load_pipeline():
     transformer = ZImageTransformer2DModel.from_pretrained(
         ZIMAGE_PATH,
         subfolder="transformer",
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
     )
 
     # Check if siglip components exist
@@ -93,12 +92,18 @@ def load_pipeline():
         new_config = dict(config)
         new_config["siglip_feat_dim"] = siglip_feat_dim
 
-        from diffusers.models.transformers.transformer_z_image import ZImageTransformer2DModel as ZImageTransformer
+        from diffusers.models.transformers.transformer_z_image import (
+        from diffusers.models.transformers.transformer_z_image import (
+            ZImageTransformer2DModel as ZImageTransformer,
+        )
+
         new_transformer = ZImageTransformer(**new_config)
 
         # Copy existing weights
         print("  Copying existing weights to new transformer...")
-        missing, unexpected = new_transformer.load_state_dict(transformer.state_dict(), strict=False)
+        missing, unexpected = new_transformer.load_state_dict(
+            transformer.state_dict(), strict=False
+        )
         print(f"    Missing keys (expected - siglip components): {len(missing)}")
         print(f"    Unexpected keys: {len(unexpected)}")
 
@@ -170,7 +175,7 @@ def encode_siglip(siglip, siglip_processor, image: Image.Image, device: str = "c
 
     # Reshape to (H, W, C)
     B, N, C = hidden_state.shape
-    H = W = int(N ** 0.5)
+    H = W = int(N**0.5)
     hidden_state = hidden_state.squeeze(0).view(H, W, C)
 
     return hidden_state
@@ -267,7 +272,7 @@ def run_generation(
     # Denoising loop
     print("  Denoising...")
     for i, t in enumerate(timesteps):
-        print(f"    Step {i+1}/{num_steps}...")
+        print(f"    Step {i + 1}/{num_steps}...")
 
         timestep = t.expand(1)
         timestep_norm = (1000 - timestep) / 1000
@@ -299,18 +304,23 @@ def run_generation(
 
         # Scheduler step
         latents_for_step = latents.squeeze(1)
-        latents = scheduler.step(noise_pred.float(), t, latents_for_step.float(), return_dict=False)[0]
+        latents = scheduler.step(
+            noise_pred.float(), t, latents_for_step.float(), return_dict=False
+        )[0]
         latents = latents.unsqueeze(1).to(dtype)
 
     # Decode using installed diffusers VAE (not PR version)
     print("  Decoding...")
     # latents is (C, F, H, W) = (16, 1, 32, 32)
     # VAE expects (B, C, H, W) = (1, 16, 32, 32)
-    latents_for_decode = latents.squeeze(1).unsqueeze(0)  # (16, 1, H, W) -> (16, H, W) -> (1, 16, H, W)
+    latents_for_decode = latents.squeeze(1).unsqueeze(
+        0
+    )  # (16, 1, H, W) -> (16, H, W) -> (1, 16, H, W)
     latents_for_decode = (latents_for_decode / vae.config.scaling_factor) + vae.config.shift_factor
 
     # Import the installed diffusers VAE decode function
     import diffusers.models.autoencoders.autoencoder_kl as installed_vae
+
     with torch.no_grad():
         # Use the decoder directly to avoid potential PR version issues
         try:
@@ -320,23 +330,29 @@ def run_generation(
             print(f"    VAE decode failed, returning latent visualization")
 
             # Debug: check latent shape
-            print(f"    latents_for_decode: shape={latents_for_decode.shape}, is_sparse={latents_for_decode.is_sparse}")
+            print(
+                f"    latents_for_decode: shape={latents_for_decode.shape}, is_sparse={latents_for_decode.is_sparse}"
+            )
 
             # latents_for_decode shape: (1, 16, H, W)
             latent_cpu = latents_for_decode.detach().clone().cpu().float()
             latent_vis = latent_cpu[0, 0:3]  # (3, H, W)
             print(f"    latent_vis shape: {latent_vis.shape}")
 
-            latent_vis = (latent_vis - latent_vis.min()) / (latent_vis.max() - latent_vis.min() + 1e-8)
+            latent_vis = (latent_vis - latent_vis.min()) / (
+                latent_vis.max() - latent_vis.min() + 1e-8
+            )
 
             # Convert to numpy properly
             import numpy as np
+
             latent_np = latent_vis.numpy()  # (3, H, W)
             latent_np = np.transpose(latent_np, (1, 2, 0))  # (H, W, 3)
             latent_np = (latent_np * 255).astype(np.uint8)
 
             # Resize to target size
             from PIL import Image as PILImage
+
             image = PILImage.fromarray(latent_np).resize((width, height), PILImage.BILINEAR)
             return image
 
@@ -374,6 +390,7 @@ def main():
     except Exception as e:
         print(f"Error loading pipeline: {e}")
         import traceback
+
         traceback.print_exc()
         return
 
@@ -394,6 +411,7 @@ def main():
     except Exception as e:
         print(f"  Error: {e}")
         import traceback
+
         traceback.print_exc()
 
     # Test with reference image (omni mode)
@@ -415,6 +433,8 @@ def main():
         print(f"  Saved to experiments/siglip/test_omni.png")
     except Exception as e:
         print(f"  Error: {e}")
+        import traceback
+
         import traceback
         traceback.print_exc()
 

@@ -79,50 +79,96 @@ server_start_time = None  # For uptime tracking
 # Fields that can be hot-reloaded without restarting
 HOT_RELOAD_SAFE = {
     # Scheduler params
-    "shift", "shift_terminal", "dynamic_shift", "d_noise",
+    "shift",
+    "shift_terminal",
+    "dynamic_shift",
+    "d_noise",
     # Generation defaults
-    "height", "width", "steps", "guidance_scale",
-    "cfg_normalization", "cfg_truncation", "cfg_norm_mode",
+    "height",
+    "width",
+    "steps",
+    "guidance_scale",
+    "cfg_normalization",
+    "cfg_truncation",
+    "cfg_norm_mode",
     # Prompt handling
-    "long_prompt_mode", "hidden_layer", "layer_weights",
-    "enable_thinking", "default_template",
-    "system_prompt", "thinking_content", "assistant_content",
+    "long_prompt_mode",
+    "hidden_layer",
+    "layer_weights",
+    "enable_thinking",
+    "default_template",
+    "system_prompt",
+    "thinking_content",
+    "assistant_content",
     # DyPE feature params
-    "dype_enabled", "dype_method", "dype_scale", "dype_exponent",
-    "dype_start_sigma", "dype_base_shift", "dype_max_shift",
-    "dype_base_resolution", "dype_anisotropic", "dype_multipass",
-    "dype_pass2_strength", "dype_pass3_strength", "dype_frequency_modulation",
+    "dype_enabled",
+    "dype_method",
+    "dype_scale",
+    "dype_exponent",
+    "dype_start_sigma",
+    "dype_base_shift",
+    "dype_max_shift",
+    "dype_base_resolution",
+    "dype_anisotropic",
+    "dype_multipass",
+    "dype_pass2_strength",
+    "dype_pass3_strength",
+    "dype_frequency_modulation",
     # SLG feature params
-    "slg_scale", "slg_layers", "slg_start", "slg_stop",
+    "slg_scale",
+    "slg_layers",
+    "slg_start",
+    "slg_stop",
     # FMTT feature params
-    "fmtt_scale", "fmtt_start", "fmtt_stop", "fmtt_normalize",
-    "fmtt_decode_scale", "fmtt_siglip_model", "fmtt_siglip_device",
+    "fmtt_scale",
+    "fmtt_start",
+    "fmtt_stop",
+    "fmtt_normalize",
+    "fmtt_decode_scale",
+    "fmtt_siglip_model",
+    "fmtt_siglip_device",
     # Cache settings
-    "embedding_cache", "cache_size",
+    "embedding_cache",
+    "cache_size",
     # Tiled VAE (can change between generations)
-    "tiled_vae", "tile_size", "tile_overlap",
+    "tiled_vae",
+    "tile_size",
+    "tile_overlap",
     # Seed
-    "seed", "negative_prompt",
+    "seed",
+    "negative_prompt",
 }
 
 # Fields that require server restart (model reload)
 REQUIRES_RESTART = {
     # Model paths
-    "model_path", "text_encoder_path", "templates_dir",
-    "vl_model_path", "qwen_image_model_path", "qwen_image_edit_model_path",
+    "model_path",
+    "text_encoder_path",
+    "templates_dir",
+    "vl_model_path",
+    "qwen_image_model_path",
+    "qwen_image_edit_model_path",
     # Device placement
-    "encoder_device", "dit_device", "vae_device",
+    "encoder_device",
+    "dit_device",
+    "vae_device",
     # Quantization
-    "quantization", "torch_dtype",
-    "qwen_image_quantize_text_encoder", "qwen_image_quantize_transformer",
+    "quantization",
+    "dtype",
+    "qwen_image_quantize_text_encoder",
+    "qwen_image_quantize_transformer",
     # Memory management
-    "cpu_offload", "qwen_image_cpu_offload",
+    "cpu_offload",
+    "qwen_image_cpu_offload",
     # Attention backend
-    "attention_backend", "flash_attn",
+    "attention_backend",
+    "flash_attn",
     # Compilation
-    "compile", "compile_mode",
+    "compile",
+    "compile_mode",
     # LoRA (requires pipeline reload)
-    "lora_paths", "lora_scales",
+    "lora_paths",
+    "lora_scales",
 }
 
 
@@ -133,6 +179,7 @@ def unload_zimage_pipeline() -> bool:
     """
     global pipeline, encoder
     import gc
+
     import torch
 
     unloaded = False
@@ -140,10 +187,10 @@ def unload_zimage_pipeline() -> bool:
         logger.info("[VRAM] Unloading Z-Image pipeline to free VRAM...")
         # Move components to CPU before deletion to release CUDA memory
         try:
-            if hasattr(pipeline, 'transformer') and pipeline.transformer is not None:
-                pipeline.transformer.to('cpu')
-            if hasattr(pipeline, 'vae') and pipeline.vae is not None:
-                pipeline.vae.to('cpu')
+            if hasattr(pipeline, "transformer") and pipeline.transformer is not None:
+                pipeline.transformer.to("cpu")
+            if hasattr(pipeline, "vae") and pipeline.vae is not None:
+                pipeline.vae.to("cpu")
         except Exception as e:
             logger.warning(f"[VRAM] Error moving pipeline to CPU: {e}")
         del pipeline
@@ -154,9 +201,9 @@ def unload_zimage_pipeline() -> bool:
         logger.info("[VRAM] Unloading Z-Image encoder...")
         # Move encoder model to CPU before deletion
         try:
-            if hasattr(encoder, 'backend') and encoder.backend is not None:
-                if hasattr(encoder.backend, 'model') and encoder.backend.model is not None:
-                    encoder.backend.model.to('cpu')
+            if hasattr(encoder, "backend") and encoder.backend is not None:
+                if hasattr(encoder.backend, "model") and encoder.backend.model is not None:
+                    encoder.backend.model.to("cpu")
         except Exception as e:
             logger.warning(f"[VRAM] Error moving encoder to CPU: {e}")
         del encoder
@@ -167,6 +214,7 @@ def unload_zimage_pipeline() -> bool:
         # Clear torch.compile cache (frees ~3-4GB from compiled kernels)
         try:
             import torch._dynamo
+
             torch._dynamo.reset()
             logger.info("[VRAM] Cleared torch.compile cache")
         except Exception as e:
@@ -209,6 +257,7 @@ def unload_qwen_image_t2i_pipeline() -> bool:
     """
     global qwen_image_t2i_pipeline
     import gc
+
     import torch
 
     if qwen_image_t2i_pipeline is not None:
@@ -232,6 +281,7 @@ def unload_ltx2_pipeline() -> bool:
     """
     global ltx2_pipeline
     import gc
+
     import torch
 
     if ltx2_pipeline is not None:
@@ -257,8 +307,10 @@ def get_vram_status() -> dict:
             "zimage_pipeline": pipeline is not None,
             "zimage_encoder": encoder is not None,
             "qwen_image_pipeline": qwen_image_pipeline is not None,
-            "qwen_image_edit": qwen_image_pipeline is not None and getattr(qwen_image_pipeline, 'edit_pipe', None) is not None,
-            "qwen_image_decompose": qwen_image_pipeline is not None and getattr(qwen_image_pipeline, 'decompose_pipe', None) is not None,
+            "qwen_image_edit": qwen_image_pipeline is not None
+            and getattr(qwen_image_pipeline, "edit_pipe", None) is not None,
+            "qwen_image_decompose": qwen_image_pipeline is not None
+            and getattr(qwen_image_pipeline, "decompose_pipe", None) is not None,
             "qwen_image_t2i_pipeline": qwen_image_t2i_pipeline is not None,
             "ltx2_pipeline": ltx2_pipeline is not None,
         },
@@ -281,6 +333,7 @@ def get_vram_status() -> dict:
 
 class DyPEConfigRequest(BaseModel):
     """DyPE configuration for high-resolution generation."""
+
     enabled: bool = False
     method: str = "vision_yarn"  # vision_yarn, yarn, ntk
     multipass: str = "twopass"  # single, twopass, threepass
@@ -296,7 +349,9 @@ class DyPEConfigRequest(BaseModel):
 class GenerateRequest(BaseModel):
     prompt: str  # User prompt
     system_prompt: Optional[str] = None  # System prompt (optional)
-    thinking_content: Optional[str] = None  # Content inside <think>...</think> (triggers think block)
+    thinking_content: Optional[str] = (
+        None  # Content inside <think>...</think> (triggers think block)
+    )
     assistant_content: Optional[str] = None  # Content after </think> (optional)
     force_think_block: bool = False  # If True, add empty think block even without content
     strip_quotes: bool = False  # If True, remove " characters (for JSON-type prompts)
@@ -313,7 +368,9 @@ class GenerateRequest(BaseModel):
     d_noise: float = 1.0  # Sigma schedule scaling (<1.0 = sharper, >1.0 = softer)
     long_prompt_mode: str = "interpolate"  # truncate/interpolate/pool/attention_pool
     hidden_layer: int = -2  # Which hidden layer to extract (-1 to -35, Qwen3-4B has 36 layers)
-    layer_weights: Optional[Dict[int, float]] = None  # Multi-layer blending weights (overrides hidden_layer)
+    layer_weights: Optional[Dict[int, float]] = (
+        None  # Multi-layer blending weights (overrides hidden_layer)
+    )
     # DyPE (high-resolution) options
     dype: Optional[DyPEConfigRequest] = None
     # Skip Layer Guidance (SLG) options
@@ -343,28 +400,39 @@ class Img2ImgRequest(BaseModel):
     Note: SLG, FMTT, DyPE, and layer_weights are not supported for img2img.
     Use text-to-image (/api/generate) for those features.
     """
+
     prompt: str  # User prompt
     image: str  # Base64-encoded input image
     mask_image: Optional[str] = None  # Base64-encoded grayscale mask (black=preserve, white=edit)
-    strength: float = Field(0.75, ge=0.0, le=1.0, description="Denoising strength (0=no change, 1=full generation)")
+    strength: float = Field(
+        0.75, ge=0.0, le=1.0, description="Denoising strength (0=no change, 1=full generation)"
+    )
     # Common generation params
     system_prompt: Optional[str] = None
     thinking_content: Optional[str] = None
     assistant_content: Optional[str] = None
     force_think_block: bool = False
     strip_quotes: bool = False
-    width: Optional[int] = Field(None, ge=64, le=4096, description="Output width (if None, use input image size)")
-    height: Optional[int] = Field(None, ge=64, le=4096, description="Output height (if None, use input image size)")
+    width: Optional[int] = Field(
+        None, ge=64, le=4096, description="Output width (if None, use input image size)"
+    )
+    height: Optional[int] = Field(
+        None, ge=64, le=4096, description="Output height (if None, use input image size)"
+    )
     steps: int = Field(9, ge=1, le=500, description="Number of denoising steps")
     seed: Optional[int] = None
     template: Optional[str] = None
     guidance_scale: float = Field(0.0, ge=0.0, le=30.0, description="CFG guidance scale")
     cfg_normalization: float = Field(0.0, ge=0.0, le=10.0, description="CFG normalization strength")
-    cfg_truncation: float = Field(1.0, ge=0.0, le=1.0, description="Progress threshold for CFG truncation")
+    cfg_truncation: float = Field(
+        1.0, ge=0.0, le=1.0, description="Progress threshold for CFG truncation"
+    )
     cfg_norm_mode: str = "clamp"  # CFG normalization mode: clamp or match
     shift: float = Field(3.0, ge=0.0, le=10.0, description="Scheduler shift parameter")
     dynamic_shift: bool = False  # Calculate shift based on resolution (overrides shift)
-    d_noise: float = Field(1.0, ge=0.5, le=2.0, description="Sigma scaling (<1.0 = sharper, >1.0 = softer)")
+    d_noise: float = Field(
+        1.0, ge=0.5, le=2.0, description="Sigma scaling (<1.0 = sharper, >1.0 = softer)"
+    )
     long_prompt_mode: str = "interpolate"
     hidden_layer: int = Field(-2, ge=-35, le=-1, description="Hidden layer for text embeddings")
     # FBCache (Forward Block Cache) options
@@ -376,7 +444,9 @@ class Img2ImgRequest(BaseModel):
 class EncodeRequest(BaseModel):
     prompt: str  # User prompt
     system_prompt: Optional[str] = None  # System prompt (optional)
-    thinking_content: Optional[str] = None  # Content inside <think>...</think> (triggers think block)
+    thinking_content: Optional[str] = (
+        None  # Content inside <think>...</think> (triggers think block)
+    )
     assistant_content: Optional[str] = None  # Content after </think> (optional)
     force_think_block: bool = False  # If True, add empty think block even without content
     strip_quotes: bool = False  # If True, remove " characters (for JSON-type prompts)
@@ -385,7 +455,9 @@ class EncodeRequest(BaseModel):
 
 class RewriteRequest(BaseModel):
     prompt: Optional[str] = None  # User prompt to rewrite/expand (optional if image provided)
-    rewriter: Optional[str] = None  # Name of rewriter template (optional if custom_system_prompt provided)
+    rewriter: Optional[str] = (
+        None  # Name of rewriter template (optional if custom_system_prompt provided)
+    )
     custom_system_prompt: Optional[str] = None  # Ad-hoc system prompt for rewriting
     max_tokens: Optional[int] = None  # Maximum tokens to generate (default from config: 512)
     temperature: Optional[float] = None  # Sampling temperature (default: 0.6 for Qwen3 thinking)
@@ -400,6 +472,7 @@ class RewriteRequest(BaseModel):
 
 class VLExtractRequest(BaseModel):
     """Request to extract VL embeddings from an image."""
+
     image: str  # Base64-encoded image
     text: Optional[str] = None  # Optional text description with image
     hidden_layer: int = -2  # Which hidden layer to extract (-2 = penultimate)
@@ -409,6 +482,7 @@ class VLExtractRequest(BaseModel):
 
 class VLGenerateRequest(BaseModel):
     """Request for VL-conditioned generation."""
+
     prompt: str  # Text prompt
     vl_image: Optional[str] = None  # Base64-encoded reference image (optional)
     vl_embeddings_id: Optional[str] = None  # ID of pre-extracted embeddings (optional)
@@ -438,6 +512,7 @@ class VLGenerateRequest(BaseModel):
 
 class QwenImageDecomposeRequest(BaseModel):
     """Request for Qwen-Image-Layered decomposition."""
+
     image: str  # Base64-encoded input image
     prompt: str  # Text description of the image
     layer_num: int = 3  # Number of decomposition layers
@@ -450,6 +525,7 @@ class QwenImageDecomposeRequest(BaseModel):
 
 class QwenImageEditLayerRequest(BaseModel):
     """Request for Qwen-Image layer editing (single image)."""
+
     layer_image: str  # Base64-encoded RGBA layer image
     instruction: str  # Text instruction for editing (e.g., "Change color to blue")
     steps: int = 40  # Number of inference steps (40 for Edit-2511)
@@ -459,6 +535,7 @@ class QwenImageEditLayerRequest(BaseModel):
 
 class QwenImageEditMultiRequest(BaseModel):
     """Request for Qwen-Image multi-image editing (2511 feature)."""
+
     images: List[str]  # Base64-encoded images (2-4 images to combine)
     instruction: str  # Text instruction for combining (e.g., "Place both subjects together")
     steps: int = 40  # Number of inference steps (40 for Edit-2511)
@@ -468,6 +545,7 @@ class QwenImageEditMultiRequest(BaseModel):
 
 class QwenImage2512GenerateRequest(BaseModel):
     """Request for Qwen-Image T2I text-to-image generation."""
+
     prompt: str  # Text prompt
     negative_prompt: Optional[str] = None  # Negative prompt (optional)
     width: int = 1024
@@ -480,6 +558,7 @@ class QwenImage2512GenerateRequest(BaseModel):
 
 class LTX2GenerateRequest(BaseModel):
     """Request for LTX-2 video generation."""
+
     prompt: str  # Text prompt
     negative_prompt: str = "worst quality, blurry, distorted, inconsistent motion"
     width: int = 768  # Must be multiple of 32
@@ -526,9 +605,9 @@ async def qwen_image_status():
         }
 
     # Check for either layered model or edit-only model
-    edit_only = getattr(runtime_config, 'qwen_image_edit_only', False)
+    edit_only = getattr(runtime_config, "qwen_image_edit_only", False)
     has_layered = bool(runtime_config.qwen_image_model_path)
-    has_edit = bool(getattr(runtime_config, 'qwen_image_edit_model_path', ''))
+    has_edit = bool(getattr(runtime_config, "qwen_image_edit_model_path", ""))
     configured = has_layered or (edit_only and has_edit)
     loaded = qwen_image_pipeline is not None
 
@@ -598,25 +677,24 @@ async def qwen_image_decompose(request: QwenImageDecomposeRequest):
             except Exception as e:
                 logger.error(f"[Qwen-Image] Failed to load pipeline: {e}")
                 raise HTTPException(
-                    status_code=503,
-                    detail=f"Failed to load Qwen-Image pipeline: {e}"
+                    status_code=503, detail=f"Failed to load Qwen-Image pipeline: {e}"
                 )
         else:
             raise HTTPException(
                 status_code=503,
-                detail="Qwen-Image pipeline not loaded. Configure qwen_image.model_path in config."
+                detail="Qwen-Image pipeline not loaded. Configure qwen_image.model_path in config.",
             )
 
     # Validate resolution
     if request.resolution not in (640, 1024):
         raise HTTPException(
-            status_code=400,
-            detail=f"Resolution must be 640 or 1024. Got: {request.resolution}"
+            status_code=400, detail=f"Resolution must be 640 or 1024. Got: {request.resolution}"
         )
 
     try:
         import base64
         import zipfile
+
         from PIL import Image
 
         # Decode base64 image
@@ -666,15 +744,17 @@ async def qwen_image_decompose(request: QwenImageDecomposeRequest):
             else:
                 layer_name = f"Layer {i}"
 
-            layer_data.append({
-                "name": layer_name,
-                "image": f"data:image/png;base64,{layer_b64}",
-                "index": i,
-            })
+            layer_data.append(
+                {
+                    "name": layer_name,
+                    "image": f"data:image/png;base64,{layer_b64}",
+                    "index": i,
+                }
+            )
 
         # Create ZIP file for download
         zip_buffer = io.BytesIO()
-        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
             for i, layer_img in enumerate(layers):
                 layer_bytes = io.BytesIO()
                 layer_img.save(layer_bytes, format="PNG")
@@ -720,6 +800,7 @@ async def qwen_image_decompose(request: QwenImageDecomposeRequest):
     except Exception as e:
         logger.error(f"[Qwen-Image] Decomposition failed: {e}")
         import traceback
+
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -745,12 +826,14 @@ async def qwen_image_edit_layer(request: QwenImageEditLayerRequest):
                 unload_zimage_pipeline()
 
             # Get quantization settings from config
-            quant_te = getattr(runtime_config, 'qwen_image_quantize_text_encoder', 'none')
-            quant_tf = getattr(runtime_config, 'qwen_image_quantize_transformer', 'none')
-            quant_te = quant_te if quant_te != 'none' else None
-            quant_tf = quant_tf if quant_tf != 'none' else None
+            quant_te = getattr(runtime_config, "qwen_image_quantize_text_encoder", "none")
+            quant_tf = getattr(runtime_config, "qwen_image_quantize_transformer", "none")
+            quant_te = quant_te if quant_te != "none" else None
+            quant_tf = quant_tf if quant_tf != "none" else None
 
-            logger.info(f"[Qwen-Image] Loading pipeline in edit-only mode (quantize_text_encoder={quant_te})...")
+            logger.info(
+                f"[Qwen-Image] Loading pipeline in edit-only mode (quantize_text_encoder={quant_te})..."
+            )
             try:
                 from llm_dit.pipelines.qwen_image_diffusers import QwenImageDiffusersPipeline
 
@@ -766,24 +849,24 @@ async def qwen_image_edit_layer(request: QwenImageEditLayerRequest):
             except Exception as e:
                 logger.error(f"[Qwen-Image] Failed to load pipeline: {e}")
                 raise HTTPException(
-                    status_code=503,
-                    detail=f"Failed to load Qwen-Image pipeline: {e}"
+                    status_code=503, detail=f"Failed to load Qwen-Image pipeline: {e}"
                 )
         else:
             raise HTTPException(
                 status_code=503,
-                detail="Qwen-Image pipeline not loaded. Configure qwen_image.model_path in config."
+                detail="Qwen-Image pipeline not loaded. Configure qwen_image.model_path in config.",
             )
 
     # Check if pipeline has edit capability
-    if not hasattr(qwen_image_pipeline, 'edit_layer'):
+    if not hasattr(qwen_image_pipeline, "edit_layer"):
         raise HTTPException(
             status_code=400,
-            detail="Pipeline does not support layer editing. Use QwenImageDiffusersPipeline."
+            detail="Pipeline does not support layer editing. Use QwenImageDiffusersPipeline.",
         )
 
     try:
         import base64
+
         from PIL import Image
 
         # Decode base64 layer image
@@ -835,6 +918,7 @@ async def qwen_image_edit_layer(request: QwenImageEditLayerRequest):
     except Exception as e:
         logger.error(f"[Qwen-Image] Layer edit failed: {e}")
         import traceback
+
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -848,14 +932,16 @@ async def qwen_image_edit_status():
             "reason": "Pipeline not loaded",
         }
 
-    has_edit_method = hasattr(qwen_image_pipeline, 'edit_layer')
-    has_edit_pipe = hasattr(qwen_image_pipeline, 'has_edit_model') and qwen_image_pipeline.has_edit_model
+    has_edit_method = hasattr(qwen_image_pipeline, "edit_layer")
+    has_edit_pipe = (
+        hasattr(qwen_image_pipeline, "has_edit_model") and qwen_image_pipeline.has_edit_model
+    )
 
     return {
         "available": has_edit_method,
         "edit_model_loaded": has_edit_pipe,
-        "edit_model_path": getattr(qwen_image_pipeline, '_edit_model_path', None),
-        "supports_multi_image": hasattr(qwen_image_pipeline, 'edit_multi'),
+        "edit_model_path": getattr(qwen_image_pipeline, "_edit_model_path", None),
+        "supports_multi_image": hasattr(qwen_image_pipeline, "edit_multi"),
     }
 
 
@@ -875,7 +961,7 @@ async def qwen_image_edit_multi(request: QwenImageEditMultiRequest):
         raise HTTPException(
             status_code=400,
             detail=f"edit-multi requires at least 2 images, got {len(request.images)}. "
-                   "For single-image editing, use /api/qwen-image/edit-layer instead."
+            "For single-image editing, use /api/qwen-image/edit-layer instead.",
         )
 
     # Check if pipeline is loaded
@@ -887,12 +973,14 @@ async def qwen_image_edit_multi(request: QwenImageEditMultiRequest):
                 unload_zimage_pipeline()
 
             # Get quantization settings from config
-            quant_te = getattr(runtime_config, 'qwen_image_quantize_text_encoder', 'none')
-            quant_tf = getattr(runtime_config, 'qwen_image_quantize_transformer', 'none')
-            quant_te = quant_te if quant_te != 'none' else None
-            quant_tf = quant_tf if quant_tf != 'none' else None
+            quant_te = getattr(runtime_config, "qwen_image_quantize_text_encoder", "none")
+            quant_tf = getattr(runtime_config, "qwen_image_quantize_transformer", "none")
+            quant_te = quant_te if quant_te != "none" else None
+            quant_tf = quant_tf if quant_tf != "none" else None
 
-            logger.info(f"[Qwen-Image] Loading pipeline in edit-only mode (quantize_text_encoder={quant_te})...")
+            logger.info(
+                f"[Qwen-Image] Loading pipeline in edit-only mode (quantize_text_encoder={quant_te})..."
+            )
             try:
                 from llm_dit.pipelines.qwen_image_diffusers import QwenImageDiffusersPipeline
 
@@ -907,22 +995,21 @@ async def qwen_image_edit_multi(request: QwenImageEditMultiRequest):
             except Exception as e:
                 logger.error(f"[Qwen-Image] Failed to load pipeline: {e}")
                 raise HTTPException(
-                    status_code=500,
-                    detail=f"Failed to load Qwen-Image pipeline: {e}"
+                    status_code=500, detail=f"Failed to load Qwen-Image pipeline: {e}"
                 )
         else:
             raise HTTPException(
                 status_code=400,
                 detail="Qwen-Image pipeline not loaded and no model path configured. "
-                       "Set qwen_image.model_path in config.toml."
+                "Set qwen_image.model_path in config.toml.",
             )
 
     # Check if pipeline supports multi-image editing
-    if not hasattr(qwen_image_pipeline, 'edit_multi'):
+    if not hasattr(qwen_image_pipeline, "edit_multi"):
         raise HTTPException(
             status_code=400,
             detail="Pipeline does not support multi-image editing. "
-                   "Use QwenImageDiffusersPipeline with Edit-2511 model."
+            "Use QwenImageDiffusersPipeline with Edit-2511 model.",
         )
 
     try:
@@ -930,16 +1017,13 @@ async def qwen_image_edit_multi(request: QwenImageEditMultiRequest):
         pil_images = []
         for i, img_data in enumerate(request.images):
             try:
-                if img_data.startswith('data:'):
-                    img_data = img_data.split(',', 1)[1]
+                if img_data.startswith("data:"):
+                    img_data = img_data.split(",", 1)[1]
                 img_bytes = base64.b64decode(img_data)
                 img = Image.open(io.BytesIO(img_bytes))
                 pil_images.append(img)
             except Exception as e:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Failed to decode image {i}: {e}"
-                )
+                raise HTTPException(status_code=400, detail=f"Failed to decode image {i}: {e}")
 
         logger.info("=" * 60)
         logger.info("QWEN-IMAGE MULTI-EDIT REQUEST")
@@ -980,7 +1064,7 @@ async def qwen_image_edit_multi(request: QwenImageEditMultiRequest):
             headers={
                 "X-Inference-Time": f"{edit_time:.2f}",
                 "X-Image-Count": str(len(pil_images)),
-            }
+            },
         )
 
     except HTTPException:
@@ -988,6 +1072,7 @@ async def qwen_image_edit_multi(request: QwenImageEditMultiRequest):
     except Exception as e:
         logger.error(f"[Qwen-Image] Multi-edit failed: {e}")
         import traceback
+
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -1003,7 +1088,9 @@ def _is_t2i_configured() -> bool:
     if runtime_config is None:
         return False
     # T2I uses the unified qwen_image_model_path when model_type is qwenimage-t2i
-    return bool(runtime_config.qwen_image_model_path) and runtime_config.model_type == "qwenimage-t2i"
+    return (
+        bool(runtime_config.qwen_image_model_path) and runtime_config.model_type == "qwenimage-t2i"
+    )
 
 
 @app.get("/api/qwen-image-2512/status")
@@ -1020,8 +1107,12 @@ async def qwen_image_2512_status():
         "available": loaded,
         "configured": configured,
         "model_path": runtime_config.qwen_image_model_path if runtime_config else None,
-        "quantize_transformer": runtime_config.get_qwen_image_quantize_transformer() if runtime_config else "fp8",
-        "quantize_text_encoder": runtime_config.qwen_image_quantize_text_encoder if runtime_config else "none",
+        "quantize_transformer": runtime_config.get_qwen_image_quantize_transformer()
+        if runtime_config
+        else "fp8",
+        "quantize_text_encoder": runtime_config.qwen_image_quantize_text_encoder
+        if runtime_config
+        else "none",
     }
 
 
@@ -1037,8 +1128,12 @@ async def qwen_image_2512_config():
         "model_path": runtime_config.qwen_image_model_path if runtime_config else "",
         "steps": runtime_config.get_qwen_image_steps() if runtime_config else 40,
         "cfg_scale": runtime_config.qwen_image_cfg_scale if runtime_config else 4.0,
-        "quantize_transformer": runtime_config.get_qwen_image_quantize_transformer() if runtime_config else "fp8",
-        "quantize_text_encoder": runtime_config.qwen_image_quantize_text_encoder if runtime_config else "none",
+        "quantize_transformer": runtime_config.get_qwen_image_quantize_transformer()
+        if runtime_config
+        else "fp8",
+        "quantize_text_encoder": runtime_config.qwen_image_quantize_text_encoder
+        if runtime_config
+        else "none",
         "default_width": 1024,
         "default_height": 1024,
         "max_sequence_length": 512,
@@ -1080,15 +1175,15 @@ async def qwen_image_2512_generate(request: QwenImage2512GenerateRequest):
             except Exception as e:
                 logger.error(f"[Qwen-Image T2I] Failed to load pipeline: {e}")
                 import traceback
+
                 traceback.print_exc()
                 raise HTTPException(
-                    status_code=503,
-                    detail=f"Failed to load Qwen-Image T2I pipeline: {e}"
+                    status_code=503, detail=f"Failed to load Qwen-Image T2I pipeline: {e}"
                 )
         else:
             raise HTTPException(
                 status_code=503,
-                detail="Qwen-Image T2I not configured. Use --model-type qwenimage-t2i --qwen-image-model-path"
+                detail="Qwen-Image T2I not configured. Use --model-type qwenimage-t2i --qwen-image-model-path",
             )
 
     try:
@@ -1128,6 +1223,7 @@ async def qwen_image_2512_generate(request: QwenImage2512GenerateRequest):
 
         # Add to history
         import base64
+
         img_b64 = base64.b64encode(img_bytes.getvalue()).decode("ascii")
         history_entry = {
             "id": len(generation_history),
@@ -1155,7 +1251,7 @@ async def qwen_image_2512_generate(request: QwenImage2512GenerateRequest):
             headers={
                 "X-Inference-Time": f"{gen_time:.2f}",
                 "X-Model": "qwen-image-2512",
-            }
+            },
         )
 
     except HTTPException:
@@ -1163,6 +1259,7 @@ async def qwen_image_2512_generate(request: QwenImage2512GenerateRequest):
     except Exception as e:
         logger.error(f"[Qwen-Image T2I] Generation failed: {e}")
         import traceback
+
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -1192,12 +1289,12 @@ async def vl_status():
         "default_alpha": runtime_config.vl_alpha if vl_configured else 0.3,
         "default_hidden_layer": runtime_config.vl_hidden_layer if vl_configured else -2,
         "blend_modes": [
-            "interpolate",      # RECOMMENDED: compresses all VL tokens
-            "adain_per_dim",    # Best for style transfer
-            "adain",            # Transfer VL statistics to text
-            "linear",           # WARNING: truncates, loses most VL info
-            "style_only",       # Blend only style dimensions
-            "graduated",        # Graduated alpha per token
+            "interpolate",  # RECOMMENDED: compresses all VL tokens
+            "adain_per_dim",  # Best for style transfer
+            "adain",  # Transfer VL statistics to text
+            "linear",  # WARNING: truncates, loses most VL info
+            "style_only",  # Blend only style dimensions
+            "graduated",  # Graduated alpha per token
             "attention_weighted",  # Falls back to interpolate
         ],
         "cached_embeddings": list(vl_embeddings_cache.keys()),
@@ -1231,13 +1328,13 @@ async def vl_extract(request: VLExtractRequest):
     """
     if vl_extractor is None:
         raise HTTPException(
-            status_code=503,
-            detail="VL extractor not loaded. Configure vl.model_path in config."
+            status_code=503, detail="VL extractor not loaded. Configure vl.model_path in config."
         )
 
     try:
         import base64
         import hashlib
+
         from PIL import Image
 
         # Decode base64 image
@@ -1245,7 +1342,9 @@ async def vl_extract(request: VLExtractRequest):
         image = Image.open(io.BytesIO(image_data)).convert("RGB")
 
         logger.info(f"[VL] Extracting embeddings from {image.size[0]}x{image.size[1]} image")
-        logger.info(f"[VL] hidden_layer={request.hidden_layer}, image_tokens_only={request.image_tokens_only}")
+        logger.info(
+            f"[VL] hidden_layer={request.hidden_layer}, image_tokens_only={request.image_tokens_only}"
+        )
 
         start = time.time()
 
@@ -1276,7 +1375,9 @@ async def vl_extract(request: VLExtractRequest):
             "timestamp": time.time(),
         }
 
-        logger.info(f"[VL] Extracted {result.num_tokens} tokens in {extract_time:.2f}s -> {cache_id}")
+        logger.info(
+            f"[VL] Extracted {result.num_tokens} tokens in {extract_time:.2f}s -> {cache_id}"
+        )
 
         return {
             "embeddings_id": cache_id,
@@ -1313,8 +1414,7 @@ async def vl_generate(request: VLGenerateRequest):
         cached = vl_embeddings_cache.get(request.vl_embeddings_id)
         if cached is None:
             raise HTTPException(
-                status_code=404,
-                detail=f"Embeddings not found: {request.vl_embeddings_id}"
+                status_code=404, detail=f"Embeddings not found: {request.vl_embeddings_id}"
             )
         vl_emb = cached["embeddings"]
         logger.info(f"[VL] Using cached embeddings: {request.vl_embeddings_id}")
@@ -1324,17 +1424,20 @@ async def vl_generate(request: VLGenerateRequest):
         if vl_extractor is None:
             raise HTTPException(
                 status_code=503,
-                detail="VL extractor not loaded. Configure vl.model_path in config."
+                detail="VL extractor not loaded. Configure vl.model_path in config.",
             )
 
         try:
             import base64
+
             from PIL import Image
 
             image_data = base64.b64decode(request.vl_image)
             image = Image.open(io.BytesIO(image_data)).convert("RGB")
 
-            logger.info(f"[VL] Extracting embeddings on-the-fly from {image.size[0]}x{image.size[1]} image")
+            logger.info(
+                f"[VL] Extracting embeddings on-the-fly from {image.size[0]}x{image.size[1]} image"
+            )
 
             result = vl_extractor.extract(
                 image=image,
@@ -1379,12 +1482,12 @@ async def vl_generate(request: VLGenerateRequest):
         # Blend VL and text embeddings
         if vl_emb is not None and request.vl_alpha > 0:
             from llm_dit.vl import (
-                blend_embeddings,
-                blend_interpolate,
-                blend_style_only,
-                blend_per_token,
                 blend_adain,
                 blend_adain_per_dim,
+                blend_embeddings,
+                blend_interpolate,
+                blend_per_token,
+                blend_style_only,
                 create_graduated_alpha,
             )
 
@@ -1451,6 +1554,7 @@ async def vl_generate(request: VLGenerateRequest):
 
         # Store in history with VL info
         import base64
+
         img_bytes_copy = io.BytesIO()
         image.save(img_bytes_copy, format="PNG")
         img_b64 = base64.b64encode(img_bytes_copy.getvalue()).decode("ascii")
@@ -1512,6 +1616,7 @@ async def vl_clear_cache():
 # DyPE (High-Resolution) Endpoints
 # =====================================================================
 
+
 @app.get("/api/dype/config")
 async def dype_config():
     """Get DyPE configuration defaults from server config.
@@ -1533,7 +1638,7 @@ async def dype_config():
         }
 
     # Get DyPE config from runtime config if available
-    dype = getattr(runtime_config, 'dype', None)
+    dype = getattr(runtime_config, "dype", None)
     if dype is not None:
         return {
             "enabled": dype.enabled,
@@ -1656,11 +1761,14 @@ def load_ltx2_pipeline():
         from llm_dit.pipelines.ltx2 import LTX2Pipeline
 
         # Try to load from config if available
-        config_path = getattr(runtime_config, 'config_path', None) if runtime_config else None
-        profile = getattr(runtime_config, 'current_profile', 'default') if runtime_config else 'default'
+        config_path = getattr(runtime_config, "config_path", None) if runtime_config else None
+        profile = (
+            getattr(runtime_config, "current_profile", "default") if runtime_config else "default"
+        )
 
         if config_path:
             from llm_dit.config import Config
+
             config = Config.load(config_path, profile=profile)
             if config.ltx2 and config.ltx2.model_path:
                 logger.info(f"[LTX-2] Loading from config: {config.ltx2.model_path}")
@@ -1676,7 +1784,7 @@ def load_ltx2_pipeline():
             if default_path.exists():
                 ltx2_pipeline = LTX2Pipeline.from_pretrained(
                     str(default_path),
-                    torch_dtype=torch.bfloat16,
+                    dtype=torch.bfloat16,
                     enable_cpu_offload=True,
                 )
             else:
@@ -1702,12 +1810,13 @@ async def ltx2_status():
     # Check if LTX-2 config exists in the loaded config file
     ltx2_configured = False
 
-    config_path = getattr(runtime_config, 'config_path', None) if runtime_config else None
-    profile = getattr(runtime_config, 'current_profile', 'default') if runtime_config else 'default'
+    config_path = getattr(runtime_config, "config_path", None) if runtime_config else None
+    profile = getattr(runtime_config, "current_profile", "default") if runtime_config else "default"
 
     if config_path:
         try:
             from llm_dit.config import Config
+
             config = Config.load(config_path, profile=profile)
             if config.ltx2 and config.ltx2.model_path:
                 # Check if path actually exists
@@ -1743,9 +1852,7 @@ async def ltx2_generate_stream(request: LTX2GenerateRequest):
             yield f"data: {json.dumps({'type': 'status', 'message': 'Loading LTX-2 pipeline...'})}\n\n"
 
             # Load pipeline (blocking, so run in thread)
-            pipe = await asyncio.get_event_loop().run_in_executor(
-                None, load_ltx2_pipeline
-            )
+            pipe = await asyncio.get_event_loop().run_in_executor(None, load_ltx2_pipeline)
 
             yield f"data: {json.dumps({'type': 'status', 'message': 'Pipeline loaded, starting generation...'})}\n\n"
 
@@ -1817,12 +1924,13 @@ async def ltx2_generate_stream(request: LTX2GenerateRequest):
 
             try:
                 from PIL import Image
-                frames = output.frames if hasattr(output, 'frames') else output
-                if hasattr(frames, 'ndim') and frames.ndim == 5:
+
+                frames = output.frames if hasattr(output, "frames") else output
+                if hasattr(frames, "ndim") and frames.ndim == 5:
                     frames = frames[0]
                 first_frame = frames[0]
                 if first_frame.max() <= 1.0:
-                    first_frame = (first_frame * 255).astype('uint8')
+                    first_frame = (first_frame * 255).astype("uint8")
                 Image.fromarray(first_frame).save(str(thumb_path))
             except Exception as e:
                 logger.warning(f"Failed to save thumbnail: {e}")
@@ -1844,6 +1952,7 @@ async def ltx2_generate_stream(request: LTX2GenerateRequest):
         except Exception as e:
             logger.error(f"[LTX-2] Generation failed: {e}")
             import traceback
+
             traceback.print_exc()
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
 
@@ -1902,9 +2011,15 @@ async def get_generation_config():
         }
 
     # Get feature flags from config
-    dype_enabled = getattr(runtime_config, 'dype_enabled', False)
-    slg_enabled = getattr(runtime_config, 'slg_enabled', False) or getattr(runtime_config, 'slg_scale', 0.0) > 0
-    fmtt_enabled = getattr(runtime_config, 'fmtt_enabled', False) or getattr(runtime_config, 'fmtt_scale', 0.0) > 0
+    dype_enabled = getattr(runtime_config, "dype_enabled", False)
+    slg_enabled = (
+        getattr(runtime_config, "slg_enabled", False)
+        or getattr(runtime_config, "slg_scale", 0.0) > 0
+    )
+    fmtt_enabled = (
+        getattr(runtime_config, "fmtt_enabled", False)
+        or getattr(runtime_config, "fmtt_scale", 0.0) > 0
+    )
 
     return {
         "width": runtime_config.width,
@@ -1912,24 +2027,26 @@ async def get_generation_config():
         "steps": runtime_config.steps,
         "guidance_scale": runtime_config.guidance_scale,
         "shift": runtime_config.shift,
-        "dynamic_shift": getattr(runtime_config, 'dynamic_shift', False),
-        "d_noise": getattr(runtime_config, 'd_noise', 1.0),
+        "dynamic_shift": getattr(runtime_config, "dynamic_shift", False),
+        "d_noise": getattr(runtime_config, "d_noise", 1.0),
         "long_prompt_mode": runtime_config.long_prompt_mode,
         "hidden_layer": runtime_config.hidden_layer,
-        "layer_weights": getattr(runtime_config, 'layer_weights', None),
+        "layer_weights": getattr(runtime_config, "layer_weights", None),
         # SLG settings
-        "slg_scale": getattr(runtime_config, 'slg_scale', 0.0),
-        "slg_layers": getattr(runtime_config, 'slg_layers', None),
-        "slg_start": getattr(runtime_config, 'slg_start', 0.05),
-        "slg_stop": getattr(runtime_config, 'slg_stop', 0.5),
+        "slg_scale": getattr(runtime_config, "slg_scale", 0.0),
+        "slg_layers": getattr(runtime_config, "slg_layers", None),
+        "slg_start": getattr(runtime_config, "slg_start", 0.05),
+        "slg_stop": getattr(runtime_config, "slg_stop", 0.5),
         # FMTT settings
-        "fmtt_scale": getattr(runtime_config, 'fmtt_scale', 0.0),
-        "fmtt_start": getattr(runtime_config, 'fmtt_start', 0.0),
-        "fmtt_stop": getattr(runtime_config, 'fmtt_stop', 0.5),
-        "fmtt_normalize": getattr(runtime_config, 'fmtt_normalize', 'unit'),
-        "fmtt_decode_scale": getattr(runtime_config, 'fmtt_decode_scale', 0.5),
-        "fmtt_siglip_model": getattr(runtime_config, 'fmtt_siglip_model', 'google/siglip2-giant-opt-patch16-384'),
-        "fmtt_siglip_device": getattr(runtime_config, 'fmtt_siglip_device', 'cuda'),
+        "fmtt_scale": getattr(runtime_config, "fmtt_scale", 0.0),
+        "fmtt_start": getattr(runtime_config, "fmtt_start", 0.0),
+        "fmtt_stop": getattr(runtime_config, "fmtt_stop", 0.5),
+        "fmtt_normalize": getattr(runtime_config, "fmtt_normalize", "unit"),
+        "fmtt_decode_scale": getattr(runtime_config, "fmtt_decode_scale", 0.5),
+        "fmtt_siglip_model": getattr(
+            runtime_config, "fmtt_siglip_model", "google/siglip2-giant-opt-patch16-384"
+        ),
+        "fmtt_siglip_device": getattr(runtime_config, "fmtt_siglip_device", "cuda"),
         # Feature flags based on config
         "features": {
             "dype_enabled": dype_enabled,
@@ -1957,12 +2074,12 @@ async def get_resolution_config(model: Optional[str] = None):
     - Qwen-Image T2I: Default 1328x1328, flexible with VAE constraints
     """
     from llm_dit.constants import (
+        ASPECT_RATIOS,
+        DEFAULT_RESOLUTION,
+        MAX_RESOLUTION,
+        MIN_RESOLUTION,
         VAE_MULTIPLE,
         VAE_SCALE_FACTOR,
-        MIN_RESOLUTION,
-        MAX_RESOLUTION,
-        DEFAULT_RESOLUTION,
-        ASPECT_RATIOS,
     )
 
     # Detect currently loaded model if not specified
@@ -1971,6 +2088,7 @@ async def get_resolution_config(model: Optional[str] = None):
         if pipeline is not None:
             from llm_dit.pipelines import ZImagePipeline
             from llm_dit.pipelines.qwen_image_diffusers import QwenImageDiffusersPipeline
+
             if isinstance(pipeline, ZImagePipeline):
                 current_model = "zimage"
             elif isinstance(pipeline, QwenImageDiffusersPipeline):
@@ -2053,63 +2171,339 @@ async def get_resolution_config(model: Optional[str] = None):
     # Z-Image presets (flexible, all divisible by 16)
     zimage_presets = [
         # Square (1:1)
-        {"value": "512x512", "label": "512", "width": 512, "height": 512, "category": "square", "ratio": "1:1"},
-        {"value": "768x768", "label": "768", "width": 768, "height": 768, "category": "square", "ratio": "1:1"},
-        {"value": "1024x1024", "label": "1024", "width": 1024, "height": 1024, "category": "square", "ratio": "1:1", "default": True},
-        {"value": "1280x1280", "label": "1280", "width": 1280, "height": 1280, "category": "square", "ratio": "1:1"},
-        {"value": "1536x1536", "label": "1536", "width": 1536, "height": 1536, "category": "square", "ratio": "1:1"},
-        {"value": "1920x1920", "label": "1920", "width": 1920, "height": 1920, "category": "square", "ratio": "1:1"},
-        {"value": "2048x2048", "label": "2K", "width": 2048, "height": 2048, "category": "square", "ratio": "1:1"},
+        {
+            "value": "512x512",
+            "label": "512",
+            "width": 512,
+            "height": 512,
+            "category": "square",
+            "ratio": "1:1",
+        },
+        {
+            "value": "768x768",
+            "label": "768",
+            "width": 768,
+            "height": 768,
+            "category": "square",
+            "ratio": "1:1",
+        },
+        {
+            "value": "1024x1024",
+            "label": "1024",
+            "width": 1024,
+            "height": 1024,
+            "category": "square",
+            "ratio": "1:1",
+            "default": True,
+        },
+        {
+            "value": "1280x1280",
+            "label": "1280",
+            "width": 1280,
+            "height": 1280,
+            "category": "square",
+            "ratio": "1:1",
+        },
+        {
+            "value": "1536x1536",
+            "label": "1536",
+            "width": 1536,
+            "height": 1536,
+            "category": "square",
+            "ratio": "1:1",
+        },
+        {
+            "value": "1920x1920",
+            "label": "1920",
+            "width": 1920,
+            "height": 1920,
+            "category": "square",
+            "ratio": "1:1",
+        },
+        {
+            "value": "2048x2048",
+            "label": "2K",
+            "width": 2048,
+            "height": 2048,
+            "category": "square",
+            "ratio": "1:1",
+        },
         # Landscape - 16:9
-        {"value": "1280x720", "label": "720p", "width": 1280, "height": 720, "category": "landscape", "ratio": "16:9"},
-        {"value": "1920x1088", "label": "1080p", "width": 1920, "height": 1088, "category": "landscape", "ratio": "16:9"},
-        {"value": "2560x1440", "label": "1440p", "width": 2560, "height": 1440, "category": "landscape", "ratio": "16:9"},
+        {
+            "value": "1280x720",
+            "label": "720p",
+            "width": 1280,
+            "height": 720,
+            "category": "landscape",
+            "ratio": "16:9",
+        },
+        {
+            "value": "1920x1088",
+            "label": "1080p",
+            "width": 1920,
+            "height": 1088,
+            "category": "landscape",
+            "ratio": "16:9",
+        },
+        {
+            "value": "2560x1440",
+            "label": "1440p",
+            "width": 2560,
+            "height": 1440,
+            "category": "landscape",
+            "ratio": "16:9",
+        },
         # Landscape - 3:2
-        {"value": "1536x1024", "label": "1536x1024", "width": 1536, "height": 1024, "category": "landscape", "ratio": "3:2"},
-        {"value": "1920x1280", "label": "1920x1280", "width": 1920, "height": 1280, "category": "landscape", "ratio": "3:2"},
+        {
+            "value": "1536x1024",
+            "label": "1536x1024",
+            "width": 1536,
+            "height": 1024,
+            "category": "landscape",
+            "ratio": "3:2",
+        },
+        {
+            "value": "1920x1280",
+            "label": "1920x1280",
+            "width": 1920,
+            "height": 1280,
+            "category": "landscape",
+            "ratio": "3:2",
+        },
         # Landscape - 4:3
-        {"value": "1024x768", "label": "1024x768", "width": 1024, "height": 768, "category": "landscape", "ratio": "4:3"},
-        {"value": "1280x960", "label": "1280x960", "width": 1280, "height": 960, "category": "landscape", "ratio": "4:3"},
-        {"value": "1600x1200", "label": "1600x1200", "width": 1600, "height": 1200, "category": "landscape", "ratio": "4:3"},
+        {
+            "value": "1024x768",
+            "label": "1024x768",
+            "width": 1024,
+            "height": 768,
+            "category": "landscape",
+            "ratio": "4:3",
+        },
+        {
+            "value": "1280x960",
+            "label": "1280x960",
+            "width": 1280,
+            "height": 960,
+            "category": "landscape",
+            "ratio": "4:3",
+        },
+        {
+            "value": "1600x1200",
+            "label": "1600x1200",
+            "width": 1600,
+            "height": 1200,
+            "category": "landscape",
+            "ratio": "4:3",
+        },
         # Mobile Landscape - 21:9, 19.5:9 (phone screens rotated)
-        {"value": "1792x768", "label": "Ultrawide", "width": 1792, "height": 768, "category": "landscape", "ratio": "21:9"},
-        {"value": "2560x1088", "label": "UW 1080", "width": 2560, "height": 1088, "category": "landscape", "ratio": "21:9"},
-        {"value": "2340x1080", "label": "Phone HD", "width": 2340, "height": 1080, "category": "landscape", "ratio": "19.5:9"},
+        {
+            "value": "1792x768",
+            "label": "Ultrawide",
+            "width": 1792,
+            "height": 768,
+            "category": "landscape",
+            "ratio": "21:9",
+        },
+        {
+            "value": "2560x1088",
+            "label": "UW 1080",
+            "width": 2560,
+            "height": 1088,
+            "category": "landscape",
+            "ratio": "21:9",
+        },
+        {
+            "value": "2340x1080",
+            "label": "Phone HD",
+            "width": 2340,
+            "height": 1080,
+            "category": "landscape",
+            "ratio": "19.5:9",
+        },
         # Portrait - 9:16
-        {"value": "720x1280", "label": "720p", "width": 720, "height": 1280, "category": "portrait", "ratio": "9:16"},
-        {"value": "1088x1920", "label": "1080p", "width": 1088, "height": 1920, "category": "portrait", "ratio": "9:16"},
-        {"value": "1440x2560", "label": "1440p", "width": 1440, "height": 2560, "category": "portrait", "ratio": "9:16"},
+        {
+            "value": "720x1280",
+            "label": "720p",
+            "width": 720,
+            "height": 1280,
+            "category": "portrait",
+            "ratio": "9:16",
+        },
+        {
+            "value": "1088x1920",
+            "label": "1080p",
+            "width": 1088,
+            "height": 1920,
+            "category": "portrait",
+            "ratio": "9:16",
+        },
+        {
+            "value": "1440x2560",
+            "label": "1440p",
+            "width": 1440,
+            "height": 2560,
+            "category": "portrait",
+            "ratio": "9:16",
+        },
         # Portrait - 2:3
-        {"value": "1024x1536", "label": "1024x1536", "width": 1024, "height": 1536, "category": "portrait", "ratio": "2:3"},
-        {"value": "1280x1920", "label": "1280x1920", "width": 1280, "height": 1920, "category": "portrait", "ratio": "2:3"},
+        {
+            "value": "1024x1536",
+            "label": "1024x1536",
+            "width": 1024,
+            "height": 1536,
+            "category": "portrait",
+            "ratio": "2:3",
+        },
+        {
+            "value": "1280x1920",
+            "label": "1280x1920",
+            "width": 1280,
+            "height": 1920,
+            "category": "portrait",
+            "ratio": "2:3",
+        },
         # Portrait - 3:4
-        {"value": "768x1024", "label": "768x1024", "width": 768, "height": 1024, "category": "portrait", "ratio": "3:4"},
-        {"value": "960x1280", "label": "960x1280", "width": 960, "height": 1280, "category": "portrait", "ratio": "3:4"},
-        {"value": "1200x1600", "label": "1200x1600", "width": 1200, "height": 1600, "category": "portrait", "ratio": "3:4"},
+        {
+            "value": "768x1024",
+            "label": "768x1024",
+            "width": 768,
+            "height": 1024,
+            "category": "portrait",
+            "ratio": "3:4",
+        },
+        {
+            "value": "960x1280",
+            "label": "960x1280",
+            "width": 960,
+            "height": 1280,
+            "category": "portrait",
+            "ratio": "3:4",
+        },
+        {
+            "value": "1200x1600",
+            "label": "1200x1600",
+            "width": 1200,
+            "height": 1600,
+            "category": "portrait",
+            "ratio": "3:4",
+        },
         # Mobile Portrait - 9:19.5, 9:20 (phone screens)
-        {"value": "1080x2340", "label": "Phone HD", "width": 1080, "height": 2340, "category": "portrait", "ratio": "9:19.5"},
-        {"value": "1284x2778", "label": "iPhone Pro", "width": 1284, "height": 2778, "category": "portrait", "ratio": "9:19.5"},
+        {
+            "value": "1080x2340",
+            "label": "Phone HD",
+            "width": 1080,
+            "height": 2340,
+            "category": "portrait",
+            "ratio": "9:19.5",
+        },
+        {
+            "value": "1284x2778",
+            "label": "iPhone Pro",
+            "width": 1284,
+            "height": 2778,
+            "category": "portrait",
+            "ratio": "9:19.5",
+        },
     ]
 
     # Qwen-Image-Layered presets (FIXED: only 640 or 1024 square)
     qwenimage_layered_presets = [
-        {"value": "640x640", "label": "640 (Fast)", "width": 640, "height": 640, "category": "square", "ratio": "1:1", "default": True},
-        {"value": "1024x1024", "label": "1024 (Quality)", "width": 1024, "height": 1024, "category": "square", "ratio": "1:1"},
+        {
+            "value": "640x640",
+            "label": "640 (Fast)",
+            "width": 640,
+            "height": 640,
+            "category": "square",
+            "ratio": "1:1",
+            "default": True,
+        },
+        {
+            "value": "1024x1024",
+            "label": "1024 (Quality)",
+            "width": 1024,
+            "height": 1024,
+            "category": "square",
+            "ratio": "1:1",
+        },
     ]
 
     # Qwen-Image T2I presets (flexible, default 1328)
     qwenimage_t2i_presets = [
-        {"value": "512x512", "label": "512", "width": 512, "height": 512, "category": "square", "ratio": "1:1"},
-        {"value": "768x768", "label": "768", "width": 768, "height": 768, "category": "square", "ratio": "1:1"},
-        {"value": "1024x1024", "label": "1024", "width": 1024, "height": 1024, "category": "square", "ratio": "1:1"},
-        {"value": "1328x1328", "label": "1328 (Default)", "width": 1328, "height": 1328, "category": "square", "ratio": "1:1", "default": True},
-        {"value": "1536x1536", "label": "1536", "width": 1536, "height": 1536, "category": "square", "ratio": "1:1"},
+        {
+            "value": "512x512",
+            "label": "512",
+            "width": 512,
+            "height": 512,
+            "category": "square",
+            "ratio": "1:1",
+        },
+        {
+            "value": "768x768",
+            "label": "768",
+            "width": 768,
+            "height": 768,
+            "category": "square",
+            "ratio": "1:1",
+        },
+        {
+            "value": "1024x1024",
+            "label": "1024",
+            "width": 1024,
+            "height": 1024,
+            "category": "square",
+            "ratio": "1:1",
+        },
+        {
+            "value": "1328x1328",
+            "label": "1328 (Default)",
+            "width": 1328,
+            "height": 1328,
+            "category": "square",
+            "ratio": "1:1",
+            "default": True,
+        },
+        {
+            "value": "1536x1536",
+            "label": "1536",
+            "width": 1536,
+            "height": 1536,
+            "category": "square",
+            "ratio": "1:1",
+        },
         # Landscape
-        {"value": "1328x1024", "label": "1328x1024", "width": 1328, "height": 1024, "category": "landscape", "ratio": "4:3"},
-        {"value": "1536x1024", "label": "1536x1024", "width": 1536, "height": 1024, "category": "landscape", "ratio": "3:2"},
+        {
+            "value": "1328x1024",
+            "label": "1328x1024",
+            "width": 1328,
+            "height": 1024,
+            "category": "landscape",
+            "ratio": "4:3",
+        },
+        {
+            "value": "1536x1024",
+            "label": "1536x1024",
+            "width": 1536,
+            "height": 1024,
+            "category": "landscape",
+            "ratio": "3:2",
+        },
         # Portrait
-        {"value": "1024x1328", "label": "1024x1328", "width": 1024, "height": 1328, "category": "portrait", "ratio": "3:4"},
-        {"value": "1024x1536", "label": "1024x1536", "width": 1024, "height": 1536, "category": "portrait", "ratio": "2:3"},
+        {
+            "value": "1024x1328",
+            "label": "1024x1328",
+            "width": 1024,
+            "height": 1328,
+            "category": "portrait",
+            "ratio": "3:4",
+        },
+        {
+            "value": "1024x1536",
+            "label": "1024x1536",
+            "width": 1024,
+            "height": 1536,
+            "category": "portrait",
+            "ratio": "2:3",
+        },
     ]
 
     # Select presets based on model
@@ -2142,8 +2536,12 @@ async def get_resolution_config(model: Optional[str] = None):
     # This ensures the UI respects user's configured resolution while still
     # providing sensible defaults (1024x1024 for Z-Image)
     if runtime_config is not None and current_model == "zimage":
-        default_width = getattr(runtime_config, 'width', None) or constraints.get("default_width", 1024)
-        default_height = getattr(runtime_config, 'height', None) or constraints.get("default_height", 1024)
+        default_width = getattr(runtime_config, "width", None) or constraints.get(
+            "default_width", 1024
+        )
+        default_height = getattr(runtime_config, "height", None) or constraints.get(
+            "default_height", 1024
+        )
     else:
         default_width = constraints.get("default_width", 1024)
         default_height = constraints.get("default_height", 1024)
@@ -2220,14 +2618,20 @@ async def get_rewriter_models():
 
     # Check if VL rewriter via API is available (higher priority than local VL)
     vl_api_available = False
-    if runtime_config and runtime_config.rewriter_vl_api_model and runtime_config.rewriter_vl_enabled:
+    if (
+        runtime_config
+        and runtime_config.rewriter_vl_api_model
+        and runtime_config.rewriter_vl_enabled
+    ):
         vl_api_available = True
-        models.append({
-            "id": "qwen3-vl-api",
-            "name": f"VL via API ({runtime_config.rewriter_vl_api_model})",
-            "supports_image": True,
-            "loaded": True,  # API is always available
-        })
+        models.append(
+            {
+                "id": "qwen3-vl-api",
+                "name": f"VL via API ({runtime_config.rewriter_vl_api_model})",
+                "supports_image": True,
+                "loaded": True,  # API is always available
+            }
+        )
 
     # Check if local VL rewriter is available
     vl_local_available = False
@@ -2235,12 +2639,14 @@ async def get_rewriter_models():
     if runtime_config and runtime_config.vl_model_path and runtime_config.rewriter_vl_enabled:
         vl_local_available = True
         vl_loaded = vl_rewriter is not None or vl_extractor is not None
-        models.append({
-            "id": "qwen3-vl",
-            "name": "Qwen3-VL (Vision+Text)",
-            "supports_image": True,
-            "loaded": vl_loaded,
-        })
+        models.append(
+            {
+                "id": "qwen3-vl",
+                "name": "Qwen3-VL (Vision+Text)",
+                "supports_image": True,
+                "loaded": vl_loaded,
+            }
+        )
 
     return {
         "models": models,
@@ -2301,8 +2707,7 @@ async def generate(request: GenerateRequest):
     """Generate an image from a prompt."""
     if encoder_only_mode:
         raise HTTPException(
-            status_code=400,
-            detail="Server running in encoder-only mode. Use /api/encode instead."
+            status_code=400, detail="Server running in encoder-only mode. Use /api/encode instead."
         )
     if pipeline is None:
         # Check if it was unloaded for Qwen-Image
@@ -2310,7 +2715,7 @@ async def generate(request: GenerateRequest):
             raise HTTPException(
                 status_code=503,
                 detail="Z-Image pipeline was unloaded for Qwen-Image. "
-                       "Use the VRAM settings panel to reload Z-Image, or restart the server."
+                "Use the VRAM settings panel to reload Z-Image, or restart the server.",
             )
         raise HTTPException(status_code=503, detail="Pipeline not loaded")
 
@@ -2333,11 +2738,13 @@ async def generate(request: GenerateRequest):
         logger.info("Pipeline state:")
         logger.info(f"  pipeline.device: {pipeline.device}")
         logger.info(f"  pipeline.dtype: {pipeline.dtype}")
-        logger.info(f"  pipeline.encoder: {type(pipeline.encoder).__name__ if pipeline.encoder is not None else 'None'}")
+        logger.info(
+            f"  pipeline.encoder: {type(pipeline.encoder).__name__ if pipeline.encoder is not None else 'None'}"
+        )
         logger.info(f"  pipeline.transformer: {pipeline.transformer is not None}")
         logger.info(f"  pipeline.vae: {pipeline.vae is not None}")
         if pipeline.encoder is not None:
-            backend = getattr(pipeline.encoder, 'backend', None)
+            backend = getattr(pipeline.encoder, "backend", None)
             logger.info(f"  encoder.backend: {type(backend).__name__ if backend else 'None'}")
         logger.info("-" * 60)
 
@@ -2362,14 +2769,23 @@ async def generate(request: GenerateRequest):
         fmtt_start = request.fmtt_start if request.fmtt_start is not None else 0.0
         fmtt_stop = request.fmtt_stop if request.fmtt_stop is not None else 0.5
         fmtt_normalize = request.fmtt_normalize if request.fmtt_normalize is not None else "unit"
-        fmtt_decode_scale = request.fmtt_decode_scale if request.fmtt_decode_scale is not None else 0.5
-        fmtt_siglip_model = request.fmtt_siglip_model if request.fmtt_siglip_model is not None else "google/siglip2-giant-opt-patch16-384"
-        fmtt_siglip_device = request.fmtt_siglip_device if request.fmtt_siglip_device is not None else "cuda"
+        fmtt_decode_scale = (
+            request.fmtt_decode_scale if request.fmtt_decode_scale is not None else 0.5
+        )
+        fmtt_siglip_model = (
+            request.fmtt_siglip_model
+            if request.fmtt_siglip_model is not None
+            else "google/siglip2-giant-opt-patch16-384"
+        )
+        fmtt_siglip_device = (
+            request.fmtt_siglip_device if request.fmtt_siglip_device is not None else "cuda"
+        )
 
         # Convert DyPE request to DyPEConfig if provided
         dype_config = None
         if request.dype is not None and request.dype.enabled:
             from llm_dit.utils.dype import DyPEConfig
+
             dype_config = DyPEConfig(
                 enabled=request.dype.enabled,
                 method=request.dype.method,
@@ -2385,13 +2801,19 @@ async def generate(request: GenerateRequest):
             )
 
         # Generate image
-        logger.info(f"Calling pipeline() with long_prompt_mode={request.long_prompt_mode}, hidden_layer={request.hidden_layer}...")
+        logger.info(
+            f"Calling pipeline() with long_prompt_mode={request.long_prompt_mode}, hidden_layer={request.hidden_layer}..."
+        )
         if slg_scale > 0 and slg_layers:
-            logger.info(f"  SLG: scale={slg_scale}, layers={slg_layers}, range=[{slg_start:.0%}, {slg_stop:.0%}]")
+            logger.info(
+                f"  SLG: scale={slg_scale}, layers={slg_layers}, range=[{slg_start:.0%}, {slg_stop:.0%}]"
+            )
         if fmtt_scale > 0:
             logger.info(f"  FMTT: scale={fmtt_scale}, range=[{fmtt_start:.0%}, {fmtt_stop:.0%}]")
         if dype_config is not None:
-            logger.info(f"  DyPE: method={dype_config.method}, scale={dype_config.dype_scale}, exponent={dype_config.dype_exponent}")
+            logger.info(
+                f"  DyPE: method={dype_config.method}, scale={dype_config.dype_scale}, exponent={dype_config.dype_exponent}"
+            )
 
         # Check for multipass generation (for high-res with DyPE)
         multipass_mode = dype_config.multipass if dype_config else "single"
@@ -2414,7 +2836,9 @@ async def generate(request: GenerateRequest):
             else:
                 passes = None  # Use default
 
-            logger.info(f"  Multipass: {multipass_mode}, pass2_strength={pass2_strength}, pass3_strength={pass3_strength}")
+            logger.info(
+                f"  Multipass: {multipass_mode}, pass2_strength={pass2_strength}, pass3_strength={pass3_strength}"
+            )
             image = pipeline.generate_multipass(
                 request.prompt,
                 final_width=request.width,
@@ -2502,6 +2926,7 @@ async def generate(request: GenerateRequest):
 
         # Convert to base64 for history storage
         import base64
+
         img_bytes_copy = io.BytesIO()
         image.save(img_bytes_copy, format="PNG")
         img_b64 = base64.b64encode(img_bytes_copy.getvalue()).decode("ascii")
@@ -2512,6 +2937,7 @@ async def generate(request: GenerateRequest):
         if enc:
             try:
                 from llm_dit.conversation import Conversation
+
                 conv = enc._build_conversation(
                     prompt=request.prompt,
                     template=request.template,
@@ -2583,8 +3009,7 @@ async def img2img(request: Img2ImgRequest):
     """
     if encoder_only_mode:
         raise HTTPException(
-            status_code=400,
-            detail="Server running in encoder-only mode. Img2img not available."
+            status_code=400, detail="Server running in encoder-only mode. Img2img not available."
         )
     if pipeline is None:
         raise HTTPException(status_code=503, detail="Pipeline not loaded")
@@ -2592,6 +3017,7 @@ async def img2img(request: Img2ImgRequest):
     try:
         import base64
         import binascii
+
         from PIL import Image as PILImage
         from PIL import UnidentifiedImageError
 
@@ -2743,6 +3169,7 @@ async def img2img(request: Img2ImgRequest):
     except Exception as e:
         logger.error(f"Img2img failed: {e}")
         import traceback
+
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -2772,7 +3199,7 @@ async def format_prompt_endpoint(request: EncodeRequest):
 
         # Get token count if tokenizer is available
         token_count = None
-        if hasattr(enc, 'backend') and hasattr(enc.backend, 'tokenizer'):
+        if hasattr(enc, "backend") and hasattr(enc.backend, "tokenizer"):
             tokens = enc.backend.tokenizer.encode(formatted, add_special_tokens=False)
             token_count = len(tokens)
 
@@ -2801,7 +3228,7 @@ def _get_zimage_encoder():
     """
     if encoder is not None:
         return encoder
-    if pipeline is not None and hasattr(pipeline, 'encoder'):
+    if pipeline is not None and hasattr(pipeline, "encoder"):
         return pipeline.encoder
     return None
 
@@ -2818,15 +3245,17 @@ async def list_templates():
     for name in enc.templates:
         tpl = enc.templates.get(name)
         if tpl and tpl.category != "rewriter":  # Exclude rewriter templates
-            templates.append({
-                "name": name,
-                "description": tpl.description or "",
-                "category": tpl.category or "general",
-                "system_prompt": tpl.content or "",
-                "thinking_content": tpl.thinking_content or "",
-                "assistant_content": tpl.assistant_content or "",
-                "add_think_block": tpl.add_think_block,
-            })
+            templates.append(
+                {
+                    "name": name,
+                    "description": tpl.description or "",
+                    "category": tpl.category or "general",
+                    "system_prompt": tpl.content or "",
+                    "thinking_content": tpl.thinking_content or "",
+                    "assistant_content": tpl.assistant_content or "",
+                    "add_think_block": tpl.add_think_block,
+                }
+            )
 
     # Sort by category then name
     templates.sort(key=lambda x: (x["category"], x["name"]))
@@ -2844,10 +3273,12 @@ async def list_rewriters():
     # Get rewriter templates (category == "rewriter")
     rewriters = []
     for tpl in enc.templates.list_by_category("rewriter"):
-        rewriters.append({
-            "name": tpl.name,
-            "description": tpl.description,
-        })
+        rewriters.append(
+            {
+                "name": tpl.name,
+                "description": tpl.description,
+            }
+        )
 
     return {"rewriters": rewriters}
 
@@ -2864,13 +3295,13 @@ async def _rewrite_with_vl_api(request: RewriteRequest) -> dict:
     if not runtime_config or not runtime_config.rewriter_vl_api_model:
         raise HTTPException(
             status_code=400,
-            detail="VL API model not configured. Set rewriter.vl_api_model in config.toml."
+            detail="VL API model not configured. Set rewriter.vl_api_model in config.toml.",
         )
 
     if not runtime_config.rewriter_vl_enabled:
         raise HTTPException(
             status_code=400,
-            detail="VL rewriter is disabled. Enable with rewriter.vl_enabled=true in config."
+            detail="VL rewriter is disabled. Enable with rewriter.vl_enabled=true in config.",
         )
 
     # Determine API URL
@@ -2878,7 +3309,7 @@ async def _rewrite_with_vl_api(request: RewriteRequest) -> dict:
     if not api_url:
         raise HTTPException(
             status_code=400,
-            detail="No API URL configured. Set rewriter.api_url or api.url in config.toml."
+            detail="No API URL configured. Set rewriter.api_url or api.url in config.toml.",
         )
 
     # Create API backend with VL model
@@ -2909,14 +3340,12 @@ async def _rewrite_with_vl_api(request: RewriteRequest) -> dict:
         rewriter_template = enc.templates.get(request.rewriter)
         if rewriter_template is None:
             raise HTTPException(
-                status_code=404,
-                detail=f"Rewriter template not found: {request.rewriter}"
+                status_code=404, detail=f"Rewriter template not found: {request.rewriter}"
             )
 
         if rewriter_template.category != "rewriter":
             raise HTTPException(
-                status_code=400,
-                detail=f"Template '{request.rewriter}' is not a rewriter template"
+                status_code=400, detail=f"Template '{request.rewriter}' is not a rewriter template"
             )
 
         system_prompt = rewriter_template.content
@@ -2927,16 +3356,42 @@ async def _rewrite_with_vl_api(request: RewriteRequest) -> dict:
         rewriter_name = "default_vl"
 
     # Get generation parameters (use 'is not None' to preserve 0 values)
-    max_tokens = request.max_tokens if request.max_tokens is not None else (runtime_config.rewriter_max_tokens if runtime_config else 1024)
-    temperature = request.temperature if request.temperature is not None else (runtime_config.rewriter_temperature if runtime_config else 0.6)
-    top_p = request.top_p if request.top_p is not None else (runtime_config.rewriter_top_p if runtime_config else 0.95)
-    top_k = request.top_k if request.top_k is not None else (runtime_config.rewriter_top_k if runtime_config else 20)
-    min_p = request.min_p if request.min_p is not None else (runtime_config.rewriter_min_p if runtime_config else 0.0)
-    presence_penalty = request.presence_penalty if request.presence_penalty is not None else (runtime_config.rewriter_presence_penalty if runtime_config else 0.0)
+    max_tokens = (
+        request.max_tokens
+        if request.max_tokens is not None
+        else (runtime_config.rewriter_max_tokens if runtime_config else 1024)
+    )
+    temperature = (
+        request.temperature
+        if request.temperature is not None
+        else (runtime_config.rewriter_temperature if runtime_config else 0.6)
+    )
+    top_p = (
+        request.top_p
+        if request.top_p is not None
+        else (runtime_config.rewriter_top_p if runtime_config else 0.95)
+    )
+    top_k = (
+        request.top_k
+        if request.top_k is not None
+        else (runtime_config.rewriter_top_k if runtime_config else 20)
+    )
+    min_p = (
+        request.min_p
+        if request.min_p is not None
+        else (runtime_config.rewriter_min_p if runtime_config else 0.0)
+    )
+    presence_penalty = (
+        request.presence_penalty
+        if request.presence_penalty is not None
+        else (runtime_config.rewriter_presence_penalty if runtime_config else 0.0)
+    )
 
     try:
         start = time.time()
-        logger.info(f"[VL API Rewrite] Using: {rewriter_name} (model: {runtime_config.rewriter_vl_api_model})")
+        logger.info(
+            f"[VL API Rewrite] Using: {rewriter_name} (model: {runtime_config.rewriter_vl_api_model})"
+        )
         if request.prompt:
             logger.info(f"[VL API Rewrite] Input prompt: {request.prompt[:100]}...")
         logger.info(f"[VL API Rewrite] Has image: {request.image is not None}")
@@ -2963,17 +3418,19 @@ async def _rewrite_with_vl_api(request: RewriteRequest) -> dict:
         thinking_content = None
         rewritten_prompt = generated
 
-        think_match = re.search(r'<think>\s*(.*?)\s*</think>', generated, re.DOTALL)
+        think_match = re.search(r"<think>\s*(.*?)\s*</think>", generated, re.DOTALL)
         if think_match:
             thinking_content = think_match.group(1).strip()
-            rewritten_prompt = re.sub(r'<think>.*?</think>\s*', '', generated, flags=re.DOTALL).strip()
+            rewritten_prompt = re.sub(
+                r"<think>.*?</think>\s*", "", generated, flags=re.DOTALL
+            ).strip()
             logger.info(f"[VL API Rewrite] Extracted thinking ({len(thinking_content)} chars)")
 
         # Clean up any remaining tags
         if thinking_content:
-            thinking_content = re.sub(r'</?think>', '', thinking_content).strip()
+            thinking_content = re.sub(r"</?think>", "", thinking_content).strip()
         if rewritten_prompt:
-            rewritten_prompt = re.sub(r'</?think>', '', rewritten_prompt).strip()
+            rewritten_prompt = re.sub(r"</?think>", "", rewritten_prompt).strip()
             # Strip surrounding quotes if the entire prompt is wrapped
             if rewritten_prompt.startswith('"') and rewritten_prompt.endswith('"'):
                 rewritten_prompt = rewritten_prompt[1:-1].strip()
@@ -2992,7 +3449,7 @@ async def _rewrite_with_vl_api(request: RewriteRequest) -> dict:
         logger.error(f"[VL API Rewrite] Timeout after {timeout}s: {e}")
         raise HTTPException(
             status_code=504,
-            detail=f"API request timed out after {timeout}s. Try increasing rewriter.timeout in config.toml."
+            detail=f"API request timed out after {timeout}s. Try increasing rewriter.timeout in config.toml.",
         )
     except httpx.HTTPStatusError as e:
         # Parse API error details if available
@@ -3004,15 +3461,11 @@ async def _rewrite_with_vl_api(request: RewriteRequest) -> dict:
         except Exception:
             pass
         logger.error(f"[VL API Rewrite] HTTP {e.response.status_code}: {error_detail}")
-        raise HTTPException(
-            status_code=e.response.status_code,
-            detail=f"API error: {error_detail}"
-        )
+        raise HTTPException(status_code=e.response.status_code, detail=f"API error: {error_detail}")
     except httpx.ConnectError as e:
         logger.error(f"[VL API Rewrite] Connection failed: {e}")
         raise HTTPException(
-            status_code=503,
-            detail=f"Cannot connect to API at {api_url}. Is the server running?"
+            status_code=503, detail=f"Cannot connect to API at {api_url}. Is the server running?"
         )
     except Exception as e:
         logger.error(f"[VL API Rewrite] Failed: {e}")
@@ -3026,6 +3479,7 @@ async def _rewrite_with_vl(request: RewriteRequest) -> dict:
     Loads Qwen3-VL on-demand if not already loaded.
     """
     import base64
+
     from PIL import Image
 
     global vl_rewriter, vl_extractor
@@ -3033,14 +3487,13 @@ async def _rewrite_with_vl(request: RewriteRequest) -> dict:
     # Check if VL is available
     if not runtime_config or not runtime_config.vl_model_path:
         raise HTTPException(
-            status_code=400,
-            detail="VL model not configured. Set vl.model_path in config.toml."
+            status_code=400, detail="VL model not configured. Set vl.model_path in config.toml."
         )
 
     if not runtime_config.rewriter_vl_enabled:
         raise HTTPException(
             status_code=400,
-            detail="VL rewriter is disabled. Enable with rewriter.vl_enabled=true in config."
+            detail="VL rewriter is disabled. Enable with rewriter.vl_enabled=true in config.",
         )
 
     # Load VL model on-demand if not already loaded
@@ -3052,11 +3505,12 @@ async def _rewrite_with_vl(request: RewriteRequest) -> dict:
         else:
             logger.info(f"[VL Rewrite] Loading Qwen3-VL from {runtime_config.vl_model_path}")
             from llm_dit.vl import VLEmbeddingExtractor
+
             vl_dtype = torch.bfloat16 if runtime_config.vl_device == "cuda" else torch.float32
             vl_rewriter = VLEmbeddingExtractor.from_pretrained(
                 runtime_config.vl_model_path,
                 device=runtime_config.vl_device,
-                torch_dtype=vl_dtype,
+                dtype=vl_dtype,
             )
             logger.info("[VL Rewrite] Qwen3-VL loaded for rewriting")
 
@@ -3073,10 +3527,7 @@ async def _rewrite_with_vl(request: RewriteRequest) -> dict:
             pil_image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
             logger.info(f"[VL Rewrite] Decoded image: {pil_image.size}")
         except Exception as e:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Failed to decode image: {e}"
-            )
+            raise HTTPException(status_code=400, detail=f"Failed to decode image: {e}")
 
     # Get template loader from encoder (for template lookup)
     enc = encoder if encoder is not None else (pipeline.encoder if pipeline else None)
@@ -3095,14 +3546,12 @@ async def _rewrite_with_vl(request: RewriteRequest) -> dict:
         rewriter_template = enc.templates.get(request.rewriter)
         if rewriter_template is None:
             raise HTTPException(
-                status_code=404,
-                detail=f"Rewriter template not found: {request.rewriter}"
+                status_code=404, detail=f"Rewriter template not found: {request.rewriter}"
             )
 
         if rewriter_template.category != "rewriter":
             raise HTTPException(
-                status_code=400,
-                detail=f"Template '{request.rewriter}' is not a rewriter template"
+                status_code=400, detail=f"Template '{request.rewriter}' is not a rewriter template"
             )
 
         system_prompt = rewriter_template.content
@@ -3113,12 +3562,36 @@ async def _rewrite_with_vl(request: RewriteRequest) -> dict:
         rewriter_name = "default_vl"
 
     # Get generation parameters (use 'is not None' to preserve 0 values)
-    max_tokens = request.max_tokens if request.max_tokens is not None else (runtime_config.rewriter_max_tokens if runtime_config else 1024)
-    temperature = request.temperature if request.temperature is not None else (runtime_config.rewriter_temperature if runtime_config else 0.6)
-    top_p = request.top_p if request.top_p is not None else (runtime_config.rewriter_top_p if runtime_config else 0.95)
-    top_k = request.top_k if request.top_k is not None else (runtime_config.rewriter_top_k if runtime_config else 20)
-    min_p = request.min_p if request.min_p is not None else (runtime_config.rewriter_min_p if runtime_config else 0.0)
-    presence_penalty = request.presence_penalty if request.presence_penalty is not None else (runtime_config.rewriter_presence_penalty if runtime_config else 0.0)
+    max_tokens = (
+        request.max_tokens
+        if request.max_tokens is not None
+        else (runtime_config.rewriter_max_tokens if runtime_config else 1024)
+    )
+    temperature = (
+        request.temperature
+        if request.temperature is not None
+        else (runtime_config.rewriter_temperature if runtime_config else 0.6)
+    )
+    top_p = (
+        request.top_p
+        if request.top_p is not None
+        else (runtime_config.rewriter_top_p if runtime_config else 0.95)
+    )
+    top_k = (
+        request.top_k
+        if request.top_k is not None
+        else (runtime_config.rewriter_top_k if runtime_config else 20)
+    )
+    min_p = (
+        request.min_p
+        if request.min_p is not None
+        else (runtime_config.rewriter_min_p if runtime_config else 0.0)
+    )
+    presence_penalty = (
+        request.presence_penalty
+        if request.presence_penalty is not None
+        else (runtime_config.rewriter_presence_penalty if runtime_config else 0.0)
+    )
 
     try:
         start = time.time()
@@ -3146,20 +3619,23 @@ async def _rewrite_with_vl(request: RewriteRequest) -> dict:
 
         # Parse thinking content (same logic as text-only rewrite)
         import re
+
         thinking_content = None
         rewritten_prompt = generated
 
-        think_match = re.search(r'<think>\s*(.*?)\s*</think>', generated, re.DOTALL)
+        think_match = re.search(r"<think>\s*(.*?)\s*</think>", generated, re.DOTALL)
         if think_match:
             thinking_content = think_match.group(1).strip()
-            rewritten_prompt = re.sub(r'<think>.*?</think>\s*', '', generated, flags=re.DOTALL).strip()
+            rewritten_prompt = re.sub(
+                r"<think>.*?</think>\s*", "", generated, flags=re.DOTALL
+            ).strip()
             logger.info(f"[VL Rewrite] Extracted thinking ({len(thinking_content)} chars)")
 
         # Clean up any remaining tags
         if thinking_content:
-            thinking_content = re.sub(r'</?think>', '', thinking_content).strip()
+            thinking_content = re.sub(r"</?think>", "", thinking_content).strip()
         if rewritten_prompt:
-            rewritten_prompt = re.sub(r'</?think>', '', rewritten_prompt).strip()
+            rewritten_prompt = re.sub(r"</?think>", "", rewritten_prompt).strip()
             # Strip surrounding quotes if the entire prompt is wrapped
             if rewritten_prompt.startswith('"') and rewritten_prompt.endswith('"'):
                 rewritten_prompt = rewritten_prompt[1:-1].strip()
@@ -3211,8 +3687,7 @@ async def rewrite_prompt(request: RewriteRequest):
     # Validate that at least prompt or image is provided
     if not request.prompt and not request.image:
         raise HTTPException(
-            status_code=400,
-            detail="At least one of 'prompt' or 'image' must be provided"
+            status_code=400, detail="At least one of 'prompt' or 'image' must be provided"
         )
 
     # Handle VL model selection
@@ -3223,13 +3698,15 @@ async def rewrite_prompt(request: RewriteRequest):
 
     # If image provided but model is not VL, warn and ignore
     if request.image:
-        logger.warning("[Rewrite] Image provided but model is qwen3-4b (text-only). Image will be ignored.")
+        logger.warning(
+            "[Rewrite] Image provided but model is qwen3-4b (text-only). Image will be ignored."
+        )
 
     # Require prompt for text-only model
     if not request.prompt:
         raise HTTPException(
             status_code=400,
-            detail="Text prompt is required for qwen3-4b model. Use qwen3-vl for image-only rewriting."
+            detail="Text prompt is required for qwen3-4b model. Use qwen3-vl for image-only rewriting.",
         )
 
     # Determine which backend to use for generation
@@ -3245,17 +3722,14 @@ async def rewrite_prompt(request: RewriteRequest):
         # Use encoder from pipeline or standalone encoder
         enc = encoder if encoder is not None else (pipeline.encoder if pipeline else None)
         if enc is not None:
-            backend = getattr(enc, 'backend', None)
+            backend = getattr(enc, "backend", None)
             backend_name = "local"
 
     if backend is None:
         raise HTTPException(status_code=503, detail="No backend available for generation")
 
-    if not getattr(backend, 'supports_generation', False):
-        raise HTTPException(
-            status_code=400,
-            detail="Backend does not support text generation"
-        )
+    if not getattr(backend, "supports_generation", False):
+        raise HTTPException(status_code=400, detail="Backend does not support text generation")
 
     # Get template loader from encoder (for template lookup)
     enc = encoder if encoder is not None else (pipeline.encoder if pipeline else None)
@@ -3277,22 +3751,19 @@ async def rewrite_prompt(request: RewriteRequest):
         rewriter_template = enc.templates.get(request.rewriter)
         if rewriter_template is None:
             raise HTTPException(
-                status_code=404,
-                detail=f"Rewriter template not found: {request.rewriter}"
+                status_code=404, detail=f"Rewriter template not found: {request.rewriter}"
             )
 
         if rewriter_template.category != "rewriter":
             raise HTTPException(
-                status_code=400,
-                detail=f"Template '{request.rewriter}' is not a rewriter template"
+                status_code=400, detail=f"Template '{request.rewriter}' is not a rewriter template"
             )
 
         system_prompt = rewriter_template.content
         rewriter_name = request.rewriter
     else:
         raise HTTPException(
-            status_code=400,
-            detail="Either 'rewriter' or 'custom_system_prompt' must be provided"
+            status_code=400, detail="Either 'rewriter' or 'custom_system_prompt' must be provided"
         )
 
     # Get generation parameters from request or config defaults
@@ -3336,7 +3807,9 @@ async def rewrite_prompt(request: RewriteRequest):
         start = time.time()
         logger.info(f"[Rewrite] Using: {rewriter_name} (backend: {backend_name})")
         logger.info(f"[Rewrite] Input prompt: {request.prompt[:100]}...")
-        logger.info(f"[Rewrite] Params: max_tokens={max_tokens}, temperature={temperature}, top_p={top_p}, top_k={top_k}, min_p={min_p}, presence_penalty={presence_penalty}")
+        logger.info(
+            f"[Rewrite] Params: max_tokens={max_tokens}, temperature={temperature}, top_p={top_p}, top_k={top_k}, min_p={min_p}, presence_penalty={presence_penalty}"
+        )
 
         # Generate using the backend
         generated = backend.generate(
@@ -3362,42 +3835,50 @@ async def rewrite_prompt(request: RewriteRequest):
         rewritten_prompt = generated
 
         # Try to find <think>...</think> tags first
-        think_match = re.search(r'<think>\s*(.*?)\s*</think>', generated, re.DOTALL)
+        think_match = re.search(r"<think>\s*(.*?)\s*</think>", generated, re.DOTALL)
         if think_match:
             thinking_content = think_match.group(1).strip()
             # Remove the think block from the rewritten prompt
-            rewritten_prompt = re.sub(r'<think>.*?</think>\s*', '', generated, flags=re.DOTALL).strip()
-            logger.info(f"[Rewrite] Extracted thinking via <think> tags ({len(thinking_content)} chars), prompt ({len(rewritten_prompt)} chars)")
+            rewritten_prompt = re.sub(
+                r"<think>.*?</think>\s*", "", generated, flags=re.DOTALL
+            ).strip()
+            logger.info(
+                f"[Rewrite] Extracted thinking via <think> tags ({len(thinking_content)} chars), prompt ({len(rewritten_prompt)} chars)"
+            )
         else:
             # No think tags - try to find JSON at the end and treat preceding text as thinking
             # Look for a JSON object (starts with { and ends with })
-            json_match = re.search(r'(\{[\s\S]*\})\s*$', generated)
+            json_match = re.search(r"(\{[\s\S]*\})\s*$", generated)
             if json_match:
                 json_text = json_match.group(1)
                 # Everything before the JSON is reasoning/thinking
-                pre_json = generated[:json_match.start()].strip()
+                pre_json = generated[: json_match.start()].strip()
                 if pre_json:
                     thinking_content = pre_json
                     rewritten_prompt = json_text
-                    logger.info(f"[Rewrite] Extracted thinking via JSON detection ({len(thinking_content)} chars), JSON prompt ({len(rewritten_prompt)} chars)")
+                    logger.info(
+                        f"[Rewrite] Extracted thinking via JSON detection ({len(thinking_content)} chars), JSON prompt ({len(rewritten_prompt)} chars)"
+                    )
             # If output starts with reasoning patterns like "Okay," "Let me", etc. and has a clear break
-            elif re.match(r'^(Okay|Let me|I need|First|The user|Looking)', generated):
+            elif re.match(r"^(Okay|Let me|I need|First|The user|Looking)", generated):
                 # Look for double newline as separator between thinking and output
-                parts = re.split(r'\n\n+', generated, maxsplit=1)
+                parts = re.split(r"\n\n+", generated, maxsplit=1)
                 if len(parts) == 2 and len(parts[1]) > 50:
                     # If second part is substantial, treat first as thinking
                     # But only if second part looks like a prompt (not more reasoning)
-                    if not re.match(r'^(Okay|Let me|I need|First|The user|Looking|Now)', parts[1]):
+                    if not re.match(r"^(Okay|Let me|I need|First|The user|Looking|Now)", parts[1]):
                         thinking_content = parts[0].strip()
                         rewritten_prompt = parts[1].strip()
-                        logger.info(f"[Rewrite] Extracted thinking via paragraph split ({len(thinking_content)} chars), prompt ({len(rewritten_prompt)} chars)")
+                        logger.info(
+                            f"[Rewrite] Extracted thinking via paragraph split ({len(thinking_content)} chars), prompt ({len(rewritten_prompt)} chars)"
+                        )
 
         # Defense in depth: strip any remaining <think>/<think> tags from both outputs
         # This handles edge cases where tags might be nested or malformed
         if thinking_content:
-            thinking_content = re.sub(r'</?think>', '', thinking_content).strip()
+            thinking_content = re.sub(r"</?think>", "", thinking_content).strip()
         if rewritten_prompt:
-            rewritten_prompt = re.sub(r'</?think>', '', rewritten_prompt).strip()
+            rewritten_prompt = re.sub(r"</?think>", "", rewritten_prompt).strip()
             # Strip surrounding quotes if the entire prompt is wrapped
             if rewritten_prompt.startswith('"') and rewritten_prompt.endswith('"'):
                 rewritten_prompt = rewritten_prompt[1:-1].strip()
@@ -3471,6 +3952,7 @@ async def save_embeddings_endpoint(request: EncodeRequest):
 
         # Generate filename from prompt
         import hashlib
+
         prompt_hash = hashlib.md5(request.prompt.encode()).hexdigest()[:8]
         filename = f"embeddings_{prompt_hash}.safetensors"
         output_dir = Path(__file__).parent.parent / "embeddings"
@@ -3478,13 +3960,13 @@ async def save_embeddings_endpoint(request: EncodeRequest):
         output_path = output_dir / filename
 
         # Get device from encoder or pipeline
-        device = str(enc.device) if hasattr(enc, 'device') else 'unknown'
+        device = str(enc.device) if hasattr(enc, "device") else "unknown"
 
         save_path = save_emb(
             embeddings=embeddings,
             path=str(output_path),
             prompt=request.prompt,
-            model_path='unknown',  # Not stored in encoder
+            model_path="unknown",  # Not stored in encoder
             template=request.template,
             force_think_block=request.force_think_block,
             encoder_device=device,
@@ -3530,7 +4012,7 @@ def load_pipeline(
         model_path,
         text_encoder_path=text_encoder_path,
         templates_dir=templates_dir,
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
         encoder_device=encoder_device,
         dit_device=dit_device,
         vae_device=vae_device,
@@ -3571,7 +4053,7 @@ def load_encoder_only(
     encoder = ZImageTextEncoder.from_pretrained(
         model_path,
         templates_dir=templates_dir,
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
         device_map=encoder_device,
         quantization=quantization,
     )
@@ -3656,7 +4138,7 @@ def load_hybrid_pipeline(
     pipeline = ZImagePipeline.from_pretrained(
         model_path,
         templates_dir=templates_dir,
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
         encoder_device=encoder_device,
         dit_device=dit_device,
         vae_device=vae_device,
@@ -3769,7 +4251,7 @@ def load_api_pipeline(
     # Load generator-only pipeline, then attach our API encoder
     pipeline = ZImagePipeline.from_pretrained_generator_only(
         model_path,
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
         enable_cpu_offload=enable_cpu_offload,
         dit_device=dit_device,
         vae_device=vae_device,
@@ -3777,9 +4259,15 @@ def load_api_pipeline(
 
     load_time = time.time() - start
     logger.info(f"  DiT/VAE loaded in {load_time:.1f}s")
-    logger.info(f"  Transformer device: {pipeline.transformer.device if pipeline.transformer else 'None'}")
-    logger.info(f"  Transformer dtype: {next(pipeline.transformer.parameters()).dtype if pipeline.transformer else 'None'}")
-    logger.info(f"  VAE device: {next(pipeline.vae.parameters()).device if pipeline.vae else 'None'}")
+    logger.info(
+        f"  Transformer device: {pipeline.transformer.device if pipeline.transformer else 'None'}"
+    )
+    logger.info(
+        f"  Transformer dtype: {next(pipeline.transformer.parameters()).dtype if pipeline.transformer else 'None'}"
+    )
+    logger.info(
+        f"  VAE device: {next(pipeline.vae.parameters()).device if pipeline.vae else 'None'}"
+    )
 
     # Apply optimizations
     if enable_flash_attn:
@@ -3855,7 +4343,7 @@ async def system_status():
     }
 
     # Check FMTT cache
-    if pipeline is not None and hasattr(pipeline, '_fmtt_reward_fn'):
+    if pipeline is not None and hasattr(pipeline, "_fmtt_reward_fn"):
         status["fmtt_cached"] = pipeline._fmtt_reward_fn is not None
 
     # CUDA memory info
@@ -3879,7 +4367,7 @@ async def system_status():
         }
 
         # Add profile if available
-        if hasattr(runtime_config, 'current_profile'):
+        if hasattr(runtime_config, "current_profile"):
             config_info["profile"] = runtime_config.current_profile
 
         # Z-Image specific config
@@ -3888,23 +4376,25 @@ async def system_status():
             config_info["cpu_offload"] = runtime_config.cpu_offload
             config_info["flash_attn"] = runtime_config.flash_attn
             config_info["torch_compile"] = runtime_config.compile
-            config_info["tiled_vae"] = getattr(runtime_config, 'tiled_vae', False)
+            config_info["tiled_vae"] = getattr(runtime_config, "tiled_vae", False)
 
         # Qwen-Image specific config (all variants)
         if runtime_config.model_type.startswith("qwenimage"):
             config_info["quantize_text_encoder"] = runtime_config.qwen_image_quantize_text_encoder
             config_info["quantize_transformer"] = (
                 runtime_config.get_qwen_image_quantize_transformer()
-                if hasattr(runtime_config, 'get_qwen_image_quantize_transformer')
+                if hasattr(runtime_config, "get_qwen_image_quantize_transformer")
                 else runtime_config.qwen_image_quantize_transformer or "none"
             )
-            config_info["quantize_vae"] = getattr(runtime_config, 'qwen_image_quantize_vae', "none")
+            config_info["quantize_vae"] = getattr(runtime_config, "qwen_image_quantize_vae", "none")
             config_info["cpu_offload"] = runtime_config.qwen_image_cpu_offload
             # Check for new offload_type if available
-            if hasattr(runtime_config, 'qwen_image_offload_type'):
+            if hasattr(runtime_config, "qwen_image_offload_type"):
                 config_info["offload_type"] = runtime_config.qwen_image_offload_type
             else:
-                config_info["offload_type"] = "model" if runtime_config.qwen_image_cpu_offload else "none"
+                config_info["offload_type"] = (
+                    "model" if runtime_config.qwen_image_cpu_offload else "none"
+                )
 
         status["config"] = config_info
 
@@ -3917,8 +4407,10 @@ async def unload_fmtt():
     if pipeline is None:
         raise HTTPException(status_code=503, detail="Pipeline not loaded")
 
-    if not hasattr(pipeline, 'unload_fmtt'):
-        raise HTTPException(status_code=501, detail="Pipeline version does not support FMTT unloading")
+    if not hasattr(pipeline, "unload_fmtt"):
+        raise HTTPException(
+            status_code=501, detail="Pipeline version does not support FMTT unloading"
+        )
 
     was_loaded = pipeline.unload_fmtt()
 
@@ -4006,7 +4498,9 @@ async def vram_unload_qwen_image():
     status = get_vram_status()
     return {
         "success": unloaded,
-        "message": "Qwen-Image pipeline unloaded" if unloaded else "Qwen-Image pipeline was not loaded",
+        "message": "Qwen-Image pipeline unloaded"
+        if unloaded
+        else "Qwen-Image pipeline was not loaded",
         "vram": status.get("vram"),
     }
 
@@ -4023,7 +4517,9 @@ async def vram_unload_qwen_image_t2i():
     status = get_vram_status()
     return {
         "success": unloaded,
-        "message": "Qwen-Image T2I pipeline unloaded" if unloaded else "Qwen-Image T2I pipeline was not loaded",
+        "message": "Qwen-Image T2I pipeline unloaded"
+        if unloaded
+        else "Qwen-Image T2I pipeline was not loaded",
         "vram": status.get("vram"),
     }
 
@@ -4057,15 +4553,16 @@ async def get_available_configs():
 
     Returns configs grouped by model type with descriptions.
     """
-    import tomllib
     from pathlib import Path
+
+    import tomllib
 
     # Config listing is not supported with the current config system
     # Use --config config.toml --profile <profile_name> at server startup
     return {
         "configs": [],
-        "config_path": getattr(runtime_config, 'config_path', None),
-        "current_profile": getattr(runtime_config, 'current_profile', None),
+        "config_path": getattr(runtime_config, "config_path", None),
+        "current_profile": getattr(runtime_config, "current_profile", None),
         "message": "Dynamic config listing not supported. Use --profile at startup.",
     }
 
@@ -4088,6 +4585,7 @@ async def load_config_dynamic(request: dict):
 # Config Management Endpoints (Phase 1-3)
 # =============================================================================
 
+
 @app.get("/api/config/session")
 async def get_session_config():
     """Get current session configuration values.
@@ -4106,9 +4604,9 @@ async def get_session_config():
 
     return {
         "values": ui_values,
-        "profile": getattr(runtime_config, 'current_profile', 'default'),
+        "profile": getattr(runtime_config, "current_profile", "default"),
         "modified": list(session_modified_fields),
-        "config_file": getattr(runtime_config, 'config_path', None),
+        "config_file": getattr(runtime_config, "config_path", None),
     }
 
 
@@ -4156,14 +4654,15 @@ async def update_session_config(request: dict):
 @app.get("/api/config/profiles")
 async def list_profiles():
     """List available profiles from config.toml."""
-    import tomllib
     from pathlib import Path
 
-    config_path = getattr(runtime_config, 'config_path', None)
+    import tomllib
+
+    config_path = getattr(runtime_config, "config_path", None)
     if not config_path:
         return {
             "profiles": [],
-            "current": getattr(runtime_config, 'current_profile', 'default'),
+            "current": getattr(runtime_config, "current_profile", "default"),
             "config_file": None,
             "error": "No config file loaded",
         }
@@ -4173,7 +4672,7 @@ async def list_profiles():
         if not config_file.exists():
             return {
                 "profiles": [],
-                "current": getattr(runtime_config, 'current_profile', 'default'),
+                "current": getattr(runtime_config, "current_profile", "default"),
                 "config_file": str(config_path),
                 "error": f"Config file not found: {config_path}",
             }
@@ -4186,14 +4685,14 @@ async def list_profiles():
 
         return {
             "profiles": profiles,
-            "current": getattr(runtime_config, 'current_profile', 'default'),
+            "current": getattr(runtime_config, "current_profile", "default"),
             "config_file": str(config_path),
         }
     except Exception as e:
         logger.error(f"Error listing profiles: {e}")
         return {
             "profiles": [],
-            "current": getattr(runtime_config, 'current_profile', 'default'),
+            "current": getattr(runtime_config, "current_profile", "default"),
             "config_file": str(config_path) if config_path else None,
             "error": str(e),
         }
@@ -4211,8 +4710,8 @@ async def get_server_status():
     return {
         "status": "running",
         "uptime_seconds": uptime_seconds,
-        "profile": getattr(runtime_config, 'current_profile', 'default'),
-        "config_file": getattr(runtime_config, 'config_path', None),
+        "profile": getattr(runtime_config, "current_profile", "default"),
+        "config_file": getattr(runtime_config, "config_path", None),
         "pending_restart": pending_restart_changes,
         "session_modified": list(session_modified_fields),
         "can_restart": True,  # We'll implement restart in Phase 3
@@ -4226,8 +4725,8 @@ async def restart_server(request: dict = None):
     This endpoint signals the server to restart. The actual restart
     mechanism depends on how the server was launched (systemd, docker, etc.).
     """
-    import sys
     import os
+    import sys
 
     reason = request.get("reason", "user_request") if request else "user_request"
     new_profile = request.get("new_profile") if request else None
@@ -4313,9 +4812,9 @@ def main():
     setup_logging(runtime_config)
 
     # Store config path for reference
-    if hasattr(args, 'config') and args.config:
+    if hasattr(args, "config") and args.config:
         runtime_config.config_path = args.config
-    if hasattr(args, 'profile') and args.profile:
+    if hasattr(args, "profile") and args.profile:
         runtime_config.current_profile = args.profile
 
     # Validate model path (unless using API-only mode, or Qwen-Image mode)
@@ -4345,6 +4844,7 @@ def main():
     global qwen_image_pipeline
     if pipeline is not None:
         from llm_dit.pipelines.qwen_image_diffusers import QwenImageDiffusersPipeline
+
         if isinstance(pipeline, QwenImageDiffusersPipeline):
             qwen_image_pipeline = pipeline
             logger.info("[Qwen-Image] Pipeline loaded via PipelineLoader")
@@ -4369,8 +4869,12 @@ def main():
                 model_id=runtime_config.rewriter_api_model,
             )
             rewriter_backend = APIBackend(rewriter_api_config)
-            logger.info(f"[Rewriter] API backend configured: {rewriter_url} (model: {runtime_config.rewriter_api_model})")
-            logger.info(f"[Rewriter] Defaults: temperature={runtime_config.rewriter_temperature}, top_p={runtime_config.rewriter_top_p}, max_tokens={runtime_config.rewriter_max_tokens}")
+            logger.info(
+                f"[Rewriter] API backend configured: {rewriter_url} (model: {runtime_config.rewriter_api_model})"
+            )
+            logger.info(
+                f"[Rewriter] Defaults: temperature={runtime_config.rewriter_temperature}, top_p={runtime_config.rewriter_top_p}, max_tokens={runtime_config.rewriter_max_tokens}"
+            )
         else:
             logger.warning("[Rewriter] use_api=True but no API URL configured. Using local model.")
 
@@ -4378,7 +4882,9 @@ def main():
     global vl_extractor, vl_rewriter
     if runtime_config.vl_model_path:
         logger.info(f"[VL] Loading Qwen3-VL from {runtime_config.vl_model_path}")
-        logger.info(f"[VL] Device: {runtime_config.vl_device}, default alpha: {runtime_config.vl_alpha}")
+        logger.info(
+            f"[VL] Device: {runtime_config.vl_device}, default alpha: {runtime_config.vl_alpha}"
+        )
         try:
             from llm_dit.vl import VLEmbeddingExtractor
 
@@ -4388,7 +4894,7 @@ def main():
             vl_extractor = VLEmbeddingExtractor.from_pretrained(
                 runtime_config.vl_model_path,
                 device=runtime_config.vl_device,
-                torch_dtype=vl_dtype,
+                dtype=vl_dtype,
             )
             logger.info(f"[VL] Qwen3-VL loaded successfully")
             logger.info(f"[VL] Default blend mode: {runtime_config.vl_blend_mode}")
@@ -4406,13 +4912,16 @@ def main():
 
         # Log VL rewriter status
         if runtime_config.rewriter_vl_enabled:
-            logger.info("[VL Rewrite] VL rewriter enabled but no model configured (on-demand loading)")
+            logger.info(
+                "[VL Rewrite] VL rewriter enabled but no model configured (on-demand loading)"
+            )
         else:
             logger.info("[VL Rewrite] VL rewriter disabled")
 
     # Run server
-    import uvicorn
     import time
+
+    import uvicorn
 
     # Initialize server start time and save initial config values
     global server_start_time, session_file_values

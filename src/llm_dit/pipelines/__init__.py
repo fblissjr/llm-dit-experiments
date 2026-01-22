@@ -25,6 +25,16 @@ except ImportError:
     LTX2Pipeline = None
     VideoOutput = None
 
+# Pure PyTorch generation utilities (no diffusers dependency)
+from llm_dit.pipelines.generate import (
+    GenerationConfig,
+    generate_video,
+    generate_video_with_offloading,
+    create_position_indices,
+    create_video_modality,
+    cleanup_memory,
+)
+
 # WanVideoPipeline for Wan 2.1/2.2 video generation
 try:
     from llm_dit.pipelines.wan_video import WanVideoPipeline
@@ -44,4 +54,11 @@ __all__ = [
     "WanVideoOutput",
     "setup_attention_backend",
     "MAX_TEXT_SEQ_LEN",
+    # Pure PyTorch generation utilities
+    "GenerationConfig",
+    "generate_video",
+    "generate_video_with_offloading",
+    "create_position_indices",
+    "create_video_modality",
+    "cleanup_memory",
 ]

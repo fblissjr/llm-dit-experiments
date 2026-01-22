@@ -219,8 +219,9 @@ def main():
     use_wrapper = args.use_wrapper or args.normalize or args.audio_normalize or args.ffn_chunk
 
     if use_wrapper:
-        from llm_dit.pipelines.ltx2 import LTX2Pipeline as WrappedLTX2Pipeline
         from diffusers.utils import export_to_video
+
+        from llm_dit.pipelines.ltx2 import LTX2Pipeline as WrappedLTX2Pipeline
 
         # Load pipeline using our wrapper
         print("\nLoading LTX2Pipeline (llm_dit wrapper)...")
@@ -228,7 +229,7 @@ def main():
 
         pipe = WrappedLTX2Pipeline.from_pretrained(
             args.model_path,
-            torch_dtype=torch.bfloat16,
+            dtype=torch.bfloat16,
             enable_cpu_offload=True,
         )
 
@@ -260,7 +261,9 @@ def main():
 
         output = pipe(
             prompt=args.prompt,
-            negative_prompt=args.negative_prompt if args.negative_prompt else "worst quality, blurry, distorted",
+            negative_prompt=args.negative_prompt
+            if args.negative_prompt
+            else "worst quality, blurry, distorted",
             height=args.height,
             width=args.width,
             num_frames=args.num_frames,
@@ -295,7 +298,7 @@ def main():
 
         pipe = LTX2Pipeline.from_pretrained(
             args.model_path,
-            torch_dtype=torch.bfloat16,
+            dtype=torch.bfloat16,
         )
 
         # Enable CPU offload (required for 24GB)
@@ -349,7 +352,7 @@ def main():
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Handle different output formats
-    if hasattr(video_frames, 'shape'):
+    if hasattr(video_frames, "shape"):
         # numpy array from wrapper - may have batch dim
         if video_frames.ndim == 5:
             video_frames = video_frames[0]  # Remove batch dim
@@ -359,6 +362,7 @@ def main():
         print(f"Video shape: {len(video_frames)} frames")
 
     from diffusers.utils import export_to_video
+
     export_to_video(video_frames, str(output_path), fps=args.fps)
     print(f"\nSaved to: {output_path}")
 

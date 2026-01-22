@@ -16,10 +16,9 @@ from PIL import Image
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parents[3]))
 
-from src.llm_dit.vl import VLEmbeddingExtractor, blend_embeddings
-from src.llm_dit import ZImagePipeline
 from experiments.qwen3_vl.scripts.grid_utils import make_grid
-
+from src.llm_dit import ZImagePipeline
+from src.llm_dit.vl import VLEmbeddingExtractor, blend_embeddings
 
 # Paths relative to experiments/ directory
 EXPERIMENTS_DIR = Path(__file__).parent.parent.parent
@@ -88,7 +87,7 @@ def main():
     vl_extractor = VLEmbeddingExtractor.from_pretrained(
         args.vl_model_path,
         device="cuda",
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
     )
 
     vl_cache = {}  # (ref_name, prompt_idx) -> embeddings
@@ -99,7 +98,7 @@ def main():
         reference.save(output_dir / f"reference_{ref_name}.png")
 
         for i, prompt in enumerate(STYLE_PROMPTS):
-            print(f"  Prompt {i+1}: {prompt[:40]}...")
+            print(f"  Prompt {i + 1}: {prompt[:40]}...")
             vl_result = vl_extractor.extract(
                 reference,
                 text=prompt,
@@ -119,7 +118,7 @@ def main():
     print("\n=== PHASE 2: Loading Z-Image Pipeline ===")
     pipe = ZImagePipeline.from_pretrained(
         args.model_path,
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
         device="cuda",
     )
 
@@ -133,7 +132,7 @@ def main():
         num_inference_steps=9,
         generator=generator,
     )
-    image = result.images[0] if hasattr(result, 'images') else result
+    image = result.images[0] if hasattr(result, "images") else result
     image.save(output_dir / "baseline_homer.png")
 
     # PHASE 3: Generate styled images
@@ -142,7 +141,7 @@ def main():
         print(f"\n--- Style: {ref_name} ---")
 
         for i, prompt in enumerate(STYLE_PROMPTS):
-            print(f"Prompt {i+1}: {prompt[:40]}...")
+            print(f"Prompt {i + 1}: {prompt[:40]}...")
             vl_emb = vl_cache[(ref_name, i)].to("cuda")
 
             for alpha in ALPHAS:
@@ -157,9 +156,9 @@ def main():
                     num_inference_steps=9,
                     generator=generator,
                 )
-                image = result.images[0] if hasattr(result, 'images') else result
+                image = result.images[0] if hasattr(result, "images") else result
 
-                filename = f"style_{ref_name}_p{i+1}_a{int(alpha*10)}.png"
+                filename = f"style_{ref_name}_p{i + 1}_a{int(alpha * 10)}.png"
                 image.save(output_dir / filename)
 
     # Create grids
@@ -175,7 +174,8 @@ def main():
         overview_labels.append(f"Ref: {ref_name}")
 
     make_grid(
-        overview_images, overview_labels,
+        overview_images,
+        overview_labels,
         cols=3,
         output_path=output_dir / "grid_references.png",
         cell_size=256,
@@ -193,7 +193,8 @@ def main():
         results_labels.append(f"{ref_name} a=0.5")
 
     make_grid(
-        results_images, results_labels,
+        results_images,
+        results_labels,
         cols=4,
         output_path=output_dir / "grid_results.png",
         cell_size=256,
@@ -209,11 +210,12 @@ def main():
         alpha_images.append(Image.open(output_dir / f"reference_{style}.png"))
         alpha_labels.append(f"{style} ref")
         for alpha in ALPHAS:
-            alpha_images.append(Image.open(output_dir / f"style_{style}_p1_a{int(alpha*10)}.png"))
+            alpha_images.append(Image.open(output_dir / f"style_{style}_p1_a{int(alpha * 10)}.png"))
             alpha_labels.append(f"a={alpha}")
 
     make_grid(
-        alpha_images, alpha_labels,
+        alpha_images,
+        alpha_labels,
         cols=4,
         output_path=output_dir / "grid_alpha_comparison.png",
         cell_size=256,
@@ -223,7 +225,7 @@ def main():
     with open(output_dir / "prompts.txt", "w") as f:
         f.write("=== Style Transfer Prompts ===\n")
         for i, p in enumerate(STYLE_PROMPTS):
-            f.write(f"P{i+1}: {p}\n")
+            f.write(f"P{i + 1}: {p}\n")
         f.write("\n=== Reference Images ===\n")
         for name, path in REFERENCE_IMAGES.items():
             f.write(f"{name}: {path}\n")

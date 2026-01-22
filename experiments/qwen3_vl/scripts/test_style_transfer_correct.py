@@ -16,10 +16,9 @@ from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).parents[3]))
 
-from src.llm_dit.vl import VLEmbeddingExtractor, blend_embeddings
-from src.llm_dit import ZImagePipeline
 from experiments.qwen3_vl.scripts.grid_utils import make_grid
-
+from src.llm_dit import ZImagePipeline
+from src.llm_dit.vl import VLEmbeddingExtractor, blend_embeddings
 
 # Paths relative to experiments/ directory
 EXPERIMENTS_DIR = Path(__file__).parent.parent.parent
@@ -29,7 +28,9 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--model-path", required=True)
     parser.add_argument("--vl-model-path", required=True)
-    parser.add_argument("--output-dir", default=str(EXPERIMENTS_DIR / "results/vl_style_transfer_correct"))
+    parser.add_argument(
+        "--output-dir", default=str(EXPERIMENTS_DIR / "results/vl_style_transfer_correct")
+    )
     parser.add_argument("--seed", type=int, default=42)
     return parser.parse_args()
 
@@ -55,14 +56,14 @@ def main():
     print("\n=== PHASE 1: Generate Homer Baseline ===")
     pipe = ZImagePipeline.from_pretrained(
         args.model_path,
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
         device="cuda",
     )
 
     text_emb = pipe.encode_prompt(PROMPT)
     generator = torch.Generator(device="cpu").manual_seed(args.seed)
     result = pipe(prompt_embeds=text_emb, num_inference_steps=9, generator=generator)
-    homer_baseline = result.images[0] if hasattr(result, 'images') else result
+    homer_baseline = result.images[0] if hasattr(result, "images") else result
     homer_baseline.save(output_dir / "homer_baseline.png")
     print("Saved homer_baseline.png")
 
@@ -75,7 +76,7 @@ def main():
     vl_extractor = VLEmbeddingExtractor.from_pretrained(
         args.vl_model_path,
         device="cuda",
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
     )
 
     vl_cache = {}
@@ -96,6 +97,7 @@ def main():
     vl_extractor.unload()
     del vl_extractor
     import gc
+
     gc.collect()
     torch.cuda.empty_cache()
     torch.cuda.synchronize()
@@ -104,7 +106,7 @@ def main():
     print("\n=== PHASE 3: Generate Styled Homer ===")
     pipe = ZImagePipeline.from_pretrained(
         args.model_path,
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
         device="cuda",
     )
 
@@ -132,9 +134,9 @@ def main():
                     num_inference_steps=9,
                     generator=generator,
                 )
-                image = result.images[0] if hasattr(result, 'images') else result
+                image = result.images[0] if hasattr(result, "images") else result
 
-                filename = f"{style_name}_a{int(alpha*10)}_s{int(strength*10)}.png"
+                filename = f"{style_name}_a{int(alpha * 10)}_s{int(strength * 10)}.png"
                 image.save(output_dir / filename)
 
     # Create grids
@@ -150,10 +152,14 @@ def main():
 
         for strength in STRENGTHS:
             for alpha in ALPHAS:
-                images.append(output_dir / f"{style_name}_a{int(alpha*10)}_s{int(strength*10)}.png")
+                images.append(
+                    output_dir / f"{style_name}_a{int(alpha * 10)}_s{int(strength * 10)}.png"
+                )
                 labels.append(f"a={alpha} s={strength}")
 
-        make_grid(images, labels, cols=5, output_path=output_dir / f"grid_{style_name}.png", cell_size=256)
+        make_grid(
+            images, labels, cols=5, output_path=output_dir / f"grid_{style_name}.png", cell_size=256
+        )
 
     # Overview: best results (alpha=0.2, strength=0.5)
     overview = [output_dir / "homer_baseline.png"]

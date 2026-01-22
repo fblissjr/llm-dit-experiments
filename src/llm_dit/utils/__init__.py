@@ -123,6 +123,32 @@ from llm_dit.utils.vae_ops import (
     get_vae_scale_factor,
 )
 
+from llm_dit.utils.memory import (
+    cleanup_memory,
+    get_gpu_memory,
+    get_gpu_memory_reserved,
+    get_gpu_memory_stats,
+    log_memory_usage,
+    reset_peak_memory_stats,
+    estimate_vram_usage,
+    estimate_ltx2_vram,
+    MemoryTracker,
+)
+
+from llm_dit.utils.metrics import (
+    SigLIPScorer,
+    compute_siglip_score,
+    compute_video_siglip_score,
+)
+
+from llm_dit.utils.quantization import (
+    QuantizationPrecision,
+    quantize_model,
+    estimate_quantized_size,
+    EXCLUDE_PATTERNS,
+    SKIP_ROOT_MODULES,
+)
+
 __all__ = [
     # LoRA
     "LoRALoader",
@@ -216,4 +242,24 @@ __all__ = [
     "blend_differential_latents",
     "scale_noise_for_timestep",
     "get_vae_scale_factor",
+    # Memory utilities
+    "cleanup_memory",
+    "get_gpu_memory",
+    "get_gpu_memory_reserved",
+    "get_gpu_memory_stats",
+    "log_memory_usage",
+    "reset_peak_memory_stats",
+    "estimate_vram_usage",
+    "estimate_ltx2_vram",
+    "MemoryTracker",
+    # Metrics
+    "SigLIPScorer",
+    "compute_siglip_score",
+    "compute_video_siglip_score",
+    # Quantization
+    "QuantizationPrecision",
+    "quantize_model",
+    "estimate_quantized_size",
+    "EXCLUDE_PATTERNS",
+    "SKIP_ROOT_MODULES",
 ]

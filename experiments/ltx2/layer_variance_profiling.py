@@ -197,7 +197,7 @@ def run_profiling(
     model_id: str = "google/gemma-3-12b-it-qat-q4_0-unquantized",
     max_sequence_length: int = 128,
     save_plots: bool = False,
-    output_dir: str = "experiments/outputs/layer_profiling",
+    output_dir: str = "experiments/results/ltx2",
 ):
     """
     Run layer variance profiling on a set of prompts.
@@ -420,7 +420,7 @@ def main():
     parser.add_argument(
         "--output-dir",
         type=str,
-        default="experiments/outputs/layer_profiling",
+        default="experiments/results/ltx2",
         help="Output directory for plots",
     )
     args = parser.parse_args()

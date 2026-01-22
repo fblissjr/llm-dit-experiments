@@ -13,9 +13,10 @@ Usage:
 """
 
 import argparse
+from pathlib import Path
+
 import torch
 import torch.nn.functional as F
-from pathlib import Path
 
 
 def compute_layer_similarities(
@@ -39,7 +40,7 @@ def compute_layer_similarities(
     tokenizer = AutoTokenizer.from_pretrained(model_path)
     model = AutoModelForCausalLM.from_pretrained(
         model_path,
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
         device_map=device,
     )
     model.eval()
@@ -82,9 +83,7 @@ def compute_layer_similarities(
     # Compute neighbor similarities (how much each layer differs from previous)
     neighbor_sims = []
     for i in range(1, len(layers_to_analyze)):
-        sim = F.cosine_similarity(
-            layer_embeddings[i : i + 1], layer_embeddings[i - 1 : i], dim=1
-        )
+        sim = F.cosine_similarity(layer_embeddings[i : i + 1], layer_embeddings[i - 1 : i], dim=1)
         neighbor_sims.append(sim.item())
 
     return {
@@ -124,7 +123,9 @@ def print_analysis(results: dict) -> None:
         layer_to = layer_indices[i + 1]
         info_change = 1 - sim
         bar = "#" * int(30 * info_change)
-        print(f"  Layer {layer_from:3d} -> {layer_to:3d}: sim={sim:.4f} change={info_change:.4f} |{bar}")
+        print(
+            f"  Layer {layer_from:3d} -> {layer_to:3d}: sim={sim:.4f} change={info_change:.4f} |{bar}"
+        )
 
     # Find interesting transition points
     print("\nKey Findings:")
@@ -178,9 +179,7 @@ def main():
     parser = argparse.ArgumentParser(description="Analyze Qwen3-4B hidden layers")
     parser.add_argument("prompt", help="Prompt to analyze")
     parser.add_argument("--model-path", required=True, help="Path to model")
-    parser.add_argument(
-        "--all-layers", action="store_true", help="Analyze all layers (slow)"
-    )
+    parser.add_argument("--all-layers", action="store_true", help="Analyze all layers (slow)")
     parser.add_argument(
         "--layers",
         type=str,
@@ -209,6 +208,7 @@ def main():
 
     if args.output:
         import json
+
         import numpy as np
 
         # Convert numpy arrays to lists for JSON serialization

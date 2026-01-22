@@ -91,7 +91,7 @@ class QwenImage2512Pipeline:
         cls,
         model_path: Union[str, Path],
         device: Union[str, torch.device] = "cuda",
-        torch_dtype: torch.dtype = torch.bfloat16,
+        dtype: torch.dtype = torch.bfloat16,
         cpu_offload: bool = True,
         quantize_transformer: str = "fp8",  # Default FP8 for RTX 4090
         quantize_text_encoder: Optional[str] = None,  # None = CPU offload (best quality)
@@ -102,7 +102,7 @@ class QwenImage2512Pipeline:
         Args:
             model_path: Path to Qwen-Image-2512 model (diffusers format)
             device: Device for inference
-            torch_dtype: Model dtype (bfloat16 recommended)
+            dtype: Model dtype (bfloat16 recommended)
             cpu_offload: Enable sequential CPU offload for memory efficiency
             quantize_transformer: Quantization for transformer (60-layer DiT, 39GB):
                 "fp8" = TorchAO FP8 dynamic (~20GB, default for RTX 4090)
@@ -162,7 +162,7 @@ class QwenImage2512Pipeline:
             )
             pipe = QwenImagePipeline.from_pretrained(
                 str(model_path),
-                torch_dtype=torch_dtype,
+                dtype=dtype,
                 quantization_config=pipe_quant_config,
             )
         else:
@@ -173,7 +173,7 @@ class QwenImage2512Pipeline:
                 )
             pipe = QwenImagePipeline.from_pretrained(
                 str(model_path),
-                torch_dtype=torch_dtype,
+                dtype=dtype,
             )
 
         # Enable CPU offload for memory management
@@ -184,13 +184,14 @@ class QwenImage2512Pipeline:
         # For DiffSynth FP8, pre-convert weights for memory savings
         if use_diffsynth_fp8:
             from llm_dit.quantization import enable_fp8_weights
+
             logger.info("Converting transformer weights to FP8 for memory savings...")
             enable_fp8_weights(pipe.transformer)
 
         instance = cls(
             pipe=pipe,
             device=device,
-            dtype=torch_dtype,
+            dtype=dtype,
             use_diffsynth_fp8=use_diffsynth_fp8,
         )
         instance._cpu_offload_enabled = cpu_offload
@@ -222,6 +223,7 @@ class QwenImage2512Pipeline:
         if quantize_transformer:
             if quantize_transformer in ("fp8", "int8"):
                 from diffusers import TorchAoConfig
+
                 from llm_dit.quantization import check_fp8_support
 
                 if quantize_transformer == "fp8":
@@ -355,10 +357,12 @@ class QwenImage2512Pipeline:
         # Import FP8 context manager if needed
         if self._use_diffsynth_fp8:
             from llm_dit.quantization import fp8_inference
+
             context_manager = fp8_inference()
             logger.debug("Using DiffSynth-style FP8 inference")
         else:
             from contextlib import nullcontext
+
             context_manager = nullcontext()
 
         # Initialize FBCache for inference acceleration

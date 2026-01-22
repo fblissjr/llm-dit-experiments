@@ -201,7 +201,7 @@ def run_experiment(
     model_id: str = "google/gemma-3-12b-it-qat-q4_0-unquantized",
     max_sequence_length: int = 128,
     save_plots: bool = False,
-    output_dir: str = "experiments/outputs/token_correlation",
+    output_dir: str = "experiments/results/ltx2",
 ):
     """Run token-type layer correlation experiment."""
     from llm_dit.encoders.gemma3 import Gemma3Encoder
@@ -430,7 +430,7 @@ def main():
     parser.add_argument(
         "--output-dir",
         type=str,
-        default="experiments/outputs/token_correlation",
+        default="experiments/results/ltx2",
         help="Output directory",
     )
     args = parser.parse_args()

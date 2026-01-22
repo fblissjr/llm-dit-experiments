@@ -8,9 +8,9 @@ We compare: mean, std, min, max, and distribution shape.
 Runs sequentially to avoid OOM - loads one model at a time.
 """
 
+import gc
 import sys
 from pathlib import Path
-import gc
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "src"))
@@ -22,29 +22,71 @@ from PIL import Image
 def get_text_embedding_stats(prompt: str) -> dict:
     """Get Qwen3-4B text embedding statistics."""
     from llm_dit.cli import load_runtime_config
+    from llm_dit.conversation import Conversation, Message, Qwen3Formatter, Role
     from llm_dit.startup import PipelineLoader
-    from llm_dit.conversation import Qwen3Formatter, Conversation, Message, Role
 
     # Load config
     class ConfigArgs:
         pass
+
     config_args = ConfigArgs()
     config_args.config = "config.toml"
     config_args.profile = "rtx4090"
-    for attr in ['model_path', 'text_encoder_device', 'dit_device', 'vae_device',
-                 'cpu_offload', 'flash_attn', 'compile', 'debug', 'verbose',
-                 'attention_backend', 'use_custom_scheduler', 'tiled_vae',
-                 'embedding_cache', 'long_prompt_mode', 'hidden_layer', 'shift',
-                 'lora', 'api_url', 'api_model', 'local_encoder', 'templates_dir',
-                 'torch_dtype', 'text_encoder_path', 'tile_size', 'tile_overlap',
-                 'cache_size', 'steps', 'rewriter_use_api', 'rewriter_api_url',
-                 'rewriter_api_model', 'rewriter_temperature', 'rewriter_top_p',
-                 'rewriter_top_k', 'rewriter_min_p', 'rewriter_presence_penalty',
-                 'rewriter_max_tokens', 'width', 'height', 'guidance_scale',
-                 'negative_prompt', 'seed', 'embeddings_file', 'template',
-                 'system_prompt', 'thinking_content', 'assistant_content',
-                 'enable_thinking', 'vl_model_path', 'vl_device', 'vl_hidden_layer',
-                 'vl_alpha', 'vl_blend_mode', 'vl_auto_unload']:
+    for attr in [
+        "model_path",
+        "text_encoder_device",
+        "dit_device",
+        "vae_device",
+        "cpu_offload",
+        "flash_attn",
+        "compile",
+        "debug",
+        "verbose",
+        "attention_backend",
+        "use_custom_scheduler",
+        "tiled_vae",
+        "embedding_cache",
+        "long_prompt_mode",
+        "hidden_layer",
+        "shift",
+        "lora",
+        "api_url",
+        "api_model",
+        "local_encoder",
+        "templates_dir",
+        "dtype",
+        "text_encoder_path",
+        "tile_size",
+        "tile_overlap",
+        "cache_size",
+        "steps",
+        "rewriter_use_api",
+        "rewriter_api_url",
+        "rewriter_api_model",
+        "rewriter_temperature",
+        "rewriter_top_p",
+        "rewriter_top_k",
+        "rewriter_min_p",
+        "rewriter_presence_penalty",
+        "rewriter_max_tokens",
+        "width",
+        "height",
+        "guidance_scale",
+        "negative_prompt",
+        "seed",
+        "embeddings_file",
+        "template",
+        "system_prompt",
+        "thinking_content",
+        "assistant_content",
+        "enable_thinking",
+        "vl_model_path",
+        "vl_device",
+        "vl_hidden_layer",
+        "vl_alpha",
+        "vl_blend_mode",
+        "vl_auto_unload",
+    ]:
         if not hasattr(config_args, attr):
             setattr(config_args, attr, None)
 
@@ -76,7 +118,10 @@ def get_text_embedding_stats(prompt: str) -> dict:
         "std": text_emb.std().item(),
         "min": text_emb.min().item(),
         "max": text_emb.max().item(),
-        "per_dim_mean_range": [text_emb.mean(dim=0).min().item(), text_emb.mean(dim=0).max().item()],
+        "per_dim_mean_range": [
+            text_emb.mean(dim=0).min().item(),
+            text_emb.mean(dim=0).max().item(),
+        ],
         "per_dim_std_range": [text_emb.std(dim=0).min().item(), text_emb.std(dim=0).max().item()],
     }
 
@@ -118,7 +163,7 @@ def get_vl_embedding_stats(prompt: str) -> dict:
     extractor = VLEmbeddingExtractor.from_pretrained(
         vl_model_path,
         device="cuda",
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
     )
 
     # Extract WITHOUT scaling
@@ -149,8 +194,14 @@ def get_vl_embedding_stats(prompt: str) -> dict:
             "std": vl_emb_raw.std().item(),
             "min": vl_emb_raw.min().item(),
             "max": vl_emb_raw.max().item(),
-            "per_dim_mean_range": [vl_emb_raw.mean(dim=0).min().item(), vl_emb_raw.mean(dim=0).max().item()],
-            "per_dim_std_range": [vl_emb_raw.std(dim=0).min().item(), vl_emb_raw.std(dim=0).max().item()],
+            "per_dim_mean_range": [
+                vl_emb_raw.mean(dim=0).min().item(),
+                vl_emb_raw.mean(dim=0).max().item(),
+            ],
+            "per_dim_std_range": [
+                vl_emb_raw.std(dim=0).min().item(),
+                vl_emb_raw.std(dim=0).max().item(),
+            ],
         },
         "scaled": {
             "shape": list(vl_emb_scaled.shape),
@@ -209,19 +260,23 @@ def main():
     print("COMPARISON")
     print("=" * 70)
 
-    text_mean = text_stats['mean']
-    text_std = text_stats['std']
-    vl_raw_mean = vl_stats['raw']['mean']
-    vl_raw_std = vl_stats['raw']['std']
-    vl_scaled_mean = vl_stats['scaled']['mean']
-    vl_scaled_std = vl_stats['scaled']['std']
+    text_mean = text_stats["mean"]
+    text_std = text_stats["std"]
+    vl_raw_mean = vl_stats["raw"]["mean"]
+    vl_raw_std = vl_stats["raw"]["std"]
+    vl_scaled_mean = vl_stats["scaled"]["mean"]
+    vl_scaled_std = vl_stats["scaled"]["std"]
 
     print(f"\n                    Qwen3-4B    VL Raw      VL Scaled")
     print("-" * 60)
     print(f"Mean:               {text_mean:10.4f}  {vl_raw_mean:10.4f}  {vl_scaled_mean:10.4f}")
     print(f"Std:                {text_std:10.4f}  {vl_raw_std:10.4f}  {vl_scaled_std:10.4f}")
-    print(f"Min:                {text_stats['min']:10.4f}  {vl_stats['raw']['min']:10.4f}  {vl_stats['scaled']['min']:10.4f}")
-    print(f"Max:                {text_stats['max']:10.4f}  {vl_stats['raw']['max']:10.4f}  {vl_stats['scaled']['max']:10.4f}")
+    print(
+        f"Min:                {text_stats['min']:10.4f}  {vl_stats['raw']['min']:10.4f}  {vl_stats['scaled']['min']:10.4f}"
+    )
+    print(
+        f"Max:                {text_stats['max']:10.4f}  {vl_stats['raw']['max']:10.4f}  {vl_stats['scaled']['max']:10.4f}"
+    )
 
     print("\n" + "=" * 70)
     print("DIAGNOSIS")

@@ -47,8 +47,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "src"))
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
 # Import blending functions from core module (avoid duplication)
-from llm_dit.vl.blending import blend_embeddings  # noqa: E402
 from experiments.utils import save_image_grid, save_metadata  # noqa: E402
+from llm_dit.vl.blending import blend_embeddings  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -66,6 +66,7 @@ def load_vl_embeddings(path: str) -> dict:
 @dataclass
 class TextEncodingResult:
     """Result of text prompt encoding."""
+
     embeddings: torch.Tensor  # (seq_len, hidden_dim)
     formatted_prompt: str  # Full prompt with all special tokens
 
@@ -188,7 +189,8 @@ def main():
 
     # Output
     parser.add_argument(
-        "--output", "-o",
+        "--output",
+        "-o",
         type=str,
         default="output.png",
         help="Output image path (default: output.png)",
@@ -242,18 +244,54 @@ def main():
     config_args.steps = args.steps
 
     # Set defaults for required fields
-    for attr in ['model_path', 'text_encoder_device', 'dit_device', 'vae_device',
-                 'cpu_offload', 'flash_attn', 'compile', 'debug', 'verbose',
-                 'attention_backend', 'use_custom_scheduler', 'tiled_vae',
-                 'embedding_cache', 'long_prompt_mode', 'hidden_layer', 'shift',
-                 'lora', 'api_url', 'api_model', 'local_encoder', 'templates_dir',
-                 'torch_dtype', 'text_encoder_path', 'tile_size', 'tile_overlap',
-                 'cache_size', 'rewriter_use_api', 'rewriter_api_url', 'rewriter_api_model',
-                 'rewriter_temperature', 'rewriter_top_p', 'rewriter_top_k',
-                 'rewriter_min_p', 'rewriter_presence_penalty', 'rewriter_max_tokens',
-                 'width', 'height', 'guidance_scale', 'negative_prompt', 'seed',
-                 'embeddings_file', 'template', 'system_prompt', 'thinking_content',
-                 'assistant_content', 'enable_thinking']:
+    for attr in [
+        "model_path",
+        "text_encoder_device",
+        "dit_device",
+        "vae_device",
+        "cpu_offload",
+        "flash_attn",
+        "compile",
+        "debug",
+        "verbose",
+        "attention_backend",
+        "use_custom_scheduler",
+        "tiled_vae",
+        "embedding_cache",
+        "long_prompt_mode",
+        "hidden_layer",
+        "shift",
+        "lora",
+        "api_url",
+        "api_model",
+        "local_encoder",
+        "templates_dir",
+        "dtype",
+        "text_encoder_path",
+        "tile_size",
+        "tile_overlap",
+        "cache_size",
+        "rewriter_use_api",
+        "rewriter_api_url",
+        "rewriter_api_model",
+        "rewriter_temperature",
+        "rewriter_top_p",
+        "rewriter_top_k",
+        "rewriter_min_p",
+        "rewriter_presence_penalty",
+        "rewriter_max_tokens",
+        "width",
+        "height",
+        "guidance_scale",
+        "negative_prompt",
+        "seed",
+        "embeddings_file",
+        "template",
+        "system_prompt",
+        "thinking_content",
+        "assistant_content",
+        "enable_thinking",
+    ]:
         if not hasattr(config_args, attr):
             setattr(config_args, attr, None)
 
@@ -286,9 +324,9 @@ def main():
     generated_labels = []
 
     for alpha in alphas:
-        logger.info(f"\n{'='*60}")
+        logger.info(f"\n{'=' * 60}")
         logger.info(f"Processing alpha={alpha}")
-        logger.info(f"{'='*60}")
+        logger.info(f"{'=' * 60}")
 
         # Blend embeddings
         if alpha == 1.0:

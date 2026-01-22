@@ -38,9 +38,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from experiments.ltx2.prompts import CATEGORY_PROMPTS
 
 TEST_PROMPTS = [
-    CATEGORY_PROMPTS["animal"],   # Animal motion (replaces "dog playing")
-    CATEGORY_PROMPTS["nature"],   # Natural scene (replaces "mountain landscape")
-    CATEGORY_PROMPTS["human"],    # Human activity (replaces "cooking")
+    CATEGORY_PROMPTS["animal"],  # Animal motion (replaces "dog playing")
+    CATEGORY_PROMPTS["nature"],  # Natural scene (replaces "mountain landscape")
+    CATEGORY_PROMPTS["human"],  # Human activity (replaces "cooking")
 ]
 
 
@@ -59,7 +59,7 @@ def compute_frame_statistics(frames: list) -> dict:
 
 
 def run_entropy_experiment(
-    output_dir: str = "experiments/outputs/entropy_encoding",
+    output_dir: str = "experiments/results/ltx2",
     model_path: str = "models/LTX-2",
     save_videos: bool = True,
     entropy_weights: list = None,
@@ -95,21 +95,21 @@ def run_entropy_experiment(
     print("\nLoading pipeline...")
     pipe = LTX2Pipeline.from_pretrained(
         model_path,
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
     )
     pipe.enable_sequential_cpu_offload()
 
     results = {}
 
     for weight in entropy_weights:
-        print(f"\n{'='*50}")
+        print(f"\n{'=' * 50}")
         print(f"Entropy Weight: {weight}")
         print("=" * 50)
 
         weight_results = []
 
         for i, prompt in enumerate(TEST_PROMPTS):
-            print(f"\n  [{i+1}/{len(TEST_PROMPTS)}] {prompt[:50]}...")
+            print(f"\n  [{i + 1}/{len(TEST_PROMPTS)}] {prompt[:50]}...")
 
             start_time = time.time()
 
@@ -173,7 +173,9 @@ def run_entropy_experiment(
                 stats["prompt"] = prompt
                 weight_results.append(stats)
 
-                print(f"  Time: {gen_time:.1f}s | Mean: {stats['mean']:.1f} | Std: {stats['std']:.1f}")
+                print(
+                    f"  Time: {gen_time:.1f}s | Mean: {stats['mean']:.1f} | Std: {stats['std']:.1f}"
+                )
 
                 # Save video
                 if save_videos:
@@ -184,6 +186,7 @@ def run_entropy_experiment(
             except Exception as e:
                 print(f"  ERROR: {e}")
                 import traceback
+
                 traceback.print_exc()
                 weight_results.append({"error": str(e), "prompt": prompt})
                 pipe.encode_prompt = original_encode
@@ -241,7 +244,7 @@ def main():
     parser.add_argument(
         "--output-dir",
         type=str,
-        default="experiments/outputs/entropy_encoding",
+        default="experiments/results/ltx2",
         help="Output directory",
     )
     parser.add_argument(

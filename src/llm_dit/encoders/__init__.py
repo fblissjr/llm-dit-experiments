@@ -61,6 +61,11 @@ from llm_dit.encoders.factory import (
 from llm_dit.encoders.qwen3 import Qwen3Encoder
 from llm_dit.encoders.qwen25_vl import Qwen25VLEncoder
 from llm_dit.encoders.gemma3 import Gemma3Encoder, LTX2Encoder, SubLayerExtractor
+from llm_dit.encoders.embeddings_connector import (
+    Embeddings1DConnector,
+    RopeType,
+    load_connector_weights,
+)
 
 __all__ = [
     # High-level encoder (existing)
@@ -86,4 +91,8 @@ __all__ = [
     "Gemma3Encoder",
     "LTX2Encoder",
     "SubLayerExtractor",
+    # Embeddings connector
+    "Embeddings1DConnector",
+    "RopeType",
+    "load_connector_weights",
 ]

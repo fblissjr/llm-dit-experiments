@@ -1,5 +1,9 @@
 # Qwen3-VL Experiments: Working Document
 
+> **STATUS: RESEARCH DEAD-END (2025-12-12)**
+> Zero-shot VL conditioning corrupts image content. Not viable without training.
+> See `internal/state/lessons_learned.md` for full context.
+
 > **Last Updated:** 2025-12-12
 > **Purpose:** Single source of truth for experiment planning, priorities, and open questions
 

@@ -21,7 +21,7 @@ class TestBackendConfig:
         config = BackendConfig()
         assert config.backend_type == "transformers"
         assert config.max_length == 2048  # Increased for longer prompts
-        assert config.torch_dtype == "bfloat16"
+        assert config.dtype == "bfloat16"
 
     def test_for_z_image_factory(self):
         config = BackendConfig.for_z_image("/path/to/model")
@@ -29,9 +29,9 @@ class TestBackendConfig:
         assert config.subfolder == "text_encoder"
         assert config.max_length == 2048  # Increased for longer prompts
 
-    def test_get_torch_dtype(self):
-        config = BackendConfig(torch_dtype="float16")
-        assert config.get_torch_dtype() == torch.float16
+    def test_get_dtype(self):
+        config = BackendConfig(dtype="float16")
+        assert config.get_dtype() == torch.float16
 
 
 class TestTransformersBackendMocked:
@@ -65,9 +65,7 @@ class TestTransformersBackendReal:
         """Test loading model from pretrained path."""
         from llm_dit.backends.transformers import TransformersBackend
 
-        backend = TransformersBackend.from_pretrained(
-            z_image_model_path, device_map="cpu"
-        )
+        backend = TransformersBackend.from_pretrained(z_image_model_path, device_map="cpu")
 
         assert backend.embedding_dim == 2560
         assert backend.max_sequence_length == 512
@@ -76,9 +74,7 @@ class TestTransformersBackendReal:
         """Test encoding a single prompt."""
         from llm_dit.backends.transformers import TransformersBackend
 
-        backend = TransformersBackend.from_pretrained(
-            z_image_model_path, device_map="cpu"
-        )
+        backend = TransformersBackend.from_pretrained(z_image_model_path, device_map="cpu")
 
         formatted = "<|im_start|>user\nA cat sleeping<|im_end|>"
         output = backend.encode([formatted])
@@ -92,9 +88,7 @@ class TestTransformersBackendReal:
         """Test batch encoding multiple prompts."""
         from llm_dit.backends.transformers import TransformersBackend
 
-        backend = TransformersBackend.from_pretrained(
-            z_image_model_path, device_map="cpu"
-        )
+        backend = TransformersBackend.from_pretrained(z_image_model_path, device_map="cpu")
 
         texts = [
             "<|im_start|>user\nA cat<|im_end|>",
@@ -110,9 +104,7 @@ class TestTransformersBackendReal:
         """Test encoding with padded output."""
         from llm_dit.backends.transformers import TransformersBackend
 
-        backend = TransformersBackend.from_pretrained(
-            z_image_model_path, device_map="cpu"
-        )
+        backend = TransformersBackend.from_pretrained(z_image_model_path, device_map="cpu")
 
         formatted = "<|im_start|>user\nA cat<|im_end|>"
         output = backend.encode([formatted], return_padded=True)
@@ -137,9 +129,7 @@ class TestAPIBackendMocked:
         # Decode the mock response
         hidden_states_bytes = base64.b64decode(mock_api_response["hidden_states"])
         shape = mock_api_response["shape"]
-        hidden_states = np.frombuffer(hidden_states_bytes, dtype=np.float32).reshape(
-            shape
-        )
+        hidden_states = np.frombuffer(hidden_states_bytes, dtype=np.float32).reshape(shape)
 
         assert hidden_states.shape == tuple(shape)
         assert hidden_states.shape[1] == 2560
@@ -229,9 +219,7 @@ class TestBackendEquivalence:
         from llm_dit.backends.transformers import TransformersBackend
 
         # Local backend
-        local_backend = TransformersBackend.from_pretrained(
-            z_image_model_path, device_map="cpu"
-        )
+        local_backend = TransformersBackend.from_pretrained(z_image_model_path, device_map="cpu")
 
         # API backend
         api_config = APIBackendConfig(
@@ -255,9 +243,7 @@ class TestBackendEquivalence:
         from llm_dit.backends.api import APIBackend, APIBackendConfig
         from llm_dit.backends.transformers import TransformersBackend
 
-        local_backend = TransformersBackend.from_pretrained(
-            z_image_model_path, device_map="cpu"
-        )
+        local_backend = TransformersBackend.from_pretrained(z_image_model_path, device_map="cpu")
 
         api_config = APIBackendConfig(
             base_url=api_server_url,

@@ -2,7 +2,7 @@
 """
 LTX-2 Visual Comparison Grid Generator
 
-Last Updated: 2026-01-16
+Last Updated: 2026-01-18
 
 Generate side-by-side comparison grids for layer blend experiments.
 This tool creates visual outputs for human inspection - the only way
@@ -20,20 +20,23 @@ Output format:
     └─────────────────────────────────────────────────────────────┘
 
 Usage:
-    # From a layer_blend_sweep result directory
+    # Use --latest to find most recent layer experiment
+    uv run python experiments/ltx2/generate_comparison_grid.py --latest
+
+    # From a specific experiment directory (new structure)
     uv run python experiments/ltx2/generate_comparison_grid.py \\
-        --input experiments/results/ltx2_layer_blend_20260116_* \\
+        --input experiments/results/ltx2/ltx2_layer_blend_20260116_* \\
         --output comparison_grid.png
 
     # Specify which configs to compare (default: all)
     uv run python experiments/ltx2/generate_comparison_grid.py \\
-        --input experiments/results/ltx2_layer_blend_* \\
+        --input experiments/results/ltx2/ltx2_layer_blend_* \\
         --configs baseline late_heavy top_contributors \\
         --output comparison_grid.png
 
     # Limit to specific prompts
     uv run python experiments/ltx2/generate_comparison_grid.py \\
-        --input experiments/results/ltx2_layer_blend_* \\
+        --input experiments/results/ltx2/ltx2_layer_blend_* \\
         --prompts official_1 cat_street \\
         --output comparison_grid.png
 """
@@ -244,11 +247,23 @@ def generate_comparison_grid(
     print(f"  Prompts: {n_rows}")
 
 
-def find_latest_experiment(base_dir: Path, pattern: str = "ltx2_layer_blend_*") -> Path:
-    """Find the most recent experiment directory matching the pattern."""
+def find_latest_experiment(base_dir: Path, pattern: str = "*layer*") -> Path:
+    """Find the most recent experiment directory matching the pattern.
+
+    Updated 2026-01-18: Scans experiments/results/ltx2/ subdirectory
+    instead of experiments/results/ directly.
+    """
+    # Try pipeline-organized structure first
+    ltx2_dir = base_dir / "ltx2"
+    if ltx2_dir.exists():
+        candidates = sorted(ltx2_dir.glob(pattern), reverse=True)
+        if candidates:
+            return candidates[0]
+
+    # Fall back to legacy structure
     candidates = sorted(base_dir.glob(pattern), reverse=True)
     if not candidates:
-        raise FileNotFoundError(f"No directories matching {pattern} in {base_dir}")
+        raise FileNotFoundError(f"No directories matching {pattern} in {base_dir} or {ltx2_dir}")
     return candidates[0]
 
 

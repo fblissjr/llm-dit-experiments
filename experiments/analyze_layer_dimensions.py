@@ -75,10 +75,10 @@ OUTLIER_THRESHOLDS = [10, 50, 100]
 
 # Token position categories for analysis
 TOKEN_POSITIONS = {
-    "bos": 0,           # Beginning of sequence
+    "bos": 0,  # Beginning of sequence
     "system": (1, 50),  # System prompt region (approximate)
     "user": (50, -10),  # User prompt region
-    "tail": -10,        # Last 10 tokens
+    "tail": -10,  # Last 10 tokens
 }
 
 # Default diverse prompts for statistical stability
@@ -128,8 +128,8 @@ QUICK_PROMPTS = [
 class LayerDimensionStats:
     """Statistics for a single layer's embeddings."""
 
-    layer_index: int           # Python index (-1 to -36)
-    layer_number: int          # Human-readable (1 to 36)
+    layer_index: int  # Python index (-1 to -36)
+    layer_number: int  # Human-readable (1 to 36)
 
     # Per-dimension arrays (shape: 2560,)
     per_dim_mean: np.ndarray = field(default_factory=lambda: np.array([]))
@@ -190,12 +190,15 @@ class DimensionAccumulator:
 
             delta = x - self.mean
             delta_n = delta / n
-            delta_n2 = delta_n ** 2
+            delta_n2 = delta_n**2
             term1 = delta * delta_n * (n - 1)
 
             self.mean += delta_n
-            self.M4 += term1 * delta_n2 * (n**2 - 3*n + 3) + \
-                       6 * delta_n2 * self.M2 - 4 * delta_n * self.M3
+            self.M4 += (
+                term1 * delta_n2 * (n**2 - 3 * n + 3)
+                + 6 * delta_n2 * self.M2
+                - 4 * delta_n * self.M3
+            )
             self.M3 += term1 * delta_n * (n - 2) - 3 * delta_n * self.M2
             self.M2 += term1
 
@@ -235,8 +238,7 @@ class DimensionAccumulator:
             n_total = self.n + batch_n
             delta = batch_mean - self.mean
             self.mean = (self.n * self.mean + batch_n * batch_mean) / n_total
-            self.M2 = self.M2 + batch_var * batch_n + \
-                      delta**2 * self.n * batch_n / n_total
+            self.M2 = self.M2 + batch_var * batch_n + delta**2 * self.n * batch_n / n_total
             self.n = n_total
 
         # Update min/max
@@ -274,8 +276,8 @@ class DimensionAccumulator:
         # kurtosis = M4 / (n * var^2) - 3
         # skewness = M3 / (n * var^1.5)
         var_safe = np.where(variance > 1e-10, variance, 1e-10)
-        kurtosis = (self.M4 / self.n) / (var_safe ** 2) - 3
-        skewness = (self.M3 / self.n) / (var_safe ** 1.5)
+        kurtosis = (self.M4 / self.n) / (var_safe**2) - 3
+        skewness = (self.M3 / self.n) / (var_safe**1.5)
 
         # Handle edge cases
         kurtosis = np.where(variance > 1e-10, kurtosis, 0)
@@ -357,6 +359,7 @@ def analyze_all_layers(
     if format_prompts:
         try:
             from llm_dit.conversation import Qwen3Formatter
+
             formatter = Qwen3Formatter()
             formatted_prompts = []
             for prompt in prompts:
@@ -375,7 +378,7 @@ def analyze_all_layers(
 
     model = AutoModelForCausalLM.from_pretrained(
         model_path,
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
         device_map=device,
     )
     model.eval()
@@ -399,8 +402,10 @@ def analyze_all_layers(
 
     # Process prompts in batches
     for batch_start in range(0, len(prompts), batch_size):
-        batch_prompts = prompts[batch_start:batch_start + batch_size]
-        logger.info(f"Processing batch {batch_start//batch_size + 1}/{(len(prompts) + batch_size - 1)//batch_size}")
+        batch_prompts = prompts[batch_start : batch_start + batch_size]
+        logger.info(
+            f"Processing batch {batch_start // batch_size + 1}/{(len(prompts) + batch_size - 1) // batch_size}"
+        )
 
         # Tokenize
         inputs = tokenizer(
@@ -560,7 +565,9 @@ def save_summary_json(
 
         # Tracked dimensions
         for dim in tracked_dimensions:
-            summary["tracked_dimension_analysis"][dim][layer_key] = stats.tracked_dim_stats.get(dim, {})
+            summary["tracked_dimension_analysis"][dim][layer_key] = stats.tracked_dim_stats.get(
+                dim, {}
+            )
 
     # Save
     summary_path = output_dir / "summary.json"
@@ -577,8 +584,8 @@ def plot_visualizations(
 ):
     """Generate visualization plots."""
     try:
-        import matplotlib.pyplot as plt
         import matplotlib.colors as mcolors
+        import matplotlib.pyplot as plt
     except ImportError:
         logger.warning("matplotlib not installed, skipping visualizations")
         return
@@ -602,24 +609,24 @@ def plot_visualizations(
     # Use log scale for better visibility
     im = ax.imshow(
         np.log10(data + 1),
-        aspect='auto',
-        cmap='viridis',
-        interpolation='nearest',
+        aspect="auto",
+        cmap="viridis",
+        interpolation="nearest",
     )
-    plt.colorbar(im, ax=ax, label='log10(std + 1)')
+    plt.colorbar(im, ax=ax, label="log10(std + 1)")
 
-    ax.set_xlabel('Embedding Dimension')
-    ax.set_ylabel('Layer (0=embedding, 1=first transformer, 36=last)')
+    ax.set_xlabel("Embedding Dimension")
+    ax.set_ylabel("Layer (0=embedding, 1=first transformer, 36=last)")
     ax.set_yticks(range(0, num_layers, 3))
     ax.set_yticklabels([sorted_results[i][1].layer_number for i in range(0, num_layers, 3)])
-    ax.set_title('Per-Dimension Standard Deviation Across Layers')
+    ax.set_title("Per-Dimension Standard Deviation Across Layers")
 
     # Mark tracked dimensions
     for dim in tracked_dimensions:
-        ax.axvline(x=dim, color='red', linestyle='--', alpha=0.5, linewidth=0.5)
+        ax.axvline(x=dim, color="red", linestyle="--", alpha=0.5, linewidth=0.5)
 
     plt.tight_layout()
-    plt.savefig(viz_dir / "heatmap_per_dim_std.png", dpi=150, bbox_inches='tight')
+    plt.savefig(viz_dir / "heatmap_per_dim_std.png", dpi=150, bbox_inches="tight")
     plt.close()
 
     # 2. Outlier count vs layer depth
@@ -628,7 +635,11 @@ def plot_visualizations(
 
     layers = [stats.layer_number for _, stats in sorted_results]
 
-    for threshold, color, label in [(10, 'blue', '10x'), (50, 'orange', '50x'), (100, 'red', '100x')]:
+    for threshold, color, label in [
+        (10, "blue", "10x"),
+        (50, "orange", "50x"),
+        (100, "red", "100x"),
+    ]:
         if threshold == 10:
             counts = [len(stats.outliers_10x) for _, stats in sorted_results]
         elif threshold == 50:
@@ -636,17 +647,17 @@ def plot_visualizations(
         else:
             counts = [len(stats.outliers_100x) for _, stats in sorted_results]
 
-        ax.plot(layers, counts, color=color, marker='o', label=f'{label} threshold', linewidth=2)
+        ax.plot(layers, counts, color=color, marker="o", label=f"{label} threshold", linewidth=2)
 
-    ax.set_xlabel('Layer (0=embedding, 1=first transformer, 36=last)')
-    ax.set_ylabel('Number of Outlier Dimensions')
-    ax.set_title('Outlier Dimension Count by Layer Depth')
+    ax.set_xlabel("Layer (0=embedding, 1=first transformer, 36=last)")
+    ax.set_ylabel("Number of Outlier Dimensions")
+    ax.set_title("Outlier Dimension Count by Layer Depth")
     ax.legend()
     ax.grid(True, alpha=0.3)
     ax.set_xticks(range(0, 37, 3))
 
     plt.tight_layout()
-    plt.savefig(viz_dir / "line_outlier_count_vs_layer.png", dpi=150, bbox_inches='tight')
+    plt.savefig(viz_dir / "line_outlier_count_vs_layer.png", dpi=150, bbox_inches="tight")
     plt.close()
 
     # 3. Max kurtosis vs layer depth
@@ -654,11 +665,11 @@ def plot_visualizations(
     fig, ax = plt.subplots(figsize=(12, 6))
 
     kurtosis_values = [stats.max_kurtosis for _, stats in sorted_results]
-    ax.plot(layers, kurtosis_values, color='purple', marker='o', linewidth=2)
+    ax.plot(layers, kurtosis_values, color="purple", marker="o", linewidth=2)
 
-    ax.set_xlabel('Layer (0=embedding, 1=first transformer, 36=last)')
-    ax.set_ylabel('Maximum Kurtosis')
-    ax.set_title('Maximum Per-Dimension Kurtosis by Layer Depth')
+    ax.set_xlabel("Layer (0=embedding, 1=first transformer, 36=last)")
+    ax.set_ylabel("Maximum Kurtosis")
+    ax.set_title("Maximum Per-Dimension Kurtosis by Layer Depth")
     ax.grid(True, alpha=0.3)
     ax.set_xticks(range(0, 37, 3))
 
@@ -669,16 +680,16 @@ def plot_visualizations(
         kurtosis = kurtosis_values[idx]
         dim = sorted_results[idx][1].max_kurtosis_dim
         ax.annotate(
-            f'dim {dim}',
+            f"dim {dim}",
             (layer_num, kurtosis),
             textcoords="offset points",
             xytext=(0, 10),
-            ha='center',
+            ha="center",
             fontsize=8,
         )
 
     plt.tight_layout()
-    plt.savefig(viz_dir / "line_kurtosis_vs_layer.png", dpi=150, bbox_inches='tight')
+    plt.savefig(viz_dir / "line_kurtosis_vs_layer.png", dpi=150, bbox_inches="tight")
     plt.close()
 
     # 4. Tracked dimension plots
@@ -690,24 +701,28 @@ def plot_visualizations(
         kurtosis_vals = [stats.per_dim_kurtosis[dim] for _, stats in sorted_results]
 
         # Std subplot
-        axes[0].plot(layers, stds, color='blue', marker='o', linewidth=2)
+        axes[0].plot(layers, stds, color="blue", marker="o", linewidth=2)
         median_stds = [stats.median_dim_std for _, stats in sorted_results]
-        axes[0].axhline(y=np.mean(median_stds) * 10, color='orange', linestyle='--', label='10x median (avg)')
-        axes[0].axhline(y=np.mean(median_stds) * 100, color='red', linestyle='--', label='100x median (avg)')
-        axes[0].set_ylabel('Standard Deviation')
-        axes[0].set_title(f'Dimension {dim} - Standard Deviation Across Layers')
+        axes[0].axhline(
+            y=np.mean(median_stds) * 10, color="orange", linestyle="--", label="10x median (avg)"
+        )
+        axes[0].axhline(
+            y=np.mean(median_stds) * 100, color="red", linestyle="--", label="100x median (avg)"
+        )
+        axes[0].set_ylabel("Standard Deviation")
+        axes[0].set_title(f"Dimension {dim} - Standard Deviation Across Layers")
         axes[0].legend()
         axes[0].grid(True, alpha=0.3)
 
         # Kurtosis subplot
-        axes[1].plot(layers, kurtosis_vals, color='purple', marker='o', linewidth=2)
-        axes[1].set_xlabel('Layer (1=earliest, 36=last)')
-        axes[1].set_ylabel('Kurtosis')
-        axes[1].set_title(f'Dimension {dim} - Kurtosis Across Layers')
+        axes[1].plot(layers, kurtosis_vals, color="purple", marker="o", linewidth=2)
+        axes[1].set_xlabel("Layer (1=earliest, 36=last)")
+        axes[1].set_ylabel("Kurtosis")
+        axes[1].set_title(f"Dimension {dim} - Kurtosis Across Layers")
         axes[1].grid(True, alpha=0.3)
 
         plt.tight_layout()
-        plt.savefig(viz_dir / f"track_dim_{dim}_across_layers.png", dpi=150, bbox_inches='tight')
+        plt.savefig(viz_dir / f"track_dim_{dim}_across_layers.png", dpi=150, bbox_inches="tight")
         plt.close()
 
     # 5. Median std vs layer depth
@@ -717,18 +732,18 @@ def plot_visualizations(
     median_stds = [stats.median_dim_std for _, stats in sorted_results]
     max_stds = [stats.max_dim_std for _, stats in sorted_results]
 
-    ax.plot(layers, median_stds, color='blue', marker='o', linewidth=2, label='Median dim std')
-    ax.plot(layers, max_stds, color='red', marker='s', linewidth=2, alpha=0.7, label='Max dim std')
+    ax.plot(layers, median_stds, color="blue", marker="o", linewidth=2, label="Median dim std")
+    ax.plot(layers, max_stds, color="red", marker="s", linewidth=2, alpha=0.7, label="Max dim std")
 
-    ax.set_xlabel('Layer (0=embedding, 1=first transformer, 36=last)')
-    ax.set_ylabel('Standard Deviation')
-    ax.set_title('Embedding Statistics by Layer Depth')
+    ax.set_xlabel("Layer (0=embedding, 1=first transformer, 36=last)")
+    ax.set_ylabel("Standard Deviation")
+    ax.set_title("Embedding Statistics by Layer Depth")
     ax.legend()
     ax.grid(True, alpha=0.3)
     ax.set_xticks(range(0, 37, 3))
 
     plt.tight_layout()
-    plt.savefig(viz_dir / "line_std_vs_layer.png", dpi=150, bbox_inches='tight')
+    plt.savefig(viz_dir / "line_std_vs_layer.png", dpi=150, bbox_inches="tight")
     plt.close()
 
     logger.info(f"Saved visualizations to {viz_dir}")
@@ -792,7 +807,9 @@ def compare_to_reference(
                     "ratio": float(our_std[dim] / (ref_std[dim] + 1e-10)),
                 }
 
-        logger.info(f"Reference comparison: correlation={correlation:.4f}, scale={comparison['std_scale_factor']:.2f}x")
+        logger.info(
+            f"Reference comparison: correlation={correlation:.4f}, scale={comparison['std_scale_factor']:.2f}x"
+        )
         return comparison
 
     except Exception as e:
@@ -818,34 +835,39 @@ def generate_analysis_report(
     # Compare to reference
     ref_comparison = compare_to_reference(results)
     if ref_comparison:
-        report_lines.extend([
-            "### Reference Comparison (Layer -2 vs qwen3_4b_stats.npz)",
-            "",
-            f"- **Correlation:** {ref_comparison['correlation']:.4f}",
-            f"- **Scale factor:** {ref_comparison['std_scale_factor']:.2f}x",
-            "",
-        ])
+        report_lines.extend(
+            [
+                "### Reference Comparison (Layer -2 vs qwen3_4b_stats.npz)",
+                "",
+                f"- **Correlation:** {ref_comparison['correlation']:.4f}",
+                f"- **Scale factor:** {ref_comparison['std_scale_factor']:.2f}x",
+                "",
+            ]
+        )
 
     # Sort by layer number
     sorted_results = sorted(results.items(), key=lambda x: x[1].layer_number)
 
     # Find layers with fewest/most outliers at 10x threshold
-    outlier_counts = [(stats.layer_number, len(stats.outliers_10x))
-                      for _, stats in sorted_results]
+    outlier_counts = [(stats.layer_number, len(stats.outliers_10x)) for _, stats in sorted_results]
     min_outliers = min(outlier_counts, key=lambda x: x[1])
     max_outliers = max(outlier_counts, key=lambda x: x[1])
 
-    report_lines.extend([
-        f"- **Cleanest layer (10x threshold):** Layer {min_outliers[0]} ({min_outliers[1]} outliers)",
-        f"- **Most outliers (10x threshold):** Layer {max_outliers[0]} ({max_outliers[1]} outliers)",
-        "",
-    ])
+    report_lines.extend(
+        [
+            f"- **Cleanest layer (10x threshold):** Layer {min_outliers[0]} ({min_outliers[1]} outliers)",
+            f"- **Most outliers (10x threshold):** Layer {max_outliers[0]} ({max_outliers[1]} outliers)",
+            "",
+        ]
+    )
 
     # Tracked dimensions summary
-    report_lines.extend([
-        "## Tracked Dimensions",
-        "",
-    ])
+    report_lines.extend(
+        [
+            "## Tracked Dimensions",
+            "",
+        ]
+    )
 
     for dim in tracked_dimensions:
         report_lines.append(f"### Dimension {dim}")
@@ -858,17 +880,21 @@ def generate_analysis_report(
             std = dim_stats.get("std", 0)
             ratio = dim_stats.get("std_ratio", 0)
             kurtosis = dim_stats.get("kurtosis", 0)
-            report_lines.append(f"| {stats.layer_number} | {std:.2f} | {ratio:.1f}x | {kurtosis:.1f} |")
+            report_lines.append(
+                f"| {stats.layer_number} | {std:.2f} | {ratio:.1f}x | {kurtosis:.1f} |"
+            )
 
         report_lines.append("")
 
     # Layer-by-layer summary table
-    report_lines.extend([
-        "## Layer-by-Layer Summary",
-        "",
-        "| Layer | Median Std | Max Std | Outliers (10x) | Outliers (50x) | Max Kurtosis | Max Kurt Dim |",
-        "|-------|-----------|---------|----------------|----------------|--------------|--------------|",
-    ])
+    report_lines.extend(
+        [
+            "## Layer-by-Layer Summary",
+            "",
+            "| Layer | Median Std | Max Std | Outliers (10x) | Outliers (50x) | Max Kurtosis | Max Kurt Dim |",
+            "|-------|-----------|---------|----------------|----------------|--------------|--------------|",
+        ]
+    )
 
     for _, stats in sorted_results:
         report_lines.append(
@@ -877,45 +903,54 @@ def generate_analysis_report(
             f"{stats.max_kurtosis:.1f} | {stats.max_kurtosis_dim} |"
         )
 
-    report_lines.extend([
-        "",
-        "## Recommendations",
-        "",
-        "Based on the outlier analysis:",
-        "",
-    ])
+    report_lines.extend(
+        [
+            "",
+            "## Recommendations",
+            "",
+            "Based on the outlier analysis:",
+            "",
+        ]
+    )
 
     # Find clean layers (0 outliers at 10x)
-    clean_layers = [stats.layer_number for _, stats in sorted_results
-                    if len(stats.outliers_10x) == 0]
+    clean_layers = [
+        stats.layer_number for _, stats in sorted_results if len(stats.outliers_10x) == 0
+    ]
     if clean_layers:
         report_lines.append(f"- **Clean layers (no 10x outliers):** {clean_layers}")
     else:
         # Find layers with minimum outliers
         min_count = min(len(stats.outliers_10x) for _, stats in sorted_results)
-        min_layers = [stats.layer_number for _, stats in sorted_results
-                      if len(stats.outliers_10x) == min_count]
+        min_layers = [
+            stats.layer_number
+            for _, stats in sorted_results
+            if len(stats.outliers_10x) == min_count
+        ]
         report_lines.append(f"- **Cleanest layers ({min_count} outliers):** {min_layers}")
 
     # Find problematic layers (>5 outliers at 10x)
-    problematic_layers = [stats.layer_number for _, stats in sorted_results
-                          if len(stats.outliers_10x) > 5]
+    problematic_layers = [
+        stats.layer_number for _, stats in sorted_results if len(stats.outliers_10x) > 5
+    ]
     if problematic_layers:
         report_lines.append(f"- **Problematic layers (>5 outliers):** {problematic_layers}")
 
-    report_lines.extend([
-        "",
-        "## Files Generated",
-        "",
-        "- `layer_stats/layer_XX_stats.npz` - Per-layer statistics (36 files)",
-        "- `summary.json` - Aggregate statistics in JSON format",
-        "- `visualizations/` - Analysis plots",
-        "  - `heatmap_per_dim_std.png` - 2560x36 heatmap of std",
-        "  - `line_outlier_count_vs_layer.png` - Outliers by depth",
-        "  - `line_kurtosis_vs_layer.png` - Kurtosis by depth",
-        "  - `track_dim_*_across_layers.png` - Tracked dimension plots",
-        "",
-    ])
+    report_lines.extend(
+        [
+            "",
+            "## Files Generated",
+            "",
+            "- `layer_stats/layer_XX_stats.npz` - Per-layer statistics (36 files)",
+            "- `summary.json` - Aggregate statistics in JSON format",
+            "- `visualizations/` - Analysis plots",
+            "  - `heatmap_per_dim_std.png` - 2560x36 heatmap of std",
+            "  - `line_outlier_count_vs_layer.png` - Outliers by depth",
+            "  - `line_kurtosis_vs_layer.png` - Kurtosis by depth",
+            "  - `track_dim_*_across_layers.png` - Tracked dimension plots",
+            "",
+        ]
+    )
 
     # Write report
     report_path = output_dir / "analysis_report.md"
@@ -1009,6 +1044,7 @@ def main():
         prompts = args.prompts
     elif args.prompts_file:
         import yaml
+
         with open(args.prompts_file) as f:
             data = yaml.safe_load(f)
         prompts = data.get("prompts", [])
@@ -1025,7 +1061,7 @@ def main():
         print(f"  Output: {output_dir}")
         print(f"  Prompts: {len(prompts)}")
         for i, p in enumerate(prompts[:5]):
-            print(f"    {i+1}. {p[:60]}{'...' if len(p) > 60 else ''}")
+            print(f"    {i + 1}. {p[:60]}{'...' if len(p) > 60 else ''}")
         if len(prompts) > 5:
             print(f"    ... and {len(prompts) - 5} more")
         print(f"  Tracked dimensions: {args.track_dims}")

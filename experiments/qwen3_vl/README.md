@@ -1,5 +1,9 @@
 # Qwen3-VL Vision Conditioning Experiments
 
+> **STATUS: RESEARCH DEAD-END (2025-12-12)**
+> Zero-shot VL conditioning corrupts image content. Not viable without training.
+> See `internal/state/lessons_learned.md` for full context.
+
 > **Last Updated:** 2025-12-22
 
 **See [docs/guides/vl_conditioning.md](../../docs/guides/vl_conditioning.md) for the main user guide.** This file contains experiment-specific details and deep research findings.

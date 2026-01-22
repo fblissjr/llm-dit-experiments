@@ -14,12 +14,12 @@ sys.path.insert(0, str(coderef_diffusers))
 
 import argparse
 import logging
+
 import torch
 from PIL import Image
 
 logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
 
@@ -100,7 +100,7 @@ def main():
     logger.info(f"Loading pipeline from {model_path}...")
     pipe = QwenImageLayeredPipeline.from_pretrained(
         str(model_path),
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
     )
 
     # Enable memory optimizations

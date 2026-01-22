@@ -14,8 +14,8 @@ from PIL import Image
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "src"))
 
-from llm_dit.vl import VLEmbeddingExtractor
 from llm_dit.cli import load_runtime_config
+from llm_dit.vl import VLEmbeddingExtractor
 
 
 def main():
@@ -49,7 +49,7 @@ def main():
     extractor = VLEmbeddingExtractor.from_pretrained(
         vl_model_path,
         device="cuda",
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
     )
 
     print("\n" + "=" * 60)
@@ -105,23 +105,65 @@ def main():
     # Load config
     class ConfigArgs:
         pass
+
     config_args = ConfigArgs()
     config_args.config = "config.toml"
     config_args.profile = "rtx4090"
-    for attr in ['model_path', 'text_encoder_device', 'dit_device', 'vae_device',
-                 'cpu_offload', 'flash_attn', 'compile', 'debug', 'verbose',
-                 'attention_backend', 'use_custom_scheduler', 'tiled_vae',
-                 'embedding_cache', 'long_prompt_mode', 'hidden_layer', 'shift',
-                 'lora', 'api_url', 'api_model', 'local_encoder', 'templates_dir',
-                 'torch_dtype', 'text_encoder_path', 'tile_size', 'tile_overlap',
-                 'cache_size', 'steps', 'rewriter_use_api', 'rewriter_api_url',
-                 'rewriter_api_model', 'rewriter_temperature', 'rewriter_top_p',
-                 'rewriter_top_k', 'rewriter_min_p', 'rewriter_presence_penalty',
-                 'rewriter_max_tokens', 'width', 'height', 'guidance_scale',
-                 'negative_prompt', 'seed', 'embeddings_file', 'template',
-                 'system_prompt', 'thinking_content', 'assistant_content',
-                 'enable_thinking', 'vl_model_path', 'vl_device', 'vl_hidden_layer',
-                 'vl_alpha', 'vl_blend_mode', 'vl_auto_unload']:
+    for attr in [
+        "model_path",
+        "text_encoder_device",
+        "dit_device",
+        "vae_device",
+        "cpu_offload",
+        "flash_attn",
+        "compile",
+        "debug",
+        "verbose",
+        "attention_backend",
+        "use_custom_scheduler",
+        "tiled_vae",
+        "embedding_cache",
+        "long_prompt_mode",
+        "hidden_layer",
+        "shift",
+        "lora",
+        "api_url",
+        "api_model",
+        "local_encoder",
+        "templates_dir",
+        "dtype",
+        "text_encoder_path",
+        "tile_size",
+        "tile_overlap",
+        "cache_size",
+        "steps",
+        "rewriter_use_api",
+        "rewriter_api_url",
+        "rewriter_api_model",
+        "rewriter_temperature",
+        "rewriter_top_p",
+        "rewriter_top_k",
+        "rewriter_min_p",
+        "rewriter_presence_penalty",
+        "rewriter_max_tokens",
+        "width",
+        "height",
+        "guidance_scale",
+        "negative_prompt",
+        "seed",
+        "embeddings_file",
+        "template",
+        "system_prompt",
+        "thinking_content",
+        "assistant_content",
+        "enable_thinking",
+        "vl_model_path",
+        "vl_device",
+        "vl_hidden_layer",
+        "vl_alpha",
+        "vl_blend_mode",
+        "vl_auto_unload",
+    ]:
         if not hasattr(config_args, attr):
             setattr(config_args, attr, None)
 
@@ -129,6 +171,7 @@ def main():
 
     # Encode text with Qwen3-4B
     from llm_dit.startup import PipelineLoader
+
     loader = PipelineLoader(z_config)
 
     # Just load text encoder
@@ -139,6 +182,7 @@ def main():
     # Encode the prompt
     print(f"Encoding prompt: {prompt}")
     from llm_dit.conversation import Qwen3Formatter
+
     formatter = Qwen3Formatter()
     formatted = formatter.format(prompt)
 

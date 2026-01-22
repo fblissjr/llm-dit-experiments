@@ -20,7 +20,7 @@ Reference: DiffSynth-Studio z_image_dit.py
 from __future__ import annotations
 
 import math
-from typing import Optional, Tuple, List
+from typing import List, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -136,9 +136,7 @@ class RotaryEmbedding(nn.Module):
         # freqs_cis shape: (1, seq_len, 1, head_dim//2)
 
         # Reshape x to complex: split last dim in half, treat as real+imag
-        x_complex = torch.view_as_complex(
-            x.float().reshape(*x.shape[:-1], -1, 2)
-        )
+        x_complex = torch.view_as_complex(x.float().reshape(*x.shape[:-1], -1, 2))
 
         # Multiply by rotation frequencies
         x_rotated = x_complex * freqs_cis.to(x.device)
@@ -315,8 +313,8 @@ class ContextRefinerBlock(nn.Module):
         # Dual normalization layers
         self.attention_norm1 = RMSNorm(dim, eps=norm_eps)  # Pre-attention
         self.attention_norm2 = RMSNorm(dim, eps=norm_eps)  # Post-attention
-        self.ffn_norm1 = RMSNorm(dim, eps=norm_eps)        # Pre-FFN
-        self.ffn_norm2 = RMSNorm(dim, eps=norm_eps)        # Post-FFN
+        self.ffn_norm1 = RMSNorm(dim, eps=norm_eps)  # Pre-FFN
+        self.ffn_norm2 = RMSNorm(dim, eps=norm_eps)  # Post-FFN
 
     def forward(
         self,
@@ -417,19 +415,21 @@ class ContextRefiner(nn.Module):
         self.n_heads = n_heads
 
         # Create transformer blocks
-        self.layers = nn.ModuleList([
-            ContextRefinerBlock(
-                dim=dim,
-                n_heads=n_heads,
-                n_kv_heads=n_kv_heads,
-                norm_eps=norm_eps,
-                qk_norm=qk_norm,
-                ffn_hidden_dim=ffn_hidden_dim,
-                rope_theta=rope_theta,
-                max_seq_len=max_seq_len,
-            )
-            for _ in range(n_layers)
-        ])
+        self.layers = nn.ModuleList(
+            [
+                ContextRefinerBlock(
+                    dim=dim,
+                    n_heads=n_heads,
+                    n_kv_heads=n_kv_heads,
+                    norm_eps=norm_eps,
+                    qk_norm=qk_norm,
+                    ffn_hidden_dim=ffn_hidden_dim,
+                    rope_theta=rope_theta,
+                    max_seq_len=max_seq_len,
+                )
+                for _ in range(n_layers)
+            ]
+        )
 
         # Gradient checkpointing flag
         self._gradient_checkpointing = False
@@ -473,20 +473,21 @@ class ContextRefiner(nn.Module):
         cls,
         model_path: str,
         device: str | torch.device = "cpu",
-        torch_dtype: torch.dtype = torch.float32,
+        dtype: torch.dtype = torch.float32,
     ) -> "ContextRefiner":
         """Load Context Refiner weights from a Z-Image checkpoint.
 
         Args:
             model_path: Path to Z-Image model directory
             device: Device to load weights to
-            torch_dtype: Data type for weights
+            dtype: Data type for weights
 
         Returns:
             ContextRefiner with loaded weights
         """
         import json
         from pathlib import Path
+
         from safetensors.torch import load_file
 
         model_path = Path(model_path)
@@ -520,9 +521,7 @@ class ContextRefiner(nn.Module):
             weight_files = list(model_path.glob("*.safetensors"))
 
         if not weight_files:
-            raise FileNotFoundError(
-                f"No safetensors files found in {model_path}"
-            )
+            raise FileNotFoundError(f"No safetensors files found in {model_path}")
 
         # Load and filter context_refiner weights
         state_dict = {}
@@ -537,13 +536,12 @@ class ContextRefiner(nn.Module):
 
         if not state_dict:
             raise ValueError(
-                "No context_refiner weights found in checkpoint. "
-                "Make sure this is a Z-Image model."
+                "No context_refiner weights found in checkpoint. Make sure this is a Z-Image model."
             )
 
         # Load weights
         model.load_state_dict(state_dict, strict=False)
-        model = model.to(device=device, dtype=torch_dtype)
+        model = model.to(device=device, dtype=dtype)
 
         return model
 

@@ -43,8 +43,8 @@ from experiments.ltx2.prompts import CATEGORY_PROMPTS
 # Use category prompts for layer extraction comparison
 # Map to prompt types: semantic (animal), spatial (urban), abstract (abstract)
 TEST_PROMPTS = [
-    CATEGORY_PROMPTS["animal"],    # Semantic/concrete - should benefit from middle layers
-    CATEGORY_PROMPTS["urban"],     # Spatial/compositional
+    CATEGORY_PROMPTS["animal"],  # Semantic/concrete - should benefit from middle layers
+    CATEGORY_PROMPTS["urban"],  # Spatial/compositional
     CATEGORY_PROMPTS["abstract"],  # Abstract/style - should benefit from late layers
 ]
 
@@ -79,7 +79,7 @@ def compute_frame_statistics(frames: list) -> dict:
 
 
 def run_layer_extraction_experiment(
-    output_dir: str = "experiments/outputs/layer_extraction",
+    output_dir: str = "experiments/results/ltx2",
     model_path: str = "models/LTX-2",
     save_videos: bool = True,
     configs_to_test: list = None,
@@ -114,7 +114,7 @@ def run_layer_extraction_experiment(
     print("\nLoading pipeline...")
     pipe = LTX2Pipeline.from_pretrained(
         model_path,
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
     )
     # Use model_cpu_offload instead of sequential_cpu_offload for 2-3x speedup
     pipe.enable_model_cpu_offload()
@@ -127,7 +127,7 @@ def run_layer_extraction_experiment(
             continue
 
         active_layers = LAYER_CONFIGS[config_name]
-        print(f"\n{'='*50}")
+        print(f"\n{'=' * 50}")
         print(f"Config: {config_name}")
         print(f"Active layers: {len(active_layers)} ({min(active_layers)}-{max(active_layers)})")
         print("=" * 50)
@@ -176,7 +176,9 @@ def run_layer_extraction_experiment(
             for layer_idx in range(49):
                 if layer_idx not in active_layers:
                     # Replace with mean across sequence (preserves layer statistics)
-                    layer_mean = text_encoder_hidden_states[:, :, :, layer_idx].mean(dim=1, keepdim=True)
+                    layer_mean = text_encoder_hidden_states[:, :, :, layer_idx].mean(
+                        dim=1, keepdim=True
+                    )
                     text_encoder_hidden_states[:, :, :, layer_idx] = layer_mean
 
             sequence_lengths = prompt_attention_mask.sum(dim=-1)
@@ -205,7 +207,7 @@ def run_layer_extraction_experiment(
         pipe._get_gemma_prompt_embeds = masked_get_embeds
 
         for i, prompt in enumerate(TEST_PROMPTS):
-            print(f"\n  [{i+1}/{len(TEST_PROMPTS)}] {prompt[:50]}...")
+            print(f"\n  [{i + 1}/{len(TEST_PROMPTS)}] {prompt[:50]}...")
 
             start_time = time.time()
 
@@ -232,7 +234,9 @@ def run_layer_extraction_experiment(
                 stats["prompt_type"] = PROMPT_TYPES[i]
                 config_results.append(stats)
 
-                print(f"  Time: {gen_time:.1f}s | Mean: {stats['mean']:.1f} | Std: {stats['std']:.1f}")
+                print(
+                    f"  Time: {gen_time:.1f}s | Mean: {stats['mean']:.1f} | Std: {stats['std']:.1f}"
+                )
 
                 # Save video
                 if save_videos:
@@ -243,6 +247,7 @@ def run_layer_extraction_experiment(
             except Exception as e:
                 print(f"  ERROR: {e}")
                 import traceback
+
                 traceback.print_exc()
                 config_results.append({"error": str(e), "prompt": prompt})
 
@@ -272,7 +277,9 @@ def run_layer_extraction_experiment(
             std_avg = np.mean([s["std"] for s in valid])
             temp_avg = np.mean([s["temporal_variance"] for s in valid])
             n_layers = len(LAYER_CONFIGS.get(config_name, []))
-            print(f"| {config_name:14} | {n_layers:6} | {mean_avg:5.1f} | {std_avg:4.1f} | {temp_avg:8.1f} |")
+            print(
+                f"| {config_name:14} | {n_layers:6} | {mean_avg:5.1f} | {std_avg:4.1f} | {temp_avg:8.1f} |"
+            )
 
     # Per-prompt-type analysis
     print("\n## Layer Effects by Prompt Type\n")
@@ -306,7 +313,7 @@ def main():
     parser.add_argument(
         "--output-dir",
         type=str,
-        default="experiments/outputs/layer_extraction",
+        default="experiments/results/ltx2",
         help="Output directory",
     )
     parser.add_argument(

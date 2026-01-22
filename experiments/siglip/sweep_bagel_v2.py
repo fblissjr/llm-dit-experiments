@@ -8,8 +8,8 @@ Improved Bagel connector test with:
 """
 
 import sys
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
 
 DIFFUSERS_PR_PATH = Path(__file__).parent.parent.parent / "coderef/diffusers/src"
 sys.path.insert(0, str(DIFFUSERS_PR_PATH))
@@ -36,9 +36,9 @@ def load_and_adapt_bagel_connector(target_dim=3840, output_scale=1.85):
     Load Bagel's connector and adapt to Z-Image dimensions.
     Scale output to match Z-Image's expected distribution.
     """
-    with safe_open(str(BAGEL_PATH), framework='pt', device='cpu') as f:
-        fc1_weight = f.get_tensor('connector.fc1.weight')
-        fc1_bias = f.get_tensor('connector.fc1.bias')
+    with safe_open(str(BAGEL_PATH), framework="pt", device="cpu") as f:
+        fc1_weight = f.get_tensor("connector.fc1.weight")
+        fc1_bias = f.get_tensor("connector.fc1.bias")
 
     current_out = fc1_weight.shape[0]
     pad_size = target_dim - current_out
@@ -65,12 +65,14 @@ def load_pipeline(output_scale=1.85, init_refiner_from_context=True):
     """Load Z-Image pipeline with improved Bagel connector."""
     from diffusers import AutoencoderKL, FlowMatchEulerDiscreteScheduler
     from diffusers.models.transformers.transformer_z_image import ZImageTransformer2DModel
-    from transformers import AutoModel, AutoTokenizer, AutoProcessor
+    from transformers import AutoModel, AutoProcessor, AutoTokenizer
 
     print("Loading pipeline...")
 
-    vae = AutoencoderKL.from_pretrained(ZIMAGE_PATH, subfolder="vae", torch_dtype=torch.bfloat16)
-    text_encoder = AutoModel.from_pretrained(QWEN3_PATH, dtype=torch.bfloat16, trust_remote_code=True)
+    vae = AutoencoderKL.from_pretrained(ZIMAGE_PATH, subfolder="vae", dtype=torch.bfloat16)
+    text_encoder = AutoModel.from_pretrained(
+        QWEN3_PATH, dtype=torch.bfloat16, trust_remote_code=True
+    )
     tokenizer = AutoTokenizer.from_pretrained(QWEN3_PATH, trust_remote_code=True)
     scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(ZIMAGE_PATH, subfolder="scheduler")
 
@@ -79,7 +81,7 @@ def load_pipeline(output_scale=1.85, init_refiner_from_context=True):
     siglip_processor = AutoProcessor.from_pretrained(SIGLIP_PATH)
 
     base_transformer = ZImageTransformer2DModel.from_pretrained(
-        ZIMAGE_PATH, subfolder="transformer", torch_dtype=torch.bfloat16
+        ZIMAGE_PATH, subfolder="transformer", dtype=torch.bfloat16
     )
 
     config = dict(base_transformer.config)
@@ -133,7 +135,9 @@ def load_pipeline(output_scale=1.85, init_refiner_from_context=True):
 
 def encode_prompt(tokenizer, text_encoder, prompt, device):
     formatted = f"<|im_start|>user\n{prompt}<|im_end|>\n<|im_start|>assistant\n"
-    inputs = tokenizer(formatted, padding="max_length", max_length=512, truncation=True, return_tensors="pt")
+    inputs = tokenizer(
+        formatted, padding="max_length", max_length=512, truncation=True, return_tensors="pt"
+    )
 
     with torch.no_grad():
         outputs = text_encoder(
@@ -156,7 +160,7 @@ def encode_siglip(siglip, processor, image, device, scale_factor=1.0):
         hidden_state = outputs.last_hidden_state
 
     B, N, C = hidden_state.shape
-    H = W = int(N ** 0.5)
+    H = W = int(N**0.5)
     hidden_state = hidden_state.squeeze(0).view(H, W, C)
     hidden_state = hidden_state * scale_factor
 
@@ -164,8 +168,14 @@ def encode_siglip(siglip, processor, image, device, scale_factor=1.0):
 
 
 def generate_single(
-    components, prompt, reference_image=None, scale_factor=1.0,
-    height=512, width=512, num_steps=4, device="cuda",
+    components,
+    prompt,
+    reference_image=None,
+    scale_factor=1.0,
+    height=512,
+    width=512,
+    num_steps=4,
+    device="cuda",
 ):
     vae = components["vae"].to(device)
     text_encoder = components["text_encoder"].to(device)
@@ -185,7 +195,9 @@ def generate_single(
         cap_feats_list = [cap_feats]
         siglip_feats = None
     else:
-        siglip_emb = encode_siglip(siglip, siglip_processor, reference_image, device, scale_factor).to(dtype)
+        siglip_emb = encode_siglip(
+            siglip, siglip_processor, reference_image, device, scale_factor
+        ).to(dtype)
         siglip_feats = [[siglip_emb]]
         cap_feats_list = [cap_feats]
 
@@ -201,13 +213,23 @@ def generate_single(
 
         with torch.no_grad():
             if siglip_feats is not None:
-                output = transformer(x=x, t=timestep_norm, cap_feats=cap_feats_list, siglip_feats=siglip_feats, return_dict=False)
+                output = transformer(
+                    x=x,
+                    t=timestep_norm,
+                    cap_feats=cap_feats_list,
+                    siglip_feats=siglip_feats,
+                    return_dict=False,
+                )
             else:
-                output = transformer(x=x, t=timestep_norm, cap_feats=cap_feats_list, return_dict=False)
+                output = transformer(
+                    x=x, t=timestep_norm, cap_feats=cap_feats_list, return_dict=False
+                )
 
         noise_pred = -output[0][0].squeeze(1)
         latents_for_step = latents.squeeze(1)
-        latents = scheduler.step(noise_pred.float(), t, latents_for_step.float(), return_dict=False)[0]
+        latents = scheduler.step(
+            noise_pred.float(), t, latents_for_step.float(), return_dict=False
+        )[0]
         latents = latents.unsqueeze(1).to(dtype)
 
     latents_for_decode = latents.squeeze(1).unsqueeze(0)
@@ -229,7 +251,7 @@ def create_grid(images, labels, title, cols=4, cell_size=256):
     grid_w = cols * cell_size
     grid_h = rows * (cell_size + label_height) + 40
 
-    grid = Image.new('RGB', (grid_w, grid_h), (255, 255, 255))
+    grid = Image.new("RGB", (grid_w, grid_h), (255, 255, 255))
     draw = ImageDraw.Draw(grid)
 
     try:
@@ -256,9 +278,9 @@ def create_grid(images, labels, title, cols=4, cell_size=256):
 def main():
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    print("="*60)
+    print("=" * 60)
     print("Z-Image Omni + Bagel Connector v2 (with fixes)")
-    print("="*60)
+    print("=" * 60)
 
     # Load pipeline with scaled connector and context_refiner init
     components = load_pipeline(output_scale=1.85, init_refiner_from_context=True)
@@ -292,7 +314,12 @@ def main():
             images.append(img)
             labels.append(f"scale={scale}")
 
-        grid = create_grid(images, labels, f"v2: Scaled connector + context_refiner init | {prompt[:40]}...", cols=5)
+        grid = create_grid(
+            images,
+            labels,
+            f"v2: Scaled connector + context_refiner init | {prompt[:40]}...",
+            cols=5,
+        )
         out_path = OUTPUT_DIR / f"sweep_v2_{timestamp}.png"
         grid.save(out_path)
         print(f"\nSaved: {out_path}")
@@ -333,9 +360,9 @@ def main():
     grid.save(out_path)
     print(f"Saved: {out_path}")
 
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print(f"Results saved to: {OUTPUT_DIR}")
-    print("="*60)
+    print("=" * 60)
 
 
 if __name__ == "__main__":

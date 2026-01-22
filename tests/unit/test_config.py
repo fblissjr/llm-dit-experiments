@@ -31,7 +31,7 @@ class TestEncoderConfig:
     def test_default_values(self):
         config = EncoderConfig()
         assert config.device == "auto"
-        assert config.torch_dtype == "bfloat16"
+        assert config.dtype == "bfloat16"
         assert config.quantization == "none"
         assert config.cpu_offload is False
         assert config.trust_remote_code is True
@@ -49,15 +49,15 @@ class TestEncoderConfig:
         config = EncoderConfig(quantization="none")
         assert config.get_quantization_config() is None
 
-    def test_get_torch_dtype(self):
-        config = EncoderConfig(torch_dtype="bfloat16")
-        assert config.get_torch_dtype() == torch.bfloat16
+    def test_get_dtype(self):
+        config = EncoderConfig(dtype="bfloat16")
+        assert config.get_dtype() == torch.bfloat16
 
-        config = EncoderConfig(torch_dtype="float16")
-        assert config.get_torch_dtype() == torch.float16
+        config = EncoderConfig(dtype="float16")
+        assert config.get_dtype() == torch.float16
 
-        config = EncoderConfig(torch_dtype="float32")
-        assert config.get_torch_dtype() == torch.float32
+        config = EncoderConfig(dtype="float32")
+        assert config.get_dtype() == torch.float32
 
     def test_get_device_auto_resolution(self):
         config = EncoderConfig(device="auto")
@@ -113,13 +113,13 @@ class TestPipelineConfig:
     def test_default_values(self):
         config = PipelineConfig()
         assert config.device == "auto"
-        assert config.torch_dtype == "bfloat16"
+        assert config.dtype == "bfloat16"
         assert config.enable_model_cpu_offload is False
         assert config.enable_sequential_cpu_offload is False
 
-    def test_get_torch_dtype(self):
-        config = PipelineConfig(torch_dtype="float16")
-        assert config.get_torch_dtype() == torch.float16
+    def test_get_dtype(self):
+        config = PipelineConfig(dtype="float16")
+        assert config.get_dtype() == torch.float16
 
 
 class TestGenerationConfig:
@@ -156,9 +156,7 @@ class TestLoRAConfig:
         assert config.scales == []
 
     def test_with_values(self):
-        config = LoRAConfig(
-            paths=["lora1.safetensors", "lora2.safetensors"], scales=[0.8, 0.5]
-        )
+        config = LoRAConfig(paths=["lora1.safetensors", "lora2.safetensors"], scales=[0.8, 0.5])
         assert len(config.paths) == 2
         assert len(config.scales) == 2
 
@@ -240,7 +238,7 @@ class TestPresets:
     def test_default_preset(self):
         config = get_preset("default")
         assert config.encoder.device == "auto"
-        assert config.encoder.torch_dtype == "bfloat16"
+        assert config.encoder.dtype == "bfloat16"
 
     def test_low_vram_preset(self):
         config = get_preset("low_vram")
@@ -251,7 +249,7 @@ class TestPresets:
     def test_cpu_only_preset(self):
         config = get_preset("cpu_only")
         assert config.encoder.device == "cpu"
-        assert config.encoder.torch_dtype == "float32"
+        assert config.encoder.dtype == "float32"
 
     def test_unknown_preset_raises(self):
         with pytest.raises(KeyError):
@@ -278,4 +276,4 @@ class TestLoadConfig:
         # When path is provided, preset is ignored
         config = load_config(path=test_config_file, preset="cpu_only")
         # Should use TOML values, not cpu_only preset
-        assert config.encoder.torch_dtype == "bfloat16"  # From TOML, not float32
+        assert config.encoder.dtype == "bfloat16"  # From TOML, not float32

@@ -47,12 +47,12 @@ def parse_lora_arg(lora_str: str) -> tuple[str, float]:
         >>> parse_lora_arg('/path/to/lora.safetensors')
         ('/path/to/lora.safetensors', 1.0)
     """
-    if ':' in lora_str:
+    if ":" in lora_str:
         # Find the last colon (in case path contains colons on Windows)
-        last_colon = lora_str.rfind(':')
+        last_colon = lora_str.rfind(":")
         path = lora_str[:last_colon]
         try:
-            scale = float(lora_str[last_colon + 1:])
+            scale = float(lora_str[last_colon + 1 :])
         except ValueError:
             # Not a valid float, treat entire string as path
             path = lora_str
@@ -80,16 +80,18 @@ def parse_layer_weights(weights_str: str) -> dict[int, float]:
         {-1: 0.33, -2: 0.34, -3: 0.33}
     """
     weights = {}
-    for part in weights_str.split(','):
+    for part in weights_str.split(","):
         part = part.strip()
-        if ':' not in part:
+        if ":" not in part:
             raise ValueError(f"Invalid layer weight format: '{part}'. Expected 'layer:weight'")
-        layer_str, weight_str = part.rsplit(':', 1)
+        layer_str, weight_str = part.rsplit(":", 1)
         try:
             layer = int(layer_str)
             weight = float(weight_str)
         except ValueError as e:
-            raise ValueError(f"Invalid layer weight: '{part}'. Layer must be int, weight must be float") from e
+            raise ValueError(
+                f"Invalid layer weight: '{part}'. Layer must be int, weight must be float"
+            ) from e
         weights[layer] = weight
     return weights
 
@@ -121,12 +123,14 @@ class RuntimeConfig:
     qwen_image_cfg_scale: float = 4.0  # CFG scale (4.0 for all variants)
     qwen_image_steps: int | None = None  # Diffusion steps (None = variant default: 40/25/50)
     qwen_image_resolution: int | None = None  # Resolution (None = variant default: 1024/640/640)
-    qwen_image_quantize_text_encoder: str = "none"  # none/4bit/8bit - CPU offload makes quant optional
+    qwen_image_quantize_text_encoder: str = (
+        "none"  # none/4bit/8bit - CPU offload makes quant optional
+    )
     qwen_image_quantize_transformer: str | None = None  # None = variant default (fp8/diffsynth-fp8)
 
     # LTX-2 video generation
     ltx2_model_path: str = ""  # Path to LTX-2 model directory
-    ltx2_encoder_model_id: str = "google/gemma-3-12b-it-qat-q4_0-unquantized"  # Gemma 3 encoder
+    ltx2_encoder_model_id: str = "models/LTX-2/text_encoder"  # Gemma 3 encoder
     ltx2_num_frames: int = 33  # Number of frames (33-65 typical for 24GB)
     ltx2_fps: int = 24  # Output framerate
     ltx2_guidance_scale: float = 3.5  # CFG scale (3.0-4.0 recommended)
@@ -158,7 +162,7 @@ class RuntimeConfig:
     vae_device: str = "auto"
 
     # Precision
-    torch_dtype: str = "bfloat16"
+    dtype: str = "bfloat16"
 
     # Quantization
     quantization: str = "none"  # none, 4bit, 8bit, int8_dynamic
@@ -185,7 +189,9 @@ class RuntimeConfig:
 
     # Encoder settings
     hidden_layer: int = -2  # Which layer to extract embeddings from (-1=last, -2=penultimate)
-    layer_weights: dict[int, float] | None = None  # Multi-layer blending weights (overrides hidden_layer)
+    layer_weights: dict[int, float] | None = (
+        None  # Multi-layer blending weights (overrides hidden_layer)
+    )
 
     # Scheduler
     shift: float = 3.0
@@ -290,14 +296,14 @@ class RuntimeConfig:
     verbose: bool = False
     log_dir: str | None = None  # Directory for JSON log files with rotation
 
-    def get_torch_dtype(self) -> torch.dtype:
+    def get_dtype(self) -> torch.dtype:
         """Convert string dtype to torch.dtype."""
         dtype_map = {
             "bfloat16": torch.bfloat16,
             "float16": torch.float16,
             "float32": torch.float32,
         }
-        return dtype_map.get(self.torch_dtype, torch.bfloat16)
+        return dtype_map.get(self.dtype, torch.bfloat16)
 
     def resolve_device(self, device: str) -> str:
         """Resolve 'auto' to actual device."""
@@ -379,6 +385,7 @@ class RuntimeConfig:
             Dict with all config field names and values.
         """
         from dataclasses import fields as dataclass_fields
+
         result = {}
         for f in dataclass_fields(self):
             value = getattr(self, f.name)
@@ -520,7 +527,7 @@ def create_base_parser(
         "--ltx2-encoder-model-id",
         type=str,
         default=None,
-        help="Gemma 3 text encoder model ID (default: google/gemma-3-12b-it-qat-q4_0-unquantized)",
+        help="Gemma 3 text encoder model ID (default: models/LTX-2/text_encoder)",
     )
     ltx2_group.add_argument(
         "--ltx2-num-frames",
@@ -927,8 +934,13 @@ def create_base_parser(
         "--vl-blend-mode",
         type=str,
         choices=[
-            "interpolate", "adain_per_dim", "adain", "linear",
-            "style_only", "graduated", "attention_weighted"
+            "interpolate",
+            "adain_per_dim",
+            "adain",
+            "linear",
+            "style_only",
+            "graduated",
+            "attention_weighted",
         ],
         default=None,
         help=(
@@ -1335,147 +1347,147 @@ def _apply_cli_overrides(args: argparse.Namespace, config: RuntimeConfig) -> Run
         Modified RuntimeConfig with CLI overrides applied
     """
     # Model overrides
-    if getattr(args, 'model_type', None) is not None:
+    if getattr(args, "model_type", None) is not None:
         config.model_type = args.model_type
-    if getattr(args, 'model_path', None) is not None:
+    if getattr(args, "model_path", None) is not None:
         config.model_path = args.model_path
-    if getattr(args, 'text_encoder_path', None) is not None:
+    if getattr(args, "text_encoder_path", None) is not None:
         config.text_encoder_path = args.text_encoder_path
-    if getattr(args, 'templates_dir', None) is not None:
+    if getattr(args, "templates_dir", None) is not None:
         config.templates_dir = args.templates_dir
 
     # Qwen-Image overrides
-    if getattr(args, 'qwen_image_model_path', None) is not None:
+    if getattr(args, "qwen_image_model_path", None) is not None:
         config.qwen_image_model_path = args.qwen_image_model_path
-    if getattr(args, 'qwen_image_edit_model_path', None) is not None:
+    if getattr(args, "qwen_image_edit_model_path", None) is not None:
         config.qwen_image_edit_model_path = args.qwen_image_edit_model_path
-    if getattr(args, 'qwen_image_cpu_offload', None) is not None:
+    if getattr(args, "qwen_image_cpu_offload", None) is not None:
         config.qwen_image_cpu_offload = args.qwen_image_cpu_offload
-    if getattr(args, 'qwen_image_layers', None) is not None:
+    if getattr(args, "qwen_image_layers", None) is not None:
         config.qwen_image_layer_num = args.qwen_image_layers
-    if getattr(args, 'qwen_image_steps', None) is not None:
+    if getattr(args, "qwen_image_steps", None) is not None:
         config.qwen_image_steps = args.qwen_image_steps
-    if getattr(args, 'qwen_image_cfg_scale', None) is not None:
+    if getattr(args, "qwen_image_cfg_scale", None) is not None:
         config.qwen_image_cfg_scale = args.qwen_image_cfg_scale
-    if getattr(args, 'qwen_image_resolution', None) is not None:
+    if getattr(args, "qwen_image_resolution", None) is not None:
         config.qwen_image_resolution = args.qwen_image_resolution
-    if getattr(args, 'qwen_image_edit_only', False):
+    if getattr(args, "qwen_image_edit_only", False):
         config.qwen_image_edit_only = args.qwen_image_edit_only
-    if getattr(args, 'qwen_image_quantize_text_encoder', None) is not None:
+    if getattr(args, "qwen_image_quantize_text_encoder", None) is not None:
         config.qwen_image_quantize_text_encoder = args.qwen_image_quantize_text_encoder
-    if getattr(args, 'qwen_image_quantize_transformer', None) is not None:
+    if getattr(args, "qwen_image_quantize_transformer", None) is not None:
         config.qwen_image_quantize_transformer = args.qwen_image_quantize_transformer
 
     # LTX-2 video overrides
-    if getattr(args, 'ltx2_model_path', None) is not None:
+    if getattr(args, "ltx2_model_path", None) is not None:
         config.ltx2_model_path = args.ltx2_model_path
-    if getattr(args, 'ltx2_encoder_model_id', None) is not None:
+    if getattr(args, "ltx2_encoder_model_id", None) is not None:
         config.ltx2_encoder_model_id = args.ltx2_encoder_model_id
-    if getattr(args, 'ltx2_num_frames', None) is not None:
+    if getattr(args, "ltx2_num_frames", None) is not None:
         config.ltx2_num_frames = args.ltx2_num_frames
-    if getattr(args, 'ltx2_fps', None) is not None:
+    if getattr(args, "ltx2_fps", None) is not None:
         config.ltx2_fps = args.ltx2_fps
-    if getattr(args, 'ltx2_guidance_scale', None) is not None:
+    if getattr(args, "ltx2_guidance_scale", None) is not None:
         config.ltx2_guidance_scale = args.ltx2_guidance_scale
-    if getattr(args, 'ltx2_steps', None) is not None:
+    if getattr(args, "ltx2_steps", None) is not None:
         config.ltx2_steps = args.ltx2_steps
-    if getattr(args, 'ltx2_lora_path', None) is not None:
+    if getattr(args, "ltx2_lora_path", None) is not None:
         config.ltx2_lora_path = args.ltx2_lora_path
-    if getattr(args, 'ltx2_lora_scale', None) is not None:
+    if getattr(args, "ltx2_lora_scale", None) is not None:
         config.ltx2_lora_scale = args.ltx2_lora_scale
-    if getattr(args, 'ltx2_offload_mode', None) is not None:
+    if getattr(args, "ltx2_offload_mode", None) is not None:
         config.ltx2_offload_mode = args.ltx2_offload_mode
-    if getattr(args, 'ltx2_audio', False):
+    if getattr(args, "ltx2_audio", False):
         config.ltx2_audio = True
-    if getattr(args, 'ltx2_output', None) is not None:
+    if getattr(args, "ltx2_output", None) is not None:
         config.ltx2_output_path = args.ltx2_output
 
     # Wan/HuMo video overrides
-    if getattr(args, 'wan_humo_path', None) is not None:
+    if getattr(args, "wan_humo_path", None) is not None:
         config.wan_humo_path = args.wan_humo_path
-    if getattr(args, 'wan_base_path', None) is not None:
+    if getattr(args, "wan_base_path", None) is not None:
         config.wan_base_path = args.wan_base_path
-    if getattr(args, 'wan_whisper_path', None) is not None:
+    if getattr(args, "wan_whisper_path", None) is not None:
         config.wan_whisper_path = args.wan_whisper_path
-    if getattr(args, 'wan_humo_variant', None) is not None:
+    if getattr(args, "wan_humo_variant", None) is not None:
         config.wan_humo_variant = args.wan_humo_variant
-    if getattr(args, 'wan_num_frames', None) is not None:
+    if getattr(args, "wan_num_frames", None) is not None:
         config.wan_num_frames = args.wan_num_frames
-    if getattr(args, 'wan_fps', None) is not None:
+    if getattr(args, "wan_fps", None) is not None:
         config.wan_fps = args.wan_fps
-    if getattr(args, 'wan_height', None) is not None:
+    if getattr(args, "wan_height", None) is not None:
         config.wan_height = args.wan_height
-    if getattr(args, 'wan_width', None) is not None:
+    if getattr(args, "wan_width", None) is not None:
         config.wan_width = args.wan_width
-    if getattr(args, 'wan_guidance_scale', None) is not None:
+    if getattr(args, "wan_guidance_scale", None) is not None:
         config.wan_guidance_scale = args.wan_guidance_scale
-    if getattr(args, 'wan_audio_scale', None) is not None:
+    if getattr(args, "wan_audio_scale", None) is not None:
         config.wan_audio_scale = args.wan_audio_scale
-    if getattr(args, 'wan_steps', None) is not None:
+    if getattr(args, "wan_steps", None) is not None:
         config.wan_steps = args.wan_steps
-    if getattr(args, 'wan_offload_mode', None) is not None:
+    if getattr(args, "wan_offload_mode", None) is not None:
         config.wan_offload_mode = args.wan_offload_mode
-    if getattr(args, 'wan_output', None) is not None:
+    if getattr(args, "wan_output", None) is not None:
         config.wan_output_path = args.wan_output
 
     # Device overrides
-    if getattr(args, 'text_encoder_device', None) is not None:
+    if getattr(args, "text_encoder_device", None) is not None:
         config.encoder_device = args.text_encoder_device
-    if getattr(args, 'dit_device', None) is not None:
+    if getattr(args, "dit_device", None) is not None:
         config.dit_device = args.dit_device
-    if getattr(args, 'vae_device', None) is not None:
+    if getattr(args, "vae_device", None) is not None:
         config.vae_device = args.vae_device
 
     # Optimization overrides
-    if getattr(args, 'cpu_offload', False):
+    if getattr(args, "cpu_offload", False):
         config.cpu_offload = True
-    if getattr(args, 'flash_attn', False):
+    if getattr(args, "flash_attn", False):
         config.flash_attn = True
-    if getattr(args, 'compile', False):
+    if getattr(args, "compile", False):
         config.compile = True
-    if getattr(args, 'torch_dtype', None) is not None:
-        config.torch_dtype = args.torch_dtype
-    if getattr(args, 'quantization', None) is not None:
+    if getattr(args, "dtype", None) is not None:
+        config.dtype = args.dtype
+    if getattr(args, "quantization", None) is not None:
         config.quantization = args.quantization
 
     # Scheduler overrides
-    if getattr(args, 'shift', None) is not None:
+    if getattr(args, "shift", None) is not None:
         config.shift = args.shift
-    if getattr(args, 'shift_terminal', None) is not None:
+    if getattr(args, "shift_terminal", None) is not None:
         config.shift_terminal = args.shift_terminal
-    if getattr(args, 'dynamic_shift', False):
+    if getattr(args, "dynamic_shift", False):
         config.dynamic_shift = True
-    if getattr(args, 'd_noise', None) is not None:
+    if getattr(args, "d_noise", None) is not None:
         config.d_noise = args.d_noise
 
     # CFG mode override
-    if getattr(args, 'cfg_norm_mode', None) is not None:
+    if getattr(args, "cfg_norm_mode", None) is not None:
         config.cfg_norm_mode = args.cfg_norm_mode
 
     # PyTorch-native component overrides
-    if getattr(args, 'attention_backend', None) is not None:
+    if getattr(args, "attention_backend", None) is not None:
         config.attention_backend = args.attention_backend
-    if getattr(args, 'use_custom_scheduler', False):
+    if getattr(args, "use_custom_scheduler", False):
         config.use_custom_scheduler = True
-    if getattr(args, 'tiled_vae', False):
+    if getattr(args, "tiled_vae", False):
         config.tiled_vae = True
-    if getattr(args, 'tile_size', None) is not None:
+    if getattr(args, "tile_size", None) is not None:
         config.tile_size = args.tile_size
-    if getattr(args, 'tile_overlap', None) is not None:
+    if getattr(args, "tile_overlap", None) is not None:
         config.tile_overlap = args.tile_overlap
-    if getattr(args, 'embedding_cache', False):
+    if getattr(args, "embedding_cache", False):
         config.embedding_cache = True
-    if getattr(args, 'cache_size', None) is not None:
+    if getattr(args, "cache_size", None) is not None:
         config.cache_size = args.cache_size
-    if getattr(args, 'long_prompt_mode', None) is not None:
+    if getattr(args, "long_prompt_mode", None) is not None:
         config.long_prompt_mode = args.long_prompt_mode
-    if getattr(args, 'hidden_layer', None) is not None:
+    if getattr(args, "hidden_layer", None) is not None:
         config.hidden_layer = args.hidden_layer
-    if getattr(args, 'layer_weights', None) is not None:
+    if getattr(args, "layer_weights", None) is not None:
         config.layer_weights = parse_layer_weights(args.layer_weights)
 
     # LoRA overrides
-    if getattr(args, 'loras', None):
+    if getattr(args, "loras", None):
         config.lora_paths = []
         config.lora_scales = []
         for lora_str in args.loras:
@@ -1484,61 +1496,61 @@ def _apply_cli_overrides(args: argparse.Namespace, config: RuntimeConfig) -> Run
             config.lora_scales.append(scale)
 
     # Prompt control overrides
-    if getattr(args, 'template', None) is not None:
+    if getattr(args, "template", None) is not None:
         config.default_template = args.template
-    if getattr(args, 'system_prompt', None) is not None:
+    if getattr(args, "system_prompt", None) is not None:
         config.system_prompt = args.system_prompt
-    if getattr(args, 'thinking_content', None) is not None:
+    if getattr(args, "thinking_content", None) is not None:
         config.thinking_content = args.thinking_content
-    if getattr(args, 'assistant_content', None) is not None:
+    if getattr(args, "assistant_content", None) is not None:
         config.assistant_content = args.assistant_content
-    if getattr(args, 'enable_thinking', False):
+    if getattr(args, "enable_thinking", False):
         config.enable_thinking = True
 
     # Generation overrides
-    if getattr(args, 'height', None) is not None:
+    if getattr(args, "height", None) is not None:
         config.height = args.height
-    if getattr(args, 'width', None) is not None:
+    if getattr(args, "width", None) is not None:
         config.width = args.width
-    if getattr(args, 'steps', None) is not None:
+    if getattr(args, "steps", None) is not None:
         config.steps = args.steps
-    if getattr(args, 'guidance_scale', None) is not None:
+    if getattr(args, "guidance_scale", None) is not None:
         config.guidance_scale = args.guidance_scale
-    if getattr(args, 'seed', None) is not None:
+    if getattr(args, "seed", None) is not None:
         config.seed = args.seed
-    if getattr(args, 'negative_prompt', None) is not None:
+    if getattr(args, "negative_prompt", None) is not None:
         config.negative_prompt = args.negative_prompt
-    if getattr(args, 'cfg_normalization', None) is not None:
+    if getattr(args, "cfg_normalization", None) is not None:
         config.cfg_normalization = args.cfg_normalization
-    if getattr(args, 'cfg_truncation', None) is not None:
+    if getattr(args, "cfg_truncation", None) is not None:
         config.cfg_truncation = args.cfg_truncation
 
     # DyPE overrides
-    if getattr(args, 'dype', False):
+    if getattr(args, "dype", False):
         config.dype_enabled = True
-    if getattr(args, 'dype_method', None) is not None:
+    if getattr(args, "dype_method", None) is not None:
         config.dype_method = args.dype_method
-    if getattr(args, 'dype_scale', None) is not None:
+    if getattr(args, "dype_scale", None) is not None:
         config.dype_scale = args.dype_scale
 
     # SLG overrides
-    if getattr(args, 'slg_scale', None) is not None:
+    if getattr(args, "slg_scale", None) is not None:
         config.slg_scale = args.slg_scale
-    if getattr(args, 'slg_layers', None) is not None:
-        config.slg_layers = [int(x.strip()) for x in args.slg_layers.split(',')]
+    if getattr(args, "slg_layers", None) is not None:
+        config.slg_layers = [int(x.strip()) for x in args.slg_layers.split(",")]
 
     # Server overrides
-    if getattr(args, 'host', None) is not None:
+    if getattr(args, "host", None) is not None:
         config.host = args.host
-    if getattr(args, 'port', None) is not None:
+    if getattr(args, "port", None) is not None:
         config.port = args.port
 
     # Debug overrides
-    if getattr(args, 'debug', False):
+    if getattr(args, "debug", False):
         config.debug = True
-    if getattr(args, 'verbose', False):
+    if getattr(args, "verbose", False):
         config.verbose = True
-    if getattr(args, 'log_dir', None) is not None:
+    if getattr(args, "log_dir", None) is not None:
         config.log_dir = args.log_dir
 
     return config
@@ -1573,7 +1585,7 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
             config.model_path = toml_config.model_path or config.model_path
             config.templates_dir = toml_config.templates_dir or config.templates_dir
             config.encoder_device = toml_config.encoder.device
-            config.torch_dtype = toml_config.encoder.torch_dtype
+            config.dtype = toml_config.encoder.dtype
             config.hidden_layer = toml_config.encoder.hidden_layer
             config.quantization = toml_config.encoder.quantization
 
@@ -1582,8 +1594,8 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
             config.width = toml_config.generation.width
             config.steps = toml_config.generation.num_inference_steps
             config.guidance_scale = toml_config.generation.guidance_scale
-            config.cfg_normalization = getattr(toml_config.generation, 'cfg_normalization', 0.0)
-            config.cfg_truncation = getattr(toml_config.generation, 'cfg_truncation', 1.0)
+            config.cfg_normalization = getattr(toml_config.generation, "cfg_normalization", 0.0)
+            config.cfg_truncation = getattr(toml_config.generation, "cfg_truncation", 1.0)
             config.enable_thinking = toml_config.generation.enable_thinking
             config.default_template = toml_config.generation.default_template
 
@@ -1591,152 +1603,156 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
             config.cpu_offload = toml_config.pipeline.enable_model_cpu_offload
 
             # Check for optimization section
-            if hasattr(toml_config, 'optimization'):
+            if hasattr(toml_config, "optimization"):
                 opt = toml_config.optimization
-                config.flash_attn = getattr(opt, 'flash_attn', False)
-                config.compile = getattr(opt, 'compile', False)
-                config.compile_mode = getattr(opt, 'compile_mode', 'max-autotune-no-cudagraphs')
-                config.cpu_offload = getattr(opt, 'cpu_offload', config.cpu_offload)
+                config.flash_attn = getattr(opt, "flash_attn", False)
+                config.compile = getattr(opt, "compile", False)
+                config.compile_mode = getattr(opt, "compile_mode", "max-autotune-no-cudagraphs")
+                config.cpu_offload = getattr(opt, "cpu_offload", config.cpu_offload)
 
             # Check for scheduler section
-            if hasattr(toml_config, 'scheduler'):
+            if hasattr(toml_config, "scheduler"):
                 sched = toml_config.scheduler
-                config.shift = getattr(sched, 'shift', 3.0)
-                config.dynamic_shift = getattr(sched, 'dynamic_shift', False)
-                config.d_noise = getattr(sched, 'd_noise', 1.0)
+                config.shift = getattr(sched, "shift", 3.0)
+                config.dynamic_shift = getattr(sched, "dynamic_shift", False)
+                config.d_noise = getattr(sched, "d_noise", 1.0)
 
             # Check for LoRA section
-            if hasattr(toml_config, 'lora'):
+            if hasattr(toml_config, "lora"):
                 lora = toml_config.lora
-                config.lora_paths = getattr(lora, 'paths', [])
-                config.lora_scales = getattr(lora, 'scales', [])
+                config.lora_paths = getattr(lora, "paths", [])
+                config.lora_scales = getattr(lora, "scales", [])
 
             # Check for PyTorch-native section
-            if hasattr(toml_config, 'pytorch'):
+            if hasattr(toml_config, "pytorch"):
                 pytorch = toml_config.pytorch
-                config.attention_backend = getattr(pytorch, 'attention_backend', None)
-                config.use_custom_scheduler = getattr(pytorch, 'use_custom_scheduler', False)
-                config.tiled_vae = getattr(pytorch, 'tiled_vae', False)
-                config.tile_size = getattr(pytorch, 'tile_size', 512)
-                config.tile_overlap = getattr(pytorch, 'tile_overlap', 64)
-                config.embedding_cache = getattr(pytorch, 'embedding_cache', False)
-                config.cache_size = getattr(pytorch, 'cache_size', 100)
-                config.long_prompt_mode = getattr(pytorch, 'long_prompt_mode', 'interpolate')
+                config.attention_backend = getattr(pytorch, "attention_backend", None)
+                config.use_custom_scheduler = getattr(pytorch, "use_custom_scheduler", False)
+                config.tiled_vae = getattr(pytorch, "tiled_vae", False)
+                config.tile_size = getattr(pytorch, "tile_size", 512)
+                config.tile_overlap = getattr(pytorch, "tile_overlap", 64)
+                config.embedding_cache = getattr(pytorch, "embedding_cache", False)
+                config.cache_size = getattr(pytorch, "cache_size", 100)
+                config.long_prompt_mode = getattr(pytorch, "long_prompt_mode", "interpolate")
 
             # Check for rewriter section
-            if hasattr(toml_config, 'rewriter'):
+            if hasattr(toml_config, "rewriter"):
                 rewriter = toml_config.rewriter
-                config.rewriter_use_api = getattr(rewriter, 'use_api', False)
-                config.rewriter_api_url = getattr(rewriter, 'api_url', '')
-                config.rewriter_api_model = getattr(rewriter, 'api_model', 'Qwen3-4B')
-                config.rewriter_temperature = getattr(rewriter, 'temperature', 0.6)
-                config.rewriter_top_p = getattr(rewriter, 'top_p', 0.95)
-                config.rewriter_top_k = getattr(rewriter, 'top_k', 20)
-                config.rewriter_min_p = getattr(rewriter, 'min_p', 0.0)
-                config.rewriter_presence_penalty = getattr(rewriter, 'presence_penalty', 0.0)
-                config.rewriter_max_tokens = getattr(rewriter, 'max_tokens', 512)
-                config.rewriter_vl_enabled = getattr(rewriter, 'vl_enabled', True)
-                config.rewriter_preload_vl = getattr(rewriter, 'preload_vl', False)
-                config.rewriter_vl_api_model = getattr(rewriter, 'vl_api_model', '')
-                config.rewriter_timeout = getattr(rewriter, 'timeout', 120.0)
+                config.rewriter_use_api = getattr(rewriter, "use_api", False)
+                config.rewriter_api_url = getattr(rewriter, "api_url", "")
+                config.rewriter_api_model = getattr(rewriter, "api_model", "Qwen3-4B")
+                config.rewriter_temperature = getattr(rewriter, "temperature", 0.6)
+                config.rewriter_top_p = getattr(rewriter, "top_p", 0.95)
+                config.rewriter_top_k = getattr(rewriter, "top_k", 20)
+                config.rewriter_min_p = getattr(rewriter, "min_p", 0.0)
+                config.rewriter_presence_penalty = getattr(rewriter, "presence_penalty", 0.0)
+                config.rewriter_max_tokens = getattr(rewriter, "max_tokens", 512)
+                config.rewriter_vl_enabled = getattr(rewriter, "vl_enabled", True)
+                config.rewriter_preload_vl = getattr(rewriter, "preload_vl", False)
+                config.rewriter_vl_api_model = getattr(rewriter, "vl_api_model", "")
+                config.rewriter_timeout = getattr(rewriter, "timeout", 120.0)
 
             # Check for VL section
-            if hasattr(toml_config, 'vl'):
+            if hasattr(toml_config, "vl"):
                 vl = toml_config.vl
-                config.vl_model_path = getattr(vl, 'model_path', '')
-                config.vl_device = getattr(vl, 'device', 'cpu')
-                config.vl_alpha = getattr(vl, 'default_alpha', 0.3)
-                config.vl_hidden_layer = getattr(vl, 'default_hidden_layer', -2)
-                config.vl_auto_unload = getattr(vl, 'auto_unload', True)
+                config.vl_model_path = getattr(vl, "model_path", "")
+                config.vl_device = getattr(vl, "device", "cpu")
+                config.vl_alpha = getattr(vl, "default_alpha", 0.3)
+                config.vl_hidden_layer = getattr(vl, "default_hidden_layer", -2)
+                config.vl_auto_unload = getattr(vl, "auto_unload", True)
 
             # Check for Qwen-Image section
-            if hasattr(toml_config, 'qwen_image'):
+            if hasattr(toml_config, "qwen_image"):
                 qi = toml_config.qwen_image
-                config.qwen_image_model_path = getattr(qi, 'model_path', '')
-                config.qwen_image_edit_model_path = getattr(qi, 'edit_model_path', '')
-                config.qwen_image_cpu_offload = getattr(qi, 'cpu_offload', True)
-                config.qwen_image_layer_num = getattr(qi, 'layer_num', 4)
-                config.qwen_image_steps = getattr(qi, 'num_inference_steps', 25)
-                config.qwen_image_cfg_scale = getattr(qi, 'cfg_scale', 4.0)
-                config.qwen_image_resolution = getattr(qi, 'resolution', 640)
-                config.qwen_image_quantize_text_encoder = getattr(qi, 'quantize_text_encoder', 'none')
-                config.qwen_image_quantize_transformer = getattr(qi, 'quantize_transformer', 'none')
+                config.qwen_image_model_path = getattr(qi, "model_path", "")
+                config.qwen_image_edit_model_path = getattr(qi, "edit_model_path", "")
+                config.qwen_image_cpu_offload = getattr(qi, "cpu_offload", True)
+                config.qwen_image_layer_num = getattr(qi, "layer_num", 4)
+                config.qwen_image_steps = getattr(qi, "num_inference_steps", 25)
+                config.qwen_image_cfg_scale = getattr(qi, "cfg_scale", 4.0)
+                config.qwen_image_resolution = getattr(qi, "resolution", 640)
+                config.qwen_image_quantize_text_encoder = getattr(
+                    qi, "quantize_text_encoder", "none"
+                )
+                config.qwen_image_quantize_transformer = getattr(qi, "quantize_transformer", "none")
 
             # Check for LTX-2 section
-            if hasattr(toml_config, 'ltx2'):
+            if hasattr(toml_config, "ltx2"):
                 ltx2 = toml_config.ltx2
-                config.ltx2_model_path = getattr(ltx2, 'model_path', '')
-                config.ltx2_num_frames = getattr(ltx2, 'num_frames', 33)
-                config.ltx2_fps = getattr(ltx2, 'fps', 24)
-                config.ltx2_guidance_scale = getattr(ltx2, 'guidance_scale', 3.5)
-                config.ltx2_steps = getattr(ltx2, 'num_inference_steps', None)
-                config.ltx2_lora_path = getattr(ltx2, 'lora_path', '')
-                config.ltx2_lora_scale = getattr(ltx2, 'lora_scale', 1.0)
-                config.ltx2_offload_mode = getattr(ltx2, 'offload_mode', 'model')
-                config.ltx2_audio = getattr(ltx2, 'audio_enabled', False)
+                config.ltx2_model_path = getattr(ltx2, "model_path", "")
+                config.ltx2_num_frames = getattr(ltx2, "num_frames", 33)
+                config.ltx2_fps = getattr(ltx2, "fps", 24)
+                config.ltx2_guidance_scale = getattr(ltx2, "guidance_scale", 3.5)
+                config.ltx2_steps = getattr(ltx2, "num_inference_steps", None)
+                config.ltx2_lora_path = getattr(ltx2, "lora_path", "")
+                config.ltx2_lora_scale = getattr(ltx2, "lora_scale", 1.0)
+                config.ltx2_offload_mode = getattr(ltx2, "offload_mode", "model")
+                config.ltx2_audio = getattr(ltx2, "audio_enabled", False)
 
             # Check for Wan section
-            if hasattr(toml_config, 'wan'):
+            if hasattr(toml_config, "wan"):
                 wan = toml_config.wan
-                config.wan_humo_path = getattr(wan, 'humo_path', '')
-                config.wan_base_path = getattr(wan, 'base_path', '')
-                config.wan_whisper_path = getattr(wan, 'whisper_path', '')
-                config.wan_humo_variant = getattr(wan, 'humo_variant', '17B')
-                config.wan_num_frames = getattr(wan, 'num_frames', 97)
-                config.wan_fps = getattr(wan, 'fps', 25)
-                config.wan_height = getattr(wan, 'height', 720)
-                config.wan_width = getattr(wan, 'width', 1280)
-                config.wan_guidance_scale = getattr(wan, 'guidance_scale', 5.0)
-                config.wan_audio_scale = getattr(wan, 'audio_scale', 0.0)
-                config.wan_steps = getattr(wan, 'num_inference_steps', 50)
-                config.wan_offload_mode = getattr(wan, 'offload_mode', 'model')
+                config.wan_humo_path = getattr(wan, "humo_path", "")
+                config.wan_base_path = getattr(wan, "base_path", "")
+                config.wan_whisper_path = getattr(wan, "whisper_path", "")
+                config.wan_humo_variant = getattr(wan, "humo_variant", "17B")
+                config.wan_num_frames = getattr(wan, "num_frames", 97)
+                config.wan_fps = getattr(wan, "fps", 25)
+                config.wan_height = getattr(wan, "height", 720)
+                config.wan_width = getattr(wan, "width", 1280)
+                config.wan_guidance_scale = getattr(wan, "guidance_scale", 5.0)
+                config.wan_audio_scale = getattr(wan, "audio_scale", 0.0)
+                config.wan_steps = getattr(wan, "num_inference_steps", 50)
+                config.wan_offload_mode = getattr(wan, "offload_mode", "model")
 
             # Check for DyPE section
-            if hasattr(toml_config, 'dype'):
+            if hasattr(toml_config, "dype"):
                 dype = toml_config.dype
-                config.dype_enabled = getattr(dype, 'enabled', False)
-                config.dype_method = getattr(dype, 'method', 'vision_yarn')
-                config.dype_scale = getattr(dype, 'dype_scale', 2.0)
-                config.dype_exponent = getattr(dype, 'dype_exponent', 2.0)
-                config.dype_start_sigma = getattr(dype, 'dype_start_sigma', 1.0)
-                config.dype_base_shift = getattr(dype, 'base_shift', 0.5)
-                config.dype_max_shift = getattr(dype, 'max_shift', 1.15)
-                config.dype_base_resolution = getattr(dype, 'base_resolution', 1024)
-                config.dype_anisotropic = getattr(dype, 'anisotropic', False)
-                config.dype_multipass = getattr(dype, 'multipass', 'single')
-                config.dype_pass2_strength = getattr(dype, 'pass2_strength', 0.5)
-                config.dype_pass3_strength = getattr(dype, 'pass3_strength', 0.4)
-                config.dype_frequency_modulation = getattr(dype, 'frequency_modulation', False)
+                config.dype_enabled = getattr(dype, "enabled", False)
+                config.dype_method = getattr(dype, "method", "vision_yarn")
+                config.dype_scale = getattr(dype, "dype_scale", 2.0)
+                config.dype_exponent = getattr(dype, "dype_exponent", 2.0)
+                config.dype_start_sigma = getattr(dype, "dype_start_sigma", 1.0)
+                config.dype_base_shift = getattr(dype, "base_shift", 0.5)
+                config.dype_max_shift = getattr(dype, "max_shift", 1.15)
+                config.dype_base_resolution = getattr(dype, "base_resolution", 1024)
+                config.dype_anisotropic = getattr(dype, "anisotropic", False)
+                config.dype_multipass = getattr(dype, "multipass", "single")
+                config.dype_pass2_strength = getattr(dype, "pass2_strength", 0.5)
+                config.dype_pass3_strength = getattr(dype, "pass3_strength", 0.4)
+                config.dype_frequency_modulation = getattr(dype, "frequency_modulation", False)
 
             # Check for SLG (Skip Layer Guidance) section
-            if hasattr(toml_config, 'slg'):
+            if hasattr(toml_config, "slg"):
                 slg = toml_config.slg
-                if getattr(slg, 'enabled', False):
-                    config.slg_scale = getattr(slg, 'scale', 2.5)
-                    config.slg_layers = getattr(slg, 'layers', [7, 8, 9, 10, 11, 12])
-                    config.slg_start = getattr(slg, 'start', 0.05)
-                    config.slg_stop = getattr(slg, 'stop', 0.5)
+                if getattr(slg, "enabled", False):
+                    config.slg_scale = getattr(slg, "scale", 2.5)
+                    config.slg_layers = getattr(slg, "layers", [7, 8, 9, 10, 11, 12])
+                    config.slg_start = getattr(slg, "start", 0.05)
+                    config.slg_stop = getattr(slg, "stop", 0.5)
 
             # Check for FMTT (Flow Map Trajectory Tilting) section
-            if hasattr(toml_config, 'fmtt'):
+            if hasattr(toml_config, "fmtt"):
                 fmtt = toml_config.fmtt
                 # Always load siglip_model and siglip_device from config
-                config.fmtt_siglip_model = getattr(fmtt, 'siglip_model', 'google/siglip2-giant-opt-patch16-384')
-                config.fmtt_siglip_device = getattr(fmtt, 'siglip_device', 'cuda')
-                if getattr(fmtt, 'enabled', False):
-                    config.fmtt_scale = getattr(fmtt, 'guidance_scale', 1.0)
-                    config.fmtt_start = getattr(fmtt, 'guidance_start', 0.0)
-                    config.fmtt_stop = getattr(fmtt, 'guidance_stop', 0.5)
-                    config.fmtt_normalize = getattr(fmtt, 'normalize_mode', 'unit')
-                    config.fmtt_decode_scale = getattr(fmtt, 'decode_scale', 0.5)
+                config.fmtt_siglip_model = getattr(
+                    fmtt, "siglip_model", "google/siglip2-giant-opt-patch16-384"
+                )
+                config.fmtt_siglip_device = getattr(fmtt, "siglip_device", "cuda")
+                if getattr(fmtt, "enabled", False):
+                    config.fmtt_scale = getattr(fmtt, "guidance_scale", 1.0)
+                    config.fmtt_start = getattr(fmtt, "guidance_start", 0.0)
+                    config.fmtt_stop = getattr(fmtt, "guidance_stop", 0.5)
+                    config.fmtt_normalize = getattr(fmtt, "normalize_mode", "unit")
+                    config.fmtt_decode_scale = getattr(fmtt, "decode_scale", 0.5)
 
             # Check for FBCache (Forward Block Cache) section
-            if hasattr(toml_config, 'fbcache'):
+            if hasattr(toml_config, "fbcache"):
                 fbcache = toml_config.fbcache
-                if getattr(fbcache, 'enabled', False):
+                if getattr(fbcache, "enabled", False):
                     config.fbcache = True
-                    config.fbcache_threshold = getattr(fbcache, 'middle_threshold', 0.05)
-                    config.fbcache_log = getattr(fbcache, 'log_residuals', False)
+                    config.fbcache_threshold = getattr(fbcache, "middle_threshold", 0.05)
+                    config.fbcache_log = getattr(fbcache, "log_residuals", False)
 
         except Exception as e:
             logger.warning(f"Failed to load config: {e}")
@@ -1771,7 +1787,7 @@ def setup_logging(config: RuntimeConfig) -> None:
     level = logging.DEBUG if config.debug or config.verbose else logging.INFO
 
     # Check if JSON file logging is requested
-    log_dir = getattr(config, 'log_dir', None)
+    log_dir = getattr(config, "log_dir", None)
     enable_json = log_dir is not None
 
     configure_logging(

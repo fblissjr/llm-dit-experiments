@@ -115,7 +115,11 @@ def test_z_image_compatibility(
             # Use config for dimensions
             height = runtime_config.height if runtime_config and runtime_config.height else 256
             width = runtime_config.width if runtime_config and runtime_config.width else 256
-            steps = runtime_config.num_inference_steps if runtime_config and runtime_config.num_inference_steps else 9
+            steps = (
+                runtime_config.num_inference_steps
+                if runtime_config and runtime_config.num_inference_steps
+                else 9
+            )
 
             image = pipe.generate_from_embeddings(
                 prompt_embeds=embeddings,
@@ -196,18 +200,48 @@ def main():
 
     # Add other required fields
     for field in [
-        'torch_dtype', 'quantization', 'encoder_cpu_offload', 'encoder_max_length',
-        'pipeline_torch_dtype', 'pipeline_device', 'enable_model_cpu_offload',
-        'enable_sequential_cpu_offload', 'width', 'height', 'num_inference_steps',
-        'guidance_scale', 'enable_thinking', 'default_template', 'shift',
-        'flash_attn', 'compile', 'cpu_offload', 'attention_backend',
-        'use_custom_scheduler', 'tiled_vae', 'tile_size', 'tile_overlap',
-        'embedding_cache', 'cache_size', 'long_prompt_mode', 'hidden_layer',
-        'api_url', 'api_model', 'use_api_encoder', 'lora_paths', 'lora_scales',
-        'rewriter_use_api', 'rewriter_api_url', 'rewriter_api_model',
-        'rewriter_temperature', 'rewriter_top_p', 'rewriter_top_k',
-        'rewriter_min_p', 'rewriter_presence_penalty', 'rewriter_max_tokens',
-        'debug',
+        "dtype",
+        "quantization",
+        "encoder_cpu_offload",
+        "encoder_max_length",
+        "pipeline_dtype",
+        "pipeline_device",
+        "enable_model_cpu_offload",
+        "enable_sequential_cpu_offload",
+        "width",
+        "height",
+        "num_inference_steps",
+        "guidance_scale",
+        "enable_thinking",
+        "default_template",
+        "shift",
+        "flash_attn",
+        "compile",
+        "cpu_offload",
+        "attention_backend",
+        "use_custom_scheduler",
+        "tiled_vae",
+        "tile_size",
+        "tile_overlap",
+        "embedding_cache",
+        "cache_size",
+        "long_prompt_mode",
+        "hidden_layer",
+        "api_url",
+        "api_model",
+        "use_api_encoder",
+        "lora_paths",
+        "lora_scales",
+        "rewriter_use_api",
+        "rewriter_api_url",
+        "rewriter_api_model",
+        "rewriter_temperature",
+        "rewriter_top_p",
+        "rewriter_top_k",
+        "rewriter_min_p",
+        "rewriter_presence_penalty",
+        "rewriter_max_tokens",
+        "debug",
     ]:
         if not hasattr(config_args, field):
             setattr(config_args, field, None)
@@ -283,6 +317,7 @@ def main():
 
     # Use core VLEmbeddingExtractor
     from PIL import Image
+
     from llm_dit.vl import VLEmbeddingExtractor
 
     print(f"Loading VLEmbeddingExtractor from {vl_model_path}...")
@@ -290,7 +325,7 @@ def main():
     extractor = VLEmbeddingExtractor.from_pretrained(
         vl_model_path,
         device=device,
-        torch_dtype=vl_dtype,
+        dtype=vl_dtype,
     )
 
     # Extract embeddings
@@ -310,12 +345,15 @@ def main():
 
     # Save if requested
     if args.save_embeddings:
-        torch.save({
-            "embeddings": embeddings.cpu(),
-            "shape": embeddings.shape,
-            "source_image": str(args.image),
-            "hidden_layer": result.hidden_layer,
-        }, args.save_embeddings)
+        torch.save(
+            {
+                "embeddings": embeddings.cpu(),
+                "shape": embeddings.shape,
+                "source_image": str(args.image),
+                "hidden_layer": result.hidden_layer,
+            },
+            args.save_embeddings,
+        )
         print(f"Embeddings saved to {args.save_embeddings}")
 
     # Offload VL model before loading Z-Image

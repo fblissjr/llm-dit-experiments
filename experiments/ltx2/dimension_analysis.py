@@ -156,8 +156,7 @@ class DimensionAccumulator:
             n_total = self.n + batch_n
             delta = batch_mean - self.mean
             self.mean = (self.n * self.mean + batch_n * batch_mean) / n_total
-            self.M2 = self.M2 + batch_var * batch_n + \
-                      delta**2 * self.n * batch_n / n_total
+            self.M2 = self.M2 + batch_var * batch_n + delta**2 * self.n * batch_n / n_total
             self.n = n_total
 
         # Update min/max
@@ -181,8 +180,16 @@ class DimensionAccumulator:
         # Kurtosis and skewness (computed from variance)
         # For simplicity, using excess kurtosis approximation
         var_safe = np.where(variance > 1e-10, variance, 1e-10)
-        kurtosis = (self.M4 / self.n) / (var_safe ** 2) - 3 if hasattr(self, 'M4') else np.zeros(self.hidden_dim)
-        skewness = (self.M3 / self.n) / (var_safe ** 1.5) if hasattr(self, 'M3') else np.zeros(self.hidden_dim)
+        kurtosis = (
+            (self.M4 / self.n) / (var_safe**2) - 3
+            if hasattr(self, "M4")
+            else np.zeros(self.hidden_dim)
+        )
+        skewness = (
+            (self.M3 / self.n) / (var_safe**1.5)
+            if hasattr(self, "M3")
+            else np.zeros(self.hidden_dim)
+        )
 
         # Handle edge cases
         kurtosis = np.where(variance > 1e-10, kurtosis, 0)
@@ -260,7 +267,7 @@ def analyze_gemma_layers(
     logger.info(f"Loading LTX-2 pipeline from {model_path}...")
     pipe = LTX2Pipeline.from_pretrained(
         model_path,
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
     )
 
     # Move only text encoder to device (don't need full pipeline)
@@ -268,8 +275,10 @@ def analyze_gemma_layers(
     tokenizer = pipe.tokenizer
     text_encoder.set_output_embeddings(None)  # Disable any output layer
 
-    logger.info(f"Gemma config: hidden_size={text_encoder.config.hidden_size}, "
-                f"num_hidden_layers={text_encoder.config.num_hidden_layers}")
+    logger.info(
+        f"Gemma config: hidden_size={text_encoder.config.hidden_size}, "
+        f"num_hidden_layers={text_encoder.config.num_hidden_layers}"
+    )
 
     # Verify dimensions match expectations
     actual_hidden = text_encoder.config.hidden_size
@@ -435,7 +444,9 @@ def save_summary_json(
 
         # Tracked dimensions
         for dim in tracked_dimensions:
-            summary["tracked_dimension_analysis"][str(dim)][layer_key] = stats.tracked_dim_stats.get(dim, {})
+            summary["tracked_dimension_analysis"][str(dim)][layer_key] = (
+                stats.tracked_dim_stats.get(dim, {})
+            )
 
     # Save
     summary_path = output_dir / "summary.json"
@@ -476,25 +487,25 @@ def plot_visualizations(
     # Use log scale for better visibility
     im = ax.imshow(
         np.log10(data + 1),
-        aspect='auto',
-        cmap='viridis',
-        interpolation='nearest',
+        aspect="auto",
+        cmap="viridis",
+        interpolation="nearest",
     )
-    plt.colorbar(im, ax=ax, label='log10(std + 1)')
+    plt.colorbar(im, ax=ax, label="log10(std + 1)")
 
-    ax.set_xlabel('Embedding Dimension')
-    ax.set_ylabel('Layer (0=embedding, 48=last)')
+    ax.set_xlabel("Embedding Dimension")
+    ax.set_ylabel("Layer (0=embedding, 48=last)")
     ax.set_yticks(range(0, num_layers, 4))
     ax.set_yticklabels([sorted_results[i][0] for i in range(0, num_layers, 4)])
-    ax.set_title(f'Per-Dimension Standard Deviation Across {num_layers} Gemma Layers')
+    ax.set_title(f"Per-Dimension Standard Deviation Across {num_layers} Gemma Layers")
 
     # Mark tracked dimensions
     for dim in tracked_dimensions:
         if dim < hidden_dim:
-            ax.axvline(x=dim, color='red', linestyle='--', alpha=0.5, linewidth=0.5)
+            ax.axvline(x=dim, color="red", linestyle="--", alpha=0.5, linewidth=0.5)
 
     plt.tight_layout()
-    plt.savefig(viz_dir / "heatmap_per_dim_std.png", dpi=150, bbox_inches='tight')
+    plt.savefig(viz_dir / "heatmap_per_dim_std.png", dpi=150, bbox_inches="tight")
     plt.close()
 
     # 2. Outlier count vs layer depth
@@ -503,7 +514,11 @@ def plot_visualizations(
 
     layers = [layer_idx for layer_idx, _ in sorted_results]
 
-    for threshold, color, label in [(10, 'blue', '10x'), (50, 'orange', '50x'), (100, 'red', '100x')]:
+    for threshold, color, label in [
+        (10, "blue", "10x"),
+        (50, "orange", "50x"),
+        (100, "red", "100x"),
+    ]:
         if threshold == 10:
             counts = [len(stats.outliers_10x) for _, stats in sorted_results]
         elif threshold == 50:
@@ -511,16 +526,16 @@ def plot_visualizations(
         else:
             counts = [len(stats.outliers_100x) for _, stats in sorted_results]
 
-        ax.plot(layers, counts, color=color, marker='o', label=f'{label} threshold', linewidth=2)
+        ax.plot(layers, counts, color=color, marker="o", label=f"{label} threshold", linewidth=2)
 
-    ax.set_xlabel('Layer Index (0=embedding, 48=last transformer)')
-    ax.set_ylabel('Number of Outlier Dimensions')
-    ax.set_title('Outlier Dimension Count by Layer Depth (Gemma in LTX-2)')
+    ax.set_xlabel("Layer Index (0=embedding, 48=last transformer)")
+    ax.set_ylabel("Number of Outlier Dimensions")
+    ax.set_title("Outlier Dimension Count by Layer Depth (Gemma in LTX-2)")
     ax.legend()
     ax.grid(True, alpha=0.3)
 
     plt.tight_layout()
-    plt.savefig(viz_dir / "outlier_count_vs_layer.png", dpi=150, bbox_inches='tight')
+    plt.savefig(viz_dir / "outlier_count_vs_layer.png", dpi=150, bbox_inches="tight")
     plt.close()
 
     # 3. Median std vs layer depth
@@ -530,17 +545,17 @@ def plot_visualizations(
     median_stds = [stats.median_dim_std for _, stats in sorted_results]
     max_stds = [stats.max_dim_std for _, stats in sorted_results]
 
-    ax.plot(layers, median_stds, color='blue', marker='o', linewidth=2, label='Median dim std')
-    ax.plot(layers, max_stds, color='red', marker='s', linewidth=2, alpha=0.7, label='Max dim std')
+    ax.plot(layers, median_stds, color="blue", marker="o", linewidth=2, label="Median dim std")
+    ax.plot(layers, max_stds, color="red", marker="s", linewidth=2, alpha=0.7, label="Max dim std")
 
-    ax.set_xlabel('Layer Index (0=embedding, 48=last transformer)')
-    ax.set_ylabel('Standard Deviation')
-    ax.set_title('Embedding Statistics by Layer Depth (Gemma in LTX-2)')
+    ax.set_xlabel("Layer Index (0=embedding, 48=last transformer)")
+    ax.set_ylabel("Standard Deviation")
+    ax.set_title("Embedding Statistics by Layer Depth (Gemma in LTX-2)")
     ax.legend()
     ax.grid(True, alpha=0.3)
 
     plt.tight_layout()
-    plt.savefig(viz_dir / "std_vs_layer.png", dpi=150, bbox_inches='tight')
+    plt.savefig(viz_dir / "std_vs_layer.png", dpi=150, bbox_inches="tight")
     plt.close()
 
     # 4. Tracked dimension plots
@@ -554,21 +569,33 @@ def plot_visualizations(
 
         stds = [stats.per_dim_std[dim] for _, stats in sorted_results]
 
-        ax.plot(layers, stds, color='blue', marker='o', linewidth=2)
+        ax.plot(layers, stds, color="blue", marker="o", linewidth=2)
         median_stds = [stats.median_dim_std for _, stats in sorted_results]
-        ax.plot(layers, [m * 10 for m in median_stds], color='orange', linestyle='--',
-                label='10x median (per layer)', alpha=0.7)
-        ax.plot(layers, [m * 100 for m in median_stds], color='red', linestyle='--',
-                label='100x median (per layer)', alpha=0.7)
+        ax.plot(
+            layers,
+            [m * 10 for m in median_stds],
+            color="orange",
+            linestyle="--",
+            label="10x median (per layer)",
+            alpha=0.7,
+        )
+        ax.plot(
+            layers,
+            [m * 100 for m in median_stds],
+            color="red",
+            linestyle="--",
+            label="100x median (per layer)",
+            alpha=0.7,
+        )
 
-        ax.set_xlabel('Layer Index')
-        ax.set_ylabel('Standard Deviation')
-        ax.set_title(f'Dimension {dim} - Standard Deviation Across Layers')
+        ax.set_xlabel("Layer Index")
+        ax.set_ylabel("Standard Deviation")
+        ax.set_title(f"Dimension {dim} - Standard Deviation Across Layers")
         ax.legend()
         ax.grid(True, alpha=0.3)
 
         plt.tight_layout()
-        plt.savefig(viz_dir / f"tracked_dim_{dim}_across_layers.png", dpi=150, bbox_inches='tight')
+        plt.savefig(viz_dir / f"tracked_dim_{dim}_across_layers.png", dpi=150, bbox_inches="tight")
         plt.close()
 
     logger.info(f"Saved visualizations to {viz_dir}")
@@ -597,22 +624,25 @@ def generate_analysis_report(
     sorted_results = sorted(results.items(), key=lambda x: x[0])
 
     # Find layers with fewest/most outliers at 10x threshold
-    outlier_counts = [(layer_idx, len(stats.outliers_10x))
-                      for layer_idx, stats in sorted_results]
+    outlier_counts = [(layer_idx, len(stats.outliers_10x)) for layer_idx, stats in sorted_results]
     min_outliers = min(outlier_counts, key=lambda x: x[1])
     max_outliers = max(outlier_counts, key=lambda x: x[1])
 
-    report_lines.extend([
-        f"- **Cleanest layer (10x threshold):** Layer {min_outliers[0]} ({min_outliers[1]} outliers)",
-        f"- **Most outliers (10x threshold):** Layer {max_outliers[0]} ({max_outliers[1]} outliers)",
-        "",
-    ])
+    report_lines.extend(
+        [
+            f"- **Cleanest layer (10x threshold):** Layer {min_outliers[0]} ({min_outliers[1]} outliers)",
+            f"- **Most outliers (10x threshold):** Layer {max_outliers[0]} ({max_outliers[1]} outliers)",
+            "",
+        ]
+    )
 
     # Tracked dimensions summary
-    report_lines.extend([
-        "## Tracked Dimensions",
-        "",
-    ])
+    report_lines.extend(
+        [
+            "## Tracked Dimensions",
+            "",
+        ]
+    )
 
     for dim in tracked_dimensions:
         report_lines.append(f"### Dimension {dim}")
@@ -626,17 +656,21 @@ def generate_analysis_report(
             ratio = dim_stats.get("std_ratio", 0)
             min_val = dim_stats.get("min", 0)
             max_val = dim_stats.get("max", 0)
-            report_lines.append(f"| {layer_idx} | {std:.2f} | {ratio:.1f}x | {min_val:.2f} | {max_val:.2f} |")
+            report_lines.append(
+                f"| {layer_idx} | {std:.2f} | {ratio:.1f}x | {min_val:.2f} | {max_val:.2f} |"
+            )
 
         report_lines.append("")
 
     # Layer-by-layer summary table
-    report_lines.extend([
-        "## Layer-by-Layer Summary",
-        "",
-        "| Layer | Median Std | Max Std | Outliers (10x) | Outliers (50x) | Outliers (100x) |",
-        "|-------|-----------|---------|----------------|----------------|-----------------|",
-    ])
+    report_lines.extend(
+        [
+            "## Layer-by-Layer Summary",
+            "",
+            "| Layer | Median Std | Max Std | Outliers (10x) | Outliers (50x) | Outliers (100x) |",
+            "|-------|-----------|---------|----------------|----------------|-----------------|",
+        ]
+    )
 
     for layer_idx, stats in sorted_results:
         report_lines.append(
@@ -644,29 +678,34 @@ def generate_analysis_report(
             f"{len(stats.outliers_10x)} | {len(stats.outliers_50x)} | {len(stats.outliers_100x)} |"
         )
 
-    report_lines.extend([
-        "",
-        "## Recommendations",
-        "",
-        "Based on the outlier analysis:",
-        "",
-    ])
+    report_lines.extend(
+        [
+            "",
+            "## Recommendations",
+            "",
+            "Based on the outlier analysis:",
+            "",
+        ]
+    )
 
     # Find clean layers (0 outliers at 10x)
-    clean_layers = [layer_idx for layer_idx, stats in sorted_results
-                    if len(stats.outliers_10x) == 0]
+    clean_layers = [
+        layer_idx for layer_idx, stats in sorted_results if len(stats.outliers_10x) == 0
+    ]
     if clean_layers:
         report_lines.append(f"- **Clean layers (no 10x outliers):** {clean_layers}")
     else:
         # Find layers with minimum outliers
         min_count = min(len(stats.outliers_10x) for _, stats in sorted_results)
-        min_layers = [layer_idx for layer_idx, stats in sorted_results
-                      if len(stats.outliers_10x) == min_count]
+        min_layers = [
+            layer_idx for layer_idx, stats in sorted_results if len(stats.outliers_10x) == min_count
+        ]
         report_lines.append(f"- **Cleanest layers ({min_count} outliers):** {min_layers}")
 
     # Find problematic layers (>5 outliers at 10x)
-    problematic_layers = [layer_idx for layer_idx, stats in sorted_results
-                          if len(stats.outliers_10x) > 5]
+    problematic_layers = [
+        layer_idx for layer_idx, stats in sorted_results if len(stats.outliers_10x) > 5
+    ]
     if problematic_layers:
         report_lines.append(f"- **Problematic layers (>5 outliers):** {problematic_layers}")
 
@@ -683,19 +722,21 @@ def generate_analysis_report(
         for dim, count in sorted_outliers:
             report_lines.append(f"  - Dim {dim}: outlier in {count}/{len(results)} layers")
 
-    report_lines.extend([
-        "",
-        "## Files Generated",
-        "",
-        f"- `layer_stats/layer_XX_stats.npz` - Per-layer statistics ({len(results)} files)",
-        "- `summary.json` - Aggregate statistics in JSON format",
-        "- `visualizations/` - Analysis plots",
-        "  - `heatmap_per_dim_std.png` - 49x3840 heatmap of std",
-        "  - `outlier_count_vs_layer.png` - Outliers by depth",
-        "  - `std_vs_layer.png` - Std statistics by depth",
-        "  - `tracked_dim_*_across_layers.png` - Tracked dimension plots",
-        "",
-    ])
+    report_lines.extend(
+        [
+            "",
+            "## Files Generated",
+            "",
+            f"- `layer_stats/layer_XX_stats.npz` - Per-layer statistics ({len(results)} files)",
+            "- `summary.json` - Aggregate statistics in JSON format",
+            "- `visualizations/` - Analysis plots",
+            "  - `heatmap_per_dim_std.png` - 49x3840 heatmap of std",
+            "  - `outlier_count_vs_layer.png` - Outliers by depth",
+            "  - `std_vs_layer.png` - Std statistics by depth",
+            "  - `tracked_dim_*_across_layers.png` - Tracked dimension plots",
+            "",
+        ]
+    )
 
     # Write report
     report_path = output_dir / "analysis_report.md"
@@ -758,7 +799,7 @@ def run_dimension_analysis(
 
     generate_analysis_report(results, output_dir, tracked_dimensions)
 
-    logger.info(f"\n{'='*60}")
+    logger.info(f"\n{'=' * 60}")
     logger.info("ANALYSIS COMPLETE")
     logger.info("=" * 60)
     logger.info(f"Results saved to: {output_dir}")

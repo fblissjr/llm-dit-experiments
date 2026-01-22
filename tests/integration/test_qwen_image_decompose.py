@@ -14,8 +14,7 @@ import torch
 from PIL import Image
 
 logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
 
@@ -138,7 +137,7 @@ def main():
         device="cuda",
         text_encoder_device="cpu",  # Keep encoder on CPU to save VRAM
         vae_device="cpu",  # Keep VAE on CPU initially (offload moves it)
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
         text_encoder_quantization=args.text_encoder_quantization,
         dit_quantization=args.dit_quantization,
         compile_model=args.compile,

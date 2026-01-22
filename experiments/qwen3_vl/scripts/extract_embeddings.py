@@ -110,19 +110,22 @@ def main():
 
     # Script-specific args
     parser.add_argument(
-        "--image", "-i",
+        "--image",
+        "-i",
         type=str,
         required=True,
         help="Path to input image",
     )
     parser.add_argument(
-        "--output", "-o",
+        "--output",
+        "-o",
         type=str,
         required=True,
         help="Output path for embeddings (.pt file)",
     )
     parser.add_argument(
-        "--text", "-t",
+        "--text",
+        "-t",
         type=str,
         default=None,
         help="Optional text description to include with image",
@@ -152,18 +155,48 @@ def main():
 
     # Add all other required RuntimeConfig fields with None/defaults
     for field in [
-        'torch_dtype', 'quantization', 'encoder_cpu_offload', 'encoder_max_length',
-        'pipeline_torch_dtype', 'pipeline_device', 'enable_model_cpu_offload',
-        'enable_sequential_cpu_offload', 'width', 'height', 'num_inference_steps',
-        'guidance_scale', 'enable_thinking', 'default_template', 'shift',
-        'flash_attn', 'compile', 'cpu_offload', 'attention_backend',
-        'use_custom_scheduler', 'tiled_vae', 'tile_size', 'tile_overlap',
-        'embedding_cache', 'cache_size', 'long_prompt_mode', 'hidden_layer',
-        'api_url', 'api_model', 'use_api_encoder', 'lora_paths', 'lora_scales',
-        'rewriter_use_api', 'rewriter_api_url', 'rewriter_api_model',
-        'rewriter_temperature', 'rewriter_top_p', 'rewriter_top_k',
-        'rewriter_min_p', 'rewriter_presence_penalty', 'rewriter_max_tokens',
-        'debug',
+        "dtype",
+        "quantization",
+        "encoder_cpu_offload",
+        "encoder_max_length",
+        "pipeline_dtype",
+        "pipeline_device",
+        "enable_model_cpu_offload",
+        "enable_sequential_cpu_offload",
+        "width",
+        "height",
+        "num_inference_steps",
+        "guidance_scale",
+        "enable_thinking",
+        "default_template",
+        "shift",
+        "flash_attn",
+        "compile",
+        "cpu_offload",
+        "attention_backend",
+        "use_custom_scheduler",
+        "tiled_vae",
+        "tile_size",
+        "tile_overlap",
+        "embedding_cache",
+        "cache_size",
+        "long_prompt_mode",
+        "hidden_layer",
+        "api_url",
+        "api_model",
+        "use_api_encoder",
+        "lora_paths",
+        "lora_scales",
+        "rewriter_use_api",
+        "rewriter_api_url",
+        "rewriter_api_model",
+        "rewriter_temperature",
+        "rewriter_top_p",
+        "rewriter_top_k",
+        "rewriter_min_p",
+        "rewriter_presence_penalty",
+        "rewriter_max_tokens",
+        "debug",
     ]:
         if not hasattr(config_args, field):
             setattr(config_args, field, None)
@@ -217,7 +250,7 @@ def main():
 
     # Determine target std from config
     target_std = 58.75
-    if runtime_config and hasattr(runtime_config, 'vl_target_std'):
+    if runtime_config and hasattr(runtime_config, "vl_target_std"):
         target_std = runtime_config.vl_target_std or 58.75
 
     # Load image
@@ -237,7 +270,7 @@ def main():
     extractor = VLEmbeddingExtractor.from_pretrained(
         vl_model_path,
         device=vl_device,
-        torch_dtype=vl_dtype,
+        dtype=vl_dtype,
     )
 
     # Extract embeddings using the core module

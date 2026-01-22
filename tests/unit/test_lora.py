@@ -9,14 +9,15 @@ Tests cover:
 """
 
 from unittest.mock import MagicMock, patch
+
 import pytest
 import torch
 import torch.nn as nn
 
-
 # ============================================================================
 # LoRALoader Tests
 # ============================================================================
+
 
 class TestLoRALoader:
     """Test LoRALoader class."""
@@ -27,15 +28,15 @@ class TestLoRALoader:
 
         loader = LoRALoader()
         assert loader.device == "cpu"
-        assert loader.torch_dtype == torch.float32
+        assert loader.dtype == torch.float32
 
     def test_init_custom(self):
         """Test LoRALoader initialization with custom params."""
         from llm_dit.utils.lora import LoRALoader
 
-        loader = LoRALoader(device="cuda", torch_dtype=torch.bfloat16)
+        loader = LoRALoader(device="cuda", dtype=torch.bfloat16)
         assert loader.device == "cuda"
-        assert loader.torch_dtype == torch.bfloat16
+        assert loader.dtype == torch.bfloat16
 
     def test_get_name_dict_kohya_format(self):
         """Test parsing Kohya-style LoRA state dict."""
@@ -127,7 +128,7 @@ class TestLoRALoader:
         """Test fusing LoRA weights into base model."""
         from llm_dit.utils.lora import LoRALoader
 
-        loader = LoRALoader(device="cpu", torch_dtype=torch.float32)
+        loader = LoRALoader(device="cpu", dtype=torch.float32)
 
         # Create simple model
         class SimpleModel(nn.Module):
@@ -155,7 +156,7 @@ class TestLoRALoader:
         """Test LoRA fusion with different alpha values."""
         from llm_dit.utils.lora import LoRALoader
 
-        loader = LoRALoader(device="cpu", torch_dtype=torch.float32)
+        loader = LoRALoader(device="cpu", dtype=torch.float32)
 
         class SimpleModel(nn.Module):
             def __init__(self):
@@ -192,6 +193,7 @@ class TestLoRALoader:
 # load_lora Function Tests
 # ============================================================================
 
+
 class TestLoadLora:
     """Test load_lora function."""
 
@@ -206,13 +208,13 @@ class TestLoadLora:
 
     def test_load_lora_infers_device_dtype(self):
         """Test load_lora infers device and dtype from model."""
-        from llm_dit.utils.lora import load_lora, LoRALoader
+        from llm_dit.utils.lora import LoRALoader, load_lora
 
         model = nn.Linear(32, 32)
 
-        with patch.object(LoRALoader, 'fuse_lora_to_base_model', return_value=1) as mock_fuse:
-            with patch('llm_dit.utils.lora.load_safetensors', return_value={}):
-                with patch('pathlib.Path.exists', return_value=True):
+        with patch.object(LoRALoader, "fuse_lora_to_base_model", return_value=1) as mock_fuse:
+            with patch("llm_dit.utils.lora.load_safetensors", return_value={}):
+                with patch("pathlib.Path.exists", return_value=True):
                     load_lora(model, "test.safetensors", scale=0.8)
 
                     # Check that fuse was called
@@ -222,6 +224,7 @@ class TestLoadLora:
 # ============================================================================
 # fuse_lora Function Tests
 # ============================================================================
+
 
 class TestFuseLora:
     """Test fuse_lora function."""
@@ -251,6 +254,7 @@ class TestFuseLora:
 # ============================================================================
 # parse_lora_spec Tests
 # ============================================================================
+
 
 class TestParseLoraSpec:
     """Test parse_lora_spec function."""
@@ -335,6 +339,7 @@ class TestParseLoraSpec:
 # clear_lora Tests
 # ============================================================================
 
+
 class TestClearLora:
     """Test clear_lora function."""
 
@@ -352,6 +357,7 @@ class TestClearLora:
 # Conv2d LoRA Tests
 # ============================================================================
 
+
 class TestConv2dLoRA:
     """Test LoRA fusion for Conv2d layers."""
 
@@ -359,7 +365,7 @@ class TestConv2dLoRA:
         """Test fusing LoRA into Conv2d layer."""
         from llm_dit.utils.lora import LoRALoader
 
-        loader = LoRALoader(device="cpu", torch_dtype=torch.float32)
+        loader = LoRALoader(device="cpu", dtype=torch.float32)
 
         class ConvModel(nn.Module):
             def __init__(self):

@@ -28,7 +28,7 @@ from PIL import Image
 
 from llm_dit.training.base import BaseTrainingModule
 from llm_dit.training.config import LoRAConfig, TrainingConfig
-from llm_dit.training.losses import FlowMatchSFTLoss, DirectDistillLoss
+from llm_dit.training.losses import DirectDistillLoss, FlowMatchSFTLoss
 
 logger = logging.getLogger(__name__)
 
@@ -145,7 +145,7 @@ class ZImageTrainingModule(BaseTrainingModule):
 
         self.pipe = ZImagePipeline.from_pretrained(
             model_path,
-            torch_dtype=dtype,
+            dtype=dtype,
             use_custom_scheduler=True,
         )
 
@@ -172,9 +172,7 @@ class ZImageTrainingModule(BaseTrainingModule):
             # LoRA training
             base_model = getattr(self.pipe, lora_config.base_model, None)
             if base_model is None:
-                raise ValueError(
-                    f"Model '{lora_config.base_model}' not found in pipeline"
-                )
+                raise ValueError(f"Model '{lora_config.base_model}' not found in pipeline")
 
             # Add LoRA adapters
             base_model = self.add_lora_to_model(
@@ -224,7 +222,9 @@ class ZImageTrainingModule(BaseTrainingModule):
 
             # Encode to latents
             latents = self.pipe.vae.encode(pixel_values).latent_dist.sample()
-            latents = (latents - self.pipe.vae.config.shift_factor) * self.pipe.vae.config.scaling_factor
+            latents = (
+                latents - self.pipe.vae.config.shift_factor
+            ) * self.pipe.vae.config.scaling_factor
 
         return latents
 

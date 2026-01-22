@@ -14,7 +14,7 @@ processed jointly but with separate projections.
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, List, Tuple, Optional
+from typing import TYPE_CHECKING, List, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -90,7 +90,7 @@ class QwenImageDiT(nn.Module):
         model_path: str,
         transformer_subfolder: str = "transformer",
         device: str | torch.device = "cuda",
-        torch_dtype: torch.dtype = torch.bfloat16,
+        dtype: torch.dtype = torch.bfloat16,
         use_layer3d_rope: bool = True,
         compile_model: bool = False,
         compile_mode: str = "reduce-overhead",
@@ -105,7 +105,7 @@ class QwenImageDiT(nn.Module):
             model_path: Path to Qwen-Image-Layered model directory
             transformer_subfolder: Subfolder containing transformer weights
             device: Device to load model on
-            torch_dtype: Model dtype
+            dtype: Model dtype
             use_layer3d_rope: Use layer-aware 3D RoPE for multi-layer decomposition
             compile_model: If True, compile model with torch.compile for speedup
             compile_mode: Mode for torch.compile: "reduce-overhead", "max-autotune", or "default"
@@ -167,7 +167,9 @@ class QwenImageDiT(nn.Module):
         from llm_dit.models._qwen_image_dit_components import QwenImageDiTModel
 
         # Create model with detected configuration
-        logger.info(f"Creating QwenImageDiT (num_layers={cls.NUM_LAYERS}, use_layer3d_rope={use_layer3d_rope}, use_additional_t_cond={use_additional_t_cond}, zero_cond_t={zero_cond_t})")
+        logger.info(
+            f"Creating QwenImageDiT (num_layers={cls.NUM_LAYERS}, use_layer3d_rope={use_layer3d_rope}, use_additional_t_cond={use_additional_t_cond}, zero_cond_t={zero_cond_t})"
+        )
         model = QwenImageDiTModel(
             num_layers=cls.NUM_LAYERS,
             use_layer3d_rope=use_layer3d_rope,
@@ -189,12 +191,12 @@ class QwenImageDiT(nn.Module):
         if quantization in ("4bit", "8bit", "shard"):
             # Use accelerate for device sharding (model is too large for single GPU)
             try:
-                from accelerate import infer_auto_device_map, dispatch_model, init_empty_weights
+                from accelerate import dispatch_model, infer_auto_device_map, init_empty_weights
 
                 logger.info(f"Using accelerate device sharding for DiT...")
 
                 # Convert to target dtype first (on CPU)
-                model = model.to(dtype=torch_dtype)
+                model = model.to(dtype=dtype)
 
                 # Compute device map to split across GPU/CPU
                 # Reserve some GPU memory for inference activations
@@ -221,15 +223,15 @@ class QwenImageDiT(nn.Module):
                     "Falling back to standard loading (may OOM). "
                     "Install with: pip install accelerate"
                 )
-                model = model.to(device=device, dtype=torch_dtype)
+                model = model.to(device=device, dtype=dtype)
                 model.eval()
             except Exception as e:
                 logger.warning(f"Device sharding failed: {e}. Falling back to standard loading.")
-                model = model.to(device=device, dtype=torch_dtype)
+                model = model.to(device=device, dtype=dtype)
                 model.eval()
         else:
             # Standard loading without sharding
-            model = model.to(device=device, dtype=torch_dtype)
+            model = model.to(device=device, dtype=dtype)
             model.eval()
 
         # Apply torch.compile if requested
@@ -244,10 +246,10 @@ class QwenImageDiT(nn.Module):
         logger.info(
             f"Loaded QwenImageDiT: {cls.NUM_LAYERS} layers, "
             f"dim={cls.INNER_DIM}, heads={cls.NUM_HEADS}, "
-            f"device={device}, dtype={torch_dtype}, compiled={compile_model}, zero_cond_t={zero_cond_t}"
+            f"device={device}, dtype={dtype}, compiled={compile_model}, zero_cond_t={zero_cond_t}"
         )
 
-        return cls(model, device, torch_dtype, uses_accelerate_dispatch, zero_cond_t)
+        return cls(model, device, dtype, uses_accelerate_dispatch, zero_cond_t)
 
     @property
     def device(self) -> torch.device:

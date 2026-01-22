@@ -20,7 +20,7 @@ Architecture:
 
 import logging
 from pathlib import Path
-from typing import List, Tuple, Optional
+from typing import List, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -30,17 +30,41 @@ logger = logging.getLogger(__name__)
 # Latent normalization values (per-channel)
 # These are critical for correct encoding/decoding
 LATENT_MEAN = [
-    -0.7571, -0.7089, -0.9113, 0.1075,
-    -0.1745, 0.9653, -0.1517, 1.5508,
-    0.4134, -0.0715, 0.5517, -0.3632,
-    -0.1922, -0.9497, 0.2503, -0.2921,
+    -0.7571,
+    -0.7089,
+    -0.9113,
+    0.1075,
+    -0.1745,
+    0.9653,
+    -0.1517,
+    1.5508,
+    0.4134,
+    -0.0715,
+    0.5517,
+    -0.3632,
+    -0.1922,
+    -0.9497,
+    0.2503,
+    -0.2921,
 ]
 
 LATENT_STD = [
-    2.8184, 1.4541, 2.3275, 2.6558,
-    1.2196, 1.7708, 2.6052, 2.0743,
-    3.2687, 2.1526, 2.8652, 1.5579,
-    1.6382, 1.1253, 2.8251, 1.9160,
+    2.8184,
+    1.4541,
+    2.3275,
+    2.6558,
+    1.2196,
+    1.7708,
+    2.6052,
+    2.0743,
+    3.2687,
+    2.1526,
+    2.8652,
+    1.5579,
+    1.6382,
+    1.1253,
+    2.8251,
+    1.9160,
 ]
 
 
@@ -110,7 +134,7 @@ class QwenImageVAE(nn.Module):
         model_path: str,
         vae_subfolder: str = "vae",
         device: str | torch.device = "cuda",
-        torch_dtype: torch.dtype = torch.bfloat16,
+        dtype: torch.dtype = torch.bfloat16,
         **kwargs,
     ) -> "QwenImageVAE":
         """
@@ -120,7 +144,7 @@ class QwenImageVAE(nn.Module):
             model_path: Path to Qwen-Image-Layered model directory
             vae_subfolder: Subfolder containing VAE weights
             device: Device to load model on
-            torch_dtype: Model dtype
+            dtype: Model dtype
 
         Returns:
             Initialized QwenImageVAE
@@ -131,9 +155,9 @@ class QwenImageVAE(nn.Module):
         # Import the model components
         # We use our own simplified implementation based on DiffSynth
         from llm_dit.models._qwen_image_vae_components import (
-            QwenImageEncoder3d,
-            QwenImageDecoder3d,
             QwenImageCausalConv3d,
+            QwenImageDecoder3d,
+            QwenImageEncoder3d,
         )
 
         # Create model components with default Qwen-Image architecture
@@ -188,10 +212,10 @@ class QwenImageVAE(nn.Module):
             logger.debug(f"Unexpected keys: {unexpected[:5]}...")
 
         # Move to device and dtype
-        encoder = encoder.to(device=device, dtype=torch_dtype)
-        decoder = decoder.to(device=device, dtype=torch_dtype)
-        quant_conv = quant_conv.to(device=device, dtype=torch_dtype)
-        post_quant_conv = post_quant_conv.to(device=device, dtype=torch_dtype)
+        encoder = encoder.to(device=device, dtype=dtype)
+        decoder = decoder.to(device=device, dtype=dtype)
+        quant_conv = quant_conv.to(device=device, dtype=dtype)
+        post_quant_conv = post_quant_conv.to(device=device, dtype=dtype)
 
         encoder.eval()
         decoder.eval()
@@ -200,10 +224,10 @@ class QwenImageVAE(nn.Module):
 
         logger.info(
             f"Loaded Qwen-Image VAE: z_dim={cls.Z_DIM}, "
-            f"scale_factor={cls.SCALE_FACTOR}, device={device}, dtype={torch_dtype}"
+            f"scale_factor={cls.SCALE_FACTOR}, device={device}, dtype={dtype}"
         )
 
-        return cls(encoder, decoder, quant_conv, post_quant_conv, device, torch_dtype)
+        return cls(encoder, decoder, quant_conv, post_quant_conv, device, dtype)
 
     @property
     def device(self) -> torch.device:

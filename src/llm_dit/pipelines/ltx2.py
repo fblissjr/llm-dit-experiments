@@ -1,7 +1,7 @@
 """
 LTX-2 Pipeline for text-to-video generation.
 
-Last Updated: 2026-01-09
+Last Updated: 2026-01-18
 
 This pipeline wraps the diffusers LTX2Pipeline with our config integration
 and memory management patterns optimized for RTX 4090 (24GB VRAM).
@@ -44,17 +44,18 @@ from typing import Any, Callable, Iterator, List, Optional, Tuple, Union
 # Prevent tokenizers parallelism warning when forking (e.g., during video export)
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
-import torch
 import numpy as np
+import torch
 
+from llm_dit.config import EnhancementConfig
+from llm_dit.encoders.gemma3 import pack_text_embeds
+from llm_dit.pipelines.utils.ffn_chunking import patch_ffn_chunking, unpatch_ffn_chunking
 from llm_dit.pipelines.utils.latent_norm import (
+    AudioLatentNormalizer,
+    NormalizationConfig,
     PerStepNormalizer,
     statistical_normalize,
-    NormalizationConfig,
-    AudioLatentNormalizer,
 )
-from llm_dit.pipelines.utils.ffn_chunking import patch_ffn_chunking, unpatch_ffn_chunking
-from llm_dit.config import EnhancementConfig
 
 logger = logging.getLogger(__name__)
 
@@ -232,7 +233,7 @@ class LTX2Pipeline:
     def from_pretrained(
         cls,
         model_path: str,
-        torch_dtype: torch.dtype = torch.bfloat16,
+        dtype: torch.dtype = torch.bfloat16,
         device: str = "cuda",
         enable_cpu_offload: bool = True,
         variant: Optional[str] = None,
@@ -244,7 +245,7 @@ class LTX2Pipeline:
 
         Args:
             model_path: Path to model directory or HuggingFace model ID.
-            torch_dtype: Model dtype (bfloat16 recommended).
+            dtype: Model dtype (bfloat16 recommended).
             device: Device to load on ("cuda", "cpu").
             enable_cpu_offload: Enable model CPU offload for memory efficiency.
             variant: Model variant (e.g., "fp8" for FP8 quantized).
@@ -275,6 +276,7 @@ class LTX2Pipeline:
             config_path = text_encoder_path / "config.json"
             if config_path.exists():
                 import json
+
                 with open(config_path) as f:
                     te_config = json.load(f)
                     if te_config.get("dtype") == "float32":
@@ -285,7 +287,7 @@ class LTX2Pipeline:
                         use_hf_encoder = True
 
         encoder_id = "google/gemma-3-12b-it"
-        load_kwargs = {"torch_dtype": torch_dtype, "variant": variant, **kwargs}
+        load_kwargs = {"dtype": dtype, "variant": variant, **kwargs}
 
         # Fast mode: Use 8-bit encoder pre-encoding approach
         # This is faster than sequential offload because transformer doesn't need layer-by-layer loading
@@ -298,6 +300,7 @@ class LTX2Pipeline:
 
             # Load tokenizer (always needed)
             from transformers import AutoTokenizer
+
             tokenizer = AutoTokenizer.from_pretrained(encoder_id)
 
             # Create wrapper with lazy encoder loading
@@ -307,7 +310,7 @@ class LTX2Pipeline:
             instance._load_kwargs = load_kwargs
             instance._encoder_id = encoder_id
             instance._tokenizer = tokenizer
-            instance._torch_dtype = torch_dtype
+            instance._dtype = dtype
             instance._device = device
             instance._enable_cpu_offload = enable_cpu_offload
             instance._fast_mode = True
@@ -318,14 +321,14 @@ class LTX2Pipeline:
 
         # Standard mode: Load encoder and enable offloading
         if use_hf_encoder:
-            from transformers import Gemma3ForConditionalGeneration, AutoTokenizer
+            from transformers import AutoTokenizer, Gemma3ForConditionalGeneration
 
             logger.info(f"Loading text encoder (bfloat16): {encoder_id}")
             logger.info("Sequential CPU offload will move layers one at a time (~600MB each)")
 
             text_encoder = Gemma3ForConditionalGeneration.from_pretrained(
                 encoder_id,
-                dtype=torch_dtype,
+                dtype=dtype,
                 low_cpu_mem_usage=True,
             )
             logger.info("Text encoder loaded to CPU (bfloat16)")
@@ -348,7 +351,9 @@ class LTX2Pipeline:
         if torch.cuda.is_available():
             allocated = torch.cuda.memory_allocated() / 1e9
             reserved = torch.cuda.memory_reserved() / 1e9
-            logger.info(f"GPU memory after load: {allocated:.1f}GB allocated, {reserved:.1f}GB reserved")
+            logger.info(
+                f"GPU memory after load: {allocated:.1f}GB allocated, {reserved:.1f}GB reserved"
+            )
 
         instance = cls(pipe=pipe)
         instance._fast_mode = False
@@ -358,8 +363,8 @@ class LTX2Pipeline:
     def from_single_file(
         cls,
         checkpoint_path: str,
-        encoder_model_id: str = "google/gemma-3-12b-it-qat-q4_0-unquantized",
-        torch_dtype: torch.dtype = torch.bfloat16,
+        encoder_model_id: str = "models/LTX-2/text_encoder",
+        dtype: torch.dtype = torch.bfloat16,
         device: str = "cuda",
         enable_cpu_offload: bool = True,
         **kwargs,
@@ -375,7 +380,7 @@ class LTX2Pipeline:
             checkpoint_path: Path to .safetensors checkpoint file.
             encoder_model_id: HuggingFace model ID for Gemma 3 text encoder.
                 Defaults to the Q4 QAT quantized variant for memory efficiency.
-            torch_dtype: Model dtype for transformer/VAE.
+            dtype: Model dtype for transformer/VAE.
             device: Device to load on.
             enable_cpu_offload: Enable CPU offload for memory-constrained GPUs.
             **kwargs: Additional arguments passed to diffusers.
@@ -392,7 +397,7 @@ class LTX2Pipeline:
             )
 
         try:
-            from transformers import Gemma3ForConditionalGeneration, AutoTokenizer
+            from transformers import AutoTokenizer, Gemma3ForConditionalGeneration
         except ImportError:
             raise ImportError(
                 "transformers with Gemma3 support required. "
@@ -422,7 +427,7 @@ class LTX2Pipeline:
 
         text_encoder = Gemma3ForConditionalGeneration.from_pretrained(
             encoder_source,
-            dtype=torch_dtype,
+            dtype=dtype,
             # Start on CPU when offloading, diffusers will manage device placement
             device_map="cpu" if enable_cpu_offload else "auto",
         )
@@ -435,7 +440,7 @@ class LTX2Pipeline:
             checkpoint_path,
             text_encoder=text_encoder,
             tokenizer=tokenizer,
-            torch_dtype=torch_dtype,
+            dtype=dtype,
             **kwargs,
         )
 
@@ -482,10 +487,12 @@ class LTX2Pipeline:
         # If so, prefer from_pretrained() which reads configs properly
         model_index_path = model_dir / "model_index.json"
         if model_index_path.exists():
-            logger.info(f"Found model_index.json - using from_pretrained() for proper config loading")
+            logger.info(
+                f"Found model_index.json - using from_pretrained() for proper config loading"
+            )
             pipe = cls.from_pretrained(
                 str(model_dir),
-                torch_dtype=ltx2_config.get_torch_dtype(),
+                dtype=ltx2_config.get_dtype(),
                 device=device,
                 enable_cpu_offload=(ltx2_config.offload_mode != "none"),
                 **kwargs,
@@ -506,7 +513,7 @@ class LTX2Pipeline:
                 pipe = cls.from_single_file(
                     transformer_path,
                     encoder_model_id=encoder_model_id,
-                    torch_dtype=ltx2_config.get_torch_dtype(),
+                    dtype=ltx2_config.get_dtype(),
                     device=device,
                     enable_cpu_offload=(ltx2_config.offload_mode != "none"),
                     **kwargs,
@@ -515,7 +522,7 @@ class LTX2Pipeline:
                 # Try as HuggingFace model ID
                 pipe = cls.from_pretrained(
                     model_path,
-                    torch_dtype=ltx2_config.get_torch_dtype(),
+                    dtype=ltx2_config.get_dtype(),
                     device=device,
                     enable_cpu_offload=(ltx2_config.offload_mode != "none"),
                     **kwargs,
@@ -574,7 +581,7 @@ class LTX2Pipeline:
             Tuple of (prompt_embeds, prompt_attention_mask,
                      negative_prompt_embeds, negative_prompt_attention_mask)
         """
-        from transformers import Gemma3ForConditionalGeneration, BitsAndBytesConfig
+        from transformers import BitsAndBytesConfig, Gemma3ForConditionalGeneration
 
         logger.info(f"Loading 8-bit text encoder: {self._encoder_id}")
 
@@ -586,7 +593,7 @@ class LTX2Pipeline:
         encoder = Gemma3ForConditionalGeneration.from_pretrained(
             self._encoder_id,
             quantization_config=bnb_config,
-            torch_dtype=self._torch_dtype,
+            dtype=self._dtype,
             device_map="auto",
             low_cpu_mem_usage=True,
         )
@@ -602,7 +609,7 @@ class LTX2Pipeline:
             tokenizer.pad_token = tokenizer.eos_token
 
         device = encoder.device
-        dtype = self._torch_dtype
+        dtype = self._dtype
 
         # Encode positive prompt
         logger.info("Encoding positive prompt...")
@@ -869,48 +876,51 @@ class LTX2Pipeline:
             logger.info(f"Enhancements enabled: {', '.join(enhancements_active)}")
 
         # Fast mode: Lazy loading with pre-encoding
-        if getattr(self, '_fast_mode', False) and self._pipe is None:
+        # Store pre-computed embeddings for use in generation
+        fast_mode_embeds = None
+        if getattr(self, "_fast_mode", False) and self._pipe is None:
             logger.info("FAST MODE: Pre-encoding prompts with 8-bit encoder...")
 
-            # Step 1: Load 8-bit encoder and encode prompts
+            # Step 1: Load 8-bit encoder and encode prompts (raw hidden states)
             (
-                prompt_embeds,
+                raw_prompt_embeds,
                 prompt_attention_mask,
-                negative_prompt_embeds,
+                raw_negative_embeds,
                 negative_prompt_attention_mask,
             ) = self._load_8bit_encoder_and_encode(prompt, negative_prompt)
 
-            # Step 2: Load pipeline without encoder
+            # Step 2: Pack the raw hidden states into diffusers-compatible format
+            # Raw shape: [B, T, 3840, 49] -> Packed shape: [B, T, 188160]
+            logger.info("Packing embeddings for diffusers pipeline...")
+            device = torch.device(self._device)
+
+            packed_prompt_embeds = pack_text_embeds(
+                raw_prompt_embeds,
+                sequence_length=int(prompt_attention_mask.sum().item()),
+                device=device,
+            )
+            packed_negative_embeds = pack_text_embeds(
+                raw_negative_embeds,
+                sequence_length=int(negative_prompt_attention_mask.sum().item()),
+                device=device,
+            )
+
+            # Move attention masks to device
+            prompt_attention_mask = prompt_attention_mask.to(device)
+            negative_prompt_attention_mask = negative_prompt_attention_mask.to(device)
+
+            logger.info(f"Packed embeddings shape: {packed_prompt_embeds.shape}")
+
+            # Step 3: Load pipeline without encoder
             self._load_pipeline_without_encoder()
 
-            # Step 3: Generate using pre-computed embeddings
-            # Note: We pass raw hidden states, diffusers will pack them
-            # Actually, we need to use the pipeline's _pack_text_embeds method
-            # But since we loaded without encoder, we need to handle this differently
-
-            # For now, fall back to standard path with the loaded pipeline
-            # The embeddings approach requires more integration with diffusers internals
-            logger.warning(
-                "Fast mode pre-encoding not yet fully integrated with diffusers. "
-                "Falling back to standard generation (will be slower)."
-            )
-
-            # Re-encode with the pipeline (which now has no encoder, so this will fail)
-            # Actually, let's just generate normally since we've loaded the pipeline
-            # but without encoder, we need embeddings
-
-            # TODO: Complete the embeddings integration
-            # For now, reload with encoder for this run
-            logger.info("Reloading with bfloat16 encoder for this generation...")
-            from transformers import Gemma3ForConditionalGeneration
-
-            text_encoder = Gemma3ForConditionalGeneration.from_pretrained(
-                self._encoder_id,
-                torch_dtype=self._torch_dtype,
-                low_cpu_mem_usage=True,
-            )
-            self._pipe.text_encoder = text_encoder
-            self._pipe.enable_sequential_cpu_offload()
+            # Store packed embeddings for use in generation call
+            fast_mode_embeds = {
+                "prompt_embeds": packed_prompt_embeds.to(self._dtype),
+                "prompt_attention_mask": prompt_attention_mask,
+                "negative_prompt_embeds": packed_negative_embeds.to(self._dtype),
+                "negative_prompt_attention_mask": negative_prompt_attention_mask,
+            }
 
         # Apply FFN chunking if enabled (model-level patch)
         ffn_patched = False
@@ -922,7 +932,9 @@ class LTX2Pipeline:
                     dim_threshold=ffn_dim_threshold,
                 )
                 if num_patched > 0:
-                    logger.info(f"FFN chunking: patched {num_patched} modules (chunks={ffn_chunk_count})")
+                    logger.info(
+                        f"FFN chunking: patched {num_patched} modules (chunks={ffn_chunk_count})"
+                    )
                     ffn_patched = True
             except Exception as e:
                 logger.warning(f"FFN chunking failed: {e}")
@@ -959,6 +971,7 @@ class LTX2Pipeline:
 
         # Create combined callback if any enhancement is enabled
         if latent_normalizer is not None or audio_normalizer is not None:
+
             def enhancement_callback(pipe, step, timestep, callback_kwargs):
                 # Apply latent normalization
                 if latent_normalizer is not None and "latents" in callback_kwargs:
@@ -976,31 +989,53 @@ class LTX2Pipeline:
 
                 # Call original callback if provided
                 if callback_on_step_end is not None:
-                    callback_kwargs = callback_on_step_end(
-                        pipe, step, timestep, callback_kwargs
-                    )
+                    callback_kwargs = callback_on_step_end(pipe, step, timestep, callback_kwargs)
 
                 return callback_kwargs
 
             actual_callback = enhancement_callback
 
-        # Standard generation
+        # Generation: use pre-computed embeddings if available (fast_mode), else standard
         try:
-            result = self._pipe(
-                prompt=prompt,
-                negative_prompt=negative_prompt,
-                height=height,
-                width=width,
-                num_frames=num_frames,
-                frame_rate=fps,
-                num_inference_steps=num_inference_steps,
-                guidance_scale=guidance_scale,
-                generator=generator,
-                output_type=output_type,
-                return_dict=False,
-                callback_on_step_end=actual_callback,
-                **kwargs,
-            )
+            if fast_mode_embeds is not None:
+                # Fast mode: use pre-computed embeddings (bypass text encoder)
+                logger.info("Generating with pre-computed embeddings (fast_mode)...")
+                result = self._pipe(
+                    prompt_embeds=fast_mode_embeds["prompt_embeds"],
+                    prompt_attention_mask=fast_mode_embeds["prompt_attention_mask"],
+                    negative_prompt_embeds=fast_mode_embeds["negative_prompt_embeds"],
+                    negative_prompt_attention_mask=fast_mode_embeds[
+                        "negative_prompt_attention_mask"
+                    ],
+                    height=height,
+                    width=width,
+                    num_frames=num_frames,
+                    frame_rate=fps,
+                    num_inference_steps=num_inference_steps,
+                    guidance_scale=guidance_scale,
+                    generator=generator,
+                    output_type=output_type,
+                    return_dict=False,
+                    callback_on_step_end=actual_callback,
+                    **kwargs,
+                )
+            else:
+                # Standard generation: let pipeline encode prompts
+                result = self._pipe(
+                    prompt=prompt,
+                    negative_prompt=negative_prompt,
+                    height=height,
+                    width=width,
+                    num_frames=num_frames,
+                    frame_rate=fps,
+                    num_inference_steps=num_inference_steps,
+                    guidance_scale=guidance_scale,
+                    generator=generator,
+                    output_type=output_type,
+                    return_dict=False,
+                    callback_on_step_end=actual_callback,
+                    **kwargs,
+                )
         finally:
             # Clean up FFN chunking patches
             if ffn_patched:
@@ -1201,8 +1236,9 @@ class LTX2Pipeline:
 
         # Option 1: PyAV (official LTX-2 method, supports audio)
         try:
-            import av
             from fractions import Fraction
+
+            import av
 
             num_frames, height, width, _ = frames.shape
             container = av.open(output_path, mode="w")
@@ -1288,12 +1324,14 @@ class LTX2Pipeline:
         except Exception as e:
             logger.warning(f"PyAV failed: {e}")
             import traceback
+
             traceback.print_exc()
 
         # Option 2: torchvision (if available)
         if not saved:
             try:
                 import torchvision.io as tvio
+
                 video_tensor = torch.from_numpy(frames)
                 tvio.write_video(output_path, video_tensor, fps=fps)
                 saved = True
@@ -1305,6 +1343,7 @@ class LTX2Pipeline:
         if not saved:
             try:
                 import imageio.v3 as iio
+
                 iio.imwrite(output_path, frames, fps=fps)
                 saved = True
                 logger.info(f"Video saved with imageio: {output_path}")
@@ -1315,8 +1354,9 @@ class LTX2Pipeline:
         if not saved:
             try:
                 import cv2
+
                 h, w = frames.shape[1:3]
-                fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+                fourcc = cv2.VideoWriter_fourcc(*"mp4v")
                 out = cv2.VideoWriter(output_path, fourcc, fps, (w, h))
                 for frame in frames:
                     out.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
@@ -1350,6 +1390,7 @@ class LTX2Pipeline:
     def to(self, device: torch.device) -> "LTX2Pipeline":
         """Move pipeline to device."""
         self._pipe.to(device)
+        self._is_offloaded = str(device) == "cpu"
         self._is_offloaded = (str(device) == "cpu")
         return self
 

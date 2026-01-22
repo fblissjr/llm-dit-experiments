@@ -81,8 +81,9 @@ def benchmark_backend(
 ) -> tuple[list[Image.Image], list[float]]:
     """Run benchmark for a specific attention backend."""
     from diffusers.models.attention_dispatch import attention_backend as diffusers_attention_backend
+
     from llm_dit.pipelines.z_image import ZImagePipeline
-    from llm_dit.utils.attention import set_attention_backend, reset_attention_backend
+    from llm_dit.utils.attention import reset_attention_backend, set_attention_backend
 
     # Set our backend for components that use attention_forward()
     reset_attention_backend()
@@ -102,7 +103,7 @@ def benchmark_backend(
         print(f"Loading pipeline with {backend}...")
         pipeline = ZImagePipeline.from_pretrained(
             model_path=model_path,
-            torch_dtype=torch.bfloat16,
+            dtype=torch.bfloat16,
         )
 
         # Compile for fair comparison (reduce-overhead uses CUDA graphs, incompatible with some backends)
@@ -216,6 +217,7 @@ def main():
     compile_mode = args.compile  # CLI override if provided
     if args.config:
         from llm_dit.config import Config
+
         config = Config.from_toml(args.config, args.profile)
         model_path = config.model_path
         # Use config's compile setting if CLI wasn't explicitly set
@@ -235,6 +237,7 @@ def main():
 
     # Detect available backends
     from llm_dit.utils.attention import get_available_backends
+
     available = get_available_backends()
     print(f"Available backends: {available}")
 
@@ -378,7 +381,9 @@ def main():
             ssim = comparison_results[backend]["ssim"]
             labels.append(f"{backend} ({speedup:.2f}x, SSIM={ssim:.4f})")
 
-    save_image_grid(all_images, output_dir / "comparison_grid.png", cols=len(backends), labels=labels)
+    save_image_grid(
+        all_images, output_dir / "comparison_grid.png", cols=len(backends), labels=labels
+    )
 
     print(f"\nResults saved to {output_dir}/")
 

@@ -12,17 +12,16 @@ from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).parents[3]))
 
+from experiments.qwen3_vl.scripts.grid_utils import make_grid
+from src.llm_dit.cli import load_runtime_config
+from src.llm_dit.startup import PipelineLoader
 from src.llm_dit.vl import (
     VLEmbeddingExtractor,
-    blend_interpolate,
     blend_adain,
     blend_adain_per_dim,
     blend_embeddings,
+    blend_interpolate,
 )
-from src.llm_dit.startup import PipelineLoader
-from src.llm_dit.cli import load_runtime_config
-from experiments.qwen3_vl.scripts.grid_utils import make_grid
-
 
 BLEND_MODES = {
     "interpolate": lambda vl, text, alpha: blend_interpolate(vl, text, alpha),
@@ -41,13 +40,23 @@ HIDDEN_LAYER = -6
 def main():
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument("-i", "--image", default="experiments/inputs/style_anime_girl.png",
-                        help="Reference image for style")
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "-i",
+        "--image",
+        default="experiments/inputs/style_anime_girl.png",
+        help="Reference image for style",
+    )
     parser.add_argument("-p", "--prompt", default=PROMPT, help="Subject prompt")
     parser.add_argument("-a", "--alpha", type=float, default=ALPHA, help="VL alpha")
     parser.add_argument("-s", "--strength", type=float, default=STRENGTH, help="img2img strength")
-    parser.add_argument("-o", "--output", default="experiments/results/blend_mode_comparison",
-                        help="Output directory")
+    parser.add_argument(
+        "-o",
+        "--output",
+        default="experiments/results/blend_mode_comparison",
+        help="Output directory",
+    )
     args = parser.parse_args()
 
     output_dir = Path(args.output)
@@ -60,6 +69,7 @@ def main():
 
     # Load VL extractor
     import os
+
     vl_model_path = os.environ.get("QWEN3_VL_PATH")
     if not vl_model_path:
         raise ValueError("Set QWEN3_VL_PATH environment variable")
@@ -67,7 +77,7 @@ def main():
     vl_extractor = VLEmbeddingExtractor.from_pretrained(
         vl_model_path,
         device="cuda",
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
     )
 
     # Extract VL embeddings
@@ -88,9 +98,11 @@ def main():
 
     # Load Z-Image pipeline
     print("Loading Z-Image pipeline...")
+
     class ConfigArgs:
         config = "config.toml"
         profile = "default"
+
     config = load_runtime_config(ConfigArgs())
     loader = PipelineLoader(config)
     pipe = loader.load_pipeline().pipeline
@@ -110,11 +122,14 @@ def main():
         num_inference_steps=9,
         generator=generator,
     )
-    baseline_img = baseline.images[0] if hasattr(baseline, 'images') else baseline
+    baseline_img = baseline.images[0] if hasattr(baseline, "images") else baseline
     baseline_img.save(output_dir / "baseline_no_vl.png")
 
     # Test each blend mode
-    results = {"reference": output_dir / "reference.png", "no_vl": output_dir / "baseline_no_vl.png"}
+    results = {
+        "reference": output_dir / "reference.png",
+        "no_vl": output_dir / "baseline_no_vl.png",
+    }
 
     for mode_name, blend_fn in BLEND_MODES.items():
         print(f"\n=== Testing: {mode_name} ===")
@@ -133,8 +148,7 @@ def main():
             generator=generator,
         )
 
-        result_img = result.images[0] if hasattr(result, 'images') else result
-        out_path = output_dir / f"{mode_name}.png"
+        result_img = result.images[0] if hasattr(result, "images") else result
         result_img.save(out_path)
         print(f"  Saved: {out_path}")
         results[mode_name] = out_path

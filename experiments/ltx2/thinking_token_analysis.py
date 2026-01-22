@@ -58,7 +58,7 @@ def analyze_thinking_tokens(
     print("\nLoading model...")
     pipe = LTX2Pipeline.from_pretrained(
         model_path,
-        torch_dtype=torch.float32,
+        dtype=torch.float32,
     )
 
     # Find thinking tokens
@@ -91,7 +91,10 @@ def analyze_thinking_tokens(
     # Search in state dict
     if thinking_tokens is None:
         print("\nSearching state dict for thinking/register tokens...")
-        for component_name, component in [("text_encoder", pipe.text_encoder), ("transformer", pipe.transformer)]:
+        for component_name, component in [
+            ("text_encoder", pipe.text_encoder),
+            ("transformer", pipe.transformer),
+        ]:
             if component is None:
                 continue
             for name, param in component.named_parameters():
@@ -229,7 +232,9 @@ def analyze_thinking_tokens(
     for i, j, sim in top_pairs:
         print(f"  Token {i} ↔ Token {j}: {sim:.4f}")
 
-    analysis["statistics"]["most_similar_pairs"] = [[int(i), int(j), float(s)] for i, j, s in top_pairs]
+    analysis["statistics"]["most_similar_pairs"] = [
+        [int(i), int(j), float(s)] for i, j, s in top_pairs
+    ]
 
     # PCA analysis to understand structure
     print("\n" + "=" * 60)
@@ -241,7 +246,7 @@ def analyze_thinking_tokens(
     singular_values = S.numpy()
 
     # Cumulative variance explained
-    var_explained = singular_values ** 2
+    var_explained = singular_values**2
     var_explained = var_explained / var_explained.sum() * 100
     cumulative_var = np.cumsum(var_explained)
 
@@ -269,7 +274,9 @@ def analyze_thinking_tokens(
     ax1.set_xlabel("Token Index")
     ax1.set_ylabel("L2 Norm")
     ax1.set_title("Per-Token Norm Distribution")
-    ax1.axhline(y=token_norms.mean(), color="r", linestyle="--", label=f"Mean: {token_norms.mean():.2f}")
+    ax1.axhline(
+        y=token_norms.mean(), color="r", linestyle="--", label=f"Mean: {token_norms.mean():.2f}"
+    )
     ax1.legend()
 
     # Plot 2: Similarity heatmap
@@ -364,7 +371,7 @@ def compare_generation_with_without_thinking(
     print("\nLoading pipeline...")
     pipe = LTX2Pipeline.from_pretrained(
         model_path,
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
     )
     pipe.enable_model_cpu_offload()
 
@@ -427,9 +434,7 @@ def compare_generation_with_without_thinking(
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Analyze LTX-2 thinking tokens"
-    )
+    parser = argparse.ArgumentParser(description="Analyze LTX-2 thinking tokens")
     parser.add_argument(
         "--model-path",
         default="models/LTX-2",

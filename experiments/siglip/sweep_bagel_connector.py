@@ -7,8 +7,8 @@ Generates comparison grids with different parameters.
 """
 
 import sys
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
 
 DIFFUSERS_PR_PATH = Path(__file__).parent.parent.parent / "coderef/diffusers/src"
 sys.path.insert(0, str(DIFFUSERS_PR_PATH))
@@ -32,9 +32,9 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 def load_and_adapt_bagel_connector(target_dim=3840):
     """Load Bagel's connector and adapt to Z-Image dimensions."""
-    with safe_open(str(BAGEL_PATH), framework='pt', device='cpu') as f:
-        fc1_weight = f.get_tensor('connector.fc1.weight')
-        fc1_bias = f.get_tensor('connector.fc1.bias')
+    with safe_open(str(BAGEL_PATH), framework="pt", device="cpu") as f:
+        fc1_weight = f.get_tensor("connector.fc1.weight")
+        fc1_bias = f.get_tensor("connector.fc1.bias")
 
     current_out = fc1_weight.shape[0]
     pad_size = target_dim - current_out
@@ -53,12 +53,14 @@ def load_pipeline():
     """Load Z-Image pipeline with Bagel connector weights."""
     from diffusers import AutoencoderKL, FlowMatchEulerDiscreteScheduler
     from diffusers.models.transformers.transformer_z_image import ZImageTransformer2DModel
-    from transformers import AutoModel, AutoTokenizer, AutoProcessor
+    from transformers import AutoModel, AutoProcessor, AutoTokenizer
 
     print("Loading pipeline...")
 
-    vae = AutoencoderKL.from_pretrained(ZIMAGE_PATH, subfolder="vae", torch_dtype=torch.bfloat16)
-    text_encoder = AutoModel.from_pretrained(QWEN3_PATH, dtype=torch.bfloat16, trust_remote_code=True)
+    vae = AutoencoderKL.from_pretrained(ZIMAGE_PATH, subfolder="vae", dtype=torch.bfloat16)
+    text_encoder = AutoModel.from_pretrained(
+        QWEN3_PATH, dtype=torch.bfloat16, trust_remote_code=True
+    )
     tokenizer = AutoTokenizer.from_pretrained(QWEN3_PATH, trust_remote_code=True)
     scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(ZIMAGE_PATH, subfolder="scheduler")
 
@@ -67,7 +69,7 @@ def load_pipeline():
     siglip_processor = AutoProcessor.from_pretrained(SIGLIP_PATH)
 
     base_transformer = ZImageTransformer2DModel.from_pretrained(
-        ZIMAGE_PATH, subfolder="transformer", torch_dtype=torch.bfloat16
+        ZIMAGE_PATH, subfolder="transformer", dtype=torch.bfloat16
     )
 
     config = dict(base_transformer.config)
@@ -106,7 +108,9 @@ def load_pipeline():
 
 def encode_prompt(tokenizer, text_encoder, prompt, device):
     formatted = f"<|im_start|>user\n{prompt}<|im_end|>\n<|im_start|>assistant\n"
-    inputs = tokenizer(formatted, padding="max_length", max_length=512, truncation=True, return_tensors="pt")
+    inputs = tokenizer(
+        formatted, padding="max_length", max_length=512, truncation=True, return_tensors="pt"
+    )
 
     with torch.no_grad():
         outputs = text_encoder(
@@ -129,7 +133,7 @@ def encode_siglip(siglip, processor, image, device, scale_factor=1.0):
         hidden_state = outputs.last_hidden_state
 
     B, N, C = hidden_state.shape
-    H = W = int(N ** 0.5)
+    H = W = int(N**0.5)
     hidden_state = hidden_state.squeeze(0).view(H, W, C)
     hidden_state = hidden_state * scale_factor
 
@@ -165,7 +169,9 @@ def generate_single(
         cap_feats_list = [cap_feats]
         siglip_feats = None
     else:
-        siglip_emb = encode_siglip(siglip, siglip_processor, reference_image, device, scale_factor).to(dtype)
+        siglip_emb = encode_siglip(
+            siglip, siglip_processor, reference_image, device, scale_factor
+        ).to(dtype)
         siglip_feats = [[siglip_emb]]
         cap_feats_list = [cap_feats]
 
@@ -181,13 +187,23 @@ def generate_single(
 
         with torch.no_grad():
             if siglip_feats is not None:
-                output = transformer(x=x, t=timestep_norm, cap_feats=cap_feats_list, siglip_feats=siglip_feats, return_dict=False)
+                output = transformer(
+                    x=x,
+                    t=timestep_norm,
+                    cap_feats=cap_feats_list,
+                    siglip_feats=siglip_feats,
+                    return_dict=False,
+                )
             else:
-                output = transformer(x=x, t=timestep_norm, cap_feats=cap_feats_list, return_dict=False)
+                output = transformer(
+                    x=x, t=timestep_norm, cap_feats=cap_feats_list, return_dict=False
+                )
 
         noise_pred = -output[0][0].squeeze(1)
         latents_for_step = latents.squeeze(1)
-        latents = scheduler.step(noise_pred.float(), t, latents_for_step.float(), return_dict=False)[0]
+        latents = scheduler.step(
+            noise_pred.float(), t, latents_for_step.float(), return_dict=False
+        )[0]
         latents = latents.unsqueeze(1).to(dtype)
 
     latents_for_decode = latents.squeeze(1).unsqueeze(0)
@@ -212,7 +228,7 @@ def create_grid(images, labels, title, cols=4, cell_size=256):
     grid_w = cols * cell_size
     grid_h = rows * (cell_size + label_height) + 40  # Extra for title
 
-    grid = Image.new('RGB', (grid_w, grid_h), (255, 255, 255))
+    grid = Image.new("RGB", (grid_w, grid_h), (255, 255, 255))
     draw = ImageDraw.Draw(grid)
 
     # Try to get a font
@@ -312,7 +328,9 @@ def sweep_styles(components, prompt, output_path):
             # images.append(ref_img.resize((512, 512), Image.LANCZOS))
             # labels.append(f"{style_name} ref")
 
-    grid = create_grid(images, labels, f"Style Transfer | Prompt: {prompt[:50]}... | scale={scale_factor}", cols=4)
+    grid = create_grid(
+        images, labels, f"Style Transfer | Prompt: {prompt[:50]}... | scale={scale_factor}", cols=4
+    )
     grid.save(output_path)
     print(f"  Saved: {output_path}")
 
@@ -342,11 +360,15 @@ def sweep_prompts(components, reference_image, ref_name, output_path):
 
     for prompt in prompts:
         print(f"  Generating: {prompt[:30]}...")
-        img = generate_single(components, prompt, reference_image, scale_factor, 512, 512, 4, DEVICE)
+        img = generate_single(
+            components, prompt, reference_image, scale_factor, 512, 512, 4, DEVICE
+        )
         images.append(img)
         labels.append(prompt[:25] + "...")
 
-    grid = create_grid(images, labels, f"Prompt Sweep | Reference: {ref_name} | scale={scale_factor}", cols=4)
+    grid = create_grid(
+        images, labels, f"Prompt Sweep | Reference: {ref_name} | scale={scale_factor}", cols=4
+    )
     grid.save(output_path)
     print(f"  Saved: {output_path}")
 
@@ -354,9 +376,9 @@ def sweep_prompts(components, reference_image, ref_name, output_path):
 def main():
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    print("="*60)
+    print("=" * 60)
     print("Z-Image Omni + Bagel Connector - Parameter Sweep")
-    print("="*60)
+    print("=" * 60)
 
     # Load pipeline once
     components = load_pipeline()
@@ -369,14 +391,14 @@ def main():
             components,
             ref_img,
             "A portrait of a young woman with flowing hair",
-            OUTPUT_DIR / f"sweep_scale_{timestamp}.png"
+            OUTPUT_DIR / f"sweep_scale_{timestamp}.png",
         )
 
     # Test 2: Style sweep with a fixed prompt
     sweep_styles(
         components,
         "A serene mountain landscape with a lake",
-        OUTPUT_DIR / f"sweep_styles_{timestamp}.png"
+        OUTPUT_DIR / f"sweep_styles_{timestamp}.png",
     )
 
     # Test 3: Prompt sweep with oil painting reference
@@ -384,15 +406,12 @@ def main():
     if ref_path.exists():
         ref_img = Image.open(ref_path).convert("RGB")
         sweep_prompts(
-            components,
-            ref_img,
-            "Oil Painting",
-            OUTPUT_DIR / f"sweep_prompts_{timestamp}.png"
+            components, ref_img, "Oil Painting", OUTPUT_DIR / f"sweep_prompts_{timestamp}.png"
         )
 
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print(f"All results saved to: {OUTPUT_DIR}")
-    print("="*60)
+    print("=" * 60)
 
 
 if __name__ == "__main__":

@@ -70,11 +70,10 @@ def compute_metrics(frame: Image.Image, prompt: str) -> dict:
     # Try SigLIP score
     try:
         from experiments.metrics.siglip_score import compute_siglip_score
+
         # For SigLIP, use the prose version for fair comparison across formats
         # (structured formats shouldn't be penalized for format syntax)
-        metrics["siglip_score"] = compute_siglip_score(
-            STRUCTURED_PROMPTS["prose_baseline"], frame
-        )
+        metrics["siglip_score"] = compute_siglip_score(STRUCTURED_PROMPTS["prose_baseline"], frame)
     except Exception as e:
         metrics["siglip_score"] = None
         metrics["siglip_error"] = str(e)
@@ -82,10 +81,9 @@ def compute_metrics(frame: Image.Image, prompt: str) -> dict:
     # Try ImageReward
     try:
         from experiments.metrics.image_reward import compute_image_reward
+
         # Same logic - evaluate against prose semantic content
-        metrics["image_reward"] = compute_image_reward(
-            STRUCTURED_PROMPTS["prose_baseline"], frame
-        )
+        metrics["image_reward"] = compute_image_reward(STRUCTURED_PROMPTS["prose_baseline"], frame)
     except Exception as e:
         metrics["image_reward"] = None
         metrics["image_reward_error"] = str(e)
@@ -176,7 +174,7 @@ def run_format_ablation(
     print("\nLoading pipeline...")
     pipe = LTX2Pipeline.from_pretrained(
         model_path,
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
     )
     pipe.enable_model_cpu_offload()
 
@@ -191,7 +189,7 @@ def run_format_ablation(
             continue
 
         prompt_text = STRUCTURED_PROMPTS[format_name]
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"Format: {format_name}")
         print(f"Prompt length: {len(prompt_text)} chars, {len(prompt_text.split())} words")
         print("=" * 60)
@@ -271,11 +269,14 @@ def run_format_ablation(
             except Exception as e:
                 print(f"  ERROR: {e}")
                 import traceback
+
                 traceback.print_exc()
-                all_results.append({
-                    "config": {"format": format_name, "seed": seed},
-                    "error": str(e),
-                })
+                all_results.append(
+                    {
+                        "config": {"format": format_name, "seed": seed},
+                        "error": str(e),
+                    }
+                )
 
             # Cleanup
             gc.collect()
@@ -287,14 +288,16 @@ def run_format_ablation(
             format_summaries[format_name] = {
                 "num_samples": len(valid_results),
                 "mean_brightness": np.mean([r["mean_brightness"] for r in valid_results]),
-                "mean_siglip": np.mean([
-                    r["siglip_score"] for r in valid_results
-                    if r.get("siglip_score") is not None
-                ]) if any(r.get("siglip_score") is not None for r in valid_results) else None,
-                "mean_image_reward": np.mean([
-                    r["image_reward"] for r in valid_results
-                    if r.get("image_reward") is not None
-                ]) if any(r.get("image_reward") is not None for r in valid_results) else None,
+                "mean_siglip": np.mean(
+                    [r["siglip_score"] for r in valid_results if r.get("siglip_score") is not None]
+                )
+                if any(r.get("siglip_score") is not None for r in valid_results)
+                else None,
+                "mean_image_reward": np.mean(
+                    [r["image_reward"] for r in valid_results if r.get("image_reward") is not None]
+                )
+                if any(r.get("image_reward") is not None for r in valid_results)
+                else None,
                 "prompt_length_words": len(STRUCTURED_PROMPTS[format_name].split()),
             }
 
@@ -332,15 +335,23 @@ def run_format_ablation(
     baseline_reward = format_summaries.get("prose_baseline", {}).get("mean_image_reward")
 
     for format_name, stats in format_summaries.items():
-        siglip_str = f"{stats['mean_siglip']:.4f}" if stats.get('mean_siglip') is not None else "N/A"
-        reward_str = f"{stats['mean_image_reward']:.4f}" if stats.get('mean_image_reward') is not None else "N/A"
+        siglip_str = (
+            f"{stats['mean_siglip']:.4f}" if stats.get("mean_siglip") is not None else "N/A"
+        )
+        reward_str = (
+            f"{stats['mean_image_reward']:.4f}"
+            if stats.get("mean_image_reward") is not None
+            else "N/A"
+        )
 
         # Add delta from baseline
-        if format_name != "prose_baseline" and baseline_siglip and stats.get('mean_siglip'):
-            delta = stats['mean_siglip'] - baseline_siglip
+        if format_name != "prose_baseline" and baseline_siglip and stats.get("mean_siglip"):
+            delta = stats["mean_siglip"] - baseline_siglip
             siglip_str += f" ({delta:+.3f})"
 
-        print(f"{format_name:<18} {stats['prompt_length_words']:<8} {stats['mean_brightness']:<12.1f} {siglip_str:<10} {reward_str:<10}")
+        print(
+            f"{format_name:<18} {stats['prompt_length_words']:<8} {stats['mean_brightness']:<12.1f} {siglip_str:<10} {reward_str:<10}"
+        )
 
     # Create visualization
     if len(format_summaries) > 1:
@@ -352,7 +363,7 @@ def run_format_ablation(
         # Brightness
         ax1 = axes[0]
         brightness_values = [format_summaries[f]["mean_brightness"] for f in format_names]
-        colors = ['green' if f == 'prose_baseline' else 'steelblue' for f in format_names]
+        colors = ["green" if f == "prose_baseline" else "steelblue" for f in format_names]
         ax1.bar(x, brightness_values, color=colors)
         ax1.set_xticks(x)
         ax1.set_xticklabels(format_names, rotation=45, ha="right")
@@ -368,7 +379,7 @@ def run_format_ablation(
         ax2.set_ylabel("SigLIP Score")
         ax2.set_title("Text-Image Alignment by Format")
         if baseline_siglip:
-            ax2.axhline(y=baseline_siglip, color='red', linestyle='--', label='Prose baseline')
+            ax2.axhline(y=baseline_siglip, color="red", linestyle="--", label="Prose baseline")
             ax2.legend()
 
         # ImageReward
@@ -380,7 +391,7 @@ def run_format_ablation(
         ax3.set_ylabel("ImageReward Score")
         ax3.set_title("Human Preference by Format")
         if baseline_reward:
-            ax3.axhline(y=baseline_reward, color='red', linestyle='--', label='Prose baseline')
+            ax3.axhline(y=baseline_reward, color="red", linestyle="--", label="Prose baseline")
             ax3.legend()
 
         plt.tight_layout()

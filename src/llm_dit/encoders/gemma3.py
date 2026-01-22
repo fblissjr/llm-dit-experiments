@@ -1,7 +1,7 @@
 """
 Gemma3 Encoder implementation for LTX-2.
 
-Last Updated: 2026-01-09
+Last Updated: 2026-01-20
 
 Gemma 3-12B is used as the text encoder for LTX-2 video generation.
 Architecture based on LTX-2 reference implementation.
@@ -9,22 +9,34 @@ Architecture based on LTX-2 reference implementation.
 Key Architecture:
 - 49 decoder layers, each 3840-dimensional hidden states
 - Multi-layer feature extraction: Stack -> Normalize -> Concatenate -> Project
+- Embeddings1DConnector: 2-layer bidirectional transformer with RoPE
 - Output: 3840-dimensional embeddings (DiT projects to 4096/2048 internally)
 
-Note: The 4096 (video) and 2048 (audio) dimensions are applied by the DiT's
-internal projection layers, not by this encoder. We output the raw 3840-dim
-features from the text encoder.
+Pipeline stages:
+1. Tokenize text
+2. Gemma3 forward -> extract all 49 hidden states
+3. Stack and normalize hidden states
+4. Feature extractor linear projection (188160 -> 3840)
+5. Embeddings1DConnector (2 transformer blocks + learnable registers)
+6. Output to DiT
 """
 
 import gc
+import json
 import logging
 import math
-from typing import List, Optional, Union
+from pathlib import Path
+from typing import List, Literal, Optional, Union
 
 import torch
-from torch import nn
 from PIL import Image
+from torch import nn
 
+from llm_dit.encoders.embeddings_connector import (
+    Embeddings1DConnector,
+    RopeType,
+    load_connector_weights,
+)
 from llm_dit.encoders.protocol import (
     EncoderCapability,
     EncoderInfo,
@@ -35,6 +47,18 @@ from llm_dit.encoders.protocol import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Default paths to LTX-2 model components
+# CRITICAL: Tokenizer is in tokenizer/ folder, model weights are in text_encoder/
+# Using wrong tokenizer causes completely wrong token IDs -> garbage output
+DEFAULT_TOKENIZER_PATH = "models/LTX-2/tokenizer"  # tokenizer.model, tokenizer.json
+DEFAULT_TEXT_ENCODER_PATH = "models/LTX-2/text_encoder"  # Gemma model weights + config
+DEFAULT_CONNECTOR_WEIGHTS_SHARD = (
+    "models/LTX-2/text_encoder/diffusion_pytorch_model-00011-of-00012.safetensors"
+)
+# Legacy paths (kept for reference, do NOT use)
+_LEGACY_CONNECTORS_PATH = "models/LTX-2/connectors/diffusion_pytorch_model.safetensors"
+DEFAULT_CONNECTORS_CONFIG = "models/LTX-2/connectors/config.json"
 
 
 class SubLayerExtractor:
@@ -52,7 +76,7 @@ class SubLayerExtractor:
     This extractor captures points 1 and 3, enabling sub-layer routing experiments.
 
     Important Model Notes:
-    - Use full/quantized models (google/gemma-3-12b-it-qat-q4_0-unquantized), NOT distilled
+    - Use full/quantized models (models/LTX-2/text_encoder), NOT distilled
     - Distilled/LoRA models may have different layer behaviors - avoid for experiments
     - Q4 QAT model preserves layer structure while reducing memory (~6GB)
 
@@ -89,12 +113,14 @@ class SubLayerExtractor:
         """
         self.model = model
         # Get layer count from model
-        if hasattr(model, 'model') and hasattr(model.model, 'layers'):
+        if hasattr(model, "model") and hasattr(model.model, "layers"):
             num_model_layers = len(model.model.layers)
         else:
             num_model_layers = GEMMA3_NUM_LAYERS
 
-        self.layer_indices = layer_indices if layer_indices is not None else list(range(num_model_layers))
+        self.layer_indices = (
+            layer_indices if layer_indices is not None else list(range(num_model_layers))
+        )
 
         # Storage for captured outputs
         self.attention_outputs: dict[int, torch.Tensor] = {}
@@ -103,23 +129,27 @@ class SubLayerExtractor:
 
     def _make_attention_hook(self, layer_idx: int):
         """Create hook to capture attention output (after post_attention_layernorm)."""
+
         def hook(module, input, output):
             # Output of post_attention_layernorm is normalized attention output
             # Clone to avoid modification by subsequent operations
             self.attention_outputs[layer_idx] = output.detach().clone()
+
         return hook
 
     def _make_mlp_hook(self, layer_idx: int):
         """Create hook to capture MLP output (after post_feedforward_layernorm)."""
+
         def hook(module, input, output):
             # Output of post_feedforward_layernorm is normalized MLP output
             self.mlp_outputs[layer_idx] = output.detach().clone()
+
         return hook
 
     def register(self):
         """Register hooks on specified layers."""
         # Access layers through model.model.layers (Gemma3 structure)
-        if hasattr(self.model, 'model') and hasattr(self.model.model, 'layers'):
+        if hasattr(self.model, "model") and hasattr(self.model.model, "layers"):
             layers = self.model.model.layers
         else:
             raise RuntimeError("Cannot find decoder layers in model. Expected model.model.layers")
@@ -132,7 +162,7 @@ class SubLayerExtractor:
             layer = layers[idx]
 
             # Hook after post_attention_layernorm (captures attention output)
-            if hasattr(layer, 'post_attention_layernorm'):
+            if hasattr(layer, "post_attention_layernorm"):
                 attn_hook = layer.post_attention_layernorm.register_forward_hook(
                     self._make_attention_hook(idx)
                 )
@@ -141,7 +171,7 @@ class SubLayerExtractor:
                 logger.warning(f"Layer {idx} missing post_attention_layernorm")
 
             # Hook after post_feedforward_layernorm (captures MLP output)
-            if hasattr(layer, 'post_feedforward_layernorm'):
+            if hasattr(layer, "post_feedforward_layernorm"):
                 mlp_hook = layer.post_feedforward_layernorm.register_forward_hook(
                     self._make_mlp_hook(idx)
                 )
@@ -149,7 +179,9 @@ class SubLayerExtractor:
             else:
                 logger.warning(f"Layer {idx} missing post_feedforward_layernorm")
 
-        logger.debug(f"Registered {len(self.hooks)} sub-layer hooks for layers {self.layer_indices}")
+        logger.debug(
+            f"Registered {len(self.hooks)} sub-layer hooks for layers {self.layer_indices}"
+        )
 
     def unregister(self):
         """Remove all hooks and clear stored outputs."""
@@ -177,18 +209,18 @@ class SubLayerExtractor:
         # Stack in sorted order
         sorted_indices = sorted(self.attention_outputs.keys())
 
-        attention_stack = torch.stack([
-            self.attention_outputs[i] for i in sorted_indices
-        ], dim=-1)  # [B, T, 3840, L]
+        attention_stack = torch.stack(
+            [self.attention_outputs[i] for i in sorted_indices], dim=-1
+        )  # [B, T, 3840, L]
 
-        mlp_stack = torch.stack([
-            self.mlp_outputs[i] for i in sorted_indices
-        ], dim=-1)  # [B, T, 3840, L]
+        mlp_stack = torch.stack(
+            [self.mlp_outputs[i] for i in sorted_indices], dim=-1
+        )  # [B, T, 3840, L]
 
         return {
-            'attention': attention_stack,
-            'mlp': mlp_stack,
-            'layer_indices': sorted_indices,
+            "attention": attention_stack,
+            "mlp": mlp_stack,
+            "layer_indices": sorted_indices,
         }
 
     def __enter__(self):
@@ -208,12 +240,15 @@ GEMMA3_NUM_LAYERS = 49  # Number of decoder layers to aggregate
 GEMMA3_FEATURE_DIM = GEMMA3_HIDDEN_DIM * GEMMA3_NUM_LAYERS  # 188,160
 GEMMA3_OUTPUT_DIM = 3840  # Final output dimension (DiT projects further)
 
+# Layer masking modes for ablation experiments
+LayerMaskingMode = Literal["soft", "zero", "weighted"]
+
 
 def _norm_and_concat_layers(
     hidden_states: torch.Tensor,
     attention_mask: torch.Tensor,
     padding_side: str = "left",
-    eps: float = 1e-8,
+    eps: float = 1e-6,  # Match reference (was 1e-8)
 ) -> torch.Tensor:
     """
     Normalize and concatenate multi-layer hidden states.
@@ -246,16 +281,18 @@ def _norm_and_concat_layers(
     masked_states = hidden_states.masked_fill(~mask_expanded, 0.0)
 
     # Mean per layer (over valid tokens only)
-    denom = (seq_lengths * d).view(b, 1, 1, 1).clamp(min=eps)
-    mean = masked_states.sum(dim=(1, 2), keepdim=True) / denom
+    # Match reference: (denom + eps) instead of clamp
+    denom = (seq_lengths * d).view(b, 1, 1, 1)
+    mean = masked_states.sum(dim=(1, 2), keepdim=True) / (denom + eps)
 
     # Range per layer (over valid tokens only)
     x_min = hidden_states.masked_fill(~mask_expanded, float("inf")).amin(dim=(1, 2), keepdim=True)
     x_max = hidden_states.masked_fill(~mask_expanded, float("-inf")).amax(dim=(1, 2), keepdim=True)
-    range_val = (x_max - x_min).clamp(min=eps)
+    range_val = x_max - x_min
 
-    # Normalize: 8 * (x - mean) / range
-    normed = 8.0 * (hidden_states - mean) / range_val
+    # Normalize: 8 * (x - mean) / (range + eps)
+    # Match reference: (range + eps) instead of clamp
+    normed = 8.0 * (hidden_states - mean) / (range_val + eps)
 
     # Flatten layers: [B, T, D, L] -> [B, T, D*L]
     normed = normed.reshape(b, t, -1)
@@ -265,6 +302,55 @@ def _norm_and_concat_layers(
     normed = normed.masked_fill(~mask_flat, 0.0)
 
     return normed.to(dtype)
+
+
+def pack_text_embeds(
+    hidden_states: torch.Tensor,
+    sequence_length: int,
+    device: torch.device,
+    scale_factor: float = 8.0,
+    eps: float = 1e-6,
+) -> torch.Tensor:
+    """
+    Pack text hidden states into prompt embeddings for LTX2Pipeline.
+
+    This matches the LTX2Pipeline._pack_text_embeds method in diffusers,
+    allowing pre-computed embeddings to be passed directly to the pipeline.
+
+    Args:
+        hidden_states: [B, T, hidden_dim, num_layers] - stacked hidden states
+                      from all Gemma layers (e.g., shape [1, 256, 3840, 49])
+        sequence_length: Actual sequence length (excluding padding)
+        device: Target device for output
+        scale_factor: Scale factor for normalization (default 8.0, matches LTX-2)
+        eps: Epsilon for numerical stability
+
+    Returns:
+        Packed prompt embeddings [B, T, hidden_dim * num_layers] ready for the pipeline.
+        Shape example: [1, 256, 188160] for 49 layers of 3840 hidden dim.
+
+    Example:
+        >>> text_encoder, tokenizer = load_text_encoder_8bit("models/LTX-2")
+        >>> outputs = text_encoder(input_ids, output_hidden_states=True)
+        >>> hidden_states = torch.stack(outputs.hidden_states[:49], dim=-1)
+        >>> packed = pack_text_embeds(hidden_states, seq_len, torch.device("cuda"))
+        >>> # Now pass packed to pipeline as prompt_embeds
+    """
+    # Move to target device
+    hidden_states = hidden_states.to(device)
+
+    # Normalize each layer: divide by L2 norm
+    # Shape: [B, T, D, L] -> norm over D dimension
+    normed = hidden_states / (hidden_states.norm(dim=2, keepdim=True) + eps)
+
+    # Flatten layers: [B, T, D, L] -> [B, T, D * L]
+    batch_size, seq_len, hidden_dim, num_layers = normed.shape
+    packed = normed.view(batch_size, seq_len, hidden_dim * num_layers)
+
+    # Apply scale factor
+    packed = packed * scale_factor
+
+    return packed
 
 
 class FeatureExtractorLinear(nn.Module):
@@ -312,13 +398,16 @@ class Gemma3Encoder:
 
     def __init__(
         self,
-        model_id: str = "google/gemma-3-12b-it-qat-q4_0-unquantized",
+        model_id: str = "models/LTX-2/text_encoder",
         device: str = "cuda",
         dtype: torch.dtype = torch.bfloat16,
         max_sequence_length: int = 256,
         load_in_4bit: bool = False,
         load_in_8bit: bool = False,
         max_memory: Optional[dict] = None,
+        connectors_path: Optional[str] = None,
+        tokenizer_path: Optional[str] = None,
+        use_connector: bool = True,
     ):
         """
         Initialize Gemma3 encoder.
@@ -332,6 +421,14 @@ class Gemma3Encoder:
             load_in_8bit: Apply additional 8-bit quantization.
             max_memory: Memory limits per device for CPU offloading.
                        Example: {0: "18GiB", "cpu": "32GiB"} limits GPU 0 to 18GB.
+            connectors_path: Path to connector weights (safetensors).
+                            Defaults to text_encoder shard with jointly-trained weights.
+                            IMPORTANT: Use text_encoder/ shard, NOT connectors/ (stale).
+            tokenizer_path: Path to tokenizer files. Defaults to local LTX-2 tokenizer.
+                           CRITICAL: Must use LTX-2's local tokenizer, NOT HuggingFace.
+                           Wrong tokenizer causes signal death in caption_projection.
+            use_connector: Whether to use the Embeddings1DConnector (default True).
+                          Set False for debugging feature extractor only.
         """
         self._model_id = model_id
         self._device_str = device
@@ -340,23 +437,34 @@ class Gemma3Encoder:
         self._load_in_4bit = load_in_4bit
         self._load_in_8bit = load_in_8bit
         self._max_memory = max_memory
+        self._connectors_path = connectors_path or DEFAULT_CONNECTOR_WEIGHTS_SHARD
+        # CRITICAL: Text encoder model/config and tokenizer are in DIFFERENT directories!
+        # _text_encoder_path: Gemma model weights + config.json
+        # _tokenizer_path: tokenizer.model, tokenizer.json, etc.
+        self._text_encoder_path = model_id  # Usually models/LTX-2/text_encoder
+        self._tokenizer_path = tokenizer_path or DEFAULT_TOKENIZER_PATH  # models/LTX-2/tokenizer
+        self._use_connector = use_connector
 
         # Model components (lazy loaded)
         self._model = None
         self._tokenizer = None
         self._feature_extractor = None
+        self._embeddings_connector: Optional[Embeddings1DConnector] = None
         self._is_loaded = False
         self._is_offloaded = False
 
     @classmethod
     def from_pretrained(
         cls,
-        model_path: str = "google/gemma-3-12b-it-qat-q4_0-unquantized",
+        model_path: str = "models/LTX-2/text_encoder",
         device: str = "cuda",
         dtype: str = "bfloat16",
         max_sequence_length: int = 256,
         quantization: Optional[str] = None,
         max_memory: Optional[dict] = None,
+        connectors_path: Optional[str] = None,
+        tokenizer_path: Optional[str] = None,
+        use_connector: bool = True,
         **kwargs,
     ) -> "Gemma3Encoder":
         """
@@ -369,6 +477,11 @@ class Gemma3Encoder:
             max_sequence_length: Max sequence length.
             quantization: Additional quantization ("4bit", "8bit", or None).
             max_memory: Memory limits for CPU offloading. Example: {0: "18GiB", "cpu": "32GiB"}.
+            connectors_path: Path to connector weights shard.
+                            Defaults to text_encoder/ jointly-trained weights.
+            tokenizer_path: Path to tokenizer files.
+                           CRITICAL: Defaults to local LTX-2 tokenizer. Do NOT use HuggingFace.
+            use_connector: Whether to use Embeddings1DConnector (default True).
             **kwargs: Additional arguments.
 
         Returns:
@@ -379,16 +492,19 @@ class Gemma3Encoder:
             "float16": torch.float16,
             "float32": torch.float32,
         }
-        torch_dtype = dtype_map.get(dtype, torch.bfloat16)
+        dtype_torch = dtype_map.get(dtype, torch.bfloat16)
 
         encoder = cls(
             model_id=model_path,
             device=device,
-            dtype=torch_dtype,
+            dtype=dtype_torch,
             max_sequence_length=max_sequence_length,
             load_in_4bit=(quantization == "4bit"),
             load_in_8bit=(quantization == "8bit"),
             max_memory=max_memory,
+            connectors_path=connectors_path,
+            tokenizer_path=tokenizer_path,
+            use_connector=use_connector,
         )
 
         # Load model immediately
@@ -397,23 +513,37 @@ class Gemma3Encoder:
         return encoder
 
     def _load_model(self) -> None:
-        """Load Gemma 3 model and tokenizer."""
+        """Load Gemma 3 model and tokenizer with manual key remapping from LTX-2 checkpoint.
+
+        The LTX-2 checkpoint stores Gemma weights with 'base_text_encoder.*' prefix,
+        but HuggingFace's Gemma3ForConditionalGeneration expects 'model.*'.
+        When from_pretrained() encounters mismatched keys, it silently ignores them
+        and initializes with random weights - causing signal death.
+
+        Solution: Create architecture from HuggingFace, then manually load and remap
+        LTX-2 weights with correct key prefixes.
+        """
         if self._is_loaded:
             return
 
         try:
-            from transformers import AutoTokenizer, Gemma3ForConditionalGeneration
+            # Use Gemma3ForCausalLM (text-only) instead of Gemma3ForConditionalGeneration
+            # The multimodal model includes SigLIP vision tower which causes OOM
+            # and is not needed for text-to-video generation
+            from transformers import AutoTokenizer, Gemma3ForCausalLM
         except ImportError:
-            from transformers import AutoTokenizer, AutoModelForCausalLM
-            # Fallback for older transformers without Gemma3ForConditionalGeneration
-            Gemma3ForConditionalGeneration = AutoModelForCausalLM
+            from transformers import AutoModelForCausalLM, AutoTokenizer
 
-        logger.info(f"Loading Gemma 3 encoder from {self._model_id}")
+            # Fallback for older transformers
+            Gemma3ForCausalLM = AutoModelForCausalLM
+
+        logger.info(f"Loading Gemma 3 text encoder (no vision) from: {self._text_encoder_path}")
 
         # Build quantization config if needed
         quantization_config = None
         if self._load_in_4bit or self._load_in_8bit:
             from transformers import BitsAndBytesConfig
+
             quantization_config = BitsAndBytesConfig(
                 load_in_4bit=self._load_in_4bit,
                 load_in_8bit=self._load_in_8bit,
@@ -427,32 +557,129 @@ class Gemma3Encoder:
         elif self._device_str != "cpu":
             device_map = {"": self._device_str}
 
-        # Load model
-        self._model = Gemma3ForConditionalGeneration.from_pretrained(
-            self._model_id,
-            torch_dtype=self._dtype,
-            device_map=device_map,
-            quantization_config=quantization_config,
-            low_cpu_mem_usage=True,
-            max_memory=self._max_memory,
+        # Step 1: Create empty model architecture from local config
+        # The config.json defines the correct architecture (vocab_size=262208, etc.)
+        # We skip automatic weight loading and do it manually with key remapping
+        from transformers import Gemma3Config, Gemma3TextConfig
+
+        logger.info(f"Loading Gemma3 text config from: {self._text_encoder_path}")
+        full_config = Gemma3Config.from_pretrained(
+            self._text_encoder_path,
+            local_files_only=True,
         )
 
-        # Load tokenizer
+        # Extract text config for the causal LM (ignores vision tower)
+        text_config = full_config.text_config
+
+        logger.info(
+            f"Config loaded: vocab_size={text_config.vocab_size}, "
+            f"hidden_size={text_config.hidden_size}, "
+            f"num_layers={text_config.num_hidden_layers}"
+        )
+
+        # Create text-only model from config on CPU first
+        logger.info("Creating Gemma3ForCausalLM (text-only) on CPU from config...")
+
+        # Force CPU creation to avoid GPU OOM during init
+        with torch.device("cpu"):
+            if hasattr(Gemma3ForCausalLM, "_from_config"):
+                self._model = Gemma3ForCausalLM._from_config(text_config)
+            else:
+                self._model = Gemma3ForCausalLM(text_config)
+
+        # Ensure model is on CPU and correct dtype
+        self._model = self._model.to(dtype=self._dtype)
+
+        # Step 2: Load LTX-2 weights with key remapping
+        logger.info("Loading LTX-2 Gemma weights with key remapping...")
+        state_dict = self._load_ltx2_gemma_weights()
+
+        # Step 3: Load remapped weights into model (on CPU)
+        if state_dict:
+            missing, unexpected = self._model.load_state_dict(state_dict, strict=False)
+            logger.info(
+                f"Loaded LTX-2 Gemma weights: {len(state_dict)} keys loaded, "
+                f"{len(missing)} missing, {len(unexpected)} unexpected"
+            )
+            if missing:
+                logger.warning(f"Missing keys (first 10): {missing[:10]}")
+            if unexpected:
+                logger.warning(f"Unexpected keys (first 10): {unexpected[:10]}")
+
+            # Tie weights if lm_head wasn't in checkpoint
+            if "lm_head.weight" in missing and hasattr(self._model, "tie_weights"):
+                logger.info("Tying lm_head weights to embed_tokens")
+                self._model.tie_weights()
+        else:
+            logger.error("No LTX-2 Gemma weights loaded - model has random weights!")
+            raise RuntimeError("Failed to load LTX-2 Gemma weights")
+
+        # Step 4: Move model to target device(s)
+        if device_map == "auto":
+            from accelerate import dispatch_model, infer_auto_device_map
+
+            logger.info("Computing device map for auto distribution...")
+            device_map_computed = infer_auto_device_map(
+                self._model,
+                max_memory=self._max_memory,
+                dtype=self._dtype,
+            )
+            logger.info(f"Dispatching model to devices: {set(device_map_computed.values())}")
+            self._model = dispatch_model(self._model, device_map_computed)
+        elif device_map is not None:
+            # Single device
+            device_name = (
+                list(device_map.values())[0] if isinstance(device_map, dict) else device_map
+            )
+            logger.info(f"Moving model to {device_name}...")
+            self._model = self._model.to(device=device_name)
+        # else: keep on CPU
+
+        # Apply quantization if requested
+        if quantization_config is not None:
+            logger.warning(
+                "Quantization requested but not applied during manual loading. "
+                "Model loaded in full precision."
+            )
+
+        # Load tokenizer from LOCAL LTX-2 files (AUTHORITATIVE SOURCE)
+        # Vocab size analysis (2026-01-20):
+        # - Standard Gemma base vocab: 256,000 tokens
+        # - LTX-2 model embed_tokens: 262,208 embeddings
+        # - The ~6k extra tokens are LTX-2's special tokens:
+        #   * "Thinking Tokens" for video conditioning
+        #   * BOI (Beginning of Image), EOI (End of Image) markers
+        #   * Other special markers added during joint training
+        # - HuggingFace tokenizer has DIFFERENT special tokens (vision/multimodal)
+        # - Using HF tokenizer strips/mangles LTX-2's conditioning tokens!
+        # - MUST use local tokenizer to preserve LTX-2 special token semantics
+        logger.info(f"Loading tokenizer from LOCAL path: {self._tokenizer_path}")
         self._tokenizer = AutoTokenizer.from_pretrained(
-            self._model_id,
+            self._tokenizer_path,
+            local_files_only=True,
             model_max_length=self._max_sequence_length,
         )
         self._tokenizer.padding_side = "left"  # Gemma prefers left padding
         if self._tokenizer.pad_token is None:
             self._tokenizer.pad_token = self._tokenizer.eos_token
 
-        # Initialize feature extractor projection
-        # Keep on CPU when using auto device_map - will be moved on first use
+        # Initialize and load feature extractor from checkpoint
         self._feature_extractor = FeatureExtractorLinear(dtype=self._dtype)
+        self._load_connector_weights()
+
         if self._device_str not in ("cpu", "auto"):
             self._feature_extractor = self._feature_extractor.to(
                 device=torch.device(self._device_str)
             )
+            if self._embeddings_connector is not None:
+                self._embeddings_connector = self._embeddings_connector.to(
+                    device=torch.device(self._device_str),
+                    dtype=self._dtype,  # Match encoder dtype (bfloat16)
+                )
+        else:
+            # For "auto" device, still ensure dtype is correct
+            if self._embeddings_connector is not None:
+                self._embeddings_connector = self._embeddings_connector.to(dtype=self._dtype)
 
         # Set model to mode without gradients
         self._model.requires_grad_(False)
@@ -460,6 +687,168 @@ class Gemma3Encoder:
         self._is_loaded = True
         self._is_offloaded = False
         logger.info(f"Gemma 3 encoder loaded: {self._model.device}")
+
+    def _load_connector_weights(self) -> None:
+        """
+        Load feature extractor and embeddings connector weights from checkpoint.
+
+        CRITICAL: Load from text_encoder/ shard, NOT connectors/ folder.
+        The text_encoder/ contains jointly-trained weights; connectors/ may be stale.
+
+        Shard 00011 (text_encoder/diffusion_pytorch_model-00011-of-00012.safetensors) contains:
+        - text_proj_in.weight: [3840, 188160] - feature extractor linear
+        - video_connector.*: embeddings connector weights
+        - audio_connector.*: audio connector weights (unused for video-only)
+
+        The connectors/config.json is still used for architecture parameters.
+        """
+        from safetensors import safe_open
+
+        connectors_path = Path(self._connectors_path)
+        if not connectors_path.exists():
+            logger.warning(
+                f"Connector weights not found at {connectors_path}. "
+                "Feature extractor will have random weights (BROKEN OUTPUT)."
+            )
+            return
+
+        logger.info(f"Loading connector weights from {connectors_path}")
+        logger.info("NOTE: Using text_encoder shard (jointly-trained weights)")
+
+        # Load weights from safetensors
+        with safe_open(connectors_path, framework="pt") as f:
+            # 1. Load feature extractor weight
+            if "text_proj_in.weight" in f.keys():
+                fe_weight = f.get_tensor("text_proj_in.weight")
+                # Feature extractor: [3840, 188160] -> [3840, 188160]
+                self._feature_extractor.aggregate_embed.weight.data = fe_weight.to(
+                    dtype=self._dtype
+                )
+                logger.info(
+                    f"Loaded feature extractor weight: {fe_weight.shape}, "
+                    f"mean={fe_weight.float().mean():.4f}, std={fe_weight.float().std():.4f}"
+                )
+            else:
+                logger.error(
+                    "text_proj_in.weight not found in checkpoint! "
+                    "Feature extractor will have random weights."
+                )
+
+            # 2. Create and load embeddings connector
+            if self._use_connector:
+                # Load config for connector architecture parameters
+                # Config lives in connectors/ folder, weights come from text_encoder/
+                config_path = Path(DEFAULT_CONNECTORS_CONFIG)
+                if config_path.exists():
+                    with open(config_path) as cfg_file:
+                        config = json.load(cfg_file)
+                    logger.info(f"Loaded connector config from {config_path}")
+                else:
+                    # Default config matching LTX-2
+                    logger.warning(f"Connector config not found at {config_path}, using defaults")
+                    config = {
+                        "video_connector_attention_head_dim": 128,
+                        "video_connector_num_attention_heads": 30,
+                        "video_connector_num_layers": 2,
+                        "video_connector_num_learnable_registers": 128,
+                        "rope_type": "interleaved",  # Reference uses INTERLEAVED
+                        "rope_theta": 10000.0,
+                        "rope_double_precision": False,  # Reference uses float32
+                        "connector_positional_embedding_max_pos": [1],  # Reference default
+                    }
+
+                # Create connector from config
+                self._embeddings_connector = Embeddings1DConnector.from_config(config)
+
+                # Load connector weights (video_connector.* keys in same shard)
+                load_connector_weights(
+                    self._embeddings_connector,
+                    connectors_path,
+                    prefix="video_connector.",
+                )
+                logger.info("Loaded embeddings connector weights")
+
+    def _load_ltx2_gemma_weights(self) -> dict:
+        """Load and remap Gemma weights from LTX-2 checkpoint shards.
+
+        The LTX-2 checkpoint stores weights with 'base_text_encoder.language_model.*' prefix,
+        but Gemma3ForCausalLM expects 'model.*' (without language_model level).
+
+        Key remapping:
+        - base_text_encoder.language_model.embed_tokens.weight -> model.embed_tokens.weight
+        - base_text_encoder.language_model.layers.X.* -> model.layers.X.*
+        - base_text_encoder.language_model.norm.weight -> model.norm.weight
+
+        Returns:
+            Dict of remapped state_dict keys/tensors ready for load_state_dict()
+        """
+        from safetensors import safe_open
+
+        index_path = (
+            Path(self._text_encoder_path) / "diffusion_pytorch_model.safetensors.index.json"
+        )
+        if not index_path.exists():
+            logger.error(f"Index file not found: {index_path}")
+            return {}
+
+        # Parse index to find which shards contain base_text_encoder keys
+        with open(index_path) as f:
+            index = json.load(f)
+
+        weight_map = index.get("weight_map", {})
+
+        # Find all shards that contain base_text_encoder.language_model.* keys
+        shards_to_load = set()
+        keys_to_load = []
+        for key, shard in weight_map.items():
+            if key.startswith("base_text_encoder.language_model."):
+                shards_to_load.add(shard)
+                keys_to_load.append(key)
+
+        logger.info(
+            f"Found {len(keys_to_load)} base_text_encoder.language_model keys across "
+            f"{len(shards_to_load)} shards"
+        )
+
+        # Load weights from each shard and remap keys
+        state_dict = {}
+        for shard_name in sorted(shards_to_load):
+            shard_path = Path(self._text_encoder_path) / shard_name
+            if not shard_path.exists():
+                logger.warning(f"Shard not found: {shard_path}")
+                continue
+
+            logger.debug(f"Loading shard: {shard_name}")
+            with safe_open(shard_path, framework="pt") as f:
+                for key in f.keys():
+                    if key.startswith("base_text_encoder.language_model."):
+                        # Remap: base_text_encoder.language_model.* -> model.*
+                        # Gemma3ForCausalLM expects model.* (not model.language_model.*)
+                        new_key = key.replace("base_text_encoder.language_model.", "model.", 1)
+                        tensor = f.get_tensor(key)
+                        state_dict[new_key] = tensor.to(self._dtype)
+
+        logger.info(f"Loaded and remapped {len(state_dict)} Gemma weight tensors")
+
+        # Log some statistics for verification
+        if state_dict:
+            sample_key = list(state_dict.keys())[0]
+            sample_tensor = state_dict[sample_key]
+            logger.info(
+                f"Sample key: {sample_key}, shape: {sample_tensor.shape}, "
+                f"dtype: {sample_tensor.dtype}"
+            )
+
+            # Check embed_tokens specifically (critical for tokenizer compatibility)
+            embed_key = "model.embed_tokens.weight"
+            if embed_key in state_dict:
+                embed = state_dict[embed_key]
+                logger.info(
+                    f"Embedding layer: shape={embed.shape}, "
+                    f"mean={embed.float().mean():.4f}, std={embed.float().std():.4f}"
+                )
+
+        return state_dict
 
     @property
     def info(self) -> EncoderInfo:
@@ -580,9 +969,9 @@ class Gemma3Encoder:
             )
 
         # Stack hidden states: tuple of [B, T, D] -> [B, T, D, L]
-        # Note: outputs.hidden_states includes embedding layer + decoder layers
-        # Skip embedding layer (index 0), use decoder layers only
-        hidden_states = outputs.hidden_states[1:]  # Skip embedding layer
+        # Note: outputs.hidden_states includes embedding layer (index 0) + decoder layers
+        # LTX-2 uses ALL hidden states including embedding layer: 1 + 48 = 49 layers
+        hidden_states = outputs.hidden_states  # Include embedding layer
 
         # Limit to expected number of layers (model may have different count)
         num_layers = min(len(hidden_states), GEMMA3_NUM_LAYERS)
@@ -609,6 +998,10 @@ class Gemma3Encoder:
             feature_extractor = self._feature_extractor
 
         normalized = _norm_and_concat_layers(stacked, attention_mask)
+        logger.debug(
+            f"[TEXT-ENC] After normalization: shape={list(normalized.shape)}, "
+            f"mean={normalized.float().mean():.4f}, std={normalized.float().std():.4f}"
+        )
 
         # Ensure feature extractor is on same device as data
         if feature_extractor.aggregate_embed.weight.device != normalized.device:
@@ -616,17 +1009,59 @@ class Gemma3Encoder:
 
         # Project to output dimension
         embeddings = feature_extractor(normalized)
+        logger.debug(
+            f"[TEXT-ENC] After feature extractor: shape={list(embeddings.shape)}, "
+            f"mean={embeddings.float().mean():.4f}, std={embeddings.float().std():.4f}"
+        )
 
-        # Apply attention mask
-        embeddings = embeddings * attention_mask[:, :, None].to(embeddings.dtype)
+        # Run through embeddings connector (2-layer bidirectional transformer)
+        if self._embeddings_connector is not None:
+            # Convert attention mask to additive format for connector
+            # Input mask: [B, T] with 1=valid, 0=padding
+            # Connector expects: [B, 1, 1, T] with 0=valid, -10000=padding
+            additive_mask = (1.0 - attention_mask.float()) * -10000.0
+            additive_mask = additive_mask[:, None, None, :].to(
+                embeddings.dtype
+            )  # Match embedding dtype
+
+            # Ensure connector is on same device
+            if next(self._embeddings_connector.parameters()).device != embeddings.device:
+                self._embeddings_connector = self._embeddings_connector.to(embeddings.device)
+
+            # Process through connector
+            # IMPORTANT: connector replaces padding with learnable registers
+            # After connector, ALL positions are valid (text + registers)
+            embeddings, connector_mask = self._embeddings_connector(embeddings, additive_mask)
+            logger.debug(
+                f"Connector output: shape={embeddings.shape}, "
+                f"mean={embeddings.float().mean():.4f}, std={embeddings.float().std():.4f}"
+            )
+            # Update attention mask to the connector's output (all-valid)
+            if connector_mask is not None:
+                # Convert additive mask back to binary: 0 means valid, -10000 means invalid
+                # After connector, mask should be all zeros (all valid)
+                attention_mask = (connector_mask.squeeze(1).squeeze(1) >= -9000.0).float()
 
         # Get sequence lengths for unpadding
         seq_lengths = attention_mask.sum(dim=1).tolist()
         batch_size = len(texts)
 
         # Build per-sample outputs (EncodingOutput expects List[Tensor])
-        embedding_list = [embeddings[i, :int(seq_lengths[i])] for i in range(batch_size)]
-        mask_list = [attention_mask[i, :int(seq_lengths[i])].bool() for i in range(batch_size)]
+        # After connector: ALL positions are valid (original text tokens + learnable registers)
+        # We return the full sequence, not just the original text tokens
+        embedding_list = []
+        mask_list = []
+        for i in range(batch_size):
+            # After connector, use full sequence (all positions valid)
+            if self._embeddings_connector is not None:
+                # Return full sequence - registers are meaningful
+                embedding_list.append(embeddings[i])
+                mask_list.append(attention_mask[i])
+            else:
+                # Without connector, extract only valid tokens (left-padding aware)
+                valid_mask = attention_mask[i].bool()
+                embedding_list.append(embeddings[i][valid_mask])
+                mask_list.append(valid_mask[valid_mask])
 
         return EncodingOutput(
             embeddings=embedding_list,
@@ -669,7 +1104,7 @@ class Gemma3Encoder:
 
         Note:
             For routing experiments, prefer using full/quantized Gemma3 models
-            (google/gemma-3-12b-it-qat-q4_0-unquantized), NOT distilled variants.
+            (models/LTX-2/text_encoder), NOT distilled variants.
             Distilled models may have compressed intermediate representations that
             don't represent true layer specialization.
         """
@@ -711,7 +1146,8 @@ class Gemma3Encoder:
                 )
 
             # Stack hidden states: [B, T, D, L]
-            hidden_states = outputs.hidden_states[1:]  # Skip embedding layer
+            # LTX-2 uses ALL hidden states including embedding layer: 1 + 48 = 49 layers
+            hidden_states = outputs.hidden_states  # Include embedding layer
             num_layers = min(len(hidden_states), GEMMA3_NUM_LAYERS)
             hidden_states = hidden_states[:num_layers]
             stacked = torch.stack(hidden_states, dim=-1)  # [B, T, 3840, 49]
@@ -745,18 +1181,18 @@ class Gemma3Encoder:
             seq_lengths = attention_mask.sum(dim=1).tolist()
 
             result = {
-                'layer_stack': stacked,
-                'attention_mask': attention_mask,
-                'projected': projected,
-                'seq_lengths': [int(s) for s in seq_lengths],
+                "layer_stack": stacked,
+                "attention_mask": attention_mask,
+                "projected": projected,
+                "seq_lengths": [int(s) for s in seq_lengths],
             }
 
             # Add sub-layer outputs if requested
             if extract_sub_layers and extractor is not None:
                 sub_outputs = extractor.get_stacked_outputs()
-                result['attention_stack'] = sub_outputs['attention']
-                result['mlp_stack'] = sub_outputs['mlp']
-                result['sublayer_indices'] = sub_outputs['layer_indices']
+                result["attention_stack"] = sub_outputs["attention"]
+                result["mlp_stack"] = sub_outputs["mlp"]
+                result["sublayer_indices"] = sub_outputs["layer_indices"]
 
             return result
 
@@ -764,6 +1200,146 @@ class Gemma3Encoder:
             # Always clean up hooks
             if extractor is not None:
                 extractor.unregister()
+
+    def encode_with_layer_masking(
+        self,
+        texts: Union[str, List[str]],
+        active_layers: List[int],
+        masking_mode: LayerMaskingMode = "soft",
+        return_packed: bool = True,
+    ) -> dict:
+        """
+        Encode text with layer masking for ablation experiments.
+
+        This masks inactive layers according to the specified mode, allowing
+        you to see what a single layer (or subset) contributes in isolation.
+        Useful for understanding layer specialization in Gemma3 for LTX-2.
+
+        Args:
+            texts: Input text(s) to encode.
+            active_layers: List of layer indices to keep active (0-48).
+                          Other layers will be masked according to masking_mode.
+            masking_mode: How to handle inactive layers:
+                - "soft": Replace with per-layer mean (maintains distribution)
+                - "zero": Zero out (creates OOD inputs - NOT RECOMMENDED)
+                - "weighted": Scale active layers to preserve total norm
+            return_packed: If True, return packed embeddings ready for pipeline.
+                          If False, return raw hidden states.
+
+        Returns:
+            Dict with:
+            - 'prompt_embeds': Packed embeddings for pipeline (if return_packed)
+            - 'hidden_states': Raw masked hidden states [B, T, D, L]
+            - 'attention_mask': Attention mask [B, T]
+            - 'seq_lengths': List of sequence lengths
+
+        Example:
+            # Test layer 47 in isolation
+            result = encoder.encode_with_layer_masking(
+                "A cat sleeping on a couch",
+                active_layers=[47],
+                masking_mode="soft"
+            )
+            output = pipe(prompt_embeds=result['prompt_embeds'], ...)
+
+        Note:
+            - "soft" mode is recommended as it maintains the expected input
+              distribution for the projection layer
+            - "zero" mode creates out-of-distribution inputs and may produce
+              unexpected results
+            - "weighted" scales active layers to preserve total signal magnitude
+        """
+        if not self._is_loaded:
+            self._load_model()
+
+        if self._is_offloaded:
+            self._model.to(self.device)
+            self._is_offloaded = False
+
+        if isinstance(texts, str):
+            texts = [texts]
+
+        active_set = set(active_layers)
+
+        # Tokenize
+        encoded = self._tokenizer(
+            texts,
+            padding="max_length",
+            max_length=self._max_sequence_length,
+            truncation=True,
+            return_tensors="pt",
+        )
+        input_ids = encoded.input_ids.to(self.device)
+        attention_mask = encoded.attention_mask.to(self.device)
+
+        # Forward pass with all hidden states
+        with torch.no_grad():
+            outputs = self._model(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                output_hidden_states=True,
+                return_dict=True,
+            )
+
+        # Stack hidden states: [B, T, D, L]
+        # LTX-2 uses ALL hidden states including embedding layer (index 0)
+        # This gives 49 layers: embedding layer + 48 decoder layers = 188160 dims
+        hidden_states_list = outputs.hidden_states[:GEMMA3_NUM_LAYERS]
+        hidden_states = torch.stack(hidden_states_list, dim=-1)
+        num_layers = hidden_states.shape[-1]  # Actual number of layers stacked
+
+        # Apply masking based on mode
+        if masking_mode == "soft":
+            # Soft masking: Replace inactive layers with per-layer mean
+            # Maintains expected input distribution for projection W
+            for layer_idx in range(num_layers):
+                if layer_idx not in active_set:
+                    layer_mean = hidden_states[:, :, :, layer_idx].mean(dim=1, keepdim=True)
+                    hidden_states[:, :, :, layer_idx] = layer_mean
+
+        elif masking_mode == "zero":
+            # Zero masking: Creates OOD inputs (not recommended)
+            for layer_idx in range(num_layers):
+                if layer_idx not in active_set:
+                    hidden_states[:, :, :, layer_idx] = 0.0
+
+        elif masking_mode == "weighted":
+            # Weighted masking: Scale active layers to preserve total norm
+            num_active = len(active_layers)
+            scale = num_layers / num_active if num_active > 0 else 1.0
+
+            for layer_idx in range(num_layers):
+                if layer_idx in active_set:
+                    hidden_states[:, :, :, layer_idx] *= scale
+                else:
+                    hidden_states[:, :, :, layer_idx] = 0.0
+
+        else:
+            raise ValueError(f"Unknown masking_mode: {masking_mode}")
+
+        seq_lengths = attention_mask.sum(dim=1).tolist()
+
+        result = {
+            "hidden_states": hidden_states,
+            "attention_mask": attention_mask,
+            "seq_lengths": [int(s) for s in seq_lengths],
+            "active_layers": active_layers,
+            "masking_mode": masking_mode,
+        }
+
+        # Pack for pipeline if requested
+        # Use _norm_and_concat_layers which matches diffusers' normalization:
+        # normalized = 8 * (x - mean) / (max - min)
+        # This preserves layer masking information, unlike L2 normalization
+        if return_packed:
+            packed = _norm_and_concat_layers(
+                hidden_states,
+                attention_mask,
+                padding_side=self._tokenizer.padding_side,
+            )
+            result["prompt_embeds"] = packed
+
+        return result
 
     def encode_image(
         self,
@@ -852,7 +1428,7 @@ class Gemma3Encoder:
             )
 
         # Decode only new tokens
-        generated_ids = outputs[0, input_ids.shape[1]:]
+        generated_ids = outputs[0, input_ids.shape[1] :]
         generated_text = self._tokenizer.decode(generated_ids, skip_special_tokens=True)
 
         return generated_text.strip()
@@ -863,6 +1439,8 @@ class Gemma3Encoder:
             self._model.to("cpu")
         if self._feature_extractor is not None:
             self._feature_extractor.to("cpu")
+        if self._embeddings_connector is not None:
+            self._embeddings_connector.to("cpu")
         self._is_offloaded = True
 
         gc.collect()
@@ -877,7 +1455,9 @@ class Gemma3Encoder:
             self._model.to(device)
         if self._feature_extractor is not None:
             self._feature_extractor.to(device)
-        self._is_offloaded = (device.type == "cpu")
+        if self._embeddings_connector is not None:
+            self._embeddings_connector.to(device)
+        self._is_offloaded = device.type == "cpu"
         return self
 
 

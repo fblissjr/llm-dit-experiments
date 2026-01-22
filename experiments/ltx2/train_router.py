@@ -62,6 +62,7 @@ GEMMA_NUM_LAYERS = 49
 def load_router():
     """Load the TokenLayerRouter."""
     from llm_dit.router import TokenLayerRouter
+
     return TokenLayerRouter(
         hidden_dim=GEMMA_HIDDEN_DIM,
         num_layers=GEMMA_NUM_LAYERS,
@@ -82,9 +83,10 @@ def load_text_encoder(model_path: str = "models/LTX-2"):
     # The text encoder is inside the LTX-2 pipeline
     # For training the router, we need direct access to hidden states
     from diffusers import LTX2Pipeline
+
     pipe = LTX2Pipeline.from_pretrained(
         model_path,
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
     )
 
     # Extract components
@@ -135,15 +137,14 @@ def get_token_embeddings(
 class RouterTrainer:
     """Training loop for TokenLayerRouter.
 
-    This is a scaffold - the actual reward computation requires generation
-    which is slow. For prototyping, you can:
+    Training strategy:
+    1. Pre-compute layer contributions using layer_contribution_analysis.py
+    2. Use contributions as proxy reward (fast, no generation needed)
+    3. Router learns to assign more weight to high-contribution layers
 
-    1. Pre-compute: Run layer_blend_sweep first, cache (token_embeds, siglip_scores)
-       pairs for different layer configs, then train router as a regressor.
-
-    2. Online: Generate images during training (very slow, but most accurate).
-
-    3. Proxy reward: Use a faster proxy metric during training, validate with SigLIP.
+    Alternative approaches (slower but more accurate):
+    - Online: Generate videos during training with SigLIP scoring
+    - Learned reward: Train a model to predict SigLIP from layer weights
     """
 
     def __init__(
@@ -154,6 +155,7 @@ class RouterTrainer:
         router_input_mode: RouterInputMode = "mean",
         learning_rate: float = 1e-4,
         sparsity_weight: float = 0.01,
+        layer_contributions_path: str | None = None,
         device: str = "cuda",
     ):
         self.router_input_mode = router_input_mode
@@ -165,9 +167,60 @@ class RouterTrainer:
         self.optimizer = AdamW(router.parameters(), lr=learning_rate)
         self.sparsity_weight = sparsity_weight
 
+        # Load pre-computed layer contributions for proxy reward
+        self.layer_contributions = None
+        if layer_contributions_path:
+            self._load_layer_contributions(layer_contributions_path)
+
         # Optional sparsity loss
         from llm_dit.router.token_layer_router import SparsityLoss
+
         self.sparsity_loss = SparsityLoss(target_sparsity=8.0, loss_weight=sparsity_weight)
+
+    def _load_layer_contributions(self, path: str):
+        """Load pre-computed layer contribution weights."""
+        import json
+
+        logger.info(f"Loading layer contributions from {path}")
+
+        with open(path) as f:
+            data = json.load(f)
+
+        # Handle multiple formats:
+        # 1. contribution_weights (flat dict): {"0": 0.2, "1": 0.18, ...}
+        # 2. layer_contributions (nested dict): {"0": {"mean_score": 0.2, ...}, ...}
+        # 3. Direct weights file: {"0": 0.2, ...}
+
+        if "contribution_weights" in data:
+            # Preferred format: flat dict of normalized weights
+            weights = data["contribution_weights"]
+        elif "layer_contributions" in data:
+            # Full results file: extract mean score/delta from nested dict
+            layer_contribs = data["layer_contributions"]
+            # Determine the metric name based on mode
+            mode = data.get("metadata", {}).get("mode", "ablation")
+            metric_key = "mean_score" if mode == "isolation" else "mean_delta"
+            weights = {
+                k: v[metric_key] if isinstance(v, dict) else v for k, v in layer_contribs.items()
+            }
+        else:
+            # Assume direct weights format
+            weights = data
+
+        # Convert to tensor [L]
+        num_layers = GEMMA_NUM_LAYERS
+        contribution_tensor = torch.zeros(num_layers)
+        for layer_idx, weight in weights.items():
+            # Handle both flat values and nested dicts
+            if isinstance(weight, dict):
+                # Try to extract numeric value from dict
+                value = weight.get("mean_score", weight.get("mean_delta", 0.0))
+            else:
+                value = weight
+            contribution_tensor[int(layer_idx)] = float(value)
+
+        self.layer_contributions = contribution_tensor
+        logger.info(f"Loaded contributions for {len(weights)} layers")
 
     def compute_reward(
         self,
@@ -176,20 +229,14 @@ class RouterTrainer:
     ) -> torch.Tensor:
         """Compute reward for router outputs.
 
-        This is the key function to implement. Options:
+        Uses pre-computed layer contribution scores as a fast proxy reward.
+        The reward is the weighted sum of layer contributions, where the weights
+        come from the router output.
 
-        1. Full generation + SigLIP (slow but accurate):
-           - Generate video with weighted layers
-           - Score with SigLIP
-           - Return as reward
+        Reward = sum(router_weights * layer_contribution_scores)
 
-        2. Proxy reward (fast but approximate):
-           - Use pre-computed layer contribution scores
-           - Reward = sum(weights * layer_contribution_scores)
-
-        3. Learned reward model:
-           - Train a small model to predict SigLIP from layer weights
-           - Use as fast proxy during training
+        This approximates the true reward (SigLIP score) without requiring
+        expensive video generation during training.
 
         Args:
             prompts: List of text prompts
@@ -198,10 +245,36 @@ class RouterTrainer:
         Returns:
             rewards: [B] tensor of rewards (higher is better)
         """
-        # TODO: Implement reward computation
-        # For now, return dummy rewards for scaffolding
-        batch_size = len(prompts)
-        return torch.zeros(batch_size, device=self.device)
+        if self.layer_contributions is None:
+            # No pre-computed contributions - return uniform baseline
+            # This allows training to start but won't learn meaningful routing
+            logger.warning(
+                "No layer contributions loaded. Using uniform reward. "
+                "Run layer_contribution_analysis.py first for meaningful training."
+            )
+            batch_size = len(prompts)
+            return torch.ones(batch_size, device=self.device)
+
+        # Get contribution scores as tensor [L]
+        contributions = self.layer_contributions.to(self.device)
+
+        # Compute reward as weighted sum of contributions
+        # layer_weights: [B, T, L] - router output per token
+        # contributions: [L] - how much each layer helps
+
+        # Average over tokens to get per-sample layer usage [B, L]
+        mean_weights = layer_weights.mean(dim=1)
+
+        # Reward = dot product of usage with contribution
+        # Higher reward if router assigns more weight to high-contribution layers
+        rewards = (mean_weights * contributions).sum(dim=-1)  # [B]
+
+        # Optionally add diversity bonus to prevent collapse
+        # Entropy encourages exploring different routing patterns
+        entropy = -(layer_weights * (layer_weights + 1e-8).log()).sum(dim=-1).mean(dim=-1)
+        diversity_bonus = 0.1 * entropy  # Small bonus for exploration
+
+        return rewards + diversity_bonus
 
     def train_step(
         self,
@@ -263,12 +336,15 @@ class RouterTrainer:
     def save_checkpoint(self, path: Path, epoch: int, stats: dict):
         """Save training checkpoint."""
         path.parent.mkdir(parents=True, exist_ok=True)
-        torch.save({
-            "epoch": epoch,
-            "router_state_dict": self.router.state_dict(),
-            "optimizer_state_dict": self.optimizer.state_dict(),
-            "stats": stats,
-        }, path)
+        torch.save(
+            {
+                "epoch": epoch,
+                "router_state_dict": self.router.state_dict(),
+                "optimizer_state_dict": self.optimizer.state_dict(),
+                "stats": stats,
+            },
+            path,
+        )
         logger.info(f"Saved checkpoint to {path}")
 
     def load_checkpoint(self, path: Path) -> int:
@@ -282,7 +358,7 @@ class RouterTrainer:
 
 def load_prompts(quick: bool = False) -> list[str]:
     """Load training prompts."""
-    from experiments.ltx2.prompts import get_all_prompts
+    from llm_dit.data import get_all_prompts
 
     prompts_dict = get_all_prompts(quick=quick)
     return list(prompts_dict.values())
@@ -294,7 +370,9 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--model-path", default="models/LTX-2", help="Path to LTX-2 model")
-    parser.add_argument("--output-dir", default="experiments/results/router_training", help="Output directory")
+    parser.add_argument(
+        "--output-dir", default="experiments/results/router_training", help="Output directory"
+    )
     parser.add_argument("--epochs", type=int, default=10, help="Number of epochs")
     parser.add_argument("--batch-size", type=int, default=4, help="Batch size")
     parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate")
@@ -305,11 +383,18 @@ def main():
         default="mean",
         choices=["layer_0", "layer_24", "layer_47", "layer_48", "mean", "attention", "mlp"],
         help="Which layer(s) to use as router input. Default: mean (all layers averaged). "
-             "attention/mlp modes require SubLayerExtractor hooks."
+        "attention/mlp modes require SubLayerExtractor hooks.",
     )
     parser.add_argument("--quick", action="store_true", help="Quick test mode")
     parser.add_argument("--resume", type=str, help="Resume from checkpoint")
     parser.add_argument("--device", default="cuda", help="Device")
+    parser.add_argument(
+        "--layer-contributions",
+        type=str,
+        default=None,
+        help="Path to layer_contributions.json or layer_weights.json from layer_contribution_analysis.py. "
+        "Required for meaningful training - provides proxy reward signal.",
+    )
 
     args = parser.parse_args()
 
@@ -338,6 +423,7 @@ def main():
         router_input_mode=args.router_input_mode,
         learning_rate=args.lr,
         sparsity_weight=args.sparsity_weight,
+        layer_contributions_path=args.layer_contributions,
         device=args.device,
     )
     logger.info(f"Router input mode: {args.router_input_mode}")
@@ -360,7 +446,7 @@ def main():
         # Simple batching
         epoch_stats = []
         for i in range(0, len(prompts), args.batch_size):
-            batch_prompts = prompts[i:i + args.batch_size]
+            batch_prompts = prompts[i : i + args.batch_size]
             stats = trainer.train_step(batch_prompts)
             epoch_stats.append(stats)
 
@@ -373,8 +459,7 @@ def main():
 
         # Epoch summary
         avg_stats = {
-            k: sum(s[k] for s in epoch_stats) / len(epoch_stats)
-            for k in epoch_stats[0].keys()
+            k: sum(s[k] for s in epoch_stats) / len(epoch_stats) for k in epoch_stats[0].keys()
         }
         all_stats.append({"epoch": epoch + 1, **avg_stats})
 

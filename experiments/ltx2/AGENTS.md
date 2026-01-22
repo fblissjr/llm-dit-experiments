@@ -1,6 +1,19 @@
-# Experiments Agent Context
+# LTX-2 Experiments Agent Context
 
-Last updated: 2026-01-16
+*last updated: 2026-01-17*
+
+---
+
+## research status legend
+
+| Symbol | Status | Meaning |
+|--------|--------|---------|
+| ✅ | **Validated** | Confirmed through experiments or architecture analysis |
+| 🔬 | **Open** | Hypothesis needs testing or re-testing |
+| ⚠️ | **Needs Verification** | Previous results may have bugs |
+| 🚫 | **Dead-End** | Tested, doesn't work |
+
+**Consolidated findings:** [docs/findings/](docs/findings/)
 
 ---
 
@@ -25,10 +38,19 @@ TEST_PROMPTS = get_all_prompts(quick=True)  # 5 prompts for fast testing
 
 ## Quick Links
 
+**Navigation:**
+- **[../AGENTS.md](../AGENTS.md)** - Parent navigation (all experiments)
+- **[docs/findings/](docs/findings/)** - Consolidated research findings with status
+
+**Prompts:**
 - **Prompts Module**: [prompts.py](prompts.py) - ALL experiment prompts (MUST USE)
 - **Prompting Fix Summary**: [prompting_fix_summary.md](prompting_fix_summary.md) - Why prompts changed
 - **LTX-2 Prompting Guide**: [prompting_guide.md](prompting_guide.md) - Format requirements
-- **Official Repo Analysis**: `internal/research/ltx2/official_repo_analysis.md` - Infrastructure we discovered in the official LTX-2 repo
+
+**Research:**
+- **[docs/findings/apollo_analysis.md](docs/findings/apollo_analysis.md)** - Apollo paper insights
+- **[docs/findings/research_synthesis.md](docs/findings/research_synthesis.md)** - Consolidated research status
+- `internal/research/ltx2/` - Working research notes
 
 ## Directory Structure
 
@@ -45,7 +67,8 @@ experiments/
 │   ├── analyze_projection_matrix.py    # Zero-cost W analysis
 │   ├── analyze_projection_deeper.py    # Activation-weighted contribution
 │   ├── thinking_token_analysis.py      # Register token analysis
-│   └── dimension_analysis.py
+│   ├── dimension_analysis.py
+│   └── chunk_boundary_analysis.py      # VAE temporal chunk boundary hypothesis test
 ├── metrics/                 # Scoring modules
 │   ├── siglip_score.py      # SigLIP2 text-image alignment (local models supported)
 │   └── image_reward.py      # Human preference alignment
@@ -79,16 +102,16 @@ LTX-2 does NOT use Gemma-3 as a traditional text encoder (final layer only). Ins
 │  Embedding layer                                                    │
 │         ↓                                                           │
 │  ┌─────────────────────────────────────────────────────────────┐   │
-│  │  49 Transformer Layers (output_hidden_states=True)          │   │
+│  │  48 Transformer Layers + Embedding (output_hidden_states=True) │   │
 │  │                                                             │   │
 │  │  Layer 0  → hidden_state_0  [B, T, 3840]  (embeddings)     │   │
-│  │  Layer 1  → hidden_state_1  [B, T, 3840]                   │   │
+│  │  Layer 1  → hidden_state_1  [B, T, 3840]  (transformer 1)  │   │
 │  │  ...                                                        │   │
 │  │  Layer 47 → hidden_state_47 [B, T, 3840]  (low norm!)      │   │
-│  │  Layer 48 → hidden_state_48 [B, T, 3840]  (final)          │   │
+│  │  Layer 48 → hidden_state_48 [B, T, 3840]  (final output)   │   │
 │  └─────────────────────────────────────────────────────────────┘   │
 │                                                                     │
-│  Output: tuple of 49 hidden states                                  │
+│  Output: tuple of 49 hidden states (ALL are used, including embeddings)
 └─────────────────────────────────────────────────────────────────────┘
                               ↓
                     torch.stack(dim=-1)
@@ -254,35 +277,12 @@ Key parameters:
 
 ---
 
-## Key Research Finding: Layer Contribution Analysis
+## Research Findings
 
-### The Deeper Analysis (analyze_projection_deeper.py)
+See **[docs/findings/](docs/findings/)** for consolidated research with status tracking:
 
-Initial analysis of projection W showed uniform Frobenius norms (~2% variation). Deeper analysis revealed:
-
-1. **Projection W is nearly uniform** - each layer block has similar weight magnitude
-2. **Hidden state magnitudes vary dramatically** - late layers have much higher norms
-3. **When accounting for activations** (`||W_layer @ h_layer||`):
-
-| Rank | Layer | Contribution |
-|------|-------|--------------|
-| 1 | Layer 45 | **5.60%** |
-| 2 | Layer 46 | **5.42%** |
-| 3 | Layer 47 | **5.03%** |
-| 4 | Layer 44 | **4.98%** |
-| 5 | Layer 43 | **4.75%** |
-| ... | ... | ... |
-| 49 | Layer 0 | **0.00%** |
-
-**Key insight**: Late layers (43-47) contribute ~25% of signal. Early layers (0-4) contribute <1%.
-
-**Layer 48 (final) is paradoxically low (0.02%)** - possibly LM head prediction layer, not semantic.
-
-### Implications for Experiments
-
-- **Layer blending should focus on layers 40-47** for maximum impact
-- **Early layers can likely be downweighted/excluded** with minimal effect
-- **Uniform W suggests** layer importance comes from Gemma activations, not learned projection
+- [apollo_analysis.md](docs/findings/apollo_analysis.md) - Apollo paper transfer analysis
+- [research_synthesis.md](docs/findings/research_synthesis.md) - All findings with ✅/🔬/⚠️/🚫 status
 
 ---
 

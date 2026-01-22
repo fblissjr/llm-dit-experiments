@@ -183,7 +183,7 @@ def encode_and_save(
     templates_dir: str | Path | None = None,
     template: str | None = None,
     enable_thinking: bool = True,
-    torch_dtype: torch.dtype = torch.bfloat16,
+    dtype: torch.dtype = torch.bfloat16,
 ) -> Path:
     """
     Encode a prompt and save embeddings for later use.
@@ -198,7 +198,7 @@ def encode_and_save(
         templates_dir: Path to templates
         template: Template name to use
         enable_thinking: Whether to enable thinking tags
-        torch_dtype: Model dtype
+        dtype: Model dtype
 
     Returns:
         Path to saved embeddings file
@@ -221,7 +221,7 @@ def encode_and_save(
     encoder = ZImageTextEncoder.from_pretrained(
         model_path,
         templates_dir=templates_dir,
-        torch_dtype=torch_dtype,
+        dtype=dtype,
     )
 
     logger.info(f"Encoding: {prompt[:50]}...")

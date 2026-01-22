@@ -65,6 +65,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class TestResult:
     """Results from a single DyPE test."""
+
     resolution: str
     method: str
     dype_enabled: bool
@@ -151,9 +152,9 @@ def test_resolution(
     images = []
     labels = []
 
-    logger.info(f"\n{'='*60}")
+    logger.info(f"\n{'=' * 60}")
     logger.info(f"Testing resolution: {resolution_name} ({width}x{height})")
-    logger.info(f"{'='*60}\n")
+    logger.info(f"{'=' * 60}\n")
 
     # 1. Baseline (no DyPE)
     logger.info("Testing baseline (DyPE disabled)...")
@@ -170,16 +171,18 @@ def test_resolution(
     img.save(img_path)
     logger.info(f"  Time: {gen_time:.1f}s, Peak VRAM: {peak_vram:.2f} GB")
 
-    results.append(TestResult(
-        resolution=resolution_name,
-        method="baseline",
-        dype_enabled=False,
-        multipass=False,
-        generation_time=gen_time,
-        peak_vram=peak_vram,
-        image_path=img_path,
-        seed=seed,
-    ))
+    results.append(
+        TestResult(
+            resolution=resolution_name,
+            method="baseline",
+            dype_enabled=False,
+            multipass=False,
+            generation_time=gen_time,
+            peak_vram=peak_vram,
+            image_path=img_path,
+            seed=seed,
+        )
+    )
     images.append(img)
     labels.append(f"Baseline\n{gen_time:.1f}s")
 
@@ -208,16 +211,18 @@ def test_resolution(
         img.save(img_path)
         logger.info(f"  Time: {gen_time:.1f}s, Peak VRAM: {peak_vram:.2f} GB")
 
-        results.append(TestResult(
-            resolution=resolution_name,
-            method=method,
-            dype_enabled=True,
-            multipass=False,
-            generation_time=gen_time,
-            peak_vram=peak_vram,
-            image_path=img_path,
-            seed=seed,
-        ))
+        results.append(
+            TestResult(
+                resolution=resolution_name,
+                method=method,
+                dype_enabled=True,
+                multipass=False,
+                generation_time=gen_time,
+                peak_vram=peak_vram,
+                image_path=img_path,
+                seed=seed,
+            )
+        )
         images.append(img)
         labels.append(f"DyPE {method}\n{gen_time:.1f}s")
 
@@ -265,16 +270,18 @@ def test_resolution(
         logger.info(f"  Pass 2: {gen_time_2:.1f}s ({width}x{height})")
         logger.info(f"  Total: {total_time:.1f}s, Peak VRAM: {max_vram:.2f} GB")
 
-        results.append(TestResult(
-            resolution=resolution_name,
-            method="vision_yarn",
-            dype_enabled=True,
-            multipass=True,
-            generation_time=total_time,
-            peak_vram=max_vram,
-            image_path=img_path,
-            seed=seed,
-        ))
+        results.append(
+            TestResult(
+                resolution=resolution_name,
+                method="vision_yarn",
+                dype_enabled=True,
+                multipass=True,
+                generation_time=total_time,
+                peak_vram=max_vram,
+                image_path=img_path,
+                seed=seed,
+            )
+        )
         images.append(img_final)
         labels.append(f"Multipass\n{total_time:.1f}s")
 
@@ -294,28 +301,32 @@ def save_results_csv(results: list[TestResult], output_path: Path):
 
     with open(output_path, "w", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow([
-            "resolution",
-            "method",
-            "dype_enabled",
-            "multipass",
-            "generation_time",
-            "peak_vram_gb",
-            "image_path",
-            "seed",
-        ])
+        writer.writerow(
+            [
+                "resolution",
+                "method",
+                "dype_enabled",
+                "multipass",
+                "generation_time",
+                "peak_vram_gb",
+                "image_path",
+                "seed",
+            ]
+        )
 
         for result in results:
-            writer.writerow([
-                result.resolution,
-                result.method,
-                result.dype_enabled,
-                result.multipass,
-                f"{result.generation_time:.2f}",
-                f"{result.peak_vram:.2f}",
-                result.image_path,
-                result.seed,
-            ])
+            writer.writerow(
+                [
+                    result.resolution,
+                    result.method,
+                    result.dype_enabled,
+                    result.multipass,
+                    f"{result.generation_time:.2f}",
+                    f"{result.peak_vram:.2f}",
+                    result.image_path,
+                    result.seed,
+                ]
+            )
 
 
 def save_results_summary(results: list[TestResult], output_path: Path):
@@ -323,7 +334,7 @@ def save_results_summary(results: list[TestResult], output_path: Path):
     with open(output_path, "w") as f:
         f.write(f"DyPE Test Results\n")
         f.write(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-        f.write(f"{'='*80}\n\n")
+        f.write(f"{'=' * 80}\n\n")
 
         # Group by resolution
         by_resolution = {}
@@ -334,7 +345,7 @@ def save_results_summary(results: list[TestResult], output_path: Path):
 
         for resolution, res_results in sorted(by_resolution.items()):
             f.write(f"\n{resolution}\n")
-            f.write(f"{'-'*80}\n")
+            f.write(f"{'-' * 80}\n")
 
             for result in res_results:
                 label = f"{result.method}"
@@ -343,10 +354,12 @@ def save_results_summary(results: list[TestResult], output_path: Path):
                 if not result.dype_enabled:
                     label = "Baseline"
 
-                f.write(f"  {label:20s}: {result.generation_time:6.1f}s, "
-                       f"VRAM: {result.peak_vram:5.2f} GB\n")
+                f.write(
+                    f"  {label:20s}: {result.generation_time:6.1f}s, "
+                    f"VRAM: {result.peak_vram:5.2f} GB\n"
+                )
 
-        f.write(f"\n{'='*80}\n")
+        f.write(f"\n{'=' * 80}\n")
         f.write(f"\nNotes:\n")
         f.write(f"  - Baseline: No DyPE (standard RoPE)\n")
         f.write(f"  - vision_yarn: Vision YaRN with dual mask blending\n")
@@ -424,10 +437,10 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
 
     logger.info(f"DyPE Test Suite")
-    logger.info(f"{'='*60}")
+    logger.info(f"{'=' * 60}")
     logger.info(f"Output: {output_dir}")
     logger.info(f"Seed: {args.seed}")
-    logger.info(f"{'='*60}\n")
+    logger.info(f"{'=' * 60}\n")
 
     # Load config
     if args.config:
@@ -450,11 +463,12 @@ def main():
 
     if runtime_config:
         from llm_dit.startup import create_pipeline
+
         pipe = create_pipeline(runtime_config, model_type="zimage")
     else:
         pipe = ZImagePipeline.from_pretrained(
             model_path,
-            torch_dtype=torch.bfloat16,
+            dtype=torch.bfloat16,
         )
 
     logger.info(f"Pipeline loaded in {time.time() - start:.1f}s\n")
@@ -479,10 +493,7 @@ def main():
     all_results = []
 
     for width, height, resolution_name in resolutions:
-        test_multipass = (
-            args.multipass_only or
-            (not args.quick and width >= 4096)
-        )
+        test_multipass = args.multipass_only or (not args.quick and width >= 4096)
 
         results = test_resolution(
             pipe=pipe,
@@ -503,9 +514,9 @@ def main():
     logger.info(f"  CSV: {output_dir / 'results.csv'}")
     logger.info(f"  Summary: {output_dir / 'summary.txt'}")
 
-    logger.info(f"\n{'='*60}")
+    logger.info(f"\n{'=' * 60}")
     logger.info(f"Test complete. Results saved to: {output_dir}")
-    logger.info(f"{'='*60}\n")
+    logger.info(f"{'=' * 60}\n")
 
     return 0
 

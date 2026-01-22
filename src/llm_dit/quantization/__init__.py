@@ -51,6 +51,12 @@ from .vae_utils import (
     estimate_vae_vram,
     get_vae_quant_info,
 )
+from .fp8_native import (
+    apply_fp8_native,
+    estimate_memory_savings,
+    verify_fp8_applied,
+    ALLOWLIST_SUFFIXES,
+)
 
 __all__ = [
     # Config
@@ -79,4 +85,9 @@ __all__ = [
     "quantize_vae",
     "estimate_vae_vram",
     "get_vae_quant_info",
+    # Native FP8 (official LTX-2 approach)
+    "apply_fp8_native",
+    "estimate_memory_savings",
+    "verify_fp8_applied",
+    "ALLOWLIST_SUFFIXES",
 ]
