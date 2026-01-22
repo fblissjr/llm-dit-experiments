@@ -457,7 +457,11 @@ def run_qwen_image_t2i_generation(args, config, logger) -> int:
 
 def run_ltx2_generation(args, config, logger) -> int:
     """
-    Run LTX-2 video generation.
+    Run LTX-2 video generation using pure PyTorch pipeline.
+
+    This implementation uses the pure PyTorch generate_video_with_offloading() function
+    which correctly handles FP8 quantization and dtype management, avoiding the dtype
+    mismatch errors in the diffusers wrapper.
 
     Args:
         args: Parsed CLI arguments
@@ -467,6 +471,11 @@ def run_ltx2_generation(args, config, logger) -> int:
     Returns:
         Exit code (0 for success)
     """
+    from llm_dit.pipelines.generate import (
+        GenerationConfig as LTXConfig,
+        generate_video_with_offloading,
+    )
+
     # Validate model path
     model_path = config.ltx2_model_path
     if not model_path:
@@ -475,201 +484,111 @@ def run_ltx2_generation(args, config, logger) -> int:
         )
         return 1
 
-    # Import LTX2Pipeline
-    try:
-        from llm_dit.pipelines.ltx2 import LTX2Pipeline, VideoOutput
-    except ImportError as e:
-        logger.error(f"Failed to import LTX2Pipeline: {e}")
-        logger.error("Ensure diffusers>=0.32.0 is installed.")
-        return 1
-
     # Get parameters from config
-    encoder_model_id = config.ltx2_encoder_model_id
     num_frames = config.ltx2_num_frames
     fps = config.ltx2_fps
     guidance_scale = config.ltx2_guidance_scale
-    steps = config.ltx2_steps
-    lora_path = config.ltx2_lora_path
-    lora_scale = config.ltx2_lora_scale
-    offload_mode = config.ltx2_offload_mode
-    audio_enabled = config.ltx2_audio
-
-    # Output path: prefer --ltx2-output, fall back to --output
+    steps = config.ltx2_steps or 12  # Default for distilled model
+    width = config.width or 768
+    height = config.height or 512
+    seed = getattr(args, "seed", None)
     output_path = getattr(config, "ltx2_output_path", None) or args.output or "output.mp4"
 
-    # Use general --width/--height args (landscape default for video: 768x512)
-    width = config.width if config.width else 768
-    height = config.height if config.height else 512
-
-    # Get seed
-    seed = getattr(args, "seed", None)
-
     logger.info("=" * 60)
-    logger.info("LTX-2 VIDEO GENERATION")
+    logger.info("LTX-2 VIDEO GENERATION (Pure PyTorch)")
     logger.info("=" * 60)
     logger.info(f"  Model: {model_path}")
-    logger.info(f"  Encoder: {encoder_model_id}")
     logger.info(f"  Resolution: {width}x{height}")
     logger.info(f"  Frames: {num_frames} @ {fps} FPS")
-    logger.info(f"  Steps: {steps or 'auto (12 for distilled)'}")
+    logger.info(f"  Steps: {steps}")
     logger.info(f"  Guidance: {guidance_scale}")
-    logger.info(f"  Offload: {offload_mode}")
-    if lora_path:
-        logger.info(f"  LoRA: {lora_path} (scale={lora_scale})")
-    logger.info(f"  Audio: {audio_enabled}")
     logger.info(f"  Output: {output_path}")
     if seed is not None:
         logger.info(f"  Seed: {seed}")
     logger.info("-" * 60)
 
-    # Load pipeline
-    logger.info("Loading LTX-2 pipeline...")
-    start_load = time.time()
-
-    try:
-        model_dir = Path(model_path).expanduser()
-
-        # Check if this is a full HuggingFace directory (has model_index.json)
-        # If so, prefer from_pretrained() which reads configs properly
-        model_index_path = model_dir / "model_index.json"
-        if model_index_path.exists():
-            logger.info(f"Found model_index.json - using from_pretrained()")
-            logger.info("Note: Using sequential CPU offload (layer-by-layer)")
-            logger.info("  This is slower (~4s/step) but fits in 24GB VRAM")
-            pipeline = LTX2Pipeline.from_pretrained(
-                str(model_dir),
-                dtype=torch.bfloat16,
-                enable_cpu_offload=(offload_mode != "none"),
-                fast_mode=False,  # Use reliable sequential offload
-            )
-        else:
-            # No model_index.json - try single file loading
-            # Auto-detect local text_encoder if available
-            local_encoder_path = model_dir / "text_encoder"
-            if local_encoder_path.exists() and local_encoder_path.is_dir():
-                logger.info(f"Found local text encoder: {local_encoder_path}")
-                encoder_model_id = str(local_encoder_path)
-
-            # Check for common checkpoint file names
-            checkpoint_patterns = [
-                "ltx-2-19b-distilled-fp8.safetensors",
-                "ltx-2-19b-dev-fp8.safetensors",
-                "ltx-2-19b-dev-fp4.safetensors",
-                "ltx-2-19b-dev.safetensors",
-            ]
-
-            checkpoint_file = None
-            for pattern in checkpoint_patterns:
-                candidate = model_dir / pattern
-                if candidate.exists():
-                    checkpoint_file = str(candidate)
-                    break
-
-            if checkpoint_file:
-                logger.info(f"Loading from checkpoint: {checkpoint_file}")
-                logger.info("Note: Using sequential CPU offload (layer-by-layer)")
-                logger.info("  This is slower (~4s/step) but fits in 24GB VRAM")
-                pipeline = LTX2Pipeline.from_single_file(
-                    checkpoint_file,
-                    encoder_model_id=encoder_model_id,
-                    dtype=torch.bfloat16,
-                    enable_cpu_offload=(offload_mode != "none"),
-                )
-            else:
-                # Try HuggingFace format
-                logger.info(f"Loading from directory: {model_path}")
-                logger.info("Note: Using sequential CPU offload (layer-by-layer)")
-                logger.info("  This is slower (~4s/step) but fits in 24GB VRAM")
-                pipeline = LTX2Pipeline.from_pretrained(
-                    model_path,
-                    dtype=torch.bfloat16,
-                    enable_cpu_offload=(offload_mode != "none"),
-                    fast_mode=False,  # Use reliable sequential offload
-                )
-
-    except Exception as e:
-        logger.error(f"Failed to load LTX-2 pipeline: {e}")
-        import traceback
-
-        traceback.print_exc()
-        return 1
-
-    load_time = time.time() - start_load
-    logger.info(f"Pipeline loaded in {load_time:.1f}s")
-
-    # Load LoRA if configured
-    if lora_path:
-        try:
-            pipeline.load_lora(lora_path, scale=lora_scale)
-            logger.info(f"LoRA loaded: {lora_path}")
-        except Exception as e:
-            logger.warning(f"Failed to load LoRA: {e}")
-
-    # Generate video
-    prompt = args.prompt
-    negative_prompt = (
-        getattr(args, "negative_prompt", None)
-        or "worst quality, blurry, distorted, inconsistent motion"
+    # Create config for pure PyTorch pipeline
+    ltx_config = LTXConfig(
+        num_frames=num_frames,
+        height=height,
+        width=width,
+        num_inference_steps=steps,
+        guidance_scale=guidance_scale,
+        seed=seed,
     )
 
-    # Clear CUDA cache before generation to maximize available VRAM
-    import gc
+    # Progress callback
+    def progress_callback(stage: str, step: int, total: int):
+        if step == 0:
+            logger.info(f"Stage: {stage}...")
+        elif step == total:
+            logger.info(f"  {stage} complete")
 
-    gc.collect()
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-        free_mem = torch.cuda.mem_get_info()[0] / 1e9
-        logger.info(f"VRAM available before generation: {free_mem:.1f}GB")
-
-    logger.info(f"Generating video for: {prompt[:80]}...")
-    start_gen = time.time()
-
-    # Create progress callback for step-by-step updates
-    # Default to 12 steps for distilled model
-    actual_steps = steps if steps else 12
-    from llm_dit.pipelines.ltx2 import ProgressCallback
-
-    progress = ProgressCallback(total_steps=actual_steps, desc="Diffusion")
-
+    # Generate using pure PyTorch pipeline
+    start = time.time()
     try:
-        output = pipeline(
-            prompt=prompt,
-            negative_prompt=negative_prompt,
-            height=height,
-            width=width,
-            num_frames=num_frames,
-            fps=float(fps),
-            num_inference_steps=steps,
-            guidance_scale=guidance_scale,
-            seed=seed,
-            enable_audio=audio_enabled,
-            callback_on_step_end=progress,
+        video = generate_video_with_offloading(
+            prompt=args.prompt,
+            config=ltx_config,
+            model_path=model_path,
+            quantize=True,  # FP8 for 24GB GPU
+            precision="fp8-native",
+            dtype=torch.bfloat16,
+            callback=progress_callback,
         )
     except Exception as e:
-        progress.close()  # Ensure newline before error
         logger.error(f"Generation failed: {e}")
         import traceback
 
         traceback.print_exc()
         return 1
 
-    gen_time = time.time() - start_gen
-    stats = progress.get_stats()
-    logger.info(
-        f"Generation complete in {gen_time:.1f}s "
-        f"({stats['its']:.2f} it/s avg, {stats['avg_step_time']:.2f}s/step)"
-    )
+    gen_time = time.time() - start
+    logger.info(f"Generation complete in {gen_time:.1f}s")
 
-    # Save video
+    # Save video (video is [F, H, W, C] uint8 tensor)
     try:
-        pipeline.save_video(output, output_path)
+        import subprocess
+        import tempfile
+
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        video_np = video.numpy()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Write frames as PNG files
+            for i, frame in enumerate(video_np):
+                from PIL import Image
+
+                Image.fromarray(frame).save(f"{tmpdir}/frame_{i:05d}.png")
+
+            # Encode with ffmpeg
+            cmd = [
+                "ffmpeg",
+                "-y",
+                "-framerate",
+                str(fps),
+                "-i",
+                f"{tmpdir}/frame_%05d.png",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "fast",
+                "-crf",
+                "18",
+                "-pix_fmt",
+                "yuv420p",
+                str(output_path),
+            ]
+            subprocess.run(cmd, check=True, capture_output=True)
+
         logger.info(f"Saved: {output_path}")
     except Exception as e:
         logger.error(f"Failed to save video: {e}")
         return 1
 
     logger.info("=" * 60)
-    logger.info(f"Total time: load={load_time:.1f}s + generate={gen_time:.1f}s")
+    logger.info(f"Total time: {gen_time:.1f}s")
 
     return 0
 
