@@ -470,27 +470,11 @@ def generate_video(
             callback(i + 1, len(sigmas) - 1, latents)
 
     # =========================================================================
-    # DEBUG: Post-denoising latent statistics
-    # =========================================================================
-    print(f"[DEBUG] Post-denoising latents:")
-    print(f"  Shape: {latents.shape}")
-    print(f"  Mean: {latents.mean():.4f}, Std: {latents.std():.4f}")
-    print(f"  Range: [{latents.min():.4f}, {latents.max():.4f}]")
-    per_channel_mean = latents.mean(dim=(0, 1))
-    print(f"  Per-channel mean range: [{per_channel_mean.min():.4f}, {per_channel_mean.max():.4f}]")
-    # Find which channels have extreme means
-    extreme_mask = (per_channel_mean.abs() > 1.0)
-    if extreme_mask.any():
-        extreme_idx = extreme_mask.nonzero(as_tuple=True)[0]
-        print(f"  Channels with |mean| > 1.0: {extreme_idx[:10].tolist()}... (showing first 10)")
-
-    # =========================================================================
     # Step 5: Reshape latents for VAE decode
     # From [B, T, D] to [B, D, T_lat, H_lat, W_lat]
     # =========================================================================
     latents = latents.transpose(1, 2)  # [B, D, T]
     latents = latents.reshape(1, 128, t_latent, h_latent, w_latent)
-    print(f"[DEBUG] After reshape: shape={latents.shape}")
 
     # =========================================================================
     # Step 6: VAE decode (if provided)
@@ -656,9 +640,6 @@ def generate_video_with_offloading(
     # Only load connectors if embeddings need processing (188160 -> 3840 projection)
     # Our Gemma3Encoder already outputs 3840-dim via internal Embeddings1DConnector
     embed_dim = prompt_embeds.shape[-1]
-    print(f"[DEBUG] Prompt embeddings shape: {prompt_embeds.shape}")
-    print(f"[DEBUG] Prompt embeddings stats: mean={prompt_embeds.mean():.4f}, std={prompt_embeds.std():.4f}")
-    print(f"[DEBUG] Prompt embeddings range: [{prompt_embeds.min():.4f}, {prompt_embeds.max():.4f}]")
     connectors = None
     if embed_dim == 188160:
         from llm_dit.models.ltx2.connectors import load_ltx2_connectors
@@ -715,23 +696,10 @@ def generate_video_with_offloading(
 
     logger.info("Decoding latents to video...")
 
-    # DEBUG: Latents received from generate_video (already reshaped)
-    print(f"[DEBUG] Latents for VAE decode:")
-    print(f"  Shape: {latents.shape}")
-    print(f"  Mean: {latents.mean():.4f}, Std: {latents.std():.4f}")
-    print(f"  Range: [{latents.min():.4f}, {latents.max():.4f}]")
-
     # Decode latents to video
     # Note: our VideoDecoder handles denormalization internally via per_channel_statistics
     with torch.no_grad():
         video = vae(latents)
-
-    # DEBUG: VAE output statistics
-    print(f"[DEBUG] VAE output (pre-conversion):")
-    print(f"  Shape: {video.shape}")
-    print(f"  Mean: {video.mean():.4f}, Std: {video.std():.4f}")
-    print(f"  Range: [{video.min():.4f}, {video.max():.4f}]")
-    print(f"  Expected range: [-1, 1] for proper color conversion")
 
     # Convert to [F, H, W, C] uint8
     video = video.squeeze(0).permute(1, 2, 3, 0)

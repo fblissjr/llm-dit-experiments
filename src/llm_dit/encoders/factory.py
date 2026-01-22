@@ -55,9 +55,6 @@ class EncoderConfig:
 # Pipeline to encoder type mapping
 PIPELINE_ENCODER_MAP = {
     "z_image": EncoderType.QWEN3,
-    "qwen_image": EncoderType.QWEN25_VL,
-    "qwen_image_diffusers": EncoderType.QWEN25_VL,
-    "qwen_image_layered": EncoderType.QWEN25_VL,
     "ltx2": EncoderType.GEMMA3,
 }
 
@@ -117,17 +114,6 @@ class EncoderFactory:
                 dtype=dtype,
                 enable_cache=enable_cache,
                 cache_size=cache_size,
-                **kwargs,
-            )
-
-        elif encoder_type == EncoderType.QWEN25_VL:
-            from llm_dit.encoders.qwen25_vl import Qwen25VLEncoder
-
-            return Qwen25VLEncoder.from_pretrained(
-                model_path=model_path,
-                quantization=quantization,
-                device=device,
-                dtype=dtype,
                 **kwargs,
             )
 

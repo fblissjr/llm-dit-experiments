@@ -1,6 +1,6 @@
 # llm-dit-experiments specification
 
-*last updated: 2026-01-08 (backlog reorganized)*
+*last updated: 2026-01-22*
 
 Standalone diffusers-based experimentation platform for LLM-DiT image generation.
 
@@ -176,55 +176,3 @@ Items parked for later consideration:
   - LoRA fine-tuning workflow
   - See: `internal/research/training_infrastructure_design.md`
 
----
-
-## development workflow
-
-### TDD process
-
-1. Pick a backlog item
-2. Create/update test file with failing test
-3. Run: `uv run pytest -k "test_name" -v` (watch fail)
-4. Implement the feature
-5. Run: `uv run pytest -k "test_name" -v` (watch pass)
-6. Update this spec (check off TODO)
-7. Update relevant docs
-8. Commit: `git commit -m "feat: description"`
-
-### test commands
-
-```bash
-# Run all tests
-uv run pytest tests/
-
-# Run unit tests only
-uv run pytest tests/unit/ -v
-
-# Run specific test file
-uv run pytest tests/unit/test_dype.py -v
-
-# Run tests matching pattern
-uv run pytest -k "dype" -v
-
-# Run with coverage
-uv run pytest --cov=src/llm_dit tests/
-```
-
-### key test files
-
-| Area | Test File |
-|------|-----------|
-| DyPE | tests/unit/test_dype.py |
-| Config | tests/unit/test_dry_config.py |
-| Pipeline | tests/unit/test_z_image_pipeline.py |
-| Scheduler | tests/unit/test_scheduler.py |
-| Quantization | tests/unit/test_fp8_inference.py |
-
----
-
-## references
-
-- [Session state](internal/state/session_continuity.md) - Current focus
-- [TODOs](internal/state/todos.md) - Persistent task tracking
-- [Lessons learned](internal/state/lessons_learned.md) - Gotchas and solutions
-- [Guiding principles](internal/principles/guiding_principles.md) - Architectural north star

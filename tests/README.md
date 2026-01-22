@@ -1,173 +1,105 @@
-# Portable Test Backends
+# tests
 
-**Last Updated:** 2026-01-19
+*last updated: 2026-01-22*
 
-This module provides a unified interface for LTX-2 video generation tests that work with **both**:
-- Our `llm_dit` implementation (this repo)
-- Official LTX-2 implementation (Lightricks repo)
+Comprehensive test suite with **~1030 tests** protecting against regressions.
 
-## Purpose
-
-Enable 1:1 baseline comparison by running **identical tests** with either implementation.
-Same prompts, same configs, same assertions → comparable outputs for visual inspection.
-
-## Quick Start
-
-### Run in llm-dit-experiments (our implementation)
+## quick start
 
 ```bash
-# Smoke test (~30s)
+# Run all tests
+uv run pytest tests/ -v
+
+# Quick smoke test (30s, requires GPU)
 uv run pytest tests/e2e/test_baseline_portable.py::TestBaselineSmoke -v -s
 
-# Short test (~2min)
-uv run pytest tests/e2e/test_baseline_portable.py::TestBaselineT2V::test_t2v_short -v -s
-
-# Full reference test (~10min)
-uv run pytest tests/e2e/test_baseline_portable.py::TestBaselineT2V::test_t2v_reference -v -s --runslow
+# Unit tests only (no GPU needed)
+uv run pytest tests/unit/ -v
 ```
 
-### Run in LTX-2 repo (official implementation)
+## documentation
 
-1. Copy the required files to LTX-2 repo:
-   ```bash
-   # From llm-dit-experiments root
-   cp -r tests/backends /path/to/LTX-2/tests/
-   cp tests/e2e/test_baseline_portable.py /path/to/LTX-2/tests/e2e/
-   cp tests/e2e/conftest.py /path/to/LTX-2/tests/e2e/
-   ```
+| Document | Purpose |
+|----------|---------|
+| **[AGENTS.md](AGENTS.md)** | Comprehensive testing guide for agents |
+| [backends/README.md](backends/README.md) | Portable backend system for 1:1 comparison |
 
-2. Run tests:
-   ```bash
-   cd /path/to/LTX-2
-   pytest tests/e2e/test_baseline_portable.py -v -s
-   ```
-
-3. Compare outputs:
-   ```
-   llm-dit-experiments/outputs/tests/baseline/llm_dit/
-   LTX-2/outputs/tests/baseline/ltx2/
-   ```
-
-## Module Structure
+## structure
 
 ```
-tests/backends/
-├── __init__.py           # Auto-detection and exports
-├── protocol.py           # Interface definitions (GenerationConfig, Backend, etc.)
-├── llm_dit_backend.py    # Our implementation backend
-├── ltx2_backend.py       # Official LTX-2 backend
-└── README.md             # This file
+tests/
+├── AGENTS.md              # Testing guide for agents (start here)
+├── README.md              # This file
+├── unit/                  # Fast, no GPU required (~500 tests)
+│   ├── test_ltx2_*.py     # LTX-2 components
+│   ├── test_gemma3_*.py   # Gemma3 encoder
+│   ├── test_conditioning.py
+│   ├── test_scheduler.py
+│   └── ...
+├── integration/           # Cross-component tests (~200 tests)
+│   ├── test_ltx2_*.py
+│   ├── test_performance.py
+│   └── ...
+├── e2e/                   # End-to-end pipeline tests (~50 tests)
+│   ├── test_baseline_portable.py
+│   ├── test_ltx2_reference.py
+│   └── ...
+├── backends/              # Portable test infrastructure
+│   ├── protocol.py        # Backend interface
+│   ├── llm_dit_backend.py
+│   ├── ltx2_backend.py
+│   └── README.md
+├── fixtures/              # Test data
+└── conftest.py            # Shared pytest fixtures
 ```
 
-## API
+## test categories
 
-### Getting a Backend
+| Category | Tests | GPU | Time | What's Validated |
+|----------|-------|-----|------|------------------|
+| **Unit** | ~500 | No | ~30s | Component logic, shapes, constraints |
+| **Integration** | ~200 | Sometimes | ~2min | Cross-component interaction, memory |
+| **E2E** | ~50 | Yes | ~5min | Full pipeline, visual quality |
 
-```python
-from tests.backends import get_backend, get_backend_name
+## common commands
 
-# Auto-detect available backend
-backend_name = get_backend_name()  # "llm_dit", "ltx2", or "none"
-backend = get_backend()
+```bash
+# LTX-2 specific tests
+uv run pytest tests/ -v -k ltx2
 
-# Force specific backend via environment variable
-# LLM_DIT_TEST_BACKEND=ltx2 pytest ...
+# Run with verbose output
+uv run pytest tests/unit/test_ltx2_transformer.py -v --tb=long
+
+# Skip slow tests (default behavior)
+uv run pytest tests/ -v
+
+# Include slow tests
+uv run pytest tests/ -v --runslow
+
+# Collect tests without running
+uv run pytest tests/ --collect-only
 ```
 
-### GenerationConfig
+## key test files
 
-Canonical parameters matching official LTX-2 defaults:
+| File | What It Tests |
+|------|---------------|
+| `unit/test_ltx2_transformer.py` | RoPE, attention, FFN, key mapping |
+| `unit/test_ltx2_video_vae.py` | VAE compression, tiling, convolutions |
+| `unit/test_gemma3_encoder.py` | Gemma3 connector, feature extraction |
+| `unit/test_conditioning.py` | LatentState, I2V, denoise masks |
+| `unit/test_scheduler.py` | Sigma schedule, dynamic shift |
+| `integration/test_performance.py` | Memory leaks, timing bounds |
+| `e2e/test_baseline_portable.py` | Full T2V pipeline |
 
-```python
-from tests.backends import GenerationConfig
+## success criteria
 
-config = GenerationConfig(
-    num_frames=121,          # Must be 8k+1 (e.g., 9, 17, 25, ..., 121)
-    height=512,              # Divisible by 32
-    width=768,               # Divisible by 32
-    frame_rate=24.0,
-    num_inference_steps=40,
-    guidance_scale=4.0,      # CFG scale
-    seed=10,                 # Default LTX-2 seed
-    fp8=True,                # Use FP8 quantization
-)
-```
+**Tests passing is necessary but not sufficient.**
 
-### Generating Video
+| Level | Criteria | How to Verify |
+|-------|----------|---------------|
+| **Technical** | No errors, correct shapes | pytest assertions |
+| **Semantic** | Output matches prompt | Visual inspection |
+| **Temporal** | Motion is coherent | Watch video |
 
-```python
-result = backend.generate_video(
-    prompt="A cat walking through a garden",
-    config=config,
-    output_dir=Path("outputs/test/"),
-    save_video=True,
-)
-
-# Access results
-print(f"Video shape: {result.video.shape}")  # [F, H, W, C] uint8
-print(f"Total time: {result.stats.total_time:.1f}s")
-
-# Files saved:
-# - outputs/test/video.mp4
-# - outputs/test/metadata.json
-```
-
-## Output Structure
-
-```
-outputs/tests/baseline/{backend}/
-└── {test_name}_{timestamp}/
-    ├── video.mp4           # Generated video
-    ├── metadata.json       # Config + stats + prompt
-    └── embedding_info.json # Text embedding details (for comparison tests)
-```
-
-## Test Configs
-
-| Config | Frames | Resolution | Steps | CFG | Time | VRAM |
-|--------|--------|------------|-------|-----|------|------|
-| `get_smoke_config()` | 9 | 256x384 | 2 | 1.0 | ~30s | ~14GB |
-| `get_short_config()` | 33 | 384x512 | 10 | 3.0 | ~2min | ~16GB |
-| `get_reference_config()` | 121 | 512x768 | 40 | 4.0 | ~10min | ~20GB |
-
-## Comparison Workflow
-
-1. **Generate with both backends:**
-   ```bash
-   # In llm-dit-experiments
-   uv run pytest tests/e2e/test_baseline_portable.py::TestBaselineT2V::test_t2v_reference -v -s --runslow
-
-   # In LTX-2 repo (after copying files)
-   pytest tests/e2e/test_baseline_portable.py::TestBaselineT2V::test_t2v_reference -v -s --runslow
-   ```
-
-2. **Compare outputs:**
-   - Visual inspection: Watch both videos side-by-side
-   - Stats comparison: Compare `metadata.json` files
-   - For debugging: Compare `embedding_info.json` for text encoding differences
-
-3. **Identify divergences:**
-   - Same visual quality → Parity achieved
-   - Different quality → Trace through intermediate values
-   - Use debug checkpoints (set `LLM_DIT_DEBUG=1`)
-
-## Backend Detection Priority
-
-1. Environment variable `LLM_DIT_TEST_BACKEND` (if set)
-2. `llm_dit` package available → use `llm_dit` backend
-3. `ltx_pipelines` package available → use `ltx2` backend
-4. `coderef/LTX-2/` exists → add to path and use `ltx2` backend
-
-## Requirements
-
-- CUDA GPU with 16GB+ VRAM (24GB recommended for reference tests)
-- LTX-2 model weights at `models/LTX-2/`
-  - `transformer/`
-  - `text_encoder/`
-  - `vae/`
-
-## Notes
-
-- Both backends use FP8 quantization by default for the transformer
-- Sequential offloading enables 121-frame generation on 24GB GPUs
-- Seed 10 is the official LTX-2 default for reproducibility
+See [AGENTS.md](AGENTS.md) for detailed verification workflow.

@@ -189,7 +189,7 @@ class Qwen3Encoder:
         if images is not None:
             raise ValueError(
                 "Qwen3Encoder does not support vision inputs. "
-                "Use Qwen25VLEncoder or Gemma3Encoder for vision-language tasks."
+                "Use Gemma3Encoder for vision-language tasks."
             )
 
         return self._backend.encode(

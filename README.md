@@ -1,12 +1,13 @@
 # llm-dit-experiments
 
-Diffusers-based experimentation platform for LLM-DiT image generation. Pluggable backends, quantization, and advanced features for research.
+PyTorch and Diffusers-based (depending on the models / pipeline) experimentation platform for LLM-DiT image and video generation. Pluggable backends, quantization, and quality of life features for research.
 
 ## Pipelines
 
 | Pipeline | Task | Encoder | Steps | Notes |
 |----------|------|---------|-------|-------|
 | Z-Image | text-to-image, img2img | Qwen3-4B (2560 dim) | 8-9 | CFG=0 baked, 1504 token limit |
+| LTX-2 | text-to-video | Gemma3-12B (3840 dim) | 15-40 | Pure PyTorch impl, FP8 quantization |
 | Qwen-Image-Layered | image decomposition | Qwen2.5-VL-7B (3584 dim) | 50 | Fixed 640/1024 res, outputs RGBA layers |
 | Qwen-Image-Edit-2511 | instruction editing | Qwen2.5-VL-7B (3584 dim) | 40 | Multi-image composition support |
 
@@ -28,10 +29,11 @@ uv sync
 # Z-Image (text-to-image)
 uv run scripts/generate.py --model-path /path/to/z-image-turbo "A cat sleeping"
 
-# Qwen-Image-Layered (decomposition)
-uv run scripts/generate.py --model-type qwenimage \
-  --qwen-image-model-path /path/to/Qwen-Image-Layered \
-  --img2img input.jpg "Scene description"
+# LTX-2 (text-to-video) - Pure PyTorch pipeline
+uv run scripts/generate.py --model-type ltx2 \
+  --ltx2-model-path /path/to/LTX-2 \
+  --ltx2-num-frames 33 --width 768 --height 512 \
+  "A cat walking through a sunny garden"
 
 # Web UI
 uv run web/server.py --config config.toml
@@ -98,6 +100,7 @@ See [experiments/README.md](experiments/README.md).
 
 **Models**:
 - [Z-Image](docs/models/z_image.md) - performance tuning, device placement
+- [LTX-2](docs/models/ltx2.md) - video generation with pure PyTorch pipeline
 - [Qwen-Image-Layered](docs/models/qwen_image_layered.md) - decomposition details
 - [Qwen-Image-Edit-2511](docs/models/qwen_image_edit_2511.md) - instruction editing
 
