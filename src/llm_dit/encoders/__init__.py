@@ -9,7 +9,7 @@ High-Level Encoders (with template/conversation support):
 
 Low-Level Protocol Encoders (model-agnostic):
 - Qwen3Encoder: Qwen3-4B for Z-Image (text-only, 2560 dim)
-- Gemma3Encoder: Gemma3-12B for LTX-2 (vision-language, 4096/2048 dim)
+- Gemma3Encoder: Gemma3-12B for LTX-2 (vision-language, 3840 dim output, DiT projects to 4096/2048)
 
 Factory:
 - EncoderFactory: Create encoders by type or pipeline

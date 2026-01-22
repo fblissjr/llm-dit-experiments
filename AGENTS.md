@@ -4,13 +4,26 @@
 
 Quick reference for LLM agents working on this codebase.
 
+## multi-model platform
+
+This repo supports **multiple LLM-DiT pipelines**, not just LTX-2:
+
+| Pipeline | Task | Encoder | Status |
+|----------|------|---------|--------|
+| Z-Image | text-to-image, img2img | Qwen3-4B | Production |
+| LTX-2 | text-to-video | Gemma3-12B | Active development |
+| Qwen-Image-Layered | image decomposition | Qwen2.5-VL-7B | Production |
+| Qwen-Image-Edit-2511 | instruction editing | Qwen2.5-VL-7B | Production |
+
+LTX-2 has been the focus recently due to its complexity (pure PyTorch implementation instead of diffusers).
+
 ## start here
 
 | Doc | Purpose |
 |-----|---------|
-| **[internal/hub.md](internal/hub.md)** | Central documentation hub |
 | **[internal/state/current.md](internal/state/current.md)** | Current project state (read first) |
 | **[experiments/AGENTS.md](experiments/AGENTS.md)** | Research status tracking |
+| **[internal/guides/](internal/guides/)** | Model-specific guides (z_image_*, ltx2_*) |
 
 ## critical rules
 
@@ -78,8 +91,8 @@ Models use different text encoders (Qwen3-4B, Gemma3-12B, UMT5-XXL) and DiT vari
 ## navigation
 
 ### primary (read first)
-- **[hub.md](internal/hub.md)** - central documentation hub
 - **[current.md](internal/state/current.md)** - current project state
+- **[internal/guides/](internal/guides/)** - model-specific guides (Z-Image, LTX-2)
 - [models/](internal/models/) - per-model knowledge base
 
 ### session state
@@ -88,7 +101,7 @@ Models use different text encoders (Qwen3-4B, Gemma3-12B, UMT5-XXL) and DiT vari
 
 ### architecture
 - [guiding principles](internal/principles/guiding_principles.md) - architectural north star
-- [full docs index](internal/index.md) - complete navigation map
+- [analysis/architecture/](internal/analysis/architecture/) - pipeline audits and summaries
 
 ### production generation reference docs (for all models in steady state / prod state)
 - [cli flags](docs/reference/cli_flags.md) - all CLI arguments
