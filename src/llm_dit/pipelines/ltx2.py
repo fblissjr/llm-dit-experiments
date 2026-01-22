@@ -321,7 +321,7 @@ class LTX2Pipeline:
 
         # Standard mode: Load encoder and enable offloading
         if use_hf_encoder:
-            from transformers import Gemma3ForConditionalGeneration, AutoTokenizer
+            from transformers import AutoTokenizer, Gemma3ForConditionalGeneration
 
             logger.info(f"Loading text encoder (bfloat16): {encoder_id}")
             logger.info("Sequential CPU offload will move layers one at a time (~600MB each)")
@@ -363,7 +363,7 @@ class LTX2Pipeline:
     def from_single_file(
         cls,
         checkpoint_path: str,
-        encoder_model_id: str = "google/gemma-3-12b-it-qat-q4_0-unquantized",
+        encoder_model_id: str = "models/LTX-2/text_encoder",
         dtype: torch.dtype = torch.bfloat16,
         device: str = "cuda",
         enable_cpu_offload: bool = True,
@@ -397,7 +397,7 @@ class LTX2Pipeline:
             )
 
         try:
-            from transformers import Gemma3ForConditionalGeneration, AutoTokenizer
+            from transformers import AutoTokenizer, Gemma3ForConditionalGeneration
         except ImportError:
             raise ImportError(
                 "transformers with Gemma3 support required. "
@@ -581,7 +581,7 @@ class LTX2Pipeline:
             Tuple of (prompt_embeds, prompt_attention_mask,
                      negative_prompt_embeds, negative_prompt_attention_mask)
         """
-        from transformers import Gemma3ForConditionalGeneration, BitsAndBytesConfig
+        from transformers import BitsAndBytesConfig, Gemma3ForConditionalGeneration
 
         logger.info(f"Loading 8-bit text encoder: {self._encoder_id}")
 
@@ -1236,8 +1236,9 @@ class LTX2Pipeline:
 
         # Option 1: PyAV (official LTX-2 method, supports audio)
         try:
-            import av
             from fractions import Fraction
+
+            import av
 
             num_frames, height, width, _ = frames.shape
             container = av.open(output_path, mode="w")

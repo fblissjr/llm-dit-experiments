@@ -32,6 +32,11 @@ import torch
 from PIL import Image
 from torch import nn
 
+from llm_dit.encoders.embeddings_connector import (
+    Embeddings1DConnector,
+    RopeType,
+    load_connector_weights,
+)
 from llm_dit.encoders.protocol import (
     EncoderCapability,
     EncoderInfo,
@@ -40,20 +45,17 @@ from llm_dit.encoders.protocol import (
     GenerativeEncoderProtocol,
     VisionLanguageEncoderProtocol,
 )
-from llm_dit.encoders.embeddings_connector import (
-    Embeddings1DConnector,
-    RopeType,
-    load_connector_weights,
-)
 
 logger = logging.getLogger(__name__)
 
 # Default paths to LTX-2 model components
-# CRITICAL: Use text_encoder/ for tokenizer and connector weights (jointly trained)
-# The connectors/ folder may contain stale weights that cause signal death
-DEFAULT_TOKENIZER_PATH = "models/LTX-2/text_encoder"
-DEFAULT_TEXT_ENCODER_PATH = "models/LTX-2/text_encoder"
-DEFAULT_CONNECTOR_WEIGHTS_SHARD = "models/LTX-2/text_encoder/diffusion_pytorch_model-00011-of-00012.safetensors"
+# CRITICAL: Tokenizer is in tokenizer/ folder, model weights are in text_encoder/
+# Using wrong tokenizer causes completely wrong token IDs -> garbage output
+DEFAULT_TOKENIZER_PATH = "models/LTX-2/tokenizer"  # tokenizer.model, tokenizer.json
+DEFAULT_TEXT_ENCODER_PATH = "models/LTX-2/text_encoder"  # Gemma model weights + config
+DEFAULT_CONNECTOR_WEIGHTS_SHARD = (
+    "models/LTX-2/text_encoder/diffusion_pytorch_model-00011-of-00012.safetensors"
+)
 # Legacy paths (kept for reference, do NOT use)
 _LEGACY_CONNECTORS_PATH = "models/LTX-2/connectors/diffusion_pytorch_model.safetensors"
 DEFAULT_CONNECTORS_CONFIG = "models/LTX-2/connectors/config.json"
@@ -74,7 +76,7 @@ class SubLayerExtractor:
     This extractor captures points 1 and 3, enabling sub-layer routing experiments.
 
     Important Model Notes:
-    - Use full/quantized models (google/gemma-3-12b-it-qat-q4_0-unquantized), NOT distilled
+    - Use full/quantized models (models/LTX-2/text_encoder), NOT distilled
     - Distilled/LoRA models may have different layer behaviors - avoid for experiments
     - Q4 QAT model preserves layer structure while reducing memory (~6GB)
 
@@ -396,7 +398,7 @@ class Gemma3Encoder:
 
     def __init__(
         self,
-        model_id: str = "google/gemma-3-12b-it-qat-q4_0-unquantized",
+        model_id: str = "models/LTX-2/text_encoder",
         device: str = "cuda",
         dtype: torch.dtype = torch.bfloat16,
         max_sequence_length: int = 256,
@@ -436,7 +438,11 @@ class Gemma3Encoder:
         self._load_in_8bit = load_in_8bit
         self._max_memory = max_memory
         self._connectors_path = connectors_path or DEFAULT_CONNECTOR_WEIGHTS_SHARD
-        self._tokenizer_path = tokenizer_path or DEFAULT_TOKENIZER_PATH
+        # CRITICAL: Text encoder model/config and tokenizer are in DIFFERENT directories!
+        # _text_encoder_path: Gemma model weights + config.json
+        # _tokenizer_path: tokenizer.model, tokenizer.json, etc.
+        self._text_encoder_path = model_id  # Usually models/LTX-2/text_encoder
+        self._tokenizer_path = tokenizer_path or DEFAULT_TOKENIZER_PATH  # models/LTX-2/tokenizer
         self._use_connector = use_connector
 
         # Model components (lazy loaded)
@@ -450,7 +456,7 @@ class Gemma3Encoder:
     @classmethod
     def from_pretrained(
         cls,
-        model_path: str = "google/gemma-3-12b-it-qat-q4_0-unquantized",
+        model_path: str = "models/LTX-2/text_encoder",
         device: str = "cuda",
         dtype: str = "bfloat16",
         max_sequence_length: int = 256,
@@ -531,7 +537,7 @@ class Gemma3Encoder:
             # Fallback for older transformers
             Gemma3ForCausalLM = AutoModelForCausalLM
 
-        logger.info(f"Loading Gemma 3 text encoder (no vision) from: {self._tokenizer_path}")
+        logger.info(f"Loading Gemma 3 text encoder (no vision) from: {self._text_encoder_path}")
 
         # Build quantization config if needed
         quantization_config = None
@@ -556,9 +562,9 @@ class Gemma3Encoder:
         # We skip automatic weight loading and do it manually with key remapping
         from transformers import Gemma3Config, Gemma3TextConfig
 
-        logger.info("Loading Gemma3 text config from local path...")
+        logger.info(f"Loading Gemma3 text config from: {self._text_encoder_path}")
         full_config = Gemma3Config.from_pretrained(
-            self._tokenizer_path,
+            self._text_encoder_path,
             local_files_only=True,
         )
 
@@ -622,7 +628,9 @@ class Gemma3Encoder:
             self._model = dispatch_model(self._model, device_map_computed)
         elif device_map is not None:
             # Single device
-            device_name = list(device_map.values())[0] if isinstance(device_map, dict) else device_map
+            device_name = (
+                list(device_map.values())[0] if isinstance(device_map, dict) else device_map
+            )
             logger.info(f"Moving model to {device_name}...")
             self._model = self._model.to(device=device_name)
         # else: keep on CPU
@@ -776,7 +784,9 @@ class Gemma3Encoder:
         """
         from safetensors import safe_open
 
-        index_path = Path(self._tokenizer_path) / "diffusion_pytorch_model.safetensors.index.json"
+        index_path = (
+            Path(self._text_encoder_path) / "diffusion_pytorch_model.safetensors.index.json"
+        )
         if not index_path.exists():
             logger.error(f"Index file not found: {index_path}")
             return {}
@@ -803,7 +813,7 @@ class Gemma3Encoder:
         # Load weights from each shard and remap keys
         state_dict = {}
         for shard_name in sorted(shards_to_load):
-            shard_path = Path(self._tokenizer_path) / shard_name
+            shard_path = Path(self._text_encoder_path) / shard_name
             if not shard_path.exists():
                 logger.warning(f"Shard not found: {shard_path}")
                 continue
@@ -1010,7 +1020,9 @@ class Gemma3Encoder:
             # Input mask: [B, T] with 1=valid, 0=padding
             # Connector expects: [B, 1, 1, T] with 0=valid, -10000=padding
             additive_mask = (1.0 - attention_mask.float()) * -10000.0
-            additive_mask = additive_mask[:, None, None, :].to(embeddings.dtype)  # Match embedding dtype
+            additive_mask = additive_mask[:, None, None, :].to(
+                embeddings.dtype
+            )  # Match embedding dtype
 
             # Ensure connector is on same device
             if next(self._embeddings_connector.parameters()).device != embeddings.device:
@@ -1092,7 +1104,7 @@ class Gemma3Encoder:
 
         Note:
             For routing experiments, prefer using full/quantized Gemma3 models
-            (google/gemma-3-12b-it-qat-q4_0-unquantized), NOT distilled variants.
+            (models/LTX-2/text_encoder), NOT distilled variants.
             Distilled models may have compressed intermediate representations that
             don't represent true layer specialization.
         """

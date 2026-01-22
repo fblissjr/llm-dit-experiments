@@ -1,6 +1,6 @@
 # agent context
 
-*last updated: 2026-01-20*
+*last updated: 2026-01-22*
 
 Quick reference for LLM agents working on this codebase.
 
@@ -11,21 +11,6 @@ Quick reference for LLM agents working on this codebase.
 | **[internal/hub.md](internal/hub.md)** | Central documentation hub |
 | **[internal/state/current.md](internal/state/current.md)** | Current project state (read first) |
 | **[experiments/AGENTS.md](experiments/AGENTS.md)** | Research status tracking |
-
-## research status system
-
-All research documentation uses a consistent status tracking system:
-
-| Symbol | Status | Meaning |
-|--------|--------|---------|
-| ✅ | **Validated** | Confirmed through experiments or architecture analysis |
-| 🔬 | **Open** | Hypothesis needs testing or re-testing |
-| ⚠️ | **Needs Verification** | Previous results may have bugs |
-| 🚫 | **Dead-End** | Tested, doesn't work |
-
-**Where to find status tracking:**
-- [experiments/AGENTS.md](experiments/AGENTS.md) - Top-level research navigation
-- [experiments/ltx2/docs/findings/](experiments/ltx2/docs/findings/) - Consolidated research findings
 
 ## critical rules
 
@@ -57,15 +42,6 @@ Models use different text encoders (Qwen3-4B, Gemma3-12B, UMT5-XXL) and DiT vari
 | steps | 8-9 | turbo distilled |
 | scheduler | FlowMatchEuler | shift=3.0 |
 
-### qwen-image-layered
-
-| param | value | notes |
-|-------|-------|-------|
-| encoder | Qwen2.5-VL-7B | 3584 hidden dim |
-| cfg | 4.0 | required |
-| steps | 50 | non-distilled |
-| resolution | 640/1024 | fixed |
-
 ### ltx-2 (video, active development)
 
 | param | value | notes |
@@ -78,35 +54,6 @@ Models use different text encoders (Qwen3-4B, Gemma3-12B, UMT5-XXL) and DiT vari
 | frames | 121 | default (8*15+1), 33 for quick tests |
 | rope | 3D INTERLEAVED | (T, H, W) positions |
 | quantization | FP8-quanto | 26GB->12GB, fits 24GB GPU |
-
-**Status:** Text encoder and FP8 transformer VALIDATED against reference. Debugging "blurry blob" output - issue is downstream in pipeline integration (denoising loop, VAE, scheduler).
-
-### wan (humo video)
-
-| param | value | notes |
-|-------|-------|-------|
-| transformer | HuMo-17B | 5120 hidden, 40 blocks |
-| encoder | UMT5-XXL | 4096 hidden dim |
-| vae | Wan2.1 | 8x spatial, 4x temporal |
-| input channels | 36 | 16 noise + 16 image + 4 extra |
-| output channels | 16 | latent dimension |
-| audio | Whisper-large-v3 | optional, for audio-sync |
-
-**Status:** Phase 1 complete (transformer + pipeline structure). Phase 2 pending (VAE + text encoder + scheduler integration).
-
-## key files
-
-| area | files |
-|------|-------|
-| pipeline | `src/llm_dit/pipelines/z_image.py`, `qwen_image.py`, `ltx2.py`, `generate.py` |
-| config | `src/llm_dit/config.py`, `cli.py` |
-| encoder | `src/llm_dit/encoders/z_image_encoder.py`, `gemma3.py` |
-| ltx2 models | `src/llm_dit/models/ltx2/` (transformer, vae, upsampler, connectors) |
-| ltx2 constants | `src/llm_dit/models/ltx2/constants.py` |
-| conditioning | `src/llm_dit/conditioning/` (I2V, keyframe) |
-| router | `src/llm_dit/router/token_layer_router.py` |
-| experiments | `experiments/ltx2/`, `experiments/base.py` |
-| tests | `tests/unit/`, `tests/integration/`, `tests/e2e/` |
 
 ## navigation
 
@@ -123,32 +70,25 @@ Models use different text encoders (Qwen3-4B, Gemma3-12B, UMT5-XXL) and DiT vari
 - [guiding principles](internal/principles/guiding_principles.md) - architectural north star
 - [full docs index](internal/index.md) - complete navigation map
 
-### reference docs
+### production generation reference docs (for all models in steady state / prod state)
 - [cli flags](docs/reference/cli_flags.md) - all CLI arguments
 - [api endpoints](docs/reference/api_endpoints.md) - REST API reference
 - [configuration](docs/reference/configuration.md) - DRY config principles
 
-## common cli
+## research status system
 
-```bash
-# generation
-uv run scripts/generate.py --model-path /path/to/z-image "A cat sleeping"
+All research documentation uses a consistent status tracking system:
 
-# with lora
-uv run scripts/generate.py --model-path /path/to/z-image --lora style.safetensors:0.8 "Prompt"
+| Symbol | Status | Meaning |
+|--------|--------|---------|
+| ✅ | **Validated** | Confirmed through experiments or architecture analysis |
+| 🔬 | **Open** | Hypothesis needs testing or re-testing |
+| ⚠️ | **Needs Verification** | Previous results may have bugs |
+| 🚫 | **Dead-End** | Tested, doesn't work |
 
-# high-res (DyPE)
-uv run scripts/generate.py --model-path /path/to/z-image --dype --width 2048 --height 2048 "Prompt"
-
-# wan video (when complete)
-uv run scripts/generate.py --model-type wan --wan-humo-path ~/Storage/HuMo/HuMo-17B --wan-base-path ~/Storage/Wan2.1-T2V-1.3B "A man singing"
-
-# web server
-uv run web/server.py --config config.toml --profile default
-
-# tests
-uv run pytest tests/
-```
+**Where to find EXPERIMENTS and RESEARCH (not core code) tracking:**
+- [experiments/AGENTS.md](experiments/AGENTS.md) - Top-level research navigation
+- [experiments/ltx2/docs/findings/](experiments/ltx2/docs/findings/) - Consolidated research findings
 
 ## testing protocol
 
@@ -195,6 +135,72 @@ uv run pytest tests/e2e/test_baseline_portable.py --runslow -v -s
 # Unit tests for specific component
 uv run pytest tests/unit/test_gemma3_encoder.py -v
 ```
+
+## LTX-2 T2V Test Scripts
+
+Pure PyTorch T2V pipeline tests. No diffusers dependency.
+
+| Script | Backend | Purpose | Command |
+|--------|---------|---------|---------|
+| `tests/e2e/test_baseline_portable.py` | llm_dit | Pure PyTorch e2e test | `uv run pytest tests/e2e/test_baseline_portable.py -v -s` |
+| `tests/e2e/test_baseline_portable.py` | ltx2 | Reference baseline | `LLM_DIT_TEST_BACKEND=ltx2 uv run pytest ...` |
+
+### Test Configs (tests/backends/protocol.py)
+
+| Config | Frames | Resolution | Steps | CFG | FP8 | Est. Time |
+|--------|--------|------------|-------|-----|-----|-----------|
+| SMOKE_CONFIG | 33 | 512x768 | 30 | 3.0 | Yes | ~3min |
+| SHORT_CONFIG | 33 | 512x768 | 30 | 3.0 | No | ~4min |
+| REFERENCE_CONFIG | 121 | 512x768 | 40 | 4.0 | No | ~10min |
+
+### Output Location
+
+All test outputs go to: `outputs/tests/runs/{backend}_{test}_{timestamp}/`
+- `video.mp4` - Generated video
+- `inputs.json` - Complete generation parameters
+- `metadata.json` - Timing and memory stats
+- `generation.log` - Debug logs
+
+### Code Independence
+
+| Path | Diffusers | coderef/LTX-2 |
+|------|-----------|---------------|
+| `src/llm_dit/encoders/` | No | No |
+| `src/llm_dit/models/ltx2/` | No | No |
+| `src/llm_dit/pipelines/generate.py` | No | No |
+| `tests/backends/llm_dit_backend.py` | No | No |
+| `tests/backends/ltx2_backend.py` | Yes | Yes (intentional) |
+
+### Success Criteria (CRITICAL)
+
+**A test "passing" means NOTHING without visual inspection.**
+
+| Level | Criteria | How to verify |
+|-------|----------|---------------|
+| **Technical** | Pipeline completes, shapes correct, no NaN/Inf | pytest assertions |
+| **Semantic** | Output matches prompt (cat = cat, not muppet) | Human inspection of frames |
+| **Temporal** | Motion is coherent (walking = movement across frames) | Watch video or compare frames |
+| **Reference** | Matches official LTX-2 output (same seed) | Side-by-side comparison |
+
+**Current status (2026-01-22):**
+- Technical: PASS
+- Semantic: PASS (fixed tokenizer path bug - now produces correct output)
+- Temporal: PASS (cat shows walking motion across frames)
+- Reference: NOT TESTED
+
+**Verification workflow:**
+```bash
+# 1. Run test
+uv run pytest tests/e2e/test_baseline_portable.py::TestBaselineSmoke -v -s
+
+# 2. Extract frames for inspection
+ffmpeg -i outputs/tests/runs/llm_dit_*/video.mp4 -vf "select=eq(n\,0)+eq(n\,16)+eq(n\,32)" -vsync vfr /tmp/frames_%02d.png
+
+# 3. Compare to reference (requires ltx2 backend)
+LLM_DIT_TEST_BACKEND=ltx2 uv run pytest tests/e2e/test_baseline_portable.py::TestBaselineSmoke -v -s
+```
+
+**Do not claim "working" until semantic criteria passes.**
 
 ## adding parameters
 

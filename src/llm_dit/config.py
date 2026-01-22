@@ -429,7 +429,7 @@ class LTX2Config:
     transformer_file: str = "ltx-2-19b-distilled-fp8.safetensors"  # Native FP8 recommended
 
     # Text encoder (Gemma 3-12B)
-    encoder_model_id: str = "google/gemma-3-12b-it-qat-q4_0-unquantized"
+    encoder_model_id: str = "models/LTX-2/text_encoder"
     encoder_quantization: str = "none"  # Gemma 3 already ships with Q4 QAT
     encoder_cpu_offload: bool = True  # Offload after encoding (REQUIRED for 24GB)
 

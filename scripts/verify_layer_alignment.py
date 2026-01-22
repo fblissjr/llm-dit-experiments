@@ -149,7 +149,7 @@ def analyze_weight_structure(weight: torch.Tensor, num_layers: int = 49, hidden_
 
 def run_gemma_and_check_correlation(
     connectors_path: str,
-    model_id: str = "google/gemma-3-12b-it-qat-q4_0-unquantized",
+    model_id: str = "models/LTX-2/text_encoder",
     test_prompt: str = "A fluffy orange cat sleeping peacefully on a soft red couch.",
 ):
     """
@@ -210,14 +210,17 @@ def run_gemma_and_check_correlation(
             hs = hidden_states[i].float()
             valid_mask = attention_mask[0].bool()
             valid_hs = hs[0, valid_mask]
-            logger.info(f"  Layer {i:2d}: mean={valid_hs.mean():.4f}, std={valid_hs.std():.4f}, "
-                       f"min={valid_hs.min():.4f}, max={valid_hs.max():.4f}")
+            logger.info(
+                f"  Layer {i:2d}: mean={valid_hs.mean():.4f}, std={valid_hs.std():.4f}, "
+                f"min={valid_hs.min():.4f}, max={valid_hs.max():.4f}"
+            )
 
     # Move stacked to CPU and free GPU memory
     stacked = stacked.cpu()
     attention_mask = attention_mask.cpu()
     del model, tokenizer
     import gc
+
     gc.collect()
     torch.cuda.empty_cache()
 
@@ -260,7 +263,9 @@ def run_gemma_and_check_correlation(
     mean = masked_states.sum(dim=(1, 2), keepdim=True) / (denom + eps)
 
     x_min = stacked.float().masked_fill(~mask_expanded, float("inf")).amin(dim=(1, 2), keepdim=True)
-    x_max = stacked.float().masked_fill(~mask_expanded, float("-inf")).amax(dim=(1, 2), keepdim=True)
+    x_max = (
+        stacked.float().masked_fill(~mask_expanded, float("-inf")).amax(dim=(1, 2), keepdim=True)
+    )
     range_val = x_max - x_min
 
     normed = 8.0 * (stacked.float() - mean) / (range_val + eps)
@@ -357,7 +362,7 @@ def analyze_caption_projection(dit_path: str):
             # Check what percentage of values would kill GELU
             threshold = -5.0  # GELU(-5) ≈ 0
             dead_ratio = (w < threshold).float().mean().item()
-            logger.info(f"  % below {threshold}: {dead_ratio*100:.1f}% (would cause GELU ≈ 0)")
+            logger.info(f"  % below {threshold}: {dead_ratio * 100:.1f}% (would cause GELU ≈ 0)")
 
 
 def main():
@@ -377,7 +382,7 @@ def main():
     parser.add_argument(
         "--model-id",
         type=str,
-        default="google/gemma-3-12b-it-qat-q4_0-unquantized",
+        default="models/LTX-2/text_encoder",
         help="Gemma model ID or path",
     )
     parser.add_argument(

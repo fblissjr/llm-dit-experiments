@@ -34,9 +34,7 @@ def compare_tokenizers():
     print("\n[1] Loading tokenizers...")
 
     try:
-        hf_tok = AutoTokenizer.from_pretrained(
-            "google/gemma-3-12b-it-qat-q4_0-unquantized"
-        )
+        hf_tok = AutoTokenizer.from_pretrained("models/LTX-2/tokenizer")
         print(f"  HuggingFace tokenizer loaded: vocab_size={hf_tok.vocab_size}")
     except Exception as e:
         print(f"  ERROR loading HuggingFace tokenizer: {e}")
@@ -93,7 +91,7 @@ def compare_tokenizers():
         all_match = all_match and match
 
         status = "✓ MATCH" if match else "⚠️ MISMATCH"
-        print(f"\nPrompt: \"{prompt[:50]}...\"")
+        print(f'\nPrompt: "{prompt[:50]}..."')
         print(f"  Status: {status}")
         print(f"  Length: HF={len(hf_ids)}, Local={len(local_ids)}")
 
@@ -105,7 +103,7 @@ def compare_tokenizers():
             # Count differing positions
             min_len = min(len(hf_ids), len(local_ids))
             diffs = sum(1 for i in range(min_len) if hf_ids[i] != local_ids[i])
-            print(f"  Differing positions: {diffs}/{min_len} ({100*diffs/min_len:.1f}%)")
+            print(f"  Differing positions: {diffs}/{min_len} ({100 * diffs / min_len:.1f}%)")
 
     print("\n" + "=" * 60)
     if all_match:
@@ -126,9 +124,9 @@ def verify_weight_paths():
     print("=" * 60)
 
     from llm_dit.encoders.gemma3 import (
-        DEFAULT_TOKENIZER_PATH,
         DEFAULT_CONNECTOR_WEIGHTS_SHARD,
         DEFAULT_CONNECTORS_CONFIG,
+        DEFAULT_TOKENIZER_PATH,
     )
 
     print("\n[1] Configured paths:")

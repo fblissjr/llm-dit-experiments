@@ -53,7 +53,7 @@ def test_encoding_output_structure():
     return True
 
 
-def test_encoder_shapes(model_id: str = "google/gemma-3-12b-it-qat-q4_0-unquantized"):
+def test_encoder_shapes(model_id: str = "models/LTX-2/text_encoder"):
     """Test that encoder produces correct shapes."""
     print("\n" + "=" * 60)
     print("Test 1: Encoder Shapes")
@@ -293,7 +293,7 @@ def main():
     )
     parser.add_argument(
         "--encoder-model",
-        default="google/gemma-3-12b-it-qat-q4_0-unquantized",
+        default="models/LTX-2/text_encoder",
         help="Gemma model for encoder tests. Default: LTX-2 compatible 12B model with CPU offloading.",
     )
     args = parser.parse_args()

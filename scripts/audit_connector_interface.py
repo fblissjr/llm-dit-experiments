@@ -79,7 +79,7 @@ def analyze_wx_contribution(x: torch.Tensor, W: torch.Tensor, b: torch.Tensor) -
 def run_full_pipeline_audit(
     connectors_path: str,
     dit_path: str,
-    model_id: str = "google/gemma-3-12b-it-qat-q4_0-unquantized",
+    model_id: str = "models/LTX-2/text_encoder",
     test_prompt: str = "A fluffy orange cat sleeping peacefully on a soft red couch.",
 ):
     """
@@ -140,6 +140,7 @@ def run_full_pipeline_audit(
         else:
             raise
     import gc
+
     gc.collect()
     torch.cuda.empty_cache()
 
@@ -153,7 +154,7 @@ def run_full_pipeline_audit(
     cp_weights = load_caption_projection_weights(dit_path)
 
     W1 = cp_weights["caption_projection.linear_1.weight"]  # [4096, 3840]
-    b1 = cp_weights["caption_projection.linear_1.bias"]    # [4096]
+    b1 = cp_weights["caption_projection.linear_1.bias"]  # [4096]
 
     logger.info(f"linear_1 weight shape: {W1.shape}")
     logger.info(f"linear_1 bias shape: {b1.shape}")
@@ -172,9 +173,11 @@ def run_full_pipeline_audit(
     logger.info(f"Output:   mean={decomp['output_mean']:.6f}, std={decomp['output_std']:.6f}")
 
     # Check if we reproduced -9.4
-    if decomp['output_mean'] < -5.0:
+    if decomp["output_mean"] < -5.0:
         logger.info(f"\n🔴 REPRODUCED: Output mean is {decomp['output_mean']:.2f} (expected ~-9.4)")
-        logger.info(f"   The connector output correlates negatively with caption_projection weights!")
+        logger.info(
+            f"   The connector output correlates negatively with caption_projection weights!"
+        )
     else:
         logger.info(f"\n🟢 Output mean is {decomp['output_mean']:.2f} (NOT in -9.4 range)")
         logger.info(f"   Need to check if this matches reference behavior...")
@@ -189,7 +192,7 @@ def run_full_pipeline_audit(
 
     # Compute mean contribution per input dimension
     # Each input dim contributes: sum over output dims of (x_i * W_ij)
-    per_dim_contribution = (valid_input.float().mean(dim=0) * W1.float().sum(dim=0))
+    per_dim_contribution = valid_input.float().mean(dim=0) * W1.float().sum(dim=0)
 
     logger.info(f"Per-dimension contribution to Wx:")
     logger.info(f"  Sum: {per_dim_contribution.sum():.4f}")
@@ -240,7 +243,7 @@ def main():
     parser.add_argument(
         "--model-id",
         type=str,
-        default="google/gemma-3-12b-it-qat-q4_0-unquantized",
+        default="models/LTX-2/text_encoder",
         help="Gemma model ID or path",
     )
     parser.add_argument(

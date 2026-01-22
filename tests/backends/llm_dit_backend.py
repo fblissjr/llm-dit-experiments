@@ -3,6 +3,7 @@ llm-dit backend implementation.
 """
 
 import gc
+import json
 import logging
 import time
 from pathlib import Path
@@ -10,7 +11,14 @@ from typing import Optional
 
 import torch
 
-from .protocol import Backend, GenerationConfig, GenerationResult, GenerationStats
+from .protocol import (
+    Backend,
+    GenerationConfig,
+    GenerationInputs,
+    GenerationResult,
+    GenerationStats,
+    json_serializer,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +114,29 @@ class LLMDitBackend(Backend):
             if save_video:
                 result.save_video(output_dir / "video.mp4")
             result.save_metadata(output_dir / "metadata.json")
+
+            # Save inputs.json for reproducibility
+            inputs = GenerationInputs(
+                prompt=prompt,
+                negative_prompt="",
+                num_frames=config.num_frames,
+                height=config.height,
+                width=config.width,
+                frame_rate=config.frame_rate,
+                num_inference_steps=config.num_inference_steps,
+                guidance_scale=config.guidance_scale,
+                seed=config.seed,
+                transformer_path=str(self.model_path / "transformer"),
+                text_encoder_path=str(self.model_path / "text_encoder"),
+                vae_path=str(self.model_path / "vae"),
+                transformer_dtype=str(config.dtype),
+                transformer_quantization="fp8-native" if config.fp8 else "none",
+                text_encoder_dtype="bfloat16",
+                text_encoder_quantization="none",  # CPU encoding, no quant
+                vae_dtype=str(config.dtype),
+            )
+            with open(output_dir / "inputs.json", "w") as f:
+                json.dump(inputs.to_dict(), f, indent=2, default=json_serializer)
 
         return result
 
