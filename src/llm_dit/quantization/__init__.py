@@ -55,7 +55,7 @@ from .fp8_native import (
     apply_fp8_native,
     estimate_memory_savings,
     verify_fp8_applied,
-    DEFAULT_SKIP_PATTERNS,
+    ALLOWLIST_SUFFIXES,
 )
 
 __all__ = [
@@ -89,5 +89,5 @@ __all__ = [
     "apply_fp8_native",
     "estimate_memory_savings",
     "verify_fp8_applied",
-    "DEFAULT_SKIP_PATTERNS",
+    "ALLOWLIST_SUFFIXES",
 ]

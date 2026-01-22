@@ -584,11 +584,14 @@ def generate_video_with_offloading(
     logger.info("Stage 1: Loading text encoder...")
     from llm_dit.encoders.gemma3 import Gemma3Encoder
 
+    # Load encoder on CPU first to avoid OOM during initialization
+    # The 12B Gemma model in bf16 takes ~24GB which exceeds RTX 4090's 24GB
+    # Encoding on CPU is slower but more memory-safe for sequential loading
     text_encoder = Gemma3Encoder(
         model_id=str(text_encoder_path),
-        device="cuda",
+        device="cpu",  # Load to CPU first
         dtype=dtype,
-        load_in_8bit=True,  # 8-bit for memory efficiency
+        load_in_8bit=False,  # Skip quantization for CPU loading
     )
 
     logger.info("Encoding prompt...")

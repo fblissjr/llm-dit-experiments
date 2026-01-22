@@ -1,7 +1,7 @@
 """
 Native FP8 quantization matching official LTX-2 approach.
 
-Last Updated: 2026-01-19
+Last Updated: 2026-01-21
 
 Uses torch.float8_e4m3fn for weight storage with upcasting during forward.
 No frozen buffers, no memory leaks.
@@ -12,7 +12,7 @@ Key Design Decisions:
 - Weights stored as FP8 (8-bit) for ~50% memory reduction vs bf16
 - Forward pass upcasts to input dtype (typically bf16) for numerical stability
 - No scale factors or frozen buffers = no memory accumulation
-- Skip patterns exclude sensitive layers (norms, projections) that need precision
+- ALLOWLIST approach: Only quantize specific validated layers (matching reference)
 """
 
 import logging
@@ -24,9 +24,24 @@ import torch.nn.functional as F
 
 logger = logging.getLogger(__name__)
 
-# Default layers to skip for FP8 quantization
-# These layers are sensitive to quantization and should remain in full precision
-DEFAULT_SKIP_PATTERNS = [
+# Allowlist of layer suffixes that should be quantized to FP8
+# These are the ONLY layers the reference implementation quantizes
+# Reference: LTXV_MODEL_COMFY_RENAMING_WITH_TRANSFORMER_LINEAR_DOWNCAST_MAP
+# in coderef/LTX-2/packages/ltx-core/src/ltx_core/model/transformer/model_configurator.py
+#
+# NOTE: Layer names in our model are module names (no .weight/.bias suffix)
+# e.g., "transformer_blocks.0.attn1.to_q" not "transformer_blocks.0.attn1.to_q.weight"
+ALLOWLIST_SUFFIXES = [
+    ".to_q",         # Attention Q projection (ends with .to_q)
+    ".to_k",         # Attention K projection
+    ".to_v",         # Attention V projection
+    ".to_out.0",     # Attention output projection (first layer of Sequential)
+    ".ff.net.0.proj",  # FFN gate/up projection (GEGLU first proj)
+    ".ff.net.2",     # FFN down projection
+]
+
+# Legacy denylist for reference (deprecated - use allowlist instead)
+_LEGACY_SKIP_PATTERNS = [
     "norm",           # All normalization layers (RMSNorm, LayerNorm)
     "adaln",          # Adaptive layer norm (timestep conditioning)
     "proj_out",       # Final output projection
@@ -38,6 +53,8 @@ DEFAULT_SKIP_PATTERNS = [
 def apply_fp8_native(
     model: nn.Module,
     skip_patterns: Optional[list[str]] = None,
+    use_allowlist: bool = True,
+    allowlist_suffixes: Optional[list[str]] = None,
     verbose: bool = True,
 ) -> tuple[nn.Module, dict]:
     """
@@ -50,51 +67,91 @@ def apply_fp8_native(
 
     Args:
         model: Model to quantize
-        skip_patterns: Layer name patterns to skip (e.g., ["norm", "adaln"])
-                       Defaults to DEFAULT_SKIP_PATTERNS
+        skip_patterns: (DEPRECATED) Layer name patterns to skip. Use allowlist instead.
+        use_allowlist: If True, use allowlist (only quantize specific layers).
+                      If False, use legacy denylist (skip patterns).
+        allowlist_suffixes: Custom allowlist suffixes. Defaults to ALLOWLIST_SUFFIXES.
         verbose: Log progress
 
     Returns:
         (quantized_model, stats_dict)
     """
-    if skip_patterns is None:
-        skip_patterns = DEFAULT_SKIP_PATTERNS.copy()
-
     quantized_count = 0
     skipped_count = 0
+    quantized_by_suffix: dict[str, int] = {}
     skipped_by_pattern: dict[str, int] = {}
 
-    for name, module in model.named_modules():
-        if isinstance(module, nn.Linear):
-            # Check skip patterns
-            skip_reason = None
-            for pattern in skip_patterns:
-                if pattern in name.lower():
-                    skip_reason = pattern
-                    break
+    # Use allowlist approach (matches reference implementation)
+    if use_allowlist:
+        allowlist = allowlist_suffixes if allowlist_suffixes else ALLOWLIST_SUFFIXES
 
-            if skip_reason:
-                skipped_count += 1
-                skipped_by_pattern[skip_reason] = skipped_by_pattern.get(skip_reason, 0) + 1
-                continue
+        for name, module in model.named_modules():
+            if isinstance(module, nn.Linear):
+                # Check if layer matches any allowlist suffix
+                matched_suffix = None
+                for suffix in allowlist:
+                    if suffix in name:
+                        matched_suffix = suffix
+                        break
 
-            # Convert weights to FP8
-            _convert_linear_to_fp8(module)
-            quantized_count += 1
+                if matched_suffix:
+                    # Convert weights to FP8
+                    _convert_linear_to_fp8(module)
+                    quantized_count += 1
+                    quantized_by_suffix[matched_suffix] = quantized_by_suffix.get(matched_suffix, 0) + 1
 
-            if verbose and quantized_count % 50 == 0:
-                logger.info(f"  Quantized {quantized_count} layers...")
+                    if verbose and quantized_count % 100 == 0:
+                        logger.info(f"  Quantized {quantized_count} layers...")
+                else:
+                    skipped_count += 1
 
-    stats = {
-        "quantized": quantized_count,
-        "skipped": skipped_count,
-        "skipped_by_pattern": skipped_by_pattern,
-    }
+        stats = {
+            "quantized": quantized_count,
+            "skipped": skipped_count,
+            "quantized_by_suffix": quantized_by_suffix,
+            "mode": "allowlist",
+        }
 
-    if verbose:
-        logger.info(f"Native FP8: {quantized_count} quantized, {skipped_count} skipped")
-        if skipped_by_pattern:
-            logger.info(f"  Skipped by pattern: {skipped_by_pattern}")
+        if verbose:
+            logger.info(f"Native FP8 (allowlist): {quantized_count} quantized, {skipped_count} skipped")
+            logger.info(f"  Quantized by suffix: {quantized_by_suffix}")
+
+    # Legacy denylist approach (deprecated but kept for compatibility)
+    else:
+        patterns = skip_patterns if skip_patterns else _LEGACY_SKIP_PATTERNS
+
+        for name, module in model.named_modules():
+            if isinstance(module, nn.Linear):
+                # Check skip patterns
+                skip_reason = None
+                for pattern in patterns:
+                    if pattern in name.lower():
+                        skip_reason = pattern
+                        break
+
+                if skip_reason:
+                    skipped_count += 1
+                    skipped_by_pattern[skip_reason] = skipped_by_pattern.get(skip_reason, 0) + 1
+                    continue
+
+                # Convert weights to FP8
+                _convert_linear_to_fp8(module)
+                quantized_count += 1
+
+                if verbose and quantized_count % 50 == 0:
+                    logger.info(f"  Quantized {quantized_count} layers...")
+
+        stats = {
+            "quantized": quantized_count,
+            "skipped": skipped_count,
+            "skipped_by_pattern": skipped_by_pattern,
+            "mode": "denylist",
+        }
+
+        if verbose:
+            logger.info(f"Native FP8 (denylist): {quantized_count} quantized, {skipped_count} skipped")
+            if skipped_by_pattern:
+                logger.info(f"  Skipped by pattern: {skipped_by_pattern}")
 
     return model, stats
 
@@ -139,40 +196,67 @@ def _replace_linear_forward_with_upcast(layer: nn.Linear) -> None:
     layer._original_forward = original_forward
 
 
-def estimate_memory_savings(model: nn.Module, skip_patterns: Optional[list[str]] = None) -> dict:
+def estimate_memory_savings(
+    model: nn.Module,
+    skip_patterns: Optional[list[str]] = None,
+    use_allowlist: bool = True,
+    allowlist_suffixes: Optional[list[str]] = None,
+) -> dict:
     """
     Estimate memory savings from FP8 quantization without applying it.
 
     Args:
         model: Model to analyze
-        skip_patterns: Layer patterns to skip
+        skip_patterns: (DEPRECATED) Layer patterns to skip
+        use_allowlist: If True, use allowlist mode (default)
+        allowlist_suffixes: Custom allowlist suffixes
 
     Returns:
         Dict with original_gb, quantized_gb, savings_gb, savings_percent
     """
-    if skip_patterns is None:
-        skip_patterns = DEFAULT_SKIP_PATTERNS.copy()
-
     original_bytes = 0
     quantized_bytes = 0
 
-    for name, module in model.named_modules():
-        if isinstance(module, nn.Linear):
-            weight_numel = module.weight.numel()
-            bias_numel = module.bias.numel() if module.bias is not None else 0
-            total_numel = weight_numel + bias_numel
+    if use_allowlist:
+        allowlist = allowlist_suffixes if allowlist_suffixes else ALLOWLIST_SUFFIXES
 
-            # Original size (assume bf16 = 2 bytes)
-            original_bytes += total_numel * 2
+        for name, module in model.named_modules():
+            if isinstance(module, nn.Linear):
+                weight_numel = module.weight.numel()
+                bias_numel = module.bias.numel() if module.bias is not None else 0
+                total_numel = weight_numel + bias_numel
 
-            # Check if this layer would be skipped
-            should_skip = any(pattern in name.lower() for pattern in skip_patterns)
-            if should_skip:
-                # Skipped layers stay in bf16
-                quantized_bytes += total_numel * 2
-            else:
-                # FP8 = 1 byte
-                quantized_bytes += total_numel * 1
+                # Original size (assume bf16 = 2 bytes)
+                original_bytes += total_numel * 2
+
+                # Check if this layer matches allowlist
+                should_quantize = any(suffix in name for suffix in allowlist)
+                if should_quantize:
+                    # FP8 = 1 byte
+                    quantized_bytes += total_numel * 1
+                else:
+                    # Non-allowlisted layers stay in bf16
+                    quantized_bytes += total_numel * 2
+    else:
+        patterns = skip_patterns if skip_patterns else _LEGACY_SKIP_PATTERNS
+
+        for name, module in model.named_modules():
+            if isinstance(module, nn.Linear):
+                weight_numel = module.weight.numel()
+                bias_numel = module.bias.numel() if module.bias is not None else 0
+                total_numel = weight_numel + bias_numel
+
+                # Original size (assume bf16 = 2 bytes)
+                original_bytes += total_numel * 2
+
+                # Check if this layer would be skipped
+                should_skip = any(pattern in name.lower() for pattern in patterns)
+                if should_skip:
+                    # Skipped layers stay in bf16
+                    quantized_bytes += total_numel * 2
+                else:
+                    # FP8 = 1 byte
+                    quantized_bytes += total_numel * 1
 
     original_gb = original_bytes / (1024**3)
     quantized_gb = quantized_bytes / (1024**3)

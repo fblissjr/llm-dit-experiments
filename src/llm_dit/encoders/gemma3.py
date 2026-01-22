@@ -521,14 +521,17 @@ class Gemma3Encoder:
             return
 
         try:
-            from transformers import AutoTokenizer, Gemma3ForConditionalGeneration
+            # Use Gemma3ForCausalLM (text-only) instead of Gemma3ForConditionalGeneration
+            # The multimodal model includes SigLIP vision tower which causes OOM
+            # and is not needed for text-to-video generation
+            from transformers import AutoTokenizer, Gemma3ForCausalLM
         except ImportError:
             from transformers import AutoModelForCausalLM, AutoTokenizer
 
-            # Fallback for older transformers without Gemma3ForConditionalGeneration
-            Gemma3ForConditionalGeneration = AutoModelForCausalLM
+            # Fallback for older transformers
+            Gemma3ForCausalLM = AutoModelForCausalLM
 
-        logger.info(f"Loading Gemma 3 encoder with key remapping from: {self._tokenizer_path}")
+        logger.info(f"Loading Gemma 3 text encoder (no vision) from: {self._tokenizer_path}")
 
         # Build quantization config if needed
         quantization_config = None
@@ -551,28 +554,32 @@ class Gemma3Encoder:
         # Step 1: Create empty model architecture from local config
         # The config.json defines the correct architecture (vocab_size=262208, etc.)
         # We skip automatic weight loading and do it manually with key remapping
-        from transformers import Gemma3Config
+        from transformers import Gemma3Config, Gemma3TextConfig
 
-        logger.info("Loading Gemma3 config from local path...")
-        config = Gemma3Config.from_pretrained(
+        logger.info("Loading Gemma3 text config from local path...")
+        full_config = Gemma3Config.from_pretrained(
             self._tokenizer_path,
             local_files_only=True,
         )
+
+        # Extract text config for the causal LM (ignores vision tower)
+        text_config = full_config.text_config
+
         logger.info(
-            f"Config loaded: vocab_size={config.text_config.vocab_size}, "
-            f"hidden_size={config.text_config.hidden_size}, "
-            f"num_layers={config.text_config.num_hidden_layers}"
+            f"Config loaded: vocab_size={text_config.vocab_size}, "
+            f"hidden_size={text_config.hidden_size}, "
+            f"num_layers={text_config.num_hidden_layers}"
         )
 
-        # Create model from config on CPU first (requires ~24GB RAM for 12B params)
-        logger.info("Creating Gemma3 model on CPU from config...")
+        # Create text-only model from config on CPU first
+        logger.info("Creating Gemma3ForCausalLM (text-only) on CPU from config...")
 
         # Force CPU creation to avoid GPU OOM during init
         with torch.device("cpu"):
-            if hasattr(Gemma3ForConditionalGeneration, "_from_config"):
-                self._model = Gemma3ForConditionalGeneration._from_config(config)
+            if hasattr(Gemma3ForCausalLM, "_from_config"):
+                self._model = Gemma3ForCausalLM._from_config(text_config)
             else:
-                self._model = Gemma3ForConditionalGeneration(config)
+                self._model = Gemma3ForCausalLM(text_config)
 
         # Ensure model is on CPU and correct dtype
         self._model = self._model.to(dtype=self._dtype)
@@ -756,13 +763,13 @@ class Gemma3Encoder:
     def _load_ltx2_gemma_weights(self) -> dict:
         """Load and remap Gemma weights from LTX-2 checkpoint shards.
 
-        The LTX-2 checkpoint stores weights with 'base_text_encoder.*' prefix,
-        but Gemma3ForConditionalGeneration expects 'model.*'.
+        The LTX-2 checkpoint stores weights with 'base_text_encoder.language_model.*' prefix,
+        but Gemma3ForCausalLM expects 'model.*' (without language_model level).
 
         Key remapping:
-        - base_text_encoder.language_model.embed_tokens.weight -> model.language_model.embed_tokens.weight
-        - base_text_encoder.language_model.layers.X.* -> model.language_model.layers.X.*
-        - base_text_encoder.language_model.norm.weight -> model.language_model.norm.weight
+        - base_text_encoder.language_model.embed_tokens.weight -> model.embed_tokens.weight
+        - base_text_encoder.language_model.layers.X.* -> model.layers.X.*
+        - base_text_encoder.language_model.norm.weight -> model.norm.weight
 
         Returns:
             Dict of remapped state_dict keys/tensors ready for load_state_dict()
@@ -780,16 +787,16 @@ class Gemma3Encoder:
 
         weight_map = index.get("weight_map", {})
 
-        # Find all shards that contain base_text_encoder.* keys
+        # Find all shards that contain base_text_encoder.language_model.* keys
         shards_to_load = set()
         keys_to_load = []
         for key, shard in weight_map.items():
-            if key.startswith("base_text_encoder."):
+            if key.startswith("base_text_encoder.language_model."):
                 shards_to_load.add(shard)
                 keys_to_load.append(key)
 
         logger.info(
-            f"Found {len(keys_to_load)} base_text_encoder keys across "
+            f"Found {len(keys_to_load)} base_text_encoder.language_model keys across "
             f"{len(shards_to_load)} shards"
         )
 
@@ -804,9 +811,10 @@ class Gemma3Encoder:
             logger.debug(f"Loading shard: {shard_name}")
             with safe_open(shard_path, framework="pt") as f:
                 for key in f.keys():
-                    if key.startswith("base_text_encoder."):
-                        # Remap: base_text_encoder.* -> model.*
-                        new_key = key.replace("base_text_encoder.", "model.", 1)
+                    if key.startswith("base_text_encoder.language_model."):
+                        # Remap: base_text_encoder.language_model.* -> model.*
+                        # Gemma3ForCausalLM expects model.* (not model.language_model.*)
+                        new_key = key.replace("base_text_encoder.language_model.", "model.", 1)
                         tensor = f.get_tensor(key)
                         state_dict[new_key] = tensor.to(self._dtype)
 
@@ -822,7 +830,7 @@ class Gemma3Encoder:
             )
 
             # Check embed_tokens specifically (critical for tokenizer compatibility)
-            embed_key = "model.language_model.embed_tokens.weight"
+            embed_key = "model.embed_tokens.weight"
             if embed_key in state_dict:
                 embed = state_dict[embed_key]
                 logger.info(
