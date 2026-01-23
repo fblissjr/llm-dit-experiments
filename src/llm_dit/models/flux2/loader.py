@@ -24,6 +24,7 @@ Usage:
     vae = load_flux2_vae("klein-9b", device="cuda")
 """
 
+import gc
 import os
 import sys
 from pathlib import Path
@@ -247,8 +248,9 @@ def load_flux2_transformer(
     with torch.device("meta"):
         model = Flux2Transformer(params).to(dtype)
 
-    # Load weights
-    sd = load_sft(weight_path, device=str(device))
+    # Load weights - for FP8, load to CPU first to avoid GPU memory spike during casting
+    load_device = "cpu" if is_fp8 else str(device)
+    sd = load_sft(weight_path, device=load_device)
 
     # FP8 checkpoints contain extra scale tensors (input_scale, weight_scale)
     # that our model doesn't have. Filter them out and cast weights to target dtype.
@@ -260,7 +262,7 @@ def load_flux2_transformer(
             for k in scale_keys:
                 del sd[k]
 
-        # Cast FP8 weights to target dtype (bf16)
+        # Cast FP8 weights to target dtype (bf16) on CPU to avoid memory spike
         # FP8 weights are float8_e4m3fn which can't be used directly in matmul with bf16
         fp8_count = 0
         for k, v in sd.items():
@@ -270,7 +272,16 @@ def load_flux2_transformer(
         if fp8_count > 0:
             print(f"Cast {fp8_count} FP8 tensors to {dtype}")
 
+        # Move to target device after casting
+        sd = {k: v.to(device) for k, v in sd.items()}
+
     model.load_state_dict(sd, strict=True, assign=True)
+
+    # Free state dict memory
+    del sd
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
     return model.to(device)
 
