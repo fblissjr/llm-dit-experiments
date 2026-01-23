@@ -467,6 +467,8 @@ def generate_image(
     transformer=None,
     vae=None,
     encoder_path: Optional[str] = None,
+    model_path: Optional[str] = None,
+    vae_path: Optional[str] = None,
 ) -> Image.Image:
     """
     Generate an image using FLUX.2 Klein.
@@ -476,11 +478,13 @@ def generate_image(
 
     Args:
         config: Generation configuration (can include reference_images for editing)
-        model_name: Model variant ("klein-4b", "klein-9b")
+        model_name: Model variant ("klein-4b", "klein-9b", "klein-9b-fp8", etc.)
         encoder: Pre-loaded encoder (optional)
         transformer: Pre-loaded transformer (optional)
         vae: Pre-loaded VAE (optional)
         encoder_path: Custom path for text encoder (overrides model default, auto-detects dtype)
+        model_path: Local path to transformer weights (file or directory)
+        vae_path: Local path to VAE weights (file or directory)
 
     Returns:
         Generated PIL Image
@@ -542,7 +546,7 @@ def generate_image(
         # Load VAE for encoding (will be reused for decoding)
         if vae is None:
             from llm_dit.models.flux2.loader import load_flux2_vae
-            vae = load_flux2_vae(model_name, device=config.device, dtype=dtype)
+            vae = load_flux2_vae(model_name, device=config.device, dtype=dtype, vae_path=vae_path)
 
         # Load and encode reference images
         ref_images = load_reference_images(config)
@@ -572,7 +576,7 @@ def generate_image(
     if transformer is None:
         from llm_dit.models.flux2.loader import load_flux2_transformer
 
-        transformer = load_flux2_transformer(model_name, device=config.device, dtype=dtype)
+        transformer = load_flux2_transformer(model_name, device=config.device, dtype=dtype, model_path=model_path)
 
     # Move embeddings to device
     txt_embeddings = txt_embeddings.to(device)
@@ -635,7 +639,7 @@ def generate_image(
     if vae is None:
         from llm_dit.models.flux2.loader import load_flux2_vae
 
-        vae = load_flux2_vae(model_name, device=config.device, dtype=dtype)
+        vae = load_flux2_vae(model_name, device=config.device, dtype=dtype, vae_path=vae_path)
 
     # Move latents back to device for decoding
     latents = latents.to(device).to(dtype)
@@ -659,17 +663,21 @@ def quick_generate(
     width: int = 1024,
     seed: Optional[int] = None,
     encoder_path: Optional[str] = None,
+    model_path: Optional[str] = None,
+    vae_path: Optional[str] = None,
 ) -> Image.Image:
     """
     Quick generation helper with minimal configuration.
 
     Args:
         prompt: Text prompt
-        model_name: Model variant
+        model_name: Model variant (e.g., "klein-9b", "klein-9b-fp8")
         height: Image height
         width: Image width
         seed: Random seed
         encoder_path: Custom encoder path (auto-detects dtype)
+        model_path: Local path to transformer weights
+        vae_path: Local path to VAE weights
 
     Returns:
         Generated PIL Image
@@ -680,4 +688,10 @@ def quick_generate(
         width=width,
         seed=seed,
     )
-    return generate_image(config, model_name=model_name, encoder_path=encoder_path)
+    return generate_image(
+        config,
+        model_name=model_name,
+        encoder_path=encoder_path,
+        model_path=model_path,
+        vae_path=vae_path,
+    )

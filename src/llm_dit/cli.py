@@ -174,6 +174,8 @@ class RuntimeConfig:
     flux2_output_path: str = "flux2_output.png"  # Output image path
     flux2_input_images: list[str] | None = None  # Input image paths for editing mode
     flux2_encoder_path: str | None = None  # Custom path for Qwen3 encoder (auto-detects dtype)
+    flux2_model_path: str | None = None  # Local path to transformer weights (file or directory)
+    flux2_vae_path: str | None = None  # Local path to VAE weights (file or directory)
 
     # Device placement
     encoder_device: str = "auto"
@@ -744,10 +746,14 @@ def create_base_parser(
     flux2_group.add_argument(
         "--flux2-model-name",
         type=str,
-        choices=["klein-4b", "klein-9b", "klein-base-4b", "klein-base-9b"],
+        choices=[
+            "klein-4b", "klein-9b", "klein-base-4b", "klein-base-9b",
+            "klein-4b-fp8", "klein-9b-fp8", "klein-base-4b-fp8", "klein-base-9b-fp8",
+        ],
         default=None,
         help="FLUX.2 Klein model variant (default: klein-9b). "
-        "Distilled models (klein-*b) use 4 steps, base models use 50 steps.",
+        "Distilled models (klein-*b) use 4 steps, base models use 50 steps. "
+        "FP8 variants (-fp8 suffix) use half the memory.",
     )
     flux2_group.add_argument(
         "--flux2-num-steps",
@@ -798,6 +804,20 @@ def create_base_parser(
         default=None,
         help="Custom path for Qwen3 text encoder (local path or HF model ID). "
         "Auto-detects dtype (BF16, FP8, etc). Default: uses model-specific encoder.",
+    )
+    flux2_group.add_argument(
+        "--flux2-model-path",
+        type=str,
+        default=None,
+        help="Local path to transformer weights (file or directory). "
+        "If directory, searches for expected .safetensors file.",
+    )
+    flux2_group.add_argument(
+        "--flux2-vae-path",
+        type=str,
+        default=None,
+        help="Local path to VAE weights (file or directory). "
+        "If directory, searches for ae.safetensors in vae/ subdirectory.",
     )
 
     # Device placement
@@ -1597,6 +1617,10 @@ def _apply_cli_overrides(args: argparse.Namespace, config: RuntimeConfig) -> Run
         config.flux2_input_images = args.flux2_input_image
     if getattr(args, "flux2_encoder_path", None) is not None:
         config.flux2_encoder_path = args.flux2_encoder_path
+    if getattr(args, "flux2_model_path", None) is not None:
+        config.flux2_model_path = args.flux2_model_path
+    if getattr(args, "flux2_vae_path", None) is not None:
+        config.flux2_vae_path = args.flux2_vae_path
 
     # Device overrides
     if getattr(args, "text_encoder_device", None) is not None:

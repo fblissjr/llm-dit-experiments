@@ -773,8 +773,10 @@ def run_flux2_generation(args, config, logger) -> int:
 
     mode = "editing" if reference_images else "text-to-image"
 
-    # Custom encoder path (overrides default)
+    # Custom paths (override defaults)
     encoder_path = config.flux2_encoder_path
+    model_path = config.flux2_model_path
+    vae_path = config.flux2_vae_path
 
     logger.info("=" * 60)
     logger.info(f"FLUX.2 Klein Image Generation ({mode} mode)")
@@ -785,6 +787,10 @@ def run_flux2_generation(args, config, logger) -> int:
     logger.info(f"  Guidance: {guidance}")
     if encoder_path:
         logger.info(f"  Encoder: {encoder_path}")
+    if model_path:
+        logger.info(f"  Transformer: {model_path}")
+    if vae_path:
+        logger.info(f"  VAE: {vae_path}")
     if seed is not None:
         logger.info(f"  Seed: {seed}")
     if reference_images:
@@ -810,7 +816,13 @@ def run_flux2_generation(args, config, logger) -> int:
     # Generate
     start = time.time()
     try:
-        image = generate_image(gen_config, model_name=model_name, encoder_path=encoder_path)
+        image = generate_image(
+            gen_config,
+            model_name=model_name,
+            encoder_path=encoder_path,
+            model_path=model_path,
+            vae_path=vae_path,
+        )
         gen_time = time.time() - start
 
         # Save image

@@ -137,6 +137,7 @@ LATENT_CHANNELS_AFTER_PATCHIFY = 128  # 32 * 2 * 2 = 128
 # =============================================================================
 
 FLUX2_MODEL_INFO = {
+    # BF16 distilled models
     "klein-4b": {
         "repo_id": "black-forest-labs/FLUX.2-klein-4B",
         "filename": "flux-2-klein-4b.safetensors",
@@ -155,6 +156,7 @@ FLUX2_MODEL_INFO = {
         "distilled": True,
         "defaults": {"guidance": 1.0, "num_steps": 4},
     },
+    # BF16 base models (non-distilled)
     "klein-base-4b": {
         "repo_id": "black-forest-labs/FLUX.2-klein-base-4B",
         "filename": "flux-2-klein-base-4b.safetensors",
@@ -172,6 +174,48 @@ FLUX2_MODEL_INFO = {
         "text_encoder": "Qwen/Qwen3-8B-FP8",
         "distilled": False,
         "defaults": {"guidance": 4.0, "num_steps": 50},
+    },
+    # FP8 distilled models
+    "klein-4b-fp8": {
+        "repo_id": "black-forest-labs/FLUX.2-klein-4B",
+        "filename": "flux-2-klein-4b-fp8.safetensors",
+        "filename_ae": "ae.safetensors",
+        "params_cls": Klein4BParams,
+        "text_encoder": "Qwen/Qwen3-4B-FP8",
+        "distilled": True,
+        "defaults": {"guidance": 1.0, "num_steps": 4},
+        "fp8": True,
+    },
+    "klein-9b-fp8": {
+        "repo_id": "black-forest-labs/FLUX.2-klein-9B",
+        "filename": "flux-2-klein-9b-fp8.safetensors",
+        "filename_ae": "ae.safetensors",
+        "params_cls": Klein9BParams,
+        "text_encoder": "Qwen/Qwen3-8B-FP8",
+        "distilled": True,
+        "defaults": {"guidance": 1.0, "num_steps": 4},
+        "fp8": True,
+    },
+    # FP8 base models
+    "klein-base-4b-fp8": {
+        "repo_id": "black-forest-labs/FLUX.2-klein-base-4B",
+        "filename": "flux-2-klein-base-4b-fp8.safetensors",
+        "filename_ae": "ae.safetensors",
+        "params_cls": Klein4BParams,
+        "text_encoder": "Qwen/Qwen3-4B-FP8",
+        "distilled": False,
+        "defaults": {"guidance": 4.0, "num_steps": 50},
+        "fp8": True,
+    },
+    "klein-base-9b-fp8": {
+        "repo_id": "black-forest-labs/FLUX.2-klein-base-9B",
+        "filename": "flux-2-klein-base-9b-fp8.safetensors",
+        "filename_ae": "ae.safetensors",
+        "params_cls": Klein9BParams,
+        "text_encoder": "Qwen/Qwen3-8B-FP8",
+        "distilled": False,
+        "defaults": {"guidance": 4.0, "num_steps": 50},
+        "fp8": True,
     },
 }
 

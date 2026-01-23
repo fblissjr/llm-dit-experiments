@@ -74,13 +74,18 @@ def _try_huggingface_download(repo_id: str, filename: str) -> str | None:
         return None
 
 
-def _get_model_weight_path(model_name: str) -> str:
+def _get_model_weight_path(model_name: str, model_path: str | None = None) -> str:
     """
-    Get the path to model weights, checking environment and HuggingFace.
+    Get the path to model weights, checking direct path, environment, and HuggingFace.
 
     Priority:
-    1. Environment variable (e.g., FLUX2_KLEIN_9B_PATH)
-    2. HuggingFace Hub download
+    1. Direct path (if provided)
+    2. Environment variable (e.g., FLUX2_KLEIN_9B_PATH)
+    3. HuggingFace Hub download
+
+    Args:
+        model_name: Model variant name (e.g., "klein-9b", "klein-9b-fp8")
+        model_path: Direct path to weights file or directory containing weights
     """
     model_name = model_name.lower()
     if model_name not in FLUX2_MODEL_INFO:
@@ -88,52 +93,111 @@ def _get_model_weight_path(model_name: str) -> str:
 
     config = FLUX2_MODEL_INFO[model_name]
 
-    # Check environment variable
-    env_var = MODEL_PATH_ENV_VARS.get(model_name)
+    # 1. Check direct path (highest priority)
+    if model_path:
+        model_path_obj = Path(model_path)
+        if model_path_obj.is_file() and model_path_obj.suffix == ".safetensors":
+            return str(model_path_obj)
+        # If it's a directory, look for the expected filename
+        if model_path_obj.is_dir():
+            # Check for transformer subdirectory (common in HF repos)
+            transformer_dir = model_path_obj / "transformer"
+            if transformer_dir.exists():
+                weight_file = transformer_dir / config["filename"]
+                if weight_file.exists():
+                    return str(weight_file)
+            # Check directly in the directory
+            weight_file = model_path_obj / config["filename"]
+            if weight_file.exists():
+                return str(weight_file)
+            # Fallback: look for any .safetensors file matching model pattern
+            pattern = f"*{model_name.replace('-', '*')}*.safetensors"
+            matches = list(model_path_obj.glob(pattern))
+            if matches:
+                return str(matches[0])
+            # Last fallback: any safetensors file
+            matches = list(model_path_obj.glob("*.safetensors"))
+            if len(matches) == 1:
+                return str(matches[0])
+        raise ValueError(f"Could not find weights at {model_path}")
+
+    # 2. Check environment variable
+    env_var = MODEL_PATH_ENV_VARS.get(model_name.replace("-fp8", ""))  # Strip fp8 suffix for env var
     if env_var and env_var in os.environ:
         weight_path = os.environ[env_var]
         if os.path.exists(weight_path):
             return weight_path
         print(f"Warning: {env_var} set but path doesn't exist: {weight_path}")
 
-    # Try HuggingFace download
+    # 3. Try HuggingFace download
     weight_path = _try_huggingface_download(config["repo_id"], config["filename"])
     if weight_path:
         return weight_path
 
     raise RuntimeError(
-        f"Could not find weights for {model_name}. "
-        f"Set {env_var} environment variable or ensure HuggingFace Hub access."
+        f"Could not find weights for {model_name}. Options:\n"
+        f"  1. Use --flux2-model-path to specify local path\n"
+        f"  2. Set {env_var} environment variable\n"
+        f"  3. Ensure HuggingFace Hub access for {config['repo_id']}"
     )
 
 
-def _get_vae_weight_path(model_name: str) -> str:
+def _get_vae_weight_path(model_name: str, vae_path: str | None = None) -> str:
     """
     Get the path to VAE weights.
 
     All FLUX.2 models use the same VAE weights (ae.safetensors).
+
+    Args:
+        model_name: Model variant name (used to find repo if downloading)
+        vae_path: Direct path to VAE weights file or directory
     """
-    model_name = model_name.lower()
+    model_name = model_name.lower().replace("-fp8", "")  # VAE is same for fp8/bf16
     if model_name not in FLUX2_MODEL_INFO:
         raise ValueError(f"Unknown model: {model_name}")
 
     config = FLUX2_MODEL_INFO[model_name]
 
-    # Check environment variable
+    # 1. Check direct path (highest priority)
+    if vae_path:
+        vae_path_obj = Path(vae_path)
+        if vae_path_obj.is_file() and vae_path_obj.suffix == ".safetensors":
+            return str(vae_path_obj)
+        # If it's a directory, look for ae.safetensors
+        if vae_path_obj.is_dir():
+            # Check for vae subdirectory
+            vae_subdir = vae_path_obj / "vae"
+            if vae_subdir.exists():
+                ae_file = vae_subdir / "ae.safetensors"
+                if ae_file.exists():
+                    return str(ae_file)
+            # Check directly
+            ae_file = vae_path_obj / "ae.safetensors"
+            if ae_file.exists():
+                return str(ae_file)
+            # Check diffusion_pytorch_model.safetensors (alternative name)
+            alt_file = vae_path_obj / "diffusion_pytorch_model.safetensors"
+            if alt_file.exists():
+                return str(alt_file)
+        raise ValueError(f"Could not find VAE weights at {vae_path}")
+
+    # 2. Check environment variable
     if VAE_PATH_ENV_VAR in os.environ:
         weight_path = os.environ[VAE_PATH_ENV_VAR]
         if os.path.exists(weight_path):
             return weight_path
         print(f"Warning: {VAE_PATH_ENV_VAR} set but path doesn't exist: {weight_path}")
 
-    # Try HuggingFace download
+    # 3. Try HuggingFace download
     weight_path = _try_huggingface_download(config["repo_id"], config["filename_ae"])
     if weight_path:
         return weight_path
 
     raise RuntimeError(
-        f"Could not find VAE weights. "
-        f"Set {VAE_PATH_ENV_VAR} environment variable or ensure HuggingFace Hub access."
+        f"Could not find VAE weights. Options:\n"
+        f"  1. Use --flux2-vae-path to specify local path\n"
+        f"  2. Set {VAE_PATH_ENV_VAR} environment variable\n"
+        f"  3. Ensure HuggingFace Hub access"
     )
 
 
@@ -142,15 +206,17 @@ def load_flux2_transformer(
     device: str | torch.device = "cuda",
     dtype: torch.dtype = torch.bfloat16,
     debug_mode: bool = False,
+    model_path: str | None = None,
 ) -> Flux2Transformer:
     """
     Load a FLUX.2 transformer model.
 
     Args:
-        model_name: Model variant ("klein-4b", "klein-9b", "klein-base-4b", "klein-base-9b")
+        model_name: Model variant (e.g., "klein-9b", "klein-9b-fp8")
         device: Target device
         dtype: Model dtype (default bfloat16)
         debug_mode: If True, create minimal model (1 block each) for testing
+        model_path: Direct path to weights file or directory (overrides HF download)
 
     Returns:
         Loaded Flux2Transformer
@@ -171,7 +237,7 @@ def load_flux2_transformer(
             return Flux2Transformer(params).to(dtype)
 
     # Get weights path
-    weight_path = _get_model_weight_path(model_name)
+    weight_path = _get_model_weight_path(model_name, model_path)
     print(f"Loading {model_name} from {weight_path}")
 
     # Create model on meta device for memory efficiency
@@ -189,6 +255,7 @@ def load_flux2_vae(
     model_name: str = "klein-9b",
     device: str | torch.device = "cuda",
     dtype: torch.dtype = torch.bfloat16,
+    vae_path: str | None = None,
 ) -> AutoEncoder:
     """
     Load the FLUX.2 VAE (AutoEncoder).
@@ -199,12 +266,13 @@ def load_flux2_vae(
         model_name: Model variant (used to find weights, all share same VAE)
         device: Target device
         dtype: Model dtype (default bfloat16)
+        vae_path: Direct path to VAE weights file or directory (overrides HF download)
 
     Returns:
         Loaded AutoEncoder
     """
     # Get weights path
-    weight_path = _get_vae_weight_path(model_name)
+    weight_path = _get_vae_weight_path(model_name, vae_path)
     print(f"Loading VAE from {weight_path}")
 
     # Create model on meta device
