@@ -78,7 +78,15 @@ def cleanup_memory() -> None:
     gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
+
+
+def log_gpu_memory(stage: str) -> None:
+    """Log current GPU memory usage for debugging."""
+    if torch.cuda.is_available():
         torch.cuda.synchronize()
+        allocated = torch.cuda.memory_allocated() / 1024**3
+        reserved = torch.cuda.memory_reserved() / 1024**3
+        logger.info(f"[GPU] {stage}: allocated={allocated:.2f}GB, reserved={reserved:.2f}GB")
 
 
 @dataclass
@@ -504,6 +512,7 @@ def generate_image(
     # ===========================================================================
     # Stage 1: Text Encoding
     # ===========================================================================
+    log_gpu_memory("before encoder load")
     logger.info("Stage 1: Encoding text...")
 
     if encoder is None:
@@ -516,8 +525,10 @@ def generate_image(
         encoder = Qwen3Flux2Encoder.from_pretrained(text_encoder_spec, device=config.device)
 
     # Encode text
+    log_gpu_memory("after encoder load")
     txt_embeddings = encoder.encode([config.prompt])  # [1, seq_len, context_dim]
     txt_embeddings = txt_embeddings.to(dtype)
+    log_gpu_memory("after text encoding")
 
     # Create text position IDs
     txt_ids = create_text_ids(
@@ -533,6 +544,7 @@ def generate_image(
         encoder.offload()
         del encoder
         cleanup_memory()
+        log_gpu_memory("after encoder offload + cleanup")
 
     # ===========================================================================
     # Stage 1.5: Reference Image Encoding (if editing mode)
@@ -577,6 +589,7 @@ def generate_image(
         from llm_dit.models.flux2.loader import load_flux2_transformer
 
         transformer = load_flux2_transformer(model_name, device=config.device, dtype=dtype, model_path=model_path)
+        log_gpu_memory("after transformer load")
 
     # Move embeddings to device
     txt_embeddings = txt_embeddings.to(device)
@@ -610,6 +623,8 @@ def generate_image(
 
     # Determine guidance (None for distilled models)
     guidance = None if FLUX2_MODEL_INFO[model_name.lower()]["distilled"] else config.guidance
+
+    log_gpu_memory("before denoising loop")
 
     # Denoise with optional reference image conditioning
     latents = denoise(
