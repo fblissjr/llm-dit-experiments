@@ -201,25 +201,25 @@ def _load_8bit_encoder(
     use_connector: bool,
 ) -> "Gemma3Encoder":
     """
-    Load 8-bit quantized Gemma3 encoder using BitsAndBytes.
+    Load 8-bit quantized Gemma3 encoder using torchao.
 
     Memory savings: ~24GB -> ~12GB for Gemma3-12B.
 
-    Pattern from LTX-2 trainer:
-    1. Load Gemma backbone with bitsandbytes 8-bit quantization
-    2. Load LTX-2 connector weights (full precision)
-    3. Assemble into encoder
+    Strategy:
+    1. Load Gemma model to CPU in bf16 (~24GB system RAM)
+    2. Apply torchao int8_weight_only() quantization
+    3. Move quantized model to GPU (~12GB VRAM)
+    4. Load LTX-2 connector weights (full precision)
+    5. Assemble into encoder
 
-    Note: The existing Gemma3Encoder class supports load_in_8bit but the
-    manual weight loading pattern may not work well with it. This function
-    uses HuggingFace's built-in quantization which handles it properly.
+    Note: Uses torchao instead of BitsAndBytes because LTX-2's sharded
+    checkpoint format requires manual weight loading, which is incompatible
+    with BitsAndBytes' from_pretrained hook.
     """
     try:
-        from transformers import AutoTokenizer, BitsAndBytesConfig, Gemma3ForCausalLM
+        from transformers import AutoTokenizer, Gemma3ForCausalLM
     except ImportError:
-        raise ImportError(
-            "8-bit loading requires bitsandbytes. Install with: pip install bitsandbytes"
-        )
+        raise ImportError("8-bit loading requires transformers>=4.44.0")
 
     from llm_dit.encoders.gemma3 import (
         Embeddings1DConnector,
@@ -228,51 +228,84 @@ def _load_8bit_encoder(
         load_connector_weights,
     )
 
-    logger.info("Loading 8-bit Gemma3 encoder with BitsAndBytes...")
-
-    # Configure 8-bit quantization
-    bnb_config = BitsAndBytesConfig(
-        load_in_8bit=True,
-        llm_int8_enable_fp32_cpu_offload=False,  # Keep on GPU
-    )
+    logger.info("Loading 8-bit Gemma3 encoder with torchao quantization...")
 
     # Check if encoder_path contains LTX-2 sharded weights or standard HF weights
     encoder_path_obj = Path(encoder_path)
     index_file = encoder_path_obj / "diffusion_pytorch_model.safetensors.index.json"
 
     if index_file.exists():
-        # LTX-2 sharded format - need to load from HuggingFace and apply weights
-        logger.warning(
-            "LTX-2 checkpoint format detected. 8-bit loading works best with "
-            "standard HuggingFace Gemma model. Attempting to load with manual "
-            "weight transfer..."
-        )
-        # For LTX-2 format, we need to use the standard loader
-        # The 8-bit flag will be passed through
+        # LTX-2 sharded format - use torchao int8 quantization (same approach as q4-qat)
+        logger.info("LTX-2 checkpoint format detected. Using torchao int8 quantization...")
+
+        try:
+            from torchao.quantization import quantize_, int8_weight_only
+            has_torchao = True
+        except ImportError:
+            logger.warning("torchao not available, falling back to bf16 (will use ~24GB)")
+            has_torchao = False
+
+        # Step 1: Load model on CPU using the existing Gemma3Encoder loader
+        logger.info("Loading model on CPU for quantization...")
         encoder = Gemma3Encoder(
             model_id=encoder_path,
-            device=device,
+            device="cpu",  # Load on CPU first
             dtype=dtype,
             max_sequence_length=max_sequence_length,
-            load_in_8bit=True,
+            load_in_8bit=False,  # Don't use BnB, we'll use torchao
             connectors_path=connectors_path,
             tokenizer_path=tokenizer_path,
             use_connector=use_connector,
         )
         encoder._load_model()
+
+        # Step 2: Apply torchao int8 quantization
+        if has_torchao and encoder._model is not None:
+            logger.info("Applying torchao int8 weight quantization...")
+            quantize_(encoder._model, int8_weight_only())  # type: ignore[possibly-unbound]
+            _log_memory_usage("After int8 quantization (CPU)")
+
+        # Step 3: Move to target device
+        target_device = device if device != "auto" else "cuda"
+        logger.info(f"Moving quantized model to {target_device}...")
+        if encoder._model is not None:
+            encoder._model = encoder._model.to(torch.device(target_device))
+        if encoder._feature_extractor is not None:
+            encoder._feature_extractor = encoder._feature_extractor.to(torch.device(target_device))
+        if encoder._embeddings_connector is not None:
+            encoder._embeddings_connector = encoder._embeddings_connector.to(torch.device(target_device), dtype=dtype)
+        encoder._device_str = target_device
+        _log_memory_usage(f"Model on {target_device}")
+
+        return encoder
     else:
-        # Standard HuggingFace format - can use direct quantization
+        # Standard HuggingFace format - also use torchao for consistency
         logger.info(f"Loading 8-bit Gemma from: {encoder_path}")
 
-        # Load model with quantization
+        try:
+            from torchao.quantization import quantize_, int8_weight_only
+            has_torchao = True
+        except ImportError:
+            logger.warning("torchao not available, loading in bf16")
+            has_torchao = False
+
+        # Load model on CPU first for quantization
         model = Gemma3ForCausalLM.from_pretrained(
             encoder_path,
-            quantization_config=bnb_config,
             torch_dtype=dtype,
-            device_map="auto",
+            device_map="cpu",
             low_cpu_mem_usage=True,
         )
         model.requires_grad_(False)
+
+        # Apply int8 quantization
+        if has_torchao:
+            logger.info("Applying torchao int8 weight quantization...")
+            quantize_(model, int8_weight_only())  # type: ignore[possibly-unbound]
+
+        # Move to target device
+        target_device = device if device != "auto" else "cuda"
+        model = model.to(torch.device(target_device))
 
         # Load tokenizer from LTX-2 (CRITICAL: must use LTX-2's tokenizer)
         logger.info(f"Loading tokenizer from: {tokenizer_path}")
@@ -382,18 +415,42 @@ def _load_q4_qat_encoder(
         load_connector_weights,
     )
 
-    logger.info("Loading Q4 QAT Gemma3 encoder...")
+    logger.info("Loading Q4 QAT Gemma3 encoder with torchao quantization...")
     logger.info(f"  Model path: {encoder_path}")
 
-    # Q4 QAT models can be loaded directly - they're pre-quantized
-    logger.info("Loading pre-quantized Q4 QAT model...")
+    # The "unquantized" QAT models store weights in bf16 format.
+    # We need to apply quantization at load time using torchao.
+    # Strategy: Load on CPU in bf16 -> Apply int4 quantization -> Move to GPU
+
+    try:
+        from torchao.quantization import quantize_, int4_weight_only
+        has_torchao = True
+    except ImportError:
+        logger.warning("torchao not available, falling back to bf16 (will use ~24GB)")
+        has_torchao = False
+
+    # Step 1: Load model on CPU first to avoid OOM during quantization
+    logger.info("Loading model on CPU for quantization...")
     model = Gemma3ForCausalLM.from_pretrained(
         encoder_path,
         torch_dtype=dtype,
-        device_map="auto" if device == "auto" else {"": device},
+        device_map="cpu",  # Load on CPU first
         low_cpu_mem_usage=True,
     )
     model.requires_grad_(False)
+
+    # Step 2: Apply int4 quantization (reduces ~24GB -> ~3GB)
+    if has_torchao:
+        logger.info("Applying torchao int4 weight quantization...")
+        quantize_(model, int4_weight_only())  # type: ignore[possibly-unbound]
+        _log_memory_usage("After int4 quantization (CPU)")
+
+    # Step 3: Move to target device
+    target_device = device if device != "auto" else "cuda"
+    target_device_obj = torch.device(target_device)
+    logger.info(f"Moving quantized model to {target_device}...")
+    model = model.to(target_device_obj)
+    _log_memory_usage(f"Model on {target_device}")
 
     # Load tokenizer from LTX-2 (CRITICAL)
     logger.info(f"Loading tokenizer from: {tokenizer_path}")
@@ -442,11 +499,11 @@ def _load_q4_qat_encoder(
     else:
         logger.warning(f"Connector weights not found at {connectors_path}")
 
-    # Move to device
-    target_device = torch.device(device if device != "auto" else "cuda")
-    feature_extractor = feature_extractor.to(target_device)
+    # Move connectors to same device as model (target_device already set above)
+    device_obj = torch.device(target_device)
+    feature_extractor = feature_extractor.to(device_obj)
     if embeddings_connector is not None:
-        embeddings_connector = embeddings_connector.to(target_device, dtype=dtype)
+        embeddings_connector = embeddings_connector.to(device_obj, dtype=dtype)
 
     # Create encoder wrapper
     encoder = Gemma3Encoder.__new__(Gemma3Encoder)

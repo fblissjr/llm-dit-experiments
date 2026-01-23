@@ -516,7 +516,6 @@ def run_ltx2_generation(args, config, logger) -> int:
     # =========================================================================
     if config.ltx2_save_embeddings:
         from llm_dit.distributed import save_embeddings
-        from llm_dit.encoders.gemma3 import Gemma3Encoder
 
         # Resolve text encoder path
         encoder_path = text_encoder_path or (f"{model_path}/text_encoder" if model_path else None)
@@ -528,17 +527,33 @@ def run_ltx2_generation(args, config, logger) -> int:
         logger.info("LTX-2 EMBEDDING PRECOMPUTATION")
         logger.info("=" * 60)
         logger.info(f"  Text encoder: {encoder_path}")
+        logger.info(f"  Gemma variant: {config.ltx2_gemma_variant}")
+        logger.info(f"  Device: {config.ltx2_text_encoder_device}")
         logger.info(f"  Prompt: {args.prompt[:80]}...")
         logger.info(f"  Output: {config.ltx2_save_embeddings}")
         logger.info("-" * 60)
 
         logger.info("Loading Gemma3 text encoder...")
         start = time.time()
-        encoder = Gemma3Encoder(
-            model_id=str(encoder_path),
-            device=config.ltx2_text_encoder_device,
-            dtype=config.get_dtype(),
-        )
+
+        # Use variant factory for flexible Gemma3 loading (supports bf16, 8bit, q4-qat)
+        if config.ltx2_gemma_variant != "bf16":
+            from llm_dit.encoders.gemma3_variants import create_gemma3_encoder
+            encoder = create_gemma3_encoder(
+                variant=config.ltx2_gemma_variant,
+                model_path=str(model_path),
+                text_encoder_path=str(encoder_path),
+                device=config.ltx2_text_encoder_device,
+                dtype=config.get_dtype(),
+            )
+        else:
+            # Default bf16 path
+            from llm_dit.encoders.gemma3 import Gemma3Encoder
+            encoder = Gemma3Encoder(
+                model_id=str(encoder_path),
+                device=config.ltx2_text_encoder_device,
+                dtype=config.get_dtype(),
+            )
         load_time = time.time() - start
         logger.info(f"Encoder loaded in {load_time:.1f}s")
 

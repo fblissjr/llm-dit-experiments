@@ -4,6 +4,17 @@ last updated: 2026-01-23
 
 Comprehensive guide for LTX-2 text-to-video generation, including memory optimization strategies for 24GB GPUs.
 
+## table of contents
+- [overview](#overview)
+- [architecture](#architecture)
+- [quick start](#quick-start)
+- [cli reference](#cli-reference)
+- [memory optimization](#memory-optimization)
+- [common workflows](#common-workflows)
+- [troubleshooting](#troubleshooting)
+- [model directory structure](#model-directory-structure)
+- [related documentation](#related-documentation)
+
 ## overview
 
 LTX-2 is Lightricks' 13B parameter text-to-video diffusion transformer that uses Gemma3-12B as its text encoder. The model is distilled for fast 12-step generation and supports FP8 quantization for memory-efficient inference.
@@ -13,7 +24,7 @@ LTX-2 is Lightricks' 13B parameter text-to-video diffusion transformer that uses
 - Text-to-video generation at configurable resolutions (768x512 default)
 - Variable frame counts (33-65 frames depending on VRAM)
 - FP8 quantized transformer for 24GB GPU inference
-- Multiple Gemma3 variants for text encoding (bf16, 8-bit, Q4 QAT)
+- Multiple Gemma3 variants for text encoding (bf16, 8-bit, torchao int4)
 - Precomputed embeddings for memory-constrained workflows
 - LoRA support for style/subject customization
 
@@ -114,11 +125,13 @@ LTX-2 has three major components that compete for VRAM:
 
 | Component | bf16 Size | FP8/Quantized | Notes |
 |-----------|-----------|---------------|-------|
-| Gemma3-12B | ~24GB | 12GB (8bit) / 3GB (Q4) | Text encoder |
+| Gemma3-12B | ~24GB | 12GB (8bit) / 3GB (torchao int4) | Text encoder |
 | DiT 13B | ~26GB | ~13GB (FP8) | Transformer |
 | VAE | ~2GB | ~2GB | Video decoder |
 
 **Key insight**: Components are loaded sequentially, so peak VRAM = max(encoder, transformer + VAE), not the sum.
+
+**Note on torchao int4**: The q4-qat variant loads the model to CPU in bf16 format (~24GB system RAM), applies `int4_weight_only()` quantization, then moves to GPU (~3GB VRAM). This happens during the initial load phase.
 
 ### strategy 1: default (cpu text encoder)
 
@@ -155,26 +168,35 @@ uv run scripts/generate.py --model-type ltx2 \
 
 **Tradeoff:** Requires `bitsandbytes` library, slight quality loss
 
-### strategy 3: q4 qat gemma (smallest encoder)
+### strategy 3: torchao int4 quantization (smallest encoder)
 
-Best for: Minimum encoder VRAM, faster GPU encoding
+Best for: Minimum encoder VRAM, faster GPU encoding, works with any Gemma model
 
 ```bash
 uv run scripts/generate.py --model-type ltx2 \
     --model-path ~/Storage/LTX-2 \
     --ltx2-text-encoder-device cuda \
     --ltx2-gemma-variant q4-qat \
-    --text-encoder-path ~/Storage/gemma-3-12b-it-qat-q4_0-unquantized \
     "A cat walking"
 ```
 
 **Memory profile:**
-- Text encoding: ~5GB VRAM (Q4 Gemma + connectors + activations)
+- Load phase: ~24GB system RAM (loads bf16 weights to CPU)
+- Quantization: Applies torchao `int4_weight_only()` quantization
+- Runtime: ~3GB VRAM (quantized Gemma + connectors + activations)
 - Generation: ~15GB VRAM
 
+**How it works:**
+The `q4-qat` variant now uses torchao's dynamic int4 quantization:
+1. Loads the standard bf16 Gemma model to CPU (~24GB system RAM)
+2. Applies `int4_weight_only()` quantization in-place
+3. Moves quantized model to GPU (~3GB VRAM)
+
+This approach works with any Gemma model - no need for pre-quantized checkpoints. The original "qat-q4_0-unquantized" models from Google actually store weights in bf16 format and weren't truly quantized, which is why we now quantize at load time instead.
+
 **Requirements:**
-- Download Q4 QAT model: `google/gemma-3-12b-it-qat-q4_0-unquantized`
-- Connector weights still loaded from LTX-2 checkpoint
+- ~24GB free system RAM during model loading
+- torchao library (included in dependencies)
 
 ### strategy 4: precomputed embeddings (minimum peak vram)
 
@@ -186,7 +208,6 @@ uv run scripts/generate.py --model-type ltx2 \
     --model-path ~/Storage/LTX-2 \
     --ltx2-text-encoder-device cuda \
     --ltx2-gemma-variant q4-qat \
-    --text-encoder-path ~/Storage/gemma-3-12b-it-qat-q4_0-unquantized \
     --ltx2-save-embeddings embeddings/cat.safetensors \
     "A cat walking through a sunny garden"
 ```
@@ -201,9 +222,9 @@ uv run scripts/generate.py --model-type ltx2 \
 ```
 
 **Memory profile:**
-- Step 1: ~5GB VRAM (Q4 encoder only, no transformer)
-- Step 2: ~15GB VRAM (transformer + VAE only, no encoder)
-- Peak: max(5GB, 15GB) = 15GB (never both at once)
+- Step 1 (encoding): ~24GB system RAM, ~3GB VRAM (torchao int4 encoder only, no transformer)
+- Step 2 (generation): ~15GB VRAM (transformer + VAE only, no encoder)
+- Peak VRAM: max(3GB, 15GB) = 15GB (never both at once)
 
 **Use cases:**
 - Generate multiple videos with different seeds from same prompt
@@ -219,7 +240,6 @@ uv run scripts/generate.py --model-type ltx2 \
     --model-path ~/Storage/LTX-2 \
     --ltx2-text-encoder-device cuda \
     --ltx2-gemma-variant q4-qat \
-    --text-encoder-path ~/Storage/gemma-3-12b-it-qat-q4_0-unquantized \
     --ltx2-save-embeddings /tmp/claude/prompt.safetensors \
     "A majestic eagle soaring" && \
 uv run scripts/generate.py --model-type ltx2 \
@@ -230,13 +250,15 @@ uv run scripts/generate.py --model-type ltx2 \
 
 ## memory estimates by configuration
 
-| Configuration | Encoder VRAM | Generation VRAM | Peak VRAM |
-|---------------|--------------|-----------------|-----------|
-| bf16 on CPU | 0GB | 15GB | 15GB |
-| bf16 on CUDA | 26GB | 15GB | 26GB (OOM on 24GB) |
-| 8bit on CUDA | 14GB | 15GB | 15GB |
-| q4-qat on CUDA | 5GB | 15GB | 15GB |
-| Precomputed + q4-qat | 5GB | 15GB | 15GB (never simultaneous) |
+| Configuration | System RAM | Encoder VRAM | Generation VRAM | Peak VRAM | Notes |
+|---------------|------------|--------------|-----------------|-----------|-------|
+| bf16 on CPU | 24GB | 0GB | 15GB | 15GB | Slowest encoding |
+| bf16 on CUDA | - | 26GB | 15GB | 26GB | OOM on 24GB GPU |
+| 8bit on CUDA | - | 14GB | 15GB | 15GB | Requires bitsandbytes |
+| q4-qat on CUDA (torchao) | 24GB | 3GB | 15GB | 15GB | Load-time quantization |
+| Precomputed + q4-qat | 24GB | 3GB | 15GB | 15GB | Separate encode/gen phases |
+
+**Note on q4-qat:** Uses torchao `int4_weight_only()` quantization applied at load time. Loads bf16 model to CPU (~24GB system RAM), quantizes, then moves to GPU (~3GB VRAM). Works with any Gemma model - no pre-quantized checkpoint needed.
 
 ## common workflows
 
@@ -323,14 +345,10 @@ uv run scripts/generate.py --model-type ltx2 \
 **Check:**
 ```bash
 ls ~/Storage/LTX-2/text_encoder/
-# Should contain model files
+# Should contain model files (config.json, model.safetensors, tokenizer files)
 ```
 
-If using separate encoder path:
-```bash
-ls ~/Storage/gemma-3-12b-it-qat-q4_0-unquantized/
-# Should contain model.safetensors or similar
-```
+The default text encoder is included in the LTX-2 model directory. The `--ltx2-gemma-variant q4-qat` flag uses the same text encoder but applies torchao quantization at load time - no separate model download needed.
 
 ### slow generation
 
@@ -341,12 +359,11 @@ ls ~/Storage/gemma-3-12b-it-qat-q4_0-unquantized/
 
 **Optimize:**
 ```bash
-# Use Q4 encoder on GPU for fast encoding
+# Use torchao int4 encoder on GPU for fast encoding
 uv run scripts/generate.py --model-type ltx2 \
     --model-path ~/Storage/LTX-2 \
     --ltx2-text-encoder-device cuda \
     --ltx2-gemma-variant q4-qat \
-    --text-encoder-path ~/Storage/gemma-3-12b-it-qat-q4_0-unquantized \
     "Your prompt"
 ```
 

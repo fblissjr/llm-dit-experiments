@@ -143,6 +143,7 @@ Read these files when starting a new session:
 | LTX-2 | [internal/docs/ltx2/technical_data_flow.md](internal/docs/ltx2/technical_data_flow.md) | CLI to video end-to-end |
 | LTX-2 | [internal/docs/ltx2/data_flow_diagram.md](internal/docs/ltx2/data_flow_diagram.md) | Visual tensor shapes |
 | LTX-2 | [internal/docs/ltx2/e2e_code_path.md](internal/docs/ltx2/e2e_code_path.md) | File-by-file code trace |
+| FLUX.2 Klein | [internal/docs/flux2-klein/flux2_klein_comprehensive_reference.md](internal/docs/flux2-klein/flux2_klein_comprehensive_reference.md) | **AUTHORITATIVE** - Full architecture, Qwen3 text encoder, FP8 optimization |
 
 Full index: [internal/docs/README.md](internal/docs/README.md)
 
