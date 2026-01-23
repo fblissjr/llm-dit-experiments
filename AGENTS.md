@@ -49,7 +49,8 @@ Read these files when starting a new session:
 
 | Pipeline | Task | Encoder | Status |
 |----------|------|---------|--------|
-| LTX-2 | text-to-video | Gemma3-12B | Active |
+| **FLUX.2 Klein** | **text-to-image, image editing** | Qwen3-8B/4B | **Active** (Phase 2 complete) |
+| LTX-2 | text-to-video | Gemma3-12B | Production |
 | Z-Image | text-to-image | Qwen3-4B | Production |
 | Qwen-Image | editing/decomposition | Qwen2.5-VL-7B | Production |
 
@@ -74,6 +75,39 @@ Read these files when starting a new session:
 | Starting/finishing session | `todos.md`, `log_YYYY-MM-DD.md` |
 | Major milestone or blocker | `current.md` |
 | Research or analysis complete | `log_YYYY-MM-DD.md`, relevant docs |
+
+## flux.2 klein quick reference
+
+**Start here for FLUX.2 Klein work:**
+
+| Doc | Purpose | When to Read |
+|-----|---------|--------------|
+| **[flux2_klein_comprehensive_reference.md](internal/docs/flux2-klein/flux2_klein_comprehensive_reference.md)** | **AUTHORITATIVE** - Full architecture, Qwen3 encoder, inference | First! Covers everything |
+| [flux2_implementation_plan.md](~/.claude/plans/) | Implementation plan, phases | Understanding scope |
+
+### flux.2 params
+
+| Param | Value | Notes |
+|-------|-------|-------|
+| encoder | Qwen3-8B (Klein 9B) | 12288 dim, layers [9,18,27] |
+| encoder | Qwen3-4B (Klein 4B) | 7680 dim, layers [9,18,27] |
+| guidance | 1.0 (distilled) | baked in (guidance-distilled) |
+| steps | 4 (distilled) | or 50 for base models |
+| resolution | 1024×1024 | default |
+
+### flux.2 usage
+
+```bash
+# Text-to-image
+uv run scripts/generate.py --model-type flux2 \
+    --flux2-model-name klein-9b \
+    "A photo of a cat"
+
+# Image editing with references
+uv run scripts/generate.py --model-type flux2 \
+    --flux2-input-image input.jpg \
+    "Transform into watercolor painting"
+```
 
 ## ltx-2 quick reference
 
