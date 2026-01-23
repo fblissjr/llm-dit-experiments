@@ -173,6 +173,7 @@ class RuntimeConfig:
     flux2_offload_between_stages: bool = True  # Memory-efficient three-stage offloading
     flux2_output_path: str = "flux2_output.png"  # Output image path
     flux2_input_images: list[str] | None = None  # Input image paths for editing mode
+    flux2_encoder_path: str | None = None  # Custom path for Qwen3 encoder (auto-detects dtype)
 
     # Device placement
     encoder_device: str = "auto"
@@ -790,6 +791,13 @@ def create_base_parser(
         nargs="+",
         default=None,
         help="Input image(s) for editing mode. Can specify multiple images.",
+    )
+    flux2_group.add_argument(
+        "--flux2-encoder-path",
+        type=str,
+        default=None,
+        help="Custom path for Qwen3 text encoder (local path or HF model ID). "
+        "Auto-detects dtype (BF16, FP8, etc). Default: uses model-specific encoder.",
     )
 
     # Device placement
@@ -1587,6 +1595,8 @@ def _apply_cli_overrides(args: argparse.Namespace, config: RuntimeConfig) -> Run
         config.flux2_output_path = args.flux2_output
     if getattr(args, "flux2_input_image", None) is not None:
         config.flux2_input_images = args.flux2_input_image
+    if getattr(args, "flux2_encoder_path", None) is not None:
+        config.flux2_encoder_path = args.flux2_encoder_path
 
     # Device overrides
     if getattr(args, "text_encoder_device", None) is not None:

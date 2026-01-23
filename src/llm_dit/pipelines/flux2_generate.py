@@ -466,6 +466,7 @@ def generate_image(
     encoder=None,
     transformer=None,
     vae=None,
+    encoder_path: Optional[str] = None,
 ) -> Image.Image:
     """
     Generate an image using FLUX.2 Klein.
@@ -479,6 +480,7 @@ def generate_image(
         encoder: Pre-loaded encoder (optional)
         transformer: Pre-loaded transformer (optional)
         vae: Pre-loaded VAE (optional)
+        encoder_path: Custom path for text encoder (overrides model default, auto-detects dtype)
 
     Returns:
         Generated PIL Image
@@ -503,8 +505,10 @@ def generate_image(
     if encoder is None:
         from llm_dit.encoders.qwen3_flux2 import Qwen3Flux2Encoder
 
+        # Use custom encoder path if provided, otherwise use model default
         model_info = FLUX2_MODEL_INFO[model_name.lower()]
-        text_encoder_spec = model_info["text_encoder"]
+        text_encoder_spec = encoder_path or model_info["text_encoder"]
+        logger.info(f"Loading encoder from: {text_encoder_spec}")
         encoder = Qwen3Flux2Encoder.from_pretrained(text_encoder_spec, device=config.device)
 
     # Encode text
@@ -654,6 +658,7 @@ def quick_generate(
     height: int = 1024,
     width: int = 1024,
     seed: Optional[int] = None,
+    encoder_path: Optional[str] = None,
 ) -> Image.Image:
     """
     Quick generation helper with minimal configuration.
@@ -664,6 +669,7 @@ def quick_generate(
         height: Image height
         width: Image width
         seed: Random seed
+        encoder_path: Custom encoder path (auto-detects dtype)
 
     Returns:
         Generated PIL Image
@@ -674,4 +680,4 @@ def quick_generate(
         width=width,
         seed=seed,
     )
-    return generate_image(config, model_name=model_name)
+    return generate_image(config, model_name=model_name, encoder_path=encoder_path)
