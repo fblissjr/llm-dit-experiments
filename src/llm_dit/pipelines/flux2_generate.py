@@ -6,10 +6,15 @@ Last Updated: 2026-01-23
 Pure PyTorch implementation of FLUX.2 Klein image generation with
 three-stage offloading for memory efficiency on consumer GPUs.
 
+Supports:
+- Text-to-image generation
+- Image editing with reference images (N input images)
+
 Stages:
 1. Text Encoding: Qwen3 encoder extracts multi-layer embeddings
-2. Denoising: FLUX.2 transformer performs diffusion denoising
-3. VAE Decode: AutoEncoder converts latents to pixels
+2. Reference Encoding: VAE-encode input images (if provided)
+3. Denoising: FLUX.2 transformer performs diffusion denoising
+4. VAE Decode: AutoEncoder converts latents to pixels
 
 Memory Optimization:
 - Three-stage offloading: Only one component on GPU at a time
@@ -19,6 +24,7 @@ Memory Optimization:
 Ported from: coderef/flux2/src/flux2/sampling.py
 
 Usage:
+    # Text-to-image
     from llm_dit.pipelines.flux2_generate import generate_image, Flux2GenerationConfig
 
     config = Flux2GenerationConfig(
@@ -29,16 +35,26 @@ Usage:
     )
     image = generate_image(config, model_name="klein-9b")
     image.save("output.png")
+
+    # Image editing with reference images
+    from PIL import Image
+    ref_images = [Image.open("input1.jpg"), Image.open("input2.jpg")]
+    config = Flux2GenerationConfig(
+        prompt="Make the cat wear a hat",
+        reference_images=ref_images,
+    )
+    image = generate_image(config, model_name="klein-9b")
 """
 
 import gc
 import math
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 import torch
 import torchvision
+from einops import rearrange
 from PIL import Image
 from tqdm import tqdm
 
@@ -67,7 +83,11 @@ def cleanup_memory() -> None:
 
 @dataclass
 class Flux2GenerationConfig:
-    """Configuration for FLUX.2 image generation."""
+    """Configuration for FLUX.2 image generation.
+
+    Supports both text-to-image and image editing modes.
+    For image editing, provide reference_images with input images.
+    """
 
     prompt: str
     height: int = DEFAULT_HEIGHT
@@ -75,6 +95,13 @@ class Flux2GenerationConfig:
     num_steps: int = DEFAULT_NUM_STEPS_DISTILLED
     guidance: float = DEFAULT_GUIDANCE_DISTILLED
     seed: Optional[int] = DEFAULT_SEED
+
+    # Reference images for editing (list of PIL Images or file paths)
+    reference_images: list[Image.Image | str] = field(default_factory=list)
+
+    # Pixel limits for reference images (higher = more detail, more VRAM)
+    # Single ref: up to 2024^2, multiple refs: up to 1024^2 each
+    ref_limit_pixels: Optional[int] = None
 
     # Device and dtype
     device: str = "cuda"
@@ -97,6 +124,173 @@ class Flux2GenerationConfig:
     def num_tokens(self) -> int:
         """Number of image tokens."""
         return self.latent_height * self.latent_width
+
+    @property
+    def is_editing_mode(self) -> bool:
+        """Whether reference images are provided for editing."""
+        return len(self.reference_images) > 0
+
+
+# =============================================================================
+# Reference Image Processing (for editing mode)
+# =============================================================================
+
+
+def load_reference_images(config: Flux2GenerationConfig) -> list[Image.Image]:
+    """Load and prepare reference images for encoding.
+
+    Args:
+        config: Generation config with reference_images field
+
+    Returns:
+        List of PIL Images ready for encoding
+    """
+    images = []
+    for ref in config.reference_images:
+        if isinstance(ref, str):
+            # Load from file path
+            img = Image.open(ref).convert("RGB")
+        else:
+            img = ref.convert("RGB") if ref.mode != "RGB" else ref
+        images.append(img)
+    return images
+
+
+def preprocess_reference_image(
+    img: Image.Image,
+    limit_pixels: Optional[int] = None,
+    ensure_multiple: int = 16,
+) -> torch.Tensor:
+    """Preprocess a single reference image for VAE encoding.
+
+    Args:
+        img: PIL Image
+        limit_pixels: Maximum total pixels (resizes if exceeded)
+        ensure_multiple: Ensure dimensions are multiples of this
+
+    Returns:
+        Tensor in [-1, 1] range, shape [3, H, W]
+    """
+    # Ensure RGB
+    if img.mode != "RGB":
+        img = img.convert("RGB")
+
+    # Cap pixels if needed
+    if limit_pixels is not None:
+        w, h = img.size
+        if w * h > limit_pixels:
+            scale = math.sqrt(limit_pixels / (w * h))
+            new_w = int(w * scale)
+            new_h = int(h * scale)
+            img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+
+    # Center crop to multiple of ensure_multiple
+    w, h = img.size
+    new_w = (w // ensure_multiple) * ensure_multiple
+    new_h = (h // ensure_multiple) * ensure_multiple
+    if new_w != w or new_h != h:
+        left = (w - new_w) // 2
+        top = (h - new_h) // 2
+        img = img.crop((left, top, left + new_w, top + new_h))
+
+    # Convert to tensor in [-1, 1]
+    tensor = torchvision.transforms.ToTensor()(img)
+    return 2 * tensor - 1
+
+
+def encode_reference_images(
+    vae,
+    images: list[Image.Image],
+    limit_pixels: Optional[int] = None,
+    device: str = "cuda",
+    dtype: torch.dtype = torch.bfloat16,
+) -> tuple[torch.Tensor, torch.Tensor] | tuple[None, None]:
+    """Encode reference images into latent tokens with position IDs.
+
+    Each reference image gets a unique time coordinate (t=10, t=20, etc.)
+    to distinguish it from the generated image (t=0).
+
+    Args:
+        vae: FLUX.2 VAE
+        images: List of PIL Images
+        limit_pixels: Maximum pixels per image
+        device: Target device
+        dtype: Target dtype
+
+    Returns:
+        Tuple of (ref_tokens, ref_ids) or (None, None) if no images
+        - ref_tokens: [1, total_ref_tokens, 128]
+        - ref_ids: [1, total_ref_tokens, 4]
+    """
+    if not images:
+        return None, None
+
+    # Set pixel limit based on number of images
+    if limit_pixels is None:
+        if len(images) > 1:
+            limit_pixels = 1024**2  # 1MP each for multiple refs
+        else:
+            limit_pixels = 2024**2  # 4MP for single ref
+
+    # Time offset scale for reference images
+    t_scale = 10  # Each ref gets t=10, t=20, etc.
+
+    encoded_refs = []
+    ref_ids_list = []
+
+    for idx, img in enumerate(images):
+        # Preprocess
+        img_tensor = preprocess_reference_image(img, limit_pixels=limit_pixels)
+        img_tensor = img_tensor.unsqueeze(0).to(device).to(dtype)  # [1, 3, H, W]
+
+        # VAE encode
+        with torch.no_grad():
+            latent = vae.encode(img_tensor)  # [1, 128, H/16, W/16]
+
+        # Reshape to sequence: [1, H*W, 128]
+        b, c, h, w = latent.shape
+        latent_seq = rearrange(latent, "b c h w -> b (h w) c")
+
+        # Create position IDs with unique time coordinate
+        t_coord = torch.tensor([t_scale + t_scale * idx], device=device)
+        ids = _create_ref_image_ids(h, w, t_coord, device)  # [h*w, 4]
+
+        encoded_refs.append(latent_seq)
+        ref_ids_list.append(ids)
+
+    # Concatenate all references
+    ref_tokens = torch.cat(encoded_refs, dim=1)  # [1, total_tokens, 128]
+    ref_ids = torch.cat(ref_ids_list, dim=0).unsqueeze(0)  # [1, total_tokens, 4]
+
+    return ref_tokens.to(dtype), ref_ids.to(torch.float32)
+
+
+def _create_ref_image_ids(
+    h: int,
+    w: int,
+    t_coord: torch.Tensor,
+    device: torch.device | str,
+) -> torch.Tensor:
+    """Create 4D position IDs for a reference image.
+
+    Args:
+        h: Latent height
+        w: Latent width
+        t_coord: Time coordinate tensor
+        device: Target device
+
+    Returns:
+        Position IDs [h*w, 4] with (t, h, w, l) coordinates
+    """
+    coords = {
+        "t": t_coord,
+        "h": torch.arange(h, device=device),
+        "w": torch.arange(w, device=device),
+        "l": torch.arange(1, device=device),
+    }
+    # Cartesian product: (t, h, w, l) for all spatial positions
+    ids = torch.cartesian_prod(coords["t"], coords["h"], coords["w"], coords["l"])
+    return ids
 
 
 def generalized_time_snr_shift(t: torch.Tensor, mu: float, sigma: float) -> torch.Tensor:
@@ -169,9 +363,13 @@ def denoise(
     txt_ids: torch.Tensor,
     timesteps: list[float],
     guidance: float | None = None,
+    img_cond_seq: torch.Tensor | None = None,
+    img_cond_seq_ids: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """
     FLUX.2 denoising loop with flow matching.
+
+    Supports optional reference image conditioning for editing mode.
 
     Args:
         model: FLUX.2 transformer
@@ -181,6 +379,8 @@ def denoise(
         txt_ids: Text position IDs [B, txt_len, 4]
         timesteps: List of timesteps from ~1 to ~0
         guidance: Guidance scale (None for distilled models)
+        img_cond_seq: Reference image tokens [B, ref_tokens, channels] (optional)
+        img_cond_seq_ids: Reference image position IDs [B, ref_tokens, 4] (optional)
 
     Returns:
         Denoised latents [B, seq_len, channels]
@@ -192,21 +392,35 @@ def denoise(
             (img.shape[0],), guidance, device=img.device, dtype=img.dtype
         )
 
+    num_img_tokens = img.shape[1]
+
     for t_curr, t_prev in tqdm(zip(timesteps[:-1], timesteps[1:]), total=len(timesteps) - 1, desc="Denoising"):
         # Current timestep vector
         t_vec = torch.full(
             (img.shape[0],), t_curr, dtype=img.dtype, device=img.device
         )
 
+        # Prepare input - concatenate reference tokens if provided
+        img_input = img
+        img_input_ids = img_ids
+        if img_cond_seq is not None:
+            assert img_cond_seq_ids is not None, "Must provide both img_cond_seq and img_cond_seq_ids"
+            img_input = torch.cat([img, img_cond_seq], dim=1)
+            img_input_ids = torch.cat([img_ids, img_cond_seq_ids], dim=1)
+
         # Predict velocity
         pred = model(
-            x=img,
-            x_ids=img_ids,
+            x=img_input,
+            x_ids=img_input_ids,
             timesteps=t_vec,
             ctx=txt,
             ctx_ids=txt_ids,
             guidance=guidance_vec,
         )
+
+        # Only take prediction for noise tokens (not reference tokens)
+        if img_cond_seq is not None:
+            pred = pred[:, :num_img_tokens]
 
         # Euler step: x_{t-1} = x_t + (t_prev - t_curr) * v
         img = img + (t_prev - t_curr) * pred
@@ -256,10 +470,11 @@ def generate_image(
     """
     Generate an image using FLUX.2 Klein.
 
+    Supports both text-to-image and image editing with reference images.
     Uses three-stage offloading to minimize peak VRAM usage.
 
     Args:
-        config: Generation configuration
+        config: Generation configuration (can include reference_images for editing)
         model_name: Model variant ("klein-4b", "klein-9b")
         encoder: Pre-loaded encoder (optional)
         transformer: Pre-loaded transformer (optional)
@@ -277,7 +492,8 @@ def generate_image(
         if torch.cuda.is_available():
             torch.cuda.manual_seed(config.seed)
 
-    logger.info(f"Generating {config.width}x{config.height} image with {config.num_steps} steps")
+    mode = "editing" if config.is_editing_mode else "text-to-image"
+    logger.info(f"Generating {config.width}x{config.height} image ({mode} mode) with {config.num_steps} steps")
 
     # ===========================================================================
     # Stage 1: Text Encoding
@@ -311,6 +527,40 @@ def generate_image(
         cleanup_memory()
 
     # ===========================================================================
+    # Stage 1.5: Reference Image Encoding (if editing mode)
+    # ===========================================================================
+    ref_tokens = None
+    ref_ids = None
+
+    if config.is_editing_mode:
+        logger.info(f"Stage 1.5: Encoding {len(config.reference_images)} reference image(s)...")
+
+        # Load VAE for encoding (will be reused for decoding)
+        if vae is None:
+            from llm_dit.models.flux2.loader import load_flux2_vae
+            vae = load_flux2_vae(model_name, device=config.device, dtype=dtype)
+
+        # Load and encode reference images
+        ref_images = load_reference_images(config)
+        ref_tokens, ref_ids = encode_reference_images(
+            vae=vae,
+            images=ref_images,
+            limit_pixels=config.ref_limit_pixels,
+            device=config.device,
+            dtype=dtype,
+        )
+
+        if ref_tokens is not None:
+            logger.info(f"Encoded reference images: {ref_tokens.shape[1]} tokens")
+
+        # Optionally offload VAE (will reload for decode)
+        if config.offload_between_stages:
+            logger.info("Offloading VAE (will reload for decode)...")
+            del vae
+            vae = None
+            cleanup_memory()
+
+    # ===========================================================================
     # Stage 2: Denoising
     # ===========================================================================
     logger.info("Stage 2: Denoising...")
@@ -323,6 +573,11 @@ def generate_image(
     # Move embeddings to device
     txt_embeddings = txt_embeddings.to(device)
     txt_ids = txt_ids.to(device)
+
+    # Move reference tokens to device if present
+    if ref_tokens is not None:
+        ref_tokens = ref_tokens.to(device)
+        ref_ids = ref_ids.to(device)
 
     # Create initial noise
     img = torch.randn(
@@ -348,7 +603,7 @@ def generate_image(
     # Determine guidance (None for distilled models)
     guidance = None if FLUX2_MODEL_INFO[model_name.lower()]["distilled"] else config.guidance
 
-    # Denoise
+    # Denoise with optional reference image conditioning
     latents = denoise(
         model=transformer,
         img=img,
@@ -357,6 +612,8 @@ def generate_image(
         txt_ids=txt_ids,
         timesteps=timesteps,
         guidance=guidance,
+        img_cond_seq=ref_tokens,
+        img_cond_seq_ids=ref_ids,
     )
 
     # Move latents to CPU and offload transformer

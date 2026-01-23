@@ -25,7 +25,7 @@ import torch
 from .config import Config
 
 # Supported model types
-ModelType = Literal["zimage", "qwenimage-layered", "qwenimage-t2i", "qwenimage-edit", "ltx2", "wan"]
+ModelType = Literal["zimage", "qwenimage-layered", "qwenimage-t2i", "qwenimage-edit", "ltx2", "wan", "flux2"]
 SUPPORTED_MODEL_TYPES: tuple[str, ...] = get_args(ModelType)
 
 logger = logging.getLogger(__name__)
@@ -164,6 +164,15 @@ class RuntimeConfig:
     wan_steps: int = 50  # Diffusion steps (50 for HuMo)
     wan_offload_mode: str = "model"  # none, model, sequential
     wan_output_path: str = "wan_output.mp4"  # Output video path
+
+    # FLUX.2 Klein image generation
+    flux2_model_name: str = "klein-9b"  # klein-4b, klein-9b, klein-base-4b, klein-base-9b
+    flux2_num_steps: int | None = None  # None = model default (4 for distilled, 50 for base)
+    flux2_guidance: float | None = None  # None = model default (1.0 for distilled, 4.0 for base)
+    flux2_seed: int | None = None  # Random seed for reproducibility
+    flux2_offload_between_stages: bool = True  # Memory-efficient three-stage offloading
+    flux2_output_path: str = "flux2_output.png"  # Output image path
+    flux2_input_images: list[str] | None = None  # Input image paths for editing mode
 
     # Device placement
     encoder_device: str = "auto"
@@ -727,6 +736,60 @@ def create_base_parser(
         type=str,
         default=None,
         help="Output video path (default: wan_output.mp4)",
+    )
+
+    # FLUX.2 Klein image generation
+    flux2_group = parser.add_argument_group("FLUX.2 Klein Image Generation")
+    flux2_group.add_argument(
+        "--flux2-model-name",
+        type=str,
+        choices=["klein-4b", "klein-9b", "klein-base-4b", "klein-base-9b"],
+        default=None,
+        help="FLUX.2 Klein model variant (default: klein-9b). "
+        "Distilled models (klein-*b) use 4 steps, base models use 50 steps.",
+    )
+    flux2_group.add_argument(
+        "--flux2-num-steps",
+        type=int,
+        default=None,
+        help="Number of denoising steps (default: 4 for distilled, 50 for base)",
+    )
+    flux2_group.add_argument(
+        "--flux2-guidance",
+        type=float,
+        default=None,
+        help="Guidance scale (default: 1.0 for distilled, 4.0 for base)",
+    )
+    flux2_group.add_argument(
+        "--flux2-seed",
+        type=int,
+        default=None,
+        help="Random seed for reproducibility",
+    )
+    flux2_group.add_argument(
+        "--flux2-offload",
+        action="store_true",
+        default=None,
+        help="Enable three-stage memory offloading (default: True)",
+    )
+    flux2_group.add_argument(
+        "--flux2-no-offload",
+        action="store_true",
+        default=None,
+        help="Disable memory offloading (requires more VRAM)",
+    )
+    flux2_group.add_argument(
+        "--flux2-output",
+        type=str,
+        default=None,
+        help="Output image path (default: flux2_output.png)",
+    )
+    flux2_group.add_argument(
+        "--flux2-input-image",
+        type=str,
+        nargs="+",
+        default=None,
+        help="Input image(s) for editing mode. Can specify multiple images.",
     )
 
     # Device placement
@@ -1506,6 +1569,24 @@ def _apply_cli_overrides(args: argparse.Namespace, config: RuntimeConfig) -> Run
         config.wan_offload_mode = args.wan_offload_mode
     if getattr(args, "wan_output", None) is not None:
         config.wan_output_path = args.wan_output
+
+    # FLUX.2 Klein overrides
+    if getattr(args, "flux2_model_name", None) is not None:
+        config.flux2_model_name = args.flux2_model_name
+    if getattr(args, "flux2_num_steps", None) is not None:
+        config.flux2_num_steps = args.flux2_num_steps
+    if getattr(args, "flux2_guidance", None) is not None:
+        config.flux2_guidance = args.flux2_guidance
+    if getattr(args, "flux2_seed", None) is not None:
+        config.flux2_seed = args.flux2_seed
+    if getattr(args, "flux2_offload", False):
+        config.flux2_offload_between_stages = True
+    if getattr(args, "flux2_no_offload", False):
+        config.flux2_offload_between_stages = False
+    if getattr(args, "flux2_output", None) is not None:
+        config.flux2_output_path = args.flux2_output
+    if getattr(args, "flux2_input_image", None) is not None:
+        config.flux2_input_images = args.flux2_input_image
 
     # Device overrides
     if getattr(args, "text_encoder_device", None) is not None:
