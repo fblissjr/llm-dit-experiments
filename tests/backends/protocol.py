@@ -146,7 +146,7 @@ SHORT_CONFIG = GenerationConfig(
     num_inference_steps=30,
     guidance_scale=3.0,
     seed=10,
-    fp8=False,
+    fp8=True,
 )
 
 SMOKE_CONFIG = GenerationConfig(

@@ -30,9 +30,9 @@ Usage:
         --img2img input.jpg \\
         "A cheerful child waving under a blue sky"
 
-    # LTX-2 (text-to-video)
+    # LTX-2 (text-to-video) - using unified --model-path
     uv run scripts/generate.py --model-type ltx2 \\
-        --ltx2-model-path ~/Storage/LTX-2 \\
+        --model-path ~/Storage/LTX-2 \\
         --width 768 --height 512 \\
         --ltx2-num-frames 33 --ltx2-fps 24 \\
         --output video.mp4 \\
@@ -457,7 +457,15 @@ def run_qwen_image_t2i_generation(args, config, logger) -> int:
 
 def run_ltx2_generation(args, config, logger) -> int:
     """
-    Run LTX-2 video generation.
+    Run LTX-2 video generation using pure PyTorch pipeline.
+
+    This implementation uses the pure PyTorch generate_video_with_offloading() function
+    which correctly handles FP8 quantization and dtype management, avoiding the dtype
+    mismatch errors in the diffusers wrapper.
+
+    Supports embedding precomputation:
+    - --ltx2-save-embeddings: Encode prompt and save, skip video generation
+    - --ltx2-load-embeddings: Load pre-computed embeddings, skip text encoding
 
     Args:
         args: Parsed CLI arguments
@@ -467,209 +475,228 @@ def run_ltx2_generation(args, config, logger) -> int:
     Returns:
         Exit code (0 for success)
     """
-    # Validate model path
-    model_path = config.ltx2_model_path
-    if not model_path:
-        logger.error(
-            "No LTX-2 model path specified. Use --ltx2-model-path or set ltx2.model_path in config."
-        )
-        return 1
+    from llm_dit.pipelines.generate import (
+        GenerationConfig as LTXConfig,
+        generate_video_with_offloading,
+    )
+    from llm_dit.pipelines.ltx2_config import LTX2OptimizationConfig
 
-    # Import LTX2Pipeline
-    try:
-        from llm_dit.pipelines.ltx2 import LTX2Pipeline, VideoOutput
-    except ImportError as e:
-        logger.error(f"Failed to import LTX2Pipeline: {e}")
-        logger.error("Ensure diffusers>=0.32.0 is installed.")
+    # Validate model path - prefer --ltx2-model-path, fall back to --model-path
+    model_path = config.ltx2_model_path or config.model_path
+
+    # For load-embeddings mode, model_path is optional (only need transformer/VAE)
+    # For save-embeddings mode, we need the text encoder path
+    if not model_path and not config.ltx2_load_embeddings:
+        logger.error(
+            "No LTX-2 model path specified. Use --model-path, --ltx2-model-path, "
+            "or set ltx2.model_path in config."
+        )
         return 1
 
     # Get parameters from config
-    encoder_model_id = config.ltx2_encoder_model_id
     num_frames = config.ltx2_num_frames
     fps = config.ltx2_fps
     guidance_scale = config.ltx2_guidance_scale
-    steps = config.ltx2_steps
-    lora_path = config.ltx2_lora_path
-    lora_scale = config.ltx2_lora_scale
-    offload_mode = config.ltx2_offload_mode
-    audio_enabled = config.ltx2_audio
-
-    # Output path: prefer --ltx2-output, fall back to --output
+    steps = config.ltx2_steps or 12  # Default for distilled model
+    width = config.width or 768
+    height = config.height or 512
+    seed = getattr(args, "seed", None)
     output_path = getattr(config, "ltx2_output_path", None) or args.output or "output.mp4"
 
-    # Use general --width/--height args (landscape default for video: 768x512)
-    width = config.width if config.width else 768
-    height = config.height if config.height else 512
+    # Text encoder path - prefer --ltx2-encoder-model-id, fall back to --text-encoder-path
+    # If neither specified, defaults to model_path/text_encoder in generate_video_with_offloading
+    text_encoder_path = None
+    if config.ltx2_encoder_model_id and config.ltx2_encoder_model_id != "models/LTX-2/text_encoder":
+        text_encoder_path = config.ltx2_encoder_model_id
+    elif config.text_encoder_path:
+        text_encoder_path = config.text_encoder_path
 
-    # Get seed
-    seed = getattr(args, "seed", None)
+    # =========================================================================
+    # Save-embeddings mode: encode prompt and save, skip video generation
+    # =========================================================================
+    if config.ltx2_save_embeddings:
+        from llm_dit.distributed import save_embeddings
+        from llm_dit.encoders.gemma3 import Gemma3Encoder
+
+        # Resolve text encoder path
+        encoder_path = text_encoder_path or (f"{model_path}/text_encoder" if model_path else None)
+        if not encoder_path:
+            logger.error("No text encoder path specified for save-embeddings mode.")
+            return 1
+
+        logger.info("=" * 60)
+        logger.info("LTX-2 EMBEDDING PRECOMPUTATION")
+        logger.info("=" * 60)
+        logger.info(f"  Text encoder: {encoder_path}")
+        logger.info(f"  Prompt: {args.prompt[:80]}...")
+        logger.info(f"  Output: {config.ltx2_save_embeddings}")
+        logger.info("-" * 60)
+
+        logger.info("Loading Gemma3 text encoder...")
+        start = time.time()
+        encoder = Gemma3Encoder(
+            model_id=str(encoder_path),
+            device=config.ltx2_text_encoder_device,
+            dtype=config.get_dtype(),
+        )
+        load_time = time.time() - start
+        logger.info(f"Encoder loaded in {load_time:.1f}s")
+
+        logger.info("Encoding prompt...")
+        start = time.time()
+        output = encoder.encode([args.prompt])
+        embeddings = output.embeddings[0]  # [seq_len, 3840]
+        encode_time = time.time() - start
+        logger.info(f"Encoding complete in {encode_time:.1f}s")
+        logger.info(f"  Shape: {embeddings.shape}")
+        logger.info(f"  Dtype: {embeddings.dtype}")
+
+        # Save embeddings
+        save_path = save_embeddings(
+            embeddings=embeddings,
+            path=config.ltx2_save_embeddings,
+            prompt=args.prompt,
+            model_path=str(encoder_path),
+            encoder_device=config.ltx2_text_encoder_device,
+        )
+        logger.info(f"Embeddings saved to: {save_path}")
+        logger.info("=" * 60)
+        logger.info(f"Total time: load={load_time:.1f}s + encode={encode_time:.1f}s")
+        logger.info("Run with --ltx2-load-embeddings to generate video from these embeddings.")
+
+        return 0
+
+    # =========================================================================
+    # Load-embeddings mode: load pre-computed embeddings
+    # =========================================================================
+    precomputed_embeds = None
+    if config.ltx2_load_embeddings:
+        from llm_dit.distributed import load_embeddings
+
+        logger.info(f"Loading pre-computed embeddings from {config.ltx2_load_embeddings}")
+        emb_file = load_embeddings(config.ltx2_load_embeddings)
+        precomputed_embeds = emb_file.embeddings
+        logger.info(f"  Shape: {precomputed_embeds.shape}")
+        logger.info(f"  Original prompt: {emb_file.metadata.prompt[:50]}...")
+        logger.info(f"  Encoded with: {emb_file.metadata.model_path}")
+
+    # Build optimization config from CLI settings
+    optimization = LTX2OptimizationConfig(
+        text_encoder_device=config.ltx2_text_encoder_device,
+        transformer_device=config.ltx2_transformer_device,
+        vae_device=config.ltx2_vae_device,
+        quantize_transformer=(config.ltx2_quantize == "fp8"),
+        precision="fp8-native" if config.ltx2_quantize == "fp8" else "bf16",
+        cleanup_between_stages=not config.ltx2_skip_cleanup,
+    )
 
     logger.info("=" * 60)
-    logger.info("LTX-2 VIDEO GENERATION")
+    logger.info("LTX-2 VIDEO GENERATION (Pure PyTorch)")
     logger.info("=" * 60)
     logger.info(f"  Model: {model_path}")
-    logger.info(f"  Encoder: {encoder_model_id}")
+    if precomputed_embeds is not None:
+        logger.info(f"  Embeddings: PRECOMPUTED ({precomputed_embeds.shape})")
+    else:
+        logger.info(f"  Text encoder: {text_encoder_path or f'{model_path}/text_encoder (default)'}")
     logger.info(f"  Resolution: {width}x{height}")
     logger.info(f"  Frames: {num_frames} @ {fps} FPS")
-    logger.info(f"  Steps: {steps or 'auto (12 for distilled)'}")
+    logger.info(f"  Steps: {steps}")
     logger.info(f"  Guidance: {guidance_scale}")
-    logger.info(f"  Offload: {offload_mode}")
-    if lora_path:
-        logger.info(f"  LoRA: {lora_path} (scale={lora_scale})")
-    logger.info(f"  Audio: {audio_enabled}")
     logger.info(f"  Output: {output_path}")
     if seed is not None:
         logger.info(f"  Seed: {seed}")
+    if precomputed_embeds is None:
+        logger.info(f"  Text encoder device: {optimization.text_encoder_device}")
+    logger.info(f"  Transformer device: {optimization.transformer_device}")
+    logger.info(f"  VAE device: {optimization.vae_device}")
+    logger.info(f"  Dtype: {config.get_dtype()}")
+    logger.info(f"  Quantization: {optimization.precision}")
+    logger.info(f"  Cleanup between stages: {optimization.cleanup_between_stages}")
     logger.info("-" * 60)
 
-    # Load pipeline
-    logger.info("Loading LTX-2 pipeline...")
-    start_load = time.time()
-
-    try:
-        model_dir = Path(model_path).expanduser()
-
-        # Check if this is a full HuggingFace directory (has model_index.json)
-        # If so, prefer from_pretrained() which reads configs properly
-        model_index_path = model_dir / "model_index.json"
-        if model_index_path.exists():
-            logger.info(f"Found model_index.json - using from_pretrained()")
-            logger.info("Note: Using sequential CPU offload (layer-by-layer)")
-            logger.info("  This is slower (~4s/step) but fits in 24GB VRAM")
-            pipeline = LTX2Pipeline.from_pretrained(
-                str(model_dir),
-                dtype=torch.bfloat16,
-                enable_cpu_offload=(offload_mode != "none"),
-                fast_mode=False,  # Use reliable sequential offload
-            )
-        else:
-            # No model_index.json - try single file loading
-            # Auto-detect local text_encoder if available
-            local_encoder_path = model_dir / "text_encoder"
-            if local_encoder_path.exists() and local_encoder_path.is_dir():
-                logger.info(f"Found local text encoder: {local_encoder_path}")
-                encoder_model_id = str(local_encoder_path)
-
-            # Check for common checkpoint file names
-            checkpoint_patterns = [
-                "ltx-2-19b-distilled-fp8.safetensors",
-                "ltx-2-19b-dev-fp8.safetensors",
-                "ltx-2-19b-dev-fp4.safetensors",
-                "ltx-2-19b-dev.safetensors",
-            ]
-
-            checkpoint_file = None
-            for pattern in checkpoint_patterns:
-                candidate = model_dir / pattern
-                if candidate.exists():
-                    checkpoint_file = str(candidate)
-                    break
-
-            if checkpoint_file:
-                logger.info(f"Loading from checkpoint: {checkpoint_file}")
-                logger.info("Note: Using sequential CPU offload (layer-by-layer)")
-                logger.info("  This is slower (~4s/step) but fits in 24GB VRAM")
-                pipeline = LTX2Pipeline.from_single_file(
-                    checkpoint_file,
-                    encoder_model_id=encoder_model_id,
-                    dtype=torch.bfloat16,
-                    enable_cpu_offload=(offload_mode != "none"),
-                )
-            else:
-                # Try HuggingFace format
-                logger.info(f"Loading from directory: {model_path}")
-                logger.info("Note: Using sequential CPU offload (layer-by-layer)")
-                logger.info("  This is slower (~4s/step) but fits in 24GB VRAM")
-                pipeline = LTX2Pipeline.from_pretrained(
-                    model_path,
-                    dtype=torch.bfloat16,
-                    enable_cpu_offload=(offload_mode != "none"),
-                    fast_mode=False,  # Use reliable sequential offload
-                )
-
-    except Exception as e:
-        logger.error(f"Failed to load LTX-2 pipeline: {e}")
-        import traceback
-
-        traceback.print_exc()
-        return 1
-
-    load_time = time.time() - start_load
-    logger.info(f"Pipeline loaded in {load_time:.1f}s")
-
-    # Load LoRA if configured
-    if lora_path:
-        try:
-            pipeline.load_lora(lora_path, scale=lora_scale)
-            logger.info(f"LoRA loaded: {lora_path}")
-        except Exception as e:
-            logger.warning(f"Failed to load LoRA: {e}")
-
-    # Generate video
-    prompt = args.prompt
-    negative_prompt = (
-        getattr(args, "negative_prompt", None)
-        or "worst quality, blurry, distorted, inconsistent motion"
+    # Create config for pure PyTorch pipeline
+    ltx_config = LTXConfig(
+        num_frames=num_frames,
+        height=height,
+        width=width,
+        num_inference_steps=steps,
+        guidance_scale=guidance_scale,
+        seed=seed,
     )
 
-    # Clear CUDA cache before generation to maximize available VRAM
-    import gc
+    # Progress callback
+    def progress_callback(stage: str, step: int, total: int):
+        if step == 0:
+            logger.info(f"Stage: {stage}...")
+        elif step == total:
+            logger.info(f"  {stage} complete")
 
-    gc.collect()
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-        free_mem = torch.cuda.mem_get_info()[0] / 1e9
-        logger.info(f"VRAM available before generation: {free_mem:.1f}GB")
-
-    logger.info(f"Generating video for: {prompt[:80]}...")
-    start_gen = time.time()
-
-    # Create progress callback for step-by-step updates
-    # Default to 12 steps for distilled model
-    actual_steps = steps if steps else 12
-    from llm_dit.pipelines.ltx2 import ProgressCallback
-
-    progress = ProgressCallback(total_steps=actual_steps, desc="Diffusion")
-
+    # Generate using pure PyTorch pipeline
+    start = time.time()
     try:
-        output = pipeline(
-            prompt=prompt,
-            negative_prompt=negative_prompt,
-            height=height,
-            width=width,
-            num_frames=num_frames,
-            fps=float(fps),
-            num_inference_steps=steps,
-            guidance_scale=guidance_scale,
-            seed=seed,
-            enable_audio=audio_enabled,
-            callback_on_step_end=progress,
+        video = generate_video_with_offloading(
+            prompt=args.prompt or "",  # Can be empty if using precomputed embeddings
+            config=ltx_config,
+            model_path=model_path,
+            text_encoder_path=text_encoder_path,
+            precomputed_embeddings=precomputed_embeds,
+            dtype=config.get_dtype(),
+            callback=progress_callback,
+            optimization=optimization,
         )
     except Exception as e:
-        progress.close()  # Ensure newline before error
         logger.error(f"Generation failed: {e}")
         import traceback
 
         traceback.print_exc()
         return 1
 
-    gen_time = time.time() - start_gen
-    stats = progress.get_stats()
-    logger.info(
-        f"Generation complete in {gen_time:.1f}s "
-        f"({stats['its']:.2f} it/s avg, {stats['avg_step_time']:.2f}s/step)"
-    )
+    gen_time = time.time() - start
+    logger.info(f"Generation complete in {gen_time:.1f}s")
 
-    # Save video
+    # Save video (video is [F, H, W, C] uint8 tensor)
     try:
-        pipeline.save_video(output, output_path)
+        import subprocess
+        import tempfile
+
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        video_np = video.numpy()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Write frames as PNG files
+            for i, frame in enumerate(video_np):
+                from PIL import Image
+
+                Image.fromarray(frame).save(f"{tmpdir}/frame_{i:05d}.png")
+
+            # Encode with ffmpeg
+            cmd = [
+                "ffmpeg",
+                "-y",
+                "-framerate",
+                str(fps),
+                "-i",
+                f"{tmpdir}/frame_%05d.png",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "fast",
+                "-crf",
+                "18",
+                "-pix_fmt",
+                "yuv420p",
+                str(output_path),
+            ]
+            subprocess.run(cmd, check=True, capture_output=True)
+
         logger.info(f"Saved: {output_path}")
     except Exception as e:
         logger.error(f"Failed to save video: {e}")
         return 1
 
     logger.info("=" * 60)
-    logger.info(f"Total time: load={load_time:.1f}s + generate={gen_time:.1f}s")
+    logger.info(f"Total time: {gen_time:.1f}s")
 
     return 0
 
