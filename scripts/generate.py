@@ -607,6 +607,7 @@ def run_ltx2_generation(args, config, logger) -> int:
         logger.info(f"  Seed: {seed}")
     if precomputed_embeds is None:
         logger.info(f"  Text encoder device: {optimization.text_encoder_device}")
+        logger.info(f"  Gemma variant: {config.ltx2_gemma_variant}")
     logger.info(f"  Transformer device: {optimization.transformer_device}")
     logger.info(f"  VAE device: {optimization.vae_device}")
     logger.info(f"  Dtype: {config.get_dtype()}")
@@ -643,6 +644,8 @@ def run_ltx2_generation(args, config, logger) -> int:
             dtype=config.get_dtype(),
             callback=progress_callback,
             optimization=optimization,
+            gemma_variant=config.ltx2_gemma_variant,  # bf16, 8bit, q4-qat
+            use_progress=True,  # Use rich SamplingProgress
         )
     except Exception as e:
         logger.error(f"Generation failed: {e}")

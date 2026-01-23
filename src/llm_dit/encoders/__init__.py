@@ -65,6 +65,13 @@ from llm_dit.encoders.embeddings_connector import (
     load_connector_weights,
 )
 
+# Gemma3 variant loaders
+from llm_dit.encoders.gemma3_variants import (
+    create_gemma3_encoder,
+    Gemma3Variant,
+    estimate_encoder_memory,
+)
+
 __all__ = [
     # High-level encoder (existing)
     "ZImageTextEncoder",
@@ -92,4 +99,8 @@ __all__ = [
     "Embeddings1DConnector",
     "RopeType",
     "load_connector_weights",
+    # Gemma3 variant loaders
+    "create_gemma3_encoder",
+    "Gemma3Variant",
+    "estimate_encoder_memory",
 ]

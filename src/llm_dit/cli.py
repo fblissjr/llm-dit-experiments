@@ -148,6 +148,7 @@ class RuntimeConfig:
     ltx2_vae_device: str = "cuda"  # VAE on GPU
     ltx2_quantize: str = "fp8"  # fp8 or none
     ltx2_skip_cleanup: bool = False  # Skip memory cleanup between stages
+    ltx2_gemma_variant: str = "bf16"  # bf16, 8bit, q4-qat - Gemma3 backbone variant
 
     # Wan/HuMo video generation
     wan_humo_path: str = ""  # Path to HuMo transformer (e.g., ~/Storage/HuMo)
@@ -633,6 +634,16 @@ def create_base_parser(
         "--ltx2-skip-cleanup",
         action="store_true",
         help="Skip memory cleanup between stages (faster, needs more VRAM)",
+    )
+    ltx2_opt.add_argument(
+        "--ltx2-gemma-variant",
+        choices=["bf16", "8bit", "q4-qat"],
+        default=None,
+        help="Gemma3 backbone variant for text encoding. "
+        "bf16: Full precision (~24GB). "
+        "8bit: BitsAndBytes 8-bit (~12GB). "
+        "q4-qat: Pre-quantized Q4 QAT (~3GB). "
+        "Default: bf16",
     )
 
     # Wan/HuMo video generation
@@ -1465,6 +1476,8 @@ def _apply_cli_overrides(args: argparse.Namespace, config: RuntimeConfig) -> Run
         config.ltx2_save_embeddings = args.ltx2_save_embeddings
     if getattr(args, "ltx2_load_embeddings", None) is not None:
         config.ltx2_load_embeddings = args.ltx2_load_embeddings
+    if getattr(args, "ltx2_gemma_variant", None) is not None:
+        config.ltx2_gemma_variant = args.ltx2_gemma_variant
 
     # Wan/HuMo video overrides
     if getattr(args, "wan_humo_path", None) is not None:
