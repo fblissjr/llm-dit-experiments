@@ -24,7 +24,7 @@ LTX-2 is Lightricks' 13B parameter text-to-video diffusion transformer that uses
 - Text-to-video generation at configurable resolutions (768x512 default)
 - Variable frame counts (33-65 frames depending on VRAM)
 - FP8 quantized transformer for 24GB GPU inference
-- Multiple Gemma3 variants for text encoding (bf16, 8-bit, torchao int4)
+- Multiple Gemma3 variants for text encoding (bf16, torchao int8/int4)
 - Precomputed embeddings for memory-constrained workflows
 - LoRA support for style/subject customization
 
@@ -125,13 +125,13 @@ LTX-2 has three major components that compete for VRAM:
 
 | Component | bf16 Size | FP8/Quantized | Notes |
 |-----------|-----------|---------------|-------|
-| Gemma3-12B | ~24GB | 12GB (8bit) / 3GB (torchao int4) | Text encoder |
+| Gemma3-12B | ~24GB | 12GB (torchao int8) / 3GB (torchao int4) | Text encoder |
 | DiT 13B | ~26GB | ~13GB (FP8) | Transformer |
 | VAE | ~2GB | ~2GB | Video decoder |
 
 **Key insight**: Components are loaded sequentially, so peak VRAM = max(encoder, transformer + VAE), not the sum.
 
-**Note on torchao int4**: The q4-qat variant loads the model to CPU in bf16 format (~24GB system RAM), applies `int4_weight_only()` quantization, then moves to GPU (~3GB VRAM). This happens during the initial load phase.
+**Note on torchao quantization**: Both 8bit and q4-qat variants load the model to CPU in bf16 format (~24GB system RAM), apply torchao quantization (`int8_weight_only()` or `int4_weight_only()`), then move to GPU. This load-time quantization approach works with LTX-2's non-standard sharded checkpoint format, unlike BitsAndBytes which requires standard checkpoint layouts.
 
 ### strategy 1: default (cpu text encoder)
 
@@ -150,7 +150,7 @@ uv run scripts/generate.py --model-type ltx2 \
 
 **Tradeoff:** Slower text encoding (~30s on CPU vs ~5s on GPU)
 
-### strategy 2: 8-bit gemma on gpu
+### strategy 2: torchao int8 quantization (8-bit gemma)
 
 Best for: Faster encoding with moderate VRAM savings
 
@@ -163,10 +163,24 @@ uv run scripts/generate.py --model-type ltx2 \
 ```
 
 **Memory profile:**
-- Text encoding: ~14GB VRAM (8-bit Gemma + connectors + activations)
+- Load phase: ~24GB system RAM (loads bf16 weights to CPU)
+- Quantization: Applies torchao `int8_weight_only()` quantization
+- Runtime: ~12GB VRAM (quantized Gemma + connectors + activations)
 - Generation: ~15GB VRAM
 
-**Tradeoff:** Requires `bitsandbytes` library, slight quality loss
+**How it works:**
+The 8bit variant now uses torchao's dynamic int8 quantization:
+1. Loads the standard bf16 Gemma model to CPU (~24GB system RAM)
+2. Applies `int8_weight_only()` quantization in-place
+3. Moves quantized model to GPU (~12GB VRAM)
+
+This approach works with LTX-2's non-standard sharded checkpoint format, which is incompatible with BitsAndBytes' from_pretrained hook. The CPU → quantize → GPU loading pattern avoids checkpoint format issues.
+
+**Requirements:**
+- ~24GB free system RAM during model loading
+- torchao library (included in dependencies)
+
+**Tradeoff:** Slight quality loss from quantization, but faster encoding than CPU bf16
 
 ### strategy 3: torchao int4 quantization (smallest encoder)
 
@@ -254,11 +268,11 @@ uv run scripts/generate.py --model-type ltx2 \
 |---------------|------------|--------------|-----------------|-----------|-------|
 | bf16 on CPU | 24GB | 0GB | 15GB | 15GB | Slowest encoding |
 | bf16 on CUDA | - | 26GB | 15GB | 26GB | OOM on 24GB GPU |
-| 8bit on CUDA | - | 14GB | 15GB | 15GB | Requires bitsandbytes |
-| q4-qat on CUDA (torchao) | 24GB | 3GB | 15GB | 15GB | Load-time quantization |
+| 8bit on CUDA (torchao) | 24GB | 12GB | 15GB | 15GB | Load-time int8 quantization |
+| q4-qat on CUDA (torchao) | 24GB | 3GB | 15GB | 15GB | Load-time int4 quantization |
 | Precomputed + q4-qat | 24GB | 3GB | 15GB | 15GB | Separate encode/gen phases |
 
-**Note on q4-qat:** Uses torchao `int4_weight_only()` quantization applied at load time. Loads bf16 model to CPU (~24GB system RAM), quantizes, then moves to GPU (~3GB VRAM). Works with any Gemma model - no pre-quantized checkpoint needed.
+**Note on torchao quantization:** Both 8bit and q4-qat variants use torchao quantization applied at load time. They load the bf16 model to CPU (~24GB system RAM), apply `int8_weight_only()` or `int4_weight_only()` quantization, then move to GPU. This approach works with LTX-2's non-standard sharded checkpoint format, which is incompatible with BitsAndBytes' from_pretrained hook.
 
 ## common workflows
 

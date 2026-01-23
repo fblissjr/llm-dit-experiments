@@ -680,7 +680,7 @@ def run_ltx2_generation(args, config, logger) -> int:
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        video_np = video.numpy()
+        video_np = video.cpu().numpy()
         with tempfile.TemporaryDirectory() as tmpdir:
             # Write frames as PNG files
             for i, frame in enumerate(video_np):
