@@ -56,6 +56,45 @@ from llm_dit.models.flux2.constants import (
     calculate_num_tokens,
 )
 
+# RoPE components
+from llm_dit.models.flux2.rope import (
+    EmbedND,
+    rope,
+    apply_rope,
+    attention,
+    create_image_ids,
+    create_text_ids,
+    create_reference_ids,
+)
+
+# VAE components
+from llm_dit.models.flux2.vae import (
+    AutoEncoder,
+    AutoEncoderParams,
+    Flux2VAE,
+)
+
+# Transformer components
+from llm_dit.models.flux2.transformer import (
+    Flux2Transformer,
+    Flux2,
+    DoubleStreamBlock,
+    SingleStreamBlock,
+    Modulation,
+    LastLayer,
+    QKNorm,
+    RMSNorm,
+    timestep_embedding,
+)
+
+# Loader utilities
+from llm_dit.models.flux2.loader import (
+    load_flux2_transformer,
+    load_flux2_vae,
+    get_model_info,
+    list_available_models,
+)
+
 __all__ = [
     # Parameter classes
     "Flux2Params",
@@ -75,15 +114,36 @@ __all__ = [
     "LATENT_CHANNELS_AFTER_PATCHIFY",
     # Model registry
     "FLUX2_MODEL_INFO",
-    # Helpers
+    # Helper functions
     "get_model_params",
     "get_generation_defaults",
     "calculate_latent_shape",
     "calculate_num_tokens",
+    # RoPE
+    "EmbedND",
+    "rope",
+    "apply_rope",
+    "attention",
+    "create_image_ids",
+    "create_text_ids",
+    "create_reference_ids",
+    # VAE
+    "AutoEncoder",
+    "AutoEncoderParams",
+    "Flux2VAE",
+    # Transformer
+    "Flux2Transformer",
+    "Flux2",
+    "DoubleStreamBlock",
+    "SingleStreamBlock",
+    "Modulation",
+    "LastLayer",
+    "QKNorm",
+    "RMSNorm",
+    "timestep_embedding",
+    # Loader
+    "load_flux2_transformer",
+    "load_flux2_vae",
+    "get_model_info",
+    "list_available_models",
 ]
-
-# Additional exports will be added as components are implemented:
-# - rope.py: EmbedND, rope, apply_rope, create_image_ids, create_text_ids
-# - vae.py: Flux2VAE, AutoEncoder, AutoEncoderParams
-# - transformer.py: Flux2Transformer, DoubleStreamBlock, SingleStreamBlock
-# - loader.py: load_flux2_transformer, load_flux2_vae
