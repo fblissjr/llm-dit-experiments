@@ -251,7 +251,7 @@ def load_flux2_transformer(
     sd = load_sft(weight_path, device=str(device))
 
     # FP8 checkpoints contain extra scale tensors (input_scale, weight_scale)
-    # that our model doesn't have. Filter them out and load the actual weights.
+    # that our model doesn't have. Filter them out and cast weights to target dtype.
     if is_fp8:
         # Filter out FP8 scale tensors - they're metadata, not model weights
         scale_keys = [k for k in sd.keys() if k.endswith(("_scale", ".input_scale", ".weight_scale"))]
@@ -259,6 +259,16 @@ def load_flux2_transformer(
             print(f"FP8 checkpoint detected: removing {len(scale_keys)} scale tensors")
             for k in scale_keys:
                 del sd[k]
+
+        # Cast FP8 weights to target dtype (bf16)
+        # FP8 weights are float8_e4m3fn which can't be used directly in matmul with bf16
+        fp8_count = 0
+        for k, v in sd.items():
+            if v.dtype in (torch.float8_e4m3fn, torch.float8_e5m2):
+                sd[k] = v.to(dtype)
+                fp8_count += 1
+        if fp8_count > 0:
+            print(f"Cast {fp8_count} FP8 tensors to {dtype}")
 
     model.load_state_dict(sd, strict=True, assign=True)
 
