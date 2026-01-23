@@ -75,9 +75,19 @@ Read these files when starting a new session:
 | Major milestone or blocker | `current.md` |
 | Research or analysis complete | `log_YYYY-MM-DD.md`, relevant docs |
 
-## key parameters
+## ltx-2 quick reference
 
-### ltx-2 (video)
+**Start here for LTX-2 work:**
+
+| Doc | Purpose | When to Read |
+|-----|---------|--------------|
+| **[ltx2_comprehensive_reference.md](internal/docs/ltx2/ltx2_comprehensive_reference.md)** | **AUTHORITATIVE** - Full architecture, text conditioning, inference, memory | First! Covers everything |
+| [model_file_structure.md](internal/research/ltx2/model_file_structure.md) | Model weights, tensor shapes | Loading/debugging weights |
+| [model_inventory.md](internal/research/ltx2/model_inventory.md) | Directory structure, component sizes | Disk/memory planning |
+| [paper_analysis.md](internal/research/ltx2/paper_analysis.md) | Paper claims, ablation gaps | Research directions |
+| [memory_optimization_ltx2_24gb.md](internal/analysis/memory/memory_optimization_ltx2_24gb.md) | 24GB VRAM strategies | OOM issues |
+
+### ltx-2 params
 
 | Param | Value | Notes |
 |-------|-------|-------|
@@ -106,7 +116,8 @@ Read these files when starting a new session:
 | Research/experiments | [experiments/AGENTS.md](experiments/AGENTS.md) | Research protocols |
 | Architecture decisions | [internal/principles/guiding_principles.md](internal/principles/guiding_principles.md) | Design rationale |
 | Debugging | [internal/state/lessons_learned.md](internal/state/lessons_learned.md) | Past solutions |
-| Understanding data flow | [internal/docs/ltx2/technical_data_flow.md](internal/docs/ltx2/technical_data_flow.md) | CLI to video trace |
+| **LTX-2 architecture** | [internal/docs/ltx2/ltx2_comprehensive_reference.md](internal/docs/ltx2/ltx2_comprehensive_reference.md) | **AUTHORITATIVE** reference |
+| LTX-2 data flow | [internal/docs/ltx2/technical_data_flow.md](internal/docs/ltx2/technical_data_flow.md) | CLI to video trace |
 
 ### by model
 
@@ -128,6 +139,7 @@ Read these files when starting a new session:
 
 | Model | Doc | Purpose |
 |-------|-----|---------|
+| LTX-2 | [internal/docs/ltx2/ltx2_comprehensive_reference.md](internal/docs/ltx2/ltx2_comprehensive_reference.md) | **AUTHORITATIVE** - Full architecture, text conditioning, inference |
 | LTX-2 | [internal/docs/ltx2/technical_data_flow.md](internal/docs/ltx2/technical_data_flow.md) | CLI to video end-to-end |
 | LTX-2 | [internal/docs/ltx2/data_flow_diagram.md](internal/docs/ltx2/data_flow_diagram.md) | Visual tensor shapes |
 | LTX-2 | [internal/docs/ltx2/e2e_code_path.md](internal/docs/ltx2/e2e_code_path.md) | File-by-file code trace |
