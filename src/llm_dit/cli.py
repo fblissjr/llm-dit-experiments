@@ -137,9 +137,17 @@ class RuntimeConfig:
     ltx2_steps: int | None = None  # Diffusion steps (None = config default: 12 for distilled)
     ltx2_lora_path: str = ""  # Path to LoRA safetensors
     ltx2_lora_scale: float = 1.0  # LoRA blend scale
-    ltx2_offload_mode: str = "model"  # none, model, sequential, group
     ltx2_audio: bool = False  # Enable audio generation
     ltx2_output_path: str = "output.mp4"  # Output video path
+    ltx2_save_embeddings: str | None = None  # Save embeddings to file (skip generation)
+    ltx2_load_embeddings: str | None = None  # Load embeddings from file (skip encoding)
+
+    # LTX-2 optimization (matching reference repo)
+    ltx2_text_encoder_device: str = "cpu"  # cpu recommended for 24GB
+    ltx2_transformer_device: str = "cuda"  # DiT on GPU
+    ltx2_vae_device: str = "cuda"  # VAE on GPU
+    ltx2_quantize: str = "fp8"  # fp8 or none
+    ltx2_skip_cleanup: bool = False  # Skip memory cleanup between stages
 
     # Wan/HuMo video generation
     wan_humo_path: str = ""  # Path to HuMo transformer (e.g., ~/Storage/HuMo)
@@ -445,7 +453,8 @@ def create_base_parser(
         "--model-path",
         type=str,
         default=None,
-        help="Path to Z-Image model (DiT + VAE) or HuggingFace ID",
+        help="Path to model directory. Works for all model types (Z-Image, LTX-2, etc). "
+        "Type-specific paths like --ltx2-model-path take precedence if specified.",
     )
     model_group.add_argument(
         "--text-encoder-path",
@@ -527,7 +536,9 @@ def create_base_parser(
         "--ltx2-encoder-model-id",
         type=str,
         default=None,
-        help="Gemma 3 text encoder model ID (default: models/LTX-2/text_encoder)",
+        help="Path to text encoder (Gemma 3 compatible). Can be any quantized variant "
+        "(QAT 4-bit, FP8, etc.) as long as output dimensions match. "
+        "Falls back to --text-encoder-path, then model_path/text_encoder.",
     )
     ltx2_group.add_argument(
         "--ltx2-num-frames",
@@ -566,13 +577,6 @@ def create_base_parser(
         help="LoRA blend scale (default: 1.0)",
     )
     ltx2_group.add_argument(
-        "--ltx2-offload-mode",
-        type=str,
-        choices=["none", "model", "sequential", "group"],
-        default=None,
-        help="CPU offload mode (default: model for 24GB VRAM)",
-    )
-    ltx2_group.add_argument(
         "--ltx2-audio",
         action="store_true",
         default=None,
@@ -583,6 +587,52 @@ def create_base_parser(
         type=str,
         default=None,
         help="Output video path (default: output.mp4)",
+    )
+    ltx2_group.add_argument(
+        "--ltx2-save-embeddings",
+        type=str,
+        default=None,
+        help="Save text embeddings to file (skip video generation, for precomputation). "
+        "Useful for encoding prompts once and generating multiple videos with different seeds.",
+    )
+    ltx2_group.add_argument(
+        "--ltx2-load-embeddings",
+        type=str,
+        default=None,
+        help="Load pre-computed embeddings from file (skip text encoding). "
+        "Works with any compatible Gemma3 quantization variant.",
+    )
+
+    # LTX-2 Optimization (matching reference repo)
+    ltx2_opt = parser.add_argument_group("LTX-2 Optimization")
+    ltx2_opt.add_argument(
+        "--ltx2-text-encoder-device",
+        choices=["cpu", "cuda"],
+        default=None,
+        help="Device for Gemma3 text encoder (cpu recommended for 24GB, default: cpu)",
+    )
+    ltx2_opt.add_argument(
+        "--ltx2-transformer-device",
+        choices=["cpu", "cuda"],
+        default=None,
+        help="Device for DiT transformer (default: cuda)",
+    )
+    ltx2_opt.add_argument(
+        "--ltx2-vae-device",
+        choices=["cpu", "cuda"],
+        default=None,
+        help="Device for VAE decoder (default: cuda)",
+    )
+    ltx2_opt.add_argument(
+        "--ltx2-quantize",
+        choices=["none", "fp8"],
+        default=None,
+        help="Transformer quantization (fp8 for 24GB GPUs, default: fp8)",
+    )
+    ltx2_opt.add_argument(
+        "--ltx2-skip-cleanup",
+        action="store_true",
+        help="Skip memory cleanup between stages (faster, needs more VRAM)",
     )
 
     # Wan/HuMo video generation
@@ -1395,12 +1445,26 @@ def _apply_cli_overrides(args: argparse.Namespace, config: RuntimeConfig) -> Run
         config.ltx2_lora_path = args.ltx2_lora_path
     if getattr(args, "ltx2_lora_scale", None) is not None:
         config.ltx2_lora_scale = args.ltx2_lora_scale
-    if getattr(args, "ltx2_offload_mode", None) is not None:
-        config.ltx2_offload_mode = args.ltx2_offload_mode
     if getattr(args, "ltx2_audio", False):
         config.ltx2_audio = True
     if getattr(args, "ltx2_output", None) is not None:
         config.ltx2_output_path = args.ltx2_output
+
+    # LTX-2 optimization overrides
+    if getattr(args, "ltx2_text_encoder_device", None) is not None:
+        config.ltx2_text_encoder_device = args.ltx2_text_encoder_device
+    if getattr(args, "ltx2_transformer_device", None) is not None:
+        config.ltx2_transformer_device = args.ltx2_transformer_device
+    if getattr(args, "ltx2_vae_device", None) is not None:
+        config.ltx2_vae_device = args.ltx2_vae_device
+    if getattr(args, "ltx2_quantize", None) is not None:
+        config.ltx2_quantize = args.ltx2_quantize
+    if getattr(args, "ltx2_skip_cleanup", False):
+        config.ltx2_skip_cleanup = True
+    if getattr(args, "ltx2_save_embeddings", None) is not None:
+        config.ltx2_save_embeddings = args.ltx2_save_embeddings
+    if getattr(args, "ltx2_load_embeddings", None) is not None:
+        config.ltx2_load_embeddings = args.ltx2_load_embeddings
 
     # Wan/HuMo video overrides
     if getattr(args, "wan_humo_path", None) is not None:
@@ -1686,8 +1750,13 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
                 config.ltx2_steps = getattr(ltx2, "num_inference_steps", None)
                 config.ltx2_lora_path = getattr(ltx2, "lora_path", "")
                 config.ltx2_lora_scale = getattr(ltx2, "lora_scale", 1.0)
-                config.ltx2_offload_mode = getattr(ltx2, "offload_mode", "model")
                 config.ltx2_audio = getattr(ltx2, "audio_enabled", False)
+                # LTX-2 optimization settings
+                config.ltx2_text_encoder_device = getattr(ltx2, "text_encoder_device", "cpu")
+                config.ltx2_transformer_device = getattr(ltx2, "transformer_device", "cuda")
+                config.ltx2_vae_device = getattr(ltx2, "vae_device", "cuda")
+                config.ltx2_quantize = getattr(ltx2, "quantize", "fp8")
+                config.ltx2_skip_cleanup = getattr(ltx2, "skip_cleanup", False)
 
             # Check for Wan section
             if hasattr(toml_config, "wan"):

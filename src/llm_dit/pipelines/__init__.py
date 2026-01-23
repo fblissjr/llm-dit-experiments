@@ -34,6 +34,7 @@ from llm_dit.pipelines.generate import (
     create_video_modality,
     cleanup_memory,
 )
+from llm_dit.pipelines.ltx2_config import LTX2OptimizationConfig
 
 # WanVideoPipeline for Wan 2.1/2.2 video generation
 try:
@@ -61,4 +62,5 @@ __all__ = [
     "create_position_indices",
     "create_video_modality",
     "cleanup_memory",
+    "LTX2OptimizationConfig",
 ]

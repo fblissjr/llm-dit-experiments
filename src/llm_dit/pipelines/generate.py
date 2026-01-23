@@ -47,6 +47,7 @@ from llm_dit.models.ltx2 import (
     Modality,
     VideoDecoder,
 )
+from llm_dit.pipelines.ltx2_config import LTX2OptimizationConfig
 from llm_dit.schedulers import LTX2Scheduler
 
 logger = logging.getLogger(__name__)
@@ -510,16 +511,18 @@ def generate_video_with_offloading(
     config: GenerationConfig,
     model_path: Union[str, Path] = "models/LTX-2",
     text_encoder_path: Optional[Union[str, Path]] = None,
+    precomputed_embeddings: Optional[torch.Tensor] = None,
     quantize: bool = True,
     precision: str = "fp8-native",  # Changed default: native FP8 has no memory leak
     dtype: torch.dtype = torch.bfloat16,
     callback: Optional[Callable[[str, int, int], None]] = None,
+    optimization: Optional[LTX2OptimizationConfig] = None,
 ) -> torch.Tensor:
     """
     Generate video with sequential component offloading for 24GB GPUs.
 
     This function implements the LTX-2 memory strategy:
-    1. Load text encoder -> encode prompt -> unload
+    1. Load text encoder -> encode prompt -> unload (skipped if precomputed_embeddings)
     2. Load transformer (+ optional quantization) -> denoise -> unload
     3. Load VAE -> decode latents -> unload
 
@@ -527,18 +530,27 @@ def generate_video_with_offloading(
     With FP8 quantization, the 13B model fits with room for activations.
 
     Args:
-        prompt: Text prompt for generation
+        prompt: Text prompt for generation (can be empty if using precomputed_embeddings)
         config: Generation configuration
         model_path: Path to LTX-2 model directory (contains transformer/, text_encoder/, vae/)
         text_encoder_path: Optional separate path for text encoder
-        quantize: If True, quantize transformer for memory efficiency
-        precision: Quantization method:
+        precomputed_embeddings: Optional pre-computed text embeddings [seq_len, 3840].
+            If provided, skips text encoding entirely. Useful for:
+            - Running same prompt with different seeds
+            - Using a different Gemma3 quantization variant for encoding
+            - Distributed inference (encode on one machine, generate on another)
+        quantize: If True, quantize transformer for memory efficiency.
+            DEPRECATED: Use optimization.quantize_transformer instead.
+        precision: Quantization method.
+            DEPRECATED: Use optimization.precision instead.
             - "fp8-native" (default): Official LTX-2 approach, no memory leak
             - "fp8-quanto": Quanto FP8 (legacy, has memory leak issue)
             - "int8-quanto": Quanto INT8
             - "int4-quanto": Quanto INT4 (lowest quality)
         dtype: Base dtype for loading (bf16 recommended)
         callback: Optional callback(stage, step, total) for progress
+        optimization: LTX2OptimizationConfig with device placement and memory settings.
+            If None, uses LTX2OptimizationConfig.for_24gb_gpu() defaults.
 
     Returns:
         Video tensor [F, H, W, C] in uint8 format
@@ -551,50 +563,89 @@ def generate_video_with_offloading(
             quantize=True,
         )
 
+        # With optimization config:
+        opt = LTX2OptimizationConfig.for_24gb_gpu()
+        video = generate_video_with_offloading(
+            "A cat walking",
+            GenerationConfig(num_frames=33, height=512, width=768),
+            model_path="models/LTX-2",
+            optimization=opt,
+        )
+
     Memory usage (RTX 4090, 24GB):
         - Text encoder (Gemma3): ~8GB peak
         - Transformer (FP8): ~13GB
         - VAE: ~2GB
         - Total per stage: <24GB
     """
+    # Initialize optimization config with defaults if not provided
+    if optimization is None:
+        optimization = LTX2OptimizationConfig.for_24gb_gpu()
+
+    # Override deprecated parameters with optimization config if provided explicitly
+    # This maintains backward compatibility while preferring optimization config
+    effective_quantize = optimization.quantize_transformer if optimization else quantize
+    effective_precision = optimization.precision if optimization else precision
     model_path = Path(model_path)
     if text_encoder_path is None:
         text_encoder_path = model_path / "text_encoder"
 
-    # Stage 1: Text Encoding
-    if callback:
-        callback("text_encoder", 0, 1)
+    # Stage 1: Text Encoding (skipped if precomputed_embeddings provided)
+    if precomputed_embeddings is not None:
+        logger.info("Stage 1: Using precomputed embeddings (skipping text encoder)")
+        # Precomputed embeddings are [seq_len, dim], need [1, seq_len, dim]
+        if precomputed_embeddings.dim() == 2:
+            prompt_embeds = precomputed_embeddings.unsqueeze(0)
+        else:
+            prompt_embeds = precomputed_embeddings
+        # Move to transformer device with requested dtype
+        transformer_device = optimization.transformer_device
+        prompt_embeds = prompt_embeds.to(transformer_device, dtype)
+        # Create attention mask (all ones for precomputed embeddings)
+        attention_mask = torch.ones(
+            prompt_embeds.shape[0], prompt_embeds.shape[1],
+            device=transformer_device, dtype=torch.long
+        )
+        logger.info(f"Precomputed embeddings: {prompt_embeds.shape} on {transformer_device}")
 
-    logger.info("Stage 1: Loading text encoder...")
-    from llm_dit.encoders.gemma3 import Gemma3Encoder
+        if callback:
+            callback("text_encoder", 1, 1)
+    else:
+        if callback:
+            callback("text_encoder", 0, 1)
 
-    # Load encoder on CPU first to avoid OOM during initialization
-    # The 12B Gemma model in bf16 takes ~24GB which exceeds RTX 4090's 24GB
-    # Encoding on CPU is slower but more memory-safe for sequential loading
-    text_encoder = Gemma3Encoder(
-        model_id=str(text_encoder_path),
-        device="cpu",  # Load to CPU first
-        dtype=dtype,
-        load_in_8bit=False,  # Skip quantization for CPU loading
-    )
+        logger.info("Stage 1: Loading text encoder...")
+        from llm_dit.encoders.gemma3 import Gemma3Encoder
 
-    logger.info("Encoding prompt...")
-    encoding_output = text_encoder.encode([prompt])
-    # EncodingOutput has embeddings list and attention_masks list
-    prompt_embeds = encoding_output.embeddings[0].unsqueeze(0)  # [1, seq_len, dim]
-    attention_mask = encoding_output.attention_masks[0].unsqueeze(0)  # [1, seq_len]
-    logger.info(f"Prompt embeddings: {prompt_embeds.shape}")
+        # Load encoder to configured device (cpu recommended for 24GB GPUs)
+        # The 12B Gemma model in bf16 takes ~24GB which exceeds RTX 4090's 24GB
+        # Encoding on CPU is slower but more memory-safe for sequential loading
+        text_encoder = Gemma3Encoder(
+            model_id=str(text_encoder_path),
+            device=optimization.text_encoder_device,
+            dtype=dtype,
+            load_in_8bit=False,  # Skip quantization for CPU loading
+        )
 
-    # Keep embeddings on GPU, unload encoder
-    prompt_embeds = prompt_embeds.to("cuda", dtype)
-    attention_mask = attention_mask.to("cuda")
+        logger.info("Encoding prompt...")
+        encoding_output = text_encoder.encode([prompt])
+        # EncodingOutput has embeddings list and attention_masks list
+        prompt_embeds = encoding_output.embeddings[0].unsqueeze(0)  # [1, seq_len, dim]
+        attention_mask = encoding_output.attention_masks[0].unsqueeze(0)  # [1, seq_len]
+        logger.info(f"Prompt embeddings: {prompt_embeds.shape}")
 
-    del text_encoder
-    cleanup_memory()
-    logger.info("Text encoder unloaded")
+        # Move embeddings to transformer device, unload encoder
+        transformer_device = optimization.transformer_device
+        prompt_embeds = prompt_embeds.to(transformer_device, dtype)
+        attention_mask = attention_mask.to(transformer_device)
 
-    if callback:
-        callback("text_encoder", 1, 1)
+        del text_encoder
+        if optimization.cleanup_between_stages:
+            cleanup_memory()
+        logger.info("Text encoder unloaded")
+
+        if callback:
+            callback("text_encoder", 1, 1)
 
     # Stage 2: Transformer Denoising
     if callback:
@@ -602,15 +653,15 @@ def generate_video_with_offloading(
 
     logger.info("Stage 2: Loading transformer...")
 
-    if quantize:
-        if precision == "fp8-native":
+    if effective_quantize:
+        if effective_precision == "fp8-native":
             # Native FP8: official LTX-2 approach with no memory leak
             from llm_dit.models.ltx2 import load_ltx2_transformer_fp8_native
 
             model = load_ltx2_transformer_fp8_native(
                 model_path / "transformer",
                 dtype=dtype,
-                device="cuda",  # Load directly to GPU
+                device=optimization.transformer_device,
                 video_only=True,
                 verbose=True,
             )
@@ -620,12 +671,12 @@ def generate_video_with_offloading(
 
             model = load_ltx2_transformer_quantized(
                 model_path / "transformer",
-                precision=precision,  # type: ignore[arg-type]
+                precision=effective_precision,  # type: ignore[arg-type]
                 dtype=dtype,
                 video_only=True,
                 verbose=True,
             )
-            model = model.to("cuda")
+            model = model.to(optimization.transformer_device)
     else:
         from llm_dit.models.ltx2 import load_ltx2_transformer
 
@@ -635,7 +686,7 @@ def generate_video_with_offloading(
             device="cpu",
             video_only=True,
         )
-        model = model.to("cuda")
+        model = model.to(optimization.transformer_device)
 
     # Only load connectors if embeddings need processing (188160 -> 3840 projection)
     # Our Gemma3Encoder already outputs 3840-dim via internal Embeddings1DConnector
@@ -673,7 +724,8 @@ def generate_video_with_offloading(
 
     # Unload transformer and connectors
     del model, connectors, prompt_embeds, attention_mask
-    cleanup_memory()
+    if optimization.cleanup_between_stages:
+        cleanup_memory()
     logger.info("Transformer unloaded")
 
     if callback:
@@ -692,7 +744,7 @@ def generate_video_with_offloading(
         model_path / "vae",
         dtype=dtype,
         device="cpu",
-    ).to("cuda")
+    ).to(optimization.vae_device)
 
     logger.info("Decoding latents to video...")
 
@@ -707,7 +759,8 @@ def generate_video_with_offloading(
 
     # Unload VAE
     del vae, latents
-    cleanup_memory()
+    if optimization.cleanup_between_stages:
+        cleanup_memory()
     logger.info("VAE unloaded")
 
     if callback:

@@ -34,6 +34,14 @@ uv run scripts/generate.py --model-type ltx2 \
   --ltx2-model-path /path/to/LTX-2 \
   --ltx2-num-frames 33 --width 768 --height 512 \
   "A cat walking through a sunny garden"
+  
+  # LTX-2 (text-to-video) - PyTorch pipeline with explicit device placement
+  uv run python scripts/generate.py --model-type ltx2 \
+  --ltx2-model-path /path/to/LTX-2 \
+      --ltx2-text-encoder-device cpu \
+      --ltx2-transformer-device cuda \
+      --ltx2-quantize fp8 \
+      "A cat walking"
 
 # Web UI
 uv run web/server.py --config config.toml

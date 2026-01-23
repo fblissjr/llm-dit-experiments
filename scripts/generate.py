@@ -30,9 +30,9 @@ Usage:
         --img2img input.jpg \\
         "A cheerful child waving under a blue sky"
 
-    # LTX-2 (text-to-video)
+    # LTX-2 (text-to-video) - using unified --model-path
     uv run scripts/generate.py --model-type ltx2 \\
-        --ltx2-model-path ~/Storage/LTX-2 \\
+        --model-path ~/Storage/LTX-2 \\
         --width 768 --height 512 \\
         --ltx2-num-frames 33 --ltx2-fps 24 \\
         --output video.mp4 \\
@@ -463,6 +463,10 @@ def run_ltx2_generation(args, config, logger) -> int:
     which correctly handles FP8 quantization and dtype management, avoiding the dtype
     mismatch errors in the diffusers wrapper.
 
+    Supports embedding precomputation:
+    - --ltx2-save-embeddings: Encode prompt and save, skip video generation
+    - --ltx2-load-embeddings: Load pre-computed embeddings, skip text encoding
+
     Args:
         args: Parsed CLI arguments
         config: RuntimeConfig with all settings
@@ -475,12 +479,17 @@ def run_ltx2_generation(args, config, logger) -> int:
         GenerationConfig as LTXConfig,
         generate_video_with_offloading,
     )
+    from llm_dit.pipelines.ltx2_config import LTX2OptimizationConfig
 
-    # Validate model path
-    model_path = config.ltx2_model_path
-    if not model_path:
+    # Validate model path - prefer --ltx2-model-path, fall back to --model-path
+    model_path = config.ltx2_model_path or config.model_path
+
+    # For load-embeddings mode, model_path is optional (only need transformer/VAE)
+    # For save-embeddings mode, we need the text encoder path
+    if not model_path and not config.ltx2_load_embeddings:
         logger.error(
-            "No LTX-2 model path specified. Use --ltx2-model-path or set ltx2.model_path in config."
+            "No LTX-2 model path specified. Use --model-path, --ltx2-model-path, "
+            "or set ltx2.model_path in config."
         )
         return 1
 
@@ -494,10 +503,101 @@ def run_ltx2_generation(args, config, logger) -> int:
     seed = getattr(args, "seed", None)
     output_path = getattr(config, "ltx2_output_path", None) or args.output or "output.mp4"
 
+    # Text encoder path - prefer --ltx2-encoder-model-id, fall back to --text-encoder-path
+    # If neither specified, defaults to model_path/text_encoder in generate_video_with_offloading
+    text_encoder_path = None
+    if config.ltx2_encoder_model_id and config.ltx2_encoder_model_id != "models/LTX-2/text_encoder":
+        text_encoder_path = config.ltx2_encoder_model_id
+    elif config.text_encoder_path:
+        text_encoder_path = config.text_encoder_path
+
+    # =========================================================================
+    # Save-embeddings mode: encode prompt and save, skip video generation
+    # =========================================================================
+    if config.ltx2_save_embeddings:
+        from llm_dit.distributed import save_embeddings
+        from llm_dit.encoders.gemma3 import Gemma3Encoder
+
+        # Resolve text encoder path
+        encoder_path = text_encoder_path or (f"{model_path}/text_encoder" if model_path else None)
+        if not encoder_path:
+            logger.error("No text encoder path specified for save-embeddings mode.")
+            return 1
+
+        logger.info("=" * 60)
+        logger.info("LTX-2 EMBEDDING PRECOMPUTATION")
+        logger.info("=" * 60)
+        logger.info(f"  Text encoder: {encoder_path}")
+        logger.info(f"  Prompt: {args.prompt[:80]}...")
+        logger.info(f"  Output: {config.ltx2_save_embeddings}")
+        logger.info("-" * 60)
+
+        logger.info("Loading Gemma3 text encoder...")
+        start = time.time()
+        encoder = Gemma3Encoder(
+            model_id=str(encoder_path),
+            device=config.ltx2_text_encoder_device,
+            dtype=config.get_dtype(),
+        )
+        load_time = time.time() - start
+        logger.info(f"Encoder loaded in {load_time:.1f}s")
+
+        logger.info("Encoding prompt...")
+        start = time.time()
+        output = encoder.encode([args.prompt])
+        embeddings = output.embeddings[0]  # [seq_len, 3840]
+        encode_time = time.time() - start
+        logger.info(f"Encoding complete in {encode_time:.1f}s")
+        logger.info(f"  Shape: {embeddings.shape}")
+        logger.info(f"  Dtype: {embeddings.dtype}")
+
+        # Save embeddings
+        save_path = save_embeddings(
+            embeddings=embeddings,
+            path=config.ltx2_save_embeddings,
+            prompt=args.prompt,
+            model_path=str(encoder_path),
+            encoder_device=config.ltx2_text_encoder_device,
+        )
+        logger.info(f"Embeddings saved to: {save_path}")
+        logger.info("=" * 60)
+        logger.info(f"Total time: load={load_time:.1f}s + encode={encode_time:.1f}s")
+        logger.info("Run with --ltx2-load-embeddings to generate video from these embeddings.")
+
+        return 0
+
+    # =========================================================================
+    # Load-embeddings mode: load pre-computed embeddings
+    # =========================================================================
+    precomputed_embeds = None
+    if config.ltx2_load_embeddings:
+        from llm_dit.distributed import load_embeddings
+
+        logger.info(f"Loading pre-computed embeddings from {config.ltx2_load_embeddings}")
+        emb_file = load_embeddings(config.ltx2_load_embeddings)
+        precomputed_embeds = emb_file.embeddings
+        logger.info(f"  Shape: {precomputed_embeds.shape}")
+        logger.info(f"  Original prompt: {emb_file.metadata.prompt[:50]}...")
+        logger.info(f"  Encoded with: {emb_file.metadata.model_path}")
+
+    # Build optimization config from CLI settings
+    optimization = LTX2OptimizationConfig(
+        text_encoder_device=config.ltx2_text_encoder_device,
+        transformer_device=config.ltx2_transformer_device,
+        vae_device=config.ltx2_vae_device,
+        quantize_transformer=(config.ltx2_quantize == "fp8"),
+        precision="fp8-native" if config.ltx2_quantize == "fp8" else "bf16",
+        cleanup_between_stages=not config.ltx2_skip_cleanup,
+    )
+
     logger.info("=" * 60)
     logger.info("LTX-2 VIDEO GENERATION (Pure PyTorch)")
     logger.info("=" * 60)
     logger.info(f"  Model: {model_path}")
+    if precomputed_embeds is not None:
+        logger.info(f"  Embeddings: PRECOMPUTED ({precomputed_embeds.shape})")
+    else:
+        logger.info(f"  Text encoder: {text_encoder_path or f'{model_path}/text_encoder (default)'}")
     logger.info(f"  Resolution: {width}x{height}")
     logger.info(f"  Frames: {num_frames} @ {fps} FPS")
     logger.info(f"  Steps: {steps}")
@@ -505,6 +605,13 @@ def run_ltx2_generation(args, config, logger) -> int:
     logger.info(f"  Output: {output_path}")
     if seed is not None:
         logger.info(f"  Seed: {seed}")
+    if precomputed_embeds is None:
+        logger.info(f"  Text encoder device: {optimization.text_encoder_device}")
+    logger.info(f"  Transformer device: {optimization.transformer_device}")
+    logger.info(f"  VAE device: {optimization.vae_device}")
+    logger.info(f"  Dtype: {config.get_dtype()}")
+    logger.info(f"  Quantization: {optimization.precision}")
+    logger.info(f"  Cleanup between stages: {optimization.cleanup_between_stages}")
     logger.info("-" * 60)
 
     # Create config for pure PyTorch pipeline
@@ -528,13 +635,14 @@ def run_ltx2_generation(args, config, logger) -> int:
     start = time.time()
     try:
         video = generate_video_with_offloading(
-            prompt=args.prompt,
+            prompt=args.prompt or "",  # Can be empty if using precomputed embeddings
             config=ltx_config,
             model_path=model_path,
-            quantize=True,  # FP8 for 24GB GPU
-            precision="fp8-native",
-            dtype=torch.bfloat16,
+            text_encoder_path=text_encoder_path,
+            precomputed_embeddings=precomputed_embeds,
+            dtype=config.get_dtype(),
             callback=progress_callback,
+            optimization=optimization,
         )
     except Exception as e:
         logger.error(f"Generation failed: {e}")

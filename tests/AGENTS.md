@@ -341,7 +341,8 @@ LLM_DIT_TEST_BACKEND=ltx2 uv run pytest tests/e2e/test_baseline_portable.py -v -
 | **Scheduler** | 1 | ~12 | Sigma schedule, dynamic shift |
 | **Integration** | 5 | ~60 | Numerical equivalence, memory |
 | **E2E** | 3 | ~12 | Full pipeline, reference comparison |
-| **Total** | - | **~1030** | Comprehensive regression protection |
+| **LTX-2 Embeddings** | 2 | ~19 | Embedding precomputation CLI, save/load |
+| **Total** | - | **~1050** | Comprehensive regression protection |
 
 ## critical: visual verification
 

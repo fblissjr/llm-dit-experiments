@@ -1,8 +1,30 @@
 # agent context
 
-*last updated: 2026-01-22*
+*last updated: 2026-01-23*
 
 Quick reference for LLM agents. Uses progressive disclosure - read only what you need.
+
+## guiding principles
+
+**[Read for architectural decisions and documentation protocols](internal/principles/guiding_principles.md)**
+
+Core principles:
+- **Principle 0**: Experimentation First - modularity, reproducibility, extensibility
+- **Principle 1**: Documentation as First-Class Output - session logging, state files
+- **Principle 2**: Progressive Disclosure for Onboarding - layered docs, domain AGENTS.md
+- **Principle 3**: State Management for Session Continuity - handoff protocols
+
+## onboarding path
+
+New Claude session? Read in this order:
+
+| Step | File | Purpose |
+|------|------|---------|
+| 1 | This file (`AGENTS.md`) | Critical rules, quick reference |
+| 2 | `internal/state/current.md` | What's happening now |
+| 3 | `internal/state/todos.md` | Immediate tasks, handoffs |
+| 4 | `guiding_principles.md` | How we work (if making decisions) |
+| 5 | Domain docs | Based on your task (see navigation) |
 
 ## start here (required)
 
@@ -84,6 +106,7 @@ Read these files when starting a new session:
 | Research/experiments | [experiments/AGENTS.md](experiments/AGENTS.md) | Research protocols |
 | Architecture decisions | [internal/principles/guiding_principles.md](internal/principles/guiding_principles.md) | Design rationale |
 | Debugging | [internal/state/lessons_learned.md](internal/state/lessons_learned.md) | Past solutions |
+| Understanding data flow | [internal/docs/ltx2/technical_data_flow.md](internal/docs/ltx2/technical_data_flow.md) | CLI to video trace |
 
 ### by model
 
@@ -100,6 +123,16 @@ Read these files when starting a new session:
 | CLI flags | [docs/reference/cli_flags.md](docs/reference/cli_flags.md) |
 | API endpoints | [docs/reference/api_endpoints.md](docs/reference/api_endpoints.md) |
 | Configuration | [docs/reference/configuration.md](docs/reference/configuration.md) |
+
+### technical deep-dives
+
+| Model | Doc | Purpose |
+|-------|-----|---------|
+| LTX-2 | [internal/docs/ltx2/technical_data_flow.md](internal/docs/ltx2/technical_data_flow.md) | CLI to video end-to-end |
+| LTX-2 | [internal/docs/ltx2/data_flow_diagram.md](internal/docs/ltx2/data_flow_diagram.md) | Visual tensor shapes |
+| LTX-2 | [internal/docs/ltx2/e2e_code_path.md](internal/docs/ltx2/e2e_code_path.md) | File-by-file code trace |
+
+Full index: [internal/docs/README.md](internal/docs/README.md)
 
 ## research status symbols
 
