@@ -208,6 +208,7 @@ def load_flux2_transformer(
     dtype: torch.dtype = torch.bfloat16,
     debug_mode: bool = False,
     model_path: str | None = None,
+    block_offload: bool = False,
 ) -> Flux2Transformer:
     """
     Load a FLUX.2 transformer model.
@@ -218,6 +219,7 @@ def load_flux2_transformer(
         dtype: Model dtype (default bfloat16)
         debug_mode: If True, create minimal model (1 block each) for testing
         model_path: Direct path to weights file or directory (overrides HF download)
+        block_offload: If True, enable block-by-block GPU offloading (slower but uses less VRAM)
 
     Returns:
         Loaded Flux2Transformer
@@ -275,6 +277,11 @@ def load_flux2_transformer(
         # Move to target device after casting
         sd = {k: v.to(device) for k, v in sd.items()}
 
+    # For block offloading, load weights to CPU first
+    if block_offload:
+        # Load state dict to CPU
+        sd = {k: v.to("cpu") for k, v in sd.items()}
+
     model.load_state_dict(sd, strict=True, assign=True)
 
     # Free state dict memory
@@ -283,7 +290,12 @@ def load_flux2_transformer(
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
-    return model.to(device)
+    if block_offload:
+        # Enable block-by-block offloading (keeps blocks on CPU, small layers on GPU)
+        print(f"Block offloading enabled: blocks will be moved to GPU one at a time")
+        return model.enable_block_offload(device=device, offload_device="cpu")
+    else:
+        return model.to(device)
 
 
 def load_flux2_vae(

@@ -811,7 +811,11 @@ def run_flux2_generation(args, config, logger) -> int:
         reference_images=reference_images,
         device="cuda",
         offload_between_stages=config.flux2_offload_between_stages,
+        block_offload=config.flux2_block_offload,
     )
+
+    if config.flux2_block_offload:
+        logger.info("  Block offload: ENABLED (slower but uses ~5GB less VRAM)")
 
     # Generate
     start = time.time()

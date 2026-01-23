@@ -117,6 +117,7 @@ class Flux2GenerationConfig:
 
     # Offloading
     offload_between_stages: bool = True
+    block_offload: bool = False  # Block-by-block GPU offloading (slower but uses less VRAM)
 
     @property
     def latent_height(self) -> int:
@@ -588,7 +589,13 @@ def generate_image(
     if transformer is None:
         from llm_dit.models.flux2.loader import load_flux2_transformer
 
-        transformer = load_flux2_transformer(model_name, device=config.device, dtype=dtype, model_path=model_path)
+        transformer = load_flux2_transformer(
+            model_name,
+            device=config.device,
+            dtype=dtype,
+            model_path=model_path,
+            block_offload=config.block_offload,
+        )
         log_gpu_memory("after transformer load")
 
     # Move embeddings to device
@@ -680,6 +687,7 @@ def quick_generate(
     encoder_path: Optional[str] = None,
     model_path: Optional[str] = None,
     vae_path: Optional[str] = None,
+    block_offload: bool = False,
 ) -> Image.Image:
     """
     Quick generation helper with minimal configuration.
@@ -693,6 +701,7 @@ def quick_generate(
         encoder_path: Custom encoder path (auto-detects dtype)
         model_path: Local path to transformer weights
         vae_path: Local path to VAE weights
+        block_offload: Block-by-block offloading (slower but uses less VRAM)
 
     Returns:
         Generated PIL Image
@@ -702,6 +711,7 @@ def quick_generate(
         height=height,
         width=width,
         seed=seed,
+        block_offload=block_offload,
     )
     return generate_image(
         config,

@@ -426,12 +426,20 @@ class Flux2Transformer(nn.Module):
     5. Process through single-stream blocks (unified attention)
     6. Project back to output dimension
 
+    Supports block-by-block offloading for memory-constrained GPUs:
+        model.enable_block_offload(device="cuda", offload_device="cpu")
+
     Args:
         params: Model configuration (Klein9BParams, Klein4BParams, or Flux2Params)
     """
 
     def __init__(self, params: Klein9BParams | Klein4BParams | Flux2Params):
         super().__init__()
+
+        # Block offloading state
+        self._block_offload_enabled = False
+        self._compute_device: torch.device | None = None
+        self._offload_device: torch.device | None = None
 
         self.in_channels = params.in_channels
         self.out_channels = params.in_channels
@@ -511,6 +519,68 @@ class Flux2Transformer(nn.Module):
         # Store config for inspection
         self._params = params
 
+    def enable_block_offload(
+        self,
+        device: str | torch.device = "cuda",
+        offload_device: str | torch.device = "cpu",
+    ) -> "Flux2Transformer":
+        """
+        Enable block-by-block offloading for memory-constrained GPUs.
+
+        Moves blocks to CPU and transfers them one at a time during forward pass.
+        Keeps small layers (embeddings, modulation, final) on GPU.
+
+        Args:
+            device: GPU device for computation
+            offload_device: Device to offload blocks to (usually "cpu")
+
+        Returns:
+            self for method chaining
+        """
+        self._block_offload_enabled = True
+        self._compute_device = torch.device(device)
+        self._offload_device = torch.device(offload_device)
+
+        # Keep small layers on GPU (embeddings, modulation, final)
+        self.img_in.to(self._compute_device)
+        self.txt_in.to(self._compute_device)
+        self.time_in.to(self._compute_device)
+        self.pe_embedder.to(self._compute_device)
+        self.double_stream_modulation_img.to(self._compute_device)
+        self.double_stream_modulation_txt.to(self._compute_device)
+        self.single_stream_modulation.to(self._compute_device)
+        self.final_layer.to(self._compute_device)
+
+        if self.use_guidance_embed:
+            self.guidance_in.to(self._compute_device)
+
+        # Move all blocks to offload device (CPU)
+        for block in self.double_blocks:
+            block.to(self._offload_device)
+        for block in self.single_blocks:
+            block.to(self._offload_device)
+
+        return self
+
+    def disable_block_offload(self, device: str | torch.device = "cuda") -> "Flux2Transformer":
+        """
+        Disable block offloading and move entire model to device.
+
+        Args:
+            device: Target device for entire model
+
+        Returns:
+            self for method chaining
+        """
+        self._block_offload_enabled = False
+        self._compute_device = None
+        self._offload_device = None
+        return self.to(device)
+
+    def _move_block_to_device(self, block: nn.Module, device: torch.device) -> None:
+        """Move a block to the specified device efficiently."""
+        block.to(device, non_blocking=True)
+
     def forward(
         self,
         x: Tensor,
@@ -561,27 +631,66 @@ class Flux2Transformer(nn.Module):
         pe_ctx = self.pe_embedder(ctx_ids)
 
         # Double-stream blocks (joint attention)
-        for block in self.double_blocks:
-            img, txt = block(
-                img,
-                txt,
-                pe_x,
-                pe_ctx,
-                double_block_mod_img,
-                double_block_mod_txt,
-            )
+        if self._block_offload_enabled and self._compute_device and self._offload_device:
+            # Block-by-block offloading mode
+            for block in self.double_blocks:
+                # Move block to GPU
+                self._move_block_to_device(block, self._compute_device)
+                if self._compute_device.type == "cuda":
+                    torch.cuda.synchronize()
+
+                img, txt = block(
+                    img,
+                    txt,
+                    pe_x,
+                    pe_ctx,
+                    double_block_mod_img,
+                    double_block_mod_txt,
+                )
+
+                # Move block back to CPU
+                self._move_block_to_device(block, self._offload_device)
+        else:
+            # Standard mode - all blocks on same device
+            for block in self.double_blocks:
+                img, txt = block(
+                    img,
+                    txt,
+                    pe_x,
+                    pe_ctx,
+                    double_block_mod_img,
+                    double_block_mod_txt,
+                )
 
         # Concatenate for single-stream processing
         img = torch.cat((txt, img), dim=1)
         pe = torch.cat((pe_ctx, pe_x), dim=2)
 
         # Single-stream blocks (unified attention)
-        for block in self.single_blocks:
-            img = block(
-                img,
-                pe,
-                single_block_mod,
-            )
+        if self._block_offload_enabled and self._compute_device and self._offload_device:
+            # Block-by-block offloading mode
+            for block in self.single_blocks:
+                # Move block to GPU
+                self._move_block_to_device(block, self._compute_device)
+                if self._compute_device.type == "cuda":
+                    torch.cuda.synchronize()
+
+                img = block(
+                    img,
+                    pe,
+                    single_block_mod,
+                )
+
+                # Move block back to CPU
+                self._move_block_to_device(block, self._offload_device)
+        else:
+            # Standard mode
+            for block in self.single_blocks:
+                img = block(
+                    img,
+                    pe,
+                    single_block_mod,
+                )
 
         # Extract image tokens (remove prepended text tokens)
         img = img[:, num_txt_tokens:, ...]

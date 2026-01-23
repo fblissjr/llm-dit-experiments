@@ -171,6 +171,7 @@ class RuntimeConfig:
     flux2_guidance: float | None = None  # None = model default (1.0 for distilled, 4.0 for base)
     flux2_seed: int | None = None  # Random seed for reproducibility
     flux2_offload_between_stages: bool = True  # Memory-efficient three-stage offloading
+    flux2_block_offload: bool = False  # Block-by-block offloading (slower but uses ~5GB less VRAM)
     flux2_output_path: str = "flux2_output.png"  # Output image path
     flux2_input_images: list[str] | None = None  # Input image paths for editing mode
     flux2_encoder_path: str | None = None  # Custom path for Qwen3 encoder (auto-detects dtype)
@@ -784,6 +785,13 @@ def create_base_parser(
         action="store_true",
         default=None,
         help="Disable memory offloading (requires more VRAM)",
+    )
+    flux2_group.add_argument(
+        "--flux2-block-offload",
+        action="store_true",
+        default=None,
+        help="Enable block-by-block offloading (slower but uses ~5GB less VRAM). "
+        "Use this if you're getting OOM errors with full model on GPU.",
     )
     flux2_group.add_argument(
         "--flux2-output",
@@ -1611,6 +1619,8 @@ def _apply_cli_overrides(args: argparse.Namespace, config: RuntimeConfig) -> Run
         config.flux2_offload_between_stages = True
     if getattr(args, "flux2_no_offload", False):
         config.flux2_offload_between_stages = False
+    if getattr(args, "flux2_block_offload", False):
+        config.flux2_block_offload = True
     if getattr(args, "flux2_output", None) is not None:
         config.flux2_output_path = args.flux2_output
     if getattr(args, "flux2_input_image", None) is not None:
