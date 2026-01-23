@@ -240,12 +240,26 @@ def load_flux2_transformer(
     weight_path = _get_model_weight_path(model_name, model_path)
     print(f"Loading {model_name} from {weight_path}")
 
+    # Check if this is an FP8 model (from registry or filename)
+    is_fp8 = config.get("fp8", False) or "fp8" in weight_path.lower()
+
     # Create model on meta device for memory efficiency
     with torch.device("meta"):
         model = Flux2Transformer(params).to(dtype)
 
     # Load weights
     sd = load_sft(weight_path, device=str(device))
+
+    # FP8 checkpoints contain extra scale tensors (input_scale, weight_scale)
+    # that our model doesn't have. Filter them out and load the actual weights.
+    if is_fp8:
+        # Filter out FP8 scale tensors - they're metadata, not model weights
+        scale_keys = [k for k in sd.keys() if k.endswith(("_scale", ".input_scale", ".weight_scale"))]
+        if scale_keys:
+            print(f"FP8 checkpoint detected: removing {len(scale_keys)} scale tensors")
+            for k in scale_keys:
+                del sd[k]
+
     model.load_state_dict(sd, strict=True, assign=True)
 
     return model.to(device)
