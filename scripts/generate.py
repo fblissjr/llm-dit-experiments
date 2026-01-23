@@ -719,6 +719,111 @@ def run_ltx2_generation(args, config, logger) -> int:
     return 0
 
 
+def run_flux2_generation(args, config, logger) -> int:
+    """
+    Run FLUX.2 Klein image generation.
+
+    Supports both text-to-image and image editing with reference images.
+    Uses three-stage offloading for memory efficiency on consumer GPUs.
+
+    Args:
+        args: Parsed CLI arguments
+        config: RuntimeConfig with all settings
+        logger: Logger instance
+
+    Returns:
+        Exit code (0 for success)
+    """
+    from llm_dit.pipelines.flux2_generate import (
+        Flux2GenerationConfig,
+        generate_image,
+    )
+    from llm_dit.models.flux2.constants import FLUX2_MODEL_INFO
+
+    # Get model name
+    model_name = config.flux2_model_name
+
+    # Validate model name
+    if model_name.lower() not in FLUX2_MODEL_INFO:
+        logger.error(f"Unknown FLUX.2 model: {model_name}")
+        logger.error(f"Available: {list(FLUX2_MODEL_INFO.keys())}")
+        return 1
+
+    # Get model defaults
+    model_info = FLUX2_MODEL_INFO[model_name.lower()]
+    defaults = model_info["defaults"]
+
+    # Get generation parameters (use model defaults if not specified)
+    num_steps = config.flux2_num_steps or defaults["num_steps"]
+    guidance = config.flux2_guidance or defaults["guidance"]
+    width = config.width or 1024
+    height = config.height or 1024
+    seed = config.flux2_seed
+    output_path = config.flux2_output_path
+
+    # Prompt validation
+    if not args.prompt:
+        logger.error("No prompt specified. Use: uv run scripts/generate.py --model-type flux2 'your prompt'")
+        return 1
+
+    # Prepare reference images (for editing mode)
+    reference_images = []
+    if config.flux2_input_images:
+        reference_images = config.flux2_input_images
+
+    mode = "editing" if reference_images else "text-to-image"
+
+    logger.info("=" * 60)
+    logger.info(f"FLUX.2 Klein Image Generation ({mode} mode)")
+    logger.info("=" * 60)
+    logger.info(f"  Model: {model_name}")
+    logger.info(f"  Resolution: {width}x{height}")
+    logger.info(f"  Steps: {num_steps}")
+    logger.info(f"  Guidance: {guidance}")
+    if seed is not None:
+        logger.info(f"  Seed: {seed}")
+    if reference_images:
+        logger.info(f"  Reference images: {len(reference_images)}")
+        for img_path in reference_images:
+            logger.info(f"    - {img_path}")
+    logger.info(f"  Prompt: {args.prompt[:80]}...")
+    logger.info("-" * 60)
+
+    # Create generation config
+    gen_config = Flux2GenerationConfig(
+        prompt=args.prompt,
+        height=height,
+        width=width,
+        num_steps=num_steps,
+        guidance=guidance,
+        seed=seed,
+        reference_images=reference_images,
+        device="cuda",
+        offload_between_stages=config.flux2_offload_between_stages,
+    )
+
+    # Generate
+    start = time.time()
+    try:
+        image = generate_image(gen_config, model_name=model_name)
+        gen_time = time.time() - start
+
+        # Save image
+        image.save(output_path)
+        logger.info(f"Saved: {output_path}")
+
+    except Exception as e:
+        logger.error(f"Generation failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return 1
+
+    logger.info("=" * 60)
+    logger.info(f"Total time: {gen_time:.1f}s")
+
+    return 0
+
+
 def main():
     # Create parser with generation args
     parser = create_base_parser(
@@ -804,6 +909,9 @@ def main():
 
     if config.model_type == "ltx2":
         return run_ltx2_generation(args, config, logger)
+
+    if config.model_type == "flux2":
+        return run_flux2_generation(args, config, logger)
 
     # Z-Image flow continues below
     # Validate model path
