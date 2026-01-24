@@ -4963,6 +4963,11 @@ def main():
         action="store_true",
         help="Use API backend for encoding (default: local encoder)",
     )
+    parser.add_argument(
+        "--no-preload",
+        action="store_true",
+        help="Don't load any models at startup (all models load on-demand)",
+    )
 
     args = parser.parse_args()
 
@@ -4977,28 +4982,73 @@ def main():
     if hasattr(args, "profile") and args.profile:
         runtime_config.current_profile = args.profile
 
-    # Validate model path (unless using API-only mode, or Qwen-Image mode)
-    has_model = runtime_config.model_path or runtime_config.api_url
-    has_qwen_image = bool(runtime_config.qwen_image_model_path)
-    if not has_model and not has_qwen_image:
-        logger.error("No model path specified. Use --model-path or --config.")
+    # Determine startup behavior from config or CLI flag
+    no_preload = getattr(args, "no_preload", False)
+    default_pipeline = getattr(runtime_config, "default_pipeline", "none")
+
+    # --no-preload CLI flag overrides config
+    if no_preload:
+        default_pipeline = "none"
+
+    logger.info("============================================================")
+    if default_pipeline == "none":
+        logger.info("SERVER STARTING IN ON-DEMAND MODE")
+        logger.info("============================================================")
+        logger.info("No models loaded at startup. Models will load on first request.")
+        pipeline = None
+        encoder = None
+        encoder_only_mode = False
+        mode = "on_demand"
+    elif default_pipeline == "z-image":
+        logger.info(f"PRELOADING PIPELINE: {default_pipeline}")
+        logger.info("============================================================")
+        # Validate Z-Image model path
+        if not runtime_config.model_path:
+            logger.error("default_pipeline='z-image' but model_path not set in config.")
+            return 1
+        # Use PipelineLoader for Z-Image
+        loader = PipelineLoader(runtime_config)
+        use_api = getattr(args, "use_api_encoder", False)
+        result = loader.auto_load(encoder_only=args.encoder_only, use_api=use_api)
+        pipeline = result.pipeline
+        encoder = result.encoder
+        encoder_only_mode = result.mode in ("encoder_only", "api_encoder")
+        mode = result.mode
+    elif default_pipeline == "qwen-image":
+        logger.info(f"PRELOADING PIPELINE: {default_pipeline}")
+        logger.info("============================================================")
+        # Validate Qwen-Image model path
+        if not runtime_config.qwen_image_model_path:
+            logger.error("default_pipeline='qwen-image' but qwen_image.model_path not set in config.")
+            return 1
+        # Use PipelineLoader for Qwen-Image
+        loader = PipelineLoader(runtime_config)
+        result = loader.auto_load(encoder_only=False, use_api=False)
+        pipeline = result.pipeline
+        encoder = result.encoder
+        encoder_only_mode = False
+        mode = result.mode
+    elif default_pipeline == "flux2":
+        logger.info(f"PRELOADING PIPELINE: {default_pipeline}")
+        logger.info("============================================================")
+        # FLUX.2 loads on first request - just mark it as the intended pipeline
+        logger.info("FLUX.2 will load on first generation request.")
+        pipeline = None
+        encoder = None
+        encoder_only_mode = False
+        mode = "flux2_on_demand"
+    elif default_pipeline == "ltx2":
+        logger.info(f"PRELOADING PIPELINE: {default_pipeline}")
+        logger.info("============================================================")
+        # LTX-2 loads on first request - just mark it as the intended pipeline
+        logger.info("LTX-2 will load on first generation request.")
+        pipeline = None
+        encoder = None
+        encoder_only_mode = False
+        mode = "ltx2_on_demand"
+    else:
+        logger.error(f"Unknown default_pipeline: '{default_pipeline}'. Valid options: none, z-image, qwen-image, flux2, ltx2")
         return 1
-
-    # Use PipelineLoader for unified loading
-    loader = PipelineLoader(runtime_config)
-    use_api = getattr(args, "use_api_encoder", False)
-
-    # Load using PipelineLoader.auto_load()
-    result = loader.auto_load(
-        encoder_only=args.encoder_only,
-        use_api=use_api,
-    )
-
-    # Set global state from load result
-    pipeline = result.pipeline
-    encoder = result.encoder
-    encoder_only_mode = result.mode in ("encoder_only", "api_encoder")
-    mode = result.mode
 
     # If loaded pipeline is QwenImageDiffusersPipeline, also set qwen_image_pipeline
     global qwen_image_pipeline

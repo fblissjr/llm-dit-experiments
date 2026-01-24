@@ -26,7 +26,14 @@
 # Supports Z-Image, Qwen-Image-Edit-2511, and Qwen-Image-2512.
 
 [rtx4090]
-model_path = "/path/to/z-image-turbo"  # REQUIRED: Path to Z-Image model
+# default_pipeline controls which model loads at server startup
+# Options: "none", "z-image", "qwen-image", "flux2", "ltx2"
+# "none" = no preload, all models load on-demand when first requested
+default_pipeline = "none"
+
+# Model paths - configure paths for models you want to use
+# Only the model matching default_pipeline will load at startup
+# model_path = "/path/to/z-image-turbo"  # Z-Image transformer
 templates_dir = "templates/z_image"
 
 [rtx4090.encoder]
@@ -443,7 +450,13 @@ default_guidance = 1.0           # Default CFG scale (1.0 for distilled, 4.0 for
 # Use rtx4090 profile if you have a high-end GPU.
 
 [default]
-model_path = "/path/to/z-image-turbo"  # REQUIRED: Path to Z-Image model
+# default_pipeline controls which model loads at server startup
+# Options: "none", "z-image", "qwen-image", "flux2", "ltx2"
+# "none" = no preload, all models load on-demand when first requested
+default_pipeline = "none"
+
+# Model paths - configure paths for models you want to use
+# model_path = "/path/to/z-image-turbo"  # Z-Image transformer
 templates_dir = "templates/z_image"
 
 [default.encoder]

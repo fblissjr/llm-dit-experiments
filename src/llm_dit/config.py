@@ -1240,6 +1240,9 @@ class RewriterConfig:
 class Config:
     """Complete configuration for Z-Image, Qwen-Image, and LTX-2 generation."""
 
+    # Startup pipeline selection
+    default_pipeline: str = "none"  # none, z-image, qwen-image, flux2, ltx2
+
     model_path: str = ""
     templates_dir: str | None = None
 
@@ -1283,6 +1286,7 @@ class Config:
         enhancement_data = data.pop("enhancement", {})
 
         return cls(
+            default_pipeline=data.get("default_pipeline", "none"),
             model_path=data.get("model_path", ""),
             templates_dir=data.get("templates_dir"),
             encoder=EncoderConfig(**encoder_data),

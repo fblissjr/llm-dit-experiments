@@ -104,7 +104,11 @@ class RuntimeConfig:
     This is the single source of truth used by both web server and CLI scripts.
     """
 
-    # Model type selection
+    # Startup pipeline selection
+    # Which pipeline to load at server startup (none = on-demand loading)
+    default_pipeline: str = "none"  # none, z-image, qwen-image, flux2, ltx2
+
+    # Model type selection (for CLI scripts)
     model_type: str = "zimage"  # zimage, qwenimage-layered, qwenimage-t2i, qwenimage-edit
 
     # Model paths (Z-Image)
@@ -1784,6 +1788,7 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
             logger.info(f"Loaded config profile: {args.profile}")
 
             # Apply TOML values to runtime config
+            config.default_pipeline = toml_config.default_pipeline or config.default_pipeline
             config.model_path = toml_config.model_path or config.model_path
             config.templates_dir = toml_config.templates_dir or config.templates_dir
             config.encoder_device = toml_config.encoder.device
