@@ -6,6 +6,7 @@ PyTorch and Diffusers-based (depending on the models / pipeline) experimentation
 
 | Pipeline | Task | Encoder | Steps | Notes |
 |----------|------|---------|-------|-------|
+| FLUX.2 Klein | text-to-image, image editing | Qwen3-8B/4B (12288/7680 dim) | 4 | Distilled, multi-layer extraction, configurable text encoding |
 | Z-Image | text-to-image, img2img | Qwen3-4B (2560 dim) | 8-9 | CFG=0 baked, 1504 token limit |
 | LTX-2 | text-to-video | Gemma3-12B (3840 dim) | 15-40 | Pure PyTorch impl, FP8 quantization |
 | Qwen-Image-Layered | image decomposition | Qwen2.5-VL-7B (3584 dim) | 50 | Fixed 640/1024 res, outputs RGBA layers |
@@ -26,6 +27,32 @@ uv sync
 ```
 
 ```bash
+# FLUX.2 Klein (text-to-image with FP8 and block offload for 24GB GPU)
+uv run scripts/generate.py --model-type flux2 \
+    --flux2-model-name klein-9b-fp8 \
+    --flux2-block-offload \
+    --flux2-model-path /path/to/FLUX.2-klein-9b-fp8 \
+    --flux2-vae-path /path/to/FLUX.2-klein-9B \
+    "A photo of a cat"
+
+# FLUX.2 Klein with longer prompts (configurable text encoding)
+uv run scripts/generate.py --model-type flux2 \
+    --flux2-model-name klein-9b-fp8 \
+    --flux2-block-offload \
+    --flux2-max-text-length 1024 \
+    --flux2-model-path /path/to/FLUX.2-klein-9b-fp8 \
+    --flux2-vae-path /path/to/FLUX.2-klein-9B \
+    "A highly detailed description of a complex scene..."
+
+# FLUX.2 Klein image editing with multiple references
+uv run scripts/generate.py --model-type flux2 \
+    --flux2-model-name klein-9b-fp8 \
+    --flux2-block-offload \
+    --flux2-model-path /path/to/FLUX.2-klein-9b-fp8 \
+    --flux2-vae-path /path/to/FLUX.2-klein-9B \
+    --flux2-input-image ref1.jpg ref2.jpg ref3.jpg \
+    "Combine elements from the reference images"
+
 # Z-Image (text-to-image)
 uv run scripts/generate.py --model-path /path/to/z-image-turbo "A cat sleeping"
 
@@ -34,7 +61,7 @@ uv run scripts/generate.py --model-type ltx2 \
   --ltx2-model-path /path/to/LTX-2 \
   --ltx2-num-frames 33 --width 768 --height 512 \
   "A cat walking through a sunny garden"
-  
+
   # LTX-2 (text-to-video) - PyTorch pipeline with explicit device placement
   uv run python scripts/generate.py --model-type ltx2 \
   --ltx2-model-path /path/to/LTX-2 \
