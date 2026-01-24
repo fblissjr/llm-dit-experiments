@@ -40,6 +40,7 @@ function initFlux2() {
     setupFlux2Form();
     setupFlux2Controls();
     setupFlux2RefUpload();
+    setupFlux2MatchSize();
     setupFlux2Downloads();
     checkFlux2Status();
 }
@@ -310,6 +311,81 @@ function flux2FileToBase64(file) {
 }
 
 // =============================================================================
+// Match Output Size to Reference
+// =============================================================================
+
+function setupFlux2MatchSize() {
+    const checkbox = document.getElementById('flux2MatchSize');
+    if (!checkbox) return;
+
+    checkbox.addEventListener('change', () => {
+        if (checkbox.checked && flux2ReferenceImages.length > 0) {
+            updateFlux2MatchedSize();
+        } else {
+            flux2MatchedDimensions = null;
+            updateFlux2MatchedDimsDisplay();
+        }
+    });
+}
+
+/**
+ * Read first reference image dimensions and update matched size state.
+ * Rounds dimensions to multiples of 16 (FLUX.2 requirement).
+ */
+function updateFlux2MatchedSize() {
+    if (flux2ReferenceImages.length === 0) {
+        flux2MatchedDimensions = null;
+        updateFlux2MatchedDimsDisplay();
+        return;
+    }
+
+    const firstRef = flux2ReferenceImages[0];
+    const img = new Image();
+
+    img.onload = () => {
+        // Round to multiples of 16 (required by FLUX.2)
+        const width = Math.round(img.width / 16) * 16;
+        const height = Math.round(img.height / 16) * 16;
+
+        flux2MatchedDimensions = { width, height };
+        updateFlux2MatchedDimsDisplay();
+    };
+
+    img.onerror = () => {
+        console.warn('Failed to read reference image dimensions');
+        flux2MatchedDimensions = null;
+        updateFlux2MatchedDimsDisplay();
+    };
+
+    img.src = firstRef.data;
+}
+
+function updateFlux2MatchedDimsDisplay() {
+    const dimsEl = document.getElementById('flux2MatchedDims');
+    const resolutionSelect = document.getElementById('flux2Resolution');
+
+    if (!dimsEl) return;
+
+    if (flux2MatchedDimensions) {
+        const { width, height } = flux2MatchedDimensions;
+        dimsEl.textContent = `Output will be ${width}×${height} (rounded to 16px multiples)`;
+        dimsEl.classList.remove('hidden');
+        // Disable resolution dropdown when matching
+        if (resolutionSelect) {
+            resolutionSelect.disabled = true;
+            resolutionSelect.classList.add('opacity-50', 'cursor-not-allowed');
+        }
+    } else {
+        dimsEl.classList.add('hidden');
+        // Re-enable resolution dropdown
+        if (resolutionSelect) {
+            resolutionSelect.disabled = false;
+            resolutionSelect.classList.remove('opacity-50', 'cursor-not-allowed');
+        }
+    }
+}
+
+// =============================================================================
 // Image Generation
 // =============================================================================
 
@@ -324,8 +400,17 @@ async function generateFlux2Image() {
 
     // Get parameters
     const modelName = document.getElementById('flux2Model')?.value || 'klein-9b-fp8';
-    const resolution = document.getElementById('flux2Resolution')?.value || '1024x1024';
-    const [width, height] = resolution.split('x').map(Number);
+
+    // Use matched dimensions if enabled, otherwise use dropdown
+    let width, height;
+    if (flux2MatchedDimensions) {
+        width = flux2MatchedDimensions.width;
+        height = flux2MatchedDimensions.height;
+    } else {
+        const resolution = document.getElementById('flux2Resolution')?.value || '1024x1024';
+        [width, height] = resolution.split('x').map(Number);
+    }
+
     const steps = parseInt(document.getElementById('flux2Steps')?.value || '4');
     const guidance = parseFloat(document.getElementById('flux2Guidance')?.value || '1.0');
     const seedInput = document.getElementById('flux2Seed')?.value;
