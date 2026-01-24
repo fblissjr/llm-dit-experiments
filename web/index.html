@@ -1948,6 +1948,60 @@
 
             <!-- FLUX.2 Section -->
             <div id="flux2Section" class="hidden space-y-4">
+                <!-- Generation Parameters (styled like sharedParams) -->
+                <div class="mb-6 p-4 bg-gray-800/50 rounded-xl border border-gray-700">
+                    <h3 class="text-sm font-medium text-gray-300 mb-4">Generation Parameters</h3>
+                    <div class="grid grid-cols-2 gap-4">
+                        <!-- Steps -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-2">
+                                Steps: <span id="flux2StepsValue" class="text-orange-400">4</span>
+                            </label>
+                            <input type="range" id="flux2Steps" min="1" max="100" value="4" class="w-full">
+                            <div class="flex justify-between text-xs text-gray-500 mt-1">
+                                <span>1</span>
+                                <span>100</span>
+                            </div>
+                        </div>
+
+                        <!-- Guidance -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-2">
+                                Guidance: <span id="flux2GuidanceValue" class="text-orange-400">1.0</span>
+                            </label>
+                            <input type="range" id="flux2Guidance" min="0.0" max="10.0" step="0.1" value="1.0" class="w-full">
+                            <div class="flex justify-between text-xs text-gray-500 mt-1">
+                                <span>0.0</span>
+                                <span>10.0</span>
+                            </div>
+                        </div>
+
+                        <!-- Seed -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-2">Seed</label>
+                            <div class="flex gap-2">
+                                <input type="number" id="flux2Seed" placeholder="Random" class="flex-1 px-3 py-2 bg-gray-800 border border-gray-700 rounded-xl text-white placeholder-gray-500 focus:ring-2 focus:ring-orange-500">
+                                <button type="button" id="flux2RandomSeed" class="px-3 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-xl" title="Random seed">🎲</button>
+                            </div>
+                        </div>
+
+                        <!-- Resolution -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-2">Resolution</label>
+                            <select id="flux2Resolution" class="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-xl text-white focus:ring-2 focus:ring-orange-500">
+                                <option value="512x512">512×512</option>
+                                <option value="768x768">768×768</option>
+                                <option value="1024x1024" selected>1024×1024</option>
+                                <option value="1280x1280">1280×1280</option>
+                                <option value="768x1024">768×1024 (Portrait)</option>
+                                <option value="1024x768">1024×768 (Landscape)</option>
+                                <option value="1024x1536">1024×1536 (Tall)</option>
+                                <option value="1536x1024">1536×1024 (Wide)</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Main Form -->
                 <form id="flux2Form" class="space-y-4" novalidate>
                     <!-- Prompt -->
@@ -1980,51 +2034,6 @@
                             </optgroup>
                         </select>
                         <p id="flux2ModelInfo" class="text-xs text-gray-500 mt-1">Distilled: 4 steps, CFG=1.0 | Base: 50 steps, CFG=4.0</p>
-                    </div>
-
-                    <!-- Image Parameters Grid -->
-                    <div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                        <!-- Resolution -->
-                        <div>
-                            <label class="block text-sm font-medium text-gray-300 mb-2">Resolution</label>
-                            <select id="flux2Resolution" class="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-xl text-white focus:ring-2 focus:ring-orange-500">
-                                <option value="512x512">512×512</option>
-                                <option value="768x768">768×768</option>
-                                <option value="1024x1024" selected>1024×1024</option>
-                                <option value="1280x1280">1280×1280</option>
-                                <option value="768x1024">768×1024 (Portrait)</option>
-                                <option value="1024x768">1024×768 (Landscape)</option>
-                                <option value="1024x1536">1024×1536 (Tall)</option>
-                                <option value="1536x1024">1536×1024 (Wide)</option>
-                            </select>
-                        </div>
-
-                        <!-- Steps -->
-                        <div>
-                            <label class="block text-sm font-medium text-gray-300 mb-2">Steps</label>
-                            <input type="number" id="flux2Steps" value="4" min="1" max="100" class="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-xl text-white focus:ring-2 focus:ring-orange-500">
-                        </div>
-
-                        <!-- Guidance -->
-                        <div>
-                            <label class="block text-sm font-medium text-gray-300 mb-2">
-                                Guidance: <span id="flux2GuidanceValue" class="text-orange-400">1.0</span>
-                            </label>
-                            <input type="range" id="flux2Guidance" min="0.0" max="10.0" step="0.1" value="1.0" class="w-full">
-                            <div class="flex justify-between text-xs text-gray-500 mt-1">
-                                <span>0.0</span>
-                                <span>10.0</span>
-                            </div>
-                        </div>
-
-                        <!-- Seed -->
-                        <div>
-                            <label class="block text-sm font-medium text-gray-300 mb-2">Seed</label>
-                            <div class="flex gap-2">
-                                <input type="number" id="flux2Seed" placeholder="Random" class="flex-1 px-3 py-2 bg-gray-800 border border-gray-700 rounded-xl text-white placeholder-gray-500 focus:ring-2 focus:ring-orange-500">
-                                <button type="button" id="flux2RandomSeed" class="px-3 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-xl" title="Random seed">🎲</button>
-                            </div>
-                        </div>
                     </div>
 
                     <!-- Reference Images (Collapsible) -->

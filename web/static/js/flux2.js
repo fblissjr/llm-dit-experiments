@@ -97,6 +97,15 @@ function setupFlux2Controls() {
         });
     }
 
+    // Steps slider
+    const stepsSlider = document.getElementById('flux2Steps');
+    const stepsValue = document.getElementById('flux2StepsValue');
+    if (stepsSlider && stepsValue) {
+        stepsSlider.addEventListener('input', () => {
+            stepsValue.textContent = stepsSlider.value;
+        });
+    }
+
     // Guidance slider
     const guidanceSlider = document.getElementById('flux2Guidance');
     const guidanceValue = document.getElementById('flux2GuidanceValue');
@@ -121,13 +130,17 @@ function updateFlux2Defaults(modelName) {
     const defaults = FLUX2_MODEL_DEFAULTS[modelName];
     if (!defaults) return;
 
-    // Update steps
-    const stepsInput = document.getElementById('flux2Steps');
-    if (stepsInput) {
-        stepsInput.value = defaults.steps;
+    // Update steps slider and display
+    const stepsSlider = document.getElementById('flux2Steps');
+    const stepsValue = document.getElementById('flux2StepsValue');
+    if (stepsSlider) {
+        stepsSlider.value = defaults.steps;
+        if (stepsValue) {
+            stepsValue.textContent = defaults.steps;
+        }
     }
 
-    // Update guidance
+    // Update guidance slider and display
     const guidanceSlider = document.getElementById('flux2Guidance');
     const guidanceValue = document.getElementById('flux2GuidanceValue');
     if (guidanceSlider) {

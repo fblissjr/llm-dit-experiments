@@ -79,6 +79,7 @@ function updateQiSections() {
     const qwenImageSection = document.getElementById('qwenImageSection');
     const ltx2Section = document.getElementById('ltx2Section');
     const flux2Section = document.getElementById('flux2Section');
+    const sharedParams = document.getElementById('sharedParams');
 
     // Z-Image section shown for both zimage and qwenimage2512 (Qwen T2I uses same form)
     if (zimageSection) {
@@ -92,6 +93,13 @@ function updateQiSections() {
     }
     if (flux2Section) {
         flux2Section.classList.toggle('hidden', modelType !== 'flux2');
+    }
+
+    // Hide shared Z-Image params for models that have their own controls
+    // (FLUX.2 and LTX-2 have dedicated steps/guidance in their sections)
+    if (sharedParams) {
+        const hideShared = modelType === 'flux2' || modelType === 'ltx2';
+        sharedParams.classList.toggle('hidden', hideShared);
     }
 }
 

@@ -170,6 +170,7 @@ uv run scripts/generate.py --model-type flux2 \
 | Research/experiments | [experiments/AGENTS.md](experiments/AGENTS.md) | Research protocols |
 | Architecture decisions | [internal/principles/guiding_principles.md](internal/principles/guiding_principles.md) | Design rationale |
 | Debugging | [internal/state/lessons_learned.md](internal/state/lessons_learned.md) | Past solutions |
+| **Adding new pipeline** | [internal/checklists/pipeline_integration.md](internal/checklists/pipeline_integration.md) | **Complete checklist** for config integration |
 | **LTX-2 architecture** | [internal/docs/ltx2/ltx2_comprehensive_reference.md](internal/docs/ltx2/ltx2_comprehensive_reference.md) | **AUTHORITATIVE** reference |
 | LTX-2 data flow | [internal/docs/ltx2/technical_data_flow.md](internal/docs/ltx2/technical_data_flow.md) | CLI to video trace |
 
