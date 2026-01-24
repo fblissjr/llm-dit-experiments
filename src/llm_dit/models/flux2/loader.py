@@ -1,12 +1,13 @@
 """
 FLUX.2 Model Loading Utilities.
 
-Last Updated: 2026-01-23
+Last Updated: 2026-01-24
 
-Provides functions to load FLUX.2 Klein models and VAE from HuggingFace
-or local paths. Supports both BF16 and FP8 weights.
+Pure PyTorch implementation for loading FLUX.2 Klein models and VAE.
+Supports BF16 and FP8 weights in native single-file format only.
 
-Note: FP8 model folders don't include configs - must get from non-FP8 folders.
+Note: This loader does NOT support Diffusers sharded format.
+      Use native single-file weights (e.g., flux-2-klein-9b-fp8.safetensors).
 
 Ported from: coderef/flux2/src/flux2/util.py
 
@@ -17,28 +18,24 @@ Usage:
         FLUX2_MODEL_INFO,
     )
 
-    # Load Klein 9B model
-    model = load_flux2_transformer("klein-9b", device="cuda")
+    # Load Klein 9B FP8 model
+    model = load_flux2_transformer("klein-9b-fp8", device="cuda")
 
     # Load VAE
     vae = load_flux2_vae("klein-9b", device="cuda")
 """
 
 import gc
+import logging
 import os
-import sys
 from pathlib import Path
-from typing import Literal
 
 import torch
 from safetensors.torch import load_file as load_sft
 
-from llm_dit.models.flux2.constants import (
-    FLUX2_MODEL_INFO,
-    Klein9BParams,
-    Klein4BParams,
-    Flux2Params,
-)
+logger = logging.getLogger(__name__)
+
+from llm_dit.models.flux2.constants import FLUX2_MODEL_INFO
 from llm_dit.models.flux2.transformer import Flux2Transformer
 from llm_dit.models.flux2.vae import AutoEncoder, AutoEncoderParams
 
@@ -77,7 +74,7 @@ def _try_huggingface_download(repo_id: str, filename: str) -> str | None:
 
 def _get_model_weight_path(model_name: str, model_path: str | None = None) -> str:
     """
-    Get the path to model weights, checking direct path, environment, and HuggingFace.
+    Get the path to model weights (native single-file format only).
 
     Priority:
     1. Direct path (if provided)
@@ -87,6 +84,9 @@ def _get_model_weight_path(model_name: str, model_path: str | None = None) -> st
     Args:
         model_name: Model variant name (e.g., "klein-9b", "klein-9b-fp8")
         model_path: Direct path to weights file or directory containing weights
+
+    Returns:
+        Path to the single .safetensors weight file
     """
     model_name = model_name.lower()
     if model_name not in FLUX2_MODEL_INFO:
@@ -101,13 +101,7 @@ def _get_model_weight_path(model_name: str, model_path: str | None = None) -> st
             return str(model_path_obj)
         # If it's a directory, look for the expected filename
         if model_path_obj.is_dir():
-            # Check for transformer subdirectory (common in HF repos)
-            transformer_dir = model_path_obj / "transformer"
-            if transformer_dir.exists():
-                weight_file = transformer_dir / config["filename"]
-                if weight_file.exists():
-                    return str(weight_file)
-            # Check directly in the directory
+            # Check for expected filename (e.g., flux-2-klein-9b-fp8.safetensors)
             weight_file = model_path_obj / config["filename"]
             if weight_file.exists():
                 return str(weight_file)
@@ -116,11 +110,15 @@ def _get_model_weight_path(model_name: str, model_path: str | None = None) -> st
             matches = list(model_path_obj.glob(pattern))
             if matches:
                 return str(matches[0])
-            # Last fallback: any safetensors file
+            # Last fallback: any single safetensors file
             matches = list(model_path_obj.glob("*.safetensors"))
             if len(matches) == 1:
                 return str(matches[0])
-        raise ValueError(f"Could not find weights at {model_path}")
+        raise ValueError(
+            f"Could not find native weights at {model_path}.\n"
+            f"Expected single-file format (e.g., {config['filename']}).\n"
+            f"Diffusers sharded format is NOT supported."
+        )
 
     # 2. Check environment variable
     env_var = MODEL_PATH_ENV_VARS.get(model_name.replace("-fp8", ""))  # Strip fp8 suffix for env var
@@ -145,9 +143,9 @@ def _get_model_weight_path(model_name: str, model_path: str | None = None) -> st
 
 def _get_vae_weight_path(model_name: str, vae_path: str | None = None) -> str:
     """
-    Get the path to VAE weights.
+    Get the path to VAE weights (ae.safetensors format).
 
-    All FLUX.2 models use the same VAE weights (ae.safetensors).
+    All FLUX.2 models use the same VAE weights.
 
     Args:
         model_name: Model variant name (used to find repo if downloading)
@@ -166,21 +164,20 @@ def _get_vae_weight_path(model_name: str, vae_path: str | None = None) -> str:
             return str(vae_path_obj)
         # If it's a directory, look for ae.safetensors
         if vae_path_obj.is_dir():
-            # Check for vae subdirectory
+            # Check directly at root
+            ae_file = vae_path_obj / "ae.safetensors"
+            if ae_file.exists():
+                return str(ae_file)
+            # Check in vae subdirectory
             vae_subdir = vae_path_obj / "vae"
             if vae_subdir.exists():
                 ae_file = vae_subdir / "ae.safetensors"
                 if ae_file.exists():
                     return str(ae_file)
-            # Check directly
-            ae_file = vae_path_obj / "ae.safetensors"
-            if ae_file.exists():
-                return str(ae_file)
-            # Check diffusion_pytorch_model.safetensors (alternative name)
-            alt_file = vae_path_obj / "diffusion_pytorch_model.safetensors"
-            if alt_file.exists():
-                return str(alt_file)
-        raise ValueError(f"Could not find VAE weights at {vae_path}")
+        raise ValueError(
+            f"Could not find VAE weights at {vae_path}.\n"
+            f"Expected ae.safetensors file."
+        )
 
     # 2. Check environment variable
     if VAE_PATH_ENV_VAR in os.environ:
@@ -211,7 +208,7 @@ def load_flux2_transformer(
     block_offload: bool = False,
 ) -> Flux2Transformer:
     """
-    Load a FLUX.2 transformer model.
+    Load a FLUX.2 transformer model (pure PyTorch).
 
     Args:
         model_name: Model variant (e.g., "klein-9b", "klein-9b-fp8")
@@ -239,7 +236,7 @@ def load_flux2_transformer(
         with torch.device(device):
             return Flux2Transformer(params).to(dtype)
 
-    # Get weights path
+    # Get weights path (native single-file format only)
     weight_path = _get_model_weight_path(model_name, model_path)
     print(f"Loading {model_name} from {weight_path}")
 
@@ -274,13 +271,39 @@ def load_flux2_transformer(
         if fp8_count > 0:
             print(f"Cast {fp8_count} FP8 tensors to {dtype}")
 
-        # Move to target device after casting
-        sd = {k: v.to(device) for k, v in sd.items()}
+        # Move to target device after casting - respect block_offload flag
+        # BUG FIX: Previously moved ALL weights to GPU unconditionally (17GB for Klein-9B),
+        # causing OOM even with block_offload=True. Now we check block_offload BEFORE
+        # moving weights to avoid the memory spike.
+        target_device = "cpu" if block_offload else device
 
-    # For block offloading, load weights to CPU first
-    if block_offload:
-        # Load state dict to CPU
+        # Log memory before moving weights (P1: debug logging)
+        pre_move = 0.0
+        if torch.cuda.is_available():
+            pre_move = torch.cuda.memory_allocated() / 1e9
+            logger.debug(f"[Loader] GPU before state dict move: {pre_move:.2f}GB")
+
+        sd = {k: v.to(target_device) for k, v in sd.items()}
+
+        # Log memory after moving weights
+        if torch.cuda.is_available():
+            post_move = torch.cuda.memory_allocated() / 1e9
+            delta = post_move - pre_move
+            logger.debug(f"[Loader] GPU after state dict move: {post_move:.2f}GB (delta: {delta:.2f}GB)")
+
+        # Clear temp tensors to maximize RAM for model loading
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+    elif block_offload:
+        # For non-FP8 models with block offloading, ensure weights stay on CPU
         sd = {k: v.to("cpu") for k, v in sd.items()}
+
+    # Log sample tensor dtypes and devices for debugging
+    sample_keys = list(sd.keys())[:3]
+    for k in sample_keys:
+        logger.debug(f"[Loader] Sample tensor {k}: dtype={sd[k].dtype}, device={sd[k].device}")
 
     model.load_state_dict(sd, strict=True, assign=True)
 

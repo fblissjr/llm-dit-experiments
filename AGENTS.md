@@ -2,9 +2,7 @@
 
 *last updated: 2026-01-23*
 
-Quick reference for LLM agents. Uses progressive disclosure - read only what you need.
-
-## guiding principles
+Quick reference for LLM agents. Uses progressive disclosure - read only what you need, but always read
 
 **[Read for architectural decisions and documentation protocols](internal/principles/guiding_principles.md)**
 
@@ -23,8 +21,9 @@ New Claude session? Read in this order:
 | 1 | This file (`AGENTS.md`) | Critical rules, quick reference |
 | 2 | `internal/state/current.md` | What's happening now |
 | 3 | `internal/state/todos.md` | Immediate tasks, handoffs |
-| 4 | `guiding_principles.md` | How we work (if making decisions) |
-| 5 | Domain docs | Based on your task (see navigation) |
+| 4 | `internal/principles/guiding_principles.md` | How we work (if making decisions) |
+| 5 | `internal/principles/modular_architecture.md` | Our approach and vision for a modular architecture and the levels of granularity |
+| 6 | Domain docs | Based on your task (see navigation) |
 
 ## start here (required)
 
@@ -44,6 +43,20 @@ Read these files when starting a new session:
 - **never commit** without explicit user approval
 - **dtype conventions** - transformers: `dtype=`, diffusers: `torch_dtype=`
 - **always update state** after significant work (see below)
+
+## modular architecture
+This table defines the structural hierarchy of the **llm-dit-experiments** platform, moving from top-level business logic down to hardware-level math primitives.
+
+### Hierarchy of Granularity & Composability
+
+| Level | Role | Key Components | Reusability / Composability | Dependency Logic |
+| :--- | :--- | :--- | :--- | :--- |
+| **L1: Orchestration** | **The Conductor** | `Orchestrator`, `ModelPool`, `PipelineSteps` | **Total (100%)** | Model-agnostic. Coordinates between multiple pipelines and manages VRAM. |
+| **L2: Pipelines** | **The Workflow** | `ZImagePipeline`, `LTX2Pipeline`, `WanVideoPipeline` | **Paradigm-Based** | Reusable for any model sharing the same math (e.g., all "Flow Matching" models). |
+| **L3: Backbones** | **The Models** | `DiT Transformer`, `Gemma3/Qwen3 LLMs`, `VideoVAE` | **Zero (Atomic)** | Tied to specific weights. These are the fixed blocks that everything else acts upon. |
+| **L4: Behaviors** | **The Logic** | `Schedulers`, `Guidance (SLG/FMTT)`, `Conditioning` | **High (Structural)** | Pluggable into any backbone that has a standard structure (e.g., a list of `layers`). |
+| **L5: Primitives** | **The Math** | `Attention Backends`, `Quantization`, `DyPE/YaRN` | **Absolute (Universal)** | Math primitives. They apply to the `Tensor` or `Linear` layer level regardless of model. |
+| **L6: Foundations** | **The Plumbing** | `MemoryTracker`, `VaeOps`, `Logging`, `Templates` | **Universal** | Base-level utilities that support all other levels. |
 
 ## multi-model platform
 

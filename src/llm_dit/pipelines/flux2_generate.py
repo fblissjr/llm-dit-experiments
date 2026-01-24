@@ -1,7 +1,7 @@
 """
 FLUX.2 Klein Image Generation Pipeline.
 
-Last Updated: 2026-01-23
+Last Updated: 2026-01-24
 
 Pure PyTorch implementation of FLUX.2 Klein image generation with
 three-stage offloading for memory efficiency on consumer GPUs.
@@ -87,6 +87,20 @@ def log_gpu_memory(stage: str) -> None:
         allocated = torch.cuda.memory_allocated() / 1024**3
         reserved = torch.cuda.memory_reserved() / 1024**3
         logger.info(f"[GPU] {stage}: allocated={allocated:.2f}GB, reserved={reserved:.2f}GB")
+
+
+def log_memory_snapshot(label: str) -> None:
+    """Log detailed memory snapshot including fragmentation analysis (P1 debug)."""
+    if not torch.cuda.is_available():
+        return
+    stats = torch.cuda.memory_stats()
+    allocated = stats.get("allocated_bytes.all.current", 0) / 1e9
+    reserved = stats.get("reserved_bytes.all.current", 0) / 1e9
+    frag_gap = reserved - allocated
+    logger.info(
+        f"[{label}] Allocated: {allocated:.2f}GB, Reserved: {reserved:.2f}GB, "
+        f"Fragmentation: {frag_gap:.2f}GB"
+    )
 
 
 @dataclass
@@ -632,6 +646,7 @@ def generate_image(
     guidance = None if FLUX2_MODEL_INFO[model_name.lower()]["distilled"] else config.guidance
 
     log_gpu_memory("before denoising loop")
+    log_memory_snapshot("Pre-denoise")
 
     # Denoise with optional reference image conditioning
     latents = denoise(

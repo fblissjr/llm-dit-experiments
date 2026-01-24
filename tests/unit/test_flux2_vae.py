@@ -79,13 +79,12 @@ class TestAutoEncoderParams:
             assert params.ch_mult[i] <= params.ch_mult[i + 1], \
                 f"Channel mult should increase: {params.ch_mult}"
 
-    def test_attention_resolutions(self):
-        """Test attention is applied at specified resolutions."""
+    def test_num_res_blocks(self):
+        """Test number of ResBlocks per level."""
         params = AutoEncoderParams()
 
-        # Attention typically at higher-level features
-        assert params.attn_resolutions is not None
-        assert len(params.attn_resolutions) > 0
+        # Should have ResBlocks at each level
+        assert params.num_res_blocks == 2
 
 
 # ============================================================================
