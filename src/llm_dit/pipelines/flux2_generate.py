@@ -198,6 +198,10 @@ def preprocess_reference_image(
     if img.mode != "RGB":
         img = img.convert("RGB")
 
+    # Log original dimensions
+    orig_w, orig_h = img.size
+    logger.info(f"[REF:Preprocess] Original dimensions: {orig_w}x{orig_h}")
+
     # Cap pixels if needed
     if limit_pixels is not None:
         w, h = img.size
@@ -206,6 +210,7 @@ def preprocess_reference_image(
             new_w = int(w * scale)
             new_h = int(h * scale)
             img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+            logger.info(f"[REF:Preprocess] After resize: {new_w}x{new_h} (limit={limit_pixels} pixels)")
 
     # Center crop to multiple of ensure_multiple
     w, h = img.size
@@ -215,9 +220,11 @@ def preprocess_reference_image(
         left = (w - new_w) // 2
         top = (h - new_h) // 2
         img = img.crop((left, top, left + new_w, top + new_h))
+        logger.info(f"[REF:Preprocess] After crop to multiple of {ensure_multiple}: {new_w}x{new_h}")
 
     # Convert to tensor in [-1, 1]
     tensor = torchvision.transforms.ToTensor()(img)
+    logger.info(f"[REF:Preprocess] Final tensor shape: {list(tensor.shape)}")
     return 2 * tensor - 1
 
 
@@ -261,21 +268,31 @@ def encode_reference_images(
     encoded_refs = []
     ref_ids_list = []
 
+    logger.info(f"[REF:Encode] Encoding {len(images)} reference image(s)...")
+
     for idx, img in enumerate(images):
+        logger.info(f"[REF:Encode] Processing reference image {idx}...")
+
         # Preprocess
         img_tensor = preprocess_reference_image(img, limit_pixels=limit_pixels)
         img_tensor = img_tensor.unsqueeze(0).to(device).to(dtype)  # [1, 3, H, W]
+        logger.info(f"[REF:Encode] Image {idx} input tensor shape: {list(img_tensor.shape)}")
 
         # VAE encode
         with torch.no_grad():
             latent = vae.encode(img_tensor)  # [1, 128, H/16, W/16]
 
+        logger.info(f"[REF:Encode] Image {idx} latent shape after VAE: {list(latent.shape)}")
+
         # Reshape to sequence: [1, H*W, 128]
         b, c, h, w = latent.shape
         latent_seq = rearrange(latent, "b c h w -> b (h w) c")
+        token_count = h * w
+        logger.info(f"[REF:Encode] Image {idx} latent h={h}, w={w}, token_count={token_count}")
 
         # Create position IDs with unique time coordinate
         t_coord = torch.tensor([t_scale + t_scale * idx], device=device)
+        logger.info(f"[REF:Encode] Image {idx} t_coord value: {t_coord.item()}")
         ids = _create_ref_image_ids(h, w, t_coord, device)  # [h*w, 4]
 
         encoded_refs.append(latent_seq)
@@ -284,6 +301,10 @@ def encode_reference_images(
     # Concatenate all references
     ref_tokens = torch.cat(encoded_refs, dim=1)  # [1, total_tokens, 128]
     ref_ids = torch.cat(ref_ids_list, dim=0).unsqueeze(0)  # [1, total_tokens, 4]
+
+    logger.info(f"[REF:Encode] Total ref tokens after concatenation: {ref_tokens.shape[1]}")
+    logger.info(f"[REF:Encode] Final ref_tokens shape: {list(ref_tokens.shape)}")
+    logger.info(f"[REF:Encode] Final ref_ids shape: {list(ref_ids.shape)}")
 
     return ref_tokens.to(dtype), ref_ids.to(torch.float32)
 
@@ -305,6 +326,8 @@ def _create_ref_image_ids(
     Returns:
         Position IDs [h*w, 4] with (t, h, w, l) coordinates
     """
+    logger.info(f"[REF:IDs] Creating position IDs for h={h}, w={w}, t={t_coord.item()}")
+
     coords = {
         "t": t_coord,
         "h": torch.arange(h, device=device),
@@ -313,6 +336,11 @@ def _create_ref_image_ids(
     }
     # Cartesian product: (t, h, w, l) for all spatial positions
     ids = torch.cartesian_prod(coords["t"], coords["h"], coords["w"], coords["l"])
+
+    logger.info(f"[REF:IDs] Created {ids.shape[0]} position IDs")
+    logger.info(f"[REF:IDs] First 3 IDs: {ids[:3].tolist()}")
+    logger.info(f"[REF:IDs] Last 3 IDs: {ids[-3:].tolist()}")
+
     return ids
 
 
@@ -444,6 +472,9 @@ def denoise(
     logger.debug(f"[Denoise] txt_ids shape={txt_ids.shape}")
 
     if img_cond_seq is not None:
+        logger.info(f"[Denoise:Setup] Generated image token count: {num_img_tokens}")
+        logger.info(f"[Denoise:Setup] Reference token count: {img_cond_seq.shape[1]}")
+        logger.info(f"[Denoise:Setup] Combined sequence length: {num_img_tokens + img_cond_seq.shape[1]}")
         logger.debug(f"[Denoise] Reference tokens: {img_cond_seq.shape[1]} tokens")
 
     # Log SDPA backend status
@@ -504,6 +535,10 @@ def denoise(
 
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug(f"[Denoise:Step {step_idx}] model input shape: {img_input.shape}")
+            if img_cond_seq is not None and step_idx == 0:
+                # Log on first step for diagnosis
+                logger.info(f"[Denoise:Step {step_idx}] img_input shape: {list(img_input.shape)}")
+                logger.info(f"[Denoise:Step {step_idx}] img_input_ids shape: {list(img_input_ids.shape)}")
             _log_denoise_memory(step_idx, "pre_forward")
 
         # =====================================================================
@@ -589,6 +624,9 @@ def latents_to_image(
     Returns:
         PIL Image
     """
+    logger.info(f"[Decode] Input latents shape: {list(latents.shape)}")
+    logger.info(f"[Decode] Target height={height}, width={width}")
+
     # Reshape from sequence to spatial if needed
     if latents.ndim == 3:
         # [B, seq_len, C] -> [B, C, H, W]
@@ -598,11 +636,15 @@ def latents_to_image(
         if height is not None and width is not None:
             h = height // 16  # FLUX.2 uses 16x16 patches
             w = width // 16
+            logger.info(f"[Decode] Computed h={h}, w={w} (from height={height}, width={width})")
         else:
             # Fallback to square (only works for square outputs)
             h = w = int(math.sqrt(seq_len))
+            logger.info(f"[Decode] Computed square h={h}, w={w} (from seq_len={seq_len})")
 
+        logger.info(f"[Decode] Reshaping from [B={b}, seq_len={seq_len}, C={c}] to [B={b}, C={c}, H={h}, W={w}]")
         latents = latents.view(b, h, w, c).permute(0, 3, 1, 2).contiguous()
+        logger.info(f"[Decode] Reshaped tensor dimensions: {list(latents.shape)}")
 
     # Decode
     with torch.no_grad():

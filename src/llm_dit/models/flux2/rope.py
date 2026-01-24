@@ -32,9 +32,12 @@ Usage:
     pe_txt = pe_embedder(txt_ids)  # [1, 1, 512, 128//2, 2, 2]
 """
 
+import logging
 import torch
 from einops import rearrange
 from torch import Tensor, nn
+
+logger = logging.getLogger(__name__)
 
 
 class EmbedND(nn.Module):
@@ -169,6 +172,8 @@ def create_image_ids(
     Returns:
         Position IDs [B, height*width, 4]
     """
+    logger.debug(f"[PosIDs:Image] Creating position IDs for height={height}, width={width}")
+
     # Create coordinate grids
     img_ids = torch.zeros(height, width, 4, device=device, dtype=dtype)
 
@@ -187,6 +192,11 @@ def create_image_ids(
     # Flatten spatial dimensions and add batch dimension
     img_ids = img_ids.view(-1, 4)  # [H*W, 4]
     img_ids = img_ids.unsqueeze(0).expand(batch_size, -1, -1)  # [B, H*W, 4]
+
+    total_tokens = height * width
+    logger.debug(f"[PosIDs:Image] Created {total_tokens} tokens")
+    logger.debug(f"[PosIDs:Image] First 3 IDs: {img_ids[0, :3].tolist()}")
+    logger.debug(f"[PosIDs:Image] Last 3 IDs: {img_ids[0, -3:].tolist()}")
 
     return img_ids
 
