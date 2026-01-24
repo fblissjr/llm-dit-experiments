@@ -1,6 +1,6 @@
 # agent context
 
-*last updated: 2026-01-23*
+*last updated: 2026-01-24*
 
 Quick reference for LLM agents. Uses progressive disclosure - read only what you need, but always read
 
@@ -62,7 +62,7 @@ This table defines the structural hierarchy of the **llm-dit-experiments** platf
 
 | Pipeline | Task | Encoder | Status |
 |----------|------|---------|--------|
-| **FLUX.2 Klein** | **text-to-image, image editing** | Qwen3-8B/4B | **Active** (Phase 2 complete) |
+| **FLUX.2 Klein** | **text-to-image, image editing** | Qwen3-8B/4B | **Production** (2026-01-24) |
 | LTX-2 | text-to-video | Gemma3-12B | Production |
 | Z-Image | text-to-image | Qwen3-4B | Production |
 | Qwen-Image | editing/decomposition | Qwen2.5-VL-7B | Production |
@@ -111,15 +111,22 @@ This table defines the structural hierarchy of the **llm-dit-experiments** platf
 ### flux.2 usage
 
 ```bash
-# Text-to-image
+# Text-to-image (with FP8 and block offload for 24GB GPU)
 uv run scripts/generate.py --model-type flux2 \
-    --flux2-model-name klein-9b \
+    --flux2-model-name klein-9b-fp8 \
+    --flux2-block-offload \
+    --flux2-model-path models/FLUX.2-klein/FLUX.2-klein-9b-fp8/ \
+    --flux2-vae-path models/FLUX.2-klein/FLUX.2-klein-9B/ \
     "A photo of a cat"
 
-# Image editing with references
+# Image editing with references (1-4+ images supported)
 uv run scripts/generate.py --model-type flux2 \
-    --flux2-input-image input.jpg \
-    "Transform into watercolor painting"
+    --flux2-model-name klein-9b-fp8 \
+    --flux2-block-offload \
+    --flux2-model-path models/FLUX.2-klein/FLUX.2-klein-9b-fp8/ \
+    --flux2-vae-path models/FLUX.2-klein/FLUX.2-klein-9B/ \
+    --flux2-input-image input1.jpg input2.jpg \
+    "Combine subject from image 1 with background from image 2"
 ```
 
 ## ltx-2 quick reference
