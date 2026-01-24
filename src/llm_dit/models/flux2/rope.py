@@ -172,7 +172,7 @@ def create_image_ids(
     Returns:
         Position IDs [B, height*width, 4]
     """
-    logger.debug(f"[PosIDs:Image] Creating position IDs for height={height}, width={width}")
+    logger.info(f"[PosIDs:Image] Creating position IDs for height={height}, width={width}")
 
     # Create coordinate grids
     img_ids = torch.zeros(height, width, 4, device=device, dtype=dtype)
@@ -194,9 +194,9 @@ def create_image_ids(
     img_ids = img_ids.unsqueeze(0).expand(batch_size, -1, -1)  # [B, H*W, 4]
 
     total_tokens = height * width
-    logger.debug(f"[PosIDs:Image] Created {total_tokens} tokens")
-    logger.debug(f"[PosIDs:Image] First 3 IDs: {img_ids[0, :3].tolist()}")
-    logger.debug(f"[PosIDs:Image] Last 3 IDs: {img_ids[0, -3:].tolist()}")
+    logger.info(f"[PosIDs:Image] Created {total_tokens} tokens")
+    logger.info(f"[PosIDs:Image] First 3 IDs: {img_ids[0, :3].tolist()}")
+    logger.info(f"[PosIDs:Image] Last 3 IDs: {img_ids[0, -3:].tolist()}")
 
     return img_ids
 

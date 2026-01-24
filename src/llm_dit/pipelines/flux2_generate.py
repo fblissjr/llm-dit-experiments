@@ -293,7 +293,9 @@ def encode_reference_images(
         # Create position IDs with unique time coordinate
         t_coord = torch.tensor([t_scale + t_scale * idx], device=device)
         logger.info(f"[REF:Encode] Image {idx} t_coord value: {t_coord.item()}")
+        logger.info(f"[REF:Encode] Image {idx} position ID range: h=[0,{h-1}], w=[0,{w-1}]")
         ids = _create_ref_image_ids(h, w, t_coord, device)  # [h*w, 4]
+        logger.info(f"[REF:Encode] Image {idx} position IDs first: {ids[0].tolist()}, last: {ids[-1].tolist()}")
 
         encoded_refs.append(latent_seq)
         ref_ids_list.append(ids)
@@ -535,11 +537,23 @@ def denoise(
 
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug(f"[Denoise:Step {step_idx}] model input shape: {img_input.shape}")
-            if img_cond_seq is not None and step_idx == 0:
-                # Log on first step for diagnosis
-                logger.info(f"[Denoise:Step {step_idx}] img_input shape: {list(img_input.shape)}")
-                logger.info(f"[Denoise:Step {step_idx}] img_input_ids shape: {list(img_input_ids.shape)}")
             _log_denoise_memory(step_idx, "pre_forward")
+
+        # Detailed logging on first step for diagnosis
+        if img_cond_seq is not None and step_idx == 0:
+            logger.info(f"[Denoise:Step {step_idx}] Combined sequence breakdown:")
+            logger.info(f"[Denoise:Step {step_idx}]   Generated tokens: {num_img_tokens}")
+            logger.info(f"[Denoise:Step {step_idx}]   Reference tokens: {img_cond_seq.shape[1]}")
+            logger.info(f"[Denoise:Step {step_idx}]   Total tokens: {img_input.shape[1]}")
+            logger.info(f"[Denoise:Step {step_idx}]   img_input shape: {list(img_input.shape)}")
+            logger.info(f"[Denoise:Step {step_idx}]   img_input_ids shape: {list(img_input_ids.shape)}")
+            # Show generated image position ID range
+            gen_ids = img_input_ids[0, :num_img_tokens]
+            logger.info(f"[Denoise:Step {step_idx}]   Generated IDs - first: {gen_ids[0].tolist()}, last: {gen_ids[-1].tolist()}")
+            # Show reference position ID ranges
+            ref_ids_section = img_input_ids[0, num_img_tokens:]
+            if ref_ids_section.shape[0] > 0:
+                logger.info(f"[Denoise:Step {step_idx}]   Reference IDs - first: {ref_ids_section[0].tolist()}, last: {ref_ids_section[-1].tolist()}")
 
         # =====================================================================
         # Model Forward Pass
@@ -809,6 +823,11 @@ def generate_image(
     )
 
     # Create image position IDs
+    logger.info(f"[GenImage:Setup] Creating position IDs for generated image:")
+    logger.info(f"[GenImage:Setup]   config.height={config.height}, config.width={config.width} (pixels)")
+    logger.info(f"[GenImage:Setup]   config.latent_height={config.latent_height}, config.latent_width={config.latent_width}")
+    logger.info(f"[GenImage:Setup]   config.num_tokens={config.num_tokens}")
+
     img_ids = create_image_ids(
         batch_size=1,
         height=config.latent_height,
@@ -816,6 +835,15 @@ def generate_image(
         device=device,
         dtype=torch.float32,
     )
+    logger.info(f"[GenImage:Setup] Generated img_ids shape: {list(img_ids.shape)}")
+    logger.info(f"[GenImage:Setup] Generated img_ids first 3: {img_ids[0, :3].tolist()}")
+    logger.info(f"[GenImage:Setup] Generated img_ids last 3: {img_ids[0, -3:].tolist()}")
+
+    # Validate dimensions match
+    if img.shape[1] != img_ids.shape[1]:
+        logger.error(f"[GenImage:Setup] MISMATCH: img tokens={img.shape[1]}, img_ids tokens={img_ids.shape[1]}")
+    else:
+        logger.info(f"[GenImage:Setup] Dimension check OK: {img.shape[1]} tokens")
 
     # Get timestep schedule
     timesteps = get_schedule(config.num_steps, config.num_tokens)
