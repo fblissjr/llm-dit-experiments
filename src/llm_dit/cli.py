@@ -1901,6 +1901,19 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
                 config.ltx2_quantize = getattr(ltx2, "quantize", "fp8")
                 config.ltx2_skip_cleanup = getattr(ltx2, "skip_cleanup", False)
 
+            # Check for FLUX.2 section
+            if hasattr(toml_config, "flux2"):
+                flux2 = toml_config.flux2
+                config.flux2_model_path = getattr(flux2, "model_path", None)
+                config.flux2_vae_path = getattr(flux2, "vae_path", None)
+                config.flux2_encoder_path = getattr(flux2, "encoder_path", None)
+                config.flux2_model_name = getattr(flux2, "default_model", config.flux2_model_name)
+                config.flux2_block_offload = getattr(flux2, "block_offload", config.flux2_block_offload)
+                if getattr(flux2, "default_steps", None) is not None:
+                    config.flux2_num_steps = flux2.default_steps
+                if getattr(flux2, "default_guidance", None) is not None:
+                    config.flux2_guidance = flux2.default_guidance
+
             # Check for Wan section
             if hasattr(toml_config, "wan"):
                 wan = toml_config.wan

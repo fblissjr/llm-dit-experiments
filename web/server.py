@@ -2062,9 +2062,20 @@ async def flux2_generate(request: Flux2GenerateRequest):
             block_offload=request.block_offload,
         )
 
+        # Get model/VAE paths - prefer request values, fall back to config
+        model_path = request.model_path
+        vae_path = request.vae_path
+
+        if not model_path and runtime_config:
+            model_path = getattr(runtime_config, "flux2_model_path", None)
+        if not vae_path and runtime_config:
+            vae_path = getattr(runtime_config, "flux2_vae_path", None)
+
         # Generate image
         start_time = time.time()
         logger.info(f"[FLUX.2] Generating {request.width}x{request.height} with {request.model_name}")
+        if model_path:
+            logger.info(f"[FLUX.2] Using model path: {model_path}")
 
         # Run in executor to not block event loop
         loop = asyncio.get_event_loop()
@@ -2073,8 +2084,8 @@ async def flux2_generate(request: Flux2GenerateRequest):
             lambda: generate_image(
                 config,
                 model_name=request.model_name,
-                model_path=request.model_path,
-                vae_path=request.vae_path,
+                model_path=model_path,
+                vae_path=vae_path,
             )
         )
 
