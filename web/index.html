@@ -2059,6 +2059,15 @@
                                 <!-- Reference image previews will be added here -->
                             </div>
                             <button type="button" id="flux2ClearRefs" class="hidden text-xs text-red-400 hover:text-red-300">Clear all reference images</button>
+
+                            <!-- Match Output Size to Reference -->
+                            <div id="flux2MatchSizeContainer" class="hidden mt-3 pt-3 border-t border-gray-700">
+                                <div class="flex items-center gap-3">
+                                    <input type="checkbox" id="flux2MatchSize" class="w-4 h-4 rounded bg-gray-700 border-gray-600 text-orange-500 focus:ring-orange-500">
+                                    <label for="flux2MatchSize" class="text-sm text-gray-300 cursor-pointer">Match output size to first reference image</label>
+                                </div>
+                                <p id="flux2MatchedDims" class="hidden text-xs text-orange-400 mt-1 ml-7"></p>
+                            </div>
                         </div>
                     </details>
 

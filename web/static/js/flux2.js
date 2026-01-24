@@ -16,6 +16,7 @@
 let flux2IsGenerating = false;
 let flux2ReferenceImages = [];  // Array of base64 encoded images
 let flux2CurrentImageUrl = null;
+let flux2MatchedDimensions = null;  // { width, height } when matching to reference
 
 // Model defaults - distilled vs base models have different optimal parameters
 const FLUX2_MODEL_DEFAULTS = {
@@ -236,6 +237,8 @@ async function handleFlux2RefFiles(files) {
 function renderFlux2RefPreview() {
     const preview = document.getElementById('flux2RefPreview');
     const clearBtn = document.getElementById('flux2ClearRefs');
+    const matchSizeContainer = document.getElementById('flux2MatchSizeContainer');
+    const matchSizeCheckbox = document.getElementById('flux2MatchSize');
 
     if (!preview) return;
 
@@ -247,11 +250,22 @@ function renderFlux2RefPreview() {
     if (flux2ReferenceImages.length === 0) {
         preview.classList.add('hidden');
         if (clearBtn) clearBtn.classList.add('hidden');
+        if (matchSizeContainer) matchSizeContainer.classList.add('hidden');
+        // Reset match state when no refs
+        if (matchSizeCheckbox) matchSizeCheckbox.checked = false;
+        flux2MatchedDimensions = null;
+        updateFlux2MatchedDimsDisplay();
         return;
     }
 
     preview.classList.remove('hidden');
     if (clearBtn) clearBtn.classList.remove('hidden');
+    if (matchSizeContainer) matchSizeContainer.classList.remove('hidden');
+
+    // Update matched dimensions if checkbox is checked
+    if (matchSizeCheckbox?.checked) {
+        updateFlux2MatchedSize();
+    }
 
     // Build preview using DOM methods
     flux2ReferenceImages.forEach((img, idx) => {
