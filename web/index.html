@@ -2097,6 +2097,31 @@
                                 <label for="flux2VaePath" class="block text-sm font-medium text-gray-300 mb-1">Custom VAE Path</label>
                                 <input type="text" id="flux2VaePath" placeholder="Leave empty to use HuggingFace" class="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-xl text-white placeholder-gray-500 focus:ring-2 focus:ring-orange-500 text-sm">
                             </div>
+
+                            <!-- Text Encoding Options -->
+                            <div class="border-t border-gray-700 pt-3 mt-3">
+                                <h4 class="text-sm font-medium text-gray-400 mb-3">Text Encoding</h4>
+
+                                <!-- Max Text Length -->
+                                <div class="mb-3">
+                                    <label for="flux2MaxTextLength" class="block text-sm font-medium text-gray-300 mb-1">Max Text Length</label>
+                                    <input type="number" id="flux2MaxTextLength" value="512" min="16" max="8192" step="1" class="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-xl text-white placeholder-gray-500 focus:ring-2 focus:ring-orange-500 text-sm">
+                                    <p class="text-xs text-gray-500 mt-1">Maximum tokens (16-8192). Default 512. Increase for longer prompts.</p>
+                                </div>
+
+                                <!-- Pad to Max -->
+                                <div class="flex items-center gap-3 mb-3">
+                                    <input type="checkbox" id="flux2PadToMax" checked class="w-4 h-4 rounded bg-gray-700 border-gray-600 text-orange-500 focus:ring-orange-500">
+                                    <label for="flux2PadToMax" class="text-sm text-gray-300 cursor-pointer">Pad sequences to max length</label>
+                                </div>
+
+                                <!-- Output Layers -->
+                                <div>
+                                    <label for="flux2OutputLayers" class="block text-sm font-medium text-gray-300 mb-1">Output Layers (optional)</label>
+                                    <input type="text" id="flux2OutputLayers" placeholder="9, 18, 27" class="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-xl text-white placeholder-gray-500 focus:ring-2 focus:ring-orange-500 text-sm">
+                                    <p class="text-xs text-gray-500 mt-1">Which 3 Qwen3 hidden layers to extract. Must be exactly 3 comma-separated numbers.</p>
+                                </div>
+                            </div>
                         </div>
                     </details>
 

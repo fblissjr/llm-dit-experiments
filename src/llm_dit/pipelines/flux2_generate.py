@@ -125,6 +125,14 @@ class Flux2GenerationConfig:
     # Single ref: up to 2024^2, multiple refs: up to 1024^2 each
     ref_limit_pixels: Optional[int] = None
 
+    # Text encoding options
+    max_text_length: int = 512  # Maximum text tokens (can increase for longer prompts)
+    pad_to_max: bool = True  # Whether to pad all sequences to max_text_length
+    # Which 3 hidden layers to extract from Qwen3 (must be exactly 3)
+    # Default: [9, 18, 27] for early/middle/late representations
+    # Options: any 3 layer indices in [0, 27] for 8B or [0, 17] for 4B
+    output_layers: Optional[list[int]] = None
+
     # Device and dtype
     device: str = "cuda"
     dtype: torch.dtype = torch.bfloat16
@@ -729,7 +737,15 @@ def generate_image(
         model_info = FLUX2_MODEL_INFO[model_name.lower()]
         text_encoder_spec = encoder_path or model_info["text_encoder"]
         logger.info(f"Loading encoder from: {text_encoder_spec}")
-        encoder = Qwen3Flux2Encoder.from_pretrained(text_encoder_spec, device=config.device)
+        layers_str = str(config.output_layers) if config.output_layers else "[9, 18, 27]"
+        logger.info(f"[TextEnc] max_length={config.max_text_length}, pad_to_max={config.pad_to_max}, layers={layers_str}")
+        encoder = Qwen3Flux2Encoder.from_pretrained(
+            text_encoder_spec,
+            device=config.device,
+            max_length=config.max_text_length,
+            pad_to_max=config.pad_to_max,
+            output_layers=config.output_layers,
+        )
 
     # Encode text
     log_gpu_memory("after encoder load")

@@ -419,6 +419,20 @@ async function generateFlux2Image() {
     const modelPath = document.getElementById('flux2ModelPath')?.value?.trim() || null;
     const vaePath = document.getElementById('flux2VaePath')?.value?.trim() || null;
 
+    // Text encoding options
+    const maxTextLength = parseInt(document.getElementById('flux2MaxTextLength')?.value || '512');
+    const padToMax = document.getElementById('flux2PadToMax')?.checked ?? true;
+    const outputLayersInput = document.getElementById('flux2OutputLayers')?.value?.trim();
+    let outputLayers = null;
+    if (outputLayersInput) {
+        // Parse comma-separated layer indices (e.g., "9, 18, 27")
+        outputLayers = outputLayersInput.split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n));
+        if (outputLayers.length !== 3) {
+            handleFlux2Error('Output layers must be exactly 3 numbers (e.g., "9, 18, 27")');
+            return;
+        }
+    }
+
     const params = {
         prompt,
         model_name: modelName,
@@ -433,6 +447,10 @@ async function generateFlux2Image() {
         reference_images: flux2ReferenceImages.length > 0
             ? flux2ReferenceImages.map(img => img.data)
             : null,
+        // Text encoding options
+        max_text_length: maxTextLength,
+        pad_to_max: padToMax,
+        output_layers: outputLayers,
     };
 
     // Update UI state

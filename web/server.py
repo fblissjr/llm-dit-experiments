@@ -26,7 +26,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -589,6 +589,29 @@ class Flux2GenerateRequest(BaseModel):
     model_path: Optional[str] = None  # Custom model path (overrides HuggingFace)
     vae_path: Optional[str] = None  # Custom VAE path (overrides HuggingFace)
     reference_images: Optional[List[str]] = None  # Base64 encoded reference images for editing
+
+    # Text encoding options
+    max_text_length: int = 512  # Max text tokens (512 default, increase for longer prompts)
+    pad_to_max: bool = True  # Whether to pad sequences to max_text_length
+    output_layers: Optional[List[int]] = None  # Which 3 Qwen3 layers to extract (default [9, 18, 27])
+
+    @field_validator("output_layers")
+    @classmethod
+    def validate_output_layers(cls, v):
+        if v is not None:
+            if len(v) != 3:
+                raise ValueError("output_layers must have exactly 3 layers")
+            for layer in v:
+                if not isinstance(layer, int) or layer < 0:
+                    raise ValueError(f"Invalid layer index: {layer}")
+        return v
+
+    @field_validator("max_text_length")
+    @classmethod
+    def validate_max_text_length(cls, v):
+        if v < 16 or v > 8192:
+            raise ValueError("max_text_length must be between 16 and 8192")
+        return v
 
 
 @app.get("/")
@@ -2060,6 +2083,10 @@ async def flux2_generate(request: Flux2GenerateRequest):
             seed=request.seed,
             reference_images=ref_images,
             block_offload=request.block_offload,
+            # Text encoding options
+            max_text_length=request.max_text_length,
+            pad_to_max=request.pad_to_max,
+            output_layers=request.output_layers,
         )
 
         # Get model/VAE paths - prefer request values, fall back to config
