@@ -239,7 +239,8 @@ def _load_8bit_encoder(
         logger.info("LTX-2 checkpoint format detected. Using torchao int8 quantization...")
 
         try:
-            from torchao.quantization import quantize_, int8_weight_only
+            from torchao.quantization import int8_weight_only, quantize_
+
             has_torchao = True
         except ImportError:
             logger.warning("torchao not available, falling back to bf16 (will use ~24GB)")
@@ -273,7 +274,9 @@ def _load_8bit_encoder(
         if encoder._feature_extractor is not None:
             encoder._feature_extractor = encoder._feature_extractor.to(torch.device(target_device))
         if encoder._embeddings_connector is not None:
-            encoder._embeddings_connector = encoder._embeddings_connector.to(torch.device(target_device), dtype=dtype)
+            encoder._embeddings_connector = encoder._embeddings_connector.to(
+                torch.device(target_device), dtype=dtype
+            )
         encoder._device_str = target_device
         _log_memory_usage(f"Model on {target_device}")
 
@@ -283,7 +286,8 @@ def _load_8bit_encoder(
         logger.info(f"Loading 8-bit Gemma from: {encoder_path}")
 
         try:
-            from torchao.quantization import quantize_, int8_weight_only
+            from torchao.quantization import int8_weight_only, quantize_
+
             has_torchao = True
         except ImportError:
             logger.warning("torchao not available, loading in bf16")
@@ -333,6 +337,7 @@ def _load_8bit_encoder(
 
                 if use_connector:
                     import json
+
                     from llm_dit.encoders.gemma3 import DEFAULT_CONNECTORS_CONFIG
 
                     config_path = Path(DEFAULT_CONNECTORS_CONFIG)
@@ -350,7 +355,9 @@ def _load_8bit_encoder(
                         }
 
                     embeddings_connector = Embeddings1DConnector.from_config(config)
-                    load_connector_weights(embeddings_connector, Path(connectors_path), prefix="video_connector.")
+                    load_connector_weights(
+                        embeddings_connector, Path(connectors_path), prefix="video_connector."
+                    )
 
         # Move to device
         target_device = torch.device(device if device != "auto" else "cuda")
@@ -423,7 +430,8 @@ def _load_q4_qat_encoder(
     # Strategy: Load on CPU in bf16 -> Apply int4 quantization -> Move to GPU
 
     try:
-        from torchao.quantization import quantize_, int4_weight_only
+        from torchao.quantization import int4_weight_only, quantize_
+
         has_torchao = True
     except ImportError:
         logger.warning("torchao not available, falling back to bf16 (will use ~24GB)")
@@ -478,6 +486,7 @@ def _load_q4_qat_encoder(
 
             if use_connector:
                 import json
+
                 from llm_dit.encoders.gemma3 import DEFAULT_CONNECTORS_CONFIG
 
                 config_path = Path(DEFAULT_CONNECTORS_CONFIG)
@@ -495,7 +504,9 @@ def _load_q4_qat_encoder(
                     }
 
                 embeddings_connector = Embeddings1DConnector.from_config(config)
-                load_connector_weights(embeddings_connector, Path(connectors_path), prefix="video_connector.")
+                load_connector_weights(
+                    embeddings_connector, Path(connectors_path), prefix="video_connector."
+                )
     else:
         logger.warning(f"Connector weights not found at {connectors_path}")
 

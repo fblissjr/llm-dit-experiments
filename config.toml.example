@@ -1,5 +1,5 @@
 # llm-dit-experiments Configuration
-# last updated: 2025-01-06
+# last updated: 2026-01-24
 #
 # Copy this file to config.toml and modify paths for your setup.
 # CLI flags override config values. Run `uv run scripts/generate.py --help` for all options.
@@ -17,6 +17,7 @@
 #   - Qwen-Image-2512 - text-to-image generation (pure t2i, 39GB transformer)
 #   - Qwen-Image-Layered - multi-layer decomposition (deprioritized)
 #   - LTX-2 - 19B video+audio generation (Lightricks)
+#   - FLUX.2 Klein - 4B/9B image generation (Black Forest Labs)
 
 # =============================================================================
 # RTX 4090 Profile - Optimized for 24GB VRAM
@@ -32,7 +33,7 @@ templates_dir = "templates/z_image"
 # Text encoder (Qwen3-4B) configuration for Z-Image
 # Extracts hidden states from text prompts for DiT conditioning
 device = "cuda"                  # cpu/cuda/mps/auto - GPU for speed
-torch_dtype = "bfloat16"         # bfloat16/float16/float32 - RTX 4090 has native BF16
+dtype = "bfloat16"               # bfloat16/float16/float32 - RTX 4090 has native BF16
 quantization = "none"            # Quantization options:
                                  # none: No quantization (default, ~14GB for text encoder)
                                  # fp8: TorchAO FP8 dynamic (RTX 4090+, ~50% VRAM, may skip non-16-aligned layers)
@@ -63,7 +64,7 @@ hidden_layer = -2                # Layer for embeddings: -1=last, -2=penultimate
 [rtx4090.pipeline]
 # DiT and VAE pipeline configuration
 device = "auto"                  # cpu/cuda/mps/auto - auto selects cuda if available
-torch_dtype = "bfloat16"         # bfloat16/float16/float32 - match encoder dtype
+dtype = "bfloat16"               # bfloat16/float16/float32 - match encoder dtype
 enable_model_cpu_offload = false      # Offload inactive components to CPU between steps (slower)
 enable_sequential_cpu_offload = false # More aggressive: offload each layer individually (slowest)
 
@@ -373,6 +374,36 @@ tile_overlap_temporal = 4        # Temporal overlap
 tile_overlap_spatial = 32        # Spatial overlap
 
 # =============================================================================
+# FLUX.2 Klein Configuration (Image Generation)
+# =============================================================================
+# FLUX.2 Klein is Black Forest Labs' image generation model using Qwen3 text encoder
+# with 4D RoPE for spatial-temporal attention. Available in 4B and 9B variants.
+#
+# Model variants:
+#   | Variant           | Parameters | VRAM (Block Offload) | Steps | CFG  |
+#   |-------------------|-----------|---------------------|-------|------|
+#   | klein-9b-fp8      | 9B        | ~12GB               | 4     | 1.0  |
+#   | klein-9b          | 9B        | ~20GB               | 4     | 1.0  |
+#   | klein-4b-fp8      | 4B        | ~8GB                | 4     | 1.0  |
+#   | klein-4b          | 4B        | ~14GB               | 4     | 1.0  |
+#   | klein-base-9b-fp8 | 9B        | ~12GB               | 50    | 4.0  |
+#   | klein-base-9b     | 9B        | ~20GB               | 50    | 4.0  |
+#   | klein-base-4b-fp8 | 4B        | ~8GB                | 50    | 4.0  |
+#   | klein-base-4b     | 4B        | ~14GB               | 50    | 4.0  |
+#
+# Distilled vs Base:
+#   - Distilled (klein-*): 4 steps, CFG=1.0 baked in, fast generation
+#   - Base (klein-base-*): 50 steps, CFG=4.0, more control over generation
+
+[rtx4090.flux2]
+model_path = "/path/to/FLUX.2-klein/FLUX.2-klein-9b-fp8"  # Transformer weights
+vae_path = "/path/to/FLUX.2-klein/FLUX.2-klein-9B"        # VAE weights (from full model)
+default_model = "klein-9b-fp8"   # Default model variant
+block_offload = true             # Enable block-by-block GPU offload for 24GB VRAM
+default_steps = 4                # Default inference steps (4 for distilled, 50 for base)
+default_guidance = 1.0           # Default CFG scale (1.0 for distilled, 4.0 for base)
+
+# =============================================================================
 # Optimization Presets (use with QwenImageConfig.from_preset() in code)
 # =============================================================================
 # Presets apply multiple settings at once for common use cases.
@@ -418,7 +449,7 @@ templates_dir = "templates/z_image"
 [default.encoder]
 # Text encoder (Qwen3-4B) configuration
 device = "auto"                  # cpu/cuda/mps/auto - auto for flexibility
-torch_dtype = "bfloat16"         # bfloat16/float16/float32
+dtype = "bfloat16"               # bfloat16/float16/float32
 quantization = "none"            # Quantization options (see rtx4090.encoder for details)
 cpu_offload = false              # Move encoder to CPU after encoding
 max_length = 512                 # Tokenizer max length
@@ -428,7 +459,7 @@ hidden_layer = -2                # Layer for embeddings: -2=penultimate (default
 [default.pipeline]
 # DiT and VAE pipeline configuration
 device = "auto"                  # cpu/cuda/mps/auto
-torch_dtype = "bfloat16"         # bfloat16/float16/float32
+dtype = "bfloat16"               # bfloat16/float16/float32
 enable_model_cpu_offload = false      # Offload inactive components to CPU between steps
 enable_sequential_cpu_offload = false # Offload each layer individually (slowest)
 
@@ -581,6 +612,16 @@ guidance_scale = 3.5             # CFG scale
 audio_enabled = false            # Enable audio generation
 use_distilled = true             # Use distilled model (matches transformer_file)
 tiled_vae = true                 # Required for video decode
+
+[default.flux2]
+# FLUX.2 Klein configuration
+# See rtx4090.flux2 section for detailed documentation
+model_path = ""                  # Path to transformer weights (empty = HuggingFace)
+vae_path = ""                    # Path to VAE weights (empty = HuggingFace)
+default_model = "klein-9b-fp8"   # Default model variant
+block_offload = true             # Enable block offloading for 24GB VRAM
+default_steps = 4                # Default steps (distilled=4, base=50)
+default_guidance = 1.0           # Default CFG (distilled=1.0, base=4.0)
 
 # =============================================================================
 # Web Server Configuration
