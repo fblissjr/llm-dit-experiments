@@ -35,6 +35,38 @@ from safetensors.torch import load_file as load_sft
 
 logger = logging.getLogger(__name__)
 
+try:
+    import psutil
+    PSUTIL_AVAILABLE = True
+except ImportError:
+    PSUTIL_AVAILABLE = False
+
+
+def _format_memory_gb(bytes_val: int | float) -> str:
+    """Format memory value in GB with 2 decimal places."""
+    return f"{bytes_val / 1e9:.2f}GB"
+
+
+def _log_memory_state(prefix: str = "") -> None:
+    """Log current GPU and CPU memory state."""
+    if not logger.isEnabledFor(logging.DEBUG):
+        return
+
+    msg_parts = [f"[FLUX2:Loader:{prefix}]" if prefix else "[FLUX2:Loader]"]
+
+    if torch.cuda.is_available():
+        allocated = torch.cuda.memory_allocated()
+        reserved = torch.cuda.memory_reserved()
+        msg_parts.append(f"GPU allocated: {_format_memory_gb(allocated)}")
+        msg_parts.append(f"reserved: {_format_memory_gb(reserved)}")
+
+    if PSUTIL_AVAILABLE:
+        process = psutil.Process()
+        mem_info = process.memory_info()
+        msg_parts.append(f"CPU RSS: {_format_memory_gb(mem_info.rss)}")
+
+    logger.debug(" → ".join(msg_parts))
+
 from llm_dit.models.flux2.constants import FLUX2_MODEL_INFO
 from llm_dit.models.flux2.transformer import Flux2Transformer
 from llm_dit.models.flux2.vae import AutoEncoder, AutoEncoderParams
@@ -239,9 +271,12 @@ def load_flux2_transformer(
     # Get weights path (native single-file format only)
     weight_path = _get_model_weight_path(model_name, model_path)
     print(f"Loading {model_name} from {weight_path}")
+    logger.debug(f"[FLUX2:Loader] Loading weights from {weight_path}")
+    _log_memory_state("Before load")
 
     # Check if this is an FP8 model (from registry or filename)
     is_fp8 = config.get("fp8", False) or "fp8" in weight_path.lower()
+    logger.debug(f"[FLUX2:Loader] FP8 model: {is_fp8}, block_offload: {block_offload}")
 
     # Create model on meta device for memory efficiency
     with torch.device("meta"):
@@ -249,7 +284,9 @@ def load_flux2_transformer(
 
     # Load weights - for FP8, load to CPU first to avoid GPU memory spike during casting
     load_device = "cpu" if is_fp8 else str(device)
+    logger.debug(f"[FLUX2:Loader] Loading safetensors to device: {load_device}")
     sd = load_sft(weight_path, device=load_device)
+    _log_memory_state("After load_sft")
 
     # FP8 checkpoints contain extra scale tensors (input_scale, weight_scale)
     # that our model doesn't have. Filter them out and cast weights to target dtype.
