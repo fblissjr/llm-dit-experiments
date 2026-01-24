@@ -571,13 +571,20 @@ def denoise(
     return img
 
 
-def latents_to_image(latents: torch.Tensor, vae) -> Image.Image:
+def latents_to_image(
+    latents: torch.Tensor,
+    vae,
+    height: Optional[int] = None,
+    width: Optional[int] = None,
+) -> Image.Image:
     """
     Decode latents to PIL Image.
 
     Args:
         latents: Patchified latents [B, seq_len, C] or [B, C, H, W]
         vae: FLUX.2 VAE
+        height: Target image height in pixels (needed for non-square images)
+        width: Target image width in pixels (needed for non-square images)
 
     Returns:
         PIL Image
@@ -586,7 +593,15 @@ def latents_to_image(latents: torch.Tensor, vae) -> Image.Image:
     if latents.ndim == 3:
         # [B, seq_len, C] -> [B, C, H, W]
         b, seq_len, c = latents.shape
-        h = w = int(math.sqrt(seq_len))
+
+        # Calculate patch dimensions from target size or assume square
+        if height is not None and width is not None:
+            h = height // 16  # FLUX.2 uses 16x16 patches
+            w = width // 16
+        else:
+            # Fallback to square (only works for square outputs)
+            h = w = int(math.sqrt(seq_len))
+
         latents = latents.view(b, h, w, c).permute(0, 3, 1, 2).contiguous()
 
     # Decode
@@ -803,7 +818,7 @@ def generate_image(
     latents = latents.to(device).to(dtype)
 
     # Decode to image
-    image = latents_to_image(latents, vae)
+    image = latents_to_image(latents, vae, height=config.height, width=config.width)
 
     if config.offload_between_stages:
         logger.info("Offloading VAE...")
