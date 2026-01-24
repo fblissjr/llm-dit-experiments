@@ -145,15 +145,17 @@ class LTX2GenerateRequest(BaseModel):
     seed: Optional[int] = None
 
 class Flux2GenerateRequest(BaseModel):
-    prompt: str
-    width: int = 1024
-    height: int = 1024
-    steps: int = 4
-    guidance_scale: float = 1.0
-    seed: Optional[int] = None
-    model_variant: str = "klein-9b"
-    edit_mode: bool = False
-    reference_images: Optional[List[str]] = None
+    prompt: str  # Text prompt
+    model_name: str = "klein-9b-fp8"  # Model variant
+    width: int = 1024  # Image width (must be multiple of 16)
+    height: int = 1024  # Image height (must be multiple of 16)
+    num_steps: Optional[int] = None  # Denoising steps (4 for distilled, 50 for base)
+    guidance: Optional[float] = None  # CFG scale (1.0 for distilled, 4.0 for base)
+    seed: Optional[int] = None  # Random seed
+    block_offload: bool = False  # Block-by-block GPU offloading for low VRAM
+    model_path: Optional[str] = None  # Custom model path (overrides HuggingFace)
+    vae_path: Optional[str] = None  # Custom VAE path (overrides HuggingFace)
+    reference_images: Optional[List[str]] = None  # Base64 encoded reference images for editing (0-4+)
 ```
 
 ### endpoint patterns
@@ -181,7 +183,7 @@ Examples:
 - `/api/qwen-image/status`
 - `/api/qwen-image-2512/status`
 - `/api/ltx2/status`
-- `/api/flux2/status`
+- `/api/flux2/status` - Returns available model variants and loaded state
 - `/api/vl/status`
 
 #### generate endpoints (POST)
@@ -223,7 +225,7 @@ Generate endpoints:
 - `/api/qwen-image/edit-multi` - Combine multiple images
 - `/api/qwen-image-2512/generate` - Qwen T2I
 - `/api/ltx2/generate/stream` - Video with SSE (see below)
-- `/api/flux2/generate` - FLUX.2 image generation
+- `/api/flux2/generate` - FLUX.2 text-to-image and multi-reference editing
 
 #### vram management (POST)
 
@@ -252,11 +254,11 @@ async def vram_unload_model():
 ```
 
 VRAM endpoints:
-- `/api/vram/unload-zimage`
-- `/api/vram/unload-qwen-image`
-- `/api/vram/unload-qwen-image-t2i`
-- `/api/vram/unload-ltx2`
-- `/api/vram/unload-flux2`
+- `/api/vram/unload-zimage` - Unload Z-Image (DiT + VAE + encoder)
+- `/api/vram/unload-qwen-image` - Unload Qwen-Image decompose/edit
+- `/api/vram/unload-qwen-image-t2i` - Unload Qwen T2I
+- `/api/vram/unload-ltx2` - Unload LTX-2 video (Gemma3 encoder + DiT + VAE)
+- `/api/vram/unload-flux2` - Unload FLUX.2 Klein (Qwen3 encoder + DiT + VAE)
 
 ### async generation with run_in_executor
 
@@ -697,13 +699,21 @@ async function generateVideo() {
 
 #### flux2.js - FLUX.2 image generation
 
-Handles FLUX.2 variants and generation:
+Handles FLUX.2 Klein variants, reference images, and generation:
 
 ```javascript
+// Model defaults - distilled vs base models have different optimal parameters
 const FLUX2_MODEL_DEFAULTS = {
+    // Distilled models: fast, 4 steps, CFG=1.0 (baked in)
     'klein-9b': { steps: 4, guidance: 1.0, distilled: true },
+    'klein-9b-fp8': { steps: 4, guidance: 1.0, distilled: true },
+    'klein-4b': { steps: 4, guidance: 1.0, distilled: true },
+    'klein-4b-fp8': { steps: 4, guidance: 1.0, distilled: true },
+    // Base models: quality, 50 steps, CFG=4.0
     'klein-base-9b': { steps: 50, guidance: 4.0, distilled: false },
-    // ... other variants
+    'klein-base-9b-fp8': { steps: 50, guidance: 4.0, distilled: false },
+    'klein-base-4b': { steps: 50, guidance: 4.0, distilled: false },
+    'klein-base-4b-fp8': { steps: 50, guidance: 4.0, distilled: false },
 };
 
 function updateFlux2Defaults(model) {
@@ -717,14 +727,42 @@ async function generateFlux2Image() {
         prompt: document.getElementById('flux2Prompt').value,
         width: parseInt(document.getElementById('flux2Width').value),
         height: parseInt(document.getElementById('flux2Height').value),
-        steps: parseInt(document.getElementById('flux2Steps').value),
-        guidance_scale: parseFloat(document.getElementById('flux2Guidance').value),
+        num_steps: parseInt(document.getElementById('flux2Steps').value),
+        guidance: parseFloat(document.getElementById('flux2Guidance').value),
         seed: document.getElementById('flux2Seed').value || null,
-        model_variant: document.getElementById('flux2Model').value,
+        model_name: document.getElementById('flux2Model').value,
+        reference_images: flux2ReferenceImages,  // Array of base64 images (0-4+)
     };
 
     const data = await ApiClient.flux2Generate(params);
     document.getElementById('flux2Result').src = data.image;
+    flux2CurrentImageUrl = data.image;
+}
+
+// Reference image upload handling
+function setupFlux2RefUpload() {
+    const dropZone = document.getElementById('flux2RefDropZone');
+    const fileInput = document.getElementById('flux2RefImages');
+
+    dropZone.addEventListener('click', () => fileInput.click());
+    dropZone.addEventListener('dragover', (e) => e.preventDefault());
+    dropZone.addEventListener('drop', async (e) => {
+        e.preventDefault();
+        const files = Array.from(e.dataTransfer.files);
+        await handleFlux2RefImages(files);
+    });
+
+    fileInput.addEventListener('change', async (e) => {
+        await handleFlux2RefImages(Array.from(e.target.files));
+    });
+}
+
+async function handleFlux2RefImages(files) {
+    for (const file of files) {
+        const base64 = await fileToBase64(file);
+        flux2ReferenceImages.push(base64);
+    }
+    renderFlux2RefPreviews();
 }
 ```
 
@@ -1054,7 +1092,7 @@ async function switchToModel(newModel) {
 
 ### block offload patterns
 
-Large models use sequential CPU offload for 24GB VRAM:
+Large models use CPU offload strategies for 24GB VRAM:
 
 ```python
 # LTX-2: Gemma 3-12B text encoder with sequential offload
@@ -1063,12 +1101,32 @@ ltx2_pipeline = LTX2Pipeline.from_pretrained(
     cpu_offload=True,  # Sequential CPU offload
 )
 
-# FLUX.2: Qwen3 encoder with three-stage offloading
-flux2_pipeline = Flux2Pipeline.from_pretrained(
-    model_path,
-    cpu_offload="three_stage",  # Text encoder → DiT → VAE
+# FLUX.2 Klein: Block-by-block GPU offload (9B/4B models)
+# Moves transformer blocks to/from GPU one at a time during inference
+from llm_dit.pipelines.flux2_generate import generate_image, Flux2GenerationConfig
+
+config = Flux2GenerationConfig(
+    prompt="A sunset over mountains",
+    width=1024,
+    height=1024,
+    num_steps=4,
+    guidance=1.0,
+    seed=42,
+    block_offload=True,  # Enable block offload for 24GB GPUs
+)
+
+image = generate_image(
+    config,
+    model_name="klein-9b-fp8",
+    model_path=runtime_config.flux2.model_path,
+    vae_path=runtime_config.flux2.vae_path,
 )
 ```
+
+FLUX.2 block offload:
+- Peak VRAM: ~12-15GB (vs ~22GB without)
+- Speed: ~2x slower due to CPU-GPU transfers
+- Works on RTX 3080/4070/4080 (16GB+ recommended)
 
 ## key architectural decisions
 

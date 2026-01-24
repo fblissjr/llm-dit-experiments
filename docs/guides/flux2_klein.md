@@ -172,6 +172,10 @@ The loader automatically applies scales when casting FP8 to BF16 for inference.
 ## toml configuration
 
 ```toml
+[rtx4090]
+# Auto-load FLUX.2 at web server startup (optional)
+default_pipeline = "flux2"  # Options: none, z-image, qwen-image, flux2, ltx2
+
 [rtx4090.flux2]
 model_path = "models/FLUX.2-klein/FLUX.2-klein-9b-fp8"
 vae_path = "models/FLUX.2-klein/FLUX.2-klein-9B"
@@ -180,6 +184,10 @@ block_offload = true
 default_steps = 4
 default_guidance = 1.0
 ```
+
+The `default_pipeline` setting in the profile's main section controls which model automatically loads when the web server starts. Set to "flux2" to preload FLUX.2, or "none" to start without loading any model (saves memory at startup).
+
+See [config_management.md](config_management.md) for detailed TOML configuration documentation.
 
 ## troubleshooting
 
