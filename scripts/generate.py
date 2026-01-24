@@ -516,7 +516,6 @@ def run_ltx2_generation(args, config, logger) -> int:
     # =========================================================================
     if config.ltx2_save_embeddings:
         from llm_dit.distributed import save_embeddings
-        from llm_dit.encoders.gemma3 import Gemma3Encoder
 
         # Resolve text encoder path
         encoder_path = text_encoder_path or (f"{model_path}/text_encoder" if model_path else None)
@@ -528,17 +527,33 @@ def run_ltx2_generation(args, config, logger) -> int:
         logger.info("LTX-2 EMBEDDING PRECOMPUTATION")
         logger.info("=" * 60)
         logger.info(f"  Text encoder: {encoder_path}")
+        logger.info(f"  Gemma variant: {config.ltx2_gemma_variant}")
+        logger.info(f"  Device: {config.ltx2_text_encoder_device}")
         logger.info(f"  Prompt: {args.prompt[:80]}...")
         logger.info(f"  Output: {config.ltx2_save_embeddings}")
         logger.info("-" * 60)
 
         logger.info("Loading Gemma3 text encoder...")
         start = time.time()
-        encoder = Gemma3Encoder(
-            model_id=str(encoder_path),
-            device=config.ltx2_text_encoder_device,
-            dtype=config.get_dtype(),
-        )
+
+        # Use variant factory for flexible Gemma3 loading (supports bf16, 8bit, q4-qat)
+        if config.ltx2_gemma_variant != "bf16":
+            from llm_dit.encoders.gemma3_variants import create_gemma3_encoder
+            encoder = create_gemma3_encoder(
+                variant=config.ltx2_gemma_variant,
+                model_path=str(model_path),
+                text_encoder_path=str(encoder_path),
+                device=config.ltx2_text_encoder_device,
+                dtype=config.get_dtype(),
+            )
+        else:
+            # Default bf16 path
+            from llm_dit.encoders.gemma3 import Gemma3Encoder
+            encoder = Gemma3Encoder(
+                model_id=str(encoder_path),
+                device=config.ltx2_text_encoder_device,
+                dtype=config.get_dtype(),
+            )
         load_time = time.time() - start
         logger.info(f"Encoder loaded in {load_time:.1f}s")
 
@@ -607,6 +622,7 @@ def run_ltx2_generation(args, config, logger) -> int:
         logger.info(f"  Seed: {seed}")
     if precomputed_embeds is None:
         logger.info(f"  Text encoder device: {optimization.text_encoder_device}")
+        logger.info(f"  Gemma variant: {config.ltx2_gemma_variant}")
     logger.info(f"  Transformer device: {optimization.transformer_device}")
     logger.info(f"  VAE device: {optimization.vae_device}")
     logger.info(f"  Dtype: {config.get_dtype()}")
@@ -643,6 +659,8 @@ def run_ltx2_generation(args, config, logger) -> int:
             dtype=config.get_dtype(),
             callback=progress_callback,
             optimization=optimization,
+            gemma_variant=config.ltx2_gemma_variant,  # bf16, 8bit, q4-qat
+            use_progress=True,  # Use rich SamplingProgress
         )
     except Exception as e:
         logger.error(f"Generation failed: {e}")
@@ -662,7 +680,7 @@ def run_ltx2_generation(args, config, logger) -> int:
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        video_np = video.numpy()
+        video_np = video.cpu().numpy()
         with tempfile.TemporaryDirectory() as tmpdir:
             # Write frames as PNG files
             for i, frame in enumerate(video_np):
@@ -693,6 +711,132 @@ def run_ltx2_generation(args, config, logger) -> int:
         logger.info(f"Saved: {output_path}")
     except Exception as e:
         logger.error(f"Failed to save video: {e}")
+        return 1
+
+    logger.info("=" * 60)
+    logger.info(f"Total time: {gen_time:.1f}s")
+
+    return 0
+
+
+def run_flux2_generation(args, config, logger) -> int:
+    """
+    Run FLUX.2 Klein image generation.
+
+    Supports both text-to-image and image editing with reference images.
+    Uses three-stage offloading for memory efficiency on consumer GPUs.
+
+    Args:
+        args: Parsed CLI arguments
+        config: RuntimeConfig with all settings
+        logger: Logger instance
+
+    Returns:
+        Exit code (0 for success)
+    """
+    from llm_dit.pipelines.flux2_generate import (
+        Flux2GenerationConfig,
+        generate_image,
+    )
+    from llm_dit.models.flux2.constants import FLUX2_MODEL_INFO
+
+    # Get model name
+    model_name = config.flux2_model_name
+
+    # Validate model name
+    if model_name.lower() not in FLUX2_MODEL_INFO:
+        logger.error(f"Unknown FLUX.2 model: {model_name}")
+        logger.error(f"Available: {list(FLUX2_MODEL_INFO.keys())}")
+        return 1
+
+    # Get model defaults
+    model_info = FLUX2_MODEL_INFO[model_name.lower()]
+    defaults = model_info["defaults"]
+
+    # Get generation parameters (use model defaults if not specified)
+    num_steps = config.flux2_num_steps or defaults["num_steps"]
+    guidance = config.flux2_guidance or defaults["guidance"]
+    width = config.width or 1024
+    height = config.height or 1024
+    seed = config.flux2_seed
+    output_path = config.flux2_output_path
+
+    # Prompt validation
+    if not args.prompt:
+        logger.error("No prompt specified. Use: uv run scripts/generate.py --model-type flux2 'your prompt'")
+        return 1
+
+    # Prepare reference images (for editing mode)
+    reference_images = []
+    if config.flux2_input_images:
+        reference_images = config.flux2_input_images
+
+    mode = "editing" if reference_images else "text-to-image"
+
+    # Custom paths (override defaults)
+    encoder_path = config.flux2_encoder_path
+    model_path = config.flux2_model_path
+    vae_path = config.flux2_vae_path
+
+    logger.info("=" * 60)
+    logger.info(f"FLUX.2 Klein Image Generation ({mode} mode)")
+    logger.info("=" * 60)
+    logger.info(f"  Model: {model_name}")
+    logger.info(f"  Resolution: {width}x{height}")
+    logger.info(f"  Steps: {num_steps}")
+    logger.info(f"  Guidance: {guidance}")
+    if encoder_path:
+        logger.info(f"  Encoder: {encoder_path}")
+    if model_path:
+        logger.info(f"  Transformer: {model_path}")
+    if vae_path:
+        logger.info(f"  VAE: {vae_path}")
+    if seed is not None:
+        logger.info(f"  Seed: {seed}")
+    if reference_images:
+        logger.info(f"  Reference images: {len(reference_images)}")
+        for img_path in reference_images:
+            logger.info(f"    - {img_path}")
+    logger.info(f"  Prompt: {args.prompt[:80]}...")
+    logger.info("-" * 60)
+
+    # Create generation config
+    gen_config = Flux2GenerationConfig(
+        prompt=args.prompt,
+        height=height,
+        width=width,
+        num_steps=num_steps,
+        guidance=guidance,
+        seed=seed,
+        reference_images=reference_images,
+        device="cuda",
+        offload_between_stages=config.flux2_offload_between_stages,
+        block_offload=config.flux2_block_offload,
+    )
+
+    if config.flux2_block_offload:
+        logger.info("  Block offload: ENABLED (slower but uses ~5GB less VRAM)")
+
+    # Generate
+    start = time.time()
+    try:
+        image = generate_image(
+            gen_config,
+            model_name=model_name,
+            encoder_path=encoder_path,
+            model_path=model_path,
+            vae_path=vae_path,
+        )
+        gen_time = time.time() - start
+
+        # Save image
+        image.save(output_path)
+        logger.info(f"Saved: {output_path}")
+
+    except Exception as e:
+        logger.error(f"Generation failed: {e}")
+        import traceback
+        traceback.print_exc()
         return 1
 
     logger.info("=" * 60)
@@ -786,6 +930,9 @@ def main():
 
     if config.model_type == "ltx2":
         return run_ltx2_generation(args, config, logger)
+
+    if config.model_type == "flux2":
+        return run_flux2_generation(args, config, logger)
 
     # Z-Image flow continues below
     # Validate model path

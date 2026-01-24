@@ -1,8 +1,10 @@
 # lora guide
 
-*last updated: 2025-12-22*
+*last updated: 2026-01-24*
 
 LoRAs are loaded and fused into the transformer weights at startup.
+
+**Model Support:** Currently implemented for Z-Image pipeline only. FLUX.2 Klein, LTX-2, and Qwen-Image do not support LoRA loading in this codebase.
 
 ## via cli
 

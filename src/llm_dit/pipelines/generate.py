@@ -218,6 +218,7 @@ def generate_video(
     callback: Optional[Callable[[int, int, torch.Tensor], None]] = None,
     device: Optional[torch.device] = None,
     dtype: Optional[torch.dtype] = None,
+    use_progress: bool = True,  # Use rich SamplingProgress display
 ) -> torch.Tensor:
     """
     Generate video using pure PyTorch diffusion loop.
@@ -375,9 +376,28 @@ def generate_video(
 
     # CRITICAL: torch.no_grad() prevents autograd from holding intermediate tensors
     # Without this, memory usage during forward pass spikes dramatically
-    model.eval()  # PyTorch evaluation mode (not Python eval)
+    model.train(False)  # PyTorch inference mode
+
+    # Set up progress display - prefer rich SamplingProgress, fall back to tqdm
+    num_steps = len(sigmas) - 1
+    progress_mgr = None
+    if use_progress:
+        try:
+            from llm_dit.utils.progress import SamplingProgress
+            progress_mgr = SamplingProgress(num_steps=num_steps, desc="Denoising")
+        except ImportError:
+            pass  # Fall back to tqdm
+
     with torch.no_grad():
-      for i in tqdm(range(len(sigmas) - 1), desc="Denoising"):
+      # Enter progress context if available
+      if progress_mgr is not None:
+          progress_mgr.__enter__()
+
+      step_iter = range(num_steps)
+      if progress_mgr is None:
+          step_iter = tqdm(step_iter, desc="Denoising")
+
+      for i in step_iter:
         sigma = sigmas[i]
         sigma_next = sigmas[i + 1]
 
@@ -466,9 +486,15 @@ def generate_video(
             torch.cuda.synchronize()
             torch.cuda.empty_cache()
 
-        # Progress callback
+        # Progress callback and progress manager update
         if callback is not None:
-            callback(i + 1, len(sigmas) - 1, latents)
+            callback(i + 1, num_steps, latents)
+        if progress_mgr is not None:
+            progress_mgr.advance()
+
+      # Exit progress context after loop
+      if progress_mgr is not None:
+          progress_mgr.__exit__(None, None, None)
 
     # =========================================================================
     # Step 5: Reshape latents for VAE decode
@@ -517,6 +543,8 @@ def generate_video_with_offloading(
     dtype: torch.dtype = torch.bfloat16,
     callback: Optional[Callable[[str, int, int], None]] = None,
     optimization: Optional[LTX2OptimizationConfig] = None,
+    gemma_variant: str = "bf16",  # Gemma3 variant: bf16, 8bit, q4-qat
+    use_progress: bool = True,  # Use rich progress display for denoising
 ) -> torch.Tensor:
     """
     Generate video with sequential component offloading for 24GB GPUs.
@@ -615,17 +643,27 @@ def generate_video_with_offloading(
             callback("text_encoder", 0, 1)
 
         logger.info("Stage 1: Loading text encoder...")
-        from llm_dit.encoders.gemma3 import Gemma3Encoder
+        logger.info(f"  Gemma variant: {gemma_variant}")
 
-        # Load encoder to configured device (cpu recommended for 24GB GPUs)
-        # The 12B Gemma model in bf16 takes ~24GB which exceeds RTX 4090's 24GB
-        # Encoding on CPU is slower but more memory-safe for sequential loading
-        text_encoder = Gemma3Encoder(
-            model_id=str(text_encoder_path),
-            device=optimization.text_encoder_device,
-            dtype=dtype,
-            load_in_8bit=False,  # Skip quantization for CPU loading
-        )
+        # Use variant factory for flexible Gemma3 loading
+        if gemma_variant != "bf16":
+            from llm_dit.encoders.gemma3_variants import create_gemma3_encoder
+            text_encoder = create_gemma3_encoder(
+                variant=gemma_variant,
+                model_path=str(model_path),
+                text_encoder_path=str(text_encoder_path) if text_encoder_path else None,
+                device=optimization.text_encoder_device,
+                dtype=dtype,
+            )
+        else:
+            # Default bf16 path - use original Gemma3Encoder for compatibility
+            from llm_dit.encoders.gemma3 import Gemma3Encoder
+            text_encoder = Gemma3Encoder(
+                model_id=str(text_encoder_path),
+                device=optimization.text_encoder_device,
+                dtype=dtype,
+                load_in_8bit=False,
+            )
 
         logger.info("Encoding prompt...")
         encoding_output = text_encoder.encode([prompt])
@@ -720,6 +758,7 @@ def generate_video_with_offloading(
         connectors=connectors,
         attention_mask=attention_mask,
         callback=progress_callback,
+        use_progress=use_progress,
     )
 
     # Unload transformer and connectors

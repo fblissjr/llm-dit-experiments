@@ -1,7 +1,23 @@
 """
-LTX-2 Pipeline for text-to-video generation.
+LTX-2 Pipeline for text-to-video generation (DIFFUSERS WRAPPER - DEPRECATED).
 
-Last Updated: 2026-01-18
+Last Updated: 2026-01-23
+
+.. deprecated:: 2026-01-23
+    This diffusers wrapper is deprecated in favor of the pure PyTorch implementation.
+    Use ``generate_video_with_offloading()`` from ``llm_dit.pipelines.generate`` instead.
+
+    Example migration::
+
+        # OLD (diffusers wrapper - deprecated)
+        from llm_dit.pipelines.ltx2 import LTX2Pipeline
+        pipe = LTX2Pipeline.from_pretrained(model_path)
+        output = pipe(prompt="...", height=512, width=768, ...)
+
+        # NEW (pure PyTorch - recommended)
+        from llm_dit.pipelines.generate import generate_video_with_offloading, GenerationConfig
+        config = GenerationConfig(height=512, width=768, num_frames=33)
+        video = generate_video_with_offloading(prompt="...", config=config, model_path=model_path)
 
 This pipeline wraps the diffusers LTX2Pipeline with our config integration
 and memory management patterns optimized for RTX 4090 (24GB VRAM).
@@ -37,9 +53,19 @@ import gc
 import logging
 import os
 import time
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterator, List, Optional, Tuple, Union
+
+# Emit deprecation warning on import
+warnings.warn(
+    "llm_dit.pipelines.ltx2 (diffusers wrapper) is deprecated. "
+    "Use llm_dit.pipelines.generate (pure PyTorch) instead. "
+    "See module docstring for migration guide.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 # Prevent tokenizers parallelism warning when forking (e.g., during video export)
 os.environ["TOKENIZERS_PARALLELISM"] = "false"

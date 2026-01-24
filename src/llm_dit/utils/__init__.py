@@ -135,6 +135,24 @@ from llm_dit.utils.memory import (
     MemoryTracker,
 )
 
+from llm_dit.utils.gpu_memory import (
+    cleanup_gpu_memory,
+    free_gpu_memory_context,
+    free_gpu_memory_after,
+    verify_pure_pytorch,
+    staged_gpu_loading,
+    FreeGPUMemoryContext,
+    get_peak_memory_gb,
+    reset_peak_memory,
+)
+
+from llm_dit.utils.progress import (
+    SamplingProgress,
+    StepTracker,
+    StageProgress,
+    create_denoising_callback,
+)
+
 from llm_dit.utils.metrics import (
     SigLIPScorer,
     compute_siglip_score,
@@ -252,6 +270,20 @@ __all__ = [
     "estimate_vram_usage",
     "estimate_ltx2_vram",
     "MemoryTracker",
+    # GPU Memory (pure PyTorch)
+    "cleanup_gpu_memory",
+    "free_gpu_memory_context",
+    "free_gpu_memory_after",
+    "verify_pure_pytorch",
+    "staged_gpu_loading",
+    "FreeGPUMemoryContext",
+    "get_peak_memory_gb",
+    "reset_peak_memory",
+    # Progress tracking
+    "SamplingProgress",
+    "StepTracker",
+    "StageProgress",
+    "create_denoising_callback",
     # Metrics
     "SigLIPScorer",
     "compute_siglip_score",

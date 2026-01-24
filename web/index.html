@@ -160,10 +160,15 @@
                         LTX-2
                         <span class="block text-xs font-normal opacity-75">Text-to-Video</span>
                     </button>
+                    <button type="button" id="modelTypeFLUX2" class="flex-1 min-w-[120px] px-4 py-2.5 rounded-lg bg-gray-700 text-gray-300 hover:bg-gray-600 font-medium transition-colors">
+                        FLUX.2
+                        <span class="block text-xs font-normal opacity-75">Image Gen</span>
+                    </button>
                 </div>
                 <p id="qwenImageStatus" class="hidden text-xs text-yellow-400 mt-2">Qwen-Image not configured. Set qwen_image.model_path in config.</p>
                 <p id="qwenImage2512Status" class="hidden text-xs text-yellow-400 mt-2">Qwen-Image T2I not configured. Use --model-type qwenimage-t2i --qwen-image-model-path</p>
                 <p id="ltx2Status" class="hidden text-xs text-yellow-400 mt-2">LTX-2 not available. Configure ltx2.model_path in config.toml</p>
+                <p id="flux2Status" class="hidden text-xs text-yellow-400 mt-2">FLUX.2 not available. Configure flux2.model_path in config.toml</p>
             </div>
 
             <!-- Shared Generation Parameters -->
@@ -318,7 +323,7 @@
                 <!-- Decompose Button -->
                 <button
                     type="button"
-                    id="decomposeBtn"
+                    id="qiDecomposeBtn"
                     class="w-full py-4 px-4 bg-purple-600 hover:bg-purple-700 active:bg-purple-800 disabled:bg-gray-700 disabled:cursor-not-allowed text-white font-semibold rounded-xl transition-colors text-lg shadow-lg shadow-purple-500/20"
                 >
                     Decompose Image
@@ -1940,6 +1945,213 @@
                     </div>
                 </div>
             </div> <!-- End ltx2Section -->
+
+            <!-- FLUX.2 Section -->
+            <div id="flux2Section" class="hidden space-y-4">
+                <!-- Generation Parameters (styled like sharedParams) -->
+                <div class="mb-6 p-4 bg-gray-800/50 rounded-xl border border-gray-700">
+                    <h3 class="text-sm font-medium text-gray-300 mb-4">Generation Parameters</h3>
+                    <div class="grid grid-cols-2 gap-4">
+                        <!-- Steps -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-2">
+                                Steps: <span id="flux2StepsValue" class="text-orange-400">4</span>
+                            </label>
+                            <input type="range" id="flux2Steps" min="1" max="100" value="4" class="w-full">
+                            <div class="flex justify-between text-xs text-gray-500 mt-1">
+                                <span>1</span>
+                                <span>100</span>
+                            </div>
+                        </div>
+
+                        <!-- Guidance -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-2">
+                                Guidance: <span id="flux2GuidanceValue" class="text-orange-400">1.0</span>
+                            </label>
+                            <input type="range" id="flux2Guidance" min="0.0" max="10.0" step="0.1" value="1.0" class="w-full">
+                            <div class="flex justify-between text-xs text-gray-500 mt-1">
+                                <span>0.0</span>
+                                <span>10.0</span>
+                            </div>
+                        </div>
+
+                        <!-- Seed -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-2">Seed</label>
+                            <div class="flex gap-2">
+                                <input type="number" id="flux2Seed" placeholder="Random" class="flex-1 px-3 py-2 bg-gray-800 border border-gray-700 rounded-xl text-white placeholder-gray-500 focus:ring-2 focus:ring-orange-500">
+                                <button type="button" id="flux2RandomSeed" class="px-3 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-xl" title="Random seed">🎲</button>
+                            </div>
+                        </div>
+
+                        <!-- Resolution -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-2">Resolution</label>
+                            <select id="flux2Resolution" class="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-xl text-white focus:ring-2 focus:ring-orange-500">
+                                <option value="512x512">512×512</option>
+                                <option value="768x768">768×768</option>
+                                <option value="1024x1024" selected>1024×1024</option>
+                                <option value="1280x1280">1280×1280</option>
+                                <option value="768x1024">768×1024 (Portrait)</option>
+                                <option value="1024x768">1024×768 (Landscape)</option>
+                                <option value="1024x1536">1024×1536 (Tall)</option>
+                                <option value="1536x1024">1536×1024 (Wide)</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Main Form -->
+                <form id="flux2Form" class="space-y-4" novalidate>
+                    <!-- Prompt -->
+                    <div>
+                        <label for="flux2Prompt" class="block text-sm font-medium text-gray-300 mb-2">Prompt *</label>
+                        <textarea
+                            id="flux2Prompt"
+                            rows="4"
+                            required
+                            class="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-white placeholder-gray-500 focus:ring-2 focus:ring-orange-500 focus:border-transparent resize-none"
+                            placeholder="Describe the image you want to generate..."
+                        ></textarea>
+                    </div>
+
+                    <!-- Model Variant Selector -->
+                    <div>
+                        <label for="flux2Model" class="block text-sm font-medium text-gray-300 mb-2">Model Variant</label>
+                        <select id="flux2Model" class="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-xl text-white focus:ring-2 focus:ring-orange-500">
+                            <optgroup label="Distilled (Fast - 4 steps)">
+                                <option value="klein-9b">Klein 9B (BF16)</option>
+                                <option value="klein-9b-fp8" selected>Klein 9B FP8 (Recommended)</option>
+                                <option value="klein-4b">Klein 4B (BF16)</option>
+                                <option value="klein-4b-fp8">Klein 4B FP8</option>
+                            </optgroup>
+                            <optgroup label="Base (Quality - 50 steps)">
+                                <option value="klein-base-9b">Klein Base 9B (BF16)</option>
+                                <option value="klein-base-9b-fp8">Klein Base 9B FP8</option>
+                                <option value="klein-base-4b">Klein Base 4B (BF16)</option>
+                                <option value="klein-base-4b-fp8">Klein Base 4B FP8</option>
+                            </optgroup>
+                        </select>
+                        <p id="flux2ModelInfo" class="text-xs text-gray-500 mt-1">Distilled: 4 steps, CFG=1.0 | Base: 50 steps, CFG=4.0</p>
+                    </div>
+
+                    <!-- Reference Images (Collapsible) -->
+                    <details class="p-4 bg-gray-800/50 rounded-xl border border-gray-700">
+                        <summary class="cursor-pointer text-sm font-medium text-gray-300 flex items-center gap-2">
+                            <svg class="w-4 h-4 text-orange-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+                            </svg>
+                            Image Editing (Reference Images)
+                            <span class="text-xs text-gray-500 ml-2">Optional - upload 1-4 reference images for editing</span>
+                        </summary>
+                        <div class="mt-4 space-y-3">
+                            <p class="text-xs text-gray-400">Upload images to use as references. The model will incorporate elements from these images based on your prompt.</p>
+                            <div id="flux2RefDropzone" class="border-2 border-dashed border-gray-600 rounded-xl p-6 text-center cursor-pointer hover:border-orange-500 transition-colors">
+                                <input type="file" id="flux2RefInput" accept="image/*" multiple class="hidden">
+                                <svg class="w-10 h-10 mx-auto text-gray-500 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+                                </svg>
+                                <p class="text-gray-400 text-sm">Drag & drop reference images here or click to browse</p>
+                                <p class="text-gray-500 text-xs mt-1">Supports 1-4 images (PNG, JPEG, WebP)</p>
+                            </div>
+                            <div id="flux2RefPreview" class="hidden flex flex-wrap gap-2">
+                                <!-- Reference image previews will be added here -->
+                            </div>
+                            <button type="button" id="flux2ClearRefs" class="hidden text-xs text-red-400 hover:text-red-300">Clear all reference images</button>
+
+                            <!-- Match Output Size to Reference -->
+                            <div id="flux2MatchSizeContainer" class="hidden mt-3 pt-3 border-t border-gray-700">
+                                <div class="flex items-center gap-3">
+                                    <input type="checkbox" id="flux2MatchSize" class="w-4 h-4 rounded bg-gray-700 border-gray-600 text-orange-500 focus:ring-orange-500">
+                                    <label for="flux2MatchSize" class="text-sm text-gray-300 cursor-pointer">Match output size to first reference image</label>
+                                </div>
+                                <p id="flux2MatchedDims" class="hidden text-xs text-orange-400 mt-1 ml-7"></p>
+                            </div>
+                        </div>
+                    </details>
+
+                    <!-- Advanced Options (Collapsible) -->
+                    <details class="p-4 bg-gray-800/50 rounded-xl border border-gray-700">
+                        <summary class="cursor-pointer text-sm font-medium text-gray-300 flex items-center gap-2">
+                            <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+                            </svg>
+                            Advanced Options
+                        </summary>
+                        <div class="mt-4 space-y-3">
+                            <!-- Block Offload -->
+                            <div class="flex items-center gap-3">
+                                <input type="checkbox" id="flux2BlockOffload" class="w-4 h-4 rounded bg-gray-700 border-gray-600 text-orange-500 focus:ring-orange-500">
+                                <label for="flux2BlockOffload" class="text-sm text-gray-300 cursor-pointer">Block Offload (Lower VRAM, slower)</label>
+                                <span class="text-xs text-gray-500">For GPUs with less than 24GB VRAM</span>
+                            </div>
+                            <!-- Custom Model Path -->
+                            <div>
+                                <label for="flux2ModelPath" class="block text-sm font-medium text-gray-300 mb-1">Custom Model Path</label>
+                                <input type="text" id="flux2ModelPath" placeholder="Leave empty to use HuggingFace" class="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-xl text-white placeholder-gray-500 focus:ring-2 focus:ring-orange-500 text-sm">
+                            </div>
+                            <!-- Custom VAE Path -->
+                            <div>
+                                <label for="flux2VaePath" class="block text-sm font-medium text-gray-300 mb-1">Custom VAE Path</label>
+                                <input type="text" id="flux2VaePath" placeholder="Leave empty to use HuggingFace" class="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-xl text-white placeholder-gray-500 focus:ring-2 focus:ring-orange-500 text-sm">
+                            </div>
+                        </div>
+                    </details>
+
+                    <!-- Generate Button -->
+                    <button
+                        type="submit"
+                        id="flux2GenerateBtn"
+                        class="w-full py-3 px-4 bg-orange-600 hover:bg-orange-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-semibold rounded-xl transition-colors flex items-center justify-center gap-2"
+                    >
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+                        </svg>
+                        Generate Image
+                    </button>
+                </form>
+
+                <!-- Progress Bar -->
+                <div id="flux2Progress" class="hidden">
+                    <div class="p-4 bg-gray-800/50 rounded-xl border border-gray-700">
+                        <div class="flex justify-between text-sm text-gray-300 mb-2">
+                            <span id="flux2ProgressStatus">Starting...</span>
+                            <span id="flux2ProgressEta">--</span>
+                        </div>
+                        <div class="w-full bg-gray-700 rounded-full h-3">
+                            <div id="flux2ProgressBar" class="bg-orange-600 h-3 rounded-full transition-all duration-300" style="width: 0%"></div>
+                        </div>
+                        <p class="text-xs text-gray-500 mt-2" id="flux2ProgressDetail">Preparing...</p>
+                    </div>
+                </div>
+
+                <!-- Image Result -->
+                <div id="flux2Result" class="hidden">
+                    <div class="p-4 bg-gray-800/50 rounded-xl border border-gray-700">
+                        <div class="mb-3 flex justify-between items-center">
+                            <h3 class="text-sm font-medium text-gray-300">Generated Image</h3>
+                            <span id="flux2ResultTime" class="text-xs text-gray-500">--</span>
+                        </div>
+                        <img id="flux2ResultImg" class="w-full rounded-lg bg-gray-900 cursor-pointer" alt="Generated image" title="Click to view full size">
+                        <div class="flex gap-2 mt-3">
+                            <button
+                                id="flux2Download"
+                                class="flex-1 py-2 px-4 bg-green-600 hover:bg-green-700 text-white font-medium rounded-lg transition-colors flex items-center justify-center gap-2"
+                            >
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+                                </svg>
+                                Download Image
+                            </button>
+                        </div>
+                        <div class="mt-3 text-xs text-gray-500">
+                            <span id="flux2ResultInfo">--</span>
+                        </div>
+                    </div>
+                </div>
+            </div> <!-- End flux2Section -->
         </div>
 
         <!-- Image Lightbox Modal -->
@@ -2296,6 +2508,7 @@
     <script src="/static/js/advanced.js"></script>
     <script src="/static/js/qwen-image.js"></script>
     <script src="/static/js/ltx2.js"></script>
+    <script src="/static/js/flux2.js"></script>
     <script src="/static/js/image-utils.js"></script>
     <script src="/static/js/config-manager.js"></script>
     <script src="/static/js/app.js"></script>

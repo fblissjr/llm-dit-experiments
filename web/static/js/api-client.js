@@ -375,6 +375,29 @@ const ApiClient = {
         });
         return this._handleImageResponse(response);
     },
+
+    // =========================================================================
+    // FLUX.2 Klein Image Generation
+    // =========================================================================
+
+    async getFlux2Status() {
+        const response = await fetch(`${API_BASE}/api/flux2/status`);
+        return response.json();
+    },
+
+    async flux2Generate(data) {
+        const response = await fetch(`${API_BASE}/api/flux2/generate`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+        });
+        return this._handleImageResponse(response);
+    },
+
+    async unloadFlux2() {
+        const response = await fetch(`${API_BASE}/api/vram/unload-flux2`, { method: 'POST' });
+        return response.json();
+    },
 };
 
 // Export for use by other modules

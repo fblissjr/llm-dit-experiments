@@ -25,7 +25,7 @@ import torch
 from .config import Config
 
 # Supported model types
-ModelType = Literal["zimage", "qwenimage-layered", "qwenimage-t2i", "qwenimage-edit", "ltx2", "wan"]
+ModelType = Literal["zimage", "qwenimage-layered", "qwenimage-t2i", "qwenimage-edit", "ltx2", "wan", "flux2"]
 SUPPORTED_MODEL_TYPES: tuple[str, ...] = get_args(ModelType)
 
 logger = logging.getLogger(__name__)
@@ -104,7 +104,11 @@ class RuntimeConfig:
     This is the single source of truth used by both web server and CLI scripts.
     """
 
-    # Model type selection
+    # Startup pipeline selection
+    # Which pipeline to load at server startup (none = on-demand loading)
+    default_pipeline: str = "none"  # none, z-image, qwen-image, flux2, ltx2
+
+    # Model type selection (for CLI scripts)
     model_type: str = "zimage"  # zimage, qwenimage-layered, qwenimage-t2i, qwenimage-edit
 
     # Model paths (Z-Image)
@@ -148,6 +152,7 @@ class RuntimeConfig:
     ltx2_vae_device: str = "cuda"  # VAE on GPU
     ltx2_quantize: str = "fp8"  # fp8 or none
     ltx2_skip_cleanup: bool = False  # Skip memory cleanup between stages
+    ltx2_gemma_variant: str = "bf16"  # bf16, 8bit, q4-qat - Gemma3 backbone variant
 
     # Wan/HuMo video generation
     wan_humo_path: str = ""  # Path to HuMo transformer (e.g., ~/Storage/HuMo)
@@ -163,6 +168,19 @@ class RuntimeConfig:
     wan_steps: int = 50  # Diffusion steps (50 for HuMo)
     wan_offload_mode: str = "model"  # none, model, sequential
     wan_output_path: str = "wan_output.mp4"  # Output video path
+
+    # FLUX.2 Klein image generation
+    flux2_model_name: str = "klein-9b"  # klein-4b, klein-9b, klein-base-4b, klein-base-9b
+    flux2_num_steps: int | None = None  # None = model default (4 for distilled, 50 for base)
+    flux2_guidance: float | None = None  # None = model default (1.0 for distilled, 4.0 for base)
+    flux2_seed: int | None = None  # Random seed for reproducibility
+    flux2_offload_between_stages: bool = True  # Memory-efficient three-stage offloading
+    flux2_block_offload: bool = False  # Block-by-block offloading (slower but uses ~5GB less VRAM)
+    flux2_output_path: str = "flux2_output.png"  # Output image path
+    flux2_input_images: list[str] | None = None  # Input image paths for editing mode
+    flux2_encoder_path: str | None = None  # Custom path for Qwen3 encoder (auto-detects dtype)
+    flux2_model_path: str | None = None  # Local path to transformer weights (file or directory)
+    flux2_vae_path: str | None = None  # Local path to VAE weights (file or directory)
 
     # Device placement
     encoder_device: str = "auto"
@@ -634,6 +652,16 @@ def create_base_parser(
         action="store_true",
         help="Skip memory cleanup between stages (faster, needs more VRAM)",
     )
+    ltx2_opt.add_argument(
+        "--ltx2-gemma-variant",
+        choices=["bf16", "8bit", "q4-qat"],
+        default=None,
+        help="Gemma3 backbone variant for text encoding. "
+        "bf16: Full precision (~24GB). "
+        "8bit: BitsAndBytes 8-bit (~12GB). "
+        "q4-qat: Pre-quantized Q4 QAT (~3GB). "
+        "Default: bf16",
+    )
 
     # Wan/HuMo video generation
     wan_group = parser.add_argument_group("Wan/HuMo Video Generation")
@@ -716,6 +744,92 @@ def create_base_parser(
         type=str,
         default=None,
         help="Output video path (default: wan_output.mp4)",
+    )
+
+    # FLUX.2 Klein image generation
+    flux2_group = parser.add_argument_group("FLUX.2 Klein Image Generation")
+    flux2_group.add_argument(
+        "--flux2-model-name",
+        type=str,
+        choices=[
+            "klein-4b", "klein-9b", "klein-base-4b", "klein-base-9b",
+            "klein-4b-fp8", "klein-9b-fp8", "klein-base-4b-fp8", "klein-base-9b-fp8",
+        ],
+        default=None,
+        help="FLUX.2 Klein model variant (default: klein-9b). "
+        "Distilled models (klein-*b) use 4 steps, base models use 50 steps. "
+        "FP8 variants (-fp8 suffix) use half the memory.",
+    )
+    flux2_group.add_argument(
+        "--flux2-num-steps",
+        type=int,
+        default=None,
+        help="Number of denoising steps (default: 4 for distilled, 50 for base)",
+    )
+    flux2_group.add_argument(
+        "--flux2-guidance",
+        type=float,
+        default=None,
+        help="Guidance scale (default: 1.0 for distilled, 4.0 for base)",
+    )
+    flux2_group.add_argument(
+        "--flux2-seed",
+        type=int,
+        default=None,
+        help="Random seed for reproducibility",
+    )
+    flux2_group.add_argument(
+        "--flux2-offload",
+        action="store_true",
+        default=None,
+        help="Enable three-stage memory offloading (default: True)",
+    )
+    flux2_group.add_argument(
+        "--flux2-no-offload",
+        action="store_true",
+        default=None,
+        help="Disable memory offloading (requires more VRAM)",
+    )
+    flux2_group.add_argument(
+        "--flux2-block-offload",
+        action="store_true",
+        default=None,
+        help="Enable block-by-block offloading (slower but uses ~5GB less VRAM). "
+        "Use this if you're getting OOM errors with full model on GPU.",
+    )
+    flux2_group.add_argument(
+        "--flux2-output",
+        type=str,
+        default=None,
+        help="Output image path (default: flux2_output.png)",
+    )
+    flux2_group.add_argument(
+        "--flux2-input-image",
+        type=str,
+        nargs="+",
+        default=None,
+        help="Input image(s) for editing mode. Can specify multiple images.",
+    )
+    flux2_group.add_argument(
+        "--flux2-encoder-path",
+        type=str,
+        default=None,
+        help="Custom path for Qwen3 text encoder (local path or HF model ID). "
+        "Auto-detects dtype (BF16, FP8, etc). Default: uses model-specific encoder.",
+    )
+    flux2_group.add_argument(
+        "--flux2-model-path",
+        type=str,
+        default=None,
+        help="Local path to transformer weights (file or directory). "
+        "If directory, searches for expected .safetensors file.",
+    )
+    flux2_group.add_argument(
+        "--flux2-vae-path",
+        type=str,
+        default=None,
+        help="Local path to VAE weights (file or directory). "
+        "If directory, searches for ae.safetensors in vae/ subdirectory.",
     )
 
     # Device placement
@@ -1465,6 +1579,8 @@ def _apply_cli_overrides(args: argparse.Namespace, config: RuntimeConfig) -> Run
         config.ltx2_save_embeddings = args.ltx2_save_embeddings
     if getattr(args, "ltx2_load_embeddings", None) is not None:
         config.ltx2_load_embeddings = args.ltx2_load_embeddings
+    if getattr(args, "ltx2_gemma_variant", None) is not None:
+        config.ltx2_gemma_variant = args.ltx2_gemma_variant
 
     # Wan/HuMo video overrides
     if getattr(args, "wan_humo_path", None) is not None:
@@ -1493,6 +1609,32 @@ def _apply_cli_overrides(args: argparse.Namespace, config: RuntimeConfig) -> Run
         config.wan_offload_mode = args.wan_offload_mode
     if getattr(args, "wan_output", None) is not None:
         config.wan_output_path = args.wan_output
+
+    # FLUX.2 Klein overrides
+    if getattr(args, "flux2_model_name", None) is not None:
+        config.flux2_model_name = args.flux2_model_name
+    if getattr(args, "flux2_num_steps", None) is not None:
+        config.flux2_num_steps = args.flux2_num_steps
+    if getattr(args, "flux2_guidance", None) is not None:
+        config.flux2_guidance = args.flux2_guidance
+    if getattr(args, "flux2_seed", None) is not None:
+        config.flux2_seed = args.flux2_seed
+    if getattr(args, "flux2_offload", False):
+        config.flux2_offload_between_stages = True
+    if getattr(args, "flux2_no_offload", False):
+        config.flux2_offload_between_stages = False
+    if getattr(args, "flux2_block_offload", False):
+        config.flux2_block_offload = True
+    if getattr(args, "flux2_output", None) is not None:
+        config.flux2_output_path = args.flux2_output
+    if getattr(args, "flux2_input_image", None) is not None:
+        config.flux2_input_images = args.flux2_input_image
+    if getattr(args, "flux2_encoder_path", None) is not None:
+        config.flux2_encoder_path = args.flux2_encoder_path
+    if getattr(args, "flux2_model_path", None) is not None:
+        config.flux2_model_path = args.flux2_model_path
+    if getattr(args, "flux2_vae_path", None) is not None:
+        config.flux2_vae_path = args.flux2_vae_path
 
     # Device overrides
     if getattr(args, "text_encoder_device", None) is not None:
@@ -1646,6 +1788,7 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
             logger.info(f"Loaded config profile: {args.profile}")
 
             # Apply TOML values to runtime config
+            config.default_pipeline = toml_config.default_pipeline or config.default_pipeline
             config.model_path = toml_config.model_path or config.model_path
             config.templates_dir = toml_config.templates_dir or config.templates_dir
             config.encoder_device = toml_config.encoder.device
@@ -1757,6 +1900,20 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
                 config.ltx2_vae_device = getattr(ltx2, "vae_device", "cuda")
                 config.ltx2_quantize = getattr(ltx2, "quantize", "fp8")
                 config.ltx2_skip_cleanup = getattr(ltx2, "skip_cleanup", False)
+
+            # Check for FLUX.2 section
+            if hasattr(toml_config, "flux2"):
+                flux2 = toml_config.flux2
+                # Use 'or' to handle empty strings as falsy
+                config.flux2_model_path = flux2.model_path or config.flux2_model_path
+                config.flux2_vae_path = flux2.vae_path or config.flux2_vae_path
+                config.flux2_encoder_path = flux2.encoder_path or config.flux2_encoder_path
+                config.flux2_model_name = flux2.default_model or config.flux2_model_name
+                config.flux2_block_offload = flux2.block_offload
+                if flux2.default_steps is not None:
+                    config.flux2_num_steps = flux2.default_steps
+                if flux2.default_guidance is not None:
+                    config.flux2_guidance = flux2.default_guidance
 
             # Check for Wan section
             if hasattr(toml_config, "wan"):

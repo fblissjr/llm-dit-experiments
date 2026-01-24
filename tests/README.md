@@ -1,6 +1,6 @@
 # tests
 
-*last updated: 2026-01-22*
+*last updated: 2026-01-24*
 
 Comprehensive test suite with **~1030 tests** protecting against regressions.
 
@@ -92,6 +92,27 @@ uv run pytest tests/ --collect-only
 | `unit/test_scheduler.py` | Sigma schedule, dynamic shift |
 | `integration/test_performance.py` | Memory leaks, timing bounds |
 | `e2e/test_baseline_portable.py` | Full T2V pipeline |
+
+## flux.2 test inventory
+
+| File | Scenario | Status |
+|------|----------|--------|
+| `unit/test_flux2_transformer.py` | Double/single stream blocks, modulation | Tested |
+| `unit/test_flux2_rope.py` | 4D RoPE, attention | Tested |
+| `unit/test_flux2_vae.py` | VAE encode/decode | Tested |
+| `integration/test_flux2_encoder.py` | Qwen3 encoder integration | Tested |
+| `e2e/test_flux2_generation.py` | Klein-4B/9B basic generation | Tested |
+| `e2e/test_flux2_fp8_offload.py` | **FP8 + block offload (OOM fix)** | **New** |
+
+### fp8 + block offload test coverage (new)
+
+| Scenario | Test | Status |
+|----------|------|--------|
+| Klein-9B-FP8 load with offload | `test_fp8_loading_with_block_offload_no_oom` | Tested |
+| Klein-9B-FP8 load without offload | `test_fp8_loading_without_block_offload` | Tested |
+| FP8 + offload smoke generation | `test_fp8_offload_smoke_generation` | Tested |
+| VRAM bounded during denoising | `test_vram_stays_bounded_during_denoising` | Tested |
+| FP8 variants (distilled, base) | `test_fp8_variants_with_offload` | Tested |
 
 ## success criteria
 
