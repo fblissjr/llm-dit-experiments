@@ -37,8 +37,10 @@ logger = logging.getLogger(__name__)
 
 try:
     import psutil
+    _psutil = psutil  # Bind to a variable for type checker
     PSUTIL_AVAILABLE = True
 except ImportError:
+    _psutil = None
     PSUTIL_AVAILABLE = False
 
 
@@ -60,8 +62,8 @@ def _log_memory_state(prefix: str = "") -> None:
         msg_parts.append(f"GPU allocated: {_format_memory_gb(allocated)}")
         msg_parts.append(f"reserved: {_format_memory_gb(reserved)}")
 
-    if PSUTIL_AVAILABLE:
-        process = psutil.Process()
+    if PSUTIL_AVAILABLE and _psutil is not None:
+        process = _psutil.Process()
         mem_info = process.memory_info()
         msg_parts.append(f"CPU RSS: {_format_memory_gb(mem_info.rss)}")
 
@@ -81,6 +83,144 @@ MODEL_PATH_ENV_VARS = {
 }
 
 VAE_PATH_ENV_VAR = "FLUX2_VAE_PATH"
+
+
+def _convert_diffusers_vae_keys(state_dict: dict) -> dict:
+    """
+    Convert Diffusers VAE state_dict to native FLUX format.
+
+    This handles both key renaming AND shape conversion:
+    - Diffusers uses nn.Linear for attention (2D weights)
+    - Native FLUX uses nn.Conv2d with kernel_size=1 (4D weights)
+
+    Key mappings:
+    - encoder.down_blocks.X.resnets.Y -> encoder.down.X.block.Y
+    - encoder.down_blocks.X.downsamplers.0.conv -> encoder.down.X.downsample.conv
+    - encoder.mid_block.resnets.0/1 -> encoder.mid.block_1/block_2
+    - encoder.mid_block.attentions.0.to_q/k/v -> encoder.mid.attn_1.q/k/v
+    - encoder.mid_block.attentions.0.to_out.0 -> encoder.mid.attn_1.proj_out
+    - encoder.mid_block.attentions.0.group_norm -> encoder.mid.attn_1.norm
+    - encoder.conv_norm_out -> encoder.norm_out
+    - quant_conv -> encoder.quant_conv
+    - conv_shortcut -> nin_shortcut
+    - decoder.up_blocks.X reversed to decoder.up.(3-X) (indices are reversed)
+    """
+    import re
+
+    # Check if conversion is needed (look for Diffusers-specific keys)
+    has_diffusers_keys = any("down_blocks" in k or "up_blocks" in k for k in state_dict.keys())
+    if not has_diffusers_keys:
+        return state_dict  # Already in native format
+
+    print("Converting Diffusers VAE to native FLUX format (keys + shapes)...")
+
+    new_sd = {}
+    num_up_blocks = 4  # Standard VAE has 4 up/down blocks
+
+    # Keys that need shape conversion from [N, M] to [N, M, 1, 1]
+    attention_weight_patterns = [
+        r"\.attn_1\.(q|k|v|proj_out)\.weight$",
+    ]
+
+    for old_key, value in state_dict.items():
+        new_key = old_key
+
+        # Top-level quant_conv -> encoder.quant_conv
+        if old_key.startswith("quant_conv."):
+            new_key = "encoder." + old_key
+        # Top-level post_quant_conv -> decoder.post_quant_conv
+        elif old_key.startswith("post_quant_conv."):
+            new_key = "decoder." + old_key
+
+        # Encoder down blocks
+        elif old_key.startswith("encoder.down_blocks."):
+            new_key = old_key
+            # resnets -> block
+            new_key = re.sub(r"\.resnets\.(\d+)\.", r".block.\1.", new_key)
+            # downsamplers.0.conv -> downsample.conv
+            new_key = re.sub(r"\.downsamplers\.0\.conv", ".downsample.conv", new_key)
+            # conv_shortcut -> nin_shortcut
+            new_key = new_key.replace(".conv_shortcut.", ".nin_shortcut.")
+            # down_blocks -> down
+            new_key = new_key.replace("encoder.down_blocks.", "encoder.down.")
+
+        # Encoder mid block
+        elif old_key.startswith("encoder.mid_block."):
+            new_key = old_key
+            # resnets.0 -> block_1, resnets.1 -> block_2
+            new_key = re.sub(r"\.resnets\.0\.", ".block_1.", new_key)
+            new_key = re.sub(r"\.resnets\.1\.", ".block_2.", new_key)
+            # attentions.0.to_q/k/v -> attn_1.q/k/v
+            new_key = re.sub(r"\.attentions\.0\.to_([qkv])\.", r".attn_1.\1.", new_key)
+            # attentions.0.to_out.0 -> attn_1.proj_out
+            new_key = re.sub(r"\.attentions\.0\.to_out\.0\.", ".attn_1.proj_out.", new_key)
+            # attentions.0.group_norm -> attn_1.norm
+            new_key = re.sub(r"\.attentions\.0\.group_norm\.", ".attn_1.norm.", new_key)
+            # mid_block -> mid
+            new_key = new_key.replace("encoder.mid_block.", "encoder.mid.")
+
+        # Encoder conv_norm_out -> norm_out
+        elif old_key.startswith("encoder.conv_norm_out."):
+            new_key = old_key.replace("encoder.conv_norm_out.", "encoder.norm_out.")
+
+        # Decoder up blocks (indices are reversed: up_blocks.0 -> up.3, etc.)
+        elif old_key.startswith("decoder.up_blocks."):
+            new_key = old_key
+            # Extract block index and reverse it
+            match = re.match(r"decoder\.up_blocks\.(\d+)\.", old_key)
+            if match:
+                idx = int(match.group(1))
+                reversed_idx = num_up_blocks - 1 - idx
+                # resnets -> block
+                new_key = re.sub(r"\.resnets\.(\d+)\.", r".block.\1.", new_key)
+                # upsamplers.0.conv -> upsample.conv
+                new_key = re.sub(r"\.upsamplers\.0\.conv", ".upsample.conv", new_key)
+                # conv_shortcut -> nin_shortcut
+                new_key = new_key.replace(".conv_shortcut.", ".nin_shortcut.")
+                # Replace index
+                new_key = re.sub(r"decoder\.up_blocks\.\d+\.", f"decoder.up.{reversed_idx}.", new_key)
+
+        # Decoder mid block
+        elif old_key.startswith("decoder.mid_block."):
+            new_key = old_key
+            # resnets.0 -> block_1, resnets.1 -> block_2
+            new_key = re.sub(r"\.resnets\.0\.", ".block_1.", new_key)
+            new_key = re.sub(r"\.resnets\.1\.", ".block_2.", new_key)
+            # attentions.0.to_q/k/v -> attn_1.q/k/v
+            new_key = re.sub(r"\.attentions\.0\.to_([qkv])\.", r".attn_1.\1.", new_key)
+            # attentions.0.to_out.0 -> attn_1.proj_out
+            new_key = re.sub(r"\.attentions\.0\.to_out\.0\.", ".attn_1.proj_out.", new_key)
+            # attentions.0.group_norm -> attn_1.norm
+            new_key = re.sub(r"\.attentions\.0\.group_norm\.", ".attn_1.norm.", new_key)
+            # mid_block -> mid
+            new_key = new_key.replace("decoder.mid_block.", "decoder.mid.")
+
+        # Decoder conv_norm_out -> norm_out
+        elif old_key.startswith("decoder.conv_norm_out."):
+            new_key = old_key.replace("decoder.conv_norm_out.", "decoder.norm_out.")
+
+        # BatchNorm keys are kept as-is (bn.running_mean, bn.running_var, bn.num_batches_tracked)
+        # These are critical for latent normalization!
+
+        # Shape conversion: Attention weights need [N, M] -> [N, M, 1, 1] for Conv2d
+        new_value = value
+        for pattern in attention_weight_patterns:
+            if re.search(pattern, new_key) and value.dim() == 2:
+                new_value = value.unsqueeze(-1).unsqueeze(-1)
+                break
+
+        new_sd[new_key] = new_value
+
+    # Add missing BatchNorm buffers (FLUX VAE has BatchNorm for latent normalization)
+    # These are initialized as zeros and ones, and will be updated during first forward pass
+    if "bn.running_mean" not in new_sd:
+        # Default BatchNorm stats for 128-channel latent space (32 z_channels * 4 from patchify)
+        new_sd["bn.running_mean"] = torch.zeros(128)
+        new_sd["bn.running_var"] = torch.ones(128)
+        new_sd["bn.num_batches_tracked"] = torch.tensor(0, dtype=torch.long)
+
+    print(f"Converted {len(new_sd)} VAE keys (including shape fixes)")
+    return new_sd
 
 
 def _try_huggingface_download(repo_id: str, filename: str) -> str | None:
@@ -194,21 +334,32 @@ def _get_vae_weight_path(model_name: str, vae_path: str | None = None) -> str:
         vae_path_obj = Path(vae_path)
         if vae_path_obj.is_file() and vae_path_obj.suffix == ".safetensors":
             return str(vae_path_obj)
-        # If it's a directory, look for ae.safetensors
+        # If it's a directory, look for VAE weights
+        # Prefer native format (ae.safetensors) but also support Diffusers format
+        # (diffusion_pytorch_model.safetensors) which will be converted automatically
         if vae_path_obj.is_dir():
-            # Check directly at root
-            ae_file = vae_path_obj / "ae.safetensors"
-            if ae_file.exists():
-                return str(ae_file)
-            # Check in vae subdirectory
+            search_dirs = [vae_path_obj]
+
+            # Also check vae subdirectory
             vae_subdir = vae_path_obj / "vae"
             if vae_subdir.exists():
-                ae_file = vae_subdir / "ae.safetensors"
+                search_dirs.append(vae_subdir)
+
+            # Check for native format first
+            for search_dir in search_dirs:
+                ae_file = search_dir / "ae.safetensors"
                 if ae_file.exists():
                     return str(ae_file)
+
+            # Fall back to Diffusers format (will be converted by _convert_diffusers_vae_keys)
+            for search_dir in search_dirs:
+                diffusers_file = search_dir / "diffusion_pytorch_model.safetensors"
+                if diffusers_file.exists():
+                    return str(diffusers_file)
+
         raise ValueError(
             f"Could not find VAE weights at {vae_path}.\n"
-            f"Expected ae.safetensors file."
+            f"Expected ae.safetensors or diffusion_pytorch_model.safetensors."
         )
 
     # 2. Check environment variable
@@ -218,8 +369,13 @@ def _get_vae_weight_path(model_name: str, vae_path: str | None = None) -> str:
             return weight_path
         print(f"Warning: {VAE_PATH_ENV_VAR} set but path doesn't exist: {weight_path}")
 
-    # 3. Try HuggingFace download
-    weight_path = _try_huggingface_download(config["repo_id"], config["filename_ae"])
+    # 3. Try HuggingFace download from model's repo
+    # FLUX.2-klein repos have vae/diffusion_pytorch_model.safetensors (Diffusers format)
+    # which will be converted automatically by _convert_diffusers_vae_keys
+    vae_repo_id = config["repo_id"]
+    vae_filename = "vae/diffusion_pytorch_model.safetensors"
+
+    weight_path = _try_huggingface_download(vae_repo_id, vae_filename)
     if weight_path:
         return weight_path
 
@@ -227,7 +383,7 @@ def _get_vae_weight_path(model_name: str, vae_path: str | None = None) -> str:
         f"Could not find VAE weights. Options:\n"
         f"  1. Use --flux2-vae-path to specify local path\n"
         f"  2. Set {VAE_PATH_ENV_VAR} environment variable\n"
-        f"  3. Ensure HuggingFace Hub access"
+        f"  3. Ensure HuggingFace Hub access to {vae_repo_id}"
     )
 
 
@@ -238,6 +394,7 @@ def load_flux2_transformer(
     debug_mode: bool = False,
     model_path: str | None = None,
     block_offload: bool = False,
+    validate: bool = True,
 ) -> Flux2Transformer:
     """
     Load a FLUX.2 transformer model (pure PyTorch).
@@ -249,6 +406,7 @@ def load_flux2_transformer(
         debug_mode: If True, create minimal model (1 block each) for testing
         model_path: Direct path to weights file or directory (overrides HF download)
         block_offload: If True, enable block-by-block GPU offloading (slower but uses less VRAM)
+        validate: If True, run sanity checks on loaded weights (catches FP8 dequant issues)
 
     Returns:
         Loaded Flux2Transformer
@@ -288,74 +446,180 @@ def load_flux2_transformer(
     sd = load_sft(weight_path, device=load_device)
     _log_memory_state("After load_sft")
 
-    # FP8 checkpoints contain extra scale tensors (input_scale, weight_scale)
-    # that our model doesn't have. Filter them out and cast weights to target dtype.
+    # FP8 checkpoints contain scale tensors (weight_scale) that must be applied
+    # when dequantizing. FP8 format stores: actual_weight = fp8_value * scale
     if is_fp8:
-        # Filter out FP8 scale tensors - they're metadata, not model weights
+        # Find all scale tensors and build a mapping
         scale_keys = [k for k in sd.keys() if k.endswith(("_scale", ".input_scale", ".weight_scale"))]
-        if scale_keys:
-            print(f"FP8 checkpoint detected: removing {len(scale_keys)} scale tensors")
-            for k in scale_keys:
-                del sd[k]
+        scale_map = {}  # weight_key -> scale_tensor
+        for scale_key in scale_keys:
+            # Derive the weight key from the scale key
+            # e.g., "double_blocks.0.img_attn.qkv.weight_scale" -> "double_blocks.0.img_attn.qkv.weight"
+            weight_key = scale_key.replace("_scale", "").replace(".weight", ".weight")
+            if scale_key.endswith(".weight_scale"):
+                weight_key = scale_key.replace(".weight_scale", ".weight")
+            elif scale_key.endswith(".input_scale"):
+                # Input scales are for activations, not weights - skip
+                continue
+            else:
+                weight_key = scale_key.rsplit("_scale", 1)[0]
+            scale_map[weight_key] = sd[scale_key]
 
-        # Cast FP8 weights to target dtype (bf16) on CPU to avoid memory spike
-        # FP8 weights are float8_e4m3fn which can't be used directly in matmul with bf16
+        if scale_map:
+            print(f"FP8 checkpoint detected: applying {len(scale_map)} scale factors")
+            logger.debug(f"[FLUX2:Loader] Found {len(scale_map)} weight scales to apply")
+
+        # Cast FP8 weights to target dtype (bf16) AND apply scale factors
+        # FP8 weights are quantized: actual_weight = fp8_value * scale
+        logger.debug(f"[FLUX2:Loader] Dequantizing FP8 tensors to {dtype} on CPU")
         fp8_count = 0
-        for k, v in sd.items():
+        total_fp8_bytes = 0
+        for k, v in list(sd.items()):  # Use list() since we modify dict
             if v.dtype in (torch.float8_e4m3fn, torch.float8_e5m2):
-                sd[k] = v.to(dtype)
+                tensor_bytes = v.numel() * v.element_size()
+                total_fp8_bytes += tensor_bytes
+
+                # Dequantize: cast to float and apply scale
+                dequantized = v.to(dtype)
+                if k in scale_map:
+                    scale = scale_map[k].to(dtype)
+                    dequantized = dequantized * scale
+                    if fp8_count < 3:
+                        logger.debug(
+                            f"[FLUX2:Loader] Dequantized {k}: scale={scale.item():.6f}, "
+                            f"result_std={dequantized.float().std().item():.4f}"
+                        )
+                else:
+                    logger.warning(f"[FLUX2:Loader] No scale found for FP8 weight: {k}")
+
+                sd[k] = dequantized
                 fp8_count += 1
+
         if fp8_count > 0:
-            print(f"Cast {fp8_count} FP8 tensors to {dtype}")
+            print(f"Dequantized {fp8_count} FP8 tensors to {dtype}")
+            logger.debug(
+                f"[FLUX2:Loader] Dequantized {fp8_count} tensors, "
+                f"total weight memory: {_format_memory_gb(total_fp8_bytes * 2)}"
+            )
+
+        # Remove scale tensors (they're now applied)
+        for scale_key in scale_keys:
+            if scale_key in sd:
+                del sd[scale_key]
+        logger.debug(f"[FLUX2:Loader] Removed {len(scale_keys)} scale tensors")
+        _log_memory_state("After FP8 cast")
 
         # Move to target device after casting - respect block_offload flag
         # BUG FIX: Previously moved ALL weights to GPU unconditionally (17GB for Klein-9B),
         # causing OOM even with block_offload=True. Now we check block_offload BEFORE
         # moving weights to avoid the memory spike.
         target_device = "cpu" if block_offload else device
+        logger.debug(f"[FLUX2:Loader] Target device for state dict: {target_device}")
 
-        # Log memory before moving weights (P1: debug logging)
-        pre_move = 0.0
-        if torch.cuda.is_available():
-            pre_move = torch.cuda.memory_allocated() / 1e9
-            logger.debug(f"[Loader] GPU before state dict move: {pre_move:.2f}GB")
+        # Log memory before moving weights
+        _log_memory_state("Before state dict move")
 
+        # Move state dict to target device (CPU if block_offload, else GPU)
         sd = {k: v.to(target_device) for k, v in sd.items()}
 
         # Log memory after moving weights
-        if torch.cuda.is_available():
-            post_move = torch.cuda.memory_allocated() / 1e9
-            delta = post_move - pre_move
-            logger.debug(f"[Loader] GPU after state dict move: {post_move:.2f}GB (delta: {delta:.2f}GB)")
+        _log_memory_state("After state dict move")
 
         # Clear temp tensors to maximize RAM for model loading
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+        _log_memory_state("After gc.collect")
 
     elif block_offload:
         # For non-FP8 models with block offloading, ensure weights stay on CPU
+        logger.debug("[FLUX2:Loader] Non-FP8 model with block_offload: keeping weights on CPU")
         sd = {k: v.to("cpu") for k, v in sd.items()}
+        _log_memory_state("After moving non-FP8 to CPU")
 
     # Log sample tensor dtypes and devices for debugging
-    sample_keys = list(sd.keys())[:3]
+    sample_keys = list(sd.keys())[:5]
     for k in sample_keys:
-        logger.debug(f"[Loader] Sample tensor {k}: dtype={sd[k].dtype}, device={sd[k].device}")
+        tensor = sd[k]
+        tensor_size = tensor.numel() * tensor.element_size()
+        logger.debug(
+            f"[FLUX2:Loader] Sample tensor {k}: dtype={tensor.dtype}, "
+            f"device={tensor.device}, shape={list(tensor.shape)}, size={_format_memory_gb(tensor_size)}"
+        )
 
+    logger.debug("[FLUX2:Loader] Calling load_state_dict with assign=True")
     model.load_state_dict(sd, strict=True, assign=True)
+    _log_memory_state("After load_state_dict")
 
     # Free state dict memory
+    logger.debug("[FLUX2:Loader] Freeing state dict memory")
     del sd
     gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
+    _log_memory_state("After freeing state dict")
 
     if block_offload:
         # Enable block-by-block offloading (keeps blocks on CPU, small layers on GPU)
         print(f"Block offloading enabled: blocks will be moved to GPU one at a time")
-        return model.enable_block_offload(device=device, offload_device="cpu")
+        logger.debug("[FLUX2:Loader] Enabling block offload")
+        model = model.enable_block_offload(device=device, offload_device="cpu")
+        _log_memory_state("After enable_block_offload")
     else:
-        return model.to(device)
+        logger.debug(f"[FLUX2:Loader] Moving entire model to {device}")
+        model = model.to(device)
+        _log_memory_state("After model.to(device)")
+
+    # Validate loaded weights (catches FP8 dequantization issues)
+    if validate:
+        _validate_transformer_weights(model, is_fp8)
+
+    return model
+
+
+def _validate_transformer_weights(model: Flux2Transformer, is_fp8: bool) -> None:
+    """
+    Validate transformer weights after loading.
+
+    Catches common issues:
+    - FP8 dequantization failure (weights too large - scales not applied)
+    - NaN/Inf values in weights
+    - Wrong dtype
+
+    Args:
+        model: Loaded transformer model
+        is_fp8: Whether model was loaded from FP8 checkpoint
+    """
+    # Sample a few parameters for validation
+    sample_params = []
+    for name, param in model.named_parameters():
+        sample_params.append((name, param))
+        if len(sample_params) >= 5:
+            break
+
+    for name, param in sample_params:
+        # Check for NaN/Inf
+        if param.isnan().any():
+            raise ValueError(f"NaN detected in weight '{name}' - model is corrupted")
+        if param.isinf().any():
+            raise ValueError(f"Inf detected in weight '{name}' - model is corrupted")
+
+        # Check weight magnitude (catches FP8 dequant failure)
+        # Properly scaled weights should have std < 1.0 (typically 0.01-0.1)
+        # Unscaled FP8 weights have std > 10.0
+        param_std = param.float().std().item()
+        if param_std > 5.0:
+            logger.warning(
+                f"[FLUX2:Loader:Validate] Weight '{name}' has high std={param_std:.2f} - "
+                f"FP8 scale factors may not have been applied correctly"
+            )
+            if is_fp8:
+                raise ValueError(
+                    f"FP8 dequantization failed: weight '{name}' has std={param_std:.2f} "
+                    f"(expected < 1.0). Scale factors were not applied correctly."
+                )
+
+    logger.debug("[FLUX2:Loader:Validate] Transformer weights validated successfully")
 
 
 def load_flux2_vae(
@@ -363,6 +627,7 @@ def load_flux2_vae(
     device: str | torch.device = "cuda",
     dtype: torch.dtype = torch.bfloat16,
     vae_path: str | None = None,
+    validate: bool = True,
 ) -> AutoEncoder:
     """
     Load the FLUX.2 VAE (AutoEncoder).
@@ -374,6 +639,7 @@ def load_flux2_vae(
         device: Target device
         dtype: Model dtype (default bfloat16)
         vae_path: Direct path to VAE weights file or directory (overrides HF download)
+        validate: If True, run sanity checks on loaded VAE (catches BatchNorm issues)
 
     Returns:
         Loaded AutoEncoder
@@ -388,9 +654,60 @@ def load_flux2_vae(
 
     # Load weights
     sd = load_sft(weight_path, device=str(device))
-    vae.load_state_dict(sd, strict=True, assign=True)
 
-    return vae.to(device).to(dtype)
+    # Convert Diffusers VAE keys to native FLUX format if needed
+    sd = _convert_diffusers_vae_keys(sd)
+
+    vae.load_state_dict(sd, strict=True, assign=True)
+    vae = vae.to(device).to(dtype)
+
+    # Validate VAE (catches BatchNorm stats issues)
+    if validate:
+        _validate_vae(vae)
+
+    return vae
+
+
+def _validate_vae(vae: AutoEncoder) -> None:
+    """
+    Validate VAE after loading.
+
+    Catches common issues:
+    - BatchNorm running stats not loaded (would produce poor quality)
+    - NaN/Inf values
+
+    Args:
+        vae: Loaded AutoEncoder
+    """
+    # Check BatchNorm running stats
+    # If mean=0 and var=1, the stats weren't loaded - using identity normalization
+    bn_mean = vae.bn.running_mean
+    bn_var = vae.bn.running_var
+
+    if bn_mean is None or bn_var is None:
+        raise ValueError("VAE BatchNorm running stats are None - model not loaded correctly")
+
+    mean_is_zero = (bn_mean.abs() < 1e-6).all()
+    var_is_one = ((bn_var - 1.0).abs() < 1e-6).all()
+
+    if mean_is_zero and var_is_one:
+        logger.warning(
+            "[FLUX2:Loader:Validate] VAE BatchNorm has identity stats (mean=0, var=1) - "
+            "latent normalization may not work correctly. "
+            "This can happen if BatchNorm keys weren't loaded from the weights file."
+        )
+
+    # Check for NaN/Inf
+    if bn_mean.isnan().any() or bn_var.isnan().any():
+        raise ValueError("VAE BatchNorm contains NaN values - model is corrupted")
+
+    # Log actual stats for debugging
+    logger.debug(
+        f"[FLUX2:Loader:Validate] VAE BatchNorm stats: "
+        f"mean range=[{bn_mean.min():.4f}, {bn_mean.max():.4f}], "
+        f"var range=[{bn_var.min():.4f}, {bn_var.max():.4f}]"
+    )
+    logger.debug("[FLUX2:Loader:Validate] VAE validated successfully")
 
 
 def get_model_info(model_name: str) -> dict:

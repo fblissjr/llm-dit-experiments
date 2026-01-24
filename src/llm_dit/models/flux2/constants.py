@@ -77,6 +77,8 @@ class Klein4BParams:
         - 5 double-stream blocks
         - 20 single-stream blocks
         - 3072 hidden dimension, 24 attention heads
+        - pe_dim = hidden_size // num_heads = 3072 // 24 = 128
+        - axes_dim must sum to pe_dim
     """
     in_channels: int = 128  # After 2x2 patchify
     context_in_dim: int = 7680  # 3 x 2560 (Qwen3-4B hidden dim)
@@ -84,7 +86,7 @@ class Klein4BParams:
     num_heads: int = 24
     depth: int = 5  # Double-stream blocks
     depth_single_blocks: int = 20  # Single-stream blocks
-    axes_dim: list[int] = field(default_factory=lambda: [24, 24, 24, 24])  # 4D RoPE (smaller head dim)
+    axes_dim: list[int] = field(default_factory=lambda: [32, 32, 32, 32])  # 4D RoPE: sum=128=pe_dim
     theta: int = 2000  # RoPE base frequency
     mlp_ratio: float = 3.0  # FFN expansion ratio
     use_guidance_embed: bool = False  # Distilled model: no guidance embedding

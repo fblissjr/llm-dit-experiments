@@ -378,6 +378,27 @@ def get_schedule(num_steps: int, image_seq_len: int) -> list[float]:
     return timesteps.tolist()
 
 
+def _format_gb(bytes_val: int | float) -> str:
+    """Format bytes to GB string."""
+    return f"{bytes_val / 1e9:.2f}GB"
+
+
+def _log_denoise_memory(step: int, label: str = "") -> tuple[float, float]:
+    """Log memory state during denoising. Returns (allocated, reserved) in bytes."""
+    if not torch.cuda.is_available():
+        return 0.0, 0.0
+
+    torch.cuda.synchronize()
+    allocated = torch.cuda.memory_allocated()
+    reserved = torch.cuda.memory_reserved()
+
+    if logger.isEnabledFor(logging.DEBUG):
+        prefix = f"[Denoise:Step {step}:{label}]" if label else f"[Denoise:Step {step}]"
+        logger.debug(f"{prefix} GPU: {_format_gb(allocated)} allocated, {_format_gb(reserved)} reserved")
+
+    return allocated, reserved
+
+
 def denoise(
     model,
     img: torch.Tensor,
@@ -408,16 +429,66 @@ def denoise(
     Returns:
         Denoised latents [B, seq_len, channels]
     """
+    num_steps = len(timesteps) - 1
+    num_img_tokens = img.shape[1]
+
+    # =========================================================================
+    # Denoising Loop Initialization - Granular Debug Logging
+    # =========================================================================
+    logger.debug("=" * 60)
+    logger.debug("[Denoise] Starting denoising loop")
+    logger.debug(f"[Denoise] num_steps={num_steps}, num_img_tokens={num_img_tokens}")
+    logger.debug(f"[Denoise] img shape={img.shape}, dtype={img.dtype}, device={img.device}")
+    logger.debug(f"[Denoise] txt shape={txt.shape}, dtype={txt.dtype}")
+    logger.debug(f"[Denoise] img_ids shape={img_ids.shape}")
+    logger.debug(f"[Denoise] txt_ids shape={txt_ids.shape}")
+
+    if img_cond_seq is not None:
+        logger.debug(f"[Denoise] Reference tokens: {img_cond_seq.shape[1]} tokens")
+
+    # Log SDPA backend status
+    if torch.cuda.is_available():
+        try:
+            from torch.backends.cuda import (
+                flash_sdp_enabled,
+                math_sdp_enabled,
+                mem_efficient_sdp_enabled,
+            )
+            logger.debug(f"[Denoise] SDPA backends: flash={flash_sdp_enabled()}, "
+                        f"mem_efficient={mem_efficient_sdp_enabled()}, math={math_sdp_enabled()}")
+        except ImportError:
+            logger.debug("[Denoise] SDPA backend info not available (PyTorch < 2.0)")
+
+    # Track peak memory
+    peak_allocated = 0.0
+    peak_reserved = 0.0
+    if torch.cuda.is_available():
+        torch.cuda.reset_peak_memory_stats()
+
+    initial_alloc, initial_reserved = _log_denoise_memory(0, "init")
+    logger.debug("=" * 60)
+
     # Prepare guidance vector (for non-distilled models)
     guidance_vec = None
     if guidance is not None:
         guidance_vec = torch.full(
             (img.shape[0],), guidance, device=img.device, dtype=img.dtype
         )
+        logger.debug(f"[Denoise] Using guidance: {guidance}")
+    else:
+        logger.debug("[Denoise] No guidance (distilled model)")
 
-    num_img_tokens = img.shape[1]
+    for step_idx, (t_curr, t_prev) in enumerate(
+        tqdm(zip(timesteps[:-1], timesteps[1:]), total=num_steps, desc="Denoising")
+    ):
+        # =====================================================================
+        # Step Start
+        # =====================================================================
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug("-" * 40)
+            logger.debug(f"[Denoise:Step {step_idx}] t_curr={t_curr:.4f} → t_prev={t_prev:.4f}")
+            _log_denoise_memory(step_idx, "start")
 
-    for t_curr, t_prev in tqdm(zip(timesteps[:-1], timesteps[1:]), total=len(timesteps) - 1, desc="Denoising"):
         # Current timestep vector
         t_vec = torch.full(
             (img.shape[0],), t_curr, dtype=img.dtype, device=img.device
@@ -431,15 +502,28 @@ def denoise(
             img_input = torch.cat([img, img_cond_seq], dim=1)
             img_input_ids = torch.cat([img_ids, img_cond_seq_ids], dim=1)
 
-        # Predict velocity
-        pred = model(
-            x=img_input,
-            x_ids=img_input_ids,
-            timesteps=t_vec,
-            ctx=txt,
-            ctx_ids=txt_ids,
-            guidance=guidance_vec,
-        )
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(f"[Denoise:Step {step_idx}] model input shape: {img_input.shape}")
+            _log_denoise_memory(step_idx, "pre_forward")
+
+        # =====================================================================
+        # Model Forward Pass
+        # =====================================================================
+        # CRITICAL: Use torch.no_grad() to prevent activation accumulation.
+        # Without this, PyTorch builds an autograd graph and stores all
+        # intermediate activations, causing memory to grow with each block.
+        with torch.no_grad():
+            pred = model(
+                x=img_input,
+                x_ids=img_input_ids,
+                timesteps=t_vec,
+                ctx=txt,
+                ctx_ids=txt_ids,
+                guidance=guidance_vec,
+            )
+
+        if logger.isEnabledFor(logging.DEBUG):
+            _log_denoise_memory(step_idx, "post_forward")
 
         # Only take prediction for noise tokens (not reference tokens)
         if img_cond_seq is not None:
@@ -447,6 +531,42 @@ def denoise(
 
         # Euler step: x_{t-1} = x_t + (t_prev - t_curr) * v
         img = img + (t_prev - t_curr) * pred
+
+        # =====================================================================
+        # Step End - Memory Tracking
+        # =====================================================================
+        if torch.cuda.is_available():
+            step_alloc, step_reserved = _log_denoise_memory(step_idx, "end")
+            peak_allocated = max(peak_allocated, step_alloc)
+            peak_reserved = max(peak_reserved, step_reserved)
+
+            # Log delta from initial
+            delta = step_alloc - initial_alloc
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(f"[Denoise:Step {step_idx}] Memory delta from init: {_format_gb(delta)}")
+
+    # =========================================================================
+    # Denoising Complete - Summary
+    # =========================================================================
+    logger.debug("=" * 60)
+    logger.debug("[Denoise] Denoising complete")
+
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+        final_alloc = torch.cuda.memory_allocated()
+        final_reserved = torch.cuda.memory_reserved()
+        pytorch_peak = torch.cuda.max_memory_allocated()
+
+        logger.debug(f"[Denoise] Final: {_format_gb(final_alloc)} allocated, {_format_gb(final_reserved)} reserved")
+        logger.debug(f"[Denoise] Peak (tracked): {_format_gb(peak_allocated)} allocated")
+        logger.debug(f"[Denoise] Peak (PyTorch): {_format_gb(pytorch_peak)} allocated")
+        logger.debug(f"[Denoise] Memory retained: {_format_gb(final_alloc - initial_alloc)}")
+
+        # Log if memory usage seems problematic
+        if pytorch_peak > 20e9:  # > 20GB
+            logger.warning(f"[Denoise] HIGH PEAK MEMORY: {_format_gb(pytorch_peak)} - may cause OOM")
+
+    logger.debug("=" * 60)
 
     return img
 
@@ -480,6 +600,7 @@ def latents_to_image(latents: torch.Tensor, vae) -> Image.Image:
 
     # Convert to PIL Image
     pixels = pixels[0]  # Remove batch dimension
+    pixels = pixels.float()  # to_pil_image doesn't support bfloat16
     return torchvision.transforms.functional.to_pil_image(pixels)
 
 

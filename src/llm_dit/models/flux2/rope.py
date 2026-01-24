@@ -1,7 +1,7 @@
 """
 4D Rotary Position Embeddings (RoPE) for FLUX.2.
 
-Last Updated: 2026-01-23
+Last Updated: 2026-01-24
 
 Implements 4-dimensional rotary position embeddings for FLUX.2 Klein models.
 Unlike LTX-2's 3D RoPE (t, h, w), FLUX.2 uses 4D coordinates (t, h, w, l)
@@ -10,8 +10,8 @@ where l is a linear position index.
 Key Differences from LTX-2:
 - 4D positional encoding instead of 3D
 - Different theta (2000 vs 10000)
-- Text uses only the 'l' coordinate (t=h=w=0)
-- Images use all coordinates with t=0 and l=linear index
+- Text uses only the 'l' coordinate (t=h=w=0, l=sequence_position)
+- Images use h,w for spatial position with t=0 and l=0 (NOT linear index)
 
 Ported from: coderef/flux2/src/flux2/model.py
 
@@ -157,7 +157,7 @@ def create_image_ids(
     - t (temporal) = 0 (single image, no temporal dimension)
     - h (height) = row index [0, height)
     - w (width) = column index [0, width)
-    - l (linear) = flattened position [0, height*width)
+    - l (linear) = 0 (images use h,w for spatial position, NOT l)
 
     Args:
         batch_size: Batch size
@@ -181,8 +181,8 @@ def create_image_ids(
     # w = column index (broadcast across height)
     img_ids[..., 2] = torch.arange(width, device=device, dtype=dtype)[None, :]
 
-    # l = linear index (flattened row-major order)
-    img_ids[..., 3] = torch.arange(height * width, device=device, dtype=dtype).view(height, width)
+    # l = 0 for all image tokens (images use h,w for spatial, text uses l for sequence)
+    img_ids[..., 3] = 0
 
     # Flatten spatial dimensions and add batch dimension
     img_ids = img_ids.view(-1, 4)  # [H*W, 4]
@@ -238,6 +238,7 @@ def create_reference_ids(
 
     Reference images get different t coordinates to distinguish them from
     the generation target. Each reference image gets t = t_scale * (1 + idx).
+    Like main images, l=0 for all reference tokens (spatial info via h,w only).
 
     Args:
         batch_size: Batch size
@@ -259,7 +260,7 @@ def create_reference_ids(
         ref_ids[..., 0] = t_offset  # Different t for each reference
         ref_ids[..., 1] = torch.arange(h, device=device, dtype=dtype)[:, None]
         ref_ids[..., 2] = torch.arange(w, device=device, dtype=dtype)[None, :]
-        ref_ids[..., 3] = torch.arange(h * w, device=device, dtype=dtype).view(h, w)
+        ref_ids[..., 3] = 0  # l=0 for reference images (spatial info via h,w only)
 
         all_ref_ids.append(ref_ids.view(-1, 4))
 
@@ -291,7 +292,13 @@ def attention(q: Tensor, k: Tensor, v: Tensor, pe: Tensor) -> Tensor:
     # Apply rotary position embeddings
     q, k = apply_rope(q, k, pe)
 
-    # Compute scaled dot-product attention
+    # Ensure tensors are contiguous for Flash Attention 2 dispatch
+    # SDPA only uses FA2 when tensors are contiguous in memory
+    q = q.contiguous()
+    k = k.contiguous()
+    v = v.contiguous()
+
+    # Compute scaled dot-product attention (dispatches to FA2 when available)
     x = torch.nn.functional.scaled_dot_product_attention(q, k, v)
 
     # Reshape from [B, H, L, D] to [B, L, H*D]
