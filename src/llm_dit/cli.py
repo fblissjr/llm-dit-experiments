@@ -1904,14 +1904,15 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
             # Check for FLUX.2 section
             if hasattr(toml_config, "flux2"):
                 flux2 = toml_config.flux2
-                config.flux2_model_path = getattr(flux2, "model_path", None)
-                config.flux2_vae_path = getattr(flux2, "vae_path", None)
-                config.flux2_encoder_path = getattr(flux2, "encoder_path", None)
-                config.flux2_model_name = getattr(flux2, "default_model", config.flux2_model_name)
-                config.flux2_block_offload = getattr(flux2, "block_offload", config.flux2_block_offload)
-                if getattr(flux2, "default_steps", None) is not None:
+                # Use 'or' to handle empty strings as falsy
+                config.flux2_model_path = flux2.model_path or config.flux2_model_path
+                config.flux2_vae_path = flux2.vae_path or config.flux2_vae_path
+                config.flux2_encoder_path = flux2.encoder_path or config.flux2_encoder_path
+                config.flux2_model_name = flux2.default_model or config.flux2_model_name
+                config.flux2_block_offload = flux2.block_offload
+                if flux2.default_steps is not None:
                     config.flux2_num_steps = flux2.default_steps
-                if getattr(flux2, "default_guidance", None) is not None:
+                if flux2.default_guidance is not None:
                     config.flux2_guidance = flux2.default_guidance
 
             # Check for Wan section

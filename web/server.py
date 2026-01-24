@@ -4987,6 +4987,12 @@ def main():
     runtime_config = load_runtime_config(args)
     setup_logging(runtime_config)
 
+    # Debug: Log FLUX.2 config
+    flux2_model_path = getattr(runtime_config, "flux2_model_path", None)
+    flux2_vae_path = getattr(runtime_config, "flux2_vae_path", None)
+    logger.info(f"[FLUX.2 Config] model_path: {flux2_model_path}")
+    logger.info(f"[FLUX.2 Config] vae_path: {flux2_vae_path}")
+
     # Store config path for reference
     if hasattr(args, "config") and args.config:
         runtime_config.config_path = args.config

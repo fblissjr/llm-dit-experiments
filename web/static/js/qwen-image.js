@@ -140,6 +140,14 @@ function switchModelType(type) {
         setModelDefaults(type);
     }
 
+    // FLUX.2 has its own controls - update defaults when switching to it
+    if (type === 'flux2' && typeof updateFlux2Defaults === 'function') {
+        const modelSelect = document.getElementById('flux2Model');
+        if (modelSelect) {
+            updateFlux2Defaults(modelSelect.value);
+        }
+    }
+
     // Reload resolution presets for new model
     if (typeof ResolutionSelector !== 'undefined' && ResolutionSelector.loadConstraints) {
         // Map UI model type to API model type

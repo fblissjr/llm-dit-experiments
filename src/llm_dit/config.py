@@ -630,6 +630,24 @@ class LTX2Config:
 
 
 @dataclass
+class Flux2Config:
+    """Configuration for FLUX.2 Klein image generation.
+
+    FLUX.2 Klein is a family of 8 model variants:
+    - Distilled (4 steps, CFG=1.0): klein-9b, klein-9b-fp8, klein-4b, klein-4b-fp8
+    - Base (50 steps, CFG=4.0): klein-base-9b, klein-base-9b-fp8, klein-base-4b, klein-base-4b-fp8
+    """
+
+    model_path: str = ""  # Path to transformer weights (file or directory)
+    vae_path: str = ""  # Path to VAE weights (file or directory)
+    encoder_path: str = ""  # Path to Qwen3 encoder (optional, uses HuggingFace if empty)
+    default_model: str = "klein-9b-fp8"  # Default model variant
+    block_offload: bool = True  # Enable block-by-block GPU offloading for low VRAM
+    default_steps: int | None = None  # Default steps (None = model default: 4 distilled, 50 base)
+    default_guidance: float | None = None  # Default CFG (None = model default: 1.0 distilled, 4.0 base)
+
+
+@dataclass
 class QwenImageConfig:
     """Configuration for Qwen-Image-Layered model.
 
@@ -1258,6 +1276,7 @@ class Config:
     vl: VLConfig = field(default_factory=VLConfig)
     qwen_image: QwenImageConfig = field(default_factory=QwenImageConfig)
     ltx2: LTX2Config = field(default_factory=LTX2Config)
+    flux2: Flux2Config = field(default_factory=Flux2Config)
     dype: DyPEConfig = field(default_factory=DyPEConfig)
     slg: SLGConfig = field(default_factory=SLGConfig)
     fmtt: FMTTConfig = field(default_factory=FMTTConfig)
@@ -1279,6 +1298,7 @@ class Config:
         vl_data = data.pop("vl", {})
         qwen_image_data = data.pop("qwen_image", {})
         ltx2_data = data.pop("ltx2", {})
+        flux2_data = data.pop("flux2", {})
         dype_data = data.pop("dype", {})
         slg_data = data.pop("slg", {})
         fmtt_data = data.pop("fmtt", {})
@@ -1301,6 +1321,7 @@ class Config:
             vl=VLConfig(**vl_data),
             qwen_image=QwenImageConfig(**qwen_image_data),
             ltx2=LTX2Config(**ltx2_data),
+            flux2=Flux2Config(**flux2_data),
             dype=DyPEConfig(**dype_data),
             slg=SLGConfig(**slg_data),
             fmtt=FMTTConfig(**fmtt_data),
