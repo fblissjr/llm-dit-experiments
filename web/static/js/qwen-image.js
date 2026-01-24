@@ -78,6 +78,7 @@ function updateQiSections() {
     const zimageSection = document.getElementById('zImageControls');
     const qwenImageSection = document.getElementById('qwenImageSection');
     const ltx2Section = document.getElementById('ltx2Section');
+    const flux2Section = document.getElementById('flux2Section');
 
     // Z-Image section shown for both zimage and qwenimage2512 (Qwen T2I uses same form)
     if (zimageSection) {
@@ -89,6 +90,9 @@ function updateQiSections() {
     if (ltx2Section) {
         ltx2Section.classList.toggle('hidden', modelType !== 'ltx2');
     }
+    if (flux2Section) {
+        flux2Section.classList.toggle('hidden', modelType !== 'flux2');
+    }
 }
 
 function getSelectedModelType() {
@@ -96,11 +100,13 @@ function getSelectedModelType() {
     const qwenImageBtn = document.getElementById('modelTypeQwenImage');
     const qwenImage2512Btn = document.getElementById('modelTypeQwenImage2512');
     const ltx2Btn = document.getElementById('modelTypeLTX2');
+    const flux2Btn = document.getElementById('modelTypeFLUX2');
 
     if (zimageBtn && zimageBtn.classList.contains('bg-blue-600')) return 'zimage';
     if (qwenImageBtn && qwenImageBtn.classList.contains('bg-blue-600')) return 'qwenimage';
     if (qwenImage2512Btn && qwenImage2512Btn.classList.contains('bg-blue-600')) return 'qwenimage2512';
     if (ltx2Btn && ltx2Btn.classList.contains('bg-blue-600')) return 'ltx2';
+    if (flux2Btn && flux2Btn.classList.contains('bg-blue-600')) return 'flux2';
 
     return 'zimage'; // default
 }
@@ -111,6 +117,7 @@ function switchModelType(type) {
         'qwenimage': document.getElementById('modelTypeQwenImage'),
         'qwenimage2512': document.getElementById('modelTypeQwenImage2512'),
         'ltx2': document.getElementById('modelTypeLTX2'),
+        'flux2': document.getElementById('modelTypeFLUX2'),
     };
 
     // Update button styles
@@ -561,7 +568,8 @@ function initQwenImageEvents() {
         { id: 'modelTypeZImage', type: 'zimage' },
         { id: 'modelTypeQwenImage', type: 'qwenimage' },
         { id: 'modelTypeQwenImage2512', type: 'qwenimage2512' },
-        { id: 'modelTypeLTX2', type: 'ltx2' }
+        { id: 'modelTypeLTX2', type: 'ltx2' },
+        { id: 'modelTypeFLUX2', type: 'flux2' }
     ];
     modelButtons.forEach(({ id, type }) => {
         const btn = document.getElementById(id);

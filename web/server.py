@@ -66,6 +66,10 @@ qwen_image_t2i_pipeline = None
 # Uses Gemma 3-12B text encoder with sequential CPU offload for 24GB VRAM
 ltx2_pipeline = None
 
+# FLUX.2 Klein image generation pipeline
+# Uses Qwen3 encoder with three-stage offloading for 24GB VRAM
+flux2_pipeline = None
+
 # In-memory history (cleared on server restart)
 generation_history = []
 MAX_HISTORY = 50
@@ -569,6 +573,22 @@ class LTX2GenerateRequest(BaseModel):
     guidance_scale: float = 3.5  # CFG scale (3.0-4.0 recommended)
     seed: Optional[int] = None  # Random seed
     enable_audio: bool = False  # Generate audio alongside video
+
+
+class Flux2GenerateRequest(BaseModel):
+    """Request for FLUX.2 Klein image generation."""
+
+    prompt: str  # Text prompt
+    model_name: str = "klein-9b-fp8"  # Model variant
+    width: int = 1024  # Image width (must be multiple of 16)
+    height: int = 1024  # Image height (must be multiple of 16)
+    num_steps: Optional[int] = None  # Denoising steps (4 for distilled, 50 for base)
+    guidance: Optional[float] = None  # CFG scale (1.0 for distilled, 4.0 for base)
+    seed: Optional[int] = None  # Random seed
+    block_offload: bool = False  # Block-by-block GPU offloading for low VRAM
+    model_path: Optional[str] = None  # Custom model path (overrides HuggingFace)
+    vae_path: Optional[str] = None  # Custom VAE path (overrides HuggingFace)
+    reference_images: Optional[List[str]] = None  # Base64 encoded reference images for editing
 
 
 @app.get("/")
@@ -1969,6 +1989,120 @@ async def ltx2_generate_stream(request: LTX2GenerateRequest):
 
 # Serve video files
 app.mount("/outputs/videos", StaticFiles(directory=VIDEO_OUTPUT_DIR), name="videos")
+
+
+# =============================================================================
+# FLUX.2 Klein Image Generation Endpoints
+# =============================================================================
+
+
+@app.get("/api/flux2/status")
+async def flux2_status():
+    """Get FLUX.2 Klein pipeline status.
+
+    Returns availability info. FLUX.2 is always available (downloads from HuggingFace).
+    """
+    return {
+        "available": True,  # FLUX.2 downloads models from HuggingFace as needed
+        "loaded": flux2_pipeline is not None,
+        "supported_models": [
+            "klein-9b", "klein-9b-fp8", "klein-4b", "klein-4b-fp8",
+            "klein-base-9b", "klein-base-9b-fp8", "klein-base-4b", "klein-base-4b-fp8"
+        ],
+    }
+
+
+@app.post("/api/flux2/generate")
+async def flux2_generate(request: Flux2GenerateRequest):
+    """Generate image using FLUX.2 Klein.
+
+    Supports both text-to-image and image editing with reference images.
+    Returns PNG image as binary response.
+    """
+    import base64
+    import io
+
+    from PIL import Image
+
+    try:
+        # Import the FLUX.2 generation pipeline
+        from llm_dit.pipelines.flux2_generate import (
+            Flux2GenerationConfig,
+            generate_image,
+        )
+        from llm_dit.models.flux2.constants import FLUX2_MODEL_INFO
+
+        # Get model defaults if steps/guidance not specified
+        model_info = FLUX2_MODEL_INFO.get(request.model_name.lower(), {})
+        defaults = model_info.get("defaults", {"guidance": 1.0, "num_steps": 4})
+
+        num_steps = request.num_steps if request.num_steps is not None else defaults["num_steps"]
+        guidance = request.guidance if request.guidance is not None else defaults["guidance"]
+
+        # Process reference images if provided
+        ref_images = []
+        if request.reference_images:
+            for ref_b64 in request.reference_images:
+                # Remove data URL prefix if present
+                if "," in ref_b64:
+                    ref_b64 = ref_b64.split(",", 1)[1]
+                img_data = base64.b64decode(ref_b64)
+                img = Image.open(io.BytesIO(img_data)).convert("RGB")
+                ref_images.append(img)
+
+        # Create generation config
+        config = Flux2GenerationConfig(
+            prompt=request.prompt,
+            height=request.height,
+            width=request.width,
+            num_steps=num_steps,
+            guidance=guidance,
+            seed=request.seed,
+            reference_images=ref_images,
+            block_offload=request.block_offload,
+        )
+
+        # Generate image
+        start_time = time.time()
+        logger.info(f"[FLUX.2] Generating {request.width}x{request.height} with {request.model_name}")
+
+        # Run in executor to not block event loop
+        loop = asyncio.get_event_loop()
+        image = await loop.run_in_executor(
+            None,
+            lambda: generate_image(
+                config,
+                model_name=request.model_name,
+                model_path=request.model_path,
+                vae_path=request.vae_path,
+            )
+        )
+
+        gen_time = time.time() - start_time
+        logger.info(f"[FLUX.2] Generation complete in {gen_time:.1f}s")
+
+        # Convert to PNG bytes
+        img_bytes = io.BytesIO()
+        image.save(img_bytes, format="PNG")
+        img_bytes.seek(0)
+
+        # Return as binary PNG with metadata headers
+        from fastapi.responses import Response
+        return Response(
+            content=img_bytes.getvalue(),
+            media_type="image/png",
+            headers={
+                "X-Seed": str(config.seed or "random"),
+                "X-Generation-Time": str(gen_time),
+                "X-Model": request.model_name,
+            }
+        )
+
+    except Exception as e:
+        logger.error(f"[FLUX.2] Generation failed: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/generation-config")
@@ -4538,6 +4672,32 @@ async def vram_unload_ltx2():
     return {
         "success": unloaded,
         "message": "LTX-2 pipeline unloaded" if unloaded else "LTX-2 pipeline was not loaded",
+        "vram": status.get("vram"),
+    }
+
+
+@app.post("/api/vram/unload-flux2")
+async def vram_unload_flux2():
+    """Unload FLUX.2 Klein pipeline to free VRAM.
+
+    FLUX.2 uses ~20GB VRAM for 9B models. Unloading is recommended
+    before loading other models like Z-Image or Qwen-Image.
+    The pipeline will be reloaded automatically on next image generation request.
+    """
+    global flux2_pipeline
+    import gc
+
+    unloaded = flux2_pipeline is not None
+    if unloaded:
+        flux2_pipeline = None
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+    status = get_vram_status()
+    return {
+        "success": unloaded,
+        "message": "FLUX.2 pipeline unloaded" if unloaded else "FLUX.2 pipeline was not loaded",
         "vram": status.get("vram"),
     }
 
