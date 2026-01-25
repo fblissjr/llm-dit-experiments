@@ -70,6 +70,11 @@ ltx2_pipeline = None
 # Uses Qwen3 encoder with three-stage offloading for 24GB VRAM
 flux2_pipeline = None
 
+# Loading locks to prevent concurrent pipeline loading (which causes OOM)
+import threading
+_zimage_loading_lock = threading.Lock()
+_zimage_loading_in_progress = False
+
 # In-memory history (cleared on server restart)
 generation_history = []
 MAX_HISTORY = 50
@@ -2878,35 +2883,15 @@ async def encode(request: EncodeRequest):
 @app.post("/api/generate")
 async def generate(request: GenerateRequest):
     """Generate an image from a prompt."""
-    global pipeline
-
     if encoder_only_mode:
         raise HTTPException(
             status_code=400, detail="Server running in encoder-only mode. Use /api/encode instead."
         )
     if pipeline is None:
-        # Try on-demand loading if model_path is configured
-        if runtime_config and runtime_config.model_path:
-            # Unload Qwen-Image first to free VRAM if needed
-            if qwen_image_pipeline is not None:
-                logger.info("[Z-Image] Unloading Qwen-Image to free VRAM for Z-Image...")
-                unload_qwen_image_pipeline()
-            if qwen_image_t2i_pipeline is not None:
-                logger.info("[Z-Image] Unloading Qwen-Image T2I to free VRAM for Z-Image...")
-                unload_qwen_image_t2i_pipeline()
-
-            try:
-                load_zimage_pipeline_on_demand()
-            except Exception as e:
-                raise HTTPException(
-                    status_code=503, detail=f"Failed to load Z-Image pipeline: {e}"
-                )
-        else:
-            raise HTTPException(
-                status_code=503,
-                detail="Z-Image pipeline not loaded and model_path not configured. "
-                "Set model_path in config.toml or use the settings panel to load the pipeline.",
-            )
+        raise HTTPException(
+            status_code=503,
+            detail="Z-Image pipeline not loaded. Use the Settings panel to load it first.",
+        )
 
     try:
         logger.info("=" * 60)
@@ -3371,22 +3356,10 @@ async def format_prompt_endpoint(request: EncodeRequest):
     # Use encoder from pipeline or standalone encoder
     enc = encoder if encoder is not None else (pipeline.encoder if pipeline else None)
     if enc is None:
-        # Try on-demand loading if model_path is configured
-        if runtime_config and runtime_config.model_path:
-            try:
-                load_zimage_pipeline_on_demand()
-                enc = pipeline.encoder if pipeline else None
-            except Exception as e:
-                raise HTTPException(
-                    status_code=503, detail=f"Failed to load Z-Image pipeline: {e}"
-                )
-
-        if enc is None:
-            raise HTTPException(
-                status_code=503,
-                detail="Encoder not loaded and model_path not configured. "
-                "Set model_path in config.toml or use the settings panel to load the pipeline.",
-            )
+        raise HTTPException(
+            status_code=503,
+            detail="Z-Image pipeline not loaded. Use the Settings panel to load it first.",
+        )
 
     try:
         # Build conversation and format without encoding
@@ -4677,42 +4650,123 @@ async def vram_status():
     return get_vram_status()
 
 
+def unload_all_pipelines_except(keep: str = None):
+    """Unload all pipelines except the specified one to free VRAM.
+
+    Args:
+        keep: Name of pipeline to keep loaded ('zimage', 'qwen-image', 'qwen-image-t2i', 'ltx2', 'flux2')
+              If None, unloads all pipelines.
+    """
+    import gc
+
+    unloaded = []
+
+    # Z-Image
+    if keep != "zimage":
+        if unload_zimage_pipeline():
+            unloaded.append("Z-Image")
+
+    # Qwen-Image Edit
+    if keep != "qwen-image":
+        if unload_qwen_image_pipeline():
+            unloaded.append("Qwen-Image")
+
+    # Qwen-Image T2I
+    if keep != "qwen-image-t2i":
+        if unload_qwen_image_t2i_pipeline():
+            unloaded.append("Qwen-Image T2I")
+
+    # LTX-2
+    if keep != "ltx2":
+        if unload_ltx2_pipeline():
+            unloaded.append("LTX-2")
+
+    # FLUX.2
+    if keep != "flux2":
+        global flux2_pipeline
+        if flux2_pipeline is not None:
+            del flux2_pipeline
+            flux2_pipeline = None
+            unloaded.append("FLUX.2")
+
+    if unloaded:
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        logger.info(f"[VRAM] Unloaded pipelines to free memory: {', '.join(unloaded)}")
+
+    return unloaded
+
+
 def load_zimage_pipeline_on_demand():
     """Load Z-Image pipeline on-demand using runtime config.
 
     Returns True if successfully loaded, raises exception on failure.
+    Thread-safe: uses a lock to prevent concurrent loading attempts.
+    Automatically unloads other pipelines first to free VRAM.
     """
-    global pipeline
+    global pipeline, _zimage_loading_in_progress
 
+    # Fast path: already loaded
     if pipeline is not None:
-        return True  # Already loaded
-
-    if runtime_config is None:
-        raise ValueError("Runtime config not initialized")
-
-    if not runtime_config.model_path:
-        raise ValueError("Z-Image model_path not configured. Set model_path in config.toml")
-
-    logger.info("[Z-Image] Loading pipeline on-demand...")
-    logger.info(f"  Model path: {runtime_config.model_path}")
-
-    try:
-        load_pipeline(
-            model_path=runtime_config.model_path,
-            text_encoder_path=runtime_config.text_encoder_path,
-            templates_dir=runtime_config.templates_dir,
-            encoder_device=runtime_config.encoder_device,
-            dit_device=runtime_config.dit_device,
-            vae_device=runtime_config.vae_device,
-            quantization=runtime_config.quantization,
-            lora_paths=runtime_config.lora_paths,
-            lora_scales=runtime_config.lora_scales,
-        )
-        logger.info("[Z-Image] Pipeline loaded successfully")
         return True
-    except Exception as e:
-        logger.error(f"[Z-Image] Failed to load pipeline: {e}")
-        raise
+
+    # Acquire lock to prevent concurrent loading
+    with _zimage_loading_lock:
+        # Check again inside lock (another thread may have loaded it)
+        if pipeline is not None:
+            return True
+
+        # Check if loading is already in progress (shouldn't happen with lock, but safety check)
+        if _zimage_loading_in_progress:
+            raise ValueError("Z-Image loading already in progress, please wait")
+
+        if runtime_config is None:
+            raise ValueError("Runtime config not initialized")
+
+        if not runtime_config.model_path:
+            raise ValueError("Z-Image model_path not configured. Set model_path in config.toml")
+
+        # Unload other pipelines first to free VRAM
+        unload_all_pipelines_except("zimage")
+
+        _zimage_loading_in_progress = True
+        logger.info("[Z-Image] Loading pipeline on-demand...")
+        logger.info(f"  Model path: {runtime_config.model_path}")
+
+        try:
+            load_pipeline(
+                model_path=runtime_config.model_path,
+                text_encoder_path=runtime_config.text_encoder_path,
+                templates_dir=runtime_config.templates_dir,
+                encoder_device=runtime_config.encoder_device,
+                dit_device=runtime_config.dit_device,
+                vae_device=runtime_config.vae_device,
+                quantization=runtime_config.quantization,
+                lora_paths=runtime_config.lora_paths,
+                lora_scales=runtime_config.lora_scales,
+            )
+            logger.info("[Z-Image] Pipeline loaded successfully")
+            return True
+        except Exception as e:
+            logger.error(f"[Z-Image] Failed to load pipeline: {e}")
+            # Clean up partial state on failure to avoid VRAM accumulation
+            import gc
+
+            global encoder
+            if pipeline is not None:
+                del pipeline
+                pipeline = None
+            if encoder is not None:
+                del encoder
+                encoder = None
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                logger.info("[Z-Image] Cleaned up VRAM after failed load attempt")
+            raise
+        finally:
+            _zimage_loading_in_progress = False
 
 
 @app.post("/api/vram/load-zimage")
@@ -4789,6 +4843,9 @@ async def vram_load_qwen_image():
             detail="Qwen-Image model_path not configured. Set qwen_image.model_path in config.toml",
         )
 
+    # Unload other pipelines first to free VRAM
+    unload_all_pipelines_except("qwen-image")
+
     try:
         from llm_dit.pipelines.qwen_image_diffusers import QwenImageDiffusersPipeline
 
@@ -4861,6 +4918,9 @@ async def vram_load_qwen_image_t2i():
             detail="Qwen-Image model_path not configured. Set qwen_image.model_path in config.toml",
         )
 
+    # Unload other pipelines first to free VRAM
+    unload_all_pipelines_except("qwen-image-t2i")
+
     try:
         from llm_dit.pipelines.qwen_image_2512 import QwenImage2512Pipeline
 
@@ -4928,6 +4988,9 @@ async def vram_load_ltx2():
             "vram": status.get("vram"),
         }
 
+    # Unload other pipelines first to free VRAM
+    unload_all_pipelines_except("ltx2")
+
     try:
         load_ltx2_pipeline()
         status = get_vram_status()
@@ -4985,6 +5048,9 @@ async def vram_load_flux2():
             status_code=400,
             detail="FLUX.2 model_path not configured. Set flux2.model_path in config.toml",
         )
+
+    # Unload other pipelines first to free VRAM
+    unload_all_pipelines_except("flux2")
 
     try:
         from llm_dit.pipelines.flux2_generate import Flux2GenerationConfig, generate_image
