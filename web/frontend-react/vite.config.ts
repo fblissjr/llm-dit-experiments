@@ -12,13 +12,14 @@ export default defineConfig({
   },
   server: {
     port: 5174,
+    host: true,  // Bind to 0.0.0.0 for LAN access
     proxy: {
       '/api': {
-        target: 'http://localhost:8000',
+        target: 'http://localhost:7860',
         changeOrigin: true,
       },
       '/outputs': {
-        target: 'http://localhost:8000',
+        target: 'http://localhost:7860',
         changeOrigin: true,
       },
     },
