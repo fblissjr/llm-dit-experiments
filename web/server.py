@@ -2149,6 +2149,117 @@ async def flux2_generate(request: Flux2GenerateRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# =============================================================================
+# Pipeline Schema API (for dynamic UI generation)
+# =============================================================================
+
+
+@app.get("/api/pipelines")
+async def get_pipeline_schemas():
+    """Return all pipeline schemas for frontend form generation.
+
+    The frontend uses these schemas to dynamically render forms without
+    hardcoding pipeline-specific UI. Each schema describes:
+    - Pipeline metadata (name, description, output type)
+    - Form parameters with types, defaults, and constraints
+    - Feature flags (img2img, streaming, reference images)
+
+    Returns:
+        dict with:
+        - pipelines: Dict of pipeline_id -> PipelineSchema
+        - defaults: Current RuntimeConfig values (if loaded)
+        - loaded_pipeline: Currently loaded pipeline type (if any)
+    """
+    from llm_dit.pipelines.schemas import get_all_pipelines
+
+    # Get all registered pipeline schemas
+    pipelines = get_all_pipelines()
+    pipeline_dicts = {pid: schema.to_dict() for pid, schema in pipelines.items()}
+
+    # Get current defaults from RuntimeConfig if available
+    defaults = {}
+    if runtime_config is not None:
+        try:
+            defaults = runtime_config.to_dict()
+        except Exception as e:
+            logger.warning(f"Failed to serialize RuntimeConfig: {e}")
+
+    # Determine which pipeline is currently loaded
+    loaded_pipeline = None
+    if pipeline is not None:
+        loaded_pipeline = "zimage"
+    elif qwen_image_pipeline is not None:
+        loaded_pipeline = "qwenimage-layered"
+    elif qwen_image_t2i_pipeline is not None:
+        loaded_pipeline = "qwenimage-t2i"
+    elif ltx2_pipeline is not None:
+        loaded_pipeline = "ltx2"
+    elif flux2_pipeline is not None:
+        loaded_pipeline = "flux2"
+
+    return {
+        "pipelines": pipeline_dicts,
+        "defaults": defaults,
+        "loaded_pipeline": loaded_pipeline,
+    }
+
+
+@app.get("/api/pipelines/{pipeline_id}")
+async def get_pipeline_schema(pipeline_id: str):
+    """Get schema for a specific pipeline.
+
+    Args:
+        pipeline_id: Pipeline identifier (e.g., "zimage", "ltx2")
+
+    Returns:
+        PipelineSchema dict for the requested pipeline
+
+    Raises:
+        404 if pipeline not found
+    """
+    from llm_dit.pipelines.schemas import get_pipeline, get_all_pipelines
+
+    schema = get_pipeline(pipeline_id)
+    if schema is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Pipeline '{pipeline_id}' not found. Available: {list(get_all_pipelines().keys())}",
+        )
+
+    return schema.to_dict()
+
+
+@app.get("/api/pipelines/{pipeline_id}/defaults")
+async def get_pipeline_defaults(pipeline_id: str):
+    """Get default values for a specific pipeline.
+
+    Merges schema defaults with RuntimeConfig values for the pipeline.
+
+    Args:
+        pipeline_id: Pipeline identifier
+
+    Returns:
+        Dict of parameter_id -> default_value
+    """
+    from llm_dit.pipelines.schemas import get_pipeline
+
+    schema = get_pipeline(pipeline_id)
+    if schema is None:
+        raise HTTPException(status_code=404, detail=f"Pipeline '{pipeline_id}' not found")
+
+    # Start with schema defaults
+    defaults = schema.get_defaults()
+
+    # Overlay RuntimeConfig values if available
+    if runtime_config is not None:
+        config_dict = runtime_config.to_dict()
+        for param in schema.params:
+            if param.id in config_dict:
+                defaults[param.id] = config_dict[param.id]
+
+    return defaults
+
+
 @app.get("/api/generation-config")
 async def get_generation_config():
     """Get generation configuration defaults from server config.

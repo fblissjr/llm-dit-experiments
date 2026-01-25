@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="LLM-DiT Studio - Multi-pipeline image and video generation"
+    />
+    <title>LLM-DiT Studio</title>
+    <link rel="stylesheet" href="/src/styles/main.css" />
+  </head>
+  <body class="bg-gray-900 min-h-screen">
+    <!-- Top Navigation -->
+    <nav
+      class="sticky top-0 z-50 bg-gray-800/95 backdrop-blur border-b border-gray-700"
+    >
+      <div class="flex items-center justify-between p-4">
+        <div class="flex items-center gap-3">
+          <span class="text-xl font-bold text-white">LLM-DiT Studio</span>
+          <span
+            id="loadedPipelineIndicator"
+            class="hidden px-2 py-0.5 text-xs font-medium bg-green-600/20 text-green-400 rounded-full"
+          >
+            Ready
+          </span>
+        </div>
+        <div class="flex items-center gap-2">
+          <button
+            id="historyToggle"
+            class="btn-ghost p-2 rounded-lg md:hidden"
+            aria-label="Toggle history"
+          >
+            <svg
+              class="w-6 h-6"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
+              />
+            </svg>
+          </button>
+          <button
+            id="systemStatusBtn"
+            class="btn-ghost p-2 rounded-lg"
+            aria-label="System status"
+          >
+            <svg
+              class="w-6 h-6"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"
+              />
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- Pipeline Tabs (horizontal scroll on mobile) -->
+      <div
+        id="pipelineTabs"
+        class="flex overflow-x-auto scrollbar-hide border-t border-gray-700/50"
+      >
+        <!-- Populated by JS from schema -->
+        <div class="flex-1 flex justify-center py-4 text-gray-500">
+          <div class="skeleton w-48 h-8 rounded-lg"></div>
+        </div>
+      </div>
+    </nav>
+
+    <!-- Main Content -->
+    <main class="flex flex-col md:flex-row min-h-[calc(100vh-8rem)]">
+      <!-- Form Panel -->
+      <div class="flex-1 p-4 md:p-6 pb-24 md:pb-6 max-w-3xl mx-auto w-full">
+        <!-- Error Banner -->
+        <div
+          id="errorBanner"
+          class="hidden mb-4 p-4 bg-red-900/30 border border-red-700 rounded-lg text-red-300"
+        >
+          <div class="flex items-start gap-3">
+            <svg
+              class="w-5 h-5 flex-shrink-0 mt-0.5"
+              fill="currentColor"
+              viewBox="0 0 20 20"
+            >
+              <path
+                fill-rule="evenodd"
+                d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z"
+                clip-rule="evenodd"
+              />
+            </svg>
+            <div>
+              <p id="errorMessage" class="font-medium"></p>
+              <button
+                id="dismissError"
+                class="mt-2 text-sm text-red-400 hover:text-red-300 underline"
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Dynamic Form Container -->
+        <div id="formContainer" class="space-y-6">
+          <!-- Populated by form-builder component -->
+          <div class="card animate-pulse">
+            <div class="space-y-4">
+              <div class="skeleton h-6 w-24 rounded"></div>
+              <div class="skeleton h-24 w-full rounded-lg"></div>
+              <div class="flex gap-4">
+                <div class="skeleton h-10 w-24 rounded-lg"></div>
+                <div class="skeleton h-10 w-24 rounded-lg"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Generate Button -->
+        <div class="mt-6">
+          <button
+            id="generateBtn"
+            class="btn-primary w-full text-lg py-3"
+            disabled
+          >
+            <svg
+              class="w-5 h-5"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M13 10V3L4 14h7v7l9-11h-7z"
+              />
+            </svg>
+            Generate
+          </button>
+        </div>
+
+        <!-- Progress Bar (shown during generation) -->
+        <div id="progressContainer" class="hidden mt-4">
+          <div class="flex items-center justify-between mb-2">
+            <span id="progressLabel" class="text-sm text-gray-400"
+              >Generating...</span
+            >
+            <span id="progressPercent" class="text-sm font-mono text-gray-400"
+              >0%</span
+            >
+          </div>
+          <div class="progress-bar">
+            <div id="progressFill" class="fill" style="width: 0%"></div>
+          </div>
+        </div>
+
+        <!-- Result Display -->
+        <div id="resultContainer" class="hidden mt-6">
+          <div class="result-container">
+            <img
+              id="resultImage"
+              class="result-image hidden"
+              alt="Generated result"
+            />
+            <video
+              id="resultVideo"
+              class="result-video hidden"
+              controls
+              loop
+            ></video>
+          </div>
+          <div class="flex items-center justify-between mt-3">
+            <span id="resultInfo" class="text-sm text-gray-400"></span>
+            <div class="flex gap-2">
+              <button id="downloadBtn" class="btn-secondary text-sm">
+                <svg
+                  class="w-4 h-4"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="2"
+                    d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
+                  />
+                </svg>
+                Download
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- History Sidebar (desktop) / Bottom Sheet (mobile) -->
+      <aside
+        id="historyPanel"
+        class="
+          fixed bottom-0 left-0 right-0
+          md:relative md:w-80 md:flex-shrink-0
+          bg-gray-800 border-t md:border-t-0 md:border-l border-gray-700
+          transform transition-transform duration-300
+          bottom-sheet md:transform-none
+          z-40
+        "
+      >
+        <!-- Bottom sheet handle (mobile only) -->
+        <div class="md:hidden">
+          <div class="handle"></div>
+        </div>
+
+        <div class="p-4">
+          <h2 class="text-lg font-semibold text-white mb-4">History</h2>
+          <div
+            id="historyContent"
+            class="grid grid-cols-3 md:grid-cols-2 gap-2 max-h-[50vh] md:max-h-[calc(100vh-12rem)] overflow-y-auto"
+          >
+            <!-- Populated by history component -->
+            <div class="text-center text-gray-500 py-8 col-span-full">
+              No generations yet
+            </div>
+          </div>
+        </div>
+      </aside>
+    </main>
+
+    <!-- System Status Modal -->
+    <div
+      id="systemStatusModal"
+      class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+    >
+      <div class="card max-w-md mx-4 w-full animate-fade-in">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-lg font-semibold">System Status</h2>
+          <button id="closeSystemStatus" class="btn-ghost p-1 rounded">
+            <svg
+              class="w-5 h-5"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M6 18L18 6M6 6l12 12"
+              />
+            </svg>
+          </button>
+        </div>
+        <div id="systemStatusContent" class="space-y-4">
+          <!-- Populated by JS -->
+        </div>
+      </div>
+    </div>
+
+    <!-- Entry point script -->
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
