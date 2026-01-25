@@ -2877,19 +2877,35 @@ async def encode(request: EncodeRequest):
 @app.post("/api/generate")
 async def generate(request: GenerateRequest):
     """Generate an image from a prompt."""
+    global pipeline
+
     if encoder_only_mode:
         raise HTTPException(
             status_code=400, detail="Server running in encoder-only mode. Use /api/encode instead."
         )
     if pipeline is None:
-        # Check if it was unloaded for Qwen-Image
-        if qwen_image_pipeline is not None:
+        # Try on-demand loading if model_path is configured
+        if runtime_config and runtime_config.model_path:
+            # Unload Qwen-Image first to free VRAM if needed
+            if qwen_image_pipeline is not None:
+                logger.info("[Z-Image] Unloading Qwen-Image to free VRAM for Z-Image...")
+                unload_qwen_image_pipeline()
+            if qwen_image_t2i_pipeline is not None:
+                logger.info("[Z-Image] Unloading Qwen-Image T2I to free VRAM for Z-Image...")
+                unload_qwen_image_t2i_pipeline()
+
+            try:
+                load_zimage_pipeline_on_demand()
+            except Exception as e:
+                raise HTTPException(
+                    status_code=503, detail=f"Failed to load Z-Image pipeline: {e}"
+                )
+        else:
             raise HTTPException(
                 status_code=503,
-                detail="Z-Image pipeline was unloaded for Qwen-Image. "
-                "Use the VRAM settings panel to reload Z-Image, or restart the server.",
+                detail="Z-Image pipeline not loaded and model_path not configured. "
+                "Set model_path in config.toml or use the settings panel to load the pipeline.",
             )
-        raise HTTPException(status_code=503, detail="Pipeline not loaded")
 
     try:
         logger.info("=" * 60)
@@ -3349,10 +3365,27 @@ async def img2img(request: Img2ImgRequest):
 @app.post("/api/format-prompt")
 async def format_prompt_endpoint(request: EncodeRequest):
     """Preview the formatted prompt without encoding (fast, no GPU needed)."""
+    global pipeline
+
     # Use encoder from pipeline or standalone encoder
     enc = encoder if encoder is not None else (pipeline.encoder if pipeline else None)
     if enc is None:
-        raise HTTPException(status_code=503, detail="Encoder not loaded")
+        # Try on-demand loading if model_path is configured
+        if runtime_config and runtime_config.model_path:
+            try:
+                load_zimage_pipeline_on_demand()
+                enc = pipeline.encoder if pipeline else None
+            except Exception as e:
+                raise HTTPException(
+                    status_code=503, detail=f"Failed to load Z-Image pipeline: {e}"
+                )
+
+        if enc is None:
+            raise HTTPException(
+                status_code=503,
+                detail="Encoder not loaded and model_path not configured. "
+                "Set model_path in config.toml or use the settings panel to load the pipeline.",
+            )
 
     try:
         # Build conversation and format without encoding
@@ -4639,6 +4672,78 @@ async def vram_status():
     Useful for understanding memory pressure before loading additional models.
     """
     return get_vram_status()
+
+
+def load_zimage_pipeline_on_demand():
+    """Load Z-Image pipeline on-demand using runtime config.
+
+    Returns True if successfully loaded, raises exception on failure.
+    """
+    global pipeline
+
+    if pipeline is not None:
+        return True  # Already loaded
+
+    if runtime_config is None:
+        raise ValueError("Runtime config not initialized")
+
+    if not runtime_config.model_path:
+        raise ValueError("Z-Image model_path not configured. Set model_path in config.toml")
+
+    logger.info("[Z-Image] Loading pipeline on-demand...")
+    logger.info(f"  Model path: {runtime_config.model_path}")
+
+    try:
+        load_pipeline(
+            model_path=runtime_config.model_path,
+            text_encoder_path=runtime_config.text_encoder_path,
+            templates_dir=runtime_config.templates_dir,
+            encoder_device=runtime_config.encoder_device,
+            dit_device=runtime_config.dit_device,
+            vae_device=runtime_config.vae_device,
+            quantization=runtime_config.quantization,
+            lora_paths=runtime_config.lora_paths,
+            lora_scales=runtime_config.lora_scales,
+        )
+        logger.info("[Z-Image] Pipeline loaded successfully")
+        return True
+    except Exception as e:
+        logger.error(f"[Z-Image] Failed to load pipeline: {e}")
+        raise
+
+
+@app.post("/api/vram/load-zimage")
+async def vram_load_zimage():
+    """Load Z-Image pipeline on-demand.
+
+    Uses model_path and other settings from config.toml.
+    Call this before generating if the pipeline was previously unloaded.
+    """
+    if pipeline is not None:
+        status = get_vram_status()
+        return {
+            "success": True,
+            "message": "Z-Image pipeline already loaded",
+            "vram": status.get("vram"),
+        }
+
+    if runtime_config is None or not runtime_config.model_path:
+        raise HTTPException(
+            status_code=400,
+            detail="Z-Image model_path not configured. Set model_path in config.toml",
+        )
+
+    try:
+        load_zimage_pipeline_on_demand()
+        status = get_vram_status()
+        return {
+            "success": True,
+            "message": "Z-Image pipeline loaded successfully",
+            "vram": status.get("vram"),
+        }
+    except Exception as e:
+        logger.error(f"[Z-Image] Failed to load pipeline: {e}")
+        raise HTTPException(status_code=503, detail=f"Failed to load Z-Image pipeline: {e}")
 
 
 @app.post("/api/vram/unload-zimage")

@@ -333,15 +333,18 @@ async function refreshSystemStatus() {
 
         // Z-Image pipeline status
         const zimageStatus = document.getElementById('zimageStatus');
+        const loadZimageBtn = document.getElementById('loadZimageBtn');
         const unloadZimageBtn = document.getElementById('unloadZimageBtn');
         if (zimageStatus) {
             if (data.pipeline_loaded) {
                 zimageStatus.textContent = 'Loaded';
                 zimageStatus.className = 'text-xs px-2 py-1 rounded bg-green-600/20 text-green-400';
+                if (loadZimageBtn) loadZimageBtn.classList.add('hidden');
                 if (unloadZimageBtn) unloadZimageBtn.classList.remove('hidden');
             } else {
                 zimageStatus.textContent = 'Not loaded';
                 zimageStatus.className = 'text-xs px-2 py-1 rounded bg-gray-700 text-gray-400';
+                if (loadZimageBtn) loadZimageBtn.classList.remove('hidden');
                 if (unloadZimageBtn) unloadZimageBtn.classList.add('hidden');
             }
         }
@@ -511,6 +514,24 @@ function setupSettingsModal() {
                 showSettingsMessage('Failed to clear history', 'error');
             }
             clearHistoryBtn2.disabled = false;
+        });
+    }
+
+    const loadZimageBtn = document.getElementById('loadZimageBtn');
+    if (loadZimageBtn) {
+        loadZimageBtn.addEventListener('click', async () => {
+            loadZimageBtn.disabled = true;
+            loadZimageBtn.textContent = 'Loading...';
+            try {
+                const result = await ApiClient.loadZImage();
+                showSettingsMessage(result.message || 'Z-Image loaded', 'success');
+            } catch (err) {
+                const msg = err.message || 'Failed to load Z-Image';
+                showSettingsMessage(msg, 'error');
+            }
+            await refreshSystemStatus();
+            loadZimageBtn.textContent = 'Load';
+            loadZimageBtn.disabled = false;
         });
     }
 

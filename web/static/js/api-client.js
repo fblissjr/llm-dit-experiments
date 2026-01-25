@@ -29,6 +29,11 @@ const ApiClient = {
     // VRAM Management
     // =========================================================================
 
+    async loadZImage() {
+        const response = await fetch(`${API_BASE}/api/vram/load-zimage`, { method: 'POST' });
+        return response.json();
+    },
+
     async unloadZImage() {
         const response = await fetch(`${API_BASE}/api/vram/unload-zimage`, { method: 'POST' });
         return response.json();
