@@ -69,16 +69,23 @@ export const usePipelineStore = create<PipelineState>()(
         }
 
         const data = await response.json();
-        const pipelines: Record<string, PipelineSchema> = {};
+        let pipelines: Record<string, PipelineSchema> = {};
 
-        // API returns array of pipeline schemas
-        if (Array.isArray(data)) {
+        // API returns { pipelines: {id: schema, ...}, defaults: {...}, loaded_pipeline: string|null }
+        if (data.pipelines && typeof data.pipelines === 'object') {
+          // Server returns pipelines as a dict: { pipeline_id: schema }
+          if (Array.isArray(data.pipelines)) {
+            // Array format (legacy): [{id: "zimage", ...}, ...]
+            data.pipelines.forEach((pipeline: PipelineSchema) => {
+              pipelines[pipeline.id] = pipeline;
+            });
+          } else {
+            // Dict format (current): { "zimage": {...}, "ltx2": {...} }
+            pipelines = data.pipelines;
+          }
+        } else if (Array.isArray(data)) {
+          // Direct array format
           data.forEach((pipeline: PipelineSchema) => {
-            pipelines[pipeline.id] = pipeline;
-          });
-        } else if (data.pipelines) {
-          // Or might be wrapped in { pipelines: [...] }
-          data.pipelines.forEach((pipeline: PipelineSchema) => {
             pipelines[pipeline.id] = pipeline;
           });
         }
