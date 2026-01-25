@@ -454,8 +454,8 @@ def create_base_parser(
     config_group.add_argument(
         "--profile",
         type=str,
-        default="default",
-        help="Config profile to use (default: default)",
+        default=None,
+        help="Config profile to use. If not specified, auto-detects flat vs profile-based config",
     )
 
     # Model selection
@@ -1784,8 +1784,11 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
     toml_config: Config | None = None
     if args.config:
         try:
+            # Pass profile to from_toml - if None, it auto-detects flat vs profile-based config
             toml_config = Config.from_toml(args.config, args.profile)
-            logger.info(f"Loaded config profile: {args.profile}")
+            if args.profile:
+                logger.info(f"Loaded config profile: {args.profile}")
+            # Note: from_toml logs "Loaded flat config" when auto-detecting
 
             # Apply TOML values to runtime config
             config.default_pipeline = toml_config.default_pipeline or config.default_pipeline
