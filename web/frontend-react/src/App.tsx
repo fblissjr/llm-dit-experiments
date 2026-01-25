@@ -8,8 +8,8 @@ import { HistoryPanel } from './components/history/HistoryPanel';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 
 export default function App() {
-  const { fetchPipelines, isLoading: pipelinesLoading, error: pipelinesError } = usePipelineStore();
-  const { fetchVRAMStatus } = useModelStore();
+  const { fetchPipelines, pipelines, isLoading: pipelinesLoading, error: pipelinesError } = usePipelineStore();
+  const { fetchVRAMStatus, fetchModelStatus } = useModelStore();
 
   // Global keyboard shortcuts
   useKeyboardShortcuts();
@@ -26,6 +26,17 @@ export default function App() {
 
     return () => clearInterval(interval);
   }, [fetchPipelines, fetchVRAMStatus]);
+
+  // Fetch model status for each pipeline after pipelines load
+  useEffect(() => {
+    const pipelineIds = Object.keys(pipelines);
+    if (pipelineIds.length > 0) {
+      // Check status for each pipeline
+      pipelineIds.forEach((id) => {
+        fetchModelStatus(id);
+      });
+    }
+  }, [pipelines, fetchModelStatus]);
 
   if (pipelinesLoading) {
     return (

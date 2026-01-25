@@ -5227,6 +5227,167 @@ async def vram_unload_flux2():
 
 
 # =============================================================================
+# Unified Model Management API
+# =============================================================================
+# These endpoints provide a consistent API for the React frontend to load/unload
+# models by pipeline ID, mapping to the specific load functions above.
+
+PIPELINE_LOADERS = {
+    "zimage": "vram_load_zimage",
+    "z-image": "vram_load_zimage",
+    "qwenimage-layered": "vram_load_qwen_image",
+    "qwenimage-edit": "vram_load_qwen_image",
+    "qwenimage-t2i": "vram_load_qwen_image_t2i",
+    "ltx2": "vram_load_ltx2",
+    "flux2": "vram_load_flux2",
+}
+
+PIPELINE_UNLOADERS = {
+    "zimage": "vram_unload_zimage",
+    "z-image": "vram_unload_zimage",
+    "qwenimage-layered": "vram_unload_qwen_image",
+    "qwenimage-edit": "vram_unload_qwen_image",
+    "qwenimage-t2i": "vram_unload_qwen_image_t2i",
+    "ltx2": "vram_unload_ltx2",
+    "flux2": "vram_unload_flux2",
+}
+
+
+@app.post("/api/models/{pipeline_id}/load")
+async def load_model_by_id(pipeline_id: str):
+    """Load a model by pipeline ID.
+
+    This is the unified API for the React frontend. Maps pipeline IDs to
+    the specific load functions (e.g., zimage -> vram_load_zimage).
+
+    Args:
+        pipeline_id: Pipeline identifier (zimage, ltx2, flux2, qwenimage-t2i, etc.)
+
+    Returns:
+        Load result with VRAM status
+    """
+    loader_name = PIPELINE_LOADERS.get(pipeline_id.lower())
+    if not loader_name:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Unknown pipeline: {pipeline_id}. Available: {list(PIPELINE_LOADERS.keys())}",
+        )
+
+    # Get the loader function from globals
+    loader_fn = globals().get(loader_name)
+    if not loader_fn:
+        raise HTTPException(status_code=500, detail=f"Loader function not found: {loader_name}")
+
+    try:
+        result = await loader_fn()
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to load {pipeline_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/models/{pipeline_id}/unload")
+async def unload_model_by_id(pipeline_id: str):
+    """Unload a model by pipeline ID.
+
+    Args:
+        pipeline_id: Pipeline identifier
+
+    Returns:
+        Unload result with VRAM status
+    """
+    unloader_name = PIPELINE_UNLOADERS.get(pipeline_id.lower())
+    if not unloader_name:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Unknown pipeline: {pipeline_id}. Available: {list(PIPELINE_UNLOADERS.keys())}",
+        )
+
+    unloader_fn = globals().get(unloader_name)
+    if not unloader_fn:
+        raise HTTPException(status_code=500, detail=f"Unloader function not found: {unloader_name}")
+
+    try:
+        result = await unloader_fn()
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to unload {pipeline_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/models/unload-all")
+async def unload_all_models():
+    """Unload all loaded models to free VRAM."""
+    unload_all_pipelines_except(None)
+
+    status = get_vram_status()
+    return {
+        "success": True,
+        "message": "All models unloaded",
+        "vram": status.get("vram"),
+    }
+
+
+@app.get("/api/models/{pipeline_id}/status")
+async def get_model_status(pipeline_id: str):
+    """Get the status of a specific pipeline model.
+
+    Returns whether the model is loaded and its VRAM usage.
+    """
+    pid = pipeline_id.lower()
+
+    # Check if loaded
+    loaded = False
+    components = []
+    total_vram_mb = 0
+
+    if pid in ("zimage", "z-image"):
+        loaded = pipeline is not None
+        if loaded:
+            components = [
+                {"name": "encoder", "vramMB": 8000},  # Approximate
+                {"name": "transformer", "vramMB": 8000},
+                {"name": "vae", "vramMB": 500},
+            ]
+            total_vram_mb = sum(c["vramMB"] for c in components)
+    elif pid in ("qwenimage-layered", "qwenimage-edit"):
+        loaded = qwen_image_pipeline is not None
+    elif pid == "qwenimage-t2i":
+        loaded = qwen_image_t2i_pipeline is not None
+    elif pid == "ltx2":
+        loaded = ltx2_pipeline is not None
+        if loaded:
+            components = [
+                {"name": "encoder", "vramMB": 3000},
+                {"name": "transformer", "vramMB": 20000},
+                {"name": "vae", "vramMB": 1000},
+            ]
+            total_vram_mb = sum(c["vramMB"] for c in components)
+    elif pid == "flux2":
+        loaded = flux2_pipeline is not None
+        if loaded:
+            components = [
+                {"name": "encoder", "vramMB": 2000},
+                {"name": "transformer", "vramMB": 12000},
+                {"name": "vae", "vramMB": 500},
+            ]
+            total_vram_mb = sum(c["vramMB"] for c in components)
+    else:
+        raise HTTPException(status_code=404, detail=f"Unknown pipeline: {pipeline_id}")
+
+    return {
+        "pipeline_id": pipeline_id,
+        "status": "loaded" if loaded else "unloaded",
+        "components": components if loaded else [],
+        "total_vram_mb": total_vram_mb if loaded else 0,
+    }
+
+
+# =============================================================================
 # Configuration Management API
 # =============================================================================
 
