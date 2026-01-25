@@ -4734,12 +4734,19 @@ def load_zimage_pipeline_on_demand():
         logger.info("[Z-Image] Loading pipeline on-demand...")
         logger.info(f"  Model path: {runtime_config.model_path}")
 
+        # Determine encoder device - use CPU when cpu_offload is enabled to fit in 24GB VRAM
+        # cpu_offload maps to [pipeline].enable_model_cpu_offload in config
+        encoder_device = runtime_config.encoder_device
+        if getattr(runtime_config, "cpu_offload", False):
+            encoder_device = "cpu"
+            logger.info("  CPU offload enabled - placing encoder on CPU")
+
         try:
             load_pipeline(
                 model_path=runtime_config.model_path,
                 text_encoder_path=runtime_config.text_encoder_path,
                 templates_dir=runtime_config.templates_dir,
-                encoder_device=runtime_config.encoder_device,
+                encoder_device=encoder_device,
                 dit_device=runtime_config.dit_device,
                 vae_device=runtime_config.vae_device,
                 quantization=runtime_config.quantization,
