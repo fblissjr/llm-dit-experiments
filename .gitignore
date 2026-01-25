@@ -34,10 +34,11 @@ share/python-wheels/
 MANIFEST
 .claude
 scripts/archive
-/models/
+models/
 outputs/
 embeddings/*
 test_images/*
+experiments/outputs
 
 # PyInstaller
 #  Usually these files are written by a python script from a template

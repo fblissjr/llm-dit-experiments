@@ -29,13 +29,28 @@ const ApiClient = {
     // VRAM Management
     // =========================================================================
 
+    async loadZImage() {
+        const response = await fetch(`${API_BASE}/api/vram/load-zimage`, { method: 'POST' });
+        return response.json();
+    },
+
     async unloadZImage() {
         const response = await fetch(`${API_BASE}/api/vram/unload-zimage`, { method: 'POST' });
         return response.json();
     },
 
+    async loadQwenImage() {
+        const response = await fetch(`${API_BASE}/api/vram/load-qwen-image`, { method: 'POST' });
+        return response.json();
+    },
+
     async unloadQwenImage() {
         const response = await fetch(`${API_BASE}/api/vram/unload-qwen-image`, { method: 'POST' });
+        return response.json();
+    },
+
+    async loadQwenImageT2i() {
+        const response = await fetch(`${API_BASE}/api/vram/load-qwen-image-t2i`, { method: 'POST' });
         return response.json();
     },
 
@@ -46,6 +61,21 @@ const ApiClient = {
 
     async unloadLtx2() {
         const response = await fetch(`${API_BASE}/api/vram/unload-ltx2`, { method: 'POST' });
+        return response.json();
+    },
+
+    async loadLtx2() {
+        const response = await fetch(`${API_BASE}/api/vram/load-ltx2`, { method: 'POST' });
+        return response.json();
+    },
+
+    async loadFlux2() {
+        const response = await fetch(`${API_BASE}/api/vram/load-flux2`, { method: 'POST' });
+        return response.json();
+    },
+
+    async unloadFlux2() {
+        const response = await fetch(`${API_BASE}/api/vram/unload-flux2`, { method: 'POST' });
         return response.json();
     },
 

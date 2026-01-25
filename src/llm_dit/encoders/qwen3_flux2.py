@@ -40,12 +40,12 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 logger = logging.getLogger(__name__)
 
 
-# Layers to extract for FLUX.2 conditioning
+# Default layers to extract for FLUX.2 conditioning
 # These provide a mix of early, middle, and late representations
-OUTPUT_LAYERS_QWEN3 = [9, 18, 27]
+DEFAULT_OUTPUT_LAYERS = [9, 18, 27]
 
 # Default max sequence length
-MAX_LENGTH = 512
+DEFAULT_MAX_LENGTH = 512
 
 
 class Qwen3Flux2Encoder(nn.Module):
@@ -62,20 +62,34 @@ class Qwen3Flux2Encoder(nn.Module):
     Args:
         model_spec: HuggingFace model ID or local path
         device: Target device (cuda, cpu)
-        max_length: Maximum sequence length (default 512)
+        max_length: Maximum sequence length (default 512, set None to disable truncation)
+        output_layers: Which hidden layers to extract and concatenate (default [9, 18, 27])
+        pad_to_max: Whether to pad all sequences to max_length (default True)
     """
 
     def __init__(
         self,
         model_spec: str,
         device: str | torch.device = "cuda",
-        max_length: int = MAX_LENGTH,
+        max_length: int = DEFAULT_MAX_LENGTH,
+        output_layers: Optional[list[int]] = None,
+        pad_to_max: bool = True,
     ):
         super().__init__()
 
         self.model_spec = model_spec
         self.max_length = max_length
+        self.output_layers = output_layers or DEFAULT_OUTPUT_LAYERS.copy()
+        self.pad_to_max = pad_to_max
         self._device = torch.device(device)
+
+        # Validate output_layers - must be exactly 3 for Klein models
+        if len(self.output_layers) != 3:
+            raise ValueError(
+                f"output_layers must have exactly 3 layers for Klein models "
+                f"(got {len(self.output_layers)}). The transformer expects "
+                f"context_dim = 3 * hidden_dim."
+            )
 
         # Load model
         logger.info(f"Loading Qwen3 encoder from {model_spec}")
@@ -93,7 +107,7 @@ class Qwen3Flux2Encoder(nn.Module):
         self._num_layers = self.model.config.num_hidden_layers
 
         # Validate layer indices
-        for layer_idx in OUTPUT_LAYERS_QWEN3:
+        for layer_idx in self.output_layers:
             if layer_idx >= self._num_layers:
                 raise ValueError(
                     f"Layer {layer_idx} requested but model only has {self._num_layers} layers"
@@ -102,6 +116,7 @@ class Qwen3Flux2Encoder(nn.Module):
         logger.info(
             f"Qwen3 encoder loaded: {self._hidden_dim} dim, "
             f"{self._num_layers} layers, "
+            f"extracting layers {self.output_layers}, "
             f"output dim = {self.output_dim}"
         )
 
@@ -110,7 +125,9 @@ class Qwen3Flux2Encoder(nn.Module):
         cls,
         model_spec: str,
         device: str | torch.device = "cuda",
-        max_length: int = MAX_LENGTH,
+        max_length: int = DEFAULT_MAX_LENGTH,
+        output_layers: Optional[list[int]] = None,
+        pad_to_max: bool = True,
     ) -> "Qwen3Flux2Encoder":
         """
         Load Qwen3 encoder from pretrained model.
@@ -119,16 +136,24 @@ class Qwen3Flux2Encoder(nn.Module):
             model_spec: HuggingFace model ID (e.g., "Qwen/Qwen3-8B-FP8")
             device: Target device
             max_length: Maximum sequence length
+            output_layers: Which hidden layers to extract (default [9, 18, 27])
+            pad_to_max: Whether to pad all sequences to max_length
 
         Returns:
             Initialized encoder
         """
-        return cls(model_spec=model_spec, device=device, max_length=max_length)
+        return cls(
+            model_spec=model_spec,
+            device=device,
+            max_length=max_length,
+            output_layers=output_layers,
+            pad_to_max=pad_to_max,
+        )
 
     @property
     def output_dim(self) -> int:
-        """Output dimension after layer concatenation (3 * hidden_dim)."""
-        return len(OUTPUT_LAYERS_QWEN3) * self._hidden_dim
+        """Output dimension after layer concatenation (num_layers * hidden_dim)."""
+        return len(self.output_layers) * self._hidden_dim
 
     @property
     def hidden_dim(self) -> int:
@@ -154,7 +179,7 @@ class Qwen3Flux2Encoder(nn.Module):
             txt: List of text prompts
 
         Returns:
-            Tensor [batch_size, seq_len, 3*hidden_dim]
+            Tensor [batch_size, seq_len, num_layers*hidden_dim]
         """
         all_input_ids = []
         all_attention_masks = []
@@ -170,12 +195,13 @@ class Qwen3Flux2Encoder(nn.Module):
                 enable_thinking=False,  # CRITICAL: Disable thinking tokens
             )
 
-            # Tokenize
+            # Tokenize with configurable padding
+            padding_strategy = "max_length" if self.pad_to_max else "longest"
             model_inputs = self.tokenizer(
                 text,
                 return_tensors="pt",
-                padding="max_length",
-                truncation=True,
+                padding=padding_strategy,
+                truncation=True if self.max_length else False,
                 max_length=self.max_length,
             )
 
@@ -185,6 +211,14 @@ class Qwen3Flux2Encoder(nn.Module):
         # Batch inputs
         input_ids = torch.cat(all_input_ids, dim=0).to(self.model.device)
         attention_mask = torch.cat(all_attention_masks, dim=0).to(self.model.device)
+
+        # Log sequence info
+        logger.info(
+            f"[Qwen3Encoder] Encoding {len(txt)} prompts, "
+            f"seq_len={input_ids.shape[1]}, "
+            f"layers={self.output_layers}, "
+            f"pad_to_max={self.pad_to_max}"
+        )
 
         # Forward pass with hidden state extraction
         output = self.model(
@@ -197,11 +231,13 @@ class Qwen3Flux2Encoder(nn.Module):
         # Extract specified layers
         # hidden_states is a tuple of (num_layers + 1) tensors
         # Index 0 is embeddings, indices 1-N are layer outputs
-        layers = [output.hidden_states[k] for k in OUTPUT_LAYERS_QWEN3]
+        layers = [output.hidden_states[k] for k in self.output_layers]
 
         # Stack and reshape: [B, num_layers, L, D] -> [B, L, num_layers*D]
         out = torch.stack(layers, dim=1)
         out = rearrange(out, "b c l d -> b l (c d)")
+
+        logger.info(f"[Qwen3Encoder] Output shape: {list(out.shape)}")
 
         return out
 
@@ -256,7 +292,9 @@ class Qwen3Flux2Encoder(nn.Module):
 def load_qwen3_flux2_encoder(
     variant: str,
     device: str | torch.device = "cuda",
-    max_length: int = MAX_LENGTH,
+    max_length: int = DEFAULT_MAX_LENGTH,
+    output_layers: Optional[list[int]] = None,
+    pad_to_max: bool = True,
 ) -> Qwen3Flux2Encoder:
     """
     Load Qwen3 encoder for FLUX.2 by variant name.
@@ -265,6 +303,8 @@ def load_qwen3_flux2_encoder(
         variant: Model variant ("8B" for Klein 9B, "4B" for Klein 4B)
         device: Target device
         max_length: Maximum sequence length
+        output_layers: Which hidden layers to extract (default [9, 18, 27])
+        pad_to_max: Whether to pad all sequences to max_length
 
     Returns:
         Initialized encoder
@@ -280,4 +320,6 @@ def load_qwen3_flux2_encoder(
         model_spec=model_spec,
         device=device,
         max_length=max_length,
+        output_layers=output_layers,
+        pad_to_max=pad_to_max,
     )

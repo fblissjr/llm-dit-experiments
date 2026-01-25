@@ -333,15 +333,18 @@ async function refreshSystemStatus() {
 
         // Z-Image pipeline status
         const zimageStatus = document.getElementById('zimageStatus');
+        const loadZimageBtn = document.getElementById('loadZimageBtn');
         const unloadZimageBtn = document.getElementById('unloadZimageBtn');
         if (zimageStatus) {
             if (data.pipeline_loaded) {
                 zimageStatus.textContent = 'Loaded';
                 zimageStatus.className = 'text-xs px-2 py-1 rounded bg-green-600/20 text-green-400';
+                if (loadZimageBtn) loadZimageBtn.classList.add('hidden');
                 if (unloadZimageBtn) unloadZimageBtn.classList.remove('hidden');
             } else {
                 zimageStatus.textContent = 'Not loaded';
                 zimageStatus.className = 'text-xs px-2 py-1 rounded bg-gray-700 text-gray-400';
+                if (loadZimageBtn) loadZimageBtn.classList.remove('hidden');
                 if (unloadZimageBtn) unloadZimageBtn.classList.add('hidden');
             }
         }
@@ -349,45 +352,72 @@ async function refreshSystemStatus() {
         // Qwen-Image Edit pipeline status
         const qwenImagePipelineStatus = document.getElementById('qwenImagePipelineStatus');
         const unloadQwenImageBtn = document.getElementById('unloadQwenImageBtn');
+        const loadQwenImageBtn = document.getElementById('loadQwenImageBtn');
         if (qwenImagePipelineStatus) {
             if (data.qwen_image_available) {
                 qwenImagePipelineStatus.textContent = 'Loaded';
                 qwenImagePipelineStatus.className = 'text-xs px-2 py-1 rounded bg-green-600/20 text-green-400';
+                if (loadQwenImageBtn) loadQwenImageBtn.classList.add('hidden');
                 if (unloadQwenImageBtn) unloadQwenImageBtn.classList.remove('hidden');
             } else {
                 qwenImagePipelineStatus.textContent = 'Not loaded';
                 qwenImagePipelineStatus.className = 'text-xs px-2 py-1 rounded bg-gray-700 text-gray-400';
+                if (loadQwenImageBtn) loadQwenImageBtn.classList.remove('hidden');
                 if (unloadQwenImageBtn) unloadQwenImageBtn.classList.add('hidden');
             }
         }
 
         // Qwen-Image T2I pipeline status
         const qwenImageT2iStatus = document.getElementById('qwenImageT2iStatus');
+        const loadQwenImageT2iBtn = document.getElementById('loadQwenImageT2iBtn');
         const unloadQwenImageT2iBtn = document.getElementById('unloadQwenImageT2iBtn');
         if (qwenImageT2iStatus) {
             if (data.qwen_image_t2i_available) {
                 qwenImageT2iStatus.textContent = 'Loaded';
                 qwenImageT2iStatus.className = 'text-xs px-2 py-1 rounded bg-green-600/20 text-green-400';
+                if (loadQwenImageT2iBtn) loadQwenImageT2iBtn.classList.add('hidden');
                 if (unloadQwenImageT2iBtn) unloadQwenImageT2iBtn.classList.remove('hidden');
             } else {
                 qwenImageT2iStatus.textContent = 'Not loaded';
                 qwenImageT2iStatus.className = 'text-xs px-2 py-1 rounded bg-gray-700 text-gray-400';
+                if (loadQwenImageT2iBtn) loadQwenImageT2iBtn.classList.remove('hidden');
                 if (unloadQwenImageT2iBtn) unloadQwenImageT2iBtn.classList.add('hidden');
             }
         }
 
         // LTX-2 Video pipeline status
         const ltx2PipelineStatus = document.getElementById('ltx2PipelineStatus');
+        const loadLtx2Btn = document.getElementById('loadLtx2Btn');
         const unloadLtx2Btn = document.getElementById('unloadLtx2Btn');
         if (ltx2PipelineStatus) {
             if (data.ltx2_pipeline) {
                 ltx2PipelineStatus.textContent = 'Loaded';
                 ltx2PipelineStatus.className = 'text-xs px-2 py-1 rounded bg-green-600/20 text-green-400';
+                if (loadLtx2Btn) loadLtx2Btn.classList.add('hidden');
                 if (unloadLtx2Btn) unloadLtx2Btn.classList.remove('hidden');
             } else {
                 ltx2PipelineStatus.textContent = 'Not loaded';
                 ltx2PipelineStatus.className = 'text-xs px-2 py-1 rounded bg-gray-700 text-gray-400';
+                if (loadLtx2Btn) loadLtx2Btn.classList.remove('hidden');
                 if (unloadLtx2Btn) unloadLtx2Btn.classList.add('hidden');
+            }
+        }
+
+        // FLUX.2 Klein pipeline status
+        const flux2PipelineStatus = document.getElementById('flux2PipelineStatus');
+        const loadFlux2Btn = document.getElementById('loadFlux2Btn');
+        const unloadFlux2Btn = document.getElementById('unloadFlux2Btn');
+        if (flux2PipelineStatus) {
+            if (data.flux2_pipeline) {
+                flux2PipelineStatus.textContent = 'Loaded';
+                flux2PipelineStatus.className = 'text-xs px-2 py-1 rounded bg-green-600/20 text-green-400';
+                if (loadFlux2Btn) loadFlux2Btn.classList.add('hidden');
+                if (unloadFlux2Btn) unloadFlux2Btn.classList.remove('hidden');
+            } else {
+                flux2PipelineStatus.textContent = 'Not loaded';
+                flux2PipelineStatus.className = 'text-xs px-2 py-1 rounded bg-gray-700 text-gray-400';
+                if (loadFlux2Btn) loadFlux2Btn.classList.remove('hidden');
+                if (unloadFlux2Btn) unloadFlux2Btn.classList.add('hidden');
             }
         }
 
@@ -514,6 +544,24 @@ function setupSettingsModal() {
         });
     }
 
+    const loadZimageBtn = document.getElementById('loadZimageBtn');
+    if (loadZimageBtn) {
+        loadZimageBtn.addEventListener('click', async () => {
+            loadZimageBtn.disabled = true;
+            loadZimageBtn.textContent = 'Loading...';
+            try {
+                const result = await ApiClient.loadZImage();
+                showSettingsMessage(result.message || 'Z-Image loaded', 'success');
+            } catch (err) {
+                const msg = err.message || 'Failed to load Z-Image';
+                showSettingsMessage(msg, 'error');
+            }
+            await refreshSystemStatus();
+            loadZimageBtn.textContent = 'Load';
+            loadZimageBtn.disabled = false;
+        });
+    }
+
     const unloadZimageBtn = document.getElementById('unloadZimageBtn');
     if (unloadZimageBtn) {
         unloadZimageBtn.addEventListener('click', async () => {
@@ -528,6 +576,24 @@ function setupSettingsModal() {
             await refreshSystemStatus();
             unloadZimageBtn.textContent = 'Unload';
             unloadZimageBtn.disabled = false;
+        });
+    }
+
+    const loadQwenImageBtn = document.getElementById('loadQwenImageBtn');
+    if (loadQwenImageBtn) {
+        loadQwenImageBtn.addEventListener('click', async () => {
+            loadQwenImageBtn.disabled = true;
+            loadQwenImageBtn.textContent = 'Loading...';
+            try {
+                const result = await ApiClient.loadQwenImage();
+                showSettingsMessage(result.message || 'Qwen-Image Edit loaded', 'success');
+            } catch (err) {
+                const msg = err.message || 'Failed to load Qwen-Image Edit';
+                showSettingsMessage(msg, 'error');
+            }
+            await refreshSystemStatus();
+            loadQwenImageBtn.textContent = 'Load';
+            loadQwenImageBtn.disabled = false;
         });
     }
 
@@ -548,6 +614,24 @@ function setupSettingsModal() {
         });
     }
 
+    const loadQwenImageT2iBtn = document.getElementById('loadQwenImageT2iBtn');
+    if (loadQwenImageT2iBtn) {
+        loadQwenImageT2iBtn.addEventListener('click', async () => {
+            loadQwenImageT2iBtn.disabled = true;
+            loadQwenImageT2iBtn.textContent = 'Loading...';
+            try {
+                const result = await ApiClient.loadQwenImageT2i();
+                showSettingsMessage(result.message || 'Qwen-Image T2I loaded', 'success');
+            } catch (err) {
+                const msg = err.message || 'Failed to load Qwen-Image T2I';
+                showSettingsMessage(msg, 'error');
+            }
+            await refreshSystemStatus();
+            loadQwenImageT2iBtn.textContent = 'Load';
+            loadQwenImageT2iBtn.disabled = false;
+        });
+    }
+
     const unloadQwenImageT2iBtn = document.getElementById('unloadQwenImageT2iBtn');
     if (unloadQwenImageT2iBtn) {
         unloadQwenImageT2iBtn.addEventListener('click', async () => {
@@ -565,6 +649,24 @@ function setupSettingsModal() {
         });
     }
 
+    const loadLtx2Btn = document.getElementById('loadLtx2Btn');
+    if (loadLtx2Btn) {
+        loadLtx2Btn.addEventListener('click', async () => {
+            loadLtx2Btn.disabled = true;
+            loadLtx2Btn.textContent = 'Loading...';
+            try {
+                const result = await ApiClient.loadLtx2();
+                showSettingsMessage(result.message || 'LTX-2 Video loaded', 'success');
+            } catch (err) {
+                const msg = err.message || 'Failed to load LTX-2 Video';
+                showSettingsMessage(msg, 'error');
+            }
+            await refreshSystemStatus();
+            loadLtx2Btn.textContent = 'Load';
+            loadLtx2Btn.disabled = false;
+        });
+    }
+
     const unloadLtx2Btn = document.getElementById('unloadLtx2Btn');
     if (unloadLtx2Btn) {
         unloadLtx2Btn.addEventListener('click', async () => {
@@ -579,6 +681,41 @@ function setupSettingsModal() {
             await refreshSystemStatus();
             unloadLtx2Btn.textContent = 'Unload';
             unloadLtx2Btn.disabled = false;
+        });
+    }
+
+    const loadFlux2Btn = document.getElementById('loadFlux2Btn');
+    if (loadFlux2Btn) {
+        loadFlux2Btn.addEventListener('click', async () => {
+            loadFlux2Btn.disabled = true;
+            loadFlux2Btn.textContent = 'Loading...';
+            try {
+                const result = await ApiClient.loadFlux2();
+                showSettingsMessage(result.message || 'FLUX.2 configured', 'success');
+            } catch (err) {
+                const msg = err.message || 'Failed to load FLUX.2';
+                showSettingsMessage(msg, 'error');
+            }
+            await refreshSystemStatus();
+            loadFlux2Btn.textContent = 'Load';
+            loadFlux2Btn.disabled = false;
+        });
+    }
+
+    const unloadFlux2Btn = document.getElementById('unloadFlux2Btn');
+    if (unloadFlux2Btn) {
+        unloadFlux2Btn.addEventListener('click', async () => {
+            unloadFlux2Btn.disabled = true;
+            unloadFlux2Btn.textContent = 'Unloading...';
+            try {
+                const result = await ApiClient.unloadFlux2();
+                showSettingsMessage(result.message || 'FLUX.2 unloaded', 'success');
+            } catch (err) {
+                showSettingsMessage('Failed to unload FLUX.2', 'error');
+            }
+            await refreshSystemStatus();
+            unloadFlux2Btn.textContent = 'Unload';
+            unloadFlux2Btn.disabled = false;
         });
     }
 }
