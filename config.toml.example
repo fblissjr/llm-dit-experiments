@@ -109,13 +109,13 @@ d_noise = 1.0                    # Sigma schedule scaling (from RES4LYF research
 
 [optimization]
 # Legacy optimization flags (use [pytorch] section for new code)
-flash_attn = false               # Enable Flash Attention (deprecated: use attention_backend instead)
+flash_attn = true               # Enable Flash Attention (deprecated: use attention_backend instead)
 compile = false                  # torch.compile the transformer
                                  # false: faster startup, good for interactive use
                                  # true: ~10% speedup after warmup, good for batch processing
                                  # NOTE: torch.compile is INCOMPATIBLE with CPU offload
 compile_mode = "default"         # torch.compile mode (default is CPU-offload safe, no CUDA graphs)
-cpu_offload = false              # Offload transformer to CPU (very slow, last resort)
+cpu_offload = true              # Offload transformer to CPU (very slow, last resort)
 
 [pytorch]
 # PyTorch-native features and attention backend selection

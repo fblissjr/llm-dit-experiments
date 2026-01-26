@@ -1827,7 +1827,8 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
                     config.flash_attn = getattr(opt, "flash_attn", False)
                     config.compile = getattr(opt, "compile", False)
                     config.compile_mode = getattr(opt, "compile_mode", "max-autotune-no-cudagraphs")
-                    config.cpu_offload = getattr(opt, "cpu_offload", config.cpu_offload)
+                    # Note: cpu_offload is set from [pipeline].enable_model_cpu_offload (line 1822)
+                    # Do NOT override from [optimization].cpu_offload - that was a legacy conflict
 
                 # Check for scheduler section
                 if hasattr(toml_config, "scheduler"):
