@@ -17,6 +17,7 @@ import json
 import logging
 import re
 import time
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any, AsyncIterator, Dict, List, Optional
 
@@ -28,8 +29,58 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
-logging.basicConfig(level=logging.INFO)
+# Basic console logging (file logging added in setup_file_logging)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    datefmt="%H:%M:%S",
+)
 logger = logging.getLogger(__name__)
+
+
+def setup_file_logging(config: dict) -> None:
+    """Set up file logging with rotation based on config.
+
+    Args:
+        config: Logging configuration dict with keys:
+            - enabled: bool
+            - log_dir: str (relative to project root)
+            - log_level: str (DEBUG, INFO, WARNING, ERROR)
+            - max_bytes: int (max file size before rotation)
+            - backup_count: int (number of backup files to keep)
+    """
+    if not config.get("enabled", False):
+        return
+
+    log_dir = Path(__file__).parent.parent / config.get("log_dir", "logs")
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    log_file = log_dir / "server.log"
+    log_level = getattr(logging, config.get("log_level", "INFO").upper(), logging.INFO)
+    max_bytes = config.get("max_bytes", 10 * 1024 * 1024)  # 10MB default
+    backup_count = config.get("backup_count", 5)
+
+    # Create rotating file handler
+    file_handler = RotatingFileHandler(
+        log_file,
+        maxBytes=max_bytes,
+        backupCount=backup_count,
+        encoding="utf-8",
+    )
+    file_handler.setLevel(log_level)
+    file_handler.setFormatter(
+        logging.Formatter(
+            "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        )
+    )
+
+    # Add to root logger so all loggers write to file
+    root_logger = logging.getLogger()
+    root_logger.addHandler(file_handler)
+    root_logger.setLevel(min(root_logger.level, log_level))
+
+    logger.info(f"File logging enabled: {log_file} (max {max_bytes // 1024 // 1024}MB, {backup_count} backups)")
 
 app = FastAPI(title="Z-Image Generator")
 
@@ -179,6 +230,59 @@ REQUIRES_RESTART = {
     "lora_paths",
     "lora_scales",
 }
+
+
+# =============================================================================
+# Shared Response Utilities
+# =============================================================================
+
+
+def create_image_response(
+    image=None,  # PIL Image (optional if img_b64 provided)
+    pipeline_id: str = "unknown",
+    seed: int | None = None,
+    generation_time: float = 0.0,
+    history_id: int | None = None,
+    img_b64: str | None = None,  # Pre-computed base64 (avoids double-encoding)
+) -> dict:
+    """Create standardized JSON response for image generation endpoints.
+
+    This shared utility ensures all image endpoints (Z-Image, FLUX.2, etc.)
+    return the same format that the React frontend expects.
+
+    Args:
+        image: PIL Image object to encode (not needed if img_b64 provided)
+        pipeline_id: Pipeline identifier (e.g., "zimage", "flux2")
+        seed: Generation seed (or None/-1 for random)
+        generation_time: Time taken in seconds
+        history_id: Optional history entry ID
+        img_b64: Pre-computed base64 string (skips encoding if provided)
+
+    Returns:
+        dict with: id, output_type, url, urls, thumbnail_url, seed, generation_time
+    """
+    import base64
+
+    # Use pre-computed base64 or encode from PIL Image
+    if img_b64 is None:
+        if image is None:
+            raise ValueError("Either image or img_b64 must be provided")
+        img_bytes = io.BytesIO()
+        image.save(img_bytes, format="PNG")
+        img_b64 = base64.b64encode(img_bytes.getvalue()).decode("ascii")
+
+    data_url = f"data:image/png;base64,{img_b64}"
+
+    return {
+        "id": history_id if history_id is not None else f"gen-{int(time.time() * 1000)}",
+        "pipeline_id": pipeline_id,
+        "output_type": "image",
+        "url": data_url,
+        "urls": [data_url],
+        "thumbnail_url": data_url,
+        "seed": seed if seed is not None else -1,
+        "generation_time": generation_time,
+    }
 
 
 def unload_zimage_pipeline() -> bool:
@@ -2125,21 +2229,12 @@ async def flux2_generate(request: Flux2GenerateRequest):
         gen_time = time.time() - start_time
         logger.info(f"[FLUX.2] Generation complete in {gen_time:.1f}s")
 
-        # Convert to PNG bytes
-        img_bytes = io.BytesIO()
-        image.save(img_bytes, format="PNG")
-        img_bytes.seek(0)
-
-        # Return as binary PNG with metadata headers
-        from fastapi.responses import Response
-        return Response(
-            content=img_bytes.getvalue(),
-            media_type="image/png",
-            headers={
-                "X-Seed": str(config.seed or "random"),
-                "X-Generation-Time": str(gen_time),
-                "X-Model": request.model_name,
-            }
+        # Return standardized JSON response (same format as Z-Image)
+        return create_image_response(
+            image=image,
+            pipeline_id="flux2",
+            seed=config.seed,
+            generation_time=gen_time,
         )
 
     except Exception as e:
@@ -3204,17 +3299,12 @@ async def generate(request: GenerateRequest):
         logger.info(f"Generated in {gen_time:.1f}s")
         logger.info("=" * 60)
 
-        # Convert to PNG bytes
-        img_bytes = io.BytesIO()
-        image.save(img_bytes, format="PNG")
-        img_bytes.seek(0)
-
-        # Convert to base64 for history storage
+        # Convert to base64 for history storage and response
         import base64
 
-        img_bytes_copy = io.BytesIO()
-        image.save(img_bytes_copy, format="PNG")
-        img_b64 = base64.b64encode(img_bytes_copy.getvalue()).decode("ascii")
+        img_bytes = io.BytesIO()
+        image.save(img_bytes, format="PNG")
+        img_b64 = base64.b64encode(img_bytes.getvalue()).decode("ascii")
 
         # Get formatted prompt for history
         formatted_prompt = None
@@ -3268,17 +3358,14 @@ async def generate(request: GenerateRequest):
         if len(generation_history) > MAX_HISTORY:
             generation_history.pop()
 
-        # Return JSON with image data for React frontend
-        # Legacy clients can still use the /outputs/ path to get the raw image
-        return {
-            "id": history_entry["id"],
-            "output_type": "image",
-            "url": f"data:image/png;base64,{img_b64}",
-            "urls": [f"data:image/png;base64,{img_b64}"],
-            "thumbnail_url": f"data:image/png;base64,{img_b64}",
-            "seed": request.seed if request.seed else -1,
-            "generation_time": gen_time,
-        }
+        # Return standardized JSON response (shared format with FLUX.2, etc.)
+        return create_image_response(
+            pipeline_id="zimage",
+            seed=request.seed,
+            generation_time=gen_time,
+            history_id=history_entry["id"],
+            img_b64=img_b64,  # Reuse already-computed base64
+        )
 
     except Exception as e:
         logger.error(f"Generation failed: {e}")
@@ -3414,15 +3501,10 @@ async def img2img(request: Img2ImgRequest):
         logger.info(f"Generated in {gen_time:.1f}s")
         logger.info("=" * 60)
 
-        # Convert to PNG bytes
+        # Convert to base64 for history storage and response
         img_bytes = io.BytesIO()
         image.save(img_bytes, format="PNG")
-        img_bytes.seek(0)
-
-        # Store in history
-        img_bytes_copy = io.BytesIO()
-        image.save(img_bytes_copy, format="PNG")
-        img_b64 = base64.b64encode(img_bytes_copy.getvalue()).decode("ascii")
+        img_b64 = base64.b64encode(img_bytes.getvalue()).decode("ascii")
 
         history_entry = {
             "id": len(generation_history),
@@ -3442,15 +3524,13 @@ async def img2img(request: Img2ImgRequest):
         if len(generation_history) > MAX_HISTORY:
             generation_history.pop()
 
-        return StreamingResponse(
-            img_bytes,
-            media_type="image/png",
-            headers={
-                "X-Generation-Time": str(gen_time),
-                "X-Seed": str(request.seed) if request.seed else "random",
-                "X-History-Id": str(history_entry["id"]),
-                "X-Mode": "differential" if request.mask_image else "standard",
-            },
+        # Return standardized JSON response (shared format with other pipelines)
+        return create_image_response(
+            pipeline_id="zimage-img2img",
+            seed=request.seed,
+            generation_time=gen_time,
+            history_id=history_entry["id"],
+            img_b64=img_b64,  # Reuse already-computed base64
         )
 
     except Exception as e:

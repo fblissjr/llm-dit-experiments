@@ -1,6 +1,7 @@
-import { useEffect } from 'react';
+import { useEffect, useCallback, useRef } from 'react';
 import { usePipelineStore } from './stores/pipelineStore';
 import { useModelStore } from './stores/modelStore';
+import { useGenerationStore } from './stores/generationStore';
 import { initResponsiveState, setupResizeListener } from './stores/uiStore';
 import { AppShell } from './components/layout/AppShell';
 import { PipelineForm } from './components/pipeline/PipelineForm';
@@ -21,18 +22,57 @@ export default function App() {
     return setupResizeListener();
   }, []);
 
+  // Track polling interval ref for cleanup
+  const vramPollingInterval = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Memoized polling start/stop functions
+  const startVRAMPolling = useCallback(() => {
+    if (vramPollingInterval.current) return; // Already polling
+    fetchVRAMStatus(); // Immediate fetch
+    vramPollingInterval.current = setInterval(fetchVRAMStatus, 3000);
+  }, [fetchVRAMStatus]);
+
+  const stopVRAMPolling = useCallback(() => {
+    if (vramPollingInterval.current) {
+      clearInterval(vramPollingInterval.current);
+      vramPollingInterval.current = null;
+    }
+  }, []);
+
   // Fetch initial data on mount
   useEffect(() => {
     fetchPipelines();
     fetchVRAMStatus();
-
-    // Poll VRAM status every 5 seconds when generating
-    const interval = setInterval(() => {
-      fetchVRAMStatus();
-    }, 5000);
-
-    return () => clearInterval(interval);
   }, [fetchPipelines, fetchVRAMStatus]);
+
+  // Subscribe to generation status for VRAM polling
+  // Only poll during generation to reduce unnecessary API calls
+  useEffect(() => {
+    let previousStatus: string | null = null;
+
+    const unsubscribe = useGenerationStore.subscribe((state) => {
+      const currentStatus = state.status;
+
+      // Only react to status changes
+      if (currentStatus === previousStatus) return;
+      previousStatus = currentStatus;
+
+      if (currentStatus === 'generating' || currentStatus === 'loading') {
+        startVRAMPolling();
+      } else {
+        stopVRAMPolling();
+        // One final fetch when generation completes
+        if (currentStatus === 'completed' || currentStatus === 'error') {
+          fetchVRAMStatus();
+        }
+      }
+    });
+
+    return () => {
+      unsubscribe();
+      stopVRAMPolling();
+    };
+  }, [startVRAMPolling, stopVRAMPolling, fetchVRAMStatus]);
 
   // Fetch model status for each pipeline after pipelines load
   useEffect(() => {

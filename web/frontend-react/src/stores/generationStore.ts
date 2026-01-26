@@ -221,12 +221,72 @@ export const useGenerationStore = create<GenerationState>()(
       return defaults;
     },
 
-    getTimeEstimate: (_pipelineId: string) => {
-      // TODO: Calculate based on history or model benchmarks
+    getTimeEstimate: (pipelineId: string) => {
+      // Get history items for this pipeline
+      const historyItems = useHistoryStore.getState().getItemsByPipeline(pipelineId);
+
+      if (historyItems.length === 0) {
+        // No history - return low confidence default
+        return {
+          estimatedSeconds: 30,
+          basedOn: 'default' as const,
+          confidence: 'low' as const,
+        };
+      }
+
+      // Get the current form values to compare similar configurations
+      const currentValues = get().formValues[pipelineId] ?? {};
+      const currentSteps = Number(currentValues.steps ?? currentValues.num_inference_steps ?? 20);
+
+      // Weight recent items more heavily and prefer similar step counts
+      const recentItems = historyItems.slice(0, 10); // Last 10 items
+      let totalWeight = 0;
+      let weightedDuration = 0;
+
+      for (const item of recentItems) {
+        const itemSteps = Number(
+          item.params.steps ?? item.params.num_inference_steps ?? 20
+        );
+        const durationMs = item.result.durationMs;
+
+        if (durationMs > 0) {
+          // Base weight: 1.0 for most recent, decaying for older
+          const recencyIndex = recentItems.indexOf(item);
+          const recencyWeight = 1.0 - recencyIndex * 0.1;
+
+          // Steps similarity bonus (more weight if steps are similar)
+          const stepsDiff = Math.abs(currentSteps - itemSteps);
+          const stepsWeight = stepsDiff <= 5 ? 1.5 : stepsDiff <= 10 ? 1.2 : 1.0;
+
+          const weight = recencyWeight * stepsWeight;
+          weightedDuration += durationMs * weight;
+          totalWeight += weight;
+        }
+      }
+
+      if (totalWeight === 0) {
+        return {
+          estimatedSeconds: 30,
+          basedOn: 'default' as const,
+          confidence: 'low' as const,
+        };
+      }
+
+      const estimatedMs = weightedDuration / totalWeight;
+      const estimatedSeconds = Math.round(estimatedMs / 1000);
+
+      // Determine confidence based on sample size and recency
+      let confidence: 'low' | 'medium' | 'high' = 'low';
+      if (recentItems.length >= 5) {
+        confidence = 'high';
+      } else if (recentItems.length >= 2) {
+        confidence = 'medium';
+      }
+
       return {
-        estimatedSeconds: 30,
-        basedOn: 'default',
-        confidence: 'low',
+        estimatedSeconds,
+        basedOn: 'history' as const,
+        confidence,
       };
     },
   }))

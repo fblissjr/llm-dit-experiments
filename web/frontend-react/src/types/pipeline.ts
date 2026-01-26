@@ -86,6 +86,16 @@ export const PIPELINE_COLOR_CLASSES = {
     green: 'border-green-500 text-green-500',
     pink: 'border-pink-500 text-pink-500',
   } as const satisfies Record<PipelineColor, string>,
+
+  // Full button styles (bg + hover + focus ring)
+  button: {
+    blue: 'bg-blue-600 hover:bg-blue-500 focus:ring-blue-500',
+    purple: 'bg-purple-600 hover:bg-purple-500 focus:ring-purple-500',
+    orange: 'bg-orange-600 hover:bg-orange-500 focus:ring-orange-500',
+    teal: 'bg-teal-600 hover:bg-teal-500 focus:ring-teal-500',
+    green: 'bg-green-600 hover:bg-green-500 focus:ring-green-500',
+    pink: 'bg-pink-600 hover:bg-pink-500 focus:ring-pink-500',
+  } as const satisfies Record<PipelineColor, string>,
 };
 
 /**

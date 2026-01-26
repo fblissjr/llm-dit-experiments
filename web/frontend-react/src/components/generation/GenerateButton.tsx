@@ -9,6 +9,7 @@
 import { useGenerationStore } from '@/stores/generationStore';
 import { useModelStore } from '@/stores/modelStore';
 import { usePipelineStore } from '@/stores/pipelineStore';
+import { PIPELINE_COLOR_CLASSES, type PipelineColor } from '@/types/pipeline';
 
 interface GenerateButtonProps {
   pipelineId: string;
@@ -43,17 +44,9 @@ export function GenerateButton({
     loadModel(pipelineId);
   };
 
-  // Button color based on pipeline
-  const colorClasses: Record<string, string> = {
-    blue: 'bg-blue-600 hover:bg-blue-500 focus:ring-blue-500',
-    purple: 'bg-purple-600 hover:bg-purple-500 focus:ring-purple-500',
-    orange: 'bg-orange-600 hover:bg-orange-500 focus:ring-orange-500',
-    teal: 'bg-teal-600 hover:bg-teal-500 focus:ring-teal-500',
-    green: 'bg-green-600 hover:bg-green-500 focus:ring-green-500',
-    pink: 'bg-pink-600 hover:bg-pink-500 focus:ring-pink-500',
-  };
-
-  const buttonColor = pipeline?.color ? colorClasses[pipeline.color] : colorClasses.blue;
+  // Button color based on pipeline (using centralized color classes)
+  const pipelineColor = (pipeline?.color ?? 'blue') as PipelineColor;
+  const buttonColor = PIPELINE_COLOR_CLASSES.button[pipelineColor];
 
   // Show "Load Model" button if model isn't loaded
   if (!modelLoaded) {

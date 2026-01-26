@@ -14,6 +14,7 @@ vi.mock('../historyStore', () => ({
   useHistoryStore: {
     getState: vi.fn(() => ({
       addItem: vi.fn(),
+      getItemsByPipeline: vi.fn(() => []),
     })),
   },
 }))
@@ -217,12 +218,82 @@ describe('generationStore', () => {
   })
 
   describe('getTimeEstimate', () => {
-    it('returns default estimate (TODO placeholder)', () => {
+    it('returns default estimate when no history exists', () => {
+      vi.mocked(useHistoryStore.getState).mockReturnValue({
+        addItem: vi.fn(),
+        getItemsByPipeline: vi.fn(() => []),
+      } as unknown as ReturnType<typeof useHistoryStore.getState>)
+
       const estimate = useGenerationStore.getState().getTimeEstimate('zimage')
 
       expect(estimate.estimatedSeconds).toBe(30)
       expect(estimate.basedOn).toBe('default')
       expect(estimate.confidence).toBe('low')
+    })
+
+    it('calculates estimate from history with medium confidence', () => {
+      const mockHistoryItems = [
+        {
+          params: { steps: 20 },
+          result: { durationMs: 5000 },
+        },
+        {
+          params: { steps: 20 },
+          result: { durationMs: 6000 },
+        },
+      ]
+
+      vi.mocked(useHistoryStore.getState).mockReturnValue({
+        addItem: vi.fn(),
+        getItemsByPipeline: vi.fn(() => mockHistoryItems),
+      } as unknown as ReturnType<typeof useHistoryStore.getState>)
+
+      // Set form values to have similar steps
+      useGenerationStore.getState().setFormValue('zimage', 'steps', 20)
+
+      const estimate = useGenerationStore.getState().getTimeEstimate('zimage')
+
+      // Should estimate around 5-6 seconds (weighted average)
+      expect(estimate.estimatedSeconds).toBeGreaterThanOrEqual(5)
+      expect(estimate.estimatedSeconds).toBeLessThanOrEqual(6)
+      expect(estimate.basedOn).toBe('history')
+      expect(estimate.confidence).toBe('medium')
+    })
+
+    it('calculates estimate with high confidence when 5+ items', () => {
+      const mockHistoryItems = Array.from({ length: 5 }, (_, i) => ({
+        params: { steps: 20 },
+        result: { durationMs: 5000 + i * 200 }, // 5000, 5200, 5400, 5600, 5800
+      }))
+
+      vi.mocked(useHistoryStore.getState).mockReturnValue({
+        addItem: vi.fn(),
+        getItemsByPipeline: vi.fn(() => mockHistoryItems),
+      } as unknown as ReturnType<typeof useHistoryStore.getState>)
+
+      const estimate = useGenerationStore.getState().getTimeEstimate('zimage')
+
+      expect(estimate.basedOn).toBe('history')
+      expect(estimate.confidence).toBe('high')
+    })
+
+    it('weights similar step counts more heavily', () => {
+      const mockHistoryItems = [
+        { params: { steps: 50 }, result: { durationMs: 10000 } }, // Different steps
+        { params: { steps: 20 }, result: { durationMs: 5000 } },  // Similar steps
+      ]
+
+      vi.mocked(useHistoryStore.getState).mockReturnValue({
+        addItem: vi.fn(),
+        getItemsByPipeline: vi.fn(() => mockHistoryItems),
+      } as unknown as ReturnType<typeof useHistoryStore.getState>)
+
+      useGenerationStore.getState().setFormValue('zimage', 'steps', 20)
+
+      const estimate = useGenerationStore.getState().getTimeEstimate('zimage')
+
+      // Should be closer to 5s (similar steps) than 10s (different steps)
+      expect(estimate.estimatedSeconds).toBeLessThan(8)
     })
   })
 
