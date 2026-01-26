@@ -1,6 +1,6 @@
 # agent context
 
-*last updated: 2026-01-24*
+*last updated: 2026-01-26*
 
 Quick reference for LLM agents. Uses progressive disclosure - read only what you need, but always read
 
@@ -165,6 +165,7 @@ uv run scripts/generate.py --model-type flux2 \
 
 | Task | Read | Why |
 |------|------|-----|
+| **Web/UI development** | [internal/web/AGENTS.md](internal/web/AGENTS.md) | React frontend, design system |
 | Picking new work | [spec.md](spec.md) | Prioritized backlog (P0-P5) |
 | Writing/running tests | [tests/AGENTS.md](tests/AGENTS.md) | Complete testing guide |
 | Research/experiments | [experiments/AGENTS.md](experiments/AGENTS.md) | Research protocols |
