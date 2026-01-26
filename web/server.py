@@ -4845,6 +4845,10 @@ def load_zimage_pipeline_on_demand():
         logger.info("[Z-Image] Loading pipeline on-demand...")
         logger.info(f"  Model path: {runtime_config.model_path}")
 
+        # Debug: log cpu_offload value to diagnose OOM issues
+        cpu_offload_value = getattr(runtime_config, "cpu_offload", "NOT_SET")
+        logger.info(f"  cpu_offload from config: {cpu_offload_value}")
+
         # Determine encoder device - use CPU when cpu_offload is enabled to fit in 24GB VRAM
         # cpu_offload maps to [pipeline].enable_model_cpu_offload in config
         encoder_device = runtime_config.encoder_device
