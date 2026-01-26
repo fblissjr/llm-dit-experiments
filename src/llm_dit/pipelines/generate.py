@@ -634,7 +634,7 @@ def generate_video_with_offloading(
             prompt_embeds.shape[0], prompt_embeds.shape[1],
             device=transformer_device, dtype=torch.long
         )
-        logger.info(f"Precomputed embeddings: {prompt_embeds.shape} on {transformer_device}")
+        logger.debug(f"Precomputed embeddings: {prompt_embeds.shape} on {transformer_device}")
 
         if callback:
             callback("text_encoder", 1, 1)
@@ -643,7 +643,7 @@ def generate_video_with_offloading(
             callback("text_encoder", 0, 1)
 
         logger.info("Stage 1: Loading text encoder...")
-        logger.info(f"  Gemma variant: {gemma_variant}")
+        logger.debug(f"  Gemma variant: {gemma_variant}")
 
         # Use variant factory for flexible Gemma3 loading
         if gemma_variant != "bf16":
@@ -670,7 +670,7 @@ def generate_video_with_offloading(
         # EncodingOutput has embeddings list and attention_masks list
         prompt_embeds = encoding_output.embeddings[0].unsqueeze(0)  # [1, seq_len, dim]
         attention_mask = encoding_output.attention_masks[0].unsqueeze(0)  # [1, seq_len]
-        logger.info(f"Prompt embeddings: {prompt_embeds.shape}")
+        logger.debug(f"Prompt embeddings: {prompt_embeds.shape}")
 
         # Move embeddings to transformer device, unload encoder
         transformer_device = optimization.transformer_device
@@ -739,11 +739,11 @@ def generate_video_with_offloading(
             device="cuda",
             dtype=dtype,
         )
-        logger.info("Loaded connectors for 188160 -> 3840 projection")
+        logger.debug("Loaded connectors for 188160 -> 3840 projection")
     else:
-        logger.info(f"Skipping connectors (embed_dim={embed_dim} already projected)")
+        logger.debug(f"Skipping connectors (embed_dim={embed_dim} already projected)")
 
-    logger.info(f"Transformer loaded: {model.get_num_params() / 1e9:.2f}B params")
+    logger.debug(f"Transformer loaded: {model.get_num_params() / 1e9:.2f}B params")
 
     # Generate latents (no VAE decode yet)
     def progress_callback(step, total, _latents):

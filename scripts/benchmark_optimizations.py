@@ -630,9 +630,11 @@ def main():
     if args.output:
         save_results(results, args.output)
     else:
-        # Default output path
+        # Default output path: outputs/tests/benchmarks/
+        output_dir = PROJECT_ROOT / "outputs" / "tests" / "benchmarks"
+        output_dir.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_path = PROJECT_ROOT / f"benchmark_{args.pipeline}_{timestamp}.json"
+        output_path = output_dir / f"benchmark_{args.pipeline}_{timestamp}.json"
         save_results(results, output_path)
 
 

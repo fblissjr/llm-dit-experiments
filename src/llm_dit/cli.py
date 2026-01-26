@@ -2036,7 +2036,9 @@ def setup_logging(config: RuntimeConfig) -> None:
     )
 
     if config.debug:
-        # Enable debug for llm_dit modules
+        # Enable debug for all project modules
         logging.getLogger("llm_dit").setLevel(logging.DEBUG)
         logging.getLogger("llm_dit.backends").setLevel(logging.DEBUG)
         logging.getLogger("llm_dit.pipelines").setLevel(logging.DEBUG)
+        logging.getLogger("web").setLevel(logging.DEBUG)
+        logging.getLogger("__main__").setLevel(logging.DEBUG)  # For direct script execution

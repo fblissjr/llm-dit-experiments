@@ -5747,11 +5747,13 @@ def main():
     runtime_config = load_runtime_config(args)
     setup_logging(runtime_config)
 
-    # Debug: Log FLUX.2 config
-    flux2_model_path = getattr(runtime_config, "flux2_model_path", None)
-    flux2_vae_path = getattr(runtime_config, "flux2_vae_path", None)
-    logger.info(f"[FLUX.2 Config] model_path: {flux2_model_path}")
-    logger.info(f"[FLUX.2 Config] vae_path: {flux2_vae_path}")
+    # Debug: Log all pipeline configurations
+    logger.debug(f"[Config] Z-Image model: {getattr(runtime_config, 'model_path', None)}")
+    logger.debug(f"[Config] FLUX.2 model: {getattr(runtime_config, 'flux2_model_path', None)}")
+    logger.debug(f"[Config] FLUX.2 VAE: {getattr(runtime_config, 'flux2_vae_path', None)}")
+    logger.debug(f"[Config] LTX-2 model: {getattr(runtime_config, 'ltx2_model_path', None)}")
+    logger.debug(f"[Config] VL model: {getattr(runtime_config, 'vl_model_path', None)}")
+    logger.debug(f"[Config] Debug mode: {getattr(runtime_config, 'debug', False)}")
 
     # Store config path for reference
     if hasattr(args, "config") and args.config:

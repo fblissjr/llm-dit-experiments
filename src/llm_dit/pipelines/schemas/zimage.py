@@ -316,6 +316,19 @@ register_pipeline(PipelineSchema(
             tooltip="Similarity threshold for cache reuse. Lower = more caching.",
         ),
 
+        # === Hidden Layer Selection ===
+        ParamSchema(
+            id="hidden_layer",
+            type="select",
+            label="Hidden Layer",
+            default="-2",
+            options=[str(i) for i in range(-1, -33, -1)],  # "-1" to "-32"
+            group="advanced",
+            tooltip="Which Qwen3-4B layer to extract embeddings from. "
+                    "-1 = last layer (most semantic), -2 = penultimate (default), "
+                    "deeper negative numbers = earlier layers (more syntactic).",
+        ),
+
         # === VL Conditioning ===
         ParamSchema(
             id="vl_enabled",

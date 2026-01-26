@@ -86,7 +86,7 @@ def log_gpu_memory(stage: str) -> None:
         torch.cuda.synchronize()
         allocated = torch.cuda.memory_allocated() / 1024**3
         reserved = torch.cuda.memory_reserved() / 1024**3
-        logger.info(f"[GPU] {stage}: allocated={allocated:.2f}GB, reserved={reserved:.2f}GB")
+        logger.debug(f"[GPU] {stage}: allocated={allocated:.2f}GB, reserved={reserved:.2f}GB")
 
 
 def log_memory_snapshot(label: str) -> None:
@@ -97,7 +97,7 @@ def log_memory_snapshot(label: str) -> None:
     allocated = stats.get("allocated_bytes.all.current", 0) / 1e9
     reserved = stats.get("reserved_bytes.all.current", 0) / 1e9
     frag_gap = reserved - allocated
-    logger.info(
+    logger.debug(
         f"[{label}] Allocated: {allocated:.2f}GB, Reserved: {reserved:.2f}GB, "
         f"Fragmentation: {frag_gap:.2f}GB"
     )
@@ -208,7 +208,7 @@ def preprocess_reference_image(
 
     # Log original dimensions
     orig_w, orig_h = img.size
-    logger.info(f"[REF:Preprocess] Original dimensions: {orig_w}x{orig_h}")
+    logger.debug(f"[REF:Preprocess] Original dimensions: {orig_w}x{orig_h}")
 
     # Cap pixels if needed
     if limit_pixels is not None:
@@ -218,7 +218,7 @@ def preprocess_reference_image(
             new_w = int(w * scale)
             new_h = int(h * scale)
             img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
-            logger.info(f"[REF:Preprocess] After resize: {new_w}x{new_h} (limit={limit_pixels} pixels)")
+            logger.debug(f"[REF:Preprocess] After resize: {new_w}x{new_h} (limit={limit_pixels} pixels)")
 
     # Center crop to multiple of ensure_multiple
     w, h = img.size
@@ -228,11 +228,11 @@ def preprocess_reference_image(
         left = (w - new_w) // 2
         top = (h - new_h) // 2
         img = img.crop((left, top, left + new_w, top + new_h))
-        logger.info(f"[REF:Preprocess] After crop to multiple of {ensure_multiple}: {new_w}x{new_h}")
+        logger.debug(f"[REF:Preprocess] After crop to multiple of {ensure_multiple}: {new_w}x{new_h}")
 
     # Convert to tensor in [-1, 1]
     tensor = torchvision.transforms.ToTensor()(img)
-    logger.info(f"[REF:Preprocess] Final tensor shape: {list(tensor.shape)}")
+    logger.debug(f"[REF:Preprocess] Final tensor shape: {list(tensor.shape)}")
     return 2 * tensor - 1
 
 
@@ -279,31 +279,31 @@ def encode_reference_images(
     logger.info(f"[REF:Encode] Encoding {len(images)} reference image(s)...")
 
     for idx, img in enumerate(images):
-        logger.info(f"[REF:Encode] Processing reference image {idx}...")
+        logger.debug(f"[REF:Encode] Processing reference image {idx}...")
 
         # Preprocess
         img_tensor = preprocess_reference_image(img, limit_pixels=limit_pixels)
         img_tensor = img_tensor.unsqueeze(0).to(device).to(dtype)  # [1, 3, H, W]
-        logger.info(f"[REF:Encode] Image {idx} input tensor shape: {list(img_tensor.shape)}")
+        logger.debug(f"[REF:Encode] Image {idx} input tensor shape: {list(img_tensor.shape)}")
 
         # VAE encode
         with torch.no_grad():
             latent = vae.encode(img_tensor)  # [1, 128, H/16, W/16]
 
-        logger.info(f"[REF:Encode] Image {idx} latent shape after VAE: {list(latent.shape)}")
+        logger.debug(f"[REF:Encode] Image {idx} latent shape after VAE: {list(latent.shape)}")
 
         # Reshape to sequence: [1, H*W, 128]
         b, c, h, w = latent.shape
         latent_seq = rearrange(latent, "b c h w -> b (h w) c")
         token_count = h * w
-        logger.info(f"[REF:Encode] Image {idx} latent h={h}, w={w}, token_count={token_count}")
+        logger.debug(f"[REF:Encode] Image {idx} latent h={h}, w={w}, token_count={token_count}")
 
         # Create position IDs with unique time coordinate
         t_coord = torch.tensor([t_scale + t_scale * idx], device=device)
-        logger.info(f"[REF:Encode] Image {idx} t_coord value: {t_coord.item()}")
-        logger.info(f"[REF:Encode] Image {idx} position ID range: h=[0,{h-1}], w=[0,{w-1}]")
+        logger.debug(f"[REF:Encode] Image {idx} t_coord value: {t_coord.item()}")
+        logger.debug(f"[REF:Encode] Image {idx} position ID range: h=[0,{h-1}], w=[0,{w-1}]")
         ids = _create_ref_image_ids(h, w, t_coord, device)  # [h*w, 4]
-        logger.info(f"[REF:Encode] Image {idx} position IDs first: {ids[0].tolist()}, last: {ids[-1].tolist()}")
+        logger.debug(f"[REF:Encode] Image {idx} position IDs first: {ids[0].tolist()}, last: {ids[-1].tolist()}")
 
         encoded_refs.append(latent_seq)
         ref_ids_list.append(ids)
@@ -312,9 +312,9 @@ def encode_reference_images(
     ref_tokens = torch.cat(encoded_refs, dim=1)  # [1, total_tokens, 128]
     ref_ids = torch.cat(ref_ids_list, dim=0).unsqueeze(0)  # [1, total_tokens, 4]
 
-    logger.info(f"[REF:Encode] Total ref tokens after concatenation: {ref_tokens.shape[1]}")
-    logger.info(f"[REF:Encode] Final ref_tokens shape: {list(ref_tokens.shape)}")
-    logger.info(f"[REF:Encode] Final ref_ids shape: {list(ref_ids.shape)}")
+    logger.debug(f"[REF:Encode] Total ref tokens after concatenation: {ref_tokens.shape[1]}")
+    logger.debug(f"[REF:Encode] Final ref_tokens shape: {list(ref_tokens.shape)}")
+    logger.debug(f"[REF:Encode] Final ref_ids shape: {list(ref_ids.shape)}")
 
     return ref_tokens.to(dtype), ref_ids.to(torch.float32)
 
@@ -336,7 +336,7 @@ def _create_ref_image_ids(
     Returns:
         Position IDs [h*w, 4] with (t, h, w, l) coordinates
     """
-    logger.info(f"[REF:IDs] Creating position IDs for h={h}, w={w}, t={t_coord.item()}")
+    logger.debug(f"[REF:IDs] Creating position IDs for h={h}, w={w}, t={t_coord.item()}")
 
     coords = {
         "t": t_coord,
@@ -347,9 +347,9 @@ def _create_ref_image_ids(
     # Cartesian product: (t, h, w, l) for all spatial positions
     ids = torch.cartesian_prod(coords["t"], coords["h"], coords["w"], coords["l"])
 
-    logger.info(f"[REF:IDs] Created {ids.shape[0]} position IDs")
-    logger.info(f"[REF:IDs] First 3 IDs: {ids[:3].tolist()}")
-    logger.info(f"[REF:IDs] Last 3 IDs: {ids[-3:].tolist()}")
+    logger.debug(f"[REF:IDs] Created {ids.shape[0]} position IDs")
+    logger.debug(f"[REF:IDs] First 3 IDs: {ids[:3].tolist()}")
+    logger.debug(f"[REF:IDs] Last 3 IDs: {ids[-3:].tolist()}")
 
     return ids
 
@@ -482,9 +482,9 @@ def denoise(
     logger.debug(f"[Denoise] txt_ids shape={txt_ids.shape}")
 
     if img_cond_seq is not None:
-        logger.info(f"[Denoise:Setup] Generated image token count: {num_img_tokens}")
-        logger.info(f"[Denoise:Setup] Reference token count: {img_cond_seq.shape[1]}")
-        logger.info(f"[Denoise:Setup] Combined sequence length: {num_img_tokens + img_cond_seq.shape[1]}")
+        logger.debug(f"[Denoise:Setup] Generated image token count: {num_img_tokens}")
+        logger.debug(f"[Denoise:Setup] Reference token count: {img_cond_seq.shape[1]}")
+        logger.debug(f"[Denoise:Setup] Combined sequence length: {num_img_tokens + img_cond_seq.shape[1]}")
         logger.debug(f"[Denoise] Reference tokens: {img_cond_seq.shape[1]} tokens")
 
     # Log SDPA backend status
@@ -549,19 +549,19 @@ def denoise(
 
         # Detailed logging on first step for diagnosis
         if img_cond_seq is not None and step_idx == 0:
-            logger.info(f"[Denoise:Step {step_idx}] Combined sequence breakdown:")
-            logger.info(f"[Denoise:Step {step_idx}]   Generated tokens: {num_img_tokens}")
-            logger.info(f"[Denoise:Step {step_idx}]   Reference tokens: {img_cond_seq.shape[1]}")
-            logger.info(f"[Denoise:Step {step_idx}]   Total tokens: {img_input.shape[1]}")
-            logger.info(f"[Denoise:Step {step_idx}]   img_input shape: {list(img_input.shape)}")
-            logger.info(f"[Denoise:Step {step_idx}]   img_input_ids shape: {list(img_input_ids.shape)}")
+            logger.debug(f"[Denoise:Step {step_idx}] Combined sequence breakdown:")
+            logger.debug(f"[Denoise:Step {step_idx}]   Generated tokens: {num_img_tokens}")
+            logger.debug(f"[Denoise:Step {step_idx}]   Reference tokens: {img_cond_seq.shape[1]}")
+            logger.debug(f"[Denoise:Step {step_idx}]   Total tokens: {img_input.shape[1]}")
+            logger.debug(f"[Denoise:Step {step_idx}]   img_input shape: {list(img_input.shape)}")
+            logger.debug(f"[Denoise:Step {step_idx}]   img_input_ids shape: {list(img_input_ids.shape)}")
             # Show generated image position ID range
             gen_ids = img_input_ids[0, :num_img_tokens]
-            logger.info(f"[Denoise:Step {step_idx}]   Generated IDs - first: {gen_ids[0].tolist()}, last: {gen_ids[-1].tolist()}")
+            logger.debug(f"[Denoise:Step {step_idx}]   Generated IDs - first: {gen_ids[0].tolist()}, last: {gen_ids[-1].tolist()}")
             # Show reference position ID ranges
             ref_ids_section = img_input_ids[0, num_img_tokens:]
             if ref_ids_section.shape[0] > 0:
-                logger.info(f"[Denoise:Step {step_idx}]   Reference IDs - first: {ref_ids_section[0].tolist()}, last: {ref_ids_section[-1].tolist()}")
+                logger.debug(f"[Denoise:Step {step_idx}]   Reference IDs - first: {ref_ids_section[0].tolist()}, last: {ref_ids_section[-1].tolist()}")
 
         # =====================================================================
         # Model Forward Pass
@@ -646,8 +646,8 @@ def latents_to_image(
     Returns:
         PIL Image
     """
-    logger.info(f"[Decode] Input latents shape: {list(latents.shape)}")
-    logger.info(f"[Decode] Target height={height}, width={width}")
+    logger.debug(f"[Decode] Input latents shape: {list(latents.shape)}")
+    logger.debug(f"[Decode] Target height={height}, width={width}")
 
     # Reshape from sequence to spatial if needed
     if latents.ndim == 3:
@@ -658,15 +658,15 @@ def latents_to_image(
         if height is not None and width is not None:
             h = height // 16  # FLUX.2 uses 16x16 patches
             w = width // 16
-            logger.info(f"[Decode] Computed h={h}, w={w} (from height={height}, width={width})")
+            logger.debug(f"[Decode] Computed h={h}, w={w} (from height={height}, width={width})")
         else:
             # Fallback to square (only works for square outputs)
             h = w = int(math.sqrt(seq_len))
-            logger.info(f"[Decode] Computed square h={h}, w={w} (from seq_len={seq_len})")
+            logger.debug(f"[Decode] Computed square h={h}, w={w} (from seq_len={seq_len})")
 
-        logger.info(f"[Decode] Reshaping from [B={b}, seq_len={seq_len}, C={c}] to [B={b}, C={c}, H={h}, W={w}]")
+        logger.debug(f"[Decode] Reshaping from [B={b}, seq_len={seq_len}, C={c}] to [B={b}, C={c}, H={h}, W={w}]")
         latents = latents.view(b, h, w, c).permute(0, 3, 1, 2).contiguous()
-        logger.info(f"[Decode] Reshaped tensor dimensions: {list(latents.shape)}")
+        logger.debug(f"[Decode] Reshaped tensor dimensions: {list(latents.shape)}")
 
     # Decode
     with torch.no_grad():
@@ -738,7 +738,7 @@ def generate_image(
         text_encoder_spec = encoder_path or model_info["text_encoder"]
         logger.info(f"Loading encoder from: {text_encoder_spec}")
         layers_str = str(config.output_layers) if config.output_layers else "[9, 18, 27]"
-        logger.info(f"[TextEnc] max_length={config.max_text_length}, pad_to_max={config.pad_to_max}, layers={layers_str}")
+        logger.debug(f"[TextEnc] max_length={config.max_text_length}, pad_to_max={config.pad_to_max}, layers={layers_str}")
         encoder = Qwen3Flux2Encoder.from_pretrained(
             text_encoder_spec,
             device=config.device,
@@ -839,10 +839,10 @@ def generate_image(
     )
 
     # Create image position IDs
-    logger.info(f"[GenImage:Setup] Creating position IDs for generated image:")
-    logger.info(f"[GenImage:Setup]   config.height={config.height}, config.width={config.width} (pixels)")
-    logger.info(f"[GenImage:Setup]   config.latent_height={config.latent_height}, config.latent_width={config.latent_width}")
-    logger.info(f"[GenImage:Setup]   config.num_tokens={config.num_tokens}")
+    logger.debug(f"[GenImage:Setup] Creating position IDs for generated image:")
+    logger.debug(f"[GenImage:Setup]   config.height={config.height}, config.width={config.width} (pixels)")
+    logger.debug(f"[GenImage:Setup]   config.latent_height={config.latent_height}, config.latent_width={config.latent_width}")
+    logger.debug(f"[GenImage:Setup]   config.num_tokens={config.num_tokens}")
 
     img_ids = create_image_ids(
         batch_size=1,
@@ -851,15 +851,15 @@ def generate_image(
         device=device,
         dtype=torch.float32,
     )
-    logger.info(f"[GenImage:Setup] Generated img_ids shape: {list(img_ids.shape)}")
-    logger.info(f"[GenImage:Setup] Generated img_ids first 3: {img_ids[0, :3].tolist()}")
-    logger.info(f"[GenImage:Setup] Generated img_ids last 3: {img_ids[0, -3:].tolist()}")
+    logger.debug(f"[GenImage:Setup] Generated img_ids shape: {list(img_ids.shape)}")
+    logger.debug(f"[GenImage:Setup] Generated img_ids first 3: {img_ids[0, :3].tolist()}")
+    logger.debug(f"[GenImage:Setup] Generated img_ids last 3: {img_ids[0, -3:].tolist()}")
 
     # Validate dimensions match
     if img.shape[1] != img_ids.shape[1]:
         logger.error(f"[GenImage:Setup] MISMATCH: img tokens={img.shape[1]}, img_ids tokens={img_ids.shape[1]}")
     else:
-        logger.info(f"[GenImage:Setup] Dimension check OK: {img.shape[1]} tokens")
+        logger.debug(f"[GenImage:Setup] Dimension check OK: {img.shape[1]} tokens")
 
     # Get timestep schedule
     timesteps = get_schedule(config.num_steps, config.num_tokens)
