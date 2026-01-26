@@ -261,12 +261,12 @@ class ZImagePipeline:
         )
 
         # Load the diffusers pipeline (auto-detect pipeline class)
-        # IMPORTANT: Load to CPU first to avoid OOM, then move components to their devices
-        # We only need transformer, VAE, and scheduler - skip text_encoder/tokenizer (we use our own)
+        # Use device_map="auto" to let accelerate handle memory placement
+        # Skip text_encoder/tokenizer - we use our custom ZImageTextEncoder
         logger.info("Loading diffusers pipeline...")
         load_kwargs = {
             "torch_dtype": dtype,  # diffusers uses torch_dtype, not dtype
-            "device_map": "cpu",  # Load to CPU first, move components after
+            "device_map": "balanced",  # Distribute across available devices
             # Skip loading text encoder and tokenizer - we use our custom ZImageTextEncoder
             "text_encoder": None,
             "tokenizer": None,
