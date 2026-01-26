@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { usePipelineStore } from './stores/pipelineStore';
 import { useModelStore } from './stores/modelStore';
+import { initResponsiveState, setupResizeListener } from './stores/uiStore';
 import { AppShell } from './components/layout/AppShell';
 import { PipelineForm } from './components/pipeline/PipelineForm';
 import { ResultDisplay } from './components/generation/ResultDisplay';
@@ -13,6 +14,12 @@ export default function App() {
 
   // Global keyboard shortcuts
   useKeyboardShortcuts();
+
+  // Set up responsive state listener (with proper cleanup)
+  useEffect(() => {
+    initResponsiveState();
+    return setupResizeListener();
+  }, []);
 
   // Fetch initial data on mount
   useEffect(() => {

@@ -35,25 +35,10 @@ export const usePipelineStore = create<PipelineState>()(
     isLoading: false,
     error: null,
 
-    // Computed getters
-    get selectedPipeline() {
-      const { pipelines, selectedPipelineId } = get();
-      return selectedPipelineId ? pipelines[selectedPipelineId] ?? null : null;
-    },
-
-    get pipelinesByCategory() {
-      const { pipelines } = get();
-      const byCategory: Record<string, PipelineSchema[]> = {};
-
-      Object.values(pipelines).forEach((pipeline) => {
-        if (!byCategory[pipeline.category]) {
-          byCategory[pipeline.category] = [];
-        }
-        byCategory[pipeline.category].push(pipeline);
-      });
-
-      return byCategory;
-    },
+    // Note: selectedPipeline and pipelinesByCategory are now exported selectors
+    // (see below) instead of ES5 getters, which don't work with getState()
+    selectedPipeline: null,
+    pipelinesByCategory: {},
 
     // Actions
     fetchPipelines: async () => {
@@ -123,3 +108,34 @@ export const usePipelineStore = create<PipelineState>()(
     },
   }))
 );
+
+/**
+ * Selector: Get the currently selected pipeline.
+ * Use this instead of the old getter pattern which doesn't work with getState().
+ *
+ * Usage in component: const pipeline = usePipelineStore(selectSelectedPipeline);
+ * Usage outside:      const pipeline = selectSelectedPipeline(usePipelineStore.getState());
+ */
+export const selectSelectedPipeline = (state: PipelineState): PipelineSchema | null => {
+  return state.selectedPipelineId ? state.pipelines[state.selectedPipelineId] ?? null : null;
+};
+
+/**
+ * Selector: Get pipelines grouped by category.
+ * Use this instead of the old getter pattern which doesn't work with getState().
+ *
+ * Usage in component: const byCategory = usePipelineStore(selectPipelinesByCategory);
+ * Usage outside:      const byCategory = selectPipelinesByCategory(usePipelineStore.getState());
+ */
+export const selectPipelinesByCategory = (state: PipelineState): Record<string, PipelineSchema[]> => {
+  const byCategory: Record<string, PipelineSchema[]> = {};
+
+  Object.values(state.pipelines).forEach((pipeline) => {
+    if (!byCategory[pipeline.category]) {
+      byCategory[pipeline.category] = [];
+    }
+    byCategory[pipeline.category].push(pipeline);
+  });
+
+  return byCategory;
+};

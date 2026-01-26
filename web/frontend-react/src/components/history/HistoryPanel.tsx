@@ -4,13 +4,19 @@
  * Lists generation history with filtering and comparison support.
  */
 
-import { useHistoryStore } from '@/stores/historyStore';
+import { useEffect } from 'react';
+import { useHistoryStore, updateHistoryRelativeTimes } from '@/stores/historyStore';
 import { useGenerationStore } from '@/stores/generationStore';
 import { usePipelineStore } from '@/stores/pipelineStore';
 import { HistoryCard } from './HistoryCard';
 import { ComparisonView } from './ComparisonView';
 
 export function HistoryPanel() {
+  // Update relative times every minute (with proper cleanup)
+  useEffect(() => {
+    const interval = setInterval(updateHistoryRelativeTimes, 60000);
+    return () => clearInterval(interval);
+  }, []);
   const {
     items,
     isCompareMode,
@@ -22,7 +28,7 @@ export function HistoryPanel() {
     clearHistory,
   } = useHistoryStore();
   const { restoreFromHistory } = useGenerationStore();
-  const { selectedPipelineId, selectPipeline } = usePipelineStore();
+  const { selectPipeline } = usePipelineStore();
 
   const handleCardClick = (item: typeof items[0]) => {
     if (isCompareMode) {

@@ -6,6 +6,7 @@
  */
 
 import type { HistoryItem, PipelineColor } from '@/types';
+import { PIPELINE_COLOR_CLASSES } from '@/types';
 
 interface HistoryCardProps {
   item: HistoryItem;
@@ -24,17 +25,9 @@ export function HistoryCard({
   onUseAsInput,
   onDelete,
 }: HistoryCardProps) {
-  const colorClasses: Record<PipelineColor, string> = {
-    blue: 'border-blue-500',
-    purple: 'border-purple-500',
-    orange: 'border-orange-500',
-    teal: 'border-teal-500',
-    green: 'border-green-500',
-    pink: 'border-pink-500',
-  };
-
+  const pipelineColor = item.pipelineColor as PipelineColor;
   const accentBorder = isSelected
-    ? colorClasses[item.pipelineColor as PipelineColor] ?? 'border-blue-500'
+    ? PIPELINE_COLOR_CLASSES.border[pipelineColor] ?? 'border-blue-500'
     : 'border-gray-700';
 
   return (
@@ -70,12 +63,9 @@ export function HistoryCard({
       {/* Pipeline indicator */}
       <div
         className={`
-          absolute top-2 left-2 px-1.5 py-0.5 rounded text-[10px] font-medium
-          bg-${item.pipelineColor}-500/80 text-white
+          absolute top-2 left-2 px-1.5 py-0.5 rounded text-[10px] font-medium text-white
+          ${PIPELINE_COLOR_CLASSES.bgSubtle[pipelineColor] ?? 'bg-blue-500/80'}
         `}
-        style={{
-          backgroundColor: `var(--color-${item.pipelineColor}-500, #3b82f6)`,
-        }}
       >
         {item.pipelineName}
       </div>

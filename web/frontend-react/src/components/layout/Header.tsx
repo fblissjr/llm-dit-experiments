@@ -9,6 +9,7 @@ import { useModelStore } from '@/stores/modelStore';
 import { useUIStore } from '@/stores/uiStore';
 import { VRAMBar } from '../model/VRAMBar';
 import type { PipelineColor } from '@/types';
+import { PIPELINE_COLOR_CLASSES } from '@/types';
 
 export function Header() {
   const { pipelines, selectedPipelineId, selectPipeline } = usePipelineStore();
@@ -16,7 +17,6 @@ export function Header() {
   const { isMobile, toggleModelPanel } = useUIStore();
 
   const pipelineList = Object.values(pipelines);
-  const selectedPipeline = selectedPipelineId ? pipelines[selectedPipelineId] : null;
   const loadedPipeline = Object.keys(modelStatus).find(
     (id) => modelStatus[id].status === 'loaded'
   );
@@ -43,7 +43,7 @@ export function Header() {
               {loadedPipeline && (
                 <div className="flex items-center gap-2 text-sm">
                   <span className="text-gray-400">Loaded:</span>
-                  <span className={`text-${pipelines[loadedPipeline]?.color ?? 'blue'}-500`}>
+                  <span className={PIPELINE_COLOR_CLASSES.text[(pipelines[loadedPipeline]?.color ?? 'blue') as PipelineColor]}>
                     {pipelines[loadedPipeline]?.name ?? loadedPipeline}
                   </span>
                   <span className="w-2 h-2 rounded-full bg-green-500" title="Ready" />
@@ -107,15 +107,6 @@ function PipelineTab({
   isSelected,
   onClick,
 }: PipelineTabProps) {
-  const colorClasses: Record<PipelineColor, string> = {
-    blue: 'border-blue-500 text-blue-500',
-    purple: 'border-purple-500 text-purple-500',
-    orange: 'border-orange-500 text-orange-500',
-    teal: 'border-teal-500 text-teal-500',
-    green: 'border-green-500 text-green-500',
-    pink: 'border-pink-500 text-pink-500',
-  };
-
   return (
     <button
       onClick={onClick}
@@ -124,7 +115,7 @@ function PipelineTab({
         border-b-2 -mb-px
         ${
           isSelected
-            ? `${colorClasses[color]} bg-gray-900`
+            ? `${PIPELINE_COLOR_CLASSES.borderAndText[color]} bg-gray-900`
             : 'border-transparent text-gray-400 hover:text-gray-200 hover:bg-gray-700/50'
         }
       `}

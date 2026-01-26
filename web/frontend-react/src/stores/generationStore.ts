@@ -16,6 +16,7 @@ import type {
   PipelineSchema,
 } from '@/types';
 import { useHistoryStore } from './historyStore';
+import { useUIStore } from './uiStore';
 
 interface GenerationState {
   // Form values keyed by pipeline ID
@@ -38,6 +39,7 @@ interface GenerationState {
 
   generate: (pipelineId: string, endpoint: string, isStreaming: boolean) => Promise<void>;
   cancelGeneration: () => void;
+  dismissError: () => void;
 
   getFormValues: (pipelineId: string, schema: PipelineSchema) => FormValues;
   getTimeEstimate: (pipelineId: string) => TimeEstimate;
@@ -169,13 +171,22 @@ export const useGenerationStore = create<GenerationState>()(
           return;
         }
 
+        const errorMessage = error instanceof Error ? error.message : 'Generation failed';
+
         set((state) => {
           state.status = 'error';
           state.error = {
-            message: error instanceof Error ? error.message : 'Generation failed',
+            message: errorMessage,
             recoverable: true,
           };
           state.abortController = null;
+        });
+
+        // Show error notification (5 second duration)
+        useUIStore.getState().addNotification({
+          type: 'error',
+          message: errorMessage,
+          duration: 5000,
         });
       }
     },
@@ -185,6 +196,13 @@ export const useGenerationStore = create<GenerationState>()(
       if (abortController) {
         abortController.abort();
       }
+    },
+
+    dismissError: () => {
+      set((state) => {
+        state.status = 'idle';
+        state.error = null;
+      });
     },
 
     getFormValues: (pipelineId, schema) => {

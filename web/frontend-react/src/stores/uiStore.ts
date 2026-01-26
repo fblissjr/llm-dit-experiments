@@ -146,14 +146,35 @@ export const useUIStore = create<UIState>()(
   }))
 );
 
-// Set up resize listener
-if (typeof window !== 'undefined') {
+/**
+ * Initialize responsive state from window.
+ * Call this once from App.tsx on mount.
+ */
+export function initResponsiveState() {
+  if (typeof window !== 'undefined') {
+    useUIStore.getState().setResponsiveState(window.innerWidth);
+  }
+}
+
+/**
+ * Handle resize listener setup (for use in useEffect).
+ * Returns cleanup function.
+ *
+ * Usage in App.tsx:
+ *   useEffect(() => {
+ *     initResponsiveState();
+ *     return setupResizeListener();
+ *   }, []);
+ */
+export function setupResizeListener(): () => void {
+  if (typeof window === 'undefined') return () => {};
+
   const handleResize = () => {
     useUIStore.getState().setResponsiveState(window.innerWidth);
   };
 
   window.addEventListener('resize', handleResize);
 
-  // Initial call
-  handleResize();
+  // Return cleanup function
+  return () => window.removeEventListener('resize', handleResize);
 }

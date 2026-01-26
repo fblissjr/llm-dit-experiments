@@ -11,9 +11,15 @@ import { ProgressDisplay } from './ProgressDisplay';
 import { formatDuration } from '@/types/generation';
 
 export function ResultDisplay() {
-  const { status, currentResult, error } = useGenerationStore();
+  const { status, currentResult, error, generate, dismissError } = useGenerationStore();
   const { selectedPipelineId, pipelines } = usePipelineStore();
   const pipeline = selectedPipelineId ? pipelines[selectedPipelineId] : null;
+
+  const handleRetry = () => {
+    if (pipeline && selectedPipelineId) {
+      generate(selectedPipelineId, pipeline.endpoint, pipeline.supports_streaming);
+    }
+  };
 
   // Show progress if generating
   if (status === 'generating' || status === 'loading') {
@@ -38,7 +44,7 @@ export function ResultDisplay() {
           <svg className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
-          <div>
+          <div className="flex-1">
             <h3 className="font-medium text-red-400">Generation Failed</h3>
             <p className="text-sm text-gray-400 mt-1">{error.message}</p>
             {error.recoverable && (
@@ -46,6 +52,23 @@ export function ResultDisplay() {
                 Try adjusting parameters or check model status.
               </p>
             )}
+            <div className="flex gap-2 mt-4">
+              <button
+                onClick={handleRetry}
+                className="btn-primary text-sm py-1.5 px-3"
+              >
+                <svg className="w-4 h-4 mr-1.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                Retry
+              </button>
+              <button
+                onClick={dismissError}
+                className="btn-ghost text-sm py-1.5 px-3"
+              >
+                Dismiss
+              </button>
+            </div>
           </div>
         </div>
       </div>

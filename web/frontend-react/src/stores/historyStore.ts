@@ -7,7 +7,7 @@
 
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
-import { persist } from 'zustand/middleware';
+import { persist, createJSONStorage } from 'zustand/middleware';
 import type {
   GenerationResult,
   HistoryItem,
@@ -22,6 +22,67 @@ import { usePipelineStore } from './pipelineStore';
 
 const MAX_HISTORY_ITEMS = 100;
 const STORAGE_KEY = 'llm-dit-history';
+
+/**
+ * Custom storage that handles localStorage quota errors.
+ * When quota is exceeded, it trims oldest items and retries.
+ */
+const quotaSafeStorage = {
+  getItem: (name: string): string | null => {
+    try {
+      return localStorage.getItem(name);
+    } catch {
+      console.warn('[HistoryStore] Failed to read from localStorage');
+      return null;
+    }
+  },
+  setItem: (name: string, value: string): void => {
+    const saveWithRetry = (val: string, retries = 3): void => {
+      try {
+        localStorage.setItem(name, val);
+      } catch (error) {
+        // Check if it's a quota error
+        if (
+          error instanceof DOMException &&
+          (error.name === 'QuotaExceededError' ||
+            error.name === 'NS_ERROR_DOM_QUOTA_REACHED')
+        ) {
+          if (retries > 0) {
+            // Parse the current value, trim oldest items, and retry
+            try {
+              const parsed = JSON.parse(val);
+              if (parsed.state?.items && Array.isArray(parsed.state.items)) {
+                // Remove oldest 20% of items
+                const trimCount = Math.max(1, Math.floor(parsed.state.items.length * 0.2));
+                parsed.state.items = parsed.state.items.slice(0, -trimCount);
+                console.warn(
+                  `[HistoryStore] localStorage quota exceeded, trimmed ${trimCount} oldest items`
+                );
+                saveWithRetry(JSON.stringify(parsed), retries - 1);
+                return;
+              }
+            } catch {
+              // If parsing fails, just log and give up
+            }
+          }
+          console.error(
+            '[HistoryStore] localStorage quota exceeded, could not save history'
+          );
+        } else {
+          console.error('[HistoryStore] Failed to save to localStorage:', error);
+        }
+      }
+    };
+    saveWithRetry(value);
+  },
+  removeItem: (name: string): void => {
+    try {
+      localStorage.removeItem(name);
+    } catch {
+      console.warn('[HistoryStore] Failed to remove from localStorage');
+    }
+  },
+};
 
 interface HistoryState {
   // History items (most recent first)
@@ -195,9 +256,10 @@ export const useHistoryStore = create<HistoryState>()(
     })),
     {
       name: STORAGE_KEY,
+      storage: createJSONStorage(() => quotaSafeStorage),
       partialize: (state) => ({
         items: state.items,
-      }),
+      }) as HistoryState,
       // Update relative times on rehydration
       onRehydrateStorage: () => (state) => {
         if (state) {
@@ -211,15 +273,23 @@ export const useHistoryStore = create<HistoryState>()(
   )
 );
 
-// Update relative times periodically
-if (typeof window !== 'undefined') {
-  setInterval(() => {
-    const state = useHistoryStore.getState();
-    useHistoryStore.setState({
-      items: state.items.map((item) => ({
-        ...item,
-        relativeTime: formatRelativeTime(item.timestamp),
-      })),
-    });
-  }, 60000); // Every minute
+/**
+ * Update all history items' relative times.
+ * Call this from a component's useEffect with setInterval.
+ * Example:
+ *   useEffect(() => {
+ *     const interval = setInterval(updateHistoryRelativeTimes, 60000);
+ *     return () => clearInterval(interval);
+ *   }, []);
+ */
+export function updateHistoryRelativeTimes() {
+  const state = useHistoryStore.getState();
+  if (state.items.length === 0) return;
+
+  useHistoryStore.setState({
+    items: state.items.map((item) => ({
+      ...item,
+      relativeTime: formatRelativeTime(item.timestamp),
+    })),
+  });
 }
