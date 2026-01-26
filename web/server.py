@@ -3268,15 +3268,17 @@ async def generate(request: GenerateRequest):
         if len(generation_history) > MAX_HISTORY:
             generation_history.pop()
 
-        return StreamingResponse(
-            img_bytes,
-            media_type="image/png",
-            headers={
-                "X-Generation-Time": str(gen_time),
-                "X-Seed": str(request.seed) if request.seed else "random",
-                "X-History-Id": str(history_entry["id"]),
-            },
-        )
+        # Return JSON with image data for React frontend
+        # Legacy clients can still use the /outputs/ path to get the raw image
+        return {
+            "id": history_entry["id"],
+            "output_type": "image",
+            "url": f"data:image/png;base64,{img_b64}",
+            "urls": [f"data:image/png;base64,{img_b64}"],
+            "thumbnail_url": f"data:image/png;base64,{img_b64}",
+            "seed": request.seed if request.seed else -1,
+            "generation_time": gen_time,
+        }
 
     except Exception as e:
         logger.error(f"Generation failed: {e}")
