@@ -297,7 +297,12 @@ def unload_zimage_pipeline() -> bool:
 
     unloaded = False
     if pipeline is not None:
-        logger.info("[VRAM] Unloading Z-Image pipeline to free VRAM...")
+        # Log variant and model path before unloading
+        if runtime_config is not None:
+            model_path = runtime_config.zimage_model_path or runtime_config.model_path
+            logger.info(f"[VRAM] Unloading Z-Image pipeline (variant={runtime_config.zimage_variant}, path={model_path})...")
+        else:
+            logger.info("[VRAM] Unloading Z-Image pipeline to free VRAM...")
         # Move components to CPU before deletion to release CUDA memory
         try:
             if hasattr(pipeline, "transformer") and pipeline.transformer is not None:
@@ -3130,6 +3135,10 @@ async def generate(request: GenerateRequest):
         if pipeline.encoder is not None:
             backend = getattr(pipeline.encoder, "backend", None)
             logger.info(f"  encoder.backend: {type(backend).__name__ if backend else 'None'}")
+        if runtime_config is not None:
+            model_path = runtime_config.zimage_model_path or runtime_config.model_path
+            logger.info(f"  variant: {runtime_config.zimage_variant}")
+            logger.info(f"  model_path: {model_path}")
         logger.info("-" * 60)
 
         # Set up generator for reproducibility

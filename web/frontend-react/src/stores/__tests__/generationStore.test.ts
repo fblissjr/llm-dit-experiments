@@ -252,6 +252,27 @@ describe('generationStore', () => {
       expect(values['steps']).toBe(50)
     })
 
+    it('merges stored values with schema defaults', () => {
+      // Only store prompt, not steps/guidance_scale
+      useGenerationStore.getState().setFormValues('zimage', {
+        prompt: 'Just a prompt',
+      })
+
+      // Reset mock to return empty serverDefaults (don't override schema)
+      vi.mocked(usePipelineStore.getState).mockReturnValue({
+        serverDefaults: {},
+      } as ReturnType<typeof usePipelineStore.getState>)
+
+      const values = useGenerationStore.getState().getFormValues('zimage', mockSchema)
+
+      // Stored value should be present
+      expect(values['prompt']).toBe('Just a prompt')
+      // Schema defaults should also be present (not undefined)
+      expect(values['steps']).toBe(20)  // Schema default
+      expect(values['guidance_scale']).toBe(3.0)  // Schema default
+      expect(values['width']).toBe(1024)  // Schema default
+    })
+
     it('returns defaults from schema if no stored values and no server defaults', () => {
       // Reset mock to return empty serverDefaults
       vi.mocked(usePipelineStore.getState).mockReturnValue({
