@@ -63,6 +63,11 @@ describe('generationStore', () => {
       abortController: null,
     })
 
+    // Reset pipelineStore mock to empty serverDefaults (prevents test leakage)
+    vi.mocked(usePipelineStore.getState).mockReturnValue({
+      serverDefaults: {},
+    } as ReturnType<typeof usePipelineStore.getState>)
+
     vi.clearAllMocks()
   })
 

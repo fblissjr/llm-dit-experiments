@@ -254,12 +254,20 @@ export const useGenerationStore = create<GenerationState>()(
       // Get stored values
       const stored = get().formValues[pipelineId] ?? {};
 
-      // For Z-Image: Apply server defaults when variant differs or stored has no variant
+      // For Z-Image: Reset variant-sensitive fields when variant differs or stored has no variant
       // This ensures variant-aware defaults (steps, guidance_scale, shift) are correct
+      // while preserving user-entered values like prompt
       if (pipelineId === 'zimage' && defaults['_variant']) {
         if (!stored['_variant'] || stored['_variant'] !== defaults['_variant']) {
-          // Variant changed or never set - apply server defaults for variant-sensitive fields
-          return { ...stored, ...defaults };
+          // Variant changed or never set - reset only variant-sensitive fields
+          const variantSensitiveFields = ['steps', 'guidance_scale', 'shift', '_variant'];
+          const result = { ...defaults, ...stored };
+          for (const field of variantSensitiveFields) {
+            if (defaults[field] !== undefined) {
+              result[field] = defaults[field];
+            }
+          }
+          return result;
         }
       }
 
