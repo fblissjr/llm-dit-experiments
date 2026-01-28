@@ -12,6 +12,7 @@ interface PipelineState {
   // Data
   pipelines: Record<string, PipelineSchema>;
   selectedPipelineId: string | null;
+  serverDefaults: Record<string, unknown>;  // Defaults from server (includes zimage_variant)
 
   // Loading state
   isLoading: boolean;
@@ -32,6 +33,7 @@ export const usePipelineStore = create<PipelineState>()(
     // Initial state
     pipelines: {},
     selectedPipelineId: null,
+    serverDefaults: {},
     isLoading: false,
     error: null,
 
@@ -77,6 +79,7 @@ export const usePipelineStore = create<PipelineState>()(
 
         set((state) => {
           state.pipelines = pipelines;
+          state.serverDefaults = data.defaults || {};
           state.isLoading = false;
 
           // Auto-select first pipeline if none selected

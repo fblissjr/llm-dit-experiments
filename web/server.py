@@ -3138,6 +3138,11 @@ async def generate(request: GenerateRequest):
             generator = torch.Generator()
             generator.manual_seed(request.seed)
 
+        # Negative prompt: only use for base variant (turbo has CFG=0, so it has no effect)
+        negative_prompt_to_use = None
+        if runtime_config is not None and runtime_config.zimage_variant == "base":
+            negative_prompt_to_use = request.negative_prompt
+
         start = time.time()
 
         # SLG config: "UI always wins" - don't fall back to runtime_config
@@ -3225,7 +3230,7 @@ async def generate(request: GenerateRequest):
             )
             image = pipeline.generate_multipass(
                 request.prompt,
-                negative_prompt=request.negative_prompt,
+                negative_prompt=negative_prompt_to_use,
                 final_width=request.width,
                 final_height=request.height,
                 passes=passes,
@@ -3265,7 +3270,7 @@ async def generate(request: GenerateRequest):
             # Single pass generation
             image = pipeline(
                 request.prompt,
-                negative_prompt=request.negative_prompt,
+                negative_prompt=negative_prompt_to_use,
                 height=request.height,
                 width=request.width,
                 num_inference_steps=request.steps,
@@ -3469,6 +3474,11 @@ async def img2img(request: Img2ImgRequest):
             generator = torch.Generator()
             generator.manual_seed(request.seed)
 
+        # Negative prompt: only use for base variant (turbo has CFG=0, so it has no effect)
+        negative_prompt_to_use = None
+        if runtime_config is not None and runtime_config.zimage_variant == "base":
+            negative_prompt_to_use = request.negative_prompt
+
         start = time.time()
 
         # Generate image using img2img
@@ -3479,7 +3489,7 @@ async def img2img(request: Img2ImgRequest):
 
         image = pipeline.img2img(
             prompt=request.prompt,
-            negative_prompt=request.negative_prompt,
+            negative_prompt=negative_prompt_to_use,
             image=input_image,
             mask_image=mask_image,
             strength=request.strength,

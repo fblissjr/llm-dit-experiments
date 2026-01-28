@@ -17,6 +17,7 @@ import type {
 } from '@/types';
 import { useHistoryStore } from './historyStore';
 import { useUIStore } from './uiStore';
+import { usePipelineStore } from './pipelineStore';
 
 interface GenerationState {
   // Form values keyed by pipeline ID
@@ -78,6 +79,14 @@ export const useGenerationStore = create<GenerationState>()(
           defaults[param.id] = param.default;
         }
       });
+
+      // Inject server-side variant for Z-Image (controls conditional field visibility)
+      if (pipelineId === 'zimage') {
+        const serverDefaults = usePipelineStore.getState().serverDefaults;
+        if (serverDefaults.zimage_variant) {
+          defaults['_variant'] = serverDefaults.zimage_variant;
+        }
+      }
 
       set((state) => {
         state.formValues[pipelineId] = defaults;
@@ -218,6 +227,15 @@ export const useGenerationStore = create<GenerationState>()(
           defaults[param.id] = param.default;
         }
       });
+
+      // Inject server-side variant for Z-Image (controls conditional field visibility)
+      if (pipelineId === 'zimage') {
+        const serverDefaults = usePipelineStore.getState().serverDefaults;
+        if (serverDefaults.zimage_variant) {
+          defaults['_variant'] = serverDefaults.zimage_variant;
+        }
+      }
+
       return defaults;
     },
 
