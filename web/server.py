@@ -462,6 +462,7 @@ class DyPEConfigRequest(BaseModel):
 
 class GenerateRequest(BaseModel):
     prompt: str  # User prompt
+    negative_prompt: Optional[str] = None  # Negative prompt for CFG (only used with base model)
     system_prompt: Optional[str] = None  # System prompt (optional)
     thinking_content: Optional[str] = (
         None  # Content inside <think>...</think> (triggers think block)
@@ -516,6 +517,7 @@ class Img2ImgRequest(BaseModel):
     """
 
     prompt: str  # User prompt
+    negative_prompt: Optional[str] = None  # Negative prompt for CFG (only used with base model)
     image: str  # Base64-encoded input image
     mask_image: Optional[str] = None  # Base64-encoded grayscale mask (black=preserve, white=edit)
     strength: float = Field(
@@ -3104,6 +3106,8 @@ async def generate(request: GenerateRequest):
         logger.info("GENERATION REQUEST")
         logger.info("=" * 60)
         logger.info(f"  Prompt: {request.prompt[:80]}...")
+        if request.negative_prompt:
+            logger.info(f"  Negative: {request.negative_prompt[:80]}...")
         logger.info(f"  Size: {request.width}x{request.height}")
         logger.info(f"  Steps: {request.steps}")
         logger.info(f"  Seed: {request.seed}")
@@ -3221,6 +3225,7 @@ async def generate(request: GenerateRequest):
             )
             image = pipeline.generate_multipass(
                 request.prompt,
+                negative_prompt=request.negative_prompt,
                 final_width=request.width,
                 final_height=request.height,
                 passes=passes,
@@ -3260,6 +3265,7 @@ async def generate(request: GenerateRequest):
             # Single pass generation
             image = pipeline(
                 request.prompt,
+                negative_prompt=request.negative_prompt,
                 height=request.height,
                 width=request.width,
                 num_inference_steps=request.steps,
@@ -3473,6 +3479,7 @@ async def img2img(request: Img2ImgRequest):
 
         image = pipeline.img2img(
             prompt=request.prompt,
+            negative_prompt=request.negative_prompt,
             image=input_image,
             mask_image=mask_image,
             strength=request.strength,

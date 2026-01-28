@@ -648,6 +648,40 @@ class Flux2Config:
 
 
 @dataclass
+class ZImageConfig:
+    """Configuration for Z-Image text-to-image generation.
+
+    Supports two variants:
+    - turbo: Fast 8-9 step generation with CFG baked in (default)
+    - base: Quality 28-50 step generation with full CFG control
+
+    Key differences between variants:
+    | Setting            | Base            | Turbo                 |
+    |--------------------|-----------------|----------------------|
+    | Scheduler shift    | 6.0             | 3.0                  |
+    | Steps              | 35 (28-50 rec.) | 9 (8 actual forwards)|
+    | CFG/guidance_scale | 4.0 (3.0-5.0)   | 0.0 (baked in)       |
+    | Negative prompts   | Supported       | Not used             |
+    | Model path         | models/Z-Image  | models/Z-Image-Turbo |
+
+    Both variants use the same Qwen3-4B text encoder and DiT architecture.
+    """
+
+    model_path: str = ""  # Path to Z-Image model (turbo or base)
+    text_encoder_path: str = ""  # Optional separate path for text encoder
+    variant: str = "auto"  # auto, turbo, base (auto-detects from scheduler_config.json)
+
+    # Variant-aware defaults (None = use variant default)
+    default_steps: int | None = None  # None = 9 for turbo, 35 for base
+    default_guidance_scale: float | None = None  # None = 0.0 for turbo, 4.0 for base
+    default_shift: float | None = None  # None = 3.0 for turbo, 6.0 for base
+
+    # Base model specific
+    default_negative_prompt: str = ""  # Default negative prompt for base model
+    default_cfg_normalization: float = 0.0  # 0.0 disabled, 1.0 for realism
+
+
+@dataclass
 class QwenImageConfig:
     """Configuration for Qwen-Image-Layered model.
 
@@ -1274,6 +1308,7 @@ class Config:
     pytorch: PyTorchConfig = field(default_factory=PyTorchConfig)
     rewriter: RewriterConfig = field(default_factory=RewriterConfig)
     vl: VLConfig = field(default_factory=VLConfig)
+    zimage: ZImageConfig = field(default_factory=ZImageConfig)
     qwen_image: QwenImageConfig = field(default_factory=QwenImageConfig)
     ltx2: LTX2Config = field(default_factory=LTX2Config)
     flux2: Flux2Config = field(default_factory=Flux2Config)
@@ -1296,6 +1331,7 @@ class Config:
         pytorch_data = data.pop("pytorch", {})
         rewriter_data = data.pop("rewriter", {})
         vl_data = data.pop("vl", {})
+        zimage_data = data.pop("zimage", {})
         qwen_image_data = data.pop("qwen_image", {})
         ltx2_data = data.pop("ltx2", {})
         flux2_data = data.pop("flux2", {})
@@ -1319,6 +1355,7 @@ class Config:
             pytorch=PyTorchConfig(**pytorch_data),
             rewriter=RewriterConfig(**rewriter_data),
             vl=VLConfig(**vl_data),
+            zimage=ZImageConfig(**zimage_data),
             qwen_image=QwenImageConfig(**qwen_image_data),
             ltx2=LTX2Config(**ltx2_data),
             flux2=Flux2Config(**flux2_data),

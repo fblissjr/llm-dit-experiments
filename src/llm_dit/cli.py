@@ -182,6 +182,10 @@ class RuntimeConfig:
     flux2_model_path: str | None = None  # Local path to transformer weights (file or directory)
     flux2_vae_path: str | None = None  # Local path to VAE weights (file or directory)
 
+    # Z-Image variant configuration
+    zimage_variant: str = "auto"  # auto, turbo, base
+    zimage_model_path: str | None = None  # Path to Z-Image model (overrides config.toml)
+
     # Device placement
     encoder_device: str = "auto"
     dit_device: str = "auto"
@@ -485,6 +489,22 @@ def create_base_parser(
         type=str,
         default=None,
         help="Path to templates directory",
+    )
+
+    # Z-Image variant configuration
+    zimage_group = parser.add_argument_group("Z-Image")
+    zimage_group.add_argument(
+        "--zimage-variant",
+        type=str,
+        choices=["turbo", "base", "auto"],
+        default="auto",
+        help="Z-Image variant: turbo (9 steps, CFG baked in), base (35 steps, full CFG), auto (detect from scheduler)",
+    )
+    zimage_group.add_argument(
+        "--zimage-model-path",
+        type=str,
+        default=None,
+        help="Path to Z-Image model (overrides config.toml [zimage].model_path)",
     )
 
     # Qwen-Image (all variants: t2i, edit, layered)
@@ -1636,6 +1656,12 @@ def _apply_cli_overrides(args: argparse.Namespace, config: RuntimeConfig) -> Run
     if getattr(args, "flux2_vae_path", None) is not None:
         config.flux2_vae_path = args.flux2_vae_path
 
+    # Z-Image variant overrides
+    if getattr(args, "zimage_variant", None) is not None:
+        config.zimage_variant = args.zimage_variant
+    if getattr(args, "zimage_model_path", None) is not None:
+        config.zimage_model_path = args.zimage_model_path
+
     # Device overrides
     if getattr(args, "text_encoder_device", None) is not None:
         config.encoder_device = args.text_encoder_device
@@ -1927,6 +1953,23 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
                         config.flux2_num_steps = flux2.default_steps
                     if flux2.default_guidance is not None:
                         config.flux2_guidance = flux2.default_guidance
+
+                # Check for Z-Image section
+                if hasattr(toml_config, "zimage"):
+                    zimage = toml_config.zimage
+                    config.zimage_model_path = getattr(zimage, "model_path", "") or config.zimage_model_path
+                    config.zimage_variant = getattr(zimage, "variant", "auto")
+                    # Apply variant defaults from config if specified
+                    if getattr(zimage, "default_steps", None) is not None:
+                        config.steps = zimage.default_steps
+                    if getattr(zimage, "default_guidance_scale", None) is not None:
+                        config.guidance_scale = zimage.default_guidance_scale
+                    if getattr(zimage, "default_shift", None) is not None:
+                        config.shift = zimage.default_shift
+                    if getattr(zimage, "default_negative_prompt", None):
+                        config.negative_prompt = zimage.default_negative_prompt
+                    if getattr(zimage, "default_cfg_normalization", None) is not None:
+                        config.cfg_normalization = zimage.default_cfg_normalization
 
                 # Check for Wan section
                 if hasattr(toml_config, "wan"):

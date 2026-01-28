@@ -1,9 +1,13 @@
 """
 Z-Image Pipeline Schema
 
-last updated: 2026-01-25
+last updated: 2026-01-27
 
-Z-Image (S3-DiT 6B) is the primary image generation pipeline with advanced features:
+Z-Image (S3-DiT 6B) is the primary image generation pipeline with two variants:
+- Turbo: Fast 9-step distilled generation (CFG baked in)
+- Base: Quality 35-step generation with full CFG and negative prompt support
+
+Advanced features include:
 - DyPE (Dynamic Position Extrapolation) for high-resolution generation
 - SLG (Skip Layer Guidance) for improved anatomy
 - FMTT (Flow Map Trajectory Tilting) with SigLIP for prompt adherence
@@ -29,7 +33,7 @@ DIMENSION_PRESETS = [
 register_pipeline(PipelineSchema(
     id="zimage",
     name="Z-Image",
-    description="Fast high-quality image generation with S3-DiT 6B",
+    description="Fast high-quality image generation with S3-DiT 6B (Turbo/Base variants)",
     output_type="image",
     color="blue",
     icon="🎨",
@@ -48,6 +52,16 @@ register_pipeline(PipelineSchema(
             group="basic",
             required=True,
             tooltip="Detailed description of the image. Supports long prompts up to 1504 tokens.",
+        ),
+        ParamSchema(
+            id="negative_prompt",
+            type="textarea",
+            label="Negative Prompt",
+            placeholder="Elements to avoid (blur, artifacts, etc.)...",
+            rows=2,
+            group="basic",
+            tooltip="What to avoid in the image. Only effective when CFG > 0 (base model). "
+                    "Leave empty for turbo mode.",
         ),
         ParamSchema(
             id="width",
