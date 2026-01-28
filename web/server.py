@@ -4924,15 +4924,18 @@ def load_zimage_pipeline_on_demand():
         if runtime_config is None:
             raise ValueError("Runtime config not initialized")
 
-        if not runtime_config.model_path:
-            raise ValueError("Z-Image model_path not configured. Set model_path in config.toml")
+        # Use zimage_model_path if set, fall back to legacy model_path
+        model_path = runtime_config.zimage_model_path or runtime_config.model_path
+        if not model_path:
+            raise ValueError("Z-Image model_path not configured. Set [zimage].model_path in config.toml")
 
         # Unload other pipelines first to free VRAM
         unload_all_pipelines_except("zimage")
 
         _zimage_loading_in_progress = True
         logger.info("[Z-Image] Loading pipeline on-demand...")
-        logger.info(f"  Model path: {runtime_config.model_path}")
+        logger.info(f"  Model path: {model_path}")
+        logger.info(f"  Variant: {runtime_config.zimage_variant}")
 
         # Debug: log cpu_offload value to diagnose OOM issues
         cpu_offload_value = getattr(runtime_config, "cpu_offload", "NOT_SET")
@@ -4947,7 +4950,7 @@ def load_zimage_pipeline_on_demand():
 
         try:
             load_pipeline(
-                model_path=runtime_config.model_path,
+                model_path=model_path,
                 text_encoder_path=runtime_config.text_encoder_path,
                 templates_dir=runtime_config.templates_dir,
                 encoder_device=encoder_device,
@@ -4995,10 +4998,11 @@ async def vram_load_zimage():
             "vram": status.get("vram"),
         }
 
-    if runtime_config is None or not runtime_config.model_path:
+    model_path = (runtime_config.zimage_model_path or runtime_config.model_path) if runtime_config else None
+    if runtime_config is None or not model_path:
         raise HTTPException(
             status_code=400,
-            detail="Z-Image model_path not configured. Set model_path in config.toml",
+            detail="Z-Image model_path not configured. Set [zimage].model_path in config.toml",
         )
 
     try:
@@ -5788,9 +5792,10 @@ def main():
     elif default_pipeline == "z-image":
         logger.info(f"PRELOADING PIPELINE: {default_pipeline}")
         logger.info("============================================================")
-        # Validate Z-Image model path
-        if not runtime_config.model_path:
-            logger.error("default_pipeline='z-image' but model_path not set in config.")
+        # Validate Z-Image model path (prefer [zimage].model_path, fall back to legacy)
+        zimage_path = runtime_config.zimage_model_path or runtime_config.model_path
+        if not zimage_path:
+            logger.error("default_pipeline='z-image' but [zimage].model_path not set in config.")
             return 1
         # Use PipelineLoader for Z-Image
         loader = PipelineLoader(runtime_config)

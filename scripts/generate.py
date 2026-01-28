@@ -935,10 +935,14 @@ def main():
         return run_flux2_generation(args, config, logger)
 
     # Z-Image flow continues below
-    # Validate model path
-    if config.model_path == "" and not args.load_embeddings:
-        logger.error("No model path specified. Use --model-path or --config.")
+    # Validate model path (prefer zimage_model_path, fall back to model_path)
+    zimage_path = config.zimage_model_path or config.model_path
+    if not zimage_path and not args.load_embeddings:
+        logger.error("No model path specified. Use --zimage-model-path, --model-path, or --config.")
         return 1
+    # Update config.model_path for downstream usage
+    if zimage_path:
+        config.model_path = zimage_path
 
     # Validate and fix resolution
     from llm_dit.constants import MAX_RESOLUTION, MIN_RESOLUTION, VAE_MULTIPLE, snap_to_multiple

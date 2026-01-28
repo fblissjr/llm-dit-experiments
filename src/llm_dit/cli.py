@@ -1662,6 +1662,20 @@ def _apply_cli_overrides(args: argparse.Namespace, config: RuntimeConfig) -> Run
     if getattr(args, "zimage_model_path", None) is not None:
         config.zimage_model_path = args.zimage_model_path
 
+    # Apply Z-Image variant-aware defaults when variant is explicitly set
+    # These defaults are applied before other overrides so explicit CLI args take precedence
+    if config.zimage_variant in ("base", "turbo"):
+        from llm_dit.models.zimage.constants import get_variant_defaults
+
+        variant_defaults = get_variant_defaults(config.zimage_variant)
+        # Apply variant defaults for parameters not explicitly set by user
+        if getattr(args, "shift", None) is None:
+            config.shift = variant_defaults["shift"]
+        if getattr(args, "steps", None) is None:
+            config.steps = variant_defaults["num_inference_steps"]
+        if getattr(args, "guidance_scale", None) is None:
+            config.guidance_scale = variant_defaults["guidance_scale"]
+
     # Device overrides
     if getattr(args, "text_encoder_device", None) is not None:
         config.encoder_device = args.text_encoder_device
