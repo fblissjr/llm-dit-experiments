@@ -1662,8 +1662,15 @@ def _apply_cli_overrides(args: argparse.Namespace, config: RuntimeConfig) -> Run
     if getattr(args, "zimage_model_path", None) is not None:
         config.zimage_model_path = args.zimage_model_path
 
-    # Apply Z-Image variant-aware defaults when variant is explicitly set
-    # These defaults are applied before other overrides so explicit CLI args take precedence
+    # Apply Z-Image variant-aware defaults
+    # Auto-detect variant from model path if set to "auto"
+    if config.zimage_variant == "auto":
+        from llm_dit.models.zimage.constants import detect_zimage_variant
+        model_path = config.zimage_model_path or config.model_path
+        if model_path:
+            config.zimage_variant = detect_zimage_variant(model_path)
+
+    # Apply variant defaults when variant is known (explicit or auto-detected)
     if config.zimage_variant in ("base", "turbo"):
         from llm_dit.models.zimage.constants import get_variant_defaults
 
