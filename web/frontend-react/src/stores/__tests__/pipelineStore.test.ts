@@ -67,6 +67,7 @@ describe('pipelineStore', () => {
     usePipelineStore.setState({
       pipelines: {},
       selectedPipelineId: null,
+      serverDefaults: {},
       isLoading: false,
       error: null,
     })
@@ -79,6 +80,7 @@ describe('pipelineStore', () => {
 
       expect(state.pipelines).toEqual({})
       expect(state.selectedPipelineId).toBeNull()
+      expect(state.serverDefaults).toEqual({})
       expect(state.isLoading).toBe(false)
       expect(state.error).toBeNull()
     })
@@ -240,6 +242,75 @@ describe('pipelineStore', () => {
 
       // Should keep existing selection
       expect(usePipelineStore.getState().selectedPipelineId).toBe('ltx2')
+    })
+
+    it('stores server defaults from API response', async () => {
+      const mockResponse = {
+        pipelines: {
+          zimage: mockZImagePipeline,
+        },
+        defaults: {
+          zimage_variant: 'base',
+          steps: 40,
+          guidance_scale: 4.0,
+        },
+      }
+
+      vi.mocked(global.fetch).mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve(mockResponse),
+      } as Response)
+
+      await usePipelineStore.getState().fetchPipelines()
+      const state = usePipelineStore.getState()
+
+      expect(state.serverDefaults).toEqual({
+        zimage_variant: 'base',
+        steps: 40,
+        guidance_scale: 4.0,
+      })
+    })
+
+    it('stores turbo variant from server defaults', async () => {
+      const mockResponse = {
+        pipelines: {
+          zimage: mockZImagePipeline,
+        },
+        defaults: {
+          zimage_variant: 'turbo',
+          steps: 9,
+          guidance_scale: 0.0,
+        },
+      }
+
+      vi.mocked(global.fetch).mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve(mockResponse),
+      } as Response)
+
+      await usePipelineStore.getState().fetchPipelines()
+      const state = usePipelineStore.getState()
+
+      expect(state.serverDefaults.zimage_variant).toBe('turbo')
+    })
+
+    it('handles missing defaults gracefully', async () => {
+      const mockResponse = {
+        pipelines: {
+          zimage: mockZImagePipeline,
+        },
+        // No defaults field
+      }
+
+      vi.mocked(global.fetch).mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve(mockResponse),
+      } as Response)
+
+      await usePipelineStore.getState().fetchPipelines()
+      const state = usePipelineStore.getState()
+
+      expect(state.serverDefaults).toEqual({})
     })
   })
 

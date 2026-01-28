@@ -7,6 +7,7 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest'
 import { useGenerationStore } from '../generationStore'
 import { useHistoryStore } from '../historyStore'
+import { usePipelineStore } from '../pipelineStore'
 import type { PipelineSchema, FormValues } from '@/types'
 
 // Mock historyStore
@@ -15,6 +16,15 @@ vi.mock('../historyStore', () => ({
     getState: vi.fn(() => ({
       addItem: vi.fn(),
       getItemsByPipeline: vi.fn(() => []),
+    })),
+  },
+}))
+
+// Mock pipelineStore for variant injection tests
+vi.mock('../pipelineStore', () => ({
+  usePipelineStore: {
+    getState: vi.fn(() => ({
+      serverDefaults: {},
     })),
   },
 }))
@@ -164,6 +174,28 @@ describe('generationStore', () => {
       expect(state.formValues['zimage']['prompt']).toBeUndefined()
       expect(state.formValues['zimage']['steps']).toBe(20)
     })
+
+    it('injects _variant on reset for zimage pipeline', () => {
+      vi.mocked(usePipelineStore.getState).mockReturnValue({
+        serverDefaults: { zimage_variant: 'base' },
+      } as ReturnType<typeof usePipelineStore.getState>)
+
+      useGenerationStore.getState().resetFormValues('zimage', mockSchema)
+
+      const state = useGenerationStore.getState()
+      expect(state.formValues['zimage']['_variant']).toBe('base')
+    })
+
+    it('does not inject _variant on reset for non-zimage pipelines', () => {
+      vi.mocked(usePipelineStore.getState).mockReturnValue({
+        serverDefaults: { zimage_variant: 'base' },
+      } as ReturnType<typeof usePipelineStore.getState>)
+
+      useGenerationStore.getState().resetFormValues('ltx2', mockSchema)
+
+      const state = useGenerationStore.getState()
+      expect(state.formValues['ltx2']['_variant']).toBeUndefined()
+    })
   })
 
   describe('restoreFromHistory', () => {
@@ -214,6 +246,47 @@ describe('generationStore', () => {
       const values = useGenerationStore.getState().getFormValues('nonexistent', mockSchema)
 
       expect(values['steps']).toBe(20)
+    })
+
+    it('injects _variant from serverDefaults for zimage pipeline', () => {
+      // Mock pipelineStore to return base variant
+      vi.mocked(usePipelineStore.getState).mockReturnValue({
+        serverDefaults: { zimage_variant: 'base' },
+      } as ReturnType<typeof usePipelineStore.getState>)
+
+      const values = useGenerationStore.getState().getFormValues('zimage', mockSchema)
+
+      expect(values['_variant']).toBe('base')
+    })
+
+    it('injects turbo variant from serverDefaults', () => {
+      vi.mocked(usePipelineStore.getState).mockReturnValue({
+        serverDefaults: { zimage_variant: 'turbo' },
+      } as ReturnType<typeof usePipelineStore.getState>)
+
+      const values = useGenerationStore.getState().getFormValues('zimage', mockSchema)
+
+      expect(values['_variant']).toBe('turbo')
+    })
+
+    it('does not inject _variant for non-zimage pipelines', () => {
+      vi.mocked(usePipelineStore.getState).mockReturnValue({
+        serverDefaults: { zimage_variant: 'base' },
+      } as ReturnType<typeof usePipelineStore.getState>)
+
+      const values = useGenerationStore.getState().getFormValues('ltx2', mockSchema)
+
+      expect(values['_variant']).toBeUndefined()
+    })
+
+    it('does not inject _variant when serverDefaults is empty', () => {
+      vi.mocked(usePipelineStore.getState).mockReturnValue({
+        serverDefaults: {},
+      } as ReturnType<typeof usePipelineStore.getState>)
+
+      const values = useGenerationStore.getState().getFormValues('zimage', mockSchema)
+
+      expect(values['_variant']).toBeUndefined()
     })
   })
 
