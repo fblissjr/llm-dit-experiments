@@ -225,12 +225,7 @@ export const useGenerationStore = create<GenerationState>()(
     },
 
     getFormValues: (pipelineId, schema) => {
-      const stored = get().formValues[pipelineId];
-      if (stored && Object.keys(stored).length > 0) {
-        return stored;
-      }
-
-      // Return defaults from schema
+      // Build defaults from schema first
       const defaults: FormValues = {};
       schema.params.forEach((param) => {
         if (param.default !== undefined) {
@@ -256,7 +251,9 @@ export const useGenerationStore = create<GenerationState>()(
         }
       }
 
-      return defaults;
+      // Merge stored values on top of defaults (stored values take precedence)
+      const stored = get().formValues[pipelineId] ?? {};
+      return { ...defaults, ...stored };
     },
 
     getTimeEstimate: (pipelineId: string) => {
