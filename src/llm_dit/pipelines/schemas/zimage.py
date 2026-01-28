@@ -60,8 +60,8 @@ register_pipeline(PipelineSchema(
             placeholder="Elements to avoid (blur, artifacts, etc.)...",
             rows=2,
             group="basic",
-            tooltip="What to avoid in the image. Only effective when CFG > 0 (base model). "
-                    "Leave empty for turbo mode.",
+            conditional={"_variant": "base"},  # Only show for base variant
+            tooltip="What to avoid in the image. Uses CFG to steer away from unwanted elements.",
         ),
         ParamSchema(
             id="width",
