@@ -80,11 +80,21 @@ export const useGenerationStore = create<GenerationState>()(
         }
       });
 
-      // Inject server-side variant for Z-Image (controls conditional field visibility)
+      // Inject server-side defaults for Z-Image (variant-aware values)
       if (pipelineId === 'zimage') {
         const serverDefaults = usePipelineStore.getState().serverDefaults;
         if (serverDefaults.zimage_variant) {
           defaults['_variant'] = serverDefaults.zimage_variant;
+        }
+        // Apply variant-aware defaults from server (overrides schema defaults)
+        if (serverDefaults.steps !== undefined) {
+          defaults['steps'] = serverDefaults.steps;
+        }
+        if (serverDefaults.guidance_scale !== undefined) {
+          defaults['guidance_scale'] = serverDefaults.guidance_scale;
+        }
+        if (serverDefaults.shift !== undefined) {
+          defaults['shift'] = serverDefaults.shift;
         }
       }
 
@@ -228,11 +238,21 @@ export const useGenerationStore = create<GenerationState>()(
         }
       });
 
-      // Inject server-side variant for Z-Image (controls conditional field visibility)
+      // Inject server-side defaults for Z-Image (variant-aware values)
       if (pipelineId === 'zimage') {
         const serverDefaults = usePipelineStore.getState().serverDefaults;
         if (serverDefaults.zimage_variant) {
           defaults['_variant'] = serverDefaults.zimage_variant;
+        }
+        // Apply variant-aware defaults from server (overrides schema defaults)
+        if (serverDefaults.steps !== undefined) {
+          defaults['steps'] = serverDefaults.steps;
+        }
+        if (serverDefaults.guidance_scale !== undefined) {
+          defaults['guidance_scale'] = serverDefaults.guidance_scale;
+        }
+        if (serverDefaults.shift !== undefined) {
+          defaults['shift'] = serverDefaults.shift;
         }
       }
 
