@@ -196,6 +196,25 @@ describe('generationStore', () => {
       const state = useGenerationStore.getState()
       expect(state.formValues['ltx2']['_variant']).toBeUndefined()
     })
+
+    it('applies variant-aware defaults on reset for zimage', () => {
+      vi.mocked(usePipelineStore.getState).mockReturnValue({
+        serverDefaults: {
+          zimage_variant: 'base',
+          steps: 40,
+          guidance_scale: 4.0,
+          shift: 6.0,
+        },
+      } as ReturnType<typeof usePipelineStore.getState>)
+
+      useGenerationStore.getState().resetFormValues('zimage', mockSchema)
+
+      const state = useGenerationStore.getState()
+      expect(state.formValues['zimage']['steps']).toBe(40)
+      expect(state.formValues['zimage']['guidance_scale']).toBe(4.0)
+      expect(state.formValues['zimage']['shift']).toBe(6.0)
+      expect(state.formValues['zimage']['_variant']).toBe('base')
+    })
   })
 
   describe('restoreFromHistory', () => {
@@ -233,12 +252,17 @@ describe('generationStore', () => {
       expect(values['steps']).toBe(50)
     })
 
-    it('returns defaults from schema if no stored values', () => {
+    it('returns defaults from schema if no stored values and no server defaults', () => {
+      // Reset mock to return empty serverDefaults
+      vi.mocked(usePipelineStore.getState).mockReturnValue({
+        serverDefaults: {},
+      } as ReturnType<typeof usePipelineStore.getState>)
+
       const values = useGenerationStore.getState().getFormValues('zimage', mockSchema)
 
       expect(values['prompt']).toBe('')
-      expect(values['steps']).toBe(20)
-      expect(values['guidance_scale']).toBe(3.0)
+      expect(values['steps']).toBe(20)  // Schema default
+      expect(values['guidance_scale']).toBe(3.0)  // Schema default
       expect(values['width']).toBe(1024)
     })
 
@@ -287,6 +311,43 @@ describe('generationStore', () => {
       const values = useGenerationStore.getState().getFormValues('zimage', mockSchema)
 
       expect(values['_variant']).toBeUndefined()
+    })
+
+    it('applies variant-aware steps/guidance_scale/shift from serverDefaults for zimage', () => {
+      vi.mocked(usePipelineStore.getState).mockReturnValue({
+        serverDefaults: {
+          zimage_variant: 'base',
+          steps: 40,
+          guidance_scale: 4.0,
+          shift: 6.0,
+        },
+      } as ReturnType<typeof usePipelineStore.getState>)
+
+      const values = useGenerationStore.getState().getFormValues('zimage', mockSchema)
+
+      // Should use server defaults, not schema defaults
+      expect(values['steps']).toBe(40)  // Not schema's 20
+      expect(values['guidance_scale']).toBe(4.0)  // Not schema's 3.0
+      expect(values['shift']).toBe(6.0)  // From server
+      expect(values['_variant']).toBe('base')
+    })
+
+    it('applies turbo variant defaults from serverDefaults', () => {
+      vi.mocked(usePipelineStore.getState).mockReturnValue({
+        serverDefaults: {
+          zimage_variant: 'turbo',
+          steps: 9,
+          guidance_scale: 0.0,
+          shift: 3.0,
+        },
+      } as ReturnType<typeof usePipelineStore.getState>)
+
+      const values = useGenerationStore.getState().getFormValues('zimage', mockSchema)
+
+      expect(values['steps']).toBe(9)
+      expect(values['guidance_scale']).toBe(0.0)
+      expect(values['shift']).toBe(3.0)
+      expect(values['_variant']).toBe('turbo')
     })
   })
 
