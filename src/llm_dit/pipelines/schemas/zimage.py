@@ -5,7 +5,7 @@ last updated: 2026-01-27
 
 Z-Image (S3-DiT 6B) is the primary image generation pipeline with two variants:
 - Turbo: Fast 9-step distilled generation (CFG baked in)
-- Base: Quality 35-step generation with full CFG and negative prompt support
+- Base: Quality 40-step generation with full CFG and negative prompt support
 
 Advanced features include:
 - DyPE (Dynamic Position Extrapolation) for high-resolution generation

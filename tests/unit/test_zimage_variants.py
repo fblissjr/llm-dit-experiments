@@ -48,7 +48,7 @@ class TestZImageVariants:
         base = ZIMAGE_VARIANTS["base"]
         assert base["shift"] == 6.0
         assert base["distilled"] is False
-        assert base["defaults"]["num_inference_steps"] == 35
+        assert base["defaults"]["num_inference_steps"] == 40  # Updated from 35
         assert base["defaults"]["guidance_scale"] == 4.0
         assert base["defaults"]["negative_prompt"] == ""  # Empty but not None
 
@@ -74,7 +74,7 @@ class TestGetVariantDefaults:
     def test_base_defaults(self):
         """Get base variant defaults."""
         defaults = get_variant_defaults("base")
-        assert defaults["num_inference_steps"] == 35
+        assert defaults["num_inference_steps"] == 40  # Updated from 35
         assert defaults["guidance_scale"] == 4.0
         assert defaults["shift"] == 6.0
         assert defaults["distilled"] is False
@@ -288,9 +288,9 @@ class TestVariantAwareSteps:
         assert defaults["num_inference_steps"] == 9
 
     def test_base_steps_are_quality(self):
-        """Base should use 35 steps (quality)."""
+        """Base should use 40 steps (quality)."""
         defaults = get_variant_defaults("base")
-        assert defaults["num_inference_steps"] == 35
+        assert defaults["num_inference_steps"] == 40  # Updated from 35
         assert defaults["num_inference_steps"] > 20  # More than turbo
 
 
