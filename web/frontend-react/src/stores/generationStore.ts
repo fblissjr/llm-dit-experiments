@@ -251,8 +251,19 @@ export const useGenerationStore = create<GenerationState>()(
         }
       }
 
-      // Merge stored values on top of defaults (stored values take precedence)
+      // Get stored values
       const stored = get().formValues[pipelineId] ?? {};
+
+      // For Z-Image: Apply server defaults when variant differs or stored has no variant
+      // This ensures variant-aware defaults (steps, guidance_scale, shift) are correct
+      if (pipelineId === 'zimage' && defaults['_variant']) {
+        if (!stored['_variant'] || stored['_variant'] !== defaults['_variant']) {
+          // Variant changed or never set - apply server defaults for variant-sensitive fields
+          return { ...stored, ...defaults };
+        }
+      }
+
+      // Normal merge: stored values take precedence
       return { ...defaults, ...stored };
     },
 
