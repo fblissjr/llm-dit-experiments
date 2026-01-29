@@ -2,6 +2,11 @@
  * Generation Store
  *
  * Manages form values, generation progress, and current result.
+ *
+ * IMPORTANT: This store uses Immer middleware. When updating form values,
+ * Immer handles immutability automatically. For controlled inputs like sliders
+ * to work properly, avoid calling functions that create new objects on every
+ * render - prefer selectors that return stable references.
  */
 
 import { create } from 'zustand';
@@ -20,11 +25,11 @@ import { useUIStore } from './uiStore';
 import { usePipelineStore } from './pipelineStore';
 
 interface GenerationState {
-  // Form values keyed by pipeline ID
+  // Form values keyed by pipeline ID (stores user-modified values only)
   formValues: Record<string, FormValues>;
 
-  // Tracks which pipelines have been initialized (to run initialization only once)
-  initializedPipelines: Set<string>;
+  // Tracks which pipelines have been initialized
+  initializedPipelines: Record<string, boolean>;
 
   // Current generation state
   status: GenerationStatus;
@@ -55,7 +60,7 @@ export const useGenerationStore = create<GenerationState>()(
   immer((set, get) => ({
     // Initial state
     formValues: {},
-    initializedPipelines: new Set<string>(),
+    initializedPipelines: {},
     status: 'idle',
     progress: null,
     currentResult: null,
@@ -71,17 +76,17 @@ export const useGenerationStore = create<GenerationState>()(
      */
     initializeFormValues: (pipelineId, schema) => {
       // Skip if already initialized
-      if (get().initializedPipelines.has(pipelineId)) {
+      if (get().initializedPipelines[pipelineId]) {
         return;
       }
 
       // Build defaults from schema
       const defaults: FormValues = {};
-      schema.params.forEach((param) => {
+      for (const param of schema.params) {
         if (param.default !== undefined) {
           defaults[param.id] = param.default;
         }
-      });
+      }
 
       // Inject server-side defaults for Z-Image (variant-aware values)
       if (pipelineId === 'zimage') {
@@ -99,6 +104,9 @@ export const useGenerationStore = create<GenerationState>()(
         if (serverDefaults.shift !== undefined) {
           defaults['shift'] = serverDefaults.shift;
         }
+        if (serverDefaults.d_noise !== undefined) {
+          defaults['d_noise'] = serverDefaults.d_noise;
+        }
       }
 
       // Get any existing stored values (preserves user input across re-initialization)
@@ -107,8 +115,8 @@ export const useGenerationStore = create<GenerationState>()(
       set((state) => {
         // Merge: defaults first, then stored values take precedence
         state.formValues[pipelineId] = { ...defaults, ...stored };
-        // Mark as initialized (must use a new Set for immer to detect change)
-        state.initializedPipelines = new Set([...state.initializedPipelines, pipelineId]);
+        // Mark as initialized
+        state.initializedPipelines[pipelineId] = true;
       });
     },
 
@@ -150,6 +158,9 @@ export const useGenerationStore = create<GenerationState>()(
         }
         if (serverDefaults.shift !== undefined) {
           defaults['shift'] = serverDefaults.shift;
+        }
+        if (serverDefaults.d_noise !== undefined) {
+          defaults['d_noise'] = serverDefaults.d_noise;
         }
       }
 
@@ -314,6 +325,9 @@ export const useGenerationStore = create<GenerationState>()(
         if (serverDefaults.shift !== undefined) {
           defaults['shift'] = serverDefaults.shift;
         }
+        if (serverDefaults.d_noise !== undefined) {
+          defaults['d_noise'] = serverDefaults.d_noise;
+        }
       }
 
       // Get stored values and merge: stored takes precedence over defaults
@@ -325,7 +339,7 @@ export const useGenerationStore = create<GenerationState>()(
      * Check if a pipeline has been initialized.
      */
     isInitialized: (pipelineId) => {
-      return get().initializedPipelines.has(pipelineId);
+      return get().initializedPipelines[pipelineId] === true;
     },
 
     getTimeEstimate: (pipelineId: string) => {
@@ -398,6 +412,39 @@ export const useGenerationStore = create<GenerationState>()(
     },
   }))
 );
+
+/**
+ * Selector: Get raw form values for a pipeline (without merging defaults).
+ * Returns the stored values object directly, providing a stable reference
+ * that only changes when values are actually modified.
+ *
+ * Use this in components to get form values, then merge with defaults
+ * at the point of use (e.g., when reading a specific value).
+ */
+export function selectFormValues(
+  state: GenerationState,
+  pipelineId: string
+): FormValues {
+  return state.formValues[pipelineId] ?? {};
+}
+
+/**
+ * Helper: Get a single form value with fallback to default.
+ * Use this when reading individual values to avoid creating new objects.
+ */
+export function getFormValue(
+  formValues: FormValues,
+  param: { id: string; default?: unknown },
+  serverDefault?: unknown
+): unknown {
+  if (formValues[param.id] !== undefined) {
+    return formValues[param.id];
+  }
+  if (serverDefault !== undefined) {
+    return serverDefault;
+  }
+  return param.default;
+}
 
 /**
  * Handle SSE streaming generation (for LTX-2)

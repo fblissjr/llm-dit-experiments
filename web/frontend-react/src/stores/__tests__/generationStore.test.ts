@@ -56,6 +56,7 @@ describe('generationStore', () => {
     // Reset store state
     useGenerationStore.setState({
       formValues: {},
+      initializedPipelines: {},
       status: 'idle',
       progress: null,
       currentResult: null,

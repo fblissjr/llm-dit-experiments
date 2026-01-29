@@ -152,12 +152,12 @@ register_pipeline(PipelineSchema(
             id="d_noise",
             type="slider",
             label="D-Noise",
-            default=0.0,
-            min=-1.0,
-            max=1.0,
-            step=0.05,
+            default=1.0,
+            min=0.5,
+            max=2.0,
+            step=0.01,
             group="scheduler",
-            tooltip="Deterministic noise level. 0 = stochastic, 1 = deterministic.",
+            tooltip="Sigma schedule scaling. <1.0 = sharper (more denoising), >1.0 = softer. Default 1.0.",
         ),
 
         # === DyPE (Dynamic Position Extrapolation) ===
