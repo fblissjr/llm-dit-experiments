@@ -149,14 +149,15 @@ class FlowMatchScheduler:
         if mu is not None:
             self.shift = mu
 
-        # Linear spacing: sigma_max -> sigma_min (NOT including final 0)
-        # DiffSynth-Engine uses num_inference_steps, not num_inference_steps + 1
+        # Linear spacing: sigma_max -> sigma_min (EXCLUDING endpoint)
+        # DiffSynth-Studio uses num_inference_steps + 1 then drops the last value
+        # This ensures the last sigma is NOT 0, so the final step actually denoises
         sigmas = torch.linspace(
             self.sigma_max,
             self.sigma_min,
-            num_inference_steps,
+            num_inference_steps + 1,
             device=device,
-        )
+        )[:-1]  # Drop the endpoint (sigma_min) to avoid no-op final step
 
         # Apply shift transformation
         # Formula: sigma' = shift * sigma / (1 + (shift - 1) * sigma)
