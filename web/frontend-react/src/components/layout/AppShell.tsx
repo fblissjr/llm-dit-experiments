@@ -40,9 +40,9 @@ export function AppShell({ main, sidebar }: AppShellProps) {
           </div>
         </main>
 
-        {/* Desktop sidebar */}
+        {/* Desktop sidebar - top value accounts for header height (title + tabs + padding) */}
         {isDesktop && sidebar && (
-          <aside className="w-80 fixed right-0 top-[calc(theme(spacing.16)+1px)] bottom-0 border-l border-gray-700 bg-gray-800/50 overflow-y-auto">
+          <aside className="w-80 fixed right-0 top-[5.5rem] bottom-0 border-l border-gray-700 bg-gray-800/50 overflow-y-auto">
             <div className="p-4">
               <h2 className="text-sm font-medium text-gray-400 uppercase tracking-wide mb-4">
                 History

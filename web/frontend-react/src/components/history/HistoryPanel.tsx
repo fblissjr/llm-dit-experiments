@@ -1,17 +1,21 @@
 /**
  * History Panel
  *
- * Lists generation history with filtering and comparison support.
+ * Lists generation history with filtering, comparison, and lightbox support.
  */
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useHistoryStore, updateHistoryRelativeTimes } from '@/stores/historyStore';
 import { useGenerationStore } from '@/stores/generationStore';
 import { usePipelineStore } from '@/stores/pipelineStore';
 import { HistoryCard } from './HistoryCard';
 import { ComparisonView } from './ComparisonView';
+import { ImageLightbox } from '../common/ImageLightbox';
 
 export function HistoryPanel() {
+  // Lightbox state for viewing full-size images
+  const [lightboxImage, setLightboxImage] = useState<{ url: string; alt: string } | null>(null);
+
   // Update relative times every minute (with proper cleanup)
   useEffect(() => {
     const interval = setInterval(updateHistoryRelativeTimes, 60000);
@@ -107,10 +111,20 @@ export function HistoryPanel() {
             isSelected={selectedForCompare.includes(item.id)}
             isCompareMode={isCompareMode}
             onClick={() => handleCardClick(item)}
+            onViewFullSize={() => setLightboxImage({ url: item.result.urls[0], alt: item.shortPrompt })}
             onDelete={() => removeItem(item.id)}
           />
         ))}
       </div>
+
+      {/* Image lightbox */}
+      {lightboxImage && (
+        <ImageLightbox
+          imageUrl={lightboxImage.url}
+          alt={lightboxImage.alt}
+          onClose={() => setLightboxImage(null)}
+        />
+      )}
     </div>
   );
 }
