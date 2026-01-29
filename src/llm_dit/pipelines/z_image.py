@@ -1036,14 +1036,15 @@ class ZImagePipeline:
                     if torch.cuda.is_available():
                         torch.cuda.synchronize()
 
-                # Prepare timestep (inverted for Z-Image)
-                # NOTE: Keep in 0-1000 range for transformer (matches DiffSynth-Studio reference)
+                # Prepare timestep (inverted and normalized for Z-Image)
+                # Scheduler gives t in [0, 1000], we need [0, 1] for transformer
+                # (transformer.forward multiplies by t_scale=1000 internally)
                 timestep = t.expand(latents.shape[0])
-                timestep = 1000 - timestep
+                timestep = (1000 - timestep) / 1000  # Normalize to [0, 1]
 
                 # Calculate denoising progress (0 to 1) for CFG truncation
-                # Progress is normalized timestep: 0 at start, 1 at end
-                progress = timestep[0].item() / 1000.0
+                # Progress is the normalized timestep value
+                progress = timestep[0].item()
 
                 # Handle CFG with optional truncation
                 current_cfg_scale = guidance_scale
@@ -1681,14 +1682,15 @@ class ZImagePipeline:
                     if torch.cuda.is_available():
                         torch.cuda.synchronize()
 
-                # Prepare timestep (inverted for Z-Image)
-                # NOTE: Keep in 0-1000 range for transformer (matches DiffSynth-Studio reference)
+                # Prepare timestep (inverted and normalized for Z-Image)
+                # Scheduler gives t in [0, 1000], we need [0, 1] for transformer
+                # (transformer.forward multiplies by t_scale=1000 internally)
                 timestep = t.expand(latents.shape[0])
-                timestep = 1000 - timestep
+                timestep = (1000 - timestep) / 1000  # Normalize to [0, 1]
 
                 # Calculate denoising progress (0 to 1) for CFG truncation
-                # Progress is normalized timestep: 0 at start, 1 at end
-                progress = timestep[0].item() / 1000.0
+                # Progress is the normalized timestep value
+                progress = timestep[0].item()
 
                 # Handle CFG with optional truncation
                 # CFG truncation: disable CFG after cfg_truncation fraction of progress
@@ -2069,14 +2071,15 @@ class ZImagePipeline:
         # Denoising loop
         logger.debug(f"Running {num_inference_steps} denoising steps...")
         for i, t in enumerate(timesteps):
-            # Prepare timestep (inverted for Z-Image)
-            # NOTE: Keep in 0-1000 range for transformer (matches DiffSynth-Studio reference)
+            # Prepare timestep (inverted and normalized for Z-Image)
+            # Scheduler gives t in [0, 1000], we need [0, 1] for transformer
+            # (transformer.forward multiplies by t_scale=1000 internally)
             timestep = t.expand(latents.shape[0])
-            timestep = 1000 - timestep
+            timestep = (1000 - timestep) / 1000  # Normalize to [0, 1]
 
             # Calculate denoising progress (0 to 1) for CFG truncation
-            # Progress is normalized timestep: 0 at start, 1 at end
-            progress = timestep[0].item() / 1000.0
+            # Progress is the normalized timestep value
+            progress = timestep[0].item()
 
             # Handle CFG with optional truncation
             current_cfg_scale = guidance_scale
