@@ -12,7 +12,7 @@ import { useUIStore } from '@/stores/uiStore';
 export function useKeyboardShortcuts() {
   const { generate, status } = useGenerationStore();
   const { pipelines, selectedPipelineId } = usePipelineStore();
-  const { toggleCommandPalette, toggleHistoryPanel } = useUIStore();
+  const { toggleCommandPalette, toggleHistoryPanel, toggleModelPanel } = useUIStore();
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -57,6 +57,13 @@ export function useKeyboardShortcuts() {
         return;
       }
 
+      // M - Toggle model management sidebar (no modifier needed)
+      if (e.key === 'm' || e.key === 'M') {
+        e.preventDefault();
+        toggleModelPanel();
+        return;
+      }
+
       // Number keys 1-6 for pipeline switching (with Cmd)
       if (cmdKey && e.key >= '1' && e.key <= '9') {
         e.preventDefault();
@@ -71,5 +78,5 @@ export function useKeyboardShortcuts() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [generate, status, pipelines, selectedPipelineId, toggleCommandPalette, toggleHistoryPanel]);
+  }, [generate, status, pipelines, selectedPipelineId, toggleCommandPalette, toggleHistoryPanel, toggleModelPanel]);
 }

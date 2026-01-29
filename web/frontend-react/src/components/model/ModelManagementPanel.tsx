@@ -20,8 +20,10 @@ export function ModelManagementPanel() {
     unloadAll,
   } = useModelStore();
   const { pipelines } = usePipelineStore();
-  const { isModelPanelOpen, toggleModelPanel, isMobile } = useUIStore();
+  const { isModelPanelOpen, toggleModelPanel, isMobile, isDesktop } = useUIStore();
 
+  // Desktop uses ModelSidebar instead
+  if (isDesktop) return null;
   if (!isModelPanelOpen) return null;
 
   const level = vram ? getUtilizationLevel(vram.utilizationPercent) : 'low';

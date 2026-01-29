@@ -9,6 +9,7 @@
 import { Header } from './Header';
 import { BottomSheet } from './BottomSheet';
 import { ModelManagementPanel } from '../model/ModelManagementPanel';
+import { ModelSidebar } from '../model/ModelSidebar';
 import { Notifications } from '../common/Notifications';
 import { useUIStore } from '@/stores/uiStore';
 
@@ -64,7 +65,8 @@ export function AppShell({ main, sidebar }: AppShellProps) {
         </BottomSheet>
       )}
 
-      {/* Model management panel (modal) */}
+      {/* Model management - sidebar for desktop, modal for mobile */}
+      <ModelSidebar />
       <ModelManagementPanel />
 
       {/* Notifications */}
