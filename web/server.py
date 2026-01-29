@@ -3351,6 +3351,224 @@ async def generate(request: GenerateRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/api/generate/stream")
+async def generate_stream(request: GenerateRequest):
+    """Generate an image with SSE progress streaming.
+
+    Returns Server-Sent Events with progress updates during generation,
+    allowing the frontend to show step-by-step progress.
+
+    Events:
+    - {"type": "status", "message": "..."} - Status updates
+    - {"type": "progress", "step": N, "total_steps": M, ...} - Step progress
+    - {"type": "complete", ...} - Final result with image data
+    - {"type": "error", "message": "..."} - Error occurred
+    """
+    if encoder_only_mode:
+        raise HTTPException(
+            status_code=400, detail="Server running in encoder-only mode. Use /api/encode instead."
+        )
+    if pipeline is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Z-Image pipeline not loaded. Use the Settings panel to load it first.",
+        )
+
+    async def generate_with_progress() -> AsyncIterator[str]:
+        """Async generator for SSE events."""
+        try:
+            # Initial status
+            yield f"data: {json.dumps({'type': 'status', 'message': 'Starting generation...'})}\n\n"
+
+            # Set up generator for reproducibility
+            generator = None
+            actual_seed = request.seed if request.seed is not None else int(time.time() * 1000) % (2**32)
+            generator = torch.Generator()
+            generator.manual_seed(actual_seed)
+
+            # Negative prompt: only use for base variant
+            negative_prompt_to_use = None
+            if runtime_config is not None and runtime_config.zimage_variant == "base":
+                negative_prompt_to_use = request.negative_prompt
+
+            # SLG config
+            slg_scale = request.slg_scale if request.slg_scale is not None else 0.0
+            slg_layers = request.slg_layers
+            slg_start = request.slg_start if request.slg_start is not None else 0.01
+            slg_stop = request.slg_stop if request.slg_stop is not None else 0.2
+
+            # FMTT config
+            fmtt_scale = (
+                request.fmtt_scale if request.fmtt_enabled and request.fmtt_scale is not None else 0.0
+            )
+            fmtt_start = request.fmtt_start if request.fmtt_start is not None else 0.0
+            fmtt_stop = request.fmtt_stop if request.fmtt_stop is not None else 0.5
+            fmtt_normalize = request.fmtt_normalize if request.fmtt_normalize is not None else "unit"
+            fmtt_decode_scale = request.fmtt_decode_scale if request.fmtt_decode_scale is not None else 0.5
+            fmtt_siglip_model = request.fmtt_siglip_model or "google/siglip2-giant-opt-patch16-384"
+            fmtt_siglip_device = request.fmtt_siglip_device or "cuda"
+
+            # DyPE config
+            dype_config = None
+            if request.dype is not None and request.dype.enabled:
+                from llm_dit.utils.dype import DyPEConfig
+                dype_config = DyPEConfig(
+                    enabled=request.dype.enabled,
+                    method=request.dype.method,
+                    dype_scale=request.dype.dype_scale,
+                    dype_exponent=request.dype.dype_exponent,
+                    base_shift=request.dype.base_shift,
+                    max_shift=request.dype.max_shift,
+                    base_resolution=1024,
+                    multipass=request.dype.multipass,
+                    pass2_strength=request.dype.pass2_strength,
+                    pass3_strength=request.dype.pass3_strength,
+                    frequency_modulation=request.dype.frequency_modulation,
+                )
+
+            # Progress tracking state
+            progress_state = {"step": 0, "total": request.steps, "start_time": time.time()}
+
+            def progress_callback(step: int, total: int, latents: torch.Tensor) -> None:
+                """Update progress state (can't yield from here, but state is shared)."""
+                progress_state["step"] = step + 1
+                progress_state["total"] = total
+
+            logger.info("=" * 60)
+            logger.info("STREAMING GENERATION REQUEST")
+            logger.info("=" * 60)
+            logger.info(f"  Prompt: {request.prompt[:80]}...")
+            logger.info(f"  Size: {request.width}x{request.height}")
+            logger.info(f"  Steps: {request.steps}")
+            logger.info(f"  Seed: {actual_seed}")
+
+            # Run generation in thread pool (blocking operation)
+            loop = asyncio.get_event_loop()
+
+            def do_generate():
+                return pipeline(
+                    request.prompt,
+                    negative_prompt=negative_prompt_to_use,
+                    height=request.height,
+                    width=request.width,
+                    num_inference_steps=request.steps,
+                    guidance_scale=request.guidance_scale,
+                    cfg_normalization=request.cfg_normalization,
+                    cfg_truncation=request.cfg_truncation,
+                    shift=None if request.dynamic_shift else request.shift,
+                    d_noise=request.d_noise,
+                    generator=generator,
+                    template=request.template,
+                    system_prompt=request.system_prompt,
+                    thinking_content=request.thinking_content,
+                    assistant_content=request.assistant_content,
+                    force_think_block=request.force_think_block,
+                    remove_quotes=request.strip_quotes,
+                    long_prompt_mode=request.long_prompt_mode,
+                    hidden_layer=request.hidden_layer,
+                    layer_weights=request.layer_weights,
+                    skip_layer_guidance_scale=slg_scale,
+                    skip_layer_indices=slg_layers,
+                    skip_layer_start=slg_start,
+                    skip_layer_stop=slg_stop,
+                    fmtt_guidance_scale=fmtt_scale,
+                    fmtt_guidance_start=fmtt_start,
+                    fmtt_guidance_stop=fmtt_stop,
+                    fmtt_normalize_mode=fmtt_normalize,
+                    fmtt_decode_scale=fmtt_decode_scale,
+                    fmtt_siglip_model=fmtt_siglip_model,
+                    fmtt_siglip_device=fmtt_siglip_device,
+                    dype_config=dype_config,
+                    fbcache=request.fbcache,
+                    fbcache_threshold=request.fbcache_threshold,
+                    fbcache_log=request.fbcache_log,
+                    callback=progress_callback,
+                )
+
+            # Start generation task
+            gen_task = loop.run_in_executor(None, do_generate)
+
+            # Poll progress while generating
+            last_step = -1
+            while not gen_task.done():
+                await asyncio.sleep(0.1)  # Poll every 100ms
+                step = progress_state["step"]
+                total = progress_state["total"]
+
+                if step > last_step and step <= total:
+                    elapsed = time.time() - progress_state["start_time"]
+                    # Calculate ETA
+                    if step > 0:
+                        its = step / elapsed  # iterations per second
+                        remaining = (total - step) / its if its > 0 else 0
+                    else:
+                        its = 0
+                        remaining = 0
+
+                    yield f"data: {json.dumps({'type': 'progress', 'step': step, 'total_steps': total, 'elapsed': round(elapsed, 1), 'estimated_remaining_ms': int(remaining * 1000), 'message': f'Step {step}/{total}'})}\n\n"
+                    last_step = step
+
+            # Get result
+            image = await gen_task
+            gen_time = time.time() - progress_state["start_time"]
+
+            logger.info(f"[Stream] Generated in {gen_time:.1f}s")
+            logger.info("=" * 60)
+
+            # Convert to base64
+            img_bytes = io.BytesIO()
+            image.save(img_bytes, format="PNG")
+            img_b64 = base64.b64encode(img_bytes.getvalue()).decode("ascii")
+            data_url = f"data:image/png;base64,{img_b64}"
+
+            # Store in history
+            history_entry = {
+                "id": len(generation_history),
+                "timestamp": time.time(),
+                "model_type": "zimage",
+                "prompt": request.prompt,
+                "width": request.width,
+                "height": request.height,
+                "steps": request.steps,
+                "seed": actual_seed,
+                "gen_time": gen_time,
+                "image_b64": img_b64,
+            }
+            generation_history.insert(0, history_entry)
+            if len(generation_history) > MAX_HISTORY:
+                generation_history.pop()
+
+            # Send complete event
+            gen_id = f"gen-{int(time.time() * 1000)}"
+            complete_event = {
+                'type': 'complete',
+                'id': gen_id,
+                'pipeline_id': 'zimage',
+                'output_type': 'image',
+                'url': data_url,
+                'urls': [data_url],
+                'thumbnail_url': data_url,
+                'seed': actual_seed,
+                'generation_time': gen_time,
+            }
+            yield f"data: {json.dumps(complete_event)}\n\n"
+
+        except Exception as e:
+            logger.error(f"[Stream] Generation failed: {e}")
+            traceback.print_exc()
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+
+    return StreamingResponse(
+        generate_with_progress(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # Disable nginx buffering
+        },
+    )
+
+
 @app.post("/api/img2img")
 async def img2img(request: Img2ImgRequest):
     """Generate an image from an input image with optional differential mask.

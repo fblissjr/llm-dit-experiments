@@ -40,7 +40,8 @@ register_pipeline(PipelineSchema(
     category="image",
     supports_history=True,
     supports_img2img=True,
-    endpoint="/api/generate",  # Legacy endpoint for backwards compatibility
+    supports_streaming=True,  # Enable SSE progress streaming
+    endpoint="/api/generate/stream",  # Stream endpoint for progress updates
     params=[
         # === Basic Parameters ===
         ParamSchema(

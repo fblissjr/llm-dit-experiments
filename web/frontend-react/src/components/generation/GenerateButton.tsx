@@ -22,7 +22,7 @@ export function GenerateButton({
   endpoint,
   isStreaming,
 }: GenerateButtonProps) {
-  const { status, generate, cancelGeneration, getTimeEstimate } = useGenerationStore();
+  const { status, progress, generate, cancelGeneration, getTimeEstimate } = useGenerationStore();
   const { pipelines } = usePipelineStore();
   const { isModelLoaded, loadModel, isLoadingModel, loadingPipelineId } = useModelStore();
   const pipeline = pipelines[pipelineId];
@@ -133,7 +133,13 @@ export function GenerateButton({
                 d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
               />
             </svg>
-            Cancel Generation
+            {progress ? (
+              <span>
+                Step {progress.step}/{progress.totalSteps} · Cancel
+              </span>
+            ) : (
+              'Cancel Generation'
+            )}
           </span>
         ) : (
           <span className="flex items-center justify-center gap-2">
@@ -147,10 +153,30 @@ export function GenerateButton({
         )}
       </button>
 
+      {/* Progress bar during generation */}
+      {isGenerating && progress && (
+        <div className="mt-3 space-y-1">
+          <div className="h-2 bg-gray-700 rounded-full overflow-hidden">
+            <div
+              className={`h-full rounded-full transition-all duration-300 ease-out ${PIPELINE_COLOR_CLASSES.bg[pipelineColor]}`}
+              style={{ width: `${progress.percent}%` }}
+            />
+          </div>
+          <div className="flex justify-between text-xs text-gray-500">
+            <span>{progress.message ?? `Step ${progress.step}/${progress.totalSteps}`}</span>
+            {progress.estimatedRemainingMs !== undefined && progress.estimatedRemainingMs > 0 && (
+              <span>~{Math.ceil(progress.estimatedRemainingMs / 1000)}s remaining</span>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Keyboard shortcut hint */}
-      <p className="text-xs text-gray-500 text-center mt-2">
-        Press <kbd className="px-1.5 py-0.5 bg-gray-800 rounded text-gray-400">⌘</kbd> + <kbd className="px-1.5 py-0.5 bg-gray-800 rounded text-gray-400">Enter</kbd> to generate
-      </p>
+      {!isGenerating && (
+        <p className="text-xs text-gray-500 text-center mt-2">
+          Press <kbd className="px-1.5 py-0.5 bg-gray-800 rounded text-gray-400">⌘</kbd> + <kbd className="px-1.5 py-0.5 bg-gray-800 rounded text-gray-400">Enter</kbd> to generate
+        </p>
+      )}
     </div>
   );
 }

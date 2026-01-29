@@ -518,7 +518,7 @@ async function handleStreamingGeneration(
             onComplete({
               id: event.id ?? `gen-${Date.now()}`,
               pipelineId: event.pipeline_id,
-              outputType: event.output_type ?? 'video',
+              outputType: event.output_type ?? 'image',
               urls: event.urls ?? [event.url],
               thumbnailUrl: event.thumbnail_url,
               params: values,
@@ -526,6 +526,8 @@ async function handleStreamingGeneration(
               durationMs: Date.now() - startTime,
               timestamp: Date.now(),
             });
+          } else if (event.type === 'error') {
+            throw new Error(event.message ?? 'Generation failed');
           }
         } catch {
           // Ignore parse errors
