@@ -12,7 +12,7 @@ import { useUIStore } from '@/stores/uiStore';
 export function useKeyboardShortcuts() {
   const { generate, status } = useGenerationStore();
   const { pipelines, selectedPipelineId } = usePipelineStore();
-  const { toggleCommandPalette, toggleHistoryPanel, toggleModelPanel } = useUIStore();
+  const { toggleCommandPalette, toggleHistoryPanel, toggleModelPanel, toggleView } = useUIStore();
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -64,6 +64,13 @@ export function useKeyboardShortcuts() {
         return;
       }
 
+      // , (comma) - Toggle settings view (like VS Code)
+      if (e.key === ',') {
+        e.preventDefault();
+        toggleView();
+        return;
+      }
+
       // Number keys 1-6 for pipeline switching (with Cmd)
       if (cmdKey && e.key >= '1' && e.key <= '9') {
         e.preventDefault();
@@ -78,5 +85,5 @@ export function useKeyboardShortcuts() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [generate, status, pipelines, selectedPipelineId, toggleCommandPalette, toggleHistoryPanel, toggleModelPanel]);
+  }, [generate, status, pipelines, selectedPipelineId, toggleCommandPalette, toggleHistoryPanel, toggleModelPanel, toggleView]);
 }

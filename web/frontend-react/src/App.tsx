@@ -2,16 +2,18 @@ import { useEffect, useCallback, useRef } from 'react';
 import { usePipelineStore } from './stores/pipelineStore';
 import { useModelStore } from './stores/modelStore';
 import { useGenerationStore } from './stores/generationStore';
-import { initResponsiveState, setupResizeListener } from './stores/uiStore';
+import { initResponsiveState, setupResizeListener, useUIStore } from './stores/uiStore';
 import { AppShell } from './components/layout/AppShell';
 import { PipelineForm } from './components/pipeline/PipelineForm';
 import { ResultDisplay } from './components/generation/ResultDisplay';
 import { HistoryPanel } from './components/history/HistoryPanel';
+import { SettingsPage } from './components/settings/SettingsPage';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 
 export default function App() {
   const { fetchPipelines, pipelines, isLoading: pipelinesLoading, error: pipelinesError } = usePipelineStore();
   const { fetchVRAMStatus, fetchModelStatus } = useModelStore();
+  const { currentView } = useUIStore();
 
   // Global keyboard shortcuts
   useKeyboardShortcuts();
@@ -111,6 +113,11 @@ export default function App() {
         </div>
       </div>
     );
+  }
+
+  // Render settings page or studio based on current view
+  if (currentView === 'settings') {
+    return <SettingsPage />;
   }
 
   return (

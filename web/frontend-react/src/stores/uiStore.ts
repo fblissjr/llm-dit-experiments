@@ -16,7 +16,17 @@ interface Notification {
   duration?: number;  // Auto-dismiss after ms, 0 for persistent
 }
 
+// App views
+export type AppView = 'studio' | 'settings';
+
+// Settings tabs
+export type SettingsTab = 'models' | 'profiles' | 'defaults' | 'server';
+
 interface UIState {
+  // View state
+  currentView: AppView;
+  settingsTab: SettingsTab;
+
   // Responsive state
   isMobile: boolean;
   isTablet: boolean;
@@ -34,6 +44,9 @@ interface UIState {
   notifications: Notification[];
 
   // Actions
+  setView: (view: AppView) => void;
+  toggleView: () => void;
+  setSettingsTab: (tab: SettingsTab) => void;
   setResponsiveState: (width: number) => void;
   toggleHistoryPanel: () => void;
   toggleModelPanel: () => void;
@@ -54,6 +67,9 @@ const TABLET_BREAKPOINT = 1024;
 export const useUIStore = create<UIState>()(
   immer((set) => ({
     // Initial state
+    currentView: 'studio',
+    settingsTab: 'models',
+
     isMobile: typeof window !== 'undefined' ? window.innerWidth < MOBILE_BREAKPOINT : false,
     isTablet:
       typeof window !== 'undefined'
@@ -70,6 +86,24 @@ export const useUIStore = create<UIState>()(
     notifications: [],
 
     // Actions
+    setView: (view: AppView) => {
+      set((state) => {
+        state.currentView = view;
+      });
+    },
+
+    toggleView: () => {
+      set((state) => {
+        state.currentView = state.currentView === 'studio' ? 'settings' : 'studio';
+      });
+    },
+
+    setSettingsTab: (tab: SettingsTab) => {
+      set((state) => {
+        state.settingsTab = tab;
+      });
+    },
+
     setResponsiveState: (width: number) => {
       set((state) => {
         state.isMobile = width < MOBILE_BREAKPOINT;
