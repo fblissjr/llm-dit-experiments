@@ -430,11 +430,14 @@ export const useGenerationStore = create<GenerationState>()(
  * Use this in components to get form values, then merge with defaults
  * at the point of use (e.g., when reading a specific value).
  */
+// Stable empty object to avoid creating new references on every selector call
+const EMPTY_FORM_VALUES: FormValues = {};
+
 export function selectFormValues(
   state: GenerationState,
   pipelineId: string
 ): FormValues {
-  return state.formValues[pipelineId] ?? {};
+  return state.formValues[pipelineId] ?? EMPTY_FORM_VALUES;
 }
 
 /**

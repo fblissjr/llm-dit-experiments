@@ -41,9 +41,10 @@ export function PipelineForm(): JSX.Element | null {
   );
 
   // Get form values with a stable selector - only re-renders when this pipeline's values change
+  // Note: selectFormValues returns a stable empty object reference when pipeline doesn't exist
   const formValues = useGenerationStore(
     useCallback(
-      (state) => (pipeline ? selectFormValues(state, pipeline.id) : {}),
+      (state) => selectFormValues(state, pipeline?.id ?? ''),
       [pipeline?.id]
     )
   );
