@@ -3279,6 +3279,10 @@ async def generate(request: GenerateRequest):
                 fbcache_log=request.fbcache_log,
             )
         else:
+            # Progress callback for console logging
+            def progress_callback(step: int, total: int, latents: torch.Tensor) -> None:
+                logger.info(f"  Step {step + 1}/{total}")
+
             # Single pass generation
             image = pipeline(
                 request.prompt,
@@ -3316,6 +3320,7 @@ async def generate(request: GenerateRequest):
                 fbcache=request.fbcache,
                 fbcache_threshold=request.fbcache_threshold,
                 fbcache_log=request.fbcache_log,
+                callback=progress_callback,
             )
 
         gen_time = time.time() - start
