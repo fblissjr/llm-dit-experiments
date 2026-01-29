@@ -121,7 +121,12 @@ export const useGenerationStore = create<GenerationState>()(
         state.abortController = abortController;
       });
 
-      const values = get().formValues[pipelineId] ?? {};
+      // Get merged form values (defaults + stored) - need pipeline schema
+      const pipelineState = usePipelineStore.getState();
+      const pipeline = pipelineState.pipelines?.[pipelineId];
+      const values = pipeline
+        ? get().getFormValues(pipelineId, pipeline)
+        : get().formValues[pipelineId] ?? {};
 
       try {
         if (isStreaming) {

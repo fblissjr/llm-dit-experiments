@@ -13,10 +13,16 @@ import { GenerateButton } from '../generation/GenerateButton';
 import { groupParams } from '@/types';
 
 export function PipelineForm() {
-  const { pipelines, selectedPipelineId } = usePipelineStore();
+  const { pipelines, selectedPipelineId, serverDefaults } = usePipelineStore();
   const { getFormValues, setFormValue, status } = useGenerationStore();
 
   const pipeline = selectedPipelineId ? pipelines[selectedPipelineId] : null;
+
+  // Subscribe to serverDefaults.zimage_variant to trigger re-render when variant defaults arrive.
+  // This ensures getFormValues is called again after /api/pipelines completes,
+  // allowing variant-sensitive fields (steps, guidance_scale, shift) to be reset.
+  // The void expression consumes the value to satisfy TypeScript's unused variable check.
+  void serverDefaults?.zimage_variant;
 
   if (!pipeline) {
     return (
