@@ -190,10 +190,10 @@ def output_dir(tmp_path):
 
 @pytest.fixture
 def image_verifier():
-    """Helper for image verification using variance analysis.
+    """Helper for image verification using scripts/inspect_image.py.
 
     Returns a function that analyzes an image and returns:
-    - hash: MD5 hash of the image (first 12 chars)
+    - hash: MD5 hash of the image (first 12 chars) from inspect_image.py
     - size: Image dimensions as "WxH" string
     - variance: Pixel variance (valid images: 500-6000, noise: >6000)
     - is_valid: True if variance is in valid range
@@ -202,24 +202,30 @@ def image_verifier():
         result = image_verifier(image)
         assert result["is_valid"], f"Image is noise (variance={result['variance']})"
     """
-    import hashlib
-    import io
+    import sys
 
     import numpy as np
 
-    def verify(image, max_variance=6000, min_variance=500):
-        # Get image hash
-        img_bytes = io.BytesIO()
-        image.save(img_bytes, format="PNG")
-        img_hash = hashlib.md5(img_bytes.getvalue()).hexdigest()[:12]
+    # Add scripts directory to path for inspect_image import
+    scripts_dir = str(Path(__file__).parent.parent / "scripts")
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
 
-        # Calculate variance
+    from inspect_image import image_info
+
+    def verify(image, max_variance=6000, min_variance=500):
+        # Get hash and size from inspect_image.py
+        info = image_info(image)
+
+        # Calculate variance for noise detection
         arr = np.array(image)
         variance = float(np.var(arr))
 
         return {
-            "hash": img_hash,
-            "size": f"{image.width}x{image.height}",
+            "hash": info["hash"],
+            "size": info["size"],
+            "mode": info["mode"],
+            "bytes": info["bytes"],
             "variance": variance,
             "is_valid": min_variance < variance < max_variance,
         }
