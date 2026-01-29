@@ -188,6 +188,26 @@ class ZImagePipeline:
         if hasattr(self.scheduler, "sigmas") and len(self.scheduler.sigmas) >= 3:
             logger.debug(f"{log_prefix} Sigmas[0:3]: {self.scheduler.sigmas[:3].tolist()}")
 
+    @staticmethod
+    def _detect_variant_shift(model_path: str) -> float:
+        """Detect variant from model path and return default shift.
+
+        Z-Image has two variants:
+        - Turbo: shift=3.0 (trained with Decoupled-DMD for fewer steps)
+        - Base: shift=6.0 (standard flow matching)
+
+        Args:
+            model_path: Path to model directory or HuggingFace ID
+
+        Returns:
+            Default shift value for the detected variant
+        """
+        path_lower = str(model_path).lower()
+        if "turbo" in path_lower:
+            return 3.0  # Turbo variant
+        else:
+            return 6.0  # Base variant (default)
+
     @classmethod
     def from_pretrained(
         cls,
@@ -208,6 +228,7 @@ class ZImagePipeline:
         tile_size: int = 512,
         tile_overlap: int = 64,
         attention_backend: str | None = None,
+        shift: float | None = None,
         **kwargs,
     ) -> "ZImagePipeline":
         """
@@ -231,6 +252,9 @@ class ZImagePipeline:
             tile_size: Tile size in pixels for VAE decode (default: 512)
             tile_overlap: Overlap between tiles in pixels (default: 64)
             attention_backend: Attention backend (auto, flash_attn_2, sdpa, etc.)
+            shift: Scheduler shift value. If None (default), auto-detects from variant:
+                - "turbo" in path: shift=3.0
+                - otherwise: shift=6.0 (base variant)
             **kwargs: Additional arguments
 
         Returns:
@@ -305,6 +329,7 @@ class ZImagePipeline:
                 dit_device_resolved,
                 vae_device_resolved,
                 use_custom_scheduler,
+                shift=shift,
                 **kwargs,
             )
         else:
@@ -314,6 +339,7 @@ class ZImagePipeline:
                 dtype,
                 dit_device_resolved,
                 vae_device_resolved,
+                shift=shift,
             )
 
         logger.info("Pipeline loaded successfully")
@@ -336,9 +362,20 @@ class ZImagePipeline:
         dit_device: str,
         vae_device: str,
         use_custom_scheduler: bool,
+        shift: float | None = None,
         **kwargs,
     ):
-        """Load transformer, VAE, scheduler using diffusers."""
+        """Load transformer, VAE, scheduler using diffusers.
+
+        Args:
+            model_path: Path to model directory
+            dtype: Model dtype
+            dit_device: Device for DiT
+            vae_device: Device for VAE
+            use_custom_scheduler: Use our FlowMatchScheduler instead of diffusers
+            shift: Scheduler shift. If None, auto-detects from variant.
+            **kwargs: Additional arguments for diffusers
+        """
         try:
             from diffusers import DiffusionPipeline
         except ImportError as e:
@@ -362,8 +399,10 @@ class ZImagePipeline:
 
         if use_custom_scheduler:
             from llm_dit.schedulers import FlowMatchScheduler
-            scheduler = FlowMatchScheduler(shift=3.0)
-            logger.debug("Using custom FlowMatchScheduler (pure PyTorch)")
+            # Resolve shift: use provided value or detect from variant
+            actual_shift = shift if shift is not None else cls._detect_variant_shift(model_path)
+            scheduler = FlowMatchScheduler(shift=actual_shift)
+            logger.info(f"Using FlowMatchScheduler with shift={actual_shift}")
         else:
             scheduler = diffusers_pipe.scheduler
 
@@ -381,8 +420,17 @@ class ZImagePipeline:
         dtype: torch.dtype,
         dit_device: str,
         vae_device: str,
+        shift: float | None = None,
     ):
-        """Load transformer, VAE, scheduler using pure PyTorch implementation."""
+        """Load transformer, VAE, scheduler using pure PyTorch implementation.
+
+        Args:
+            model_path: Path to model directory
+            dtype: Model dtype
+            dit_device: Device for DiT
+            vae_device: Device for VAE
+            shift: Scheduler shift. If None, auto-detects from variant.
+        """
         from llm_dit.models.z_image import load_z_image_transformer
         from llm_dit.models.z_image.vae import load_z_image_vae
         from llm_dit.schedulers import FlowMatchScheduler
@@ -399,9 +447,10 @@ class ZImagePipeline:
         logger.debug(f"Moving VAE to {vae_device}...")
         vae = vae.to(vae_device)
 
-        # Always use our scheduler with pure PyTorch
-        scheduler = FlowMatchScheduler(shift=3.0)
-        logger.debug("Using FlowMatchScheduler (pure PyTorch)")
+        # Resolve shift: use provided value or detect from variant
+        actual_shift = shift if shift is not None else cls._detect_variant_shift(model_path)
+        scheduler = FlowMatchScheduler(shift=actual_shift)
+        logger.info(f"Using FlowMatchScheduler with shift={actual_shift}")
 
         return transformer, vae, scheduler
 
