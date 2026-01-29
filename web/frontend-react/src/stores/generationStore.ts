@@ -107,6 +107,9 @@ export const useGenerationStore = create<GenerationState>()(
         if (serverDefaults.d_noise !== undefined) {
           defaults['d_noise'] = serverDefaults.d_noise;
         }
+        if (serverDefaults.dynamic_shift !== undefined) {
+          defaults['dynamic_shift'] = serverDefaults.dynamic_shift;
+        }
       }
 
       // Get any existing stored values (preserves user input across re-initialization)
@@ -161,6 +164,9 @@ export const useGenerationStore = create<GenerationState>()(
         }
         if (serverDefaults.d_noise !== undefined) {
           defaults['d_noise'] = serverDefaults.d_noise;
+        }
+        if (serverDefaults.dynamic_shift !== undefined) {
+          defaults['dynamic_shift'] = serverDefaults.dynamic_shift;
         }
       }
 
@@ -327,6 +333,9 @@ export const useGenerationStore = create<GenerationState>()(
         }
         if (serverDefaults.d_noise !== undefined) {
           defaults['d_noise'] = serverDefaults.d_noise;
+        }
+        if (serverDefaults.dynamic_shift !== undefined) {
+          defaults['dynamic_shift'] = serverDefaults.dynamic_shift;
         }
       }
 

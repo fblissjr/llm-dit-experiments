@@ -141,7 +141,7 @@ register_pipeline(PipelineSchema(
             tooltip="Flow matching shift parameter. Higher = more denoising in early steps.",
         ),
         ParamSchema(
-            id="use_dynamic_shift",
+            id="dynamic_shift",
             type="checkbox",
             label="Dynamic Shift",
             default=False,
