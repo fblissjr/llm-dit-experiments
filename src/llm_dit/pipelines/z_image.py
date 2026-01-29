@@ -141,10 +141,52 @@ class ZImagePipeline:
         # Wrap VAE with tiled decoder if requested
         self._tiled_vae_enabled = tiled_vae
         if self._tiled_vae_enabled:
+            from llm_dit.utils.tiled_vae import TiledVAEDecoder
+
             self.vae = TiledVAEDecoder(vae, tile_size=tile_size, tile_overlap=tile_overlap)
             logger.debug(f"Tiled VAE enabled: tile_size={tile_size}, overlap={tile_overlap}")
         else:
             self.vae = vae
+
+    def _configure_scheduler(
+        self,
+        mu: float,
+        num_inference_steps: int,
+        device: torch.device | str,
+        log_prefix: str = "[Pipeline]",
+    ) -> None:
+        """
+        Configure the scheduler with shift and timesteps.
+
+        Handles both diffusers FlowMatchEulerDiscreteScheduler and our
+        pure PyTorch FlowMatchScheduler with a unified interface.
+
+        Args:
+            mu: Shift/mu value for the scheduler
+            num_inference_steps: Number of denoising steps
+            device: Device for timesteps tensor
+            log_prefix: Prefix for debug log messages (e.g., "[img2img]")
+        """
+        self.scheduler.sigma_min = 0.0
+
+        # Set shift using the appropriate method:
+        # - diffusers: set_shift() method (shift property is read-only)
+        # - our scheduler: direct attribute assignment
+        if hasattr(self.scheduler, "set_shift"):
+            self.scheduler.set_shift(mu)  # diffusers scheduler
+        elif hasattr(self.scheduler, "shift"):
+            self.scheduler.shift = mu  # our FlowMatchScheduler
+
+        self.scheduler.set_timesteps(num_inference_steps, device=device, mu=mu)
+
+        # Log scheduler configuration for debugging
+        scheduler_shift = getattr(self.scheduler, "shift", None)
+        if scheduler_shift is None and hasattr(self.scheduler, "config"):
+            scheduler_shift = self.scheduler.config.get("shift", "N/A")
+        logger.debug(f"{log_prefix} Scheduler: {type(self.scheduler).__name__}")
+        logger.debug(f"{log_prefix} Scheduler shift: {scheduler_shift}")
+        if hasattr(self.scheduler, "sigmas") and len(self.scheduler.sigmas) >= 3:
+            logger.debug(f"{log_prefix} Sigmas[0:3]: {self.scheduler.sigmas[:3].tolist()}")
 
     @classmethod
     def from_pretrained(
@@ -839,25 +881,7 @@ class ZImagePipeline:
             )
             logger.debug(f"[img2img] Calculated shift/mu for resolution: {mu:.4f}")
 
-        self.scheduler.sigma_min = 0.0
-        # IMPORTANT: For diffusers FlowMatchEulerDiscreteScheduler, when use_dynamic_shifting=False,
-        # set_timesteps() ignores the mu parameter and uses self.shift instead.
-        # Diffusers uses set_shift() method (shift property is read-only).
-        # Our FlowMatchScheduler uses direct attribute assignment.
-        if hasattr(self.scheduler, "set_shift"):
-            self.scheduler.set_shift(mu)  # diffusers scheduler
-        elif hasattr(self.scheduler, "shift"):
-            self.scheduler.shift = mu  # our FlowMatchScheduler
-        self.scheduler.set_timesteps(num_inference_steps, device=device, mu=mu)
-
-        # Log scheduler configuration for debugging
-        scheduler_shift = getattr(self.scheduler, "shift", None)
-        if scheduler_shift is None and hasattr(self.scheduler, "config"):
-            scheduler_shift = self.scheduler.config.get("shift", "N/A")
-        logger.debug(f"[img2img] Scheduler: {type(self.scheduler).__name__}")
-        logger.debug(f"[img2img] Scheduler shift: {scheduler_shift}")
-        if hasattr(self.scheduler, "sigmas") and len(self.scheduler.sigmas) >= 3:
-            logger.debug(f"[img2img] Sigmas[0:3]: {self.scheduler.sigmas[:3].tolist()}")
+        self._configure_scheduler(mu, num_inference_steps, device, log_prefix="[img2img]")
 
         # Apply d_noise scaling to sigma schedule (RES4LYF technique)
         # d_noise < 1.0 = sharper/more detail, > 1.0 = softer/deeper colors
@@ -1406,26 +1430,9 @@ class ZImagePipeline:
                 self.scheduler.config.get("max_shift", 1.15),
             )
             logger.debug(f"[Pipeline] Calculated shift/mu for resolution: {mu:.4f}")
-        self.scheduler.sigma_min = 0.0
-        # IMPORTANT: For diffusers FlowMatchEulerDiscreteScheduler, when use_dynamic_shifting=False,
-        # set_timesteps() ignores the mu parameter and uses self.shift instead.
-        # Diffusers uses set_shift() method (shift property is read-only).
-        # Our FlowMatchScheduler uses direct attribute assignment.
-        if hasattr(self.scheduler, "set_shift"):
-            self.scheduler.set_shift(mu)  # diffusers scheduler
-        elif hasattr(self.scheduler, "shift"):
-            self.scheduler.shift = mu  # our FlowMatchScheduler
-        self.scheduler.set_timesteps(num_inference_steps, device=device, mu=mu)
-        timesteps = self.scheduler.timesteps
 
-        # Log scheduler configuration for debugging
-        scheduler_shift = getattr(self.scheduler, "shift", None)
-        if scheduler_shift is None and hasattr(self.scheduler, "config"):
-            scheduler_shift = self.scheduler.config.get("shift", "N/A")
-        logger.debug(f"[Pipeline] Scheduler: {type(self.scheduler).__name__}")
-        logger.debug(f"[Pipeline] Scheduler shift: {scheduler_shift}")
-        if hasattr(self.scheduler, "sigmas") and len(self.scheduler.sigmas) >= 3:
-            logger.debug(f"[Pipeline] Sigmas[0:3]: {self.scheduler.sigmas[:3].tolist()}")
+        self._configure_scheduler(mu, num_inference_steps, device, log_prefix="[Pipeline]")
+        timesteps = self.scheduler.timesteps
 
         # Apply d_noise scaling to sigma schedule (RES4LYF technique)
         # d_noise < 1.0 = sharper/more detail, > 1.0 = softer/deeper colors
@@ -1995,25 +2002,8 @@ class ZImagePipeline:
                 self.scheduler.config.get("max_shift", 1.15),
             )
             logger.debug(f"[Pipeline] Calculated shift/mu for resolution: {mu:.4f}")
-        self.scheduler.sigma_min = 0.0
-        # IMPORTANT: For diffusers FlowMatchEulerDiscreteScheduler, when use_dynamic_shifting=False,
-        # set_timesteps() ignores the mu parameter and uses self.shift instead.
-        # Diffusers uses set_shift() method (shift property is read-only).
-        # Our FlowMatchScheduler uses direct attribute assignment.
-        if hasattr(self.scheduler, "set_shift"):
-            self.scheduler.set_shift(mu)  # diffusers scheduler
-        elif hasattr(self.scheduler, "shift"):
-            self.scheduler.shift = mu  # our FlowMatchScheduler
-        self.scheduler.set_timesteps(num_inference_steps, device=device, mu=mu)
 
-        # Log scheduler configuration for debugging
-        scheduler_shift = getattr(self.scheduler, "shift", None)
-        if scheduler_shift is None and hasattr(self.scheduler, "config"):
-            scheduler_shift = self.scheduler.config.get("shift", "N/A")
-        logger.debug(f"[_denoise] Scheduler: {type(self.scheduler).__name__}")
-        logger.debug(f"[_denoise] Scheduler shift: {scheduler_shift}")
-        if hasattr(self.scheduler, "sigmas") and len(self.scheduler.sigmas) >= 3:
-            logger.debug(f"[_denoise] Sigmas[0:3]: {self.scheduler.sigmas[:3].tolist()}")
+        self._configure_scheduler(mu, num_inference_steps, device, log_prefix="[_denoise]")
 
         # Apply d_noise scaling to sigma schedule (RES4LYF technique)
         # d_noise < 1.0 = sharper/more detail, > 1.0 = softer/deeper colors
