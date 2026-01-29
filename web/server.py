@@ -501,6 +501,7 @@ class GenerateRequest(BaseModel):
     slg_stop: Optional[float] = None  # Stop SLG at this fraction
     # Flow Map Trajectory Tilting (FMTT) options
     # None = use config defaults, explicit values override
+    fmtt_enabled: bool = False  # Enable FMTT (must be True for fmtt_scale to be used)
     fmtt_scale: Optional[float] = None  # FMTT scale (0 = disabled, 0.5-2.0 typical)
     fmtt_start: Optional[float] = None  # Start FMTT at this fraction
     fmtt_stop: Optional[float] = None  # Stop FMTT at this fraction
@@ -3162,8 +3163,10 @@ async def generate(request: GenerateRequest):
         slg_stop = request.slg_stop if request.slg_stop is not None else 0.2
 
         # FMTT config: "UI always wins" - don't fall back to runtime_config
-        # None means disabled, not "use config default"
-        fmtt_scale = request.fmtt_scale if request.fmtt_scale is not None else 0.0
+        # Only use fmtt_scale if fmtt_enabled is True
+        fmtt_scale = (
+            request.fmtt_scale if request.fmtt_enabled and request.fmtt_scale is not None else 0.0
+        )
         fmtt_start = request.fmtt_start if request.fmtt_start is not None else 0.0
         fmtt_stop = request.fmtt_stop if request.fmtt_stop is not None else 0.5
         fmtt_normalize = request.fmtt_normalize if request.fmtt_normalize is not None else "unit"
