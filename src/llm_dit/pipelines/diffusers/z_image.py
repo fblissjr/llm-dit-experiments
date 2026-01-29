@@ -146,6 +146,26 @@ class ZImagePipeline:
         else:
             self.vae = vae
 
+    @staticmethod
+    def _detect_variant_shift(model_path: str) -> float:
+        """Detect variant from model path and return default shift.
+
+        Z-Image has two variants:
+        - Turbo: shift=3.0 (trained with Decoupled-DMD for fewer steps)
+        - Base: shift=6.0 (standard flow matching)
+
+        Args:
+            model_path: Path to model directory or HuggingFace ID
+
+        Returns:
+            Default shift value for the detected variant
+        """
+        path_lower = str(model_path).lower()
+        if "turbo" in path_lower:
+            return 3.0  # Turbo variant
+        else:
+            return 6.0  # Base variant (default)
+
     @classmethod
     def from_pretrained(
         cls,
@@ -282,8 +302,9 @@ class ZImagePipeline:
         if use_custom_scheduler:
             from llm_dit.schedulers import FlowMatchScheduler
 
-            scheduler = FlowMatchScheduler(shift=3.0)
-            logger.debug("Using custom FlowMatchScheduler (pure PyTorch)")
+            actual_shift = cls._detect_variant_shift(model_path)
+            scheduler = FlowMatchScheduler(shift=actual_shift)
+            logger.info(f"Using custom FlowMatchScheduler with shift={actual_shift}")
         else:
             scheduler = diffusers_pipe.scheduler
 
@@ -1644,7 +1665,7 @@ class ZImagePipeline:
                     for pos, neg in zip(pos_out, neg_out):
                         pos_f = pos.float()
                         neg_f = neg.float()
-                        # Apply CFG: positive + scale * (positive - negative)
+                        # Apply CFG: negative + scale * (positive - negative)
                         pred = pos_f + current_cfg_scale * (pos_f - neg_f)
 
                         # CFG normalization (clamp or match mode)
@@ -2191,8 +2212,9 @@ class ZImagePipeline:
         if use_custom_scheduler:
             from llm_dit.schedulers import FlowMatchScheduler
 
-            scheduler = FlowMatchScheduler(shift=3.0)
-            logger.debug("Using custom FlowMatchScheduler (pure PyTorch)")
+            actual_shift = cls._detect_variant_shift(model_path)
+            scheduler = FlowMatchScheduler(shift=actual_shift)
+            logger.info(f"Using custom FlowMatchScheduler with shift={actual_shift}")
         else:
             logger.debug("Loading scheduler...")
             scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(

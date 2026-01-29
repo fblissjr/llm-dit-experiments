@@ -424,6 +424,10 @@ class ZImagePipeline:
     ):
         """Load transformer, VAE, scheduler using pure PyTorch implementation.
 
+        The transformer uses our pure PyTorch ZImageDiT implementation.
+        The VAE uses diffusers' AutoencoderKL since our FluxVAEDecoder has
+        key mapping issues with the diffusers-format checkpoints.
+
         Args:
             model_path: Path to model directory
             dtype: Model dtype
@@ -431,19 +435,24 @@ class ZImagePipeline:
             vae_device: Device for VAE
             shift: Scheduler shift. If None, auto-detects from variant.
         """
+        from diffusers import AutoencoderKL
+
         from llm_dit.models.z_image import load_z_image_transformer
-        from llm_dit.models.z_image.vae import load_z_image_vae
         from llm_dit.schedulers import FlowMatchScheduler
 
-        # Load transformer
+        # Load transformer (pure PyTorch implementation)
         logger.debug("Loading pure PyTorch transformer...")
         transformer = load_z_image_transformer(model_path, dtype=dtype, device="cpu")
         logger.debug(f"Moving transformer to {dit_device}...")
         transformer = transformer.to(dit_device)
 
-        # Load VAE (only decoder needed for inference)
-        logger.debug("Loading pure PyTorch VAE...")
-        _, vae = load_z_image_vae(model_path, dtype=dtype, device="cpu")
+        # Load VAE using diffusers (our FluxVAEDecoder has key mapping issues)
+        # The VAE checkpoint uses diffusers naming convention which doesn't map
+        # to our FluxVAEDecoder structure. Using AutoencoderKL is correct here.
+        logger.debug("Loading diffusers VAE...")
+        vae = AutoencoderKL.from_pretrained(
+            model_path, subfolder="vae", torch_dtype=dtype
+        )
         logger.debug(f"Moving VAE to {vae_device}...")
         vae = vae.to(vae_device)
 
@@ -1760,7 +1769,8 @@ class ZImagePipeline:
                     for pos, neg in zip(pos_out, neg_out):
                         pos_f = pos.float()
                         neg_f = neg.float()
-                        # Apply CFG: positive + scale * (positive - negative)
+                        # Apply CFG: negative + scale * (positive - negative)
+                        # Standard formula: uncond + scale * (cond - uncond)
                         pred = pos_f + current_cfg_scale * (pos_f - neg_f)
 
                         # CFG normalization (clamp or match mode)
@@ -2291,8 +2301,9 @@ class ZImagePipeline:
         if use_custom_scheduler:
             from llm_dit.schedulers import FlowMatchScheduler
 
-            scheduler = FlowMatchScheduler(shift=3.0)
-            logger.debug("Using custom FlowMatchScheduler (pure PyTorch)")
+            actual_shift = cls._detect_variant_shift(model_path)
+            scheduler = FlowMatchScheduler(shift=actual_shift)
+            logger.info(f"Using custom FlowMatchScheduler with shift={actual_shift}")
         else:
             logger.debug("Loading scheduler...")
             scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(

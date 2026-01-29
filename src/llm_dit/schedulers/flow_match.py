@@ -58,7 +58,7 @@ class FlowMatchScheduler:
         self,
         num_train_timesteps: int = 1000,
         shift: float = 3.0,
-        sigma_min: float = 0.0,
+        sigma_min: float | None = None,
         sigma_max: float = 1.0,
         shift_terminal: Optional[float] = None,
     ):
@@ -68,7 +68,10 @@ class FlowMatchScheduler:
         Args:
             num_train_timesteps: Number of training timesteps
             shift: Sigma schedule shift (3.0 for Z-Image-Turbo)
-            sigma_min: Minimum sigma value
+            sigma_min: Minimum sigma value. If None, uses 1/num_train_timesteps
+                to match diffusers FlowMatchEulerDiscreteScheduler behavior.
+                This ensures the final denoising step is small (~0.035) rather
+                than large (~0.17), preventing divergence at the end.
             sigma_max: Maximum sigma value
             shift_terminal: If set, stretches the sigma schedule so the final
                 sigma ends at this value instead of sigma_min. For example,
@@ -77,7 +80,8 @@ class FlowMatchScheduler:
         """
         self.num_train_timesteps = num_train_timesteps
         self.shift = shift
-        self.sigma_min = sigma_min
+        # Match diffusers behavior: sigma_min = 1/num_train_timesteps
+        self.sigma_min = sigma_min if sigma_min is not None else 1.0 / num_train_timesteps
         self.sigma_max = sigma_max
         self.shift_terminal = shift_terminal
 
@@ -136,10 +140,15 @@ class FlowMatchScheduler:
         """
         Set the discrete timesteps for inference.
 
-        Matches DiffSynth-Engine scheduler behavior:
-        1. Create num_inference_steps sigmas from sigma_max to sigma_min
-        2. Apply shift transformation
-        3. Append 0 as final sigma (target for last step)
+        Matches diffusers FlowMatchEulerDiscreteScheduler exactly:
+        1. Pre-shift sigma_min/max using the shift formula
+        2. Linspace in pre-shifted timestep space
+        3. Apply shift transformation again (double-shift)
+        4. Append 0 as final sigma (target for last step)
+
+        This double-shift approach ensures the final denoising step is not too
+        aggressive. Without it, the final sigma would be ~0.006 which can cause
+        instability. With double-shift, final sigma is ~0.035.
 
         Args:
             num_inference_steps: Number of denoising steps
@@ -149,17 +158,21 @@ class FlowMatchScheduler:
         if mu is not None:
             self.shift = mu
 
-        # Linear spacing: sigma_max -> sigma_min (EXCLUDING endpoint)
-        # DiffSynth-Studio uses num_inference_steps + 1 then drops the last value
-        # This ensures the last sigma is NOT 0, so the final step actually denoises
-        sigmas = torch.linspace(
-            self.sigma_max,
-            self.sigma_min,
-            num_inference_steps + 1,
-            device=device,
-        )[:-1]  # Drop the endpoint (sigma_min) to avoid no-op final step
+        # Match diffusers FlowMatchEulerDiscreteScheduler exactly:
+        # 1. Pre-shift sigma_min/max using the shift formula
+        #    This is what diffusers stores as self.sigma_min/sigma_max
+        shifted_sigma_min = self.shift * self.sigma_min / (1 + (self.shift - 1) * self.sigma_min)
+        shifted_sigma_max = self.shift * self.sigma_max / (1 + (self.shift - 1) * self.sigma_max)
 
-        # Apply shift transformation
+        # 2. Convert to timestep space (using pre-shifted values)
+        t_max = shifted_sigma_max * self.num_train_timesteps  # 1000
+        t_min = shifted_sigma_min * self.num_train_timesteps  # ~5.97 for shift=6
+
+        # 3. Linspace in pre-shifted timestep space
+        timesteps_raw = torch.linspace(t_max, t_min, num_inference_steps, device=device)
+        sigmas = timesteps_raw / self.num_train_timesteps
+
+        # 4. Apply shift transformation (second shift - this is the key!)
         # Formula: sigma' = shift * sigma / (1 + (shift - 1) * sigma)
         sigmas = self.shift * sigmas / (1 + (self.shift - 1) * sigmas)
 
@@ -168,7 +181,7 @@ class FlowMatchScheduler:
             sigmas = self._stretch_shift_to_terminal(sigmas)
 
         # Append 0 as final sigma (target for last denoising step)
-        # This matches DiffSynth-Engine: sigmas = append(sigmas, 0)
+        # This matches diffusers behavior
         sigmas = torch.cat([sigmas, sigmas.new_zeros(1)])
 
         self.sigmas = sigmas
