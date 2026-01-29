@@ -7,10 +7,11 @@ Quick reference for LLM agents. Uses progressive disclosure - read only what you
 **[Read for architectural decisions and documentation protocols](internal/principles/guiding_principles.md)**
 
 Core principles:
-- **Principle 0**: Experimentation First - modularity, reproducibility, extensibility
-- **Principle 1**: Documentation as First-Class Output - session logging, state files
-- **Principle 2**: Progressive Disclosure for Onboarding - layered docs, domain AGENTS.md
-- **Principle 3**: State Management for Session Continuity - handoff protocols
+- **Principle 1**: Clean, easy-to-extend, easy-to-maintain, modular architecture
+- **Principle 2**: Documentation and Testing as First-Class Output - session logging, state files
+- **Principle 3**: Progressive Disclosure for Onboarding - layered docs, domain AGENTS.md
+- **Principle 4**: State Management for Session Continuity to future Claude agents - handoff protocols
+- **Principle 5**: No lazy imports unless justified; keep imports organized and consistent
 
 ## onboarding path
 
@@ -64,7 +65,8 @@ This table defines the structural hierarchy of the **llm-dit-experiments** platf
 |----------|------|---------|--------|
 | **FLUX.2 Klein** | **text-to-image, image editing** | Qwen3-8B/4B | **Production** (2026-01-24) |
 | LTX-2 | text-to-video | Gemma3-12B | Production |
-| Z-Image | text-to-image | Qwen3-4B | Production |
+| Z-Image-Turbo | text-to-image | Qwen3-4B | Production |
+| Z-Image (base) | text-to-image | Qwen3-4B | In-Development |
 | Qwen-Image | editing/decomposition | Qwen2.5-VL-7B | Production |
 
 ## state management (required)

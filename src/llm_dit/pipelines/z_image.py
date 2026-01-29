@@ -792,6 +792,15 @@ class ZImagePipeline:
             self.scheduler.shift = mu  # our FlowMatchScheduler
         self.scheduler.set_timesteps(num_inference_steps, device=device, mu=mu)
 
+        # Log scheduler configuration for debugging
+        scheduler_shift = getattr(self.scheduler, "shift", None)
+        if scheduler_shift is None and hasattr(self.scheduler, "config"):
+            scheduler_shift = self.scheduler.config.get("shift", "N/A")
+        logger.debug(f"[img2img] Scheduler: {type(self.scheduler).__name__}")
+        logger.debug(f"[img2img] Scheduler shift: {scheduler_shift}")
+        if hasattr(self.scheduler, "sigmas") and len(self.scheduler.sigmas) >= 3:
+            logger.debug(f"[img2img] Sigmas[0:3]: {self.scheduler.sigmas[:3].tolist()}")
+
         # Apply d_noise scaling to sigma schedule (RES4LYF technique)
         # d_noise < 1.0 = sharper/more detail, > 1.0 = softer/deeper colors
         if d_noise != 1.0 and hasattr(self.scheduler, "sigmas"):
@@ -896,11 +905,14 @@ class ZImagePipeline:
                     if torch.cuda.is_available():
                         torch.cuda.synchronize()
 
+                # Prepare timestep (inverted for Z-Image)
+                # NOTE: Keep in 0-1000 range for transformer (matches DiffSynth-Studio reference)
                 timestep = t.expand(latents.shape[0])
-                timestep = (1000 - timestep) / 1000
+                timestep = 1000 - timestep
 
                 # Calculate denoising progress (0 to 1) for CFG truncation
-                progress = timestep[0].item()
+                # Progress is normalized timestep: 0 at start, 1 at end
+                progress = timestep[0].item() / 1000.0
 
                 # Handle CFG with optional truncation
                 current_cfg_scale = guidance_scale
@@ -1348,6 +1360,15 @@ class ZImagePipeline:
         self.scheduler.set_timesteps(num_inference_steps, device=device, mu=mu)
         timesteps = self.scheduler.timesteps
 
+        # Log scheduler configuration for debugging
+        scheduler_shift = getattr(self.scheduler, "shift", None)
+        if scheduler_shift is None and hasattr(self.scheduler, "config"):
+            scheduler_shift = self.scheduler.config.get("shift", "N/A")
+        logger.debug(f"[Pipeline] Scheduler: {type(self.scheduler).__name__}")
+        logger.debug(f"[Pipeline] Scheduler shift: {scheduler_shift}")
+        if hasattr(self.scheduler, "sigmas") and len(self.scheduler.sigmas) >= 3:
+            logger.debug(f"[Pipeline] Sigmas[0:3]: {self.scheduler.sigmas[:3].tolist()}")
+
         # Apply d_noise scaling to sigma schedule (RES4LYF technique)
         # d_noise < 1.0 = sharper/more detail, > 1.0 = softer/deeper colors
         if d_noise != 1.0 and hasattr(self.scheduler, "sigmas"):
@@ -1547,11 +1568,13 @@ class ZImagePipeline:
                         torch.cuda.synchronize()
 
                 # Prepare timestep (inverted for Z-Image)
+                # NOTE: Keep in 0-1000 range for transformer (matches DiffSynth-Studio reference)
                 timestep = t.expand(latents.shape[0])
-                timestep = (1000 - timestep) / 1000
+                timestep = 1000 - timestep
 
                 # Calculate denoising progress (0 to 1) for CFG truncation
-                progress = timestep[0].item()
+                # Progress is normalized timestep: 0 at start, 1 at end
+                progress = timestep[0].item() / 1000.0
 
                 # Handle CFG with optional truncation
                 # CFG truncation: disable CFG after cfg_truncation fraction of progress
@@ -1925,6 +1948,15 @@ class ZImagePipeline:
             self.scheduler.shift = mu  # our FlowMatchScheduler
         self.scheduler.set_timesteps(num_inference_steps, device=device, mu=mu)
 
+        # Log scheduler configuration for debugging
+        scheduler_shift = getattr(self.scheduler, "shift", None)
+        if scheduler_shift is None and hasattr(self.scheduler, "config"):
+            scheduler_shift = self.scheduler.config.get("shift", "N/A")
+        logger.debug(f"[_denoise] Scheduler: {type(self.scheduler).__name__}")
+        logger.debug(f"[_denoise] Scheduler shift: {scheduler_shift}")
+        if hasattr(self.scheduler, "sigmas") and len(self.scheduler.sigmas) >= 3:
+            logger.debug(f"[_denoise] Sigmas[0:3]: {self.scheduler.sigmas[:3].tolist()}")
+
         # Apply d_noise scaling to sigma schedule (RES4LYF technique)
         # d_noise < 1.0 = sharper/more detail, > 1.0 = softer/deeper colors
         if d_noise != 1.0 and hasattr(self.scheduler, "sigmas"):
@@ -1940,11 +1972,14 @@ class ZImagePipeline:
         # Denoising loop
         logger.debug(f"Running {num_inference_steps} denoising steps...")
         for i, t in enumerate(timesteps):
+            # Prepare timestep (inverted for Z-Image)
+            # NOTE: Keep in 0-1000 range for transformer (matches DiffSynth-Studio reference)
             timestep = t.expand(latents.shape[0])
-            timestep = (1000 - timestep) / 1000
+            timestep = 1000 - timestep
 
             # Calculate denoising progress (0 to 1) for CFG truncation
-            progress = timestep[0].item()
+            # Progress is normalized timestep: 0 at start, 1 at end
+            progress = timestep[0].item() / 1000.0
 
             # Handle CFG with optional truncation
             current_cfg_scale = guidance_scale
