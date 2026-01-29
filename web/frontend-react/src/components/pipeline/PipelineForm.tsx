@@ -5,6 +5,7 @@
  * Groups parameters and handles form state.
  */
 
+import { useEffect } from 'react';
 import { usePipelineStore } from '@/stores/pipelineStore';
 import { useGenerationStore } from '@/stores/generationStore';
 import { ParamGroup } from './ParamGroup';
@@ -14,15 +15,21 @@ import { groupParams } from '@/types';
 
 export function PipelineForm() {
   const { pipelines, selectedPipelineId, serverDefaults } = usePipelineStore();
-  const { getFormValues, setFormValue, status } = useGenerationStore();
+  const { getFormValues, setFormValue, initializeFormValues, isInitialized, status } = useGenerationStore();
 
   const pipeline = selectedPipelineId ? pipelines[selectedPipelineId] : null;
 
-  // Subscribe to serverDefaults.zimage_variant to trigger re-render when variant defaults arrive.
-  // This ensures getFormValues is called again after /api/pipelines completes,
-  // allowing variant-sensitive fields (steps, guidance_scale, shift) to be reset.
-  // The void expression consumes the value to satisfy TypeScript's unused variable check.
-  void serverDefaults?.zimage_variant;
+  // Initialize form values when pipeline changes or server defaults arrive
+  // This runs once per pipeline and persists _variant to prevent the reset loop
+  useEffect(() => {
+    if (pipeline && !isInitialized(pipeline.id)) {
+      // For zimage, wait until serverDefaults has loaded to get variant-aware defaults
+      if (pipeline.id === 'zimage' && !serverDefaults.zimage_variant) {
+        return; // Wait for server defaults
+      }
+      initializeFormValues(pipeline.id, pipeline);
+    }
+  }, [pipeline, serverDefaults, initializeFormValues, isInitialized]);
 
   if (!pipeline) {
     return (

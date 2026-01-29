@@ -23,6 +23,9 @@ interface GenerationState {
   // Form values keyed by pipeline ID
   formValues: Record<string, FormValues>;
 
+  // Tracks which pipelines have been initialized (to run initialization only once)
+  initializedPipelines: Set<string>;
+
   // Current generation state
   status: GenerationStatus;
   progress: GenerationProgress | null;
@@ -33,6 +36,7 @@ interface GenerationState {
   abortController: AbortController | null;
 
   // Actions
+  initializeFormValues: (pipelineId: string, schema: PipelineSchema) => void;
   setFormValue: (pipelineId: string, paramId: string, value: unknown) => void;
   setFormValues: (pipelineId: string, values: FormValues) => void;
   resetFormValues: (pipelineId: string, schema: PipelineSchema) => void;
@@ -44,12 +48,14 @@ interface GenerationState {
 
   getFormValues: (pipelineId: string, schema: PipelineSchema) => FormValues;
   getTimeEstimate: (pipelineId: string) => TimeEstimate;
+  isInitialized: (pipelineId: string) => boolean;
 }
 
 export const useGenerationStore = create<GenerationState>()(
   immer((set, get) => ({
     // Initial state
     formValues: {},
+    initializedPipelines: new Set<string>(),
     status: 'idle',
     progress: null,
     currentResult: null,
@@ -57,6 +63,55 @@ export const useGenerationStore = create<GenerationState>()(
     abortController: null,
 
     // Actions
+
+    /**
+     * Initialize form values for a pipeline. Called once per pipeline lifecycle.
+     * This builds defaults from schema + server, persists _variant immediately,
+     * and merges with any existing user values.
+     */
+    initializeFormValues: (pipelineId, schema) => {
+      // Skip if already initialized
+      if (get().initializedPipelines.has(pipelineId)) {
+        return;
+      }
+
+      // Build defaults from schema
+      const defaults: FormValues = {};
+      schema.params.forEach((param) => {
+        if (param.default !== undefined) {
+          defaults[param.id] = param.default;
+        }
+      });
+
+      // Inject server-side defaults for Z-Image (variant-aware values)
+      if (pipelineId === 'zimage') {
+        const serverDefaults = usePipelineStore.getState().serverDefaults;
+        if (serverDefaults.zimage_variant) {
+          defaults['_variant'] = serverDefaults.zimage_variant;
+        }
+        // Apply variant-aware defaults from server (overrides schema defaults)
+        if (serverDefaults.steps !== undefined) {
+          defaults['steps'] = serverDefaults.steps;
+        }
+        if (serverDefaults.guidance_scale !== undefined) {
+          defaults['guidance_scale'] = serverDefaults.guidance_scale;
+        }
+        if (serverDefaults.shift !== undefined) {
+          defaults['shift'] = serverDefaults.shift;
+        }
+      }
+
+      // Get any existing stored values (preserves user input across re-initialization)
+      const stored = get().formValues[pipelineId] ?? {};
+
+      set((state) => {
+        // Merge: defaults first, then stored values take precedence
+        state.formValues[pipelineId] = { ...defaults, ...stored };
+        // Mark as initialized (must use a new Set for immer to detect change)
+        state.initializedPipelines = new Set([...state.initializedPipelines, pipelineId]);
+      });
+    },
+
     setFormValue: (pipelineId, paramId, value) => {
       set((state) => {
         if (!state.formValues[pipelineId]) {
@@ -229,6 +284,11 @@ export const useGenerationStore = create<GenerationState>()(
       });
     },
 
+    /**
+     * Get merged form values for a pipeline.
+     * PURE FUNCTION: no side effects, no conditional resets.
+     * Initialization logic moved to initializeFormValues().
+     */
     getFormValues: (pipelineId, schema) => {
       // Build defaults from schema first
       const defaults: FormValues = {};
@@ -239,12 +299,12 @@ export const useGenerationStore = create<GenerationState>()(
       });
 
       // Inject server-side defaults for Z-Image (variant-aware values)
+      // These are used as fallbacks if not yet initialized
       if (pipelineId === 'zimage') {
         const serverDefaults = usePipelineStore.getState().serverDefaults;
         if (serverDefaults.zimage_variant) {
           defaults['_variant'] = serverDefaults.zimage_variant;
         }
-        // Apply variant-aware defaults from server (overrides schema defaults)
         if (serverDefaults.steps !== undefined) {
           defaults['steps'] = serverDefaults.steps;
         }
@@ -256,28 +316,16 @@ export const useGenerationStore = create<GenerationState>()(
         }
       }
 
-      // Get stored values
+      // Get stored values and merge: stored takes precedence over defaults
       const stored = get().formValues[pipelineId] ?? {};
-
-      // For Z-Image: Reset variant-sensitive fields when variant differs or stored has no variant
-      // This ensures variant-aware defaults (steps, guidance_scale, shift) are correct
-      // while preserving user-entered values like prompt
-      if (pipelineId === 'zimage' && defaults['_variant']) {
-        if (!stored['_variant'] || stored['_variant'] !== defaults['_variant']) {
-          // Variant changed or never set - reset only variant-sensitive fields
-          const variantSensitiveFields = ['steps', 'guidance_scale', 'shift', '_variant'];
-          const result = { ...defaults, ...stored };
-          for (const field of variantSensitiveFields) {
-            if (defaults[field] !== undefined) {
-              result[field] = defaults[field];
-            }
-          }
-          return result;
-        }
-      }
-
-      // Normal merge: stored values take precedence
       return { ...defaults, ...stored };
+    },
+
+    /**
+     * Check if a pipeline has been initialized.
+     */
+    isInitialized: (pipelineId) => {
+      return get().initializedPipelines.has(pipelineId);
     },
 
     getTimeEstimate: (pipelineId: string) => {

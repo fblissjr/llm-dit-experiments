@@ -1,6 +1,6 @@
 # agent context
 
-*last updated: 2026-01-26*
+*last updated: 2026-01-29*
 
 Quick reference for LLM agents. Uses progressive disclosure - read only what you need, but always read
 
@@ -44,6 +44,15 @@ Read these files when starting a new session:
 - **never commit** without explicit user approval
 - **dtype conventions** - transformers: `dtype=`, diffusers: `torch_dtype=`
 - **always update state** after significant work (see below)
+
+### configuration hierarchy
+
+Config values ALWAYS win by default. Code should:
+1. Read from config.toml as the source of truth
+2. Allow explicit parameter overrides when needed
+3. Never auto-detect when a config value exists
+
+Example: `zimage_variant` in config.toml determines Turbo vs Base. Loaders accept `variant=None` where `None` means "use config".
 
 ## modular architecture
 This table defines the structural hierarchy of the **llm-dit-experiments** platform, moving from top-level business logic down to hardware-level math primitives.

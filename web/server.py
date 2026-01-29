@@ -11,12 +11,17 @@ Usage:
 
 import argparse
 import asyncio
+import base64
+import binascii
+import gc
 import hashlib
 import io
 import json
 import logging
 import re
 import time
+import traceback
+import zipfile
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any, AsyncIterator, Dict, List, Optional
@@ -24,6 +29,7 @@ from typing import Any, AsyncIterator, Dict, List, Optional
 import httpx
 import torch
 from fastapi import FastAPI, HTTPException
+from PIL import Image
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -261,8 +267,6 @@ def create_image_response(
     Returns:
         dict with: id, output_type, url, urls, thumbnail_url, seed, generation_time
     """
-    import base64
-
     # Use pre-computed base64 or encode from PIL Image
     if img_b64 is None:
         if image is None:
@@ -291,9 +295,6 @@ def unload_zimage_pipeline() -> bool:
     Returns True if unloaded, False if not loaded.
     """
     global pipeline, encoder
-    import gc
-
-    import torch
 
     unloaded = False
     if pipeline is not None:
@@ -374,9 +375,6 @@ def unload_qwen_image_t2i_pipeline() -> bool:
     Returns True if unloaded, False if not loaded.
     """
     global qwen_image_t2i_pipeline
-    import gc
-
-    import torch
 
     if qwen_image_t2i_pipeline is not None:
         logger.info("[VRAM] Unloading Qwen-Image T2I pipeline to free VRAM...")
@@ -398,9 +396,6 @@ def unload_ltx2_pipeline() -> bool:
     LTX-2 uses ~20GB VRAM, so unloading is important before loading other models.
     """
     global ltx2_pipeline
-    import gc
-
-    import torch
 
     if ltx2_pipeline is not None:
         logger.info("[VRAM] Unloading LTX-2 pipeline to free VRAM...")
@@ -853,11 +848,6 @@ async def qwen_image_decompose(request: QwenImageDecomposeRequest):
         )
 
     try:
-        import base64
-        import zipfile
-
-        from PIL import Image
-
         # Decode base64 image
         image_data = request.image
         if image_data.startswith("data:"):
@@ -960,8 +950,6 @@ async def qwen_image_decompose(request: QwenImageDecomposeRequest):
 
     except Exception as e:
         logger.error(f"[Qwen-Image] Decomposition failed: {e}")
-        import traceback
-
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -1026,10 +1014,6 @@ async def qwen_image_edit_layer(request: QwenImageEditLayerRequest):
         )
 
     try:
-        import base64
-
-        from PIL import Image
-
         # Decode base64 layer image
         image_data = request.layer_image
         if image_data.startswith("data:"):
@@ -1078,8 +1062,6 @@ async def qwen_image_edit_layer(request: QwenImageEditLayerRequest):
 
     except Exception as e:
         logger.error(f"[Qwen-Image] Layer edit failed: {e}")
-        import traceback
-
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -1232,8 +1214,6 @@ async def qwen_image_edit_multi(request: QwenImageEditMultiRequest):
         raise
     except Exception as e:
         logger.error(f"[Qwen-Image] Multi-edit failed: {e}")
-        import traceback
-
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -1335,8 +1315,6 @@ async def qwen_image_2512_generate(request: QwenImage2512GenerateRequest):
                 logger.info("[Qwen-Image T2I] Pipeline loaded successfully")
             except Exception as e:
                 logger.error(f"[Qwen-Image T2I] Failed to load pipeline: {e}")
-                import traceback
-
                 traceback.print_exc()
                 raise HTTPException(
                     status_code=503, detail=f"Failed to load Qwen-Image T2I pipeline: {e}"
@@ -1383,8 +1361,6 @@ async def qwen_image_2512_generate(request: QwenImage2512GenerateRequest):
         img_bytes.seek(0)
 
         # Add to history
-        import base64
-
         img_b64 = base64.b64encode(img_bytes.getvalue()).decode("ascii")
         history_entry = {
             "id": len(generation_history),
@@ -1419,8 +1395,6 @@ async def qwen_image_2512_generate(request: QwenImage2512GenerateRequest):
         raise
     except Exception as e:
         logger.error(f"[Qwen-Image T2I] Generation failed: {e}")
-        import traceback
-
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -1493,11 +1467,6 @@ async def vl_extract(request: VLExtractRequest):
         )
 
     try:
-        import base64
-        import hashlib
-
-        from PIL import Image
-
         # Decode base64 image
         image_data = base64.b64decode(request.image)
         image = Image.open(io.BytesIO(image_data)).convert("RGB")
@@ -1589,10 +1558,6 @@ async def vl_generate(request: VLGenerateRequest):
             )
 
         try:
-            import base64
-
-            from PIL import Image
-
             image_data = base64.b64decode(request.vl_image)
             image = Image.open(io.BytesIO(image_data)).convert("RGB")
 
@@ -1714,8 +1679,6 @@ async def vl_generate(request: VLGenerateRequest):
         img_bytes.seek(0)
 
         # Store in history with VL info
-        import base64
-
         img_bytes_copy = io.BytesIO()
         image.save(img_bytes_copy, format="PNG")
         img_b64 = base64.b64encode(img_bytes_copy.getvalue()).decode("ascii")
@@ -2084,8 +2047,6 @@ async def ltx2_generate_stream(request: LTX2GenerateRequest):
             thumb_path = VIDEO_OUTPUT_DIR / thumb_filename
 
             try:
-                from PIL import Image
-
                 frames = output.frames if hasattr(output, "frames") else output
                 if hasattr(frames, "ndim") and frames.ndim == 5:
                     frames = frames[0]
@@ -2112,8 +2073,6 @@ async def ltx2_generate_stream(request: LTX2GenerateRequest):
 
         except Exception as e:
             logger.error(f"[LTX-2] Generation failed: {e}")
-            import traceback
-
             traceback.print_exc()
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
 
@@ -2160,11 +2119,6 @@ async def flux2_generate(request: Flux2GenerateRequest):
     Supports both text-to-image and image editing with reference images.
     Returns PNG image as binary response.
     """
-    import base64
-    import io
-
-    from PIL import Image
-
     try:
         # Import the FLUX.2 generation pipeline
         from llm_dit.pipelines.flux2_generate import (
@@ -2247,7 +2201,6 @@ async def flux2_generate(request: Flux2GenerateRequest):
 
     except Exception as e:
         logger.error(f"[FLUX.2] Generation failed: {e}")
-        import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -3328,8 +3281,6 @@ async def generate(request: GenerateRequest):
         logger.info("=" * 60)
 
         # Convert to base64 for history storage and response
-        import base64
-
         img_bytes = io.BytesIO()
         image.save(img_bytes, format="PNG")
         img_b64 = base64.b64encode(img_bytes.getvalue()).decode("ascii")
@@ -3417,11 +3368,8 @@ async def img2img(request: Img2ImgRequest):
         raise HTTPException(status_code=503, detail="Pipeline not loaded")
 
     try:
-        import base64
-        import binascii
-
-        from PIL import Image as PILImage
         from PIL import UnidentifiedImageError
+        PILImage = Image  # Alias for consistency with existing code
 
         logger.info("=" * 60)
         logger.info("IMG2IMG REQUEST")
@@ -3569,8 +3517,6 @@ async def img2img(request: Img2ImgRequest):
 
     except Exception as e:
         logger.error(f"Img2img failed: {e}")
-        import traceback
-
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -3884,10 +3830,6 @@ async def _rewrite_with_vl(request: RewriteRequest) -> dict:
 
     Loads Qwen3-VL on-demand if not already loaded.
     """
-    import base64
-
-    from PIL import Image
-
     global vl_rewriter, vl_extractor
 
     # Check if VL is available
@@ -4734,8 +4676,6 @@ def load_api_pipeline(
 @app.get("/api/system/status")
 async def system_status():
     """Get detailed system status including memory usage and cached models."""
-    import gc
-
     status = {
         "pipeline_loaded": pipeline is not None,
         "encoder_loaded": encoder is not None,
@@ -4835,8 +4775,6 @@ async def unload_fmtt():
 @app.post("/api/system/clear-cache")
 async def clear_cache():
     """Clear CUDA cache and Python garbage collection."""
-    import gc
-
     gc.collect()
 
     freed_gb = 0
@@ -4884,8 +4822,6 @@ def unload_all_pipelines_except(keep: str = None):
         keep: Name of pipeline to keep loaded ('zimage', 'qwen-image', 'qwen-image-t2i', 'ltx2', 'flux2')
               If None, unloads all pipelines.
     """
-    import gc
-
     unloaded = []
 
     # Z-Image
@@ -4992,8 +4928,6 @@ def load_zimage_pipeline_on_demand():
         except Exception as e:
             logger.error(f"[Z-Image] Failed to load pipeline: {e}")
             # Clean up partial state on failure to avoid VRAM accumulation
-            import gc
-
             global encoder
             if pipeline is not None:
                 del pipeline
@@ -5333,7 +5267,6 @@ async def vram_unload_flux2():
     The pipeline will be reloaded automatically on next image generation request.
     """
     global flux2_pipeline
-    import gc
 
     unloaded = flux2_pipeline is not None
     if unloaded:

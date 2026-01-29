@@ -161,6 +161,7 @@ class ZImagePipeline:
         quantization: str = "none",
         # PyTorch-native component options
         use_custom_scheduler: bool = False,
+        use_diffusers: bool = True,
         tiled_vae: bool = False,
         tile_size: int = 512,
         tile_overlap: int = 64,
@@ -182,6 +183,8 @@ class ZImagePipeline:
             vae_device: Device for VAE (cpu, cuda, mps, auto)
             quantization: Text encoder quantization mode (none, 4bit, 8bit, int8_dynamic)
             use_custom_scheduler: Use our pure-PyTorch FlowMatchScheduler
+            use_diffusers: If True (default), use diffusers for transformer/VAE.
+                          If False, use pure PyTorch implementation.
             tiled_vae: Enable tiled VAE decode for large images (2K+)
             tile_size: Tile size in pixels for VAE decode (default: 512)
             tile_overlap: Overlap between tiles in pixels (default: 64)
@@ -192,6 +195,7 @@ class ZImagePipeline:
             Initialized ZImagePipeline
 
         Example:
+            # Load with diffusers (default)
             pipe = ZImagePipeline.from_pretrained(
                 "Tongyi-MAI/Z-Image-Turbo",
                 templates_dir="templates/z_image",
@@ -201,28 +205,18 @@ class ZImagePipeline:
                 vae_device="cuda",
             )
 
-            # With PyTorch-native components:
+            # Load with pure PyTorch (recommended):
             pipe = ZImagePipeline.from_pretrained(
                 "/path/to/z-image",
+                use_diffusers=False,
                 use_custom_scheduler=True,
-                tiled_vae=True,
                 attention_backend="flash_attn_2",
             )
 
         Note:
-            Z-Image-Turbo requires diffusers with Z-Image support.
-            As of diffusers 0.35.x, the model architecture may not be
-            fully supported. Check diffusers releases for Z-Image support.
+            When use_diffusers=True, requires diffusers with Z-Image support.
+            When use_diffusers=False, uses our pure PyTorch implementation.
         """
-        # Import diffusers components
-        try:
-            from diffusers import DiffusionPipeline
-        except ImportError as e:
-            raise ImportError(
-                "diffusers is required for ZImagePipeline. "
-                "Install with: pip install diffusers[torch]"
-            ) from e
-
         # Set up attention backend
         if attention_backend:
             setup_attention_backend(attention_backend)
@@ -249,6 +243,7 @@ class ZImagePipeline:
         logger.info(f"  Encoder: {encoder_device_resolved} (from {encoder_path})")
         logger.info(f"  DiT: {dit_device_resolved}")
         logger.info(f"  VAE: {vae_device_resolved}")
+        logger.info(f"  Backend: {'diffusers' if use_diffusers else 'pure PyTorch'}")
 
         # Load encoder (our custom encoder with template support)
         encoder = ZImageTextEncoder.from_pretrained(
@@ -260,38 +255,24 @@ class ZImagePipeline:
             quantization=quantization,
         )
 
-        # Load the diffusers pipeline (auto-detect pipeline class)
-        # Use device_map="auto" to let accelerate handle memory placement
-        # Skip text_encoder/tokenizer - we use our custom ZImageTextEncoder
-        logger.debug("Loading diffusers pipeline...")
-        load_kwargs = {
-            "torch_dtype": dtype,  # diffusers uses torch_dtype, not dtype
-            "device_map": "balanced",  # Distribute across available devices
-            # Skip loading text encoder and tokenizer - we use our custom ZImageTextEncoder
-            "text_encoder": None,
-            "tokenizer": None,
-            **kwargs,
-        }
-        diffusers_pipe = DiffusionPipeline.from_pretrained(model_path, **load_kwargs)
-
-        # Extract components from diffusers pipeline
-        transformer = diffusers_pipe.transformer
-        vae = diffusers_pipe.vae
-
-        # Use our scheduler or diffusers scheduler
-        if use_custom_scheduler:
-            from llm_dit.schedulers import FlowMatchScheduler
-
-            scheduler = FlowMatchScheduler(shift=3.0)
-            logger.debug("Using custom FlowMatchScheduler (pure PyTorch)")
+        if use_diffusers:
+            # Load with diffusers
+            transformer, vae, scheduler = cls._load_with_diffusers(
+                model_path,
+                dtype,
+                dit_device_resolved,
+                vae_device_resolved,
+                use_custom_scheduler,
+                **kwargs,
+            )
         else:
-            scheduler = diffusers_pipe.scheduler
-
-        # Move components to their designated devices
-        logger.debug(f"Moving transformer to {dit_device_resolved}...")
-        transformer = transformer.to(dit_device_resolved)
-        logger.debug(f"Moving VAE to {vae_device_resolved}...")
-        vae = vae.to(vae_device_resolved)
+            # Load with pure PyTorch
+            transformer, vae, scheduler = cls._load_with_pytorch(
+                model_path,
+                dtype,
+                dit_device_resolved,
+                vae_device_resolved,
+            )
 
         logger.info("Pipeline loaded successfully")
         return cls(
@@ -304,6 +285,83 @@ class ZImagePipeline:
             tile_overlap=tile_overlap,
             dype_config=kwargs.get("dype_config"),
         )
+
+    @classmethod
+    def _load_with_diffusers(
+        cls,
+        model_path: str,
+        dtype: torch.dtype,
+        dit_device: str,
+        vae_device: str,
+        use_custom_scheduler: bool,
+        **kwargs,
+    ):
+        """Load transformer, VAE, scheduler using diffusers."""
+        try:
+            from diffusers import DiffusionPipeline
+        except ImportError as e:
+            raise ImportError(
+                "diffusers is required when use_diffusers=True. "
+                "Install with: pip install diffusers[torch]"
+            ) from e
+
+        logger.debug("Loading diffusers pipeline...")
+        load_kwargs = {
+            "torch_dtype": dtype,
+            "device_map": "balanced",
+            "text_encoder": None,
+            "tokenizer": None,
+            **kwargs,
+        }
+        diffusers_pipe = DiffusionPipeline.from_pretrained(model_path, **load_kwargs)
+
+        transformer = diffusers_pipe.transformer
+        vae = diffusers_pipe.vae
+
+        if use_custom_scheduler:
+            from llm_dit.schedulers import FlowMatchScheduler
+            scheduler = FlowMatchScheduler(shift=3.0)
+            logger.debug("Using custom FlowMatchScheduler (pure PyTorch)")
+        else:
+            scheduler = diffusers_pipe.scheduler
+
+        logger.debug(f"Moving transformer to {dit_device}...")
+        transformer = transformer.to(dit_device)
+        logger.debug(f"Moving VAE to {vae_device}...")
+        vae = vae.to(vae_device)
+
+        return transformer, vae, scheduler
+
+    @classmethod
+    def _load_with_pytorch(
+        cls,
+        model_path: str,
+        dtype: torch.dtype,
+        dit_device: str,
+        vae_device: str,
+    ):
+        """Load transformer, VAE, scheduler using pure PyTorch implementation."""
+        from llm_dit.models.z_image import load_z_image_transformer
+        from llm_dit.models.z_image.vae import load_z_image_vae
+        from llm_dit.schedulers import FlowMatchScheduler
+
+        # Load transformer
+        logger.debug("Loading pure PyTorch transformer...")
+        transformer = load_z_image_transformer(model_path, dtype=dtype, device="cpu")
+        logger.debug(f"Moving transformer to {dit_device}...")
+        transformer = transformer.to(dit_device)
+
+        # Load VAE (only decoder needed for inference)
+        logger.debug("Loading pure PyTorch VAE...")
+        _, vae = load_z_image_vae(model_path, dtype=dtype, device="cpu")
+        logger.debug(f"Moving VAE to {vae_device}...")
+        vae = vae.to(vae_device)
+
+        # Always use our scheduler with pure PyTorch
+        scheduler = FlowMatchScheduler(shift=3.0)
+        logger.debug("Using FlowMatchScheduler (pure PyTorch)")
+
+        return transformer, vae, scheduler
 
     @classmethod
     def from_diffusers_pipeline(

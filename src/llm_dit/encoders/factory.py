@@ -23,13 +23,17 @@ Usage:
 
 import logging
 from dataclasses import dataclass
-from typing import Optional, Union
+from typing import TYPE_CHECKING, Literal, Optional, Union
+
+import torch
 
 from llm_dit.encoders.protocol import (
     AnyEncoder,
     EncoderType,
-    TextEncoderProtocol,
 )
+
+if TYPE_CHECKING:
+    from llm_dit.encoders.gemma3 import Gemma3Encoder
 
 logger = logging.getLogger(__name__)
 
@@ -212,3 +216,67 @@ class EncoderFactory:
             )
 
         return PIPELINE_ENCODER_MAP[pipeline_type]
+
+    @staticmethod
+    def create_gemma3(
+        variant: Literal["bf16", "8bit", "q4-qat"] = "bf16",
+        model_path: str = "models/LTX-2",
+        text_encoder_path: Optional[str] = None,
+        device: str = "cuda",
+        dtype: torch.dtype = torch.bfloat16,
+        max_sequence_length: int = 256,
+        use_connector: bool = True,
+    ) -> "Gemma3Encoder":
+        """
+        Create a Gemma3 encoder with a specific quantization variant.
+
+        This is a convenience method for LTX-2 text encoding that wraps
+        the gemma3_variants module. It handles:
+        - Automatic torchao quantization for 8bit/q4-qat variants
+        - LTX-2's custom tokenizer and connector weights
+        - Staged CPU-to-GPU loading to avoid OOM
+
+        Args:
+            variant: Quantization variant:
+                - "bf16": Full precision (~24GB VRAM)
+                - "8bit": torchao int8 quantization (~12GB VRAM)
+                - "q4-qat": torchao int4 quantization (~3GB VRAM)
+            model_path: Path to LTX-2 model directory.
+            text_encoder_path: Override path for Gemma model weights.
+                For bf16/8bit: defaults to model_path/text_encoder/
+                For q4-qat: specify path to Q4 QAT model
+            device: Device to load on ("cuda", "cpu", "auto").
+            dtype: Model dtype (bfloat16 recommended).
+            max_sequence_length: Maximum sequence length (256 for LTX-2).
+            use_connector: Whether to use Embeddings1DConnector.
+
+        Returns:
+            Initialized Gemma3Encoder.
+
+        Example:
+            # Memory-efficient 8-bit for RTX 4090
+            encoder = EncoderFactory.create_gemma3(
+                variant="8bit",
+                model_path="models/LTX-2",
+            )
+
+            # Minimum memory for tight VRAM budget
+            encoder = EncoderFactory.create_gemma3(
+                variant="q4-qat",
+                model_path="models/LTX-2",
+                text_encoder_path="~/Storage/gemma-3-12b-it-qat-q4_0-unquantized",
+            )
+        """
+        from llm_dit.encoders.gemma3_variants import create_gemma3_encoder
+
+        logger.info(f"Creating Gemma3 encoder via factory (variant={variant})")
+
+        return create_gemma3_encoder(
+            variant=variant,
+            model_path=model_path,
+            text_encoder_path=text_encoder_path,
+            device=device,
+            dtype=dtype,
+            max_sequence_length=max_sequence_length,
+            use_connector=use_connector,
+        )
