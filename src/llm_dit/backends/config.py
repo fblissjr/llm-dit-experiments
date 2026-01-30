@@ -139,6 +139,60 @@ class BackendConfig:
         logger.info("  int8 dynamic quantization applied successfully")
         return model
 
+    def get_quantization_config(self):
+        """Convert string quantization mode to BitsAndBytesConfig if needed.
+
+        This method handles the conversion from human-readable quantization
+        strings ("4bit", "8bit", "fp8") to proper BitsAndBytesConfig objects
+        that transformers from_pretrained() expects.
+
+        Returns:
+            BitsAndBytesConfig for the quantization mode, or None if no
+            quantization is needed (e.g., "none" or "int8_dynamic" which
+            uses torch.ao post-load quantization instead).
+        """
+        # No quantization or uses post-load quantization (torch.ao)
+        if self.quantization in ("none", "int8_dynamic"):
+            return None
+
+        try:
+            from transformers import BitsAndBytesConfig
+        except ImportError:
+            import logging
+
+            logger = logging.getLogger(__name__)
+            logger.warning(
+                f"BitsAndBytesConfig not available. Cannot apply quantization={self.quantization}. "
+                "Install with: pip install bitsandbytes"
+            )
+            return None
+
+        import logging
+
+        logger = logging.getLogger(__name__)
+
+        if self.quantization == "4bit":
+            logger.info("Creating 4-bit quantization config (bitsandbytes)")
+            return BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_compute_dtype=self.get_dtype(),
+                bnb_4bit_use_double_quant=True,  # Nested quantization for extra savings
+            )
+        elif self.quantization == "8bit":
+            logger.info("Creating 8-bit quantization config (bitsandbytes)")
+            return BitsAndBytesConfig(load_in_8bit=True)
+        elif self.quantization == "fp8":
+            # FP8 in bitsandbytes is still experimental, fall back to 8-bit for now
+            logger.info("FP8 requested, using 8-bit quantization (bitsandbytes)")
+            return BitsAndBytesConfig(load_in_8bit=True)
+        elif self.quantization == "int8":
+            # Alias for 8bit
+            logger.info("Creating int8 quantization config (bitsandbytes)")
+            return BitsAndBytesConfig(load_in_8bit=True)
+        else:
+            logger.warning(f"Unknown quantization mode: {self.quantization}, ignoring")
+            return None
+
     @classmethod
     def for_z_image(cls, model_path: str, **kwargs) -> "BackendConfig":
         """

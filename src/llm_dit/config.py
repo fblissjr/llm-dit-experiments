@@ -648,6 +648,40 @@ class Flux2Config:
 
 
 @dataclass
+class ZImageConfig:
+    """Configuration for Z-Image text-to-image generation.
+
+    Supports two variants:
+    - turbo: Fast 8-9 step generation with CFG baked in (default)
+    - base: Quality 28-50 step generation with full CFG control
+
+    Key differences between variants:
+    | Setting            | Base            | Turbo                 |
+    |--------------------|-----------------|----------------------|
+    | Scheduler shift    | 6.0             | 3.0                  |
+    | Steps              | 35 (28-50 rec.) | 9 (8 actual forwards)|
+    | CFG/guidance_scale | 4.0 (3.0-5.0)   | 0.0 (baked in)       |
+    | Negative prompts   | Supported       | Not used             |
+    | Model path         | models/Z-Image  | models/Z-Image-Turbo |
+
+    Both variants use the same Qwen3-4B text encoder and DiT architecture.
+    """
+
+    model_path: str = ""  # Path to Z-Image model (turbo or base)
+    text_encoder_path: str = ""  # Optional separate path for text encoder
+    variant: str = "auto"  # auto, turbo, base (auto-detects from scheduler_config.json)
+
+    # Variant-aware defaults (None = use variant default)
+    default_steps: int | None = None  # None = 9 for turbo, 35 for base
+    default_guidance_scale: float | None = None  # None = 0.0 for turbo, 4.0 for base
+    default_shift: float | None = None  # None = 3.0 for turbo, 6.0 for base
+
+    # Base model specific
+    default_negative_prompt: str = ""  # Default negative prompt for base model
+    default_cfg_normalization: float = 0.0  # 0.0 disabled, 1.0 for realism
+
+
+@dataclass
 class QwenImageConfig:
     """Configuration for Qwen-Image-Layered model.
 
@@ -1274,6 +1308,7 @@ class Config:
     pytorch: PyTorchConfig = field(default_factory=PyTorchConfig)
     rewriter: RewriterConfig = field(default_factory=RewriterConfig)
     vl: VLConfig = field(default_factory=VLConfig)
+    zimage: ZImageConfig = field(default_factory=ZImageConfig)
     qwen_image: QwenImageConfig = field(default_factory=QwenImageConfig)
     ltx2: LTX2Config = field(default_factory=LTX2Config)
     flux2: Flux2Config = field(default_factory=Flux2Config)
@@ -1296,6 +1331,7 @@ class Config:
         pytorch_data = data.pop("pytorch", {})
         rewriter_data = data.pop("rewriter", {})
         vl_data = data.pop("vl", {})
+        zimage_data = data.pop("zimage", {})
         qwen_image_data = data.pop("qwen_image", {})
         ltx2_data = data.pop("ltx2", {})
         flux2_data = data.pop("flux2", {})
@@ -1319,6 +1355,7 @@ class Config:
             pytorch=PyTorchConfig(**pytorch_data),
             rewriter=RewriterConfig(**rewriter_data),
             vl=VLConfig(**vl_data),
+            zimage=ZImageConfig(**zimage_data),
             qwen_image=QwenImageConfig(**qwen_image_data),
             ltx2=LTX2Config(**ltx2_data),
             flux2=Flux2Config(**flux2_data),
@@ -1330,30 +1367,38 @@ class Config:
         )
 
     @classmethod
-    def from_toml(cls, path: str | Path, profile: str = "default") -> "Config":
+    def from_toml(cls, path: str | Path, profile: str | None = None) -> "Config":
         """
         Load config from TOML file.
 
+        Supports two config formats:
+        1. Flat config (no profiles): [encoder], [pipeline], etc. at top level
+        2. Profile-based config: [profile_name], [profile_name.encoder], etc.
+
         Args:
             path: Path to TOML config file
-            profile: Profile name to load (default: "default")
+            profile: Profile name to load. If None, auto-detects:
+                     - Uses flat config if [encoder] exists at top level
+                     - Falls back to "default" profile for legacy configs
 
         Returns:
             Loaded Config
 
-        Example TOML:
+        Example flat TOML (recommended):
+            model_path = "/path/to/model"
+
+            [encoder]
+            quantization = "8bit"
+
+            [pipeline]
+            device = "cuda"
+
+        Example profile-based TOML (legacy):
             [default]
             model_path = "/path/to/model"
 
             [default.encoder]
             quantization = "8bit"
-
-            [low_vram]
-            model_path = "/path/to/model"
-
-            [low_vram.encoder]
-            quantization = "8bit"
-            cpu_offload = true
         """
         if tomllib is None:
             raise ImportError(
@@ -1368,6 +1413,19 @@ class Config:
         with open(path, "rb") as f:
             data = tomllib.load(f)
 
+        # Auto-detect config format if no profile specified
+        if profile is None:
+            # Check for flat config: top-level sections like [encoder], [pipeline]
+            flat_sections = {"encoder", "pipeline", "generation", "scheduler", "optimization"}
+            if flat_sections & set(data.keys()):
+                # Flat config detected - use top-level data directly
+                logger.info("Loaded flat config (no profile)")
+                return cls.from_dict(data)
+            else:
+                # Legacy profile-based config - default to "default" profile
+                profile = "default"
+
+        # Profile-based loading
         if profile not in data:
             available = list(data.keys())
             raise KeyError(f"Profile '{profile}' not found in config. Available: {available}")
@@ -1520,7 +1578,7 @@ def get_preset(name: str) -> Config:
 
 def load_config(
     path: str | Path | None = None,
-    profile: str = "default",
+    profile: str | None = None,
     preset: str | None = None,
 ) -> Config:
     """
@@ -1533,7 +1591,8 @@ def load_config(
 
     Args:
         path: Optional path to TOML config file
-        profile: Profile name within TOML file
+        profile: Profile name within TOML file. If None, auto-detects:
+                 flat config (recommended) or falls back to "default" profile
         preset: Preset name ("default", "low_vram", "cpu_only")
 
     Returns:

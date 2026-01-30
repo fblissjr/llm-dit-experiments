@@ -189,6 +189,51 @@ def output_dir(tmp_path):
 
 
 @pytest.fixture
+def image_verifier():
+    """Helper for image verification using scripts/inspect_image.py.
+
+    Returns a function that analyzes an image and returns:
+    - hash: MD5 hash of the image (first 12 chars) from inspect_image.py
+    - size: Image dimensions as "WxH" string
+    - variance: Pixel variance (valid images: 500-6000, noise: >6000)
+    - is_valid: True if variance is in valid range
+
+    Example:
+        result = image_verifier(image)
+        assert result["is_valid"], f"Image is noise (variance={result['variance']})"
+    """
+    import sys
+
+    import numpy as np
+
+    # Add scripts directory to path for inspect_image import
+    scripts_dir = str(Path(__file__).parent.parent / "scripts")
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+
+    from inspect_image import image_info
+
+    def verify(image, max_variance=6000, min_variance=500):
+        # Get hash and size from inspect_image.py
+        info = image_info(image)
+
+        # Calculate variance for noise detection
+        arr = np.array(image)
+        variance = float(np.var(arr))
+
+        return {
+            "hash": info["hash"],
+            "size": info["size"],
+            "mode": info["mode"],
+            "bytes": info["bytes"],
+            "variance": variance,
+            "is_valid": min_variance < variance < max_variance,
+        }
+
+    return verify
+
+
+@pytest.fixture
 def test_config_file(tmp_path):
     """Create a temporary test config file."""
     config_path = tmp_path / "test_config.toml"

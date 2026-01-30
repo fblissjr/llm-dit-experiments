@@ -141,10 +141,72 @@ class ZImagePipeline:
         # Wrap VAE with tiled decoder if requested
         self._tiled_vae_enabled = tiled_vae
         if self._tiled_vae_enabled:
+            from llm_dit.utils.tiled_vae import TiledVAEDecoder
+
             self.vae = TiledVAEDecoder(vae, tile_size=tile_size, tile_overlap=tile_overlap)
-            logger.info(f"Tiled VAE enabled: tile_size={tile_size}, overlap={tile_overlap}")
+            logger.debug(f"Tiled VAE enabled: tile_size={tile_size}, overlap={tile_overlap}")
         else:
             self.vae = vae
+
+    def _configure_scheduler(
+        self,
+        mu: float,
+        num_inference_steps: int,
+        device: torch.device | str,
+        log_prefix: str = "[Pipeline]",
+    ) -> None:
+        """
+        Configure the scheduler with shift and timesteps.
+
+        Handles both diffusers FlowMatchEulerDiscreteScheduler and our
+        pure PyTorch FlowMatchScheduler with a unified interface.
+
+        Args:
+            mu: Shift/mu value for the scheduler
+            num_inference_steps: Number of denoising steps
+            device: Device for timesteps tensor
+            log_prefix: Prefix for debug log messages (e.g., "[img2img]")
+        """
+        self.scheduler.sigma_min = 0.0
+
+        # Set shift using the appropriate method:
+        # - diffusers: set_shift() method (shift property is read-only)
+        # - our scheduler: direct attribute assignment
+        if hasattr(self.scheduler, "set_shift"):
+            self.scheduler.set_shift(mu)  # diffusers scheduler
+        elif hasattr(self.scheduler, "shift"):
+            self.scheduler.shift = mu  # our FlowMatchScheduler
+
+        self.scheduler.set_timesteps(num_inference_steps, device=device, mu=mu)
+
+        # Log scheduler configuration for debugging
+        scheduler_shift = getattr(self.scheduler, "shift", None)
+        if scheduler_shift is None and hasattr(self.scheduler, "config"):
+            scheduler_shift = self.scheduler.config.get("shift", "N/A")
+        logger.debug(f"{log_prefix} Scheduler: {type(self.scheduler).__name__}")
+        logger.debug(f"{log_prefix} Scheduler shift: {scheduler_shift}")
+        if hasattr(self.scheduler, "sigmas") and len(self.scheduler.sigmas) >= 3:
+            logger.debug(f"{log_prefix} Sigmas[0:3]: {self.scheduler.sigmas[:3].tolist()}")
+
+    @staticmethod
+    def _detect_variant_shift(model_path: str) -> float:
+        """Detect variant from model path and return default shift.
+
+        Z-Image has two variants:
+        - Turbo: shift=3.0 (trained with Decoupled-DMD for fewer steps)
+        - Base: shift=6.0 (standard flow matching)
+
+        Args:
+            model_path: Path to model directory or HuggingFace ID
+
+        Returns:
+            Default shift value for the detected variant
+        """
+        path_lower = str(model_path).lower()
+        if "turbo" in path_lower:
+            return 3.0  # Turbo variant
+        else:
+            return 6.0  # Base variant (default)
 
     @classmethod
     def from_pretrained(
@@ -161,10 +223,12 @@ class ZImagePipeline:
         quantization: str = "none",
         # PyTorch-native component options
         use_custom_scheduler: bool = False,
+        use_diffusers: bool = True,
         tiled_vae: bool = False,
         tile_size: int = 512,
         tile_overlap: int = 64,
         attention_backend: str | None = None,
+        shift: float | None = None,
         **kwargs,
     ) -> "ZImagePipeline":
         """
@@ -182,16 +246,22 @@ class ZImagePipeline:
             vae_device: Device for VAE (cpu, cuda, mps, auto)
             quantization: Text encoder quantization mode (none, 4bit, 8bit, int8_dynamic)
             use_custom_scheduler: Use our pure-PyTorch FlowMatchScheduler
+            use_diffusers: If True (default), use diffusers for transformer/VAE.
+                          If False, use pure PyTorch implementation.
             tiled_vae: Enable tiled VAE decode for large images (2K+)
             tile_size: Tile size in pixels for VAE decode (default: 512)
             tile_overlap: Overlap between tiles in pixels (default: 64)
             attention_backend: Attention backend (auto, flash_attn_2, sdpa, etc.)
+            shift: Scheduler shift value. If None (default), auto-detects from variant:
+                - "turbo" in path: shift=3.0
+                - otherwise: shift=6.0 (base variant)
             **kwargs: Additional arguments
 
         Returns:
             Initialized ZImagePipeline
 
         Example:
+            # Load with diffusers (default)
             pipe = ZImagePipeline.from_pretrained(
                 "Tongyi-MAI/Z-Image-Turbo",
                 templates_dir="templates/z_image",
@@ -201,28 +271,18 @@ class ZImagePipeline:
                 vae_device="cuda",
             )
 
-            # With PyTorch-native components:
+            # Load with pure PyTorch (recommended):
             pipe = ZImagePipeline.from_pretrained(
                 "/path/to/z-image",
+                use_diffusers=False,
                 use_custom_scheduler=True,
-                tiled_vae=True,
                 attention_backend="flash_attn_2",
             )
 
         Note:
-            Z-Image-Turbo requires diffusers with Z-Image support.
-            As of diffusers 0.35.x, the model architecture may not be
-            fully supported. Check diffusers releases for Z-Image support.
+            When use_diffusers=True, requires diffusers with Z-Image support.
+            When use_diffusers=False, uses our pure PyTorch implementation.
         """
-        # Import diffusers components
-        try:
-            from diffusers import DiffusionPipeline
-        except ImportError as e:
-            raise ImportError(
-                "diffusers is required for ZImagePipeline. "
-                "Install with: pip install diffusers[torch]"
-            ) from e
-
         # Set up attention backend
         if attention_backend:
             setup_attention_backend(attention_backend)
@@ -249,6 +309,7 @@ class ZImagePipeline:
         logger.info(f"  Encoder: {encoder_device_resolved} (from {encoder_path})")
         logger.info(f"  DiT: {dit_device_resolved}")
         logger.info(f"  VAE: {vae_device_resolved}")
+        logger.info(f"  Backend: {'diffusers' if use_diffusers else 'pure PyTorch'}")
 
         # Load encoder (our custom encoder with template support)
         encoder = ZImageTextEncoder.from_pretrained(
@@ -260,35 +321,26 @@ class ZImagePipeline:
             quantization=quantization,
         )
 
-        # Load the diffusers pipeline (auto-detect pipeline class)
-        logger.info("Loading diffusers pipeline...")
-        load_kwargs = {
-            "dtype": dtype,  # diffusers uses dtype, not dtype
-            **kwargs,
-        }
-        # Use device_map for initial loading if provided (legacy)
-        if device_map is not None:
-            load_kwargs["device_map"] = device_map
-        diffusers_pipe = DiffusionPipeline.from_pretrained(model_path, **load_kwargs)
-
-        # Extract components from diffusers pipeline
-        transformer = diffusers_pipe.transformer
-        vae = diffusers_pipe.vae
-
-        # Use our scheduler or diffusers scheduler
-        if use_custom_scheduler:
-            from llm_dit.schedulers import FlowMatchScheduler
-
-            scheduler = FlowMatchScheduler(shift=3.0)
-            logger.info("Using custom FlowMatchScheduler (pure PyTorch)")
+        if use_diffusers:
+            # Load with diffusers
+            transformer, vae, scheduler = cls._load_with_diffusers(
+                model_path,
+                dtype,
+                dit_device_resolved,
+                vae_device_resolved,
+                use_custom_scheduler,
+                shift=shift,
+                **kwargs,
+            )
         else:
-            scheduler = diffusers_pipe.scheduler
-
-        # Move components to their designated devices
-        logger.info(f"Moving transformer to {dit_device_resolved}...")
-        transformer = transformer.to(dit_device_resolved)
-        logger.info(f"Moving VAE to {vae_device_resolved}...")
-        vae = vae.to(vae_device_resolved)
+            # Load with pure PyTorch
+            transformer, vae, scheduler = cls._load_with_pytorch(
+                model_path,
+                dtype,
+                dit_device_resolved,
+                vae_device_resolved,
+                shift=shift,
+            )
 
         logger.info("Pipeline loaded successfully")
         return cls(
@@ -301,6 +353,115 @@ class ZImagePipeline:
             tile_overlap=tile_overlap,
             dype_config=kwargs.get("dype_config"),
         )
+
+    @classmethod
+    def _load_with_diffusers(
+        cls,
+        model_path: str,
+        dtype: torch.dtype,
+        dit_device: str,
+        vae_device: str,
+        use_custom_scheduler: bool,
+        shift: float | None = None,
+        **kwargs,
+    ):
+        """Load transformer, VAE, scheduler using diffusers.
+
+        Args:
+            model_path: Path to model directory
+            dtype: Model dtype
+            dit_device: Device for DiT
+            vae_device: Device for VAE
+            use_custom_scheduler: Use our FlowMatchScheduler instead of diffusers
+            shift: Scheduler shift. If None, auto-detects from variant.
+            **kwargs: Additional arguments for diffusers
+        """
+        try:
+            from diffusers import DiffusionPipeline
+        except ImportError as e:
+            raise ImportError(
+                "diffusers is required when use_diffusers=True. "
+                "Install with: pip install diffusers[torch]"
+            ) from e
+
+        logger.debug("Loading diffusers pipeline...")
+        load_kwargs = {
+            "torch_dtype": dtype,
+            "device_map": "balanced",
+            "text_encoder": None,
+            "tokenizer": None,
+            **kwargs,
+        }
+        diffusers_pipe = DiffusionPipeline.from_pretrained(model_path, **load_kwargs)
+
+        transformer = diffusers_pipe.transformer
+        vae = diffusers_pipe.vae
+
+        if use_custom_scheduler:
+            from llm_dit.schedulers import FlowMatchScheduler
+            # Resolve shift: use provided value or detect from variant
+            actual_shift = shift if shift is not None else cls._detect_variant_shift(model_path)
+            scheduler = FlowMatchScheduler(shift=actual_shift)
+            logger.info(f"Using FlowMatchScheduler with shift={actual_shift}")
+        else:
+            scheduler = diffusers_pipe.scheduler
+
+        logger.debug(f"Moving transformer to {dit_device}...")
+        transformer = transformer.to(dit_device)
+        logger.debug(f"Moving VAE to {vae_device}...")
+        vae = vae.to(vae_device)
+
+        return transformer, vae, scheduler
+
+    @classmethod
+    def _load_with_pytorch(
+        cls,
+        model_path: str,
+        dtype: torch.dtype,
+        dit_device: str,
+        vae_device: str,
+        shift: float | None = None,
+    ):
+        """Load transformer, VAE, scheduler using pure PyTorch implementation.
+
+        The transformer uses our pure PyTorch ZImageDiT implementation.
+        The VAE uses diffusers' AutoencoderKL since our FluxVAEDecoder has
+        key mapping issues with the diffusers-format checkpoints.
+
+        Args:
+            model_path: Path to model directory
+            dtype: Model dtype
+            dit_device: Device for DiT
+            vae_device: Device for VAE
+            shift: Scheduler shift. If None, auto-detects from variant.
+        """
+        from diffusers import AutoencoderKL
+
+        from llm_dit.models.z_image import load_z_image_transformer
+        from llm_dit.schedulers import FlowMatchScheduler
+
+        # Load transformer (pure PyTorch implementation)
+        logger.debug("Loading pure PyTorch transformer...")
+        transformer = load_z_image_transformer(model_path, dtype=dtype, device="cpu")
+        logger.debug(f"Moving transformer to {dit_device}...")
+        transformer = transformer.to(dit_device)
+
+        # Load VAE using diffusers (our FluxVAEDecoder has key mapping issues)
+        # The VAE checkpoint uses diffusers naming convention which doesn't map
+        # to our FluxVAEDecoder structure. Using AutoencoderKL is correct here.
+        logger.debug("Loading diffusers VAE...")
+        vae = AutoencoderKL.from_pretrained(
+            model_path, subfolder="vae", torch_dtype=dtype
+        )
+        logger.debug(f"Moving VAE to {vae_device}...")
+        vae = vae.to(vae_device)
+
+        # Resolve shift: use provided value or detect from variant
+        actual_shift = shift if shift is not None else cls._detect_variant_shift(model_path)
+        scheduler = FlowMatchScheduler(shift=actual_shift)
+        logger.info(f"Using FlowMatchScheduler with shift={actual_shift}")
+
+        return transformer, vae, scheduler
 
     @classmethod
     def from_diffusers_pipeline(
@@ -470,18 +631,18 @@ class ZImagePipeline:
         if hasattr(self.transformer, "enable_gradient_checkpointing"):
             if enable:
                 self.transformer.enable_gradient_checkpointing()
-                logger.info("Gradient checkpointing enabled on transformer")
+                logger.debug("Gradient checkpointing enabled on transformer")
             else:
                 self.transformer.disable_gradient_checkpointing()
-                logger.info("Gradient checkpointing disabled on transformer")
+                logger.debug("Gradient checkpointing disabled on transformer")
         elif hasattr(self.transformer, "gradient_checkpointing_enable"):
             # diffusers style
             if enable:
                 self.transformer.gradient_checkpointing_enable()
-                logger.info("Gradient checkpointing enabled on transformer")
+                logger.debug("Gradient checkpointing enabled on transformer")
             else:
                 self.transformer.gradient_checkpointing_disable()
-                logger.info("Gradient checkpointing disabled on transformer")
+                logger.debug("Gradient checkpointing disabled on transformer")
         else:
             logger.warning(
                 "Transformer does not support gradient checkpointing. "
@@ -696,10 +857,10 @@ class ZImagePipeline:
         if height % vae_scale != 0:
             # Round to nearest valid size
             height = (height // vae_scale) * vae_scale
-            logger.info(f"Adjusted height to {height} (must be divisible by {vae_scale})")
+            logger.debug(f"Adjusted height to {height} (must be divisible by {vae_scale})")
         if width % vae_scale != 0:
             width = (width // vae_scale) * vae_scale
-            logger.info(f"Adjusted width to {width} (must be divisible by {vae_scale})")
+            logger.debug(f"Adjusted width to {width} (must be divisible by {vae_scale})")
 
         # Resize image if dimensions changed
         if isinstance(image, Image.Image):
@@ -719,13 +880,13 @@ class ZImagePipeline:
         init_timestep = min(int(num_inference_steps * strength), num_inference_steps)
         t_start = max(num_inference_steps - init_timestep, 0)
 
-        logger.info(
+        logger.debug(
             f"[img2img] strength={strength}, steps={num_inference_steps}, actual_steps={init_timestep}"
         )
 
         # 1. Encode prompt (or use provided embeddings)
         if prompt_embeds is not None:
-            logger.info(f"[img2img] Using provided prompt_embeds: shape={prompt_embeds.shape}")
+            logger.debug(f"[img2img] Using provided prompt_embeds: shape={prompt_embeds.shape}")
             raw_embeds = prompt_embeds
             if raw_embeds.shape[0] > MAX_TEXT_SEQ_LEN:
                 raw_embeds = compress_embeddings(
@@ -733,7 +894,7 @@ class ZImagePipeline:
                 )
             prompt_embeds_list = [raw_embeds.to(device=device, dtype=dtype)]
         else:
-            logger.info(f"[img2img] Encoding prompt...")
+            logger.debug(f"[img2img] Encoding prompt...")
             prompt_output = self.encoder.encode(
                 prompt,
                 template=template,
@@ -753,10 +914,10 @@ class ZImagePipeline:
             prompt_embeds_list = [raw_embeds.to(device=device, dtype=dtype)]
 
         # 2. Encode input image
-        logger.info(f"[img2img] Encoding input image...")
+        logger.debug(f"[img2img] Encoding input image...")
         init_latents = self.encode_image(image)
         init_latents = init_latents.to(device=device, dtype=dtype)
-        logger.info(f"[img2img] Init latents shape: {init_latents.shape}")
+        logger.debug(f"[img2img] Init latents shape: {init_latents.shape}")
 
         # 3. Prepare timesteps
         latent_height = 2 * (height // vae_scale)
@@ -766,7 +927,7 @@ class ZImagePipeline:
         if shift is not None:
             # Use user-provided shift value
             mu = shift
-            logger.info(f"[img2img] Using user-provided shift/mu: {mu}")
+            logger.debug(f"[img2img] Using user-provided shift/mu: {mu}")
         else:
             # Calculate shift based on resolution (dynamic shift)
             mu = calculate_shift(
@@ -776,26 +937,17 @@ class ZImagePipeline:
                 self.scheduler.config.get("base_shift", 0.5),
                 self.scheduler.config.get("max_shift", 1.15),
             )
-            logger.info(f"[img2img] Calculated shift/mu for resolution: {mu:.4f}")
+            logger.debug(f"[img2img] Calculated shift/mu for resolution: {mu:.4f}")
 
-        self.scheduler.sigma_min = 0.0
-        # IMPORTANT: For diffusers FlowMatchEulerDiscreteScheduler, when use_dynamic_shifting=False,
-        # set_timesteps() ignores the mu parameter and uses self.shift instead.
-        # Diffusers uses set_shift() method (shift property is read-only).
-        # Our FlowMatchScheduler uses direct attribute assignment.
-        if hasattr(self.scheduler, "set_shift"):
-            self.scheduler.set_shift(mu)  # diffusers scheduler
-        elif hasattr(self.scheduler, "shift"):
-            self.scheduler.shift = mu  # our FlowMatchScheduler
-        self.scheduler.set_timesteps(num_inference_steps, device=device, mu=mu)
+        self._configure_scheduler(mu, num_inference_steps, device, log_prefix="[img2img]")
 
         # Apply d_noise scaling to sigma schedule (RES4LYF technique)
         # d_noise < 1.0 = sharper/more detail, > 1.0 = softer/deeper colors
         if d_noise != 1.0 and hasattr(self.scheduler, "sigmas"):
             original_sigmas = self.scheduler.sigmas.clone()
             self.scheduler.sigmas = self.scheduler.sigmas * d_noise
-            logger.info(f"[img2img] Applied d_noise={d_noise:.3f} to sigma schedule")
-            logger.info(
+            logger.debug(f"[img2img] Applied d_noise={d_noise:.3f} to sigma schedule")
+            logger.debug(
                 f"[img2img] Sigmas scaled: {original_sigmas[0]:.4f} -> {self.scheduler.sigmas[0]:.4f}"
             )
 
@@ -825,7 +977,7 @@ class ZImagePipeline:
         latents = (1 - sigma) * init_latents + sigma * noise
         latents = latents.to(dtype=torch.float32)
 
-        logger.info(
+        logger.debug(
             f"[img2img] Starting denoising from step {t_start}, {len(timesteps)} steps remaining"
         )
 
@@ -833,7 +985,7 @@ class ZImagePipeline:
         differential_masks = None
         use_differential = mask_image is not None
         if use_differential:
-            logger.info("[img2img] Differential diffusion mode enabled - preparing masks")
+            logger.debug("[img2img] Differential diffusion mode enabled - preparing masks")
             differential_masks = prepare_differential_masks(
                 mask_image=mask_image,
                 num_inference_steps=len(timesteps),
@@ -879,7 +1031,7 @@ class ZImagePipeline:
             fbcache_state = FBCacheState(fbcache_config, num_inference_steps=init_timestep)
             fbcache_ctx = FBCacheContext(self.transformer, fbcache_state)
             fbcache_ctx.__enter__()
-            logger.info(
+            logger.debug(
                 f"[img2img] FBCache enabled: threshold={fbcache_config.middle_threshold:.2%}"
             )
 
@@ -893,10 +1045,14 @@ class ZImagePipeline:
                     if torch.cuda.is_available():
                         torch.cuda.synchronize()
 
+                # Prepare timestep (inverted and normalized for Z-Image)
+                # Scheduler gives t in [0, 1000], we need [0, 1] for transformer
+                # (transformer.forward multiplies by t_scale=1000 internally)
                 timestep = t.expand(latents.shape[0])
-                timestep = (1000 - timestep) / 1000
+                timestep = (1000 - timestep) / 1000  # Normalize to [0, 1]
 
                 # Calculate denoising progress (0 to 1) for CFG truncation
+                # Progress is the normalized timestep value
                 progress = timestep[0].item()
 
                 # Handle CFG with optional truncation
@@ -1001,7 +1157,7 @@ class ZImagePipeline:
             fbcache_ctx.__exit__(None, None, None)
             if fbcache_state is not None:
                 stats = fbcache_state.get_stats()
-                logger.info(
+                logger.debug(
                     f"[img2img] FBCache stats: "
                     f"{stats['skips']} skips, {stats['computes']} computes, "
                     f"ratio={stats['skip_ratio']:.1%}, est. speedup={stats['estimated_speedup']:.2f}x"
@@ -1011,7 +1167,7 @@ class ZImagePipeline:
         if output_type == "latent":
             return latents
 
-        logger.info("[img2img] Decoding latents...")
+        logger.debug("[img2img] Decoding latents...")
         if cpu_offload:
             # Get underlying VAE
             vae = self.vae.vae if hasattr(self.vae, "vae") else self.vae
@@ -1210,23 +1366,23 @@ class ZImagePipeline:
         # 1. Encode prompt OR use pre-computed embeddings
         if prompt_embeds is not None:
             # Use pre-computed embeddings (e.g., from Qwen3-VL vision encoder)
-            logger.info(f"[Pipeline] Using pre-computed embeddings: shape={prompt_embeds.shape}")
+            logger.debug(f"[Pipeline] Using pre-computed embeddings: shape={prompt_embeds.shape}")
             raw_embeds = prompt_embeds
         else:
             # Standard text encoding path
             if prompt is None:
                 raise ValueError("Either 'prompt' or 'prompt_embeds' must be provided")
 
-            logger.info(f"[Pipeline] Encoding prompt on device={device}, dtype={dtype}")
-            logger.info(f"[Pipeline] Encoder type: {type(self.encoder).__name__}")
+            logger.debug(f"[Pipeline] Encoding prompt on device={device}, dtype={dtype}")
+            logger.debug(f"[Pipeline] Encoder type: {type(self.encoder).__name__}")
             backend = getattr(self.encoder, "backend", None)
-            logger.info(
+            logger.debug(
                 f"[Pipeline] Encoder backend: {type(backend).__name__ if backend else 'local'}"
             )
 
             # Use blended encoding if layer_weights provided, otherwise standard encoding
             if layer_weights is not None:
-                logger.info(f"[Pipeline] Using blended encoding with layer_weights={layer_weights}")
+                logger.debug(f"[Pipeline] Using blended encoding with layer_weights={layer_weights}")
                 prompt_output = self.encoder.encode_blended(
                     prompt,
                     layer_weights=layer_weights,
@@ -1252,28 +1408,28 @@ class ZImagePipeline:
             # Log formatted prompt for debugging
             if prompt_output.formatted_prompts:
                 formatted = prompt_output.formatted_prompts[0]
-                logger.info(f"[Pipeline] Formatted prompt ({len(formatted)} chars):")
+                logger.debug(f"[Pipeline] Formatted prompt ({len(formatted)} chars):")
                 # Show the full prompt with special tokens visible
-                logger.info(f"[Pipeline] ---BEGIN FORMATTED PROMPT---")
-                logger.info(formatted)
-                logger.info(f"[Pipeline] ---END FORMATTED PROMPT---")
+                logger.debug(f"[Pipeline] ---BEGIN FORMATTED PROMPT---")
+                logger.debug(formatted)
+                logger.debug(f"[Pipeline] ---END FORMATTED PROMPT---")
 
             raw_embeds = prompt_output.embeddings[0]
-        logger.info(
+        logger.debug(
             f"[Pipeline] Raw embeddings: shape={raw_embeds.shape}, device={raw_embeds.device}, dtype={raw_embeds.dtype}"
         )
-        logger.info(
+        logger.debug(
             f"[Pipeline] Embedding stats: min={raw_embeds.min().item():.4f}, max={raw_embeds.max().item():.4f}, mean={raw_embeds.mean().item():.4f}, std={raw_embeds.std().item():.4f}"
         )
 
         # Handle embeddings exceeding DiT's max text sequence length
         if raw_embeds.shape[0] > MAX_TEXT_SEQ_LEN:
             raw_embeds = compress_embeddings(raw_embeds, MAX_TEXT_SEQ_LEN, mode=long_prompt_mode)
-            logger.info(f"[Pipeline] Compressed embeddings shape: {raw_embeds.shape}")
+            logger.debug(f"[Pipeline] Compressed embeddings shape: {raw_embeds.shape}")
 
         # Move embeddings to device (API backend returns CPU tensors)
         prompt_embeds = [raw_embeds.to(device=device, dtype=dtype)]
-        logger.info(
+        logger.debug(
             f"[Pipeline] Moved embeddings to: device={prompt_embeds[0].device}, dtype={prompt_embeds[0].dtype}"
         )
 
@@ -1322,7 +1478,7 @@ class ZImagePipeline:
         if shift is not None:
             # Use user-provided shift value
             mu = shift
-            logger.info(f"[Pipeline] Using user-provided shift/mu: {mu}")
+            logger.debug(f"[Pipeline] Using user-provided shift/mu: {mu}")
         else:
             # Calculate shift based on resolution (dynamic shift)
             mu = calculate_shift(
@@ -1332,17 +1488,9 @@ class ZImagePipeline:
                 self.scheduler.config.get("base_shift", 0.5),
                 self.scheduler.config.get("max_shift", 1.15),
             )
-            logger.info(f"[Pipeline] Calculated shift/mu for resolution: {mu:.4f}")
-        self.scheduler.sigma_min = 0.0
-        # IMPORTANT: For diffusers FlowMatchEulerDiscreteScheduler, when use_dynamic_shifting=False,
-        # set_timesteps() ignores the mu parameter and uses self.shift instead.
-        # Diffusers uses set_shift() method (shift property is read-only).
-        # Our FlowMatchScheduler uses direct attribute assignment.
-        if hasattr(self.scheduler, "set_shift"):
-            self.scheduler.set_shift(mu)  # diffusers scheduler
-        elif hasattr(self.scheduler, "shift"):
-            self.scheduler.shift = mu  # our FlowMatchScheduler
-        self.scheduler.set_timesteps(num_inference_steps, device=device, mu=mu)
+            logger.debug(f"[Pipeline] Calculated shift/mu for resolution: {mu:.4f}")
+
+        self._configure_scheduler(mu, num_inference_steps, device, log_prefix="[Pipeline]")
         timesteps = self.scheduler.timesteps
 
         # Apply d_noise scaling to sigma schedule (RES4LYF technique)
@@ -1350,18 +1498,18 @@ class ZImagePipeline:
         if d_noise != 1.0 and hasattr(self.scheduler, "sigmas"):
             original_sigmas = self.scheduler.sigmas.clone()
             self.scheduler.sigmas = self.scheduler.sigmas * d_noise
-            logger.info(f"[Pipeline] Applied d_noise={d_noise:.3f} to sigma schedule")
-            logger.info(
+            logger.debug(f"[Pipeline] Applied d_noise={d_noise:.3f} to sigma schedule")
+            logger.debug(
                 f"[Pipeline] Sigmas scaled: {original_sigmas[0]:.4f} -> {self.scheduler.sigmas[0]:.4f}"
             )
 
-        logger.info(f"[Pipeline] Latent shape: {latents.shape}, device={latents.device}")
-        logger.info(
+        logger.debug(f"[Pipeline] Latent shape: {latents.shape}, device={latents.device}")
+        logger.debug(
             f"[Pipeline] Prompt embeds: shape={prompt_embeds[0].shape}, device={prompt_embeds[0].device}"
         )
-        logger.info(f"[Pipeline] Timesteps: {len(timesteps)}, device={timesteps.device}")
-        logger.info(f"[Pipeline] Timestep values: {timesteps.tolist()}")
-        logger.info(
+        logger.debug(f"[Pipeline] Timesteps: {len(timesteps)}, device={timesteps.device}")
+        logger.debug(f"[Pipeline] Timestep values: {timesteps.tolist()}")
+        logger.debug(
             f"[Pipeline] Scheduler sigmas: {self.scheduler.sigmas.tolist() if hasattr(self.scheduler, 'sigmas') else 'N/A'}"
         )
 
@@ -1371,7 +1519,7 @@ class ZImagePipeline:
         # Check if using CPU offload mode
         cpu_offload = getattr(self, "_enable_cpu_offload", False)
         if cpu_offload:
-            logger.info("[Pipeline] CPU offload mode - moving transformer to GPU for forward pass")
+            logger.debug("[Pipeline] CPU offload mode - moving transformer to GPU for forward pass")
 
         # Patch transformer with DyPE if enabled
         # Per-request dype_config overrides self.dype_config
@@ -1385,15 +1533,15 @@ class ZImagePipeline:
         active_dype_config = dype_config
         dype_patched = False
         if active_dype_config is not None and active_dype_config.enabled:
-            logger.info(
+            logger.debug(
                 f"[Pipeline] DyPE enabled: method={active_dype_config.method}, scale={active_dype_config.dype_scale}"
             )
             if active_dype_config.frequency_modulation:
-                logger.info("[Pipeline] DyPE frequency modulation enabled (experimental)")
+                logger.debug("[Pipeline] DyPE frequency modulation enabled (experimental)")
             try:
                 patch_zimage_rope(self.transformer, active_dype_config, width, height)
                 dype_patched = True
-                logger.info(f"[Pipeline] DyPE patched transformer for {width}x{height}")
+                logger.debug(f"[Pipeline] DyPE patched transformer for {width}x{height}")
             except Exception as e:
                 logger.warning(f"[Pipeline] Failed to patch DyPE: {e}. Continuing without DyPE.")
 
@@ -1409,7 +1557,7 @@ class ZImagePipeline:
                 guidance_stop=skip_layer_stop,
                 fqn="layers",  # Z-Image transformer uses "layers" for transformer blocks
             )
-            logger.info(
+            logger.debug(
                 f"[Pipeline] Skip Layer Guidance enabled: "
                 f"scale={skip_layer_guidance_scale}, layers={skip_layer_indices}, "
                 f"range=[{skip_layer_start:.0%}, {skip_layer_stop:.0%}]"
@@ -1428,7 +1576,7 @@ class ZImagePipeline:
                 # Check if we have a cached reward function on the pipeline
                 if hasattr(self, "_fmtt_reward_fn") and self._fmtt_reward_fn is not None:
                     fmtt_reward_fn = self._fmtt_reward_fn
-                    logger.info("[Pipeline] Reusing cached SigLIP for FMTT")
+                    logger.debug("[Pipeline] Reusing cached SigLIP for FMTT")
                 else:
                     # Determine SigLIP device first (use param, or fall back to pipeline device)
                     siglip_device = fmtt_siglip_device if fmtt_siglip_device else device
@@ -1437,7 +1585,7 @@ class ZImagePipeline:
                     siglip_on_cuda = "cuda" in str(siglip_device)
                     if siglip_on_cuda and torch.cuda.is_available():
                         free_mem = torch.cuda.mem_get_info()[0] / 1024**3
-                        logger.info(f"[Pipeline] FMTT requested, {free_mem:.1f}GB VRAM free")
+                        logger.debug(f"[Pipeline] FMTT requested, {free_mem:.1f}GB VRAM free")
 
                         # SigLIP needs ~4GB, we want some headroom
                         if free_mem < 5.0:
@@ -1453,7 +1601,7 @@ class ZImagePipeline:
                                     if torch.cuda.is_available():
                                         torch.cuda.empty_cache()
                                     free_mem = torch.cuda.mem_get_info()[0] / 1024**3
-                                    logger.info(
+                                    logger.debug(
                                         f"[Pipeline] After encoder move: {free_mem:.1f}GB VRAM free"
                                     )
 
@@ -1465,11 +1613,11 @@ class ZImagePipeline:
                                 f"2) Disable FMTT (fmtt_scale=0)"
                             )
                     elif not siglip_on_cuda:
-                        logger.info(
+                        logger.debug(
                             f"[Pipeline] FMTT SigLIP will run on {siglip_device} (no VRAM needed)"
                         )
 
-                    logger.info(
+                    logger.debug(
                         f"[Pipeline] Loading SigLIP for FMTT: {fmtt_siglip_model} on {siglip_device}"
                     )
                     fmtt_reward_fn = DifferentiableSigLIP(
@@ -1479,7 +1627,7 @@ class ZImagePipeline:
 
                     # Cache for reuse in future generations
                     self._fmtt_reward_fn = fmtt_reward_fn
-                    logger.info("[Pipeline] SigLIP loaded and cached for FMTT")
+                    logger.debug("[Pipeline] SigLIP loaded and cached for FMTT")
 
             fmtt = FMTTGuidance(
                 vae=self.vae.vae if hasattr(self.vae, "vae") else self.vae,
@@ -1500,7 +1648,7 @@ class ZImagePipeline:
             else:
                 fmtt_prompt = str(prompt) if prompt is not None else ""
 
-            logger.info(
+            logger.debug(
                 f"[Pipeline] FMTT enabled: "
                 f"scale={fmtt_guidance_scale}, range=[{fmtt_guidance_start:.0%}, {fmtt_guidance_stop:.0%}]"
             )
@@ -1517,7 +1665,7 @@ class ZImagePipeline:
             fbcache_state = FBCacheState(fbcache_config, num_inference_steps=num_inference_steps)
             fbcache_ctx = FBCacheContext(self.transformer, fbcache_state)
             fbcache_ctx.__enter__()
-            logger.info(
+            logger.debug(
                 f"[Pipeline] FBCache enabled: threshold={fbcache_config.middle_threshold:.2%}"
             )
 
@@ -1543,11 +1691,14 @@ class ZImagePipeline:
                     if torch.cuda.is_available():
                         torch.cuda.synchronize()
 
-                # Prepare timestep (inverted for Z-Image)
+                # Prepare timestep (inverted and normalized for Z-Image)
+                # Scheduler gives t in [0, 1000], we need [0, 1] for transformer
+                # (transformer.forward multiplies by t_scale=1000 internally)
                 timestep = t.expand(latents.shape[0])
-                timestep = (1000 - timestep) / 1000
+                timestep = (1000 - timestep) / 1000  # Normalize to [0, 1]
 
                 # Calculate denoising progress (0 to 1) for CFG truncation
+                # Progress is the normalized timestep value
                 progress = timestep[0].item()
 
                 # Handle CFG with optional truncation
@@ -1618,7 +1769,8 @@ class ZImagePipeline:
                     for pos, neg in zip(pos_out, neg_out):
                         pos_f = pos.float()
                         neg_f = neg.float()
-                        # Apply CFG: positive + scale * (positive - negative)
+                        # Apply CFG: negative + scale * (positive - negative)
+                        # Standard formula: uncond + scale * (cond - uncond)
                         pred = pos_f + current_cfg_scale * (pos_f - neg_f)
 
                         # CFG normalization (clamp or match mode)
@@ -1662,7 +1814,7 @@ class ZImagePipeline:
                     noise_pred = velocity
 
                     if i % 3 == 0:  # Log every few steps
-                        logger.info(
+                        logger.debug(
                             f"[FMTT] Step {i}: reward={reward:.4f}, grad_norm={fmtt_grad.norm().item():.4f}"
                         )
 
@@ -1693,20 +1845,20 @@ class ZImagePipeline:
                     if torch.cuda.is_available():
                         free_mem = torch.cuda.mem_get_info()[0] / 1024**3
                         alloc_mem = torch.cuda.memory_allocated() / 1024**3
-                        logger.info(
+                        logger.debug(
                             f"[Pipeline] Step {i + 1}/{len(timesteps)} complete (GPU: {alloc_mem:.1f}GB alloc, {free_mem:.1f}GB free)"
                         )
                     else:
-                        logger.info(f"[Pipeline] Step {i + 1}/{len(timesteps)} complete")
+                        logger.debug(f"[Pipeline] Step {i + 1}/{len(timesteps)} complete")
 
-        logger.info(f"[Pipeline] Denoising complete, latents shape: {latents.shape}")
+        logger.info("[Pipeline] Denoising complete")
 
         # Clean up FBCache and log stats
         if fbcache_ctx is not None:
             fbcache_ctx.__exit__(None, None, None)
             if fbcache_state is not None:
                 stats = fbcache_state.get_stats()
-                logger.info(
+                logger.debug(
                     f"[Pipeline] FBCache stats: "
                     f"{stats['skips']} skips, {stats['computes']} computes, "
                     f"ratio={stats['skip_ratio']:.1%}, est. speedup={stats['estimated_speedup']:.2f}x"
@@ -1720,7 +1872,7 @@ class ZImagePipeline:
 
         # Move VAE to GPU if using CPU offload
         if cpu_offload:
-            logger.info("[Pipeline] Moving VAE to GPU for decode...")
+            logger.debug("[Pipeline] Moving VAE to GPU for decode...")
             self.vae.to(device)
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
@@ -1900,7 +2052,7 @@ class ZImagePipeline:
         if shift is not None:
             # Use user-provided shift value
             mu = shift
-            logger.info(f"[Pipeline] Using user-provided shift/mu: {mu}")
+            logger.debug(f"[Pipeline] Using user-provided shift/mu: {mu}")
         else:
             # Calculate shift based on resolution (dynamic shift)
             mu = calculate_shift(
@@ -1910,17 +2062,9 @@ class ZImagePipeline:
                 self.scheduler.config.get("base_shift", 0.5),
                 self.scheduler.config.get("max_shift", 1.15),
             )
-            logger.info(f"[Pipeline] Calculated shift/mu for resolution: {mu:.4f}")
-        self.scheduler.sigma_min = 0.0
-        # IMPORTANT: For diffusers FlowMatchEulerDiscreteScheduler, when use_dynamic_shifting=False,
-        # set_timesteps() ignores the mu parameter and uses self.shift instead.
-        # Diffusers uses set_shift() method (shift property is read-only).
-        # Our FlowMatchScheduler uses direct attribute assignment.
-        if hasattr(self.scheduler, "set_shift"):
-            self.scheduler.set_shift(mu)  # diffusers scheduler
-        elif hasattr(self.scheduler, "shift"):
-            self.scheduler.shift = mu  # our FlowMatchScheduler
-        self.scheduler.set_timesteps(num_inference_steps, device=device, mu=mu)
+            logger.debug(f"[Pipeline] Calculated shift/mu for resolution: {mu:.4f}")
+
+        self._configure_scheduler(mu, num_inference_steps, device, log_prefix="[_denoise]")
 
         # Apply d_noise scaling to sigma schedule (RES4LYF technique)
         # d_noise < 1.0 = sharper/more detail, > 1.0 = softer/deeper colors
@@ -1937,10 +2081,14 @@ class ZImagePipeline:
         # Denoising loop
         logger.debug(f"Running {num_inference_steps} denoising steps...")
         for i, t in enumerate(timesteps):
+            # Prepare timestep (inverted and normalized for Z-Image)
+            # Scheduler gives t in [0, 1000], we need [0, 1] for transformer
+            # (transformer.forward multiplies by t_scale=1000 internally)
             timestep = t.expand(latents.shape[0])
-            timestep = (1000 - timestep) / 1000
+            timestep = (1000 - timestep) / 1000  # Normalize to [0, 1]
 
             # Calculate denoising progress (0 to 1) for CFG truncation
+            # Progress is the normalized timestep value
             progress = timestep[0].item()
 
             # Handle CFG with optional truncation
@@ -2109,77 +2257,78 @@ class ZImagePipeline:
         logger.info("=" * 60)
         logger.info("LOADING GENERATOR COMPONENTS (encoder-free mode)")
         logger.info("=" * 60)
-        logger.info(f"  model_path: {model_path}")
-        logger.info(f"  dtype: {dtype}")
-        logger.info(f"  dit_device: {dit_device_resolved}")
-        logger.info(f"  vae_device: {vae_device_resolved}")
-        logger.info(f"  enable_cpu_offload: {enable_cpu_offload}")
+        logger.debug(f"  model_path: {model_path}")
+        logger.debug(f"  dtype: {dtype}")
+        logger.debug(f"  dit_device: {dit_device_resolved}")
+        logger.debug(f"  vae_device: {vae_device_resolved}")
+        logger.debug(f"  enable_cpu_offload: {enable_cpu_offload}")
         logger.info("-" * 60)
 
         # Check available GPU memory before loading
         if torch.cuda.is_available():
             free_mem = torch.cuda.mem_get_info()[0] / 1024**3
             total_mem = torch.cuda.mem_get_info()[1] / 1024**3
-            logger.info(f"  GPU memory: {free_mem:.1f}GB free / {total_mem:.1f}GB total")
+            logger.debug(f"  GPU memory: {free_mem:.1f}GB free / {total_mem:.1f}GB total")
 
         # Load only the components we need (skip text encoder entirely)
         # Use low_cpu_mem_usage to avoid OOM during dtype conversion
-        logger.info("Loading transformer (low_cpu_mem_usage=True)...")
+        logger.debug("Loading transformer (low_cpu_mem_usage=True)...")
         transformer = ZImageTransformer2DModel.from_pretrained(
             model_path / "transformer",
             dtype=dtype,  # diffusers uses dtype
             low_cpu_mem_usage=True,
             **kwargs,
         )
-        logger.info(f"  Transformer loaded: {transformer.__class__.__name__}")
-        logger.info(f"  Transformer dtype: {next(transformer.parameters()).dtype}")
-        logger.info(f"  Transformer device (before move): {next(transformer.parameters()).device}")
+        logger.debug(f"  Transformer loaded: {transformer.__class__.__name__}")
+        logger.debug(f"  Transformer dtype: {next(transformer.parameters()).dtype}")
+        logger.debug(f"  Transformer device (before move): {next(transformer.parameters()).device}")
 
         if torch.cuda.is_available():
             free_mem = torch.cuda.mem_get_info()[0] / 1024**3
-            logger.info(f"  GPU memory after transformer load: {free_mem:.1f}GB free")
+            logger.debug(f"  GPU memory after transformer load: {free_mem:.1f}GB free")
 
-        logger.info("Loading VAE (low_cpu_mem_usage=True)...")
+        logger.debug("Loading VAE (low_cpu_mem_usage=True)...")
         vae = AutoencoderKL.from_pretrained(
             model_path / "vae",
             dtype=dtype,  # diffusers uses dtype
             low_cpu_mem_usage=True,
             **kwargs,
         )
-        logger.info(f"  VAE loaded: {vae.__class__.__name__}")
-        logger.info(f"  VAE dtype: {next(vae.parameters()).dtype}")
+        logger.debug(f"  VAE loaded: {vae.__class__.__name__}")
+        logger.debug(f"  VAE dtype: {next(vae.parameters()).dtype}")
 
         # Load scheduler (custom or diffusers)
         if use_custom_scheduler:
             from llm_dit.schedulers import FlowMatchScheduler
 
-            scheduler = FlowMatchScheduler(shift=3.0)
-            logger.info("Using custom FlowMatchScheduler (pure PyTorch)")
+            actual_shift = cls._detect_variant_shift(model_path)
+            scheduler = FlowMatchScheduler(shift=actual_shift)
+            logger.info(f"Using custom FlowMatchScheduler with shift={actual_shift}")
         else:
-            logger.info("Loading scheduler...")
+            logger.debug("Loading scheduler...")
             scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(
                 model_path / "scheduler",
             )
-            logger.info(f"  Scheduler: {scheduler.__class__.__name__}")
+            logger.debug(f"  Scheduler: {scheduler.__class__.__name__}")
 
         # Move to device (unless using CPU offload)
         logger.info("-" * 60)
         if enable_cpu_offload:
-            logger.info("CPU offload enabled - both transformer and VAE stay on CPU")
-            logger.info("  Transformer: moves to GPU for each denoising step")
-            logger.info("  VAE: moves to GPU only for final decode")
+            logger.debug("CPU offload enabled - both transformer and VAE stay on CPU")
+            logger.debug("  Transformer: moves to GPU for each denoising step")
+            logger.debug("  VAE: moves to GPU only for final decode")
         else:
-            logger.info(f"Moving transformer to {dit_device_resolved}...")
+            logger.debug(f"Moving transformer to {dit_device_resolved}...")
             transformer = transformer.to(dit_device_resolved)
-            logger.info(f"  Transformer now on: {next(transformer.parameters()).device}")
+            logger.debug(f"  Transformer now on: {next(transformer.parameters()).device}")
 
             if torch.cuda.is_available():
                 free_mem = torch.cuda.mem_get_info()[0] / 1024**3
-                logger.info(f"  GPU memory after transformer move: {free_mem:.1f}GB free")
+                logger.debug(f"  GPU memory after transformer move: {free_mem:.1f}GB free")
 
-            logger.info(f"Moving VAE to {vae_device_resolved}...")
+            logger.debug(f"Moving VAE to {vae_device_resolved}...")
             vae = vae.to(vae_device_resolved)
-            logger.info(f"  VAE now on: {next(vae.parameters()).device}")
+            logger.debug(f"  VAE now on: {next(vae.parameters()).device}")
 
         # Create pipeline without encoder
         pipeline = cls.__new__(cls)
@@ -2195,7 +2344,7 @@ class ZImagePipeline:
             from llm_dit.utils.tiled_vae import TiledVAEDecoder
 
             pipeline.vae = TiledVAEDecoder(vae, tile_size=tile_size, tile_overlap=tile_overlap)
-            logger.info(f"Tiled VAE enabled: tile_size={tile_size}, overlap={tile_overlap}")
+            logger.debug(f"Tiled VAE enabled: tile_size={tile_size}, overlap={tile_overlap}")
         else:
             pipeline.vae = vae
 
@@ -2204,7 +2353,7 @@ class ZImagePipeline:
         if device == "cuda" and torch.cuda.is_available():
             free_mem = torch.cuda.mem_get_info()[0] / 1024**3
             used_mem = (torch.cuda.mem_get_info()[1] - torch.cuda.mem_get_info()[0]) / 1024**3
-            logger.info(f"  Final GPU memory: {used_mem:.1f}GB used, {free_mem:.1f}GB free")
+            logger.debug(f"  Final GPU memory: {used_mem:.1f}GB used, {free_mem:.1f}GB free")
         logger.info("=" * 60)
         return pipeline
 
@@ -2308,10 +2457,10 @@ class ZImagePipeline:
         vae_scale = self.vae_scale_factor * 2  # 16 for Z-Image
         if final_width % vae_scale != 0:
             final_width = (final_width // vae_scale) * vae_scale
-            logger.info(f"Adjusted final_width to {final_width}")
+            logger.debug(f"Adjusted final_width to {final_width}")
         if final_height % vae_scale != 0:
             final_height = (final_height // vae_scale) * vae_scale
-            logger.info(f"Adjusted final_height to {final_height}")
+            logger.debug(f"Adjusted final_height to {final_height}")
 
         logger.info(
             f"[Multipass] Starting {len(passes)}-pass generation: {final_width}x{final_height}"
@@ -2356,13 +2505,13 @@ class ZImagePipeline:
             pass_width = (pass_width // vae_scale) * vae_scale
             pass_height = (pass_height // vae_scale) * vae_scale
 
-            logger.info(
+            logger.debug(
                 f"[Multipass] Pass {pass_idx + 1}/{len(passes)}: {pass_width}x{pass_height}, steps={steps}"
             )
 
             if result is None:
                 # First pass: txt2img
-                logger.info(
+                logger.debug(
                     f"[Multipass] Pass {pass_idx + 1}: txt2img at {pass_width}x{pass_height}"
                 )
                 result = self(
@@ -2392,7 +2541,7 @@ class ZImagePipeline:
                 if strength is None:
                     strength = 0.5  # Default strength for refinement
 
-                logger.info(
+                logger.debug(
                     f"[Multipass] Pass {pass_idx + 1}: img2img at {pass_width}x{pass_height}, strength={strength}"
                 )
                 result = self.img2img(

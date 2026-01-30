@@ -164,7 +164,7 @@ class WanVideoPipeline:
             text_encoder.load_tokenizer(str(tokenizer_path))
         else:
             # Fall back to HuggingFace hub
-            logger.info("Tokenizer not found locally, loading from google/umt5-xxl")
+            logger.debug("Tokenizer not found locally, loading from google/umt5-xxl")
             text_encoder.load_tokenizer("google/umt5-xxl")
 
         # Keep text encoder on CPU for memory efficiency

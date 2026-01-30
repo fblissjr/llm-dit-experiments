@@ -182,6 +182,10 @@ class RuntimeConfig:
     flux2_model_path: str | None = None  # Local path to transformer weights (file or directory)
     flux2_vae_path: str | None = None  # Local path to VAE weights (file or directory)
 
+    # Z-Image variant configuration
+    zimage_variant: str = "auto"  # auto, turbo, base
+    zimage_model_path: str | None = None  # Path to Z-Image model (overrides config.toml)
+
     # Device placement
     encoder_device: str = "auto"
     dit_device: str = "auto"
@@ -448,14 +452,14 @@ def create_base_parser(
     config_group.add_argument(
         "--config",
         type=str,
-        default=None,
-        help="Path to TOML config file",
+        default="config.toml",
+        help="Path to TOML config file (default: config.toml)",
     )
     config_group.add_argument(
         "--profile",
         type=str,
-        default="default",
-        help="Config profile to use (default: default)",
+        default=None,
+        help="Config profile to use. If not specified, auto-detects flat vs profile-based config",
     )
 
     # Model selection
@@ -485,6 +489,22 @@ def create_base_parser(
         type=str,
         default=None,
         help="Path to templates directory",
+    )
+
+    # Z-Image variant configuration
+    zimage_group = parser.add_argument_group("Z-Image")
+    zimage_group.add_argument(
+        "--zimage-variant",
+        type=str,
+        choices=["turbo", "base", "auto"],
+        default="auto",
+        help="Z-Image variant: turbo (9 steps, CFG baked in), base (35 steps, full CFG), auto (detect from scheduler)",
+    )
+    zimage_group.add_argument(
+        "--zimage-model-path",
+        type=str,
+        default=None,
+        help="Path to Z-Image model (overrides config.toml [zimage].model_path)",
     )
 
     # Qwen-Image (all variants: t2i, edit, layered)
@@ -1636,6 +1656,33 @@ def _apply_cli_overrides(args: argparse.Namespace, config: RuntimeConfig) -> Run
     if getattr(args, "flux2_vae_path", None) is not None:
         config.flux2_vae_path = args.flux2_vae_path
 
+    # Z-Image variant overrides
+    if getattr(args, "zimage_variant", None) is not None:
+        config.zimage_variant = args.zimage_variant
+    if getattr(args, "zimage_model_path", None) is not None:
+        config.zimage_model_path = args.zimage_model_path
+
+    # Apply Z-Image variant-aware defaults
+    # Auto-detect variant from model path if set to "auto"
+    if config.zimage_variant == "auto":
+        from llm_dit.models.zimage.constants import detect_zimage_variant
+        model_path = config.zimage_model_path or config.model_path
+        if model_path:
+            config.zimage_variant = detect_zimage_variant(model_path)
+
+    # Apply variant defaults when variant is known (explicit or auto-detected)
+    if config.zimage_variant in ("base", "turbo"):
+        from llm_dit.models.zimage.constants import get_variant_defaults
+
+        variant_defaults = get_variant_defaults(config.zimage_variant)
+        # Apply variant defaults for parameters not explicitly set by user
+        if getattr(args, "shift", None) is None:
+            config.shift = variant_defaults["shift"]
+        if getattr(args, "steps", None) is None:
+            config.steps = variant_defaults["num_inference_steps"]
+        if getattr(args, "guidance_scale", None) is None:
+            config.guidance_scale = variant_defaults["guidance_scale"]
+
     # Device overrides
     if getattr(args, "text_encoder_device", None) is not None:
         config.encoder_device = args.text_encoder_device
@@ -1779,212 +1826,242 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
     """
     # Start with defaults
     config = RuntimeConfig()
+    from pathlib import Path
 
     # Load TOML config if provided
     toml_config: Config | None = None
     if args.config:
-        try:
-            toml_config = Config.from_toml(args.config, args.profile)
-            logger.info(f"Loaded config profile: {args.profile}")
+        config_path = Path(args.config)
+        if not config_path.exists():
+            # Only warn if using default path; error if user explicitly specified
+            if args.config == "config.toml":
+                logger.warning(f"Default config file not found: {args.config}, using defaults")
+            else:
+                raise FileNotFoundError(f"Config file not found: {args.config}")
+        else:
+            try:
+                # Pass profile to from_toml - if None, it auto-detects flat vs profile-based config
+                toml_config = Config.from_toml(args.config, args.profile)
+                if args.profile:
+                    logger.info(f"Loaded config profile: {args.profile}")
+                # Note: from_toml logs "Loaded flat config" when auto-detecting
 
-            # Apply TOML values to runtime config
-            config.default_pipeline = toml_config.default_pipeline or config.default_pipeline
-            config.model_path = toml_config.model_path or config.model_path
-            config.templates_dir = toml_config.templates_dir or config.templates_dir
-            config.encoder_device = toml_config.encoder.device
-            config.dtype = toml_config.encoder.dtype
-            config.hidden_layer = toml_config.encoder.hidden_layer
-            config.quantization = toml_config.encoder.quantization
+                # Apply TOML values to runtime config
+                config.default_pipeline = toml_config.default_pipeline or config.default_pipeline
+                config.model_path = toml_config.model_path or config.model_path
+                config.templates_dir = toml_config.templates_dir or config.templates_dir
+                config.encoder_device = toml_config.encoder.device
+                config.dtype = toml_config.encoder.dtype
+                config.hidden_layer = toml_config.encoder.hidden_layer
+                config.quantization = toml_config.encoder.quantization
 
-            # Generation defaults from config
-            config.height = toml_config.generation.height
-            config.width = toml_config.generation.width
-            config.steps = toml_config.generation.num_inference_steps
-            config.guidance_scale = toml_config.generation.guidance_scale
-            config.cfg_normalization = getattr(toml_config.generation, "cfg_normalization", 0.0)
-            config.cfg_truncation = getattr(toml_config.generation, "cfg_truncation", 1.0)
-            config.enable_thinking = toml_config.generation.enable_thinking
-            config.default_template = toml_config.generation.default_template
+                # Generation defaults from config
+                config.height = toml_config.generation.height
+                config.width = toml_config.generation.width
+                config.steps = toml_config.generation.num_inference_steps
+                config.guidance_scale = toml_config.generation.guidance_scale
+                config.cfg_normalization = getattr(toml_config.generation, "cfg_normalization", 0.0)
+                config.cfg_truncation = getattr(toml_config.generation, "cfg_truncation", 1.0)
+                config.enable_thinking = toml_config.generation.enable_thinking
+                config.default_template = toml_config.generation.default_template
 
-            # Pipeline settings
-            config.cpu_offload = toml_config.pipeline.enable_model_cpu_offload
+                # Pipeline settings
+                config.cpu_offload = toml_config.pipeline.enable_model_cpu_offload
 
-            # Check for optimization section
-            if hasattr(toml_config, "optimization"):
-                opt = toml_config.optimization
-                config.flash_attn = getattr(opt, "flash_attn", False)
-                config.compile = getattr(opt, "compile", False)
-                config.compile_mode = getattr(opt, "compile_mode", "max-autotune-no-cudagraphs")
-                config.cpu_offload = getattr(opt, "cpu_offload", config.cpu_offload)
+                # Check for optimization section
+                if hasattr(toml_config, "optimization"):
+                    opt = toml_config.optimization
+                    config.flash_attn = getattr(opt, "flash_attn", False)
+                    config.compile = getattr(opt, "compile", False)
+                    config.compile_mode = getattr(opt, "compile_mode", "max-autotune-no-cudagraphs")
+                    # Note: cpu_offload is set from [pipeline].enable_model_cpu_offload (line 1822)
+                    # Do NOT override from [optimization].cpu_offload - that was a legacy conflict
 
-            # Check for scheduler section
-            if hasattr(toml_config, "scheduler"):
-                sched = toml_config.scheduler
-                config.shift = getattr(sched, "shift", 3.0)
-                config.dynamic_shift = getattr(sched, "dynamic_shift", False)
-                config.d_noise = getattr(sched, "d_noise", 1.0)
+                # Check for scheduler section
+                if hasattr(toml_config, "scheduler"):
+                    sched = toml_config.scheduler
+                    config.shift = getattr(sched, "shift", 3.0)
+                    config.dynamic_shift = getattr(sched, "dynamic_shift", False)
+                    config.d_noise = getattr(sched, "d_noise", 1.0)
 
-            # Check for LoRA section
-            if hasattr(toml_config, "lora"):
-                lora = toml_config.lora
-                config.lora_paths = getattr(lora, "paths", [])
-                config.lora_scales = getattr(lora, "scales", [])
+                # Check for LoRA section
+                if hasattr(toml_config, "lora"):
+                    lora = toml_config.lora
+                    config.lora_paths = getattr(lora, "paths", [])
+                    config.lora_scales = getattr(lora, "scales", [])
 
-            # Check for PyTorch-native section
-            if hasattr(toml_config, "pytorch"):
-                pytorch = toml_config.pytorch
-                config.attention_backend = getattr(pytorch, "attention_backend", None)
-                config.use_custom_scheduler = getattr(pytorch, "use_custom_scheduler", False)
-                config.tiled_vae = getattr(pytorch, "tiled_vae", False)
-                config.tile_size = getattr(pytorch, "tile_size", 512)
-                config.tile_overlap = getattr(pytorch, "tile_overlap", 64)
-                config.embedding_cache = getattr(pytorch, "embedding_cache", False)
-                config.cache_size = getattr(pytorch, "cache_size", 100)
-                config.long_prompt_mode = getattr(pytorch, "long_prompt_mode", "interpolate")
+                # Check for PyTorch-native section
+                if hasattr(toml_config, "pytorch"):
+                    pytorch = toml_config.pytorch
+                    config.attention_backend = getattr(pytorch, "attention_backend", None)
+                    config.use_custom_scheduler = getattr(pytorch, "use_custom_scheduler", False)
+                    config.tiled_vae = getattr(pytorch, "tiled_vae", False)
+                    config.tile_size = getattr(pytorch, "tile_size", 512)
+                    config.tile_overlap = getattr(pytorch, "tile_overlap", 64)
+                    config.embedding_cache = getattr(pytorch, "embedding_cache", False)
+                    config.cache_size = getattr(pytorch, "cache_size", 100)
+                    config.long_prompt_mode = getattr(pytorch, "long_prompt_mode", "interpolate")
 
-            # Check for rewriter section
-            if hasattr(toml_config, "rewriter"):
-                rewriter = toml_config.rewriter
-                config.rewriter_use_api = getattr(rewriter, "use_api", False)
-                config.rewriter_api_url = getattr(rewriter, "api_url", "")
-                config.rewriter_api_model = getattr(rewriter, "api_model", "Qwen3-4B")
-                config.rewriter_temperature = getattr(rewriter, "temperature", 0.6)
-                config.rewriter_top_p = getattr(rewriter, "top_p", 0.95)
-                config.rewriter_top_k = getattr(rewriter, "top_k", 20)
-                config.rewriter_min_p = getattr(rewriter, "min_p", 0.0)
-                config.rewriter_presence_penalty = getattr(rewriter, "presence_penalty", 0.0)
-                config.rewriter_max_tokens = getattr(rewriter, "max_tokens", 512)
-                config.rewriter_vl_enabled = getattr(rewriter, "vl_enabled", True)
-                config.rewriter_preload_vl = getattr(rewriter, "preload_vl", False)
-                config.rewriter_vl_api_model = getattr(rewriter, "vl_api_model", "")
-                config.rewriter_timeout = getattr(rewriter, "timeout", 120.0)
+                # Check for rewriter section
+                if hasattr(toml_config, "rewriter"):
+                    rewriter = toml_config.rewriter
+                    config.rewriter_use_api = getattr(rewriter, "use_api", False)
+                    config.rewriter_api_url = getattr(rewriter, "api_url", "")
+                    config.rewriter_api_model = getattr(rewriter, "api_model", "Qwen3-4B")
+                    config.rewriter_temperature = getattr(rewriter, "temperature", 0.6)
+                    config.rewriter_top_p = getattr(rewriter, "top_p", 0.95)
+                    config.rewriter_top_k = getattr(rewriter, "top_k", 20)
+                    config.rewriter_min_p = getattr(rewriter, "min_p", 0.0)
+                    config.rewriter_presence_penalty = getattr(rewriter, "presence_penalty", 0.0)
+                    config.rewriter_max_tokens = getattr(rewriter, "max_tokens", 512)
+                    config.rewriter_vl_enabled = getattr(rewriter, "vl_enabled", True)
+                    config.rewriter_preload_vl = getattr(rewriter, "preload_vl", False)
+                    config.rewriter_vl_api_model = getattr(rewriter, "vl_api_model", "")
+                    config.rewriter_timeout = getattr(rewriter, "timeout", 120.0)
 
-            # Check for VL section
-            if hasattr(toml_config, "vl"):
-                vl = toml_config.vl
-                config.vl_model_path = getattr(vl, "model_path", "")
-                config.vl_device = getattr(vl, "device", "cpu")
-                config.vl_alpha = getattr(vl, "default_alpha", 0.3)
-                config.vl_hidden_layer = getattr(vl, "default_hidden_layer", -2)
-                config.vl_auto_unload = getattr(vl, "auto_unload", True)
+                # Check for VL section
+                if hasattr(toml_config, "vl"):
+                    vl = toml_config.vl
+                    config.vl_model_path = getattr(vl, "model_path", "")
+                    config.vl_device = getattr(vl, "device", "cpu")
+                    config.vl_alpha = getattr(vl, "default_alpha", 0.3)
+                    config.vl_hidden_layer = getattr(vl, "default_hidden_layer", -2)
+                    config.vl_auto_unload = getattr(vl, "auto_unload", True)
 
-            # Check for Qwen-Image section
-            if hasattr(toml_config, "qwen_image"):
-                qi = toml_config.qwen_image
-                config.qwen_image_model_path = getattr(qi, "model_path", "")
-                config.qwen_image_edit_model_path = getattr(qi, "edit_model_path", "")
-                config.qwen_image_cpu_offload = getattr(qi, "cpu_offload", True)
-                config.qwen_image_layer_num = getattr(qi, "layer_num", 4)
-                config.qwen_image_steps = getattr(qi, "num_inference_steps", 25)
-                config.qwen_image_cfg_scale = getattr(qi, "cfg_scale", 4.0)
-                config.qwen_image_resolution = getattr(qi, "resolution", 640)
-                config.qwen_image_quantize_text_encoder = getattr(
-                    qi, "quantize_text_encoder", "none"
-                )
-                config.qwen_image_quantize_transformer = getattr(qi, "quantize_transformer", "none")
+                # Check for Qwen-Image section
+                if hasattr(toml_config, "qwen_image"):
+                    qi = toml_config.qwen_image
+                    config.qwen_image_model_path = getattr(qi, "model_path", "")
+                    config.qwen_image_edit_model_path = getattr(qi, "edit_model_path", "")
+                    config.qwen_image_cpu_offload = getattr(qi, "cpu_offload", True)
+                    config.qwen_image_layer_num = getattr(qi, "layer_num", 4)
+                    config.qwen_image_steps = getattr(qi, "num_inference_steps", 25)
+                    config.qwen_image_cfg_scale = getattr(qi, "cfg_scale", 4.0)
+                    config.qwen_image_resolution = getattr(qi, "resolution", 640)
+                    config.qwen_image_quantize_text_encoder = getattr(
+                        qi, "quantize_text_encoder", "none"
+                    )
+                    config.qwen_image_quantize_transformer = getattr(qi, "quantize_transformer", "none")
 
-            # Check for LTX-2 section
-            if hasattr(toml_config, "ltx2"):
-                ltx2 = toml_config.ltx2
-                config.ltx2_model_path = getattr(ltx2, "model_path", "")
-                config.ltx2_num_frames = getattr(ltx2, "num_frames", 33)
-                config.ltx2_fps = getattr(ltx2, "fps", 24)
-                config.ltx2_guidance_scale = getattr(ltx2, "guidance_scale", 3.5)
-                config.ltx2_steps = getattr(ltx2, "num_inference_steps", None)
-                config.ltx2_lora_path = getattr(ltx2, "lora_path", "")
-                config.ltx2_lora_scale = getattr(ltx2, "lora_scale", 1.0)
-                config.ltx2_audio = getattr(ltx2, "audio_enabled", False)
-                # LTX-2 optimization settings
-                config.ltx2_text_encoder_device = getattr(ltx2, "text_encoder_device", "cpu")
-                config.ltx2_transformer_device = getattr(ltx2, "transformer_device", "cuda")
-                config.ltx2_vae_device = getattr(ltx2, "vae_device", "cuda")
-                config.ltx2_quantize = getattr(ltx2, "quantize", "fp8")
-                config.ltx2_skip_cleanup = getattr(ltx2, "skip_cleanup", False)
+                # Check for LTX-2 section
+                if hasattr(toml_config, "ltx2"):
+                    ltx2 = toml_config.ltx2
+                    config.ltx2_model_path = getattr(ltx2, "model_path", "")
+                    config.ltx2_num_frames = getattr(ltx2, "num_frames", 33)
+                    config.ltx2_fps = getattr(ltx2, "fps", 24)
+                    config.ltx2_guidance_scale = getattr(ltx2, "guidance_scale", 3.5)
+                    config.ltx2_steps = getattr(ltx2, "num_inference_steps", None)
+                    config.ltx2_lora_path = getattr(ltx2, "lora_path", "")
+                    config.ltx2_lora_scale = getattr(ltx2, "lora_scale", 1.0)
+                    config.ltx2_audio = getattr(ltx2, "audio_enabled", False)
+                    # LTX-2 optimization settings
+                    config.ltx2_text_encoder_device = getattr(ltx2, "text_encoder_device", "cpu")
+                    config.ltx2_transformer_device = getattr(ltx2, "transformer_device", "cuda")
+                    config.ltx2_vae_device = getattr(ltx2, "vae_device", "cuda")
+                    config.ltx2_quantize = getattr(ltx2, "quantize", "fp8")
+                    config.ltx2_skip_cleanup = getattr(ltx2, "skip_cleanup", False)
 
-            # Check for FLUX.2 section
-            if hasattr(toml_config, "flux2"):
-                flux2 = toml_config.flux2
-                # Use 'or' to handle empty strings as falsy
-                config.flux2_model_path = flux2.model_path or config.flux2_model_path
-                config.flux2_vae_path = flux2.vae_path or config.flux2_vae_path
-                config.flux2_encoder_path = flux2.encoder_path or config.flux2_encoder_path
-                config.flux2_model_name = flux2.default_model or config.flux2_model_name
-                config.flux2_block_offload = flux2.block_offload
-                if flux2.default_steps is not None:
-                    config.flux2_num_steps = flux2.default_steps
-                if flux2.default_guidance is not None:
-                    config.flux2_guidance = flux2.default_guidance
+                # Check for FLUX.2 section
+                if hasattr(toml_config, "flux2"):
+                    flux2 = toml_config.flux2
+                    # Use 'or' to handle empty strings as falsy
+                    config.flux2_model_path = flux2.model_path or config.flux2_model_path
+                    config.flux2_vae_path = flux2.vae_path or config.flux2_vae_path
+                    config.flux2_encoder_path = flux2.encoder_path or config.flux2_encoder_path
+                    config.flux2_model_name = flux2.default_model or config.flux2_model_name
+                    config.flux2_block_offload = flux2.block_offload
+                    if flux2.default_steps is not None:
+                        config.flux2_num_steps = flux2.default_steps
+                    if flux2.default_guidance is not None:
+                        config.flux2_guidance = flux2.default_guidance
 
-            # Check for Wan section
-            if hasattr(toml_config, "wan"):
-                wan = toml_config.wan
-                config.wan_humo_path = getattr(wan, "humo_path", "")
-                config.wan_base_path = getattr(wan, "base_path", "")
-                config.wan_whisper_path = getattr(wan, "whisper_path", "")
-                config.wan_humo_variant = getattr(wan, "humo_variant", "17B")
-                config.wan_num_frames = getattr(wan, "num_frames", 97)
-                config.wan_fps = getattr(wan, "fps", 25)
-                config.wan_height = getattr(wan, "height", 720)
-                config.wan_width = getattr(wan, "width", 1280)
-                config.wan_guidance_scale = getattr(wan, "guidance_scale", 5.0)
-                config.wan_audio_scale = getattr(wan, "audio_scale", 0.0)
-                config.wan_steps = getattr(wan, "num_inference_steps", 50)
-                config.wan_offload_mode = getattr(wan, "offload_mode", "model")
+                # Check for Z-Image section
+                if hasattr(toml_config, "zimage"):
+                    zimage = toml_config.zimage
+                    config.zimage_model_path = getattr(zimage, "model_path", "") or config.zimage_model_path
+                    config.zimage_variant = getattr(zimage, "variant", "auto")
+                    # Apply variant defaults from config if specified
+                    if getattr(zimage, "default_steps", None) is not None:
+                        config.steps = zimage.default_steps
+                    if getattr(zimage, "default_guidance_scale", None) is not None:
+                        config.guidance_scale = zimage.default_guidance_scale
+                    if getattr(zimage, "default_shift", None) is not None:
+                        config.shift = zimage.default_shift
+                    if getattr(zimage, "default_negative_prompt", None):
+                        config.negative_prompt = zimage.default_negative_prompt
+                    if getattr(zimage, "default_cfg_normalization", None) is not None:
+                        config.cfg_normalization = zimage.default_cfg_normalization
 
-            # Check for DyPE section
-            if hasattr(toml_config, "dype"):
-                dype = toml_config.dype
-                config.dype_enabled = getattr(dype, "enabled", False)
-                config.dype_method = getattr(dype, "method", "vision_yarn")
-                config.dype_scale = getattr(dype, "dype_scale", 2.0)
-                config.dype_exponent = getattr(dype, "dype_exponent", 2.0)
-                config.dype_start_sigma = getattr(dype, "dype_start_sigma", 1.0)
-                config.dype_base_shift = getattr(dype, "base_shift", 0.5)
-                config.dype_max_shift = getattr(dype, "max_shift", 1.15)
-                config.dype_base_resolution = getattr(dype, "base_resolution", 1024)
-                config.dype_anisotropic = getattr(dype, "anisotropic", False)
-                config.dype_multipass = getattr(dype, "multipass", "single")
-                config.dype_pass2_strength = getattr(dype, "pass2_strength", 0.5)
-                config.dype_pass3_strength = getattr(dype, "pass3_strength", 0.4)
-                config.dype_frequency_modulation = getattr(dype, "frequency_modulation", False)
+                # Check for Wan section
+                if hasattr(toml_config, "wan"):
+                    wan = toml_config.wan
+                    config.wan_humo_path = getattr(wan, "humo_path", "")
+                    config.wan_base_path = getattr(wan, "base_path", "")
+                    config.wan_whisper_path = getattr(wan, "whisper_path", "")
+                    config.wan_humo_variant = getattr(wan, "humo_variant", "17B")
+                    config.wan_num_frames = getattr(wan, "num_frames", 97)
+                    config.wan_fps = getattr(wan, "fps", 25)
+                    config.wan_height = getattr(wan, "height", 720)
+                    config.wan_width = getattr(wan, "width", 1280)
+                    config.wan_guidance_scale = getattr(wan, "guidance_scale", 5.0)
+                    config.wan_audio_scale = getattr(wan, "audio_scale", 0.0)
+                    config.wan_steps = getattr(wan, "num_inference_steps", 50)
+                    config.wan_offload_mode = getattr(wan, "offload_mode", "model")
 
-            # Check for SLG (Skip Layer Guidance) section
-            if hasattr(toml_config, "slg"):
-                slg = toml_config.slg
-                if getattr(slg, "enabled", False):
-                    config.slg_scale = getattr(slg, "scale", 2.5)
-                    config.slg_layers = getattr(slg, "layers", [7, 8, 9, 10, 11, 12])
-                    config.slg_start = getattr(slg, "start", 0.05)
-                    config.slg_stop = getattr(slg, "stop", 0.5)
+                # Check for DyPE section
+                if hasattr(toml_config, "dype"):
+                    dype = toml_config.dype
+                    config.dype_enabled = getattr(dype, "enabled", False)
+                    config.dype_method = getattr(dype, "method", "vision_yarn")
+                    config.dype_scale = getattr(dype, "dype_scale", 2.0)
+                    config.dype_exponent = getattr(dype, "dype_exponent", 2.0)
+                    config.dype_start_sigma = getattr(dype, "dype_start_sigma", 1.0)
+                    config.dype_base_shift = getattr(dype, "base_shift", 0.5)
+                    config.dype_max_shift = getattr(dype, "max_shift", 1.15)
+                    config.dype_base_resolution = getattr(dype, "base_resolution", 1024)
+                    config.dype_anisotropic = getattr(dype, "anisotropic", False)
+                    config.dype_multipass = getattr(dype, "multipass", "single")
+                    config.dype_pass2_strength = getattr(dype, "pass2_strength", 0.5)
+                    config.dype_pass3_strength = getattr(dype, "pass3_strength", 0.4)
+                    config.dype_frequency_modulation = getattr(dype, "frequency_modulation", False)
 
-            # Check for FMTT (Flow Map Trajectory Tilting) section
-            if hasattr(toml_config, "fmtt"):
-                fmtt = toml_config.fmtt
-                # Always load siglip_model and siglip_device from config
-                config.fmtt_siglip_model = getattr(
-                    fmtt, "siglip_model", "google/siglip2-giant-opt-patch16-384"
-                )
-                config.fmtt_siglip_device = getattr(fmtt, "siglip_device", "cuda")
-                if getattr(fmtt, "enabled", False):
-                    config.fmtt_scale = getattr(fmtt, "guidance_scale", 1.0)
-                    config.fmtt_start = getattr(fmtt, "guidance_start", 0.0)
-                    config.fmtt_stop = getattr(fmtt, "guidance_stop", 0.5)
-                    config.fmtt_normalize = getattr(fmtt, "normalize_mode", "unit")
-                    config.fmtt_decode_scale = getattr(fmtt, "decode_scale", 0.5)
+                # Check for SLG (Skip Layer Guidance) section
+                if hasattr(toml_config, "slg"):
+                    slg = toml_config.slg
+                    if getattr(slg, "enabled", False):
+                        config.slg_scale = getattr(slg, "scale", 2.5)
+                        config.slg_layers = getattr(slg, "layers", [7, 8, 9, 10, 11, 12])
+                        config.slg_start = getattr(slg, "start", 0.05)
+                        config.slg_stop = getattr(slg, "stop", 0.5)
 
-            # Check for FBCache (Forward Block Cache) section
-            if hasattr(toml_config, "fbcache"):
-                fbcache = toml_config.fbcache
-                if getattr(fbcache, "enabled", False):
-                    config.fbcache = True
-                    config.fbcache_threshold = getattr(fbcache, "middle_threshold", 0.05)
-                    config.fbcache_log = getattr(fbcache, "log_residuals", False)
+                # Check for FMTT (Flow Map Trajectory Tilting) section
+                if hasattr(toml_config, "fmtt"):
+                    fmtt = toml_config.fmtt
+                    # Always load siglip_model and siglip_device from config
+                    config.fmtt_siglip_model = getattr(
+                        fmtt, "siglip_model", "google/siglip2-giant-opt-patch16-384"
+                    )
+                    config.fmtt_siglip_device = getattr(fmtt, "siglip_device", "cuda")
+                    if getattr(fmtt, "enabled", False):
+                        config.fmtt_scale = getattr(fmtt, "guidance_scale", 1.0)
+                        config.fmtt_start = getattr(fmtt, "guidance_start", 0.0)
+                        config.fmtt_stop = getattr(fmtt, "guidance_stop", 0.5)
+                        config.fmtt_normalize = getattr(fmtt, "normalize_mode", "unit")
+                        config.fmtt_decode_scale = getattr(fmtt, "decode_scale", 0.5)
 
-        except Exception as e:
-            logger.warning(f"Failed to load config: {e}")
+                # Check for FBCache (Forward Block Cache) section
+                if hasattr(toml_config, "fbcache"):
+                    fbcache = toml_config.fbcache
+                    if getattr(fbcache, "enabled", False):
+                        config.fbcache = True
+                        config.fbcache_threshold = getattr(fbcache, "middle_threshold", 0.05)
+                        config.fbcache_log = getattr(fbcache, "log_residuals", False)
 
-    # Also check for server section in TOML
-    if args.config:
+            except Exception as e:
+                logger.warning(f"Failed to load config: {e}")
+
+    # Also check for server section in TOML (only if file exists)
+    if args.config and Path(args.config).exists():
         try:
             import tomllib
         except ImportError:
@@ -2023,7 +2100,9 @@ def setup_logging(config: RuntimeConfig) -> None:
     )
 
     if config.debug:
-        # Enable debug for llm_dit modules
+        # Enable debug for all project modules
         logging.getLogger("llm_dit").setLevel(logging.DEBUG)
         logging.getLogger("llm_dit.backends").setLevel(logging.DEBUG)
         logging.getLogger("llm_dit.pipelines").setLevel(logging.DEBUG)
+        logging.getLogger("web").setLevel(logging.DEBUG)
+        logging.getLogger("__main__").setLevel(logging.DEBUG)  # For direct script execution

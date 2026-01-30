@@ -1,16 +1,17 @@
 # agent context
 
-*last updated: 2026-01-24*
+*last updated: 2026-01-29*
 
 Quick reference for LLM agents. Uses progressive disclosure - read only what you need, but always read
 
 **[Read for architectural decisions and documentation protocols](internal/principles/guiding_principles.md)**
 
 Core principles:
-- **Principle 0**: Experimentation First - modularity, reproducibility, extensibility
-- **Principle 1**: Documentation as First-Class Output - session logging, state files
-- **Principle 2**: Progressive Disclosure for Onboarding - layered docs, domain AGENTS.md
-- **Principle 3**: State Management for Session Continuity - handoff protocols
+- **Principle 1**: Clean, easy-to-extend, easy-to-maintain, modular architecture
+- **Principle 2**: Documentation and Testing as First-Class Output - session logging, state files
+- **Principle 3**: Progressive Disclosure for Onboarding - layered docs, domain AGENTS.md
+- **Principle 4**: State Management for Session Continuity to future Claude agents - handoff protocols
+- **Principle 5**: No lazy imports unless justified; keep imports organized and consistent
 
 ## onboarding path
 
@@ -44,6 +45,15 @@ Read these files when starting a new session:
 - **dtype conventions** - transformers: `dtype=`, diffusers: `torch_dtype=`
 - **always update state** after significant work (see below)
 
+### configuration hierarchy
+
+Config values ALWAYS win by default. Code should:
+1. Read from config.toml as the source of truth
+2. Allow explicit parameter overrides when needed
+3. Never auto-detect when a config value exists
+
+Example: `zimage_variant` in config.toml determines Turbo vs Base. Loaders accept `variant=None` where `None` means "use config".
+
 ## modular architecture
 This table defines the structural hierarchy of the **llm-dit-experiments** platform, moving from top-level business logic down to hardware-level math primitives.
 
@@ -64,7 +74,8 @@ This table defines the structural hierarchy of the **llm-dit-experiments** platf
 |----------|------|---------|--------|
 | **FLUX.2 Klein** | **text-to-image, image editing** | Qwen3-8B/4B | **Production** (2026-01-24) |
 | LTX-2 | text-to-video | Gemma3-12B | Production |
-| Z-Image | text-to-image | Qwen3-4B | Production |
+| Z-Image-Turbo | text-to-image | Qwen3-4B | Production |
+| Z-Image (base) | text-to-image | Qwen3-4B | In-Development |
 | Qwen-Image | editing/decomposition | Qwen2.5-VL-7B | Production |
 
 ## state management (required)
@@ -165,6 +176,7 @@ uv run scripts/generate.py --model-type flux2 \
 
 | Task | Read | Why |
 |------|------|-----|
+| **Web/UI development** | [internal/web/AGENTS.md](internal/web/AGENTS.md) | React frontend, design system |
 | Picking new work | [spec.md](spec.md) | Prioritized backlog (P0-P5) |
 | Writing/running tests | [tests/AGENTS.md](tests/AGENTS.md) | Complete testing guide |
 | Research/experiments | [experiments/AGENTS.md](experiments/AGENTS.md) | Research protocols |

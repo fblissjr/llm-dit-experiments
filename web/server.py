@@ -11,25 +11,82 @@ Usage:
 
 import argparse
 import asyncio
+import base64
+import binascii
+import gc
 import hashlib
 import io
 import json
 import logging
 import re
 import time
+import traceback
+import zipfile
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any, AsyncIterator, Dict, List, Optional
 
 import httpx
 import torch
 from fastapi import FastAPI, HTTPException
+from PIL import Image
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
-logging.basicConfig(level=logging.INFO)
+# Basic console logging (file logging added in setup_file_logging)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    datefmt="%H:%M:%S",
+)
 logger = logging.getLogger(__name__)
+
+
+def setup_file_logging(config: dict) -> None:
+    """Set up file logging with rotation based on config.
+
+    Args:
+        config: Logging configuration dict with keys:
+            - enabled: bool
+            - log_dir: str (relative to project root)
+            - log_level: str (DEBUG, INFO, WARNING, ERROR)
+            - max_bytes: int (max file size before rotation)
+            - backup_count: int (number of backup files to keep)
+    """
+    if not config.get("enabled", False):
+        return
+
+    log_dir = Path(__file__).parent.parent / config.get("log_dir", "logs")
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    log_file = log_dir / "server.log"
+    log_level = getattr(logging, config.get("log_level", "INFO").upper(), logging.INFO)
+    max_bytes = config.get("max_bytes", 10 * 1024 * 1024)  # 10MB default
+    backup_count = config.get("backup_count", 5)
+
+    # Create rotating file handler
+    file_handler = RotatingFileHandler(
+        log_file,
+        maxBytes=max_bytes,
+        backupCount=backup_count,
+        encoding="utf-8",
+    )
+    file_handler.setLevel(log_level)
+    file_handler.setFormatter(
+        logging.Formatter(
+            "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        )
+    )
+
+    # Add to root logger so all loggers write to file
+    root_logger = logging.getLogger()
+    root_logger.addHandler(file_handler)
+    root_logger.setLevel(min(root_logger.level, log_level))
+
+    logger.info(f"File logging enabled: {log_file} (max {max_bytes // 1024 // 1024}MB, {backup_count} backups)")
 
 app = FastAPI(title="Z-Image Generator")
 
@@ -181,19 +238,72 @@ REQUIRES_RESTART = {
 }
 
 
+# =============================================================================
+# Shared Response Utilities
+# =============================================================================
+
+
+def create_image_response(
+    image=None,  # PIL Image (optional if img_b64 provided)
+    pipeline_id: str = "unknown",
+    seed: int | None = None,
+    generation_time: float = 0.0,
+    history_id: int | None = None,
+    img_b64: str | None = None,  # Pre-computed base64 (avoids double-encoding)
+) -> dict:
+    """Create standardized JSON response for image generation endpoints.
+
+    This shared utility ensures all image endpoints (Z-Image, FLUX.2, etc.)
+    return the same format that the React frontend expects.
+
+    Args:
+        image: PIL Image object to encode (not needed if img_b64 provided)
+        pipeline_id: Pipeline identifier (e.g., "zimage", "flux2")
+        seed: Generation seed (or None/-1 for random)
+        generation_time: Time taken in seconds
+        history_id: Optional history entry ID
+        img_b64: Pre-computed base64 string (skips encoding if provided)
+
+    Returns:
+        dict with: id, output_type, url, urls, thumbnail_url, seed, generation_time
+    """
+    # Use pre-computed base64 or encode from PIL Image
+    if img_b64 is None:
+        if image is None:
+            raise ValueError("Either image or img_b64 must be provided")
+        img_bytes = io.BytesIO()
+        image.save(img_bytes, format="PNG")
+        img_b64 = base64.b64encode(img_bytes.getvalue()).decode("ascii")
+
+    data_url = f"data:image/png;base64,{img_b64}"
+
+    return {
+        "id": history_id if history_id is not None else f"gen-{int(time.time() * 1000)}",
+        "pipeline_id": pipeline_id,
+        "output_type": "image",
+        "url": data_url,
+        "urls": [data_url],
+        "thumbnail_url": data_url,
+        "seed": seed if seed is not None else -1,
+        "generation_time": generation_time,
+    }
+
+
 def unload_zimage_pipeline() -> bool:
     """Unload Z-Image pipeline (encoder + DiT + VAE) to free VRAM.
 
     Returns True if unloaded, False if not loaded.
     """
     global pipeline, encoder
-    import gc
-
-    import torch
 
     unloaded = False
     if pipeline is not None:
-        logger.info("[VRAM] Unloading Z-Image pipeline to free VRAM...")
+        # Log variant and model path before unloading
+        if runtime_config is not None:
+            model_path = runtime_config.zimage_model_path or runtime_config.model_path
+            logger.info(f"[VRAM] Unloading Z-Image pipeline (variant={runtime_config.zimage_variant}, path={model_path})...")
+        else:
+            logger.info("[VRAM] Unloading Z-Image pipeline to free VRAM...")
         # Move components to CPU before deletion to release CUDA memory
         try:
             if hasattr(pipeline, "transformer") and pipeline.transformer is not None:
@@ -265,9 +375,6 @@ def unload_qwen_image_t2i_pipeline() -> bool:
     Returns True if unloaded, False if not loaded.
     """
     global qwen_image_t2i_pipeline
-    import gc
-
-    import torch
 
     if qwen_image_t2i_pipeline is not None:
         logger.info("[VRAM] Unloading Qwen-Image T2I pipeline to free VRAM...")
@@ -289,9 +396,6 @@ def unload_ltx2_pipeline() -> bool:
     LTX-2 uses ~20GB VRAM, so unloading is important before loading other models.
     """
     global ltx2_pipeline
-    import gc
-
-    import torch
 
     if ltx2_pipeline is not None:
         logger.info("[VRAM] Unloading LTX-2 pipeline to free VRAM...")
@@ -358,6 +462,7 @@ class DyPEConfigRequest(BaseModel):
 
 class GenerateRequest(BaseModel):
     prompt: str  # User prompt
+    negative_prompt: Optional[str] = None  # Negative prompt for CFG (only used with base model)
     system_prompt: Optional[str] = None  # System prompt (optional)
     thinking_content: Optional[str] = (
         None  # Content inside <think>...</think> (triggers think block)
@@ -391,6 +496,7 @@ class GenerateRequest(BaseModel):
     slg_stop: Optional[float] = None  # Stop SLG at this fraction
     # Flow Map Trajectory Tilting (FMTT) options
     # None = use config defaults, explicit values override
+    fmtt_enabled: bool = False  # Enable FMTT (must be True for fmtt_scale to be used)
     fmtt_scale: Optional[float] = None  # FMTT scale (0 = disabled, 0.5-2.0 typical)
     fmtt_start: Optional[float] = None  # Start FMTT at this fraction
     fmtt_stop: Optional[float] = None  # Stop FMTT at this fraction
@@ -412,6 +518,7 @@ class Img2ImgRequest(BaseModel):
     """
 
     prompt: str  # User prompt
+    negative_prompt: Optional[str] = None  # Negative prompt for CFG (only used with base model)
     image: str  # Base64-encoded input image
     mask_image: Optional[str] = None  # Base64-encoded grayscale mask (black=preserve, white=edit)
     strength: float = Field(
@@ -741,11 +848,6 @@ async def qwen_image_decompose(request: QwenImageDecomposeRequest):
         )
 
     try:
-        import base64
-        import zipfile
-
-        from PIL import Image
-
         # Decode base64 image
         image_data = request.image
         if image_data.startswith("data:"):
@@ -848,8 +950,6 @@ async def qwen_image_decompose(request: QwenImageDecomposeRequest):
 
     except Exception as e:
         logger.error(f"[Qwen-Image] Decomposition failed: {e}")
-        import traceback
-
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -914,10 +1014,6 @@ async def qwen_image_edit_layer(request: QwenImageEditLayerRequest):
         )
 
     try:
-        import base64
-
-        from PIL import Image
-
         # Decode base64 layer image
         image_data = request.layer_image
         if image_data.startswith("data:"):
@@ -966,8 +1062,6 @@ async def qwen_image_edit_layer(request: QwenImageEditLayerRequest):
 
     except Exception as e:
         logger.error(f"[Qwen-Image] Layer edit failed: {e}")
-        import traceback
-
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -1120,8 +1214,6 @@ async def qwen_image_edit_multi(request: QwenImageEditMultiRequest):
         raise
     except Exception as e:
         logger.error(f"[Qwen-Image] Multi-edit failed: {e}")
-        import traceback
-
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -1223,8 +1315,6 @@ async def qwen_image_2512_generate(request: QwenImage2512GenerateRequest):
                 logger.info("[Qwen-Image T2I] Pipeline loaded successfully")
             except Exception as e:
                 logger.error(f"[Qwen-Image T2I] Failed to load pipeline: {e}")
-                import traceback
-
                 traceback.print_exc()
                 raise HTTPException(
                     status_code=503, detail=f"Failed to load Qwen-Image T2I pipeline: {e}"
@@ -1271,8 +1361,6 @@ async def qwen_image_2512_generate(request: QwenImage2512GenerateRequest):
         img_bytes.seek(0)
 
         # Add to history
-        import base64
-
         img_b64 = base64.b64encode(img_bytes.getvalue()).decode("ascii")
         history_entry = {
             "id": len(generation_history),
@@ -1307,8 +1395,6 @@ async def qwen_image_2512_generate(request: QwenImage2512GenerateRequest):
         raise
     except Exception as e:
         logger.error(f"[Qwen-Image T2I] Generation failed: {e}")
-        import traceback
-
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -1381,11 +1467,6 @@ async def vl_extract(request: VLExtractRequest):
         )
 
     try:
-        import base64
-        import hashlib
-
-        from PIL import Image
-
         # Decode base64 image
         image_data = base64.b64decode(request.image)
         image = Image.open(io.BytesIO(image_data)).convert("RGB")
@@ -1477,10 +1558,6 @@ async def vl_generate(request: VLGenerateRequest):
             )
 
         try:
-            import base64
-
-            from PIL import Image
-
             image_data = base64.b64decode(request.vl_image)
             image = Image.open(io.BytesIO(image_data)).convert("RGB")
 
@@ -1602,8 +1679,6 @@ async def vl_generate(request: VLGenerateRequest):
         img_bytes.seek(0)
 
         # Store in history with VL info
-        import base64
-
         img_bytes_copy = io.BytesIO()
         image.save(img_bytes_copy, format="PNG")
         img_b64 = base64.b64encode(img_bytes_copy.getvalue()).decode("ascii")
@@ -1972,8 +2047,6 @@ async def ltx2_generate_stream(request: LTX2GenerateRequest):
             thumb_path = VIDEO_OUTPUT_DIR / thumb_filename
 
             try:
-                from PIL import Image
-
                 frames = output.frames if hasattr(output, "frames") else output
                 if hasattr(frames, "ndim") and frames.ndim == 5:
                     frames = frames[0]
@@ -2000,8 +2073,6 @@ async def ltx2_generate_stream(request: LTX2GenerateRequest):
 
         except Exception as e:
             logger.error(f"[LTX-2] Generation failed: {e}")
-            import traceback
-
             traceback.print_exc()
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
 
@@ -2048,11 +2119,6 @@ async def flux2_generate(request: Flux2GenerateRequest):
     Supports both text-to-image and image editing with reference images.
     Returns PNG image as binary response.
     """
-    import base64
-    import io
-
-    from PIL import Image
-
     try:
         # Import the FLUX.2 generation pipeline
         from llm_dit.pipelines.flux2_generate import (
@@ -2125,28 +2191,129 @@ async def flux2_generate(request: Flux2GenerateRequest):
         gen_time = time.time() - start_time
         logger.info(f"[FLUX.2] Generation complete in {gen_time:.1f}s")
 
-        # Convert to PNG bytes
-        img_bytes = io.BytesIO()
-        image.save(img_bytes, format="PNG")
-        img_bytes.seek(0)
-
-        # Return as binary PNG with metadata headers
-        from fastapi.responses import Response
-        return Response(
-            content=img_bytes.getvalue(),
-            media_type="image/png",
-            headers={
-                "X-Seed": str(config.seed or "random"),
-                "X-Generation-Time": str(gen_time),
-                "X-Model": request.model_name,
-            }
+        # Return standardized JSON response (same format as Z-Image)
+        return create_image_response(
+            image=image,
+            pipeline_id="flux2",
+            seed=config.seed,
+            generation_time=gen_time,
         )
 
     except Exception as e:
         logger.error(f"[FLUX.2] Generation failed: {e}")
-        import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
+# Pipeline Schema API (for dynamic UI generation)
+# =============================================================================
+
+
+@app.get("/api/pipelines")
+async def get_pipeline_schemas():
+    """Return all pipeline schemas for frontend form generation.
+
+    The frontend uses these schemas to dynamically render forms without
+    hardcoding pipeline-specific UI. Each schema describes:
+    - Pipeline metadata (name, description, output type)
+    - Form parameters with types, defaults, and constraints
+    - Feature flags (img2img, streaming, reference images)
+
+    Returns:
+        dict with:
+        - pipelines: Dict of pipeline_id -> PipelineSchema
+        - defaults: Current RuntimeConfig values (if loaded)
+        - loaded_pipeline: Currently loaded pipeline type (if any)
+    """
+    from llm_dit.pipelines.schemas import get_all_pipelines
+
+    # Get all registered pipeline schemas
+    pipelines = get_all_pipelines()
+    pipeline_dicts = {pid: schema.to_dict() for pid, schema in pipelines.items()}
+
+    # Get current defaults from RuntimeConfig if available
+    defaults = {}
+    if runtime_config is not None:
+        try:
+            defaults = runtime_config.to_dict()
+        except Exception as e:
+            logger.warning(f"Failed to serialize RuntimeConfig: {e}")
+
+    # Determine which pipeline is currently loaded
+    loaded_pipeline = None
+    if pipeline is not None:
+        loaded_pipeline = "zimage"
+    elif qwen_image_pipeline is not None:
+        loaded_pipeline = "qwenimage-layered"
+    elif qwen_image_t2i_pipeline is not None:
+        loaded_pipeline = "qwenimage-t2i"
+    elif ltx2_pipeline is not None:
+        loaded_pipeline = "ltx2"
+    elif flux2_pipeline is not None:
+        loaded_pipeline = "flux2"
+
+    return {
+        "pipelines": pipeline_dicts,
+        "defaults": defaults,
+        "loaded_pipeline": loaded_pipeline,
+    }
+
+
+@app.get("/api/pipelines/{pipeline_id}")
+async def get_pipeline_schema(pipeline_id: str):
+    """Get schema for a specific pipeline.
+
+    Args:
+        pipeline_id: Pipeline identifier (e.g., "zimage", "ltx2")
+
+    Returns:
+        PipelineSchema dict for the requested pipeline
+
+    Raises:
+        404 if pipeline not found
+    """
+    from llm_dit.pipelines.schemas import get_pipeline, get_all_pipelines
+
+    schema = get_pipeline(pipeline_id)
+    if schema is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Pipeline '{pipeline_id}' not found. Available: {list(get_all_pipelines().keys())}",
+        )
+
+    return schema.to_dict()
+
+
+@app.get("/api/pipelines/{pipeline_id}/defaults")
+async def get_pipeline_defaults(pipeline_id: str):
+    """Get default values for a specific pipeline.
+
+    Merges schema defaults with RuntimeConfig values for the pipeline.
+
+    Args:
+        pipeline_id: Pipeline identifier
+
+    Returns:
+        Dict of parameter_id -> default_value
+    """
+    from llm_dit.pipelines.schemas import get_pipeline
+
+    schema = get_pipeline(pipeline_id)
+    if schema is None:
+        raise HTTPException(status_code=404, detail=f"Pipeline '{pipeline_id}' not found")
+
+    # Start with schema defaults
+    defaults = schema.get_defaults()
+
+    # Overlay RuntimeConfig values if available
+    if runtime_config is not None:
+        config_dict = runtime_config.to_dict()
+        for param in schema.params:
+            if param.id in config_dict:
+                defaults[param.id] = config_dict[param.id]
+
+    return defaults
 
 
 @app.get("/api/generation-config")
@@ -2898,6 +3065,8 @@ async def generate(request: GenerateRequest):
         logger.info("GENERATION REQUEST")
         logger.info("=" * 60)
         logger.info(f"  Prompt: {request.prompt[:80]}...")
+        if request.negative_prompt:
+            logger.info(f"  Negative: {request.negative_prompt[:80]}...")
         logger.info(f"  Size: {request.width}x{request.height}")
         logger.info(f"  Steps: {request.steps}")
         logger.info(f"  Seed: {request.seed}")
@@ -2920,6 +3089,10 @@ async def generate(request: GenerateRequest):
         if pipeline.encoder is not None:
             backend = getattr(pipeline.encoder, "backend", None)
             logger.info(f"  encoder.backend: {type(backend).__name__ if backend else 'None'}")
+        if runtime_config is not None:
+            model_path = runtime_config.zimage_model_path or runtime_config.model_path
+            logger.info(f"  variant: {runtime_config.zimage_variant}")
+            logger.info(f"  model_path: {model_path}")
         logger.info("-" * 60)
 
         # Set up generator for reproducibility
@@ -2927,6 +3100,11 @@ async def generate(request: GenerateRequest):
         if request.seed is not None:
             generator = torch.Generator()
             generator.manual_seed(request.seed)
+
+        # Negative prompt: only use for base variant (turbo has CFG=0, so it has no effect)
+        negative_prompt_to_use = None
+        if runtime_config is not None and runtime_config.zimage_variant == "base":
+            negative_prompt_to_use = request.negative_prompt
 
         start = time.time()
 
@@ -2938,8 +3116,10 @@ async def generate(request: GenerateRequest):
         slg_stop = request.slg_stop if request.slg_stop is not None else 0.2
 
         # FMTT config: "UI always wins" - don't fall back to runtime_config
-        # None means disabled, not "use config default"
-        fmtt_scale = request.fmtt_scale if request.fmtt_scale is not None else 0.0
+        # Only use fmtt_scale if fmtt_enabled is True
+        fmtt_scale = (
+            request.fmtt_scale if request.fmtt_enabled and request.fmtt_scale is not None else 0.0
+        )
         fmtt_start = request.fmtt_start if request.fmtt_start is not None else 0.0
         fmtt_stop = request.fmtt_stop if request.fmtt_stop is not None else 0.5
         fmtt_normalize = request.fmtt_normalize if request.fmtt_normalize is not None else "unit"
@@ -3015,6 +3195,7 @@ async def generate(request: GenerateRequest):
             )
             image = pipeline.generate_multipass(
                 request.prompt,
+                negative_prompt=negative_prompt_to_use,
                 final_width=request.width,
                 final_height=request.height,
                 passes=passes,
@@ -3051,9 +3232,14 @@ async def generate(request: GenerateRequest):
                 fbcache_log=request.fbcache_log,
             )
         else:
+            # Progress callback for console logging
+            def progress_callback(step: int, total: int, latents: torch.Tensor) -> None:
+                logger.info(f"  Step {step + 1}/{total}")
+
             # Single pass generation
             image = pipeline(
                 request.prompt,
+                negative_prompt=negative_prompt_to_use,
                 height=request.height,
                 width=request.width,
                 num_inference_steps=request.steps,
@@ -3087,23 +3273,17 @@ async def generate(request: GenerateRequest):
                 fbcache=request.fbcache,
                 fbcache_threshold=request.fbcache_threshold,
                 fbcache_log=request.fbcache_log,
+                callback=progress_callback,
             )
 
         gen_time = time.time() - start
         logger.info(f"Generated in {gen_time:.1f}s")
         logger.info("=" * 60)
 
-        # Convert to PNG bytes
+        # Convert to base64 for history storage and response
         img_bytes = io.BytesIO()
         image.save(img_bytes, format="PNG")
-        img_bytes.seek(0)
-
-        # Convert to base64 for history storage
-        import base64
-
-        img_bytes_copy = io.BytesIO()
-        image.save(img_bytes_copy, format="PNG")
-        img_b64 = base64.b64encode(img_bytes_copy.getvalue()).decode("ascii")
+        img_b64 = base64.b64encode(img_bytes.getvalue()).decode("ascii")
 
         # Get formatted prompt for history
         formatted_prompt = None
@@ -3157,19 +3337,236 @@ async def generate(request: GenerateRequest):
         if len(generation_history) > MAX_HISTORY:
             generation_history.pop()
 
-        return StreamingResponse(
-            img_bytes,
-            media_type="image/png",
-            headers={
-                "X-Generation-Time": str(gen_time),
-                "X-Seed": str(request.seed) if request.seed else "random",
-                "X-History-Id": str(history_entry["id"]),
-            },
+        # Return standardized JSON response (shared format with FLUX.2, etc.)
+        return create_image_response(
+            pipeline_id="zimage",
+            seed=request.seed,
+            generation_time=gen_time,
+            history_id=history_entry["id"],
+            img_b64=img_b64,  # Reuse already-computed base64
         )
 
     except Exception as e:
         logger.error(f"Generation failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/generate/stream")
+async def generate_stream(request: GenerateRequest):
+    """Generate an image with SSE progress streaming.
+
+    Returns Server-Sent Events with progress updates during generation,
+    allowing the frontend to show step-by-step progress.
+
+    Events:
+    - {"type": "status", "message": "..."} - Status updates
+    - {"type": "progress", "step": N, "total_steps": M, ...} - Step progress
+    - {"type": "complete", ...} - Final result with image data
+    - {"type": "error", "message": "..."} - Error occurred
+    """
+    if encoder_only_mode:
+        raise HTTPException(
+            status_code=400, detail="Server running in encoder-only mode. Use /api/encode instead."
+        )
+    if pipeline is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Z-Image pipeline not loaded. Use the Settings panel to load it first.",
+        )
+
+    async def generate_with_progress() -> AsyncIterator[str]:
+        """Async generator for SSE events."""
+        try:
+            # Initial status
+            yield f"data: {json.dumps({'type': 'status', 'message': 'Starting generation...'})}\n\n"
+
+            # Set up generator for reproducibility
+            generator = None
+            actual_seed = request.seed if request.seed is not None else int(time.time() * 1000) % (2**32)
+            generator = torch.Generator()
+            generator.manual_seed(actual_seed)
+
+            # Negative prompt: only use for base variant
+            negative_prompt_to_use = None
+            if runtime_config is not None and runtime_config.zimage_variant == "base":
+                negative_prompt_to_use = request.negative_prompt
+
+            # SLG config
+            slg_scale = request.slg_scale if request.slg_scale is not None else 0.0
+            slg_layers = request.slg_layers
+            slg_start = request.slg_start if request.slg_start is not None else 0.01
+            slg_stop = request.slg_stop if request.slg_stop is not None else 0.2
+
+            # FMTT config
+            fmtt_scale = (
+                request.fmtt_scale if request.fmtt_enabled and request.fmtt_scale is not None else 0.0
+            )
+            fmtt_start = request.fmtt_start if request.fmtt_start is not None else 0.0
+            fmtt_stop = request.fmtt_stop if request.fmtt_stop is not None else 0.5
+            fmtt_normalize = request.fmtt_normalize if request.fmtt_normalize is not None else "unit"
+            fmtt_decode_scale = request.fmtt_decode_scale if request.fmtt_decode_scale is not None else 0.5
+            fmtt_siglip_model = request.fmtt_siglip_model or "google/siglip2-giant-opt-patch16-384"
+            fmtt_siglip_device = request.fmtt_siglip_device or "cuda"
+
+            # DyPE config
+            dype_config = None
+            if request.dype is not None and request.dype.enabled:
+                from llm_dit.utils.dype import DyPEConfig
+                dype_config = DyPEConfig(
+                    enabled=request.dype.enabled,
+                    method=request.dype.method,
+                    dype_scale=request.dype.dype_scale,
+                    dype_exponent=request.dype.dype_exponent,
+                    base_shift=request.dype.base_shift,
+                    max_shift=request.dype.max_shift,
+                    base_resolution=1024,
+                    multipass=request.dype.multipass,
+                    pass2_strength=request.dype.pass2_strength,
+                    pass3_strength=request.dype.pass3_strength,
+                    frequency_modulation=request.dype.frequency_modulation,
+                )
+
+            # Progress tracking state
+            progress_state = {"step": 0, "total": request.steps, "start_time": time.time()}
+
+            def progress_callback(step: int, total: int, latents: torch.Tensor) -> None:
+                """Update progress state (can't yield from here, but state is shared)."""
+                progress_state["step"] = step + 1
+                progress_state["total"] = total
+
+            logger.info("=" * 60)
+            logger.info("STREAMING GENERATION REQUEST")
+            logger.info("=" * 60)
+            logger.info(f"  Prompt: {request.prompt[:80]}...")
+            logger.info(f"  Size: {request.width}x{request.height}")
+            logger.info(f"  Steps: {request.steps}")
+            logger.info(f"  Seed: {actual_seed}")
+
+            # Run generation in thread pool (blocking operation)
+            loop = asyncio.get_event_loop()
+
+            def do_generate():
+                return pipeline(
+                    request.prompt,
+                    negative_prompt=negative_prompt_to_use,
+                    height=request.height,
+                    width=request.width,
+                    num_inference_steps=request.steps,
+                    guidance_scale=request.guidance_scale,
+                    cfg_normalization=request.cfg_normalization,
+                    cfg_truncation=request.cfg_truncation,
+                    shift=None if request.dynamic_shift else request.shift,
+                    d_noise=request.d_noise,
+                    generator=generator,
+                    template=request.template,
+                    system_prompt=request.system_prompt,
+                    thinking_content=request.thinking_content,
+                    assistant_content=request.assistant_content,
+                    force_think_block=request.force_think_block,
+                    remove_quotes=request.strip_quotes,
+                    long_prompt_mode=request.long_prompt_mode,
+                    hidden_layer=request.hidden_layer,
+                    layer_weights=request.layer_weights,
+                    skip_layer_guidance_scale=slg_scale,
+                    skip_layer_indices=slg_layers,
+                    skip_layer_start=slg_start,
+                    skip_layer_stop=slg_stop,
+                    fmtt_guidance_scale=fmtt_scale,
+                    fmtt_guidance_start=fmtt_start,
+                    fmtt_guidance_stop=fmtt_stop,
+                    fmtt_normalize_mode=fmtt_normalize,
+                    fmtt_decode_scale=fmtt_decode_scale,
+                    fmtt_siglip_model=fmtt_siglip_model,
+                    fmtt_siglip_device=fmtt_siglip_device,
+                    dype_config=dype_config,
+                    fbcache=request.fbcache,
+                    fbcache_threshold=request.fbcache_threshold,
+                    fbcache_log=request.fbcache_log,
+                    callback=progress_callback,
+                )
+
+            # Start generation task
+            gen_task = loop.run_in_executor(None, do_generate)
+
+            # Poll progress while generating
+            last_step = -1
+            while not gen_task.done():
+                await asyncio.sleep(0.1)  # Poll every 100ms
+                step = progress_state["step"]
+                total = progress_state["total"]
+
+                if step > last_step and step <= total:
+                    elapsed = time.time() - progress_state["start_time"]
+                    # Calculate ETA
+                    if step > 0:
+                        its = step / elapsed  # iterations per second
+                        remaining = (total - step) / its if its > 0 else 0
+                    else:
+                        its = 0
+                        remaining = 0
+
+                    yield f"data: {json.dumps({'type': 'progress', 'step': step, 'total_steps': total, 'elapsed': round(elapsed, 1), 'estimated_remaining_ms': int(remaining * 1000), 'message': f'Step {step}/{total}'})}\n\n"
+                    last_step = step
+
+            # Get result
+            image = await gen_task
+            gen_time = time.time() - progress_state["start_time"]
+
+            logger.info(f"[Stream] Generated in {gen_time:.1f}s")
+            logger.info("=" * 60)
+
+            # Convert to base64
+            img_bytes = io.BytesIO()
+            image.save(img_bytes, format="PNG")
+            img_b64 = base64.b64encode(img_bytes.getvalue()).decode("ascii")
+            data_url = f"data:image/png;base64,{img_b64}"
+
+            # Store in history
+            history_entry = {
+                "id": len(generation_history),
+                "timestamp": time.time(),
+                "model_type": "zimage",
+                "prompt": request.prompt,
+                "width": request.width,
+                "height": request.height,
+                "steps": request.steps,
+                "seed": actual_seed,
+                "gen_time": gen_time,
+                "image_b64": img_b64,
+            }
+            generation_history.insert(0, history_entry)
+            if len(generation_history) > MAX_HISTORY:
+                generation_history.pop()
+
+            # Send complete event
+            gen_id = f"gen-{int(time.time() * 1000)}"
+            complete_event = {
+                'type': 'complete',
+                'id': gen_id,
+                'pipeline_id': 'zimage',
+                'output_type': 'image',
+                'url': data_url,
+                'urls': [data_url],
+                'thumbnail_url': data_url,
+                'seed': actual_seed,
+                'generation_time': gen_time,
+            }
+            yield f"data: {json.dumps(complete_event)}\n\n"
+
+        except Exception as e:
+            logger.error(f"[Stream] Generation failed: {e}")
+            traceback.print_exc()
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+
+    return StreamingResponse(
+        generate_with_progress(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # Disable nginx buffering
+        },
+    )
 
 
 @app.post("/api/img2img")
@@ -3189,11 +3586,8 @@ async def img2img(request: Img2ImgRequest):
         raise HTTPException(status_code=503, detail="Pipeline not loaded")
 
     try:
-        import base64
-        import binascii
-
-        from PIL import Image as PILImage
         from PIL import UnidentifiedImageError
+        PILImage = Image  # Alias for consistency with existing code
 
         logger.info("=" * 60)
         logger.info("IMG2IMG REQUEST")
@@ -3263,6 +3657,11 @@ async def img2img(request: Img2ImgRequest):
             generator = torch.Generator()
             generator.manual_seed(request.seed)
 
+        # Negative prompt: only use for base variant (turbo has CFG=0, so it has no effect)
+        negative_prompt_to_use = None
+        if runtime_config is not None and runtime_config.zimage_variant == "base":
+            negative_prompt_to_use = request.negative_prompt
+
         start = time.time()
 
         # Generate image using img2img
@@ -3273,6 +3672,7 @@ async def img2img(request: Img2ImgRequest):
 
         image = pipeline.img2img(
             prompt=request.prompt,
+            negative_prompt=negative_prompt_to_use,
             image=input_image,
             mask_image=mask_image,
             strength=request.strength,
@@ -3301,15 +3701,10 @@ async def img2img(request: Img2ImgRequest):
         logger.info(f"Generated in {gen_time:.1f}s")
         logger.info("=" * 60)
 
-        # Convert to PNG bytes
+        # Convert to base64 for history storage and response
         img_bytes = io.BytesIO()
         image.save(img_bytes, format="PNG")
-        img_bytes.seek(0)
-
-        # Store in history
-        img_bytes_copy = io.BytesIO()
-        image.save(img_bytes_copy, format="PNG")
-        img_b64 = base64.b64encode(img_bytes_copy.getvalue()).decode("ascii")
+        img_b64 = base64.b64encode(img_bytes.getvalue()).decode("ascii")
 
         history_entry = {
             "id": len(generation_history),
@@ -3329,21 +3724,17 @@ async def img2img(request: Img2ImgRequest):
         if len(generation_history) > MAX_HISTORY:
             generation_history.pop()
 
-        return StreamingResponse(
-            img_bytes,
-            media_type="image/png",
-            headers={
-                "X-Generation-Time": str(gen_time),
-                "X-Seed": str(request.seed) if request.seed else "random",
-                "X-History-Id": str(history_entry["id"]),
-                "X-Mode": "differential" if request.mask_image else "standard",
-            },
+        # Return standardized JSON response (shared format with other pipelines)
+        return create_image_response(
+            pipeline_id="zimage-img2img",
+            seed=request.seed,
+            generation_time=gen_time,
+            history_id=history_entry["id"],
+            img_b64=img_b64,  # Reuse already-computed base64
         )
 
     except Exception as e:
         logger.error(f"Img2img failed: {e}")
-        import traceback
-
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -3657,10 +4048,6 @@ async def _rewrite_with_vl(request: RewriteRequest) -> dict:
 
     Loads Qwen3-VL on-demand if not already loaded.
     """
-    import base64
-
-    from PIL import Image
-
     global vl_rewriter, vl_extractor
 
     # Check if VL is available
@@ -4507,8 +4894,6 @@ def load_api_pipeline(
 @app.get("/api/system/status")
 async def system_status():
     """Get detailed system status including memory usage and cached models."""
-    import gc
-
     status = {
         "pipeline_loaded": pipeline is not None,
         "encoder_loaded": encoder is not None,
@@ -4608,8 +4993,6 @@ async def unload_fmtt():
 @app.post("/api/system/clear-cache")
 async def clear_cache():
     """Clear CUDA cache and Python garbage collection."""
-    import gc
-
     gc.collect()
 
     freed_gb = 0
@@ -4657,8 +5040,6 @@ def unload_all_pipelines_except(keep: str = None):
         keep: Name of pipeline to keep loaded ('zimage', 'qwen-image', 'qwen-image-t2i', 'ltx2', 'flux2')
               If None, unloads all pipelines.
     """
-    import gc
-
     unloaded = []
 
     # Z-Image
@@ -4724,15 +5105,22 @@ def load_zimage_pipeline_on_demand():
         if runtime_config is None:
             raise ValueError("Runtime config not initialized")
 
-        if not runtime_config.model_path:
-            raise ValueError("Z-Image model_path not configured. Set model_path in config.toml")
+        # Use zimage_model_path if set, fall back to legacy model_path
+        model_path = runtime_config.zimage_model_path or runtime_config.model_path
+        if not model_path:
+            raise ValueError("Z-Image model_path not configured. Set [zimage].model_path in config.toml")
 
         # Unload other pipelines first to free VRAM
         unload_all_pipelines_except("zimage")
 
         _zimage_loading_in_progress = True
         logger.info("[Z-Image] Loading pipeline on-demand...")
-        logger.info(f"  Model path: {runtime_config.model_path}")
+        logger.info(f"  Model path: {model_path}")
+        logger.info(f"  Variant: {runtime_config.zimage_variant}")
+
+        # Debug: log cpu_offload value to diagnose OOM issues
+        cpu_offload_value = getattr(runtime_config, "cpu_offload", "NOT_SET")
+        logger.info(f"  cpu_offload from config: {cpu_offload_value}")
 
         # Determine encoder device - use CPU when cpu_offload is enabled to fit in 24GB VRAM
         # cpu_offload maps to [pipeline].enable_model_cpu_offload in config
@@ -4743,7 +5131,7 @@ def load_zimage_pipeline_on_demand():
 
         try:
             load_pipeline(
-                model_path=runtime_config.model_path,
+                model_path=model_path,
                 text_encoder_path=runtime_config.text_encoder_path,
                 templates_dir=runtime_config.templates_dir,
                 encoder_device=encoder_device,
@@ -4758,8 +5146,6 @@ def load_zimage_pipeline_on_demand():
         except Exception as e:
             logger.error(f"[Z-Image] Failed to load pipeline: {e}")
             # Clean up partial state on failure to avoid VRAM accumulation
-            import gc
-
             global encoder
             if pipeline is not None:
                 del pipeline
@@ -4791,10 +5177,11 @@ async def vram_load_zimage():
             "vram": status.get("vram"),
         }
 
-    if runtime_config is None or not runtime_config.model_path:
+    model_path = (runtime_config.zimage_model_path or runtime_config.model_path) if runtime_config else None
+    if runtime_config is None or not model_path:
         raise HTTPException(
             status_code=400,
-            detail="Z-Image model_path not configured. Set model_path in config.toml",
+            detail="Z-Image model_path not configured. Set [zimage].model_path in config.toml",
         )
 
     try:
@@ -5098,7 +5485,6 @@ async def vram_unload_flux2():
     The pipeline will be reloaded automatically on next image generation request.
     """
     global flux2_pipeline
-    import gc
 
     unloaded = flux2_pipeline is not None
     if unloaded:
@@ -5112,6 +5498,167 @@ async def vram_unload_flux2():
         "success": unloaded,
         "message": "FLUX.2 pipeline unloaded" if unloaded else "FLUX.2 pipeline was not loaded",
         "vram": status.get("vram"),
+    }
+
+
+# =============================================================================
+# Unified Model Management API
+# =============================================================================
+# These endpoints provide a consistent API for the React frontend to load/unload
+# models by pipeline ID, mapping to the specific load functions above.
+
+PIPELINE_LOADERS = {
+    "zimage": "vram_load_zimage",
+    "z-image": "vram_load_zimage",
+    "qwenimage-layered": "vram_load_qwen_image",
+    "qwenimage-edit": "vram_load_qwen_image",
+    "qwenimage-t2i": "vram_load_qwen_image_t2i",
+    "ltx2": "vram_load_ltx2",
+    "flux2": "vram_load_flux2",
+}
+
+PIPELINE_UNLOADERS = {
+    "zimage": "vram_unload_zimage",
+    "z-image": "vram_unload_zimage",
+    "qwenimage-layered": "vram_unload_qwen_image",
+    "qwenimage-edit": "vram_unload_qwen_image",
+    "qwenimage-t2i": "vram_unload_qwen_image_t2i",
+    "ltx2": "vram_unload_ltx2",
+    "flux2": "vram_unload_flux2",
+}
+
+
+@app.post("/api/models/{pipeline_id}/load")
+async def load_model_by_id(pipeline_id: str):
+    """Load a model by pipeline ID.
+
+    This is the unified API for the React frontend. Maps pipeline IDs to
+    the specific load functions (e.g., zimage -> vram_load_zimage).
+
+    Args:
+        pipeline_id: Pipeline identifier (zimage, ltx2, flux2, qwenimage-t2i, etc.)
+
+    Returns:
+        Load result with VRAM status
+    """
+    loader_name = PIPELINE_LOADERS.get(pipeline_id.lower())
+    if not loader_name:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Unknown pipeline: {pipeline_id}. Available: {list(PIPELINE_LOADERS.keys())}",
+        )
+
+    # Get the loader function from globals
+    loader_fn = globals().get(loader_name)
+    if not loader_fn:
+        raise HTTPException(status_code=500, detail=f"Loader function not found: {loader_name}")
+
+    try:
+        result = await loader_fn()
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to load {pipeline_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/models/{pipeline_id}/unload")
+async def unload_model_by_id(pipeline_id: str):
+    """Unload a model by pipeline ID.
+
+    Args:
+        pipeline_id: Pipeline identifier
+
+    Returns:
+        Unload result with VRAM status
+    """
+    unloader_name = PIPELINE_UNLOADERS.get(pipeline_id.lower())
+    if not unloader_name:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Unknown pipeline: {pipeline_id}. Available: {list(PIPELINE_UNLOADERS.keys())}",
+        )
+
+    unloader_fn = globals().get(unloader_name)
+    if not unloader_fn:
+        raise HTTPException(status_code=500, detail=f"Unloader function not found: {unloader_name}")
+
+    try:
+        result = await unloader_fn()
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to unload {pipeline_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/models/unload-all")
+async def unload_all_models():
+    """Unload all loaded models to free VRAM."""
+    unload_all_pipelines_except(None)
+
+    status = get_vram_status()
+    return {
+        "success": True,
+        "message": "All models unloaded",
+        "vram": status.get("vram"),
+    }
+
+
+@app.get("/api/models/{pipeline_id}/status")
+async def get_model_status(pipeline_id: str):
+    """Get the status of a specific pipeline model.
+
+    Returns whether the model is loaded and its VRAM usage.
+    """
+    pid = pipeline_id.lower()
+
+    # Check if loaded
+    loaded = False
+    components = []
+    total_vram_mb = 0
+
+    if pid in ("zimage", "z-image"):
+        loaded = pipeline is not None
+        if loaded:
+            components = [
+                {"name": "encoder", "vramMB": 8000},  # Approximate
+                {"name": "transformer", "vramMB": 8000},
+                {"name": "vae", "vramMB": 500},
+            ]
+            total_vram_mb = sum(c["vramMB"] for c in components)
+    elif pid in ("qwenimage-layered", "qwenimage-edit"):
+        loaded = qwen_image_pipeline is not None
+    elif pid == "qwenimage-t2i":
+        loaded = qwen_image_t2i_pipeline is not None
+    elif pid == "ltx2":
+        loaded = ltx2_pipeline is not None
+        if loaded:
+            components = [
+                {"name": "encoder", "vramMB": 3000},
+                {"name": "transformer", "vramMB": 20000},
+                {"name": "vae", "vramMB": 1000},
+            ]
+            total_vram_mb = sum(c["vramMB"] for c in components)
+    elif pid == "flux2":
+        loaded = flux2_pipeline is not None
+        if loaded:
+            components = [
+                {"name": "encoder", "vramMB": 2000},
+                {"name": "transformer", "vramMB": 12000},
+                {"name": "vae", "vramMB": 500},
+            ]
+            total_vram_mb = sum(c["vramMB"] for c in components)
+    else:
+        raise HTTPException(status_code=404, detail=f"Unknown pipeline: {pipeline_id}")
+
+    return {
+        "pipeline_id": pipeline_id,
+        "status": "loaded" if loaded else "unloaded",
+        "components": components if loaded else [],
+        "total_vram_mb": total_vram_mb if loaded else 0,
     }
 
 
@@ -5389,11 +5936,13 @@ def main():
     runtime_config = load_runtime_config(args)
     setup_logging(runtime_config)
 
-    # Debug: Log FLUX.2 config
-    flux2_model_path = getattr(runtime_config, "flux2_model_path", None)
-    flux2_vae_path = getattr(runtime_config, "flux2_vae_path", None)
-    logger.info(f"[FLUX.2 Config] model_path: {flux2_model_path}")
-    logger.info(f"[FLUX.2 Config] vae_path: {flux2_vae_path}")
+    # Debug: Log all pipeline configurations
+    logger.debug(f"[Config] Z-Image model: {getattr(runtime_config, 'model_path', None)}")
+    logger.debug(f"[Config] FLUX.2 model: {getattr(runtime_config, 'flux2_model_path', None)}")
+    logger.debug(f"[Config] FLUX.2 VAE: {getattr(runtime_config, 'flux2_vae_path', None)}")
+    logger.debug(f"[Config] LTX-2 model: {getattr(runtime_config, 'ltx2_model_path', None)}")
+    logger.debug(f"[Config] VL model: {getattr(runtime_config, 'vl_model_path', None)}")
+    logger.debug(f"[Config] Debug mode: {getattr(runtime_config, 'debug', False)}")
 
     # Store config path for reference
     if hasattr(args, "config") and args.config:
@@ -5421,9 +5970,10 @@ def main():
     elif default_pipeline == "z-image":
         logger.info(f"PRELOADING PIPELINE: {default_pipeline}")
         logger.info("============================================================")
-        # Validate Z-Image model path
-        if not runtime_config.model_path:
-            logger.error("default_pipeline='z-image' but model_path not set in config.")
+        # Validate Z-Image model path (prefer [zimage].model_path, fall back to legacy)
+        zimage_path = runtime_config.zimage_model_path or runtime_config.model_path
+        if not zimage_path:
+            logger.error("default_pipeline='z-image' but [zimage].model_path not set in config.")
             return 1
         # Use PipelineLoader for Z-Image
         loader = PipelineLoader(runtime_config)

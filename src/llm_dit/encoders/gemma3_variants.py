@@ -238,13 +238,11 @@ def _load_8bit_encoder(
         # LTX-2 sharded format - use torchao int8 quantization (same approach as q4-qat)
         logger.info("LTX-2 checkpoint format detected. Using torchao int8 quantization...")
 
-        try:
-            from torchao.quantization import int8_weight_only, quantize_
+        from llm_dit.utils.availability import is_torchao_available
 
-            has_torchao = True
-        except ImportError:
+        has_torchao = is_torchao_available()
+        if not has_torchao:
             logger.warning("torchao not available, falling back to bf16 (will use ~24GB)")
-            has_torchao = False
 
         # Step 1: Load model on CPU using the existing Gemma3Encoder loader
         logger.info("Loading model on CPU for quantization...")
@@ -262,8 +260,10 @@ def _load_8bit_encoder(
 
         # Step 2: Apply torchao int8 quantization
         if has_torchao and encoder._model is not None:
+            from torchao.quantization import int8_weight_only, quantize_
+
             logger.info("Applying torchao int8 weight quantization...")
-            quantize_(encoder._model, int8_weight_only())  # type: ignore[possibly-unbound]
+            quantize_(encoder._model, int8_weight_only())
             _log_memory_usage("After int8 quantization (CPU)")
 
         # Step 3: Move to target device
@@ -285,13 +285,11 @@ def _load_8bit_encoder(
         # Standard HuggingFace format - also use torchao for consistency
         logger.info(f"Loading 8-bit Gemma from: {encoder_path}")
 
-        try:
-            from torchao.quantization import int8_weight_only, quantize_
+        from llm_dit.utils.availability import is_torchao_available
 
-            has_torchao = True
-        except ImportError:
+        has_torchao = is_torchao_available()
+        if not has_torchao:
             logger.warning("torchao not available, loading in bf16")
-            has_torchao = False
 
         # Load model on CPU first for quantization
         model = Gemma3ForCausalLM.from_pretrained(
@@ -304,8 +302,10 @@ def _load_8bit_encoder(
 
         # Apply int8 quantization
         if has_torchao:
+            from torchao.quantization import int8_weight_only, quantize_
+
             logger.info("Applying torchao int8 weight quantization...")
-            quantize_(model, int8_weight_only())  # type: ignore[possibly-unbound]
+            quantize_(model, int8_weight_only())
 
         # Move to target device
         target_device = device if device != "auto" else "cuda"
@@ -429,13 +429,11 @@ def _load_q4_qat_encoder(
     # We need to apply quantization at load time using torchao.
     # Strategy: Load on CPU in bf16 -> Apply int4 quantization -> Move to GPU
 
-    try:
-        from torchao.quantization import int4_weight_only, quantize_
+    from llm_dit.utils.availability import is_torchao_available
 
-        has_torchao = True
-    except ImportError:
+    has_torchao = is_torchao_available()
+    if not has_torchao:
         logger.warning("torchao not available, falling back to bf16 (will use ~24GB)")
-        has_torchao = False
 
     # Step 1: Load model on CPU first to avoid OOM during quantization
     logger.info("Loading model on CPU for quantization...")
@@ -449,8 +447,10 @@ def _load_q4_qat_encoder(
 
     # Step 2: Apply int4 quantization (reduces ~24GB -> ~3GB)
     if has_torchao:
+        from torchao.quantization import int4_weight_only, quantize_
+
         logger.info("Applying torchao int4 weight quantization...")
-        quantize_(model, int4_weight_only())  # type: ignore[possibly-unbound]
+        quantize_(model, int4_weight_only())
         _log_memory_usage("After int4 quantization (CPU)")
 
     # Step 3: Move to target device

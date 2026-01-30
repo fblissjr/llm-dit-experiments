@@ -181,11 +181,18 @@ class TransformersBackend:
         }
 
         # Add quantization_config if provided (v5 API)
+        # Priority: explicit quantization_config > config.get_quantization_config()
         if quantization_config is not None:
             model_kwargs["quantization_config"] = quantization_config
-            logger.info(f"Loading model with quantization: {quantization_config}")
+            logger.info(f"Loading model with explicit quantization: {quantization_config}")
         else:
-            logger.info(f"Loading model from {model_load_path} (dtype={dtype})")
+            # Try to get quantization config from string mode (4bit, 8bit, fp8)
+            config_quant = config.get_quantization_config()
+            if config_quant is not None:
+                model_kwargs["quantization_config"] = config_quant
+                logger.info(f"Loading model with quantization={config.quantization}")
+            else:
+                logger.info(f"Loading model from {model_load_path} (dtype={dtype})")
 
         # Only add subfolder if it's not None (transformers bugs on subfolder=None)
         if hf_subfolder and not is_local:

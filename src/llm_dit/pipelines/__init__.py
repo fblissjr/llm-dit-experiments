@@ -12,6 +12,10 @@ Provides:
 - MAX_TEXT_SEQ_LEN: Maximum text sequence length supported by Z-Image DiT (1504 tokens)
 """
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 from llm_dit.pipelines.z_image import ZImagePipeline, setup_attention_backend, MAX_TEXT_SEQ_LEN
 from llm_dit.pipelines.qwen_image import QwenImagePipeline
 from llm_dit.pipelines.qwen_image_diffusers import QwenImageDiffusersPipeline
@@ -21,7 +25,8 @@ from llm_dit.pipelines.qwen_image_2512 import QwenImage2512Pipeline
 # Import lazily to avoid hard dependency
 try:
     from llm_dit.pipelines.ltx2 import LTX2Pipeline, VideoOutput
-except ImportError:
+except ImportError as e:
+    logger.debug(f"LTX2Pipeline not available: {e}")
     LTX2Pipeline = None
     VideoOutput = None
 
@@ -40,7 +45,8 @@ from llm_dit.pipelines.ltx2_config import LTX2OptimizationConfig
 try:
     from llm_dit.pipelines.wan_video import WanVideoPipeline
     from llm_dit.pipelines.wan_video import VideoOutput as WanVideoOutput
-except ImportError:
+except ImportError as e:
+    logger.debug(f"WanVideoPipeline not available: {e}")
     WanVideoPipeline = None
     WanVideoOutput = None
 
