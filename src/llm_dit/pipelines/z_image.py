@@ -946,12 +946,11 @@ class ZImagePipeline:
         latent_width = 2 * (width // vae_scale)
         image_seq_len = (latent_height // 2) * (latent_width // 2)
 
-        if shift is not None:
-            # Use user-provided shift value
-            mu = shift
-            logger.debug(f"[img2img] Using user-provided shift/mu: {mu}")
-        else:
-            # Calculate shift based on resolution (dynamic shift)
+        # Determine mu based on scheduler mode (same logic as __call__)
+        use_dynamic = getattr(self.scheduler, "use_dynamic_shifting", False)
+
+        if use_dynamic:
+            # FLUX-style exponential shift: calculate mu from resolution
             mu = calculate_shift(
                 image_seq_len,
                 self.scheduler.config.get("base_image_seq_len", 256),
@@ -959,7 +958,15 @@ class ZImagePipeline:
                 self.scheduler.config.get("base_shift", 0.5),
                 self.scheduler.config.get("max_shift", 1.15),
             )
-            logger.debug(f"[img2img] Calculated shift/mu for resolution: {mu:.4f}")
+            logger.debug(f"[img2img] Dynamic shifting: calculated mu={mu:.4f} from resolution")
+        elif shift is not None:
+            # Linear shift mode with user-provided shift value
+            mu = shift
+            logger.debug(f"[img2img] Linear shift mode: using shift={mu}")
+        else:
+            # Linear shift mode with scheduler's default shift
+            mu = getattr(self.scheduler, "shift", 3.0)
+            logger.debug(f"[img2img] Linear shift mode: using scheduler default shift={mu}")
 
         self._configure_scheduler(mu, num_inference_steps, device, log_prefix="[img2img]")
 
