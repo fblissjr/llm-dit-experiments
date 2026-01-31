@@ -423,10 +423,12 @@ class ZImagePipeline:
         else:
             scheduler = diffusers_pipe.scheduler
 
-        logger.debug(f"Moving transformer to {dit_device}...")
-        transformer = transformer.to(dit_device)
-        logger.debug(f"Moving VAE to {vae_device}...")
-        vae = vae.to(vae_device)
+        # Note: When device_map="balanced" is used above, accelerate handles device
+        # placement automatically. Calling .to() on models with accelerate hooks
+        # triggers a warning. The models are already on the correct devices.
+        # We skip explicit .to() calls here since accelerate manages this.
+        logger.debug(f"Transformer device: {next(transformer.parameters()).device}")
+        logger.debug(f"VAE device: {next(vae.parameters()).device}")
 
         return transformer, vae, scheduler
 
