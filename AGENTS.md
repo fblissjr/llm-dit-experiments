@@ -13,6 +13,8 @@ Core principles:
 - **Principle 4**: State Management for Session Continuity to future Claude agents - handoff protocols
 - **Principle 5**: No lazy imports unless justified; keep imports organized and consistent
 
+## latest update - zimage base working in web ui and server
+
 ## onboarding path
 
 New Claude session? Read in this order:
