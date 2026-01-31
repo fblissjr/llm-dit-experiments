@@ -338,6 +338,16 @@ register_pipeline(PipelineSchema(
             tooltip="Similarity threshold for cache reuse. Lower = more caching.",
         ),
 
+        # === CPU Offload ===
+        ParamSchema(
+            id="cpu_offload",
+            type="checkbox",
+            label="CPU Offload",
+            default=False,
+            group="optimization",
+            tooltip="Move encoder to CPU to fit in 24GB VRAM. Slower but uses less GPU memory.",
+        ),
+
         # === Torch Compile ===
         ParamSchema(
             id="compile",
