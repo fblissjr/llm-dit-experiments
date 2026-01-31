@@ -4583,6 +4583,9 @@ def load_pipeline(
         dit_device=dit_device,
         vae_device=vae_device,
         quantization=quantization,
+        # Use our custom FlowMatchScheduler with FLUX-style dynamic shifting
+        # This fixes the pure noise bug for Z-Image-Base model
+        use_custom_scheduler=True,
     )
 
     load_time = time.time() - start
@@ -4708,6 +4711,9 @@ def load_hybrid_pipeline(
         encoder_device=encoder_device,
         dit_device=dit_device,
         vae_device=vae_device,
+        # Use our custom FlowMatchScheduler with FLUX-style dynamic shifting
+        # This fixes the pure noise bug for Z-Image-Base model
+        use_custom_scheduler=True,
     )
 
     load_time = time.time() - start
@@ -4821,6 +4827,9 @@ def load_api_pipeline(
         enable_cpu_offload=enable_cpu_offload,
         dit_device=dit_device,
         vae_device=vae_device,
+        # Use our custom FlowMatchScheduler with FLUX-style dynamic shifting
+        # This fixes the pure noise bug for Z-Image-Base model
+        use_custom_scheduler=True,
     )
 
     load_time = time.time() - start

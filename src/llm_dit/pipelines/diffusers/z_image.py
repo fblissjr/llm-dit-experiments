@@ -303,8 +303,13 @@ class ZImagePipeline:
             from llm_dit.schedulers import FlowMatchScheduler
 
             actual_shift = cls._detect_variant_shift(model_path)
-            scheduler = FlowMatchScheduler(shift=actual_shift)
-            logger.info(f"Using custom FlowMatchScheduler with shift={actual_shift}")
+            # Z-Image ALWAYS uses dynamic shifting (FLUX-style exponential)
+            # per DiffSynth-Studio reference implementation
+            scheduler = FlowMatchScheduler(
+                shift=actual_shift,
+                use_dynamic_shifting=True,  # Always true for Z-Image
+            )
+            logger.info(f"Using FlowMatchScheduler: shift={actual_shift}, mode=dynamic (FLUX-style)")
         else:
             scheduler = diffusers_pipe.scheduler
 
@@ -2213,8 +2218,13 @@ class ZImagePipeline:
             from llm_dit.schedulers import FlowMatchScheduler
 
             actual_shift = cls._detect_variant_shift(model_path)
-            scheduler = FlowMatchScheduler(shift=actual_shift)
-            logger.info(f"Using custom FlowMatchScheduler with shift={actual_shift}")
+            # Z-Image ALWAYS uses dynamic shifting (FLUX-style exponential)
+            # per DiffSynth-Studio reference implementation
+            scheduler = FlowMatchScheduler(
+                shift=actual_shift,
+                use_dynamic_shifting=True,  # Always true for Z-Image
+            )
+            logger.info(f"Using FlowMatchScheduler: shift={actual_shift}, mode=dynamic (FLUX-style)")
         else:
             logger.debug("Loading scheduler...")
             scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(
