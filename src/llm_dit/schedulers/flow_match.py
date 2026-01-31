@@ -223,8 +223,9 @@ class FlowMatchScheduler:
         if self.use_dynamic_shifting:
             # FLUX-style exponential time shift (for Z-Image-Base and similar)
             # This creates a steeper denoising curve at the beginning
-            # Use mu if passed, otherwise fall back to self.shift from constructor
-            effective_mu = mu if mu is not None else self.shift
+            # mu should be passed explicitly by the pipeline (calculated from resolution)
+            # Default of 1.0 is reasonable for 1024x1024 images
+            effective_mu = mu if mu is not None else 1.0
             sigmas = self._time_shift(effective_mu, sigmas)
             logger.debug(f"Scheduler: Using dynamic shifting with mu={effective_mu:.4f}")
         else:
