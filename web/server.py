@@ -727,6 +727,64 @@ class Flux2GenerateRequest(BaseModel):
         return v
 
 
+# =============================================================================
+# Z-Image Variant-Aware Defaults Helper
+# =============================================================================
+
+# Pydantic class defaults (Turbo values) - used to detect if client sent explicit values
+_ZIMAGE_PYDANTIC_DEFAULTS = {
+    "steps": 9,
+    "guidance_scale": 0.0,
+    "shift": 3.0,
+}
+
+
+def apply_zimage_variant_defaults(request: GenerateRequest | Img2ImgRequest | "VLGenerateRequest") -> None:
+    """Apply Z-Image variant-aware defaults to request in-place.
+
+    The Pydantic request classes have hardcoded Turbo defaults (steps=9, shift=3.0,
+    guidance_scale=0.0). When the server is running with the Base variant, we need
+    to apply the correct defaults if the client didn't explicitly set them.
+
+    This function checks if request values match Pydantic defaults (indicating the
+    client didn't override them) and replaces them with variant-appropriate values.
+
+    Args:
+        request: GenerateRequest, Img2ImgRequest, or VLGenerateRequest to modify in-place
+
+    Note:
+        - Only applies when runtime_config is available and variant is "base"
+        - Only modifies values that match Pydantic defaults (client didn't override)
+        - Turbo variant needs no changes (Pydantic defaults are already Turbo values)
+    """
+    global runtime_config
+
+    # Skip if no config or not base variant
+    if runtime_config is None:
+        return
+    if runtime_config.zimage_variant != "base":
+        return
+
+    # Get variant defaults from constants
+    from llm_dit.models.zimage.constants import get_variant_defaults
+
+    variant_defaults = get_variant_defaults("base")
+
+    # Apply variant defaults only if request has Pydantic defaults
+    # (indicating client didn't explicitly set the value)
+    if hasattr(request, "steps") and request.steps == _ZIMAGE_PYDANTIC_DEFAULTS["steps"]:
+        request.steps = variant_defaults["num_inference_steps"]
+        logger.debug(f"Applied variant default: steps={request.steps}")
+
+    if hasattr(request, "guidance_scale") and request.guidance_scale == _ZIMAGE_PYDANTIC_DEFAULTS["guidance_scale"]:
+        request.guidance_scale = variant_defaults["guidance_scale"]
+        logger.debug(f"Applied variant default: guidance_scale={request.guidance_scale}")
+
+    if hasattr(request, "shift") and request.shift == _ZIMAGE_PYDANTIC_DEFAULTS["shift"]:
+        request.shift = variant_defaults["shift"]
+        logger.debug(f"Applied variant default: shift={request.shift}")
+
+
 @app.get("/")
 async def index():
     """Serve the main page."""
@@ -1533,6 +1591,9 @@ async def vl_generate(request: VLGenerateRequest):
     2. vl_embeddings_id provided: Use pre-extracted embeddings
     3. Neither provided: Falls back to standard text-only generation
     """
+    # Apply variant-aware defaults (Base vs Turbo)
+    apply_zimage_variant_defaults(request)
+
     if pipeline is None:
         raise HTTPException(status_code=503, detail="Pipeline not loaded")
 
@@ -2367,6 +2428,8 @@ async def get_generation_config():
     )
 
     return {
+        # Z-Image variant (turbo/base) - determines default parameter values
+        "zimage_variant": getattr(runtime_config, "zimage_variant", "turbo"),
         "width": runtime_config.width,
         "height": runtime_config.height,
         "steps": runtime_config.steps,
@@ -3060,6 +3123,9 @@ async def generate(request: GenerateRequest):
             detail="Z-Image pipeline not loaded. Use the Settings panel to load it first.",
         )
 
+    # Apply variant-aware defaults (Base vs Turbo)
+    apply_zimage_variant_defaults(request)
+
     try:
         logger.info("=" * 60)
         logger.info("GENERATION REQUEST")
@@ -3364,6 +3430,9 @@ async def generate_stream(request: GenerateRequest):
     - {"type": "complete", ...} - Final result with image data
     - {"type": "error", "message": "..."} - Error occurred
     """
+    # Apply variant-aware defaults (Base vs Turbo)
+    apply_zimage_variant_defaults(request)
+
     if encoder_only_mode:
         raise HTTPException(
             status_code=400, detail="Server running in encoder-only mode. Use /api/encode instead."
@@ -3578,6 +3647,9 @@ async def img2img(request: Img2ImgRequest):
     - White (255): Allow full editing
     - Gray: Partial editing
     """
+    # Apply variant-aware defaults (Base vs Turbo)
+    apply_zimage_variant_defaults(request)
+
     if encoder_only_mode:
         raise HTTPException(
             status_code=400, detail="Server running in encoder-only mode. Img2img not available."
