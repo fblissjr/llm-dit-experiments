@@ -223,7 +223,8 @@ class FlowMatchScheduler:
         if self.use_dynamic_shifting:
             # FLUX-style exponential time shift (for Z-Image-Base and similar)
             # This creates a steeper denoising curve at the beginning
-            effective_mu = mu if mu is not None else getattr(self, "_mu", 1.0)
+            # Use mu if passed, otherwise fall back to self.shift from constructor
+            effective_mu = mu if mu is not None else self.shift
             sigmas = self._time_shift(effective_mu, sigmas)
             logger.debug(f"Scheduler: Using dynamic shifting with mu={effective_mu:.4f}")
         else:
