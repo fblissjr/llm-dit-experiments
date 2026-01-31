@@ -43,10 +43,23 @@ def decode_data_url(data_url: str) -> bytes:
 
 
 def image_info(img: Image.Image) -> dict:
-    """Get image metadata."""
+    """Get image metadata including noise detection metrics."""
+    import numpy as np
+
     img_bytes = io.BytesIO()
     img.save(img_bytes, format="PNG")
     img_hash = hashlib.md5(img_bytes.getvalue()).hexdigest()[:12]
+
+    # Noise detection metrics
+    arr = np.array(img)
+    variance = float(np.var(arr))
+    mean = float(np.mean(arr))
+
+    # Noise thresholds based on test_pure_pytorch.py
+    # Valid images: variance 500-6000, mean 50-200
+    # Noise: variance > 6000, mean ~127
+    is_noise = variance > 6000 or not (30 < mean < 220)
+    is_valid = 500 < variance < 6000 and 30 < mean < 220
 
     return {
         "size": f"{img.width}x{img.height}",
@@ -54,6 +67,10 @@ def image_info(img: Image.Image) -> dict:
         "format": img.format or "PNG",
         "hash": img_hash,
         "bytes": len(img_bytes.getvalue()),
+        "variance": variance,
+        "mean": mean,
+        "is_valid": is_valid,
+        "is_noise": is_noise,
     }
 
 
@@ -122,6 +139,8 @@ def generate_and_inspect(
     steps: int = 4,
     width: int = 512,
     height: int = 512,
+    shift: float | None = None,
+    guidance_scale: float | None = None,
     output_dir: Path | None = None,
 ) -> dict:
     """Generate an image and inspect it.
@@ -153,6 +172,11 @@ def generate_and_inspect(
         "width": width,
         "height": height,
     }
+    # Add optional params if specified
+    if shift is not None:
+        params["shift"] = shift
+    if guidance_scale is not None:
+        params["guidance_scale"] = guidance_scale
 
     print(f"Generating with {pipeline}...")
     print(f"  Prompt: {prompt[:50]}{'...' if len(prompt) > 50 else ''}")
@@ -200,6 +224,23 @@ def print_results(results: dict):
         print(f"   Format: {img['format']}")
         print(f"   Hash: {img['hash']}")
         print(f"   Bytes: {img['bytes']:,}")
+
+        # Noise detection metrics
+        variance = img.get('variance', 0)
+        mean = img.get('mean', 0)
+        is_valid = img.get('is_valid', False)
+        is_noise = img.get('is_noise', False)
+
+        print(f"\n📊 Quality Metrics:")
+        print(f"   Variance: {variance:.1f} (valid: 500-6000, noise: >6000)")
+        print(f"   Mean: {mean:.1f} (valid: 30-220, noise: ~127)")
+
+        if is_noise:
+            print(f"   ❌ LIKELY NOISE - Image may be pure noise/artifacts!")
+        elif is_valid:
+            print(f"   ✅ VALID IMAGE - Passes noise detection")
+        else:
+            print(f"   ⚠️  UNCLEAR - Check manually")
 
     if "saved_full" in results:
         print(f"\n💾 Saved:")
@@ -250,6 +291,18 @@ def main():
         help="Image height",
     )
     parser.add_argument(
+        "--shift",
+        type=float,
+        default=None,
+        help="Scheduler shift (6.0 for BASE, 3.0 for turbo). Uses server default if not specified.",
+    )
+    parser.add_argument(
+        "--guidance-scale",
+        type=float,
+        default=None,
+        help="CFG scale (4.0 for BASE, 0.0 for turbo). Uses server default if not specified.",
+    )
+    parser.add_argument(
         "--output",
         "-o",
         type=Path,
@@ -265,6 +318,8 @@ def main():
             steps=args.steps,
             width=args.width,
             height=args.height,
+            shift=args.shift,
+            guidance_scale=getattr(args, "guidance_scale", None),
             output_dir=args.output,
         )
     elif args.input:
