@@ -4631,6 +4631,7 @@ def load_pipeline(
     quantization: str = "none",
     lora_paths: Optional[list] = None,
     lora_scales: Optional[list] = None,
+    enable_compile: bool = False,
 ):
     """Load the full generation pipeline."""
     global pipeline
@@ -4644,6 +4645,7 @@ def load_pipeline(
     logger.info(f"  DiT device: {dit_device}")
     logger.info(f"  VAE device: {vae_device}")
     logger.info(f"  Quantization: {quantization}")
+    logger.info(f"  Torch Compile: {enable_compile}")
     start = time.time()
 
     pipeline = ZImagePipeline.from_pretrained(
@@ -4663,6 +4665,15 @@ def load_pipeline(
     load_time = time.time() - start
     logger.info(f"Pipeline loaded in {load_time:.1f}s")
     logger.info(f"Device: {pipeline.device}")
+
+    # Apply torch.compile for faster inference (slow first run)
+    if enable_compile:
+        logger.info("Compiling transformer with torch.compile...")
+        try:
+            pipeline.transformer = torch.compile(pipeline.transformer, mode="reduce-overhead")
+            logger.info("  Transformer compiled (first run will be slow)")
+        except Exception as e:
+            logger.warning(f"  Failed to compile: {e}")
 
     # Load LoRAs if configured
     if lora_paths:
@@ -5221,6 +5232,7 @@ def load_zimage_pipeline_on_demand():
                 quantization=runtime_config.quantization,
                 lora_paths=runtime_config.lora_paths,
                 lora_scales=runtime_config.lora_scales,
+                enable_compile=getattr(runtime_config, "compile", False),
             )
             logger.info("[Z-Image] Pipeline loaded successfully")
             return True
