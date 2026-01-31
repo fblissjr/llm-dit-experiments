@@ -1,30 +1,29 @@
 """
 FLUX.2 Pipeline Schema
 
-last updated: 2026-01-25
+last updated: 2026-01-31
 
 FLUX.2 is an image generation pipeline with:
 - Klein models: 4 distilled + 4 base variants
 - Reference image support for style/subject transfer
 - Block-by-block offloading for low VRAM
 - FP8 variants for reduced memory usage
+
+NOTE: Model names MUST match keys in FLUX2_MODEL_INFO (constants.py)
 """
 
 from . import register_pipeline, PipelineSchema, ParamSchema
 
 
-# FLUX.2 model variants
+# FLUX.2 model variants - must match keys in FLUX2_MODEL_INFO
+# Note: Only 9B variants included (4B not in use)
 FLUX2_MODELS = [
     # Distilled models (fast, 4 steps)
-    "flux2-klein-4b-distilled",
-    "flux2-klein-4b-distilled-fp8",
-    "flux2-klein-9b-distilled",
-    "flux2-klein-9b-distilled-fp8",
+    "klein-9b",
+    "klein-9b-fp8",
     # Base models (quality, 50 steps)
-    "flux2-klein-4b-base",
-    "flux2-klein-4b-base-fp8",
-    "flux2-klein-9b-base",
-    "flux2-klein-9b-base-fp8",
+    "klein-base-9b",
+    "klein-base-9b-fp8",
 ]
 
 # Dimension presets
@@ -67,7 +66,7 @@ register_pipeline(PipelineSchema(
             id="model_name",
             type="select",
             label="Model",
-            default="flux2-klein-4b-distilled",
+            default="klein-9b-fp8",
             options=FLUX2_MODELS,
             group="basic",
             tooltip="Model variant. Distilled = fast (4 steps), Base = quality (50 steps). FP8 saves VRAM.",

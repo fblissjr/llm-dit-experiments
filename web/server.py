@@ -5546,6 +5546,10 @@ async def vram_load_flux2():
         if not model_path_obj.exists():
             raise ValueError(f"FLUX.2 model path does not exist: {model_path}")
 
+        # Set sentinel value so status endpoint shows "loaded"
+        # Actual model loading happens on first generate call
+        flux2_pipeline = "configured"
+
         status = get_vram_status()
         return {
             "success": True,
