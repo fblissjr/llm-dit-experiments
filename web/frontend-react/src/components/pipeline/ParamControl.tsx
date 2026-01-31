@@ -121,6 +121,7 @@ export function ParamControl({
           onChange={(v) => onChange(v)}
           tooltip={param.tooltip}
           disabled={disabled}
+          maxCount={param.max_count ?? 1}
         />
       );
 

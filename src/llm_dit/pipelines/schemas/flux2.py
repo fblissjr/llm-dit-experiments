@@ -143,6 +143,7 @@ register_pipeline(PipelineSchema(
             label="Reference Images",
             group="advanced",
             tooltip="Upload reference images for style/subject transfer (up to 4 images).",
+            max_count=4,
         ),
         ParamSchema(
             id="reference_strength",
