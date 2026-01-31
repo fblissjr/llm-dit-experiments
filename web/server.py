@@ -24,7 +24,7 @@ import traceback
 import zipfile
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import Any, AsyncIterator, Dict, List, Optional
+from typing import Any, AsyncIterator, Dict, List, Optional, Union
 
 import httpx
 import torch
@@ -739,7 +739,7 @@ _ZIMAGE_PYDANTIC_DEFAULTS = {
 }
 
 
-def apply_zimage_variant_defaults(request: GenerateRequest | Img2ImgRequest | "VLGenerateRequest") -> None:
+def apply_zimage_variant_defaults(request: Union[GenerateRequest, Img2ImgRequest, "VLGenerateRequest"]) -> None:
     """Apply Z-Image variant-aware defaults to request in-place.
 
     The Pydantic request classes have hardcoded Turbo defaults (steps=9, shift=3.0,
