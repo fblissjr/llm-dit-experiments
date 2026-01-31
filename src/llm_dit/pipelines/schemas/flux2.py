@@ -51,7 +51,7 @@ register_pipeline(PipelineSchema(
     supports_reference_images=True,
     endpoint="/api/flux2/generate",
     params=[
-        # === Basic Parameters ===
+        # === Prompt ===
         ParamSchema(
             id="prompt",
             type="textarea",
@@ -62,6 +62,29 @@ register_pipeline(PipelineSchema(
             required=True,
             tooltip="Detailed description of the image.",
         ),
+
+        # === Reference Images (key FLUX.2 feature - right after prompt) ===
+        ParamSchema(
+            id="reference_images",
+            type="image",
+            label="Reference Images",
+            group="basic",
+            tooltip="Upload reference images for style/subject transfer (up to 4 images).",
+            max_count=4,
+        ),
+        ParamSchema(
+            id="reference_strength",
+            type="slider",
+            label="Reference Strength",
+            default=0.8,
+            min=0.0,
+            max=1.0,
+            step=0.05,
+            group="basic",
+            tooltip="How strongly to use reference images.",
+        ),
+
+        # === Model & Dimensions ===
         ParamSchema(
             id="model_name",
             type="select",
@@ -102,6 +125,8 @@ register_pipeline(PipelineSchema(
             group="basic",
             tooltip="Quick dimension presets.",
         ),
+
+        # === Generation Settings ===
         ParamSchema(
             id="num_steps",
             type="slider",
@@ -134,27 +159,6 @@ register_pipeline(PipelineSchema(
             step=1,
             group="basic",
             tooltip="Random seed for reproducibility. -1 for random.",
-        ),
-
-        # === Reference Images ===
-        ParamSchema(
-            id="reference_images",
-            type="image",
-            label="Reference Images",
-            group="advanced",
-            tooltip="Upload reference images for style/subject transfer (up to 4 images).",
-            max_count=4,
-        ),
-        ParamSchema(
-            id="reference_strength",
-            type="slider",
-            label="Reference Strength",
-            default=0.8,
-            min=0.0,
-            max=1.0,
-            step=0.05,
-            group="advanced",
-            tooltip="How strongly to use reference images.",
         ),
 
         # === Memory & Performance ===
