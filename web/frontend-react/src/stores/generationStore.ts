@@ -110,6 +110,13 @@ export const useGenerationStore = create<GenerationState>()(
         if (serverDefaults.dynamic_shift !== undefined) {
           defaults['dynamic_shift'] = serverDefaults.dynamic_shift;
         }
+        // Optimization settings from config
+        if (serverDefaults.cpu_offload !== undefined) {
+          defaults['cpu_offload'] = serverDefaults.cpu_offload;
+        }
+        if (serverDefaults.compile !== undefined) {
+          defaults['compile'] = serverDefaults.compile;
+        }
       }
 
       // Get any existing stored values (preserves user input across re-initialization)
@@ -167,6 +174,13 @@ export const useGenerationStore = create<GenerationState>()(
         }
         if (serverDefaults.dynamic_shift !== undefined) {
           defaults['dynamic_shift'] = serverDefaults.dynamic_shift;
+        }
+        // Optimization settings from config
+        if (serverDefaults.cpu_offload !== undefined) {
+          defaults['cpu_offload'] = serverDefaults.cpu_offload;
+        }
+        if (serverDefaults.compile !== undefined) {
+          defaults['compile'] = serverDefaults.compile;
         }
       }
 
@@ -336,6 +350,13 @@ export const useGenerationStore = create<GenerationState>()(
         }
         if (serverDefaults.dynamic_shift !== undefined) {
           defaults['dynamic_shift'] = serverDefaults.dynamic_shift;
+        }
+        // Optimization settings from config
+        if (serverDefaults.cpu_offload !== undefined) {
+          defaults['cpu_offload'] = serverDefaults.cpu_offload;
+        }
+        if (serverDefaults.compile !== undefined) {
+          defaults['compile'] = serverDefaults.compile;
         }
       }
 
