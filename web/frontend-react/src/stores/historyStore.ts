@@ -257,9 +257,28 @@ export const useHistoryStore = create<HistoryState>()(
     {
       name: STORAGE_KEY,
       storage: createJSONStorage(() => quotaSafeStorage),
-      partialize: (state) => ({
-        items: state.items,
-      }) as HistoryState,
+      // Strip base64 data before persisting to avoid localStorage quota issues
+      // Base64 images in urls[] and params.reference_images[] can be megabytes each
+      partialize: (state) => {
+        const strippedItems = state.items.map((item) => ({
+          ...item,
+          // Keep thumbnailUrl but strip base64 from result.urls
+          result: {
+            ...item.result,
+            urls: item.result.urls.map((url) =>
+              url.startsWith('data:') ? '[base64-stripped]' : url
+            ),
+          },
+          // Strip base64 from params.reference_images if present
+          params: {
+            ...item.params,
+            reference_images: item.params.reference_images
+              ? '[uploaded-images-stripped]'
+              : undefined,
+          },
+        }));
+        return { items: strippedItems } as unknown as HistoryState;
+      },
       // Update relative times on rehydration
       onRehydrateStorage: () => (state) => {
         if (state) {
