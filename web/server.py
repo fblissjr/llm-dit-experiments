@@ -3276,11 +3276,17 @@ async def generate(request: GenerateRequest):
         raise HTTPException(
             status_code=400, detail="Server running in encoder-only mode. Use /api/encode instead."
         )
+
+    # Load Z-Image pipeline on-demand if not already loaded
     if pipeline is None:
-        raise HTTPException(
-            status_code=503,
-            detail="Z-Image pipeline not loaded. Use the Settings panel to load it first.",
-        )
+        try:
+            load_zimage_pipeline_on_demand()
+        except Exception as e:
+            logger.error(f"[Z-Image] Failed to load pipeline on-demand: {e}")
+            raise HTTPException(
+                status_code=503,
+                detail=f"Z-Image pipeline failed to load: {str(e)}",
+            )
 
     # Apply variant-aware defaults (Base vs Turbo)
     apply_zimage_variant_defaults(request)
@@ -3596,11 +3602,17 @@ async def generate_stream(request: GenerateRequest):
         raise HTTPException(
             status_code=400, detail="Server running in encoder-only mode. Use /api/encode instead."
         )
+
+    # Load Z-Image pipeline on-demand if not already loaded
     if pipeline is None:
-        raise HTTPException(
-            status_code=503,
-            detail="Z-Image pipeline not loaded. Use the Settings panel to load it first.",
-        )
+        try:
+            load_zimage_pipeline_on_demand()
+        except Exception as e:
+            logger.error(f"[Z-Image] Failed to load pipeline on-demand: {e}")
+            raise HTTPException(
+                status_code=503,
+                detail=f"Z-Image pipeline failed to load: {str(e)}",
+            )
 
     async def generate_with_progress() -> AsyncIterator[str]:
         """Async generator for SSE events."""
@@ -3978,9 +3990,17 @@ async def format_prompt_endpoint(request: EncodeRequest):
     # Use encoder from pipeline or standalone encoder
     enc = encoder if encoder is not None else (pipeline.encoder if pipeline else None)
     if enc is None:
+        # Try loading Z-Image on-demand to get the encoder
+        try:
+            load_zimage_pipeline_on_demand()
+            enc = pipeline.encoder if pipeline else None
+        except Exception as e:
+            logger.error(f"[Z-Image] Failed to load pipeline on-demand: {e}")
+
+    if enc is None:
         raise HTTPException(
             status_code=503,
-            detail="Z-Image pipeline not loaded. Use the Settings panel to load it first.",
+            detail="No encoder available. Z-Image pipeline failed to load.",
         )
 
     try:
