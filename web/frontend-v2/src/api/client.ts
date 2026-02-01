@@ -142,17 +142,13 @@ export async function* generateStream(
   | { type: 'result'; data: GenerationResult }
   | { type: 'error'; error: string }
 > {
-  console.log('[generateStream] Starting fetch to:', endpoint);
-  console.log('[generateStream] Params:', params);
   const response = await fetch(endpoint, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(params),
   });
-  console.log('[generateStream] Response status:', response.status, response.statusText);
 
   if (!response.ok) {
-    console.log('[generateStream] Response not OK, yielding error');
     yield { type: 'error', error: `Request failed: ${response.statusText}` };
     return;
   }
@@ -186,7 +182,6 @@ export async function* generateStream(
             const total = parsed.total ?? parsed.total_steps;
 
             if (parsed.step !== undefined && total !== undefined) {
-              console.log('[generateStream] Progress event:', parsed.step, '/', total);
               yield {
                 type: 'progress',
                 step: parsed.step,
@@ -194,10 +189,8 @@ export async function* generateStream(
                 message: parsed.message,
               };
             } else if (parsed.output_path || parsed.urls || parsed.type === 'complete') {
-              console.log('[generateStream] Result event:', parsed);
               yield { type: 'result', data: parsed as GenerationResult };
             } else if (parsed.error || parsed.type === 'error') {
-              console.log('[generateStream] Error event:', parsed);
               yield { type: 'error', error: parsed.error || parsed.message };
             }
           } catch {

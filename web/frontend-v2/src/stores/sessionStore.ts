@@ -101,14 +101,11 @@ export const useSessionStore = create<SessionState>()(
        * Start a generation for the given pipeline
        */
       startGeneration: async (pipelineId) => {
-        console.log('[sessionStore] startGeneration called with:', pipelineId);
         const appStore = useAppStore.getState();
         const formStore = useFormStore.getState();
 
         const pipeline = appStore.pipelines[pipelineId];
-        console.log('[sessionStore] pipeline:', pipeline?.id, 'streaming:', pipeline?.supports_streaming, 'endpoint:', pipeline?.endpoint);
         if (!pipeline) {
-          console.log('[sessionStore] ERROR: Pipeline not found');
           set((state) => {
             state.error = 'Pipeline not found';
             state.status = 'error';
@@ -118,9 +115,7 @@ export const useSessionStore = create<SessionState>()(
 
         // Validate form
         const errors = formStore.validate(pipelineId);
-        console.log('[sessionStore] validation errors:', errors);
         if (errors.length > 0) {
-          console.log('[sessionStore] ERROR: Validation failed:', errors[0].message);
           set((state) => {
             state.error = errors[0].message;
             state.status = 'error';
@@ -130,7 +125,6 @@ export const useSessionStore = create<SessionState>()(
 
         // Get resolved parameters
         const params = formStore.getResolvedValues(pipelineId);
-        console.log('[sessionStore] params:', params);
 
         // Reset state
         set((state) => {
@@ -146,12 +140,9 @@ export const useSessionStore = create<SessionState>()(
         const startTime = Date.now();
 
         try {
-          console.log('[sessionStore] Starting generation, streaming:', pipeline.supports_streaming);
           if (pipeline.supports_streaming) {
             // Use SSE streaming for video/progress pipelines
-            console.log('[sessionStore] Using generateStream to:', pipeline.endpoint);
             for await (const event of generateStream(pipeline.endpoint, params)) {
-              console.log('[sessionStore] Received event:', event.type, event);
               // Check for cancellation
               if (abortController?.signal.aborted) {
                 set((state) => {
@@ -162,7 +153,6 @@ export const useSessionStore = create<SessionState>()(
               }
 
               if (event.type === 'progress') {
-                console.log('[sessionStore] Setting progress:', event.step, '/', event.total);
                 set((state) => {
                   state.progress = {
                     step: event.step,
