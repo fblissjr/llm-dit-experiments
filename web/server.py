@@ -4847,9 +4847,11 @@ def load_pipeline(
 
     # Apply torch.compile for faster inference (slow first run)
     if enable_compile:
-        logger.info("Compiling transformer with torch.compile...")
+        # Use compile_mode from config - "default" avoids CUDA graph issues with Z-Image's RoPE3D
+        compile_mode = getattr(runtime_config, "compile_mode", "default") if runtime_config else "default"
+        logger.info(f"Compiling transformer with torch.compile (mode={compile_mode})...")
         try:
-            pipeline.transformer = torch.compile(pipeline.transformer, mode="reduce-overhead")
+            pipeline.transformer = torch.compile(pipeline.transformer, mode=compile_mode)
             logger.info("  Transformer compiled (first run will be slow)")
         except Exception as e:
             logger.warning(f"  Failed to compile: {e}")
@@ -4992,9 +4994,11 @@ def load_hybrid_pipeline(
             logger.warning("  Install with: pip install flash-attn --no-build-isolation")
 
     if enable_compile:
-        logger.info("Compiling transformer with torch.compile...")
+        # Use compile_mode from config - "default" avoids CUDA graph issues with Z-Image's RoPE3D
+        compile_mode = getattr(runtime_config, "compile_mode", "default") if runtime_config else "default"
+        logger.info(f"Compiling transformer with torch.compile (mode={compile_mode})...")
         try:
-            pipeline.transformer = torch.compile(pipeline.transformer, mode="reduce-overhead")
+            pipeline.transformer = torch.compile(pipeline.transformer, mode=compile_mode)
             logger.info("  Transformer compiled (first run will be slow)")
         except Exception as e:
             logger.warning(f"  Failed to compile: {e}")
@@ -5117,9 +5121,11 @@ def load_api_pipeline(
             logger.warning("  Install with: pip install flash-attn --no-build-isolation")
 
     if enable_compile:
-        logger.info("Compiling transformer with torch.compile...")
+        # Use compile_mode from config - "default" avoids CUDA graph issues with Z-Image's RoPE3D
+        compile_mode = getattr(runtime_config, "compile_mode", "default") if runtime_config else "default"
+        logger.info(f"Compiling transformer with torch.compile (mode={compile_mode})...")
         try:
-            pipeline.transformer = torch.compile(pipeline.transformer, mode="reduce-overhead")
+            pipeline.transformer = torch.compile(pipeline.transformer, mode=compile_mode)
             logger.info("  Transformer compiled (first run will be slow)")
         except Exception as e:
             logger.warning(f"  Failed to compile: {e}")
