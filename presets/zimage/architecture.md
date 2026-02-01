@@ -7,8 +7,8 @@ variant: base
 
 negative_prompt: |
   curved lines, distorted perspective, surreal, fantasy, painting, illustration,
-  drawing, sketch, blur, depth of field, tilt shift, low quality, worst quality,
-  text, watermark
+  drawing, sketch, blur, blurry, bokeh, depth of field, tilt shift, simple background,
+  low quality, worst quality, text, watermark, signature
 
 guidance_scale: 4.0
 steps: 40
@@ -24,5 +24,3 @@ Key considerations for architecture:
 
 Note: Z-Image Base tends to apply strong depth of field (bokeh). If you need deep
 depth of field (everything in focus), this preset explicitly includes those negatives.
-
-Based on: internal/research/z-image/zimage_base_negative_prompts_research_by_gemini.md

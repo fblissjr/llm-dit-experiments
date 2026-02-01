@@ -7,7 +7,8 @@ variant: base
 
 negative_prompt: |
   illustration, 3d render, painting, artwork, drawing, anime, cartoon, sketch,
-  graphic, cgi, low quality, worst quality, text, watermark
+  graphic, cgi, plastic, plastic skin, smooth skin, airbrushed, wax figure,
+  semi-realistic, low quality, worst quality, text, watermark
 
 guidance_scale: 4.0
 steps: 40
@@ -22,6 +23,6 @@ you must explicitly tell the model NOT to use its artistic capabilities.
 
 This preset targets:
 - Artistic styles (illustration, 3d render, painting, anime, cartoon)
+- AI texture artifacts (plastic skin, smooth skin, airbrushed, wax figure)
+- Style ambiguity (semi-realistic - forces commitment to true photorealism)
 - Quality issues (low quality, artifacts, watermarks)
-
-Based on: internal/research/z-image/zimage_base_negative_prompts_research_by_gemini.md

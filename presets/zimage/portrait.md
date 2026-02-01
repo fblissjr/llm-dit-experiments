@@ -6,10 +6,11 @@ pipelines: [zimage]
 variant: base
 
 negative_prompt: |
-  plastic skin, doll, smooth skin, airbrushed, makeup, deformed, bad anatomy,
-  bad hands, extra fingers, missing fingers, mutation, floating limbs,
-  disconnected limbs, illustration, 3d render, painting, artwork, drawing,
-  anime, cartoon, sketch, low quality, worst quality
+  plastic skin, doll, smooth skin, airbrushed, wax figure, semi-realistic,
+  makeup, deformed, bad anatomy, bad hands, extra fingers, missing fingers,
+  mutation, floating limbs, disconnected limbs, illustration, 3d render,
+  painting, artwork, drawing, anime, cartoon, sketch, simple background,
+  low quality, worst quality
 
 guidance_scale: 4.0
 steps: 40
@@ -26,5 +27,3 @@ early Flux or SDXL models. This preset counteracts the "waxy" effect by:
 - Including universal photorealism negatives
 
 The result should render skin pores, imperfections, and natural texture variance.
-
-Based on: internal/research/z-image/zimage_base_negative_prompts_research_by_gemini.md

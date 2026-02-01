@@ -7,11 +7,11 @@ variant: base
 
 negative_prompt: |
   illustration, 3d render, painting, artwork, drawing, anime, cartoon, sketch,
-  graphic, cgi, low quality, worst quality, text, watermark,
-  plastic skin, doll, smooth skin, airbrushed,
+  graphic, cgi, semi-realistic, low quality, worst quality, text, watermark,
+  plastic skin, doll, smooth skin, airbrushed, wax figure,
   deformed, bad anatomy, bad hands, extra fingers, missing fingers,
   mutation, floating limbs, disconnected limbs,
-  bokeh, blur, depth of field,
+  bokeh, blur, depth of field, simple background,
   bad composition, cropped, out of frame,
   ugly, disfigured,
   oversaturated, undersaturated,
@@ -41,5 +41,3 @@ This preset is comprehensive, including:
 - Blur/depth of field control
 - Quality and artifact control
 - Chinese equivalents of key terms
-
-Based on: internal/research/z-image/zimage_base_negative_prompts_research_by_gemini.md

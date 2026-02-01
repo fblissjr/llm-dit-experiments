@@ -500,14 +500,14 @@ class TestTestingPresets:
 
         # Generation parameters
         assert preset.guidance_scale == 4.0
-        assert preset.steps == 30
+        assert preset.steps == 40
         assert preset.shift == 6.0
 
         # Test metadata
-        assert preset.metadata["prompt"] == "A cat sleeping in sunlight"
+        assert preset.metadata["prompt"] == "A photo of a man eating spaghetti"
         assert preset.metadata["seed"] == 42
-        assert preset.metadata["height"] == 512
-        assert preset.metadata["width"] == 512
+        assert preset.metadata["height"] == 1024
+        assert preset.metadata["width"] == 1024
         assert preset.metadata["min_variance"] == 500
         assert preset.metadata["max_variance"] == 6000
 
@@ -592,7 +592,7 @@ class TestTestFixtureHelpers:
         preset = get_test_preset("zimage_base_test")
         assert preset.name == "zimage_base_test"
         assert preset.guidance_scale == 4.0
-        assert preset.steps == 30
+        assert preset.steps == 40
 
     def test_get_test_preset_with_param_override(self):
         """Test getting a preset with parameter override."""
@@ -600,7 +600,7 @@ class TestTestFixtureHelpers:
 
         preset = get_test_preset("zimage_base_test", guidance_scale=5.0)
         assert preset.guidance_scale == 5.0  # Overridden
-        assert preset.steps == 30  # Original
+        assert preset.steps == 40  # Original
 
     def test_get_test_preset_with_metadata_override(self):
         """Test getting a preset with metadata override."""
@@ -608,7 +608,7 @@ class TestTestFixtureHelpers:
 
         preset = get_test_preset("zimage_base_test", seed=123)
         assert preset.metadata["seed"] == 123  # Overridden
-        assert preset.metadata["prompt"] == "A cat sleeping in sunlight"  # Original
+        assert preset.metadata["prompt"] == "A photo of a man eating spaghetti"  # Original
 
     def test_get_test_preset_not_found_error(self):
         """Test error when preset not found."""

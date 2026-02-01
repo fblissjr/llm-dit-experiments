@@ -197,39 +197,27 @@ class TestZImageConfig:
         assert config.model_path == ""
         assert config.text_encoder_path == ""
         assert config.variant == "auto"
-        assert config.default_steps is None
-        assert config.default_guidance_scale is None
-        assert config.default_shift is None
-        assert config.default_negative_prompt == ""
-        assert config.default_cfg_normalization == 0.0
+        assert config.default_preset == ""
 
-    def test_turbo_preset_values(self):
-        """ZImageConfig with turbo values."""
+    def test_turbo_preset_config(self):
+        """ZImageConfig for turbo variant points to preset."""
         config = ZImageConfig(
             model_path="models/Z-Image-Turbo",
             variant="turbo",
-            default_steps=9,
-            default_guidance_scale=0.0,
-            default_shift=3.0,
+            # Generation params (steps, guidance_scale, shift) are now in presets
         )
-        assert config.default_steps == 9
-        assert config.default_guidance_scale == 0.0
-        assert config.default_shift == 3.0
+        assert config.variant == "turbo"
+        assert config.model_path == "models/Z-Image-Turbo"
 
-    def test_base_preset_values(self):
-        """ZImageConfig with base model values."""
+    def test_base_preset_config(self):
+        """ZImageConfig for base variant uses preset for generation params."""
         config = ZImageConfig(
             model_path="models/Z-Image",
             variant="base",
-            default_steps=35,
-            default_guidance_scale=4.0,
-            default_shift=6.0,
-            default_negative_prompt="blur, artifacts, low quality",
+            default_preset="photorealistic",
         )
-        assert config.default_steps == 35
-        assert config.default_guidance_scale == 4.0
-        assert config.default_shift == 6.0
-        assert "blur" in config.default_negative_prompt
+        assert config.variant == "base"
+        assert config.default_preset == "photorealistic"
 
 
 class TestZImageInConfig:
@@ -248,14 +236,14 @@ class TestZImageInConfig:
             "zimage": {
                 "model_path": "models/Z-Image",
                 "variant": "base",
-                "default_steps": 35,
+                "default_preset": "photorealistic",
             },
         }
         config = Config.from_dict(data)
 
         assert config.zimage.model_path == "models/Z-Image"
         assert config.zimage.variant == "base"
-        assert config.zimage.default_steps == 35
+        assert config.zimage.default_preset == "photorealistic"
 
 
 class TestNegativePromptHandling:
