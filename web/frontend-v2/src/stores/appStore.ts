@@ -24,7 +24,6 @@ import {
   fetchVRAMStatus,
   fetchPipelineDefaults,
 } from '@/api/client';
-import { useFormStore } from './formStore';
 
 interface AppState {
   // Pipeline data
@@ -220,15 +219,23 @@ export const useAppStore = create<AppState>()(
         });
 
         // Apply default preset if one is configured
+        // Use setTimeout to break circular dependency (formStore imports appStore)
         if (defaultPreset && presets.length > 0) {
           const preset = presets.find((p) => p.name === defaultPreset);
+          console.log('[appStore] Default preset:', defaultPreset, 'found:', !!preset, 'params:', preset?.params);
           if (preset && preset.params) {
-            const formStore = useFormStore.getState();
+            setTimeout(async () => {
+              const { useFormStore } = await import('./formStore');
+              const formStore = useFormStore.getState();
 
-            // Apply preset params (includes negative_prompt, steps, guidance_scale, etc.)
-            formStore.applyPreset(pipelineId, preset.params);
-            formStore.setValue(pipelineId, 'preset', defaultPreset);
+              console.log('[appStore] Applying default preset:', defaultPreset);
+              // Apply preset params (includes negative_prompt, steps, guidance_scale, etc.)
+              formStore.applyPreset(pipelineId, preset.params);
+              formStore.setValue(pipelineId, 'preset', defaultPreset);
+            }, 0);
           }
+        } else {
+          console.log('[appStore] No default preset or no presets. defaultPreset:', defaultPreset, 'presets.length:', presets.length);
         }
       } catch {
         // Silently fail - presets are optional
