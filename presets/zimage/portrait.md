@@ -6,11 +6,7 @@ pipelines: [zimage]
 variant: base
 
 negative_prompt: |
-  plastic skin, doll, smooth skin, airbrushed, wax figure, semi-realistic,
-  makeup, deformed, bad anatomy, bad hands, extra fingers, missing fingers,
-  mutation, floating limbs, disconnected limbs, illustration, 3d render,
-  painting, artwork, drawing, anime, cartoon, sketch, simple background,
-  low quality, worst quality
+  plastic skin, doll, smooth skin, airbrushed, wax figure, semi-realistic, makeup, deformed, bad anatomy, bad hands, extra fingers, missing fingers, mutation, floating limbs, disconnected limbs, illustration, 3d render, painting, artwork, drawing, anime, cartoon, sketch, simple background, low quality, worst quality
 
 guidance_scale: 4.0
 steps: 40

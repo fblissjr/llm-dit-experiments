@@ -3394,6 +3394,9 @@ async def generate(request: GenerateRequest):
         logger.info(
             f"Calling pipeline() with long_prompt_mode={request.long_prompt_mode}, hidden_layer={request.hidden_layer}..."
         )
+        if negative_prompt_to_use:
+            neg_display = negative_prompt_to_use[:60] + "..." if len(negative_prompt_to_use) > 60 else negative_prompt_to_use
+            logger.info(f"  Negative prompt: {neg_display}")
         if slg_scale > 0 and slg_layers:
             logger.info(
                 f"  SLG: scale={slg_scale}, layers={slg_layers}, range=[{slg_start:.0%}, {slg_stop:.0%}]"
@@ -3683,6 +3686,9 @@ async def generate_stream(request: GenerateRequest):
             logger.info("STREAMING GENERATION REQUEST")
             logger.info("=" * 60)
             logger.info(f"  Prompt: {request.prompt[:80]}...")
+            if negative_prompt_to_use:
+                neg_display = negative_prompt_to_use[:60] + "..." if len(negative_prompt_to_use) > 60 else negative_prompt_to_use
+                logger.info(f"  Negative: {neg_display}")
             logger.info(f"  Size: {request.width}x{request.height}")
             logger.info(f"  Steps: {request.steps}")
             logger.info(f"  Seed: {actual_seed}")

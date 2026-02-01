@@ -6,15 +6,7 @@ pipelines: [zimage]
 variant: base
 
 negative_prompt: |
-  illustration, 3d render, painting, artwork, drawing, anime, cartoon, sketch,
-  graphic, cgi, vector art, digital art, unreal engine, video game, fantasy style,
-  plastic, plastic skin, smooth skin, airbrushed, wax figure, semi-realistic,
-  doll like, over-smooth, retouching, makeup, glossy, fake skin, flat lighting,
-  deformed, bad anatomy, bad hands, extra fingers, missing fingers, mutation,
-  floating limbs, disconnected limbs, disfigured, extra limbs, missing limbs, ugly,
-  simple background, bokeh, depth of field,
-  low quality, worst quality, text, watermark, signature, username, error,
-  jpeg artifacts, blurry, noise, grain
+  illustration, 3d render, painting, artwork, drawing, anime, cartoon, sketch, graphic, cgi, vector art, digital art, unreal engine, video game, fantasy style, plastic, plastic skin, smooth skin, airbrushed, wax figure, semi-realistic, doll like, over-smooth, retouching, makeup, glossy, fake skin, flat lighting, deformed, bad anatomy, bad hands, extra fingers, missing fingers, mutation, floating limbs, disconnected limbs, disfigured, extra limbs, missing limbs, ugly, simple background, bokeh, depth of field, low quality, worst quality, text, watermark, signature, username, error, jpeg artifacts, blurry, noise, grain
 
 guidance_scale: 4.0
 steps: 50

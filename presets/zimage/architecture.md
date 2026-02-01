@@ -6,9 +6,7 @@ pipelines: [zimage]
 variant: base
 
 negative_prompt: |
-  curved lines, distorted perspective, surreal, fantasy, painting, illustration,
-  drawing, sketch, blur, blurry, bokeh, depth of field, tilt shift, simple background,
-  low quality, worst quality, text, watermark, signature
+  curved lines, distorted perspective, surreal, fantasy, painting, illustration, drawing, sketch, blur, blurry, bokeh, depth of field, tilt shift, simple background, low quality, worst quality, text, watermark, signature
 
 guidance_scale: 4.0
 steps: 40

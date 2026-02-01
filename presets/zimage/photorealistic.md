@@ -6,9 +6,7 @@ pipelines: [zimage]
 variant: base
 
 negative_prompt: |
-  illustration, 3d render, painting, artwork, drawing, anime, cartoon, sketch,
-  graphic, cgi, plastic, plastic skin, smooth skin, airbrushed, wax figure,
-  semi-realistic, low quality, worst quality, text, watermark
+  illustration, 3d render, painting, artwork, drawing, anime, cartoon, sketch, graphic, cgi, plastic, plastic skin, smooth skin, airbrushed, wax figure, semi-realistic, low quality, worst quality, text, watermark
 
 guidance_scale: 4.0
 steps: 40
