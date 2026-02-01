@@ -17,6 +17,7 @@ import type {
   FormValues,
 } from '@/api/types';
 import { generate, generateStream } from '@/api/client';
+import { generateUUID } from '@/utils';
 import { useAppStore } from './appStore';
 import { useFormStore } from './formStore';
 
@@ -161,7 +162,7 @@ export const useSessionStore = create<SessionState>()(
                 });
               } else if (event.type === 'result') {
                 const result: GenerationResult = {
-                  id: crypto.randomUUID(),
+                  id: generateUUID(),
                   pipelineId,
                   outputType: pipeline.output_type,
                   urls: event.data.urls ?? (event.data as unknown as { output_path?: string }).output_path
@@ -194,7 +195,7 @@ export const useSessionStore = create<SessionState>()(
             const response = await generate(pipeline.endpoint, params);
 
             const result: GenerationResult = {
-              id: crypto.randomUUID(),
+              id: generateUUID(),
               pipelineId,
               outputType: pipeline.output_type,
               urls: response.urls ?? [],
