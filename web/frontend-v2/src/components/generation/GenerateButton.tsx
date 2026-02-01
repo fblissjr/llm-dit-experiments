@@ -24,15 +24,24 @@ export function GenerateButton() {
   const isGenerating = status === 'generating';
 
   const handleClick = useCallback(() => {
-    if (!selectedPipelineId) return;
+    console.log('[GenerateButton] handleClick, pipelineId:', selectedPipelineId, 'isGenerating:', isGenerating);
+    if (!selectedPipelineId) {
+      console.log('[GenerateButton] No pipeline selected, returning');
+      return;
+    }
 
     if (isGenerating) {
+      console.log('[GenerateButton] Canceling generation');
       cancelGeneration();
     } else {
       // Validate first
       const errors = validate(selectedPipelineId);
+      console.log('[GenerateButton] Validation errors:', errors);
       if (errors.length === 0) {
+        console.log('[GenerateButton] Calling startGeneration');
         startGeneration(selectedPipelineId);
+      } else {
+        console.log('[GenerateButton] Validation failed, not starting');
       }
     }
   }, [selectedPipelineId, isGenerating, validate, startGeneration, cancelGeneration]);

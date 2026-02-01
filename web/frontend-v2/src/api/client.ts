@@ -142,13 +142,17 @@ export async function* generateStream(
   | { type: 'result'; data: GenerationResult }
   | { type: 'error'; error: string }
 > {
+  console.log('[generateStream] Starting fetch to:', endpoint);
+  console.log('[generateStream] Params:', params);
   const response = await fetch(endpoint, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(params),
   });
+  console.log('[generateStream] Response status:', response.status, response.statusText);
 
   if (!response.ok) {
+    console.log('[generateStream] Response not OK, yielding error');
     yield { type: 'error', error: `Request failed: ${response.statusText}` };
     return;
   }
