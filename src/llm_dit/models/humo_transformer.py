@@ -1,7 +1,7 @@
 """
 HuMo Transformer for video generation with optional audio conditioning.
 
-Last Updated: 2026-01-11
+Last Updated: 2026-02-01
 
 This implements the HuMo DiT architecture from ByteDance:
 https://github.com/Phantom-video/HuMo
@@ -32,21 +32,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange
 
+from llm_dit.layers import RMSNorm
 
-class RMSNorm(nn.Module):
-    """Root Mean Square Layer Normalization."""
-
-    def __init__(self, dim: int, eps: float = 1e-6):
-        super().__init__()
-        self.eps = eps
-        self.weight = nn.Parameter(torch.ones(dim))
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        dtype = x.dtype
-        x = x.float()
-        rms = torch.sqrt(torch.mean(x ** 2, dim=-1, keepdim=True) + self.eps)
-        x = x / rms
-        return (self.weight * x).to(dtype)
+# Note: RMSNorm is imported from llm_dit.layers (eps=1e-6 matches HuMo's default)
 
 
 class HuMo3DRoPE(nn.Module):

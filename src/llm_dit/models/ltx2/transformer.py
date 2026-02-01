@@ -41,12 +41,12 @@ import torch.nn as nn
 from llm_dit.models.ltx2.attention import Attention, AttentionCallable, AttentionFunction
 
 logger = logging.getLogger(__name__)
+from llm_dit.layers import rms_norm
 from llm_dit.models.ltx2.components import (
     AdaLayerNormSingle,
     FeedForward,
     Modality,
     PixArtAlphaTextProjection,
-    rms_norm,
 )
 from llm_dit.models.ltx2.rope import (
     LTXRopeType,

@@ -19,6 +19,7 @@ from llm_dit.models.ltx2.rope import (
     LTXRopeType,
     apply_rotary_emb,
 )
+from llm_dit.layers import rms_norm
 from llm_dit.models.ltx2.components import (
     GELUApprox,
     FeedForward,
@@ -26,7 +27,6 @@ from llm_dit.models.ltx2.components import (
     TimestepEmbedding,
     AdaLayerNormSingle,
     PixArtAlphaTextProjection,
-    rms_norm,
 )
 from llm_dit.models.ltx2.attention import (
     Attention,

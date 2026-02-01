@@ -1,7 +1,7 @@
 """
 Wan DiT (Diffusion Transformer) for video generation.
 
-Last Updated: 2026-01-13
+Last Updated: 2026-02-01
 
 Implements the Wan 2.1 DiT architecture for text-to-video generation.
 Based on DiffSynth-Engine reference implementation.
@@ -32,23 +32,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange
 
+from llm_dit.layers import RMSNorm
 
-class RMSNorm(nn.Module):
-    """Root Mean Square Layer Normalization."""
-
-    def __init__(self, dim: int, eps: float = 1e-6):
-        super().__init__()
-        self.eps = eps
-        self.weight = nn.Parameter(torch.ones(dim))
-
-    def _norm(self, x: torch.Tensor) -> torch.Tensor:
-        """Normalize using rsqrt (matches DiffSynth implementation)."""
-        return x * torch.rsqrt(x.pow(2).mean(dim=-1, keepdim=True) + self.eps)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # Cast to float32 for precision, normalize, cast back, THEN apply weight
-        # Order matters: DiffSynth casts back BEFORE weight multiplication
-        return self._norm(x.float()).to(x.dtype) * self.weight
+# Note: RMSNorm is imported from llm_dit.layers (eps=1e-6 matches Wan's default)
 
 
 def modulate(x: torch.Tensor, shift: torch.Tensor, scale: torch.Tensor) -> torch.Tensor:

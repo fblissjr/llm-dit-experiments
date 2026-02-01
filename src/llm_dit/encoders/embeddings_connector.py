@@ -1,7 +1,7 @@
 """
 Embeddings 1D Connector for LTX-2 text encoder.
 
-Last Updated: 2026-01-21
+Last Updated: 2026-02-01
 
 Ported from:
   coderef/LTX-2/packages/ltx-core/src/ltx_core/text_encoders/gemma/embeddings_connector.py
@@ -29,6 +29,8 @@ from typing import Optional, Tuple
 
 import torch
 from torch import nn
+
+from llm_dit.layers import rms_norm
 
 logger = logging.getLogger(__name__)
 
@@ -273,21 +275,10 @@ def precompute_freqs_cis(
 
 
 # ============================================================================
-# Utility Functions
-# ============================================================================
-
-def rms_norm(
-    x: torch.Tensor,
-    weight: Optional[torch.Tensor] = None,
-    eps: float = 1e-6,
-) -> torch.Tensor:
-    """RMS normalization over last dimension."""
-    return torch.nn.functional.rms_norm(x, (x.shape[-1],), weight=weight, eps=eps)
-
-
-# ============================================================================
 # Transformer Components
 # ============================================================================
+
+# Note: rms_norm is imported from llm_dit.layers
 
 class GELUApprox(nn.Module):
     """GELU with tanh approximation."""

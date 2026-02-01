@@ -1,7 +1,7 @@
 """
 Core building blocks for LTX-2 transformer.
 
-Last Updated: 2026-01-18
+Last Updated: 2026-02-01
 
 Contains the fundamental components used in the LTX-2 DiT architecture:
 - GELUApprox: GELU activation with linear projection
@@ -390,26 +390,7 @@ class PixArtAlphaTextProjection(nn.Module):
         return hidden_states
 
 
-def rms_norm(
-    x: torch.Tensor,
-    weight: Optional[torch.Tensor] = None,
-    eps: float = 1e-6
-) -> torch.Tensor:
-    """
-    Root-mean-square (RMS) normalize tensor over its last dimension.
-
-    RMSNorm is used in LTX-2 instead of LayerNorm for attention Q/K normalization.
-    It's computationally simpler as it doesn't require mean subtraction.
-
-    Args:
-        x: Input tensor
-        weight: Optional learnable weight parameter
-        eps: Small constant for numerical stability
-
-    Returns:
-        Normalized tensor with same shape as input
-    """
-    return torch.nn.functional.rms_norm(x, (x.shape[-1],), weight=weight, eps=eps)
+# Note: rms_norm function was removed - use llm_dit.layers.rms_norm if needed
 
 
 @dataclass(frozen=True)
