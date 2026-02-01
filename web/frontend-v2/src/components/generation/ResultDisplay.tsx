@@ -34,7 +34,8 @@ export function ResultDisplay() {
   }
 
   const url = result.urls[0];
-  const isVideo = result.outputType === 'video' || url.endsWith('.mp4') || url.endsWith('.webm');
+  // Check outputType first, then file extension (data URLs don't have extensions)
+  const isVideo = result.outputType === 'video' || (url && (url.endsWith('.mp4') || url.endsWith('.webm')));
 
   return (
     <div className="card overflow-hidden">

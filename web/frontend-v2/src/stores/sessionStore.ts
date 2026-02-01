@@ -171,14 +171,23 @@ export const useSessionStore = create<SessionState>()(
                   };
                 });
               } else if (event.type === 'result') {
+                // Server may return urls (array), url (string), or output_path (string)
+                const eventData = event.data as unknown as {
+                  urls?: string[];
+                  url?: string;
+                  output_path?: string;
+                  seed?: number;
+                };
+                const urls = eventData.urls
+                  ?? (eventData.url ? [eventData.url] : null)
+                  ?? (eventData.output_path ? [eventData.output_path] : []);
+
                 const result: GenerationResult = {
                   id: generateUUID(),
                   pipelineId,
                   outputType: pipeline.output_type,
-                  urls: event.data.urls ?? (event.data as unknown as { output_path?: string }).output_path
-                    ? [(event.data as unknown as { output_path: string }).output_path]
-                    : [],
-                  seed: (event.data.seed ?? params.seed ?? -1) as number,
+                  urls,
+                  seed: (eventData.seed ?? params.seed ?? -1) as number,
                   params,
                   durationMs: Date.now() - startTime,
                   timestamp: Date.now(),
