@@ -222,20 +222,16 @@ export const useAppStore = create<AppState>()(
         // Use setTimeout to break circular dependency (formStore imports appStore)
         if (defaultPreset && presets.length > 0) {
           const preset = presets.find((p) => p.name === defaultPreset);
-          console.log('[appStore] Default preset:', defaultPreset, 'found:', !!preset, 'params:', preset?.params);
           if (preset && preset.params) {
             setTimeout(async () => {
               const { useFormStore } = await import('./formStore');
               const formStore = useFormStore.getState();
 
-              console.log('[appStore] Applying default preset:', defaultPreset);
               // Apply preset params (includes negative_prompt, steps, guidance_scale, etc.)
               formStore.applyPreset(pipelineId, preset.params);
               formStore.setValue(pipelineId, 'preset', defaultPreset);
             }, 0);
           }
-        } else {
-          console.log('[appStore] No default preset or no presets. defaultPreset:', defaultPreset, 'presets.length:', presets.length);
         }
       } catch {
         // Silently fail - presets are optional

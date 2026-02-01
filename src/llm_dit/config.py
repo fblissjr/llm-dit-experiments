@@ -1522,6 +1522,12 @@ class Config:
                 "auto_unload": self.vl.auto_unload,
                 "target_std": self.vl.target_std,
             },
+            "zimage": {
+                "model_path": self.zimage.model_path,
+                "text_encoder_path": self.zimage.text_encoder_path,
+                "variant": self.zimage.variant,
+                "default_preset": self.zimage.default_preset,
+            },
             "qwen_image": {
                 "model_path": self.qwen_image.model_path,
                 "edit_model_path": self.qwen_image.edit_model_path,
