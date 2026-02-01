@@ -2374,6 +2374,11 @@ async def get_pipeline_defaults(pipeline_id: str):
             if param.id in config_dict:
                 defaults[param.id] = config_dict[param.id]
 
+        # Add special _variant field for conditional visibility
+        # This tells the UI which variant is configured (base/turbo)
+        if pipeline_id == "zimage":
+            defaults["_variant"] = getattr(runtime_config, "zimage_variant", "turbo")
+
     return defaults
 
 
