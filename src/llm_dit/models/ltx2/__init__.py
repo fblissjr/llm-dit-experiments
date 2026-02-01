@@ -42,12 +42,12 @@ from llm_dit.models.ltx2.transformer import (
     to_velocity,
     to_denoised,
 )
+from llm_dit.layers import rms_norm
 from llm_dit.models.ltx2.components import (
     Modality,
     AdaLayerNormSingle,
     FeedForward,
     PixArtAlphaTextProjection,
-    rms_norm,
 )
 from llm_dit.models.ltx2.attention import (
     Attention,

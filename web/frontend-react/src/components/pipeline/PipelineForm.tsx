@@ -80,6 +80,14 @@ export function PipelineForm(): JSX.Element | null {
           setFormValue(pipeline.id, 'height', height);
         }
       }
+
+      // FLUX.2: Model change -> update steps/guidance defaults
+      if (pipeline.id === 'flux2' && paramId === 'model_name' && typeof value === 'string') {
+        const isBase = value.includes('base');
+        // Distilled: 4 steps, 1.0 guidance | Base: 40 steps, 3.5 guidance
+        setFormValue(pipeline.id, 'num_steps', isBase ? 40 : 4);
+        setFormValue(pipeline.id, 'guidance', isBase ? 3.5 : 1.0);
+      }
     },
     [pipeline?.id, setFormValue]
   );

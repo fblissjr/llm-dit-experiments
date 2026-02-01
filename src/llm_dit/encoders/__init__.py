@@ -72,6 +72,22 @@ from llm_dit.encoders.gemma3_variants import (
     estimate_encoder_memory,
 )
 
+# Qwen3 FLUX.2 encoder
+from llm_dit.encoders.qwen3_flux2 import (
+    Qwen3Flux2Encoder,
+    load_qwen3_flux2_encoder,
+)
+
+# Unified Qwen3 encoder (new - supports both Z-Image and FLUX.2 modes)
+from llm_dit.encoders.qwen3_unified import (
+    Qwen3UnifiedEncoder,
+    Qwen3EncoderConfig,
+    get_unified_encoder,
+    ZIMAGE_CONFIG,
+    KLEIN_4B_CONFIG,
+    KLEIN_8B_CONFIG,
+)
+
 __all__ = [
     # High-level encoder (existing)
     "ZImageTextEncoder",
@@ -103,4 +119,14 @@ __all__ = [
     "create_gemma3_encoder",
     "Gemma3Variant",
     "estimate_encoder_memory",
+    # Qwen3 FLUX.2 encoder
+    "Qwen3Flux2Encoder",
+    "load_qwen3_flux2_encoder",
+    # Unified Qwen3 encoder
+    "Qwen3UnifiedEncoder",
+    "Qwen3EncoderConfig",
+    "get_unified_encoder",
+    "ZIMAGE_CONFIG",
+    "KLEIN_4B_CONFIG",
+    "KLEIN_8B_CONFIG",
 ]

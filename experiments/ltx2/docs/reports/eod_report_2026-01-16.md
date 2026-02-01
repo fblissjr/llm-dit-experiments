@@ -72,7 +72,7 @@ Boundaries are 15% smoother than mid-chunk - LTX-2's VAE handles temporal compre
 - `memory_utils.py` (3 locations)
 - `layer_profile_sweep.py`
 - `layer_blend_sweep.py`
-- Updated `AGENTS.md` documentation
+- Updated `CLAUDE.md` documentation
 
 ### 2. Negative Prompt Embeddings for CFG
 
@@ -99,7 +99,7 @@ Boundaries are 15% smoother than mid-chunk - LTX-2's VAE handles temporal compre
 | `experiments/ltx2/memory_utils.py` | Fixed hidden states slicing, added DummyAudioVAE, added enable_audio param |
 | `experiments/ltx2/layer_profile_sweep.py` | Fixed hidden states slicing, added negative embeddings |
 | `experiments/ltx2/layer_blend_sweep.py` | Fixed hidden states slicing, added negative embeddings |
-| `experiments/ltx2/AGENTS.md` | Updated documentation for 49 layers |
+| `experiments/ltx2/CLAUDE.md` | Updated documentation for 49 layers |
 
 ---
 

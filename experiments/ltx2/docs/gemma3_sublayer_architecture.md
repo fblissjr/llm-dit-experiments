@@ -506,7 +506,7 @@ def encode_multilayer_with_sublayers(
 ### Phase 4: Documentation (Ongoing)
 
 1. Document findings in `experiments/ltx2/docs/sublayer_routing_results.md`
-2. Update `experiments/ltx2/AGENTS.md` with sub-layer architecture details
+2. Update `experiments/ltx2/CLAUDE.md` with sub-layer architecture details
 3. Create visualizations of attention vs MLP contributions
 4. Write conclusions and recommendations
 
@@ -549,7 +549,7 @@ def encode_multilayer_with_sublayers(
 
 ### Related Documents
 
-- `experiments/ltx2/AGENTS.md` - LTX-2 agent context
+- `experiments/ltx2/CLAUDE.md` - LTX-2 agent context
 - `experiments/ltx2/docs/text_conditioning_architecture.md` - Full text conditioning pipeline
 - `internal/log/log_2026-01-16.md` - Research log for this analysis
 

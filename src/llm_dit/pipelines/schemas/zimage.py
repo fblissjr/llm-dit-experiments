@@ -29,6 +29,12 @@ DIMENSION_PRESETS = [
     "896x1152",   # Portrait 3:4
 ]
 
+# Default negative prompt for Z-Image base variant (when user input is empty)
+DEFAULT_NEGATIVE_PROMPT = (
+    "low quality, worst quality, blurry, pixelated, noisy, artifacts, watermark, text, logo, "
+    "bad anatomy, bad hands, extra limbs"
+)
+
 
 register_pipeline(PipelineSchema(
     id="zimage",
@@ -58,6 +64,7 @@ register_pipeline(PipelineSchema(
             id="negative_prompt",
             type="textarea",
             label="Negative Prompt",
+            default=DEFAULT_NEGATIVE_PROMPT,
             placeholder="Elements to avoid (blur, artifacts, etc.)...",
             rows=2,
             group="basic",
@@ -329,6 +336,26 @@ register_pipeline(PipelineSchema(
             group="optimization",
             conditional={"fbcache_enabled": True},
             tooltip="Similarity threshold for cache reuse. Lower = more caching.",
+        ),
+
+        # === CPU Offload ===
+        ParamSchema(
+            id="cpu_offload",
+            type="checkbox",
+            label="CPU Offload",
+            default=False,
+            group="optimization",
+            tooltip="Move encoder to CPU to fit in 24GB VRAM. Slower but uses less GPU memory.",
+        ),
+
+        # === Torch Compile ===
+        ParamSchema(
+            id="compile",
+            type="checkbox",
+            label="Torch Compile",
+            default=False,
+            group="optimization",
+            tooltip="Use torch.compile for faster inference (slow first run, then 20-40% speedup).",
         ),
 
         # === Hidden Layer Selection ===

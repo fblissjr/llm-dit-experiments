@@ -73,7 +73,7 @@ experiments/results/
 └── archive/                           # Superseded/analysis files
 ```
 
-See [AGENTS.md](AGENTS.md) for full output organization documentation.
+See [CLAUDE.md](CLAUDE.md) for full output organization documentation.
 
 Legacy flat structure (for older experiments):
 

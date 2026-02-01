@@ -208,6 +208,18 @@ class ZImagePipeline:
         else:
             return 6.0  # Base variant (default)
 
+    @staticmethod
+    def _is_turbo_variant(model_path: str) -> bool:
+        """Check if the model is the Turbo variant.
+
+        Args:
+            model_path: Path to model directory or HuggingFace ID
+
+        Returns:
+            True if this is the Turbo (distilled) variant
+        """
+        return "turbo" in str(model_path).lower()
+
     @classmethod
     def from_pretrained(
         cls,
@@ -401,15 +413,22 @@ class ZImagePipeline:
             from llm_dit.schedulers import FlowMatchScheduler
             # Resolve shift: use provided value or detect from variant
             actual_shift = shift if shift is not None else cls._detect_variant_shift(model_path)
-            scheduler = FlowMatchScheduler(shift=actual_shift)
-            logger.info(f"Using FlowMatchScheduler with shift={actual_shift}")
+            # Z-Image ALWAYS uses dynamic shifting (FLUX-style exponential)
+            # per DiffSynth-Studio reference implementation
+            scheduler = FlowMatchScheduler(
+                shift=actual_shift,
+                use_dynamic_shifting=True,  # Always true for Z-Image
+            )
+            logger.info(f"Using FlowMatchScheduler: shift={actual_shift}, mode=dynamic (FLUX-style)")
         else:
             scheduler = diffusers_pipe.scheduler
 
-        logger.debug(f"Moving transformer to {dit_device}...")
-        transformer = transformer.to(dit_device)
-        logger.debug(f"Moving VAE to {vae_device}...")
-        vae = vae.to(vae_device)
+        # Note: When device_map="balanced" is used above, accelerate handles device
+        # placement automatically. Calling .to() on models with accelerate hooks
+        # triggers a warning. The models are already on the correct devices.
+        # We skip explicit .to() calls here since accelerate manages this.
+        logger.debug(f"Transformer device: {next(transformer.parameters()).device}")
+        logger.debug(f"VAE device: {next(vae.parameters()).device}")
 
         return transformer, vae, scheduler
 
@@ -458,8 +477,13 @@ class ZImagePipeline:
 
         # Resolve shift: use provided value or detect from variant
         actual_shift = shift if shift is not None else cls._detect_variant_shift(model_path)
-        scheduler = FlowMatchScheduler(shift=actual_shift)
-        logger.info(f"Using FlowMatchScheduler with shift={actual_shift}")
+        # Z-Image ALWAYS uses dynamic shifting (FLUX-style exponential)
+        # per DiffSynth-Studio reference implementation
+        scheduler = FlowMatchScheduler(
+            shift=actual_shift,
+            use_dynamic_shifting=True,  # Always true for Z-Image
+        )
+        logger.info(f"Using FlowMatchScheduler: shift={actual_shift}, mode=dynamic (FLUX-style)")
 
         return transformer, vae, scheduler
 
@@ -924,12 +948,11 @@ class ZImagePipeline:
         latent_width = 2 * (width // vae_scale)
         image_seq_len = (latent_height // 2) * (latent_width // 2)
 
-        if shift is not None:
-            # Use user-provided shift value
-            mu = shift
-            logger.debug(f"[img2img] Using user-provided shift/mu: {mu}")
-        else:
-            # Calculate shift based on resolution (dynamic shift)
+        # Determine mu based on scheduler mode (same logic as __call__)
+        use_dynamic = getattr(self.scheduler, "use_dynamic_shifting", False)
+
+        if use_dynamic:
+            # FLUX-style exponential shift: calculate mu from resolution
             mu = calculate_shift(
                 image_seq_len,
                 self.scheduler.config.get("base_image_seq_len", 256),
@@ -937,7 +960,15 @@ class ZImagePipeline:
                 self.scheduler.config.get("base_shift", 0.5),
                 self.scheduler.config.get("max_shift", 1.15),
             )
-            logger.debug(f"[img2img] Calculated shift/mu for resolution: {mu:.4f}")
+            logger.debug(f"[img2img] Dynamic shifting: calculated mu={mu:.4f} from resolution")
+        elif shift is not None:
+            # Linear shift mode with user-provided shift value
+            mu = shift
+            logger.debug(f"[img2img] Linear shift mode: using shift={mu}")
+        else:
+            # Linear shift mode with scheduler's default shift
+            mu = getattr(self.scheduler, "shift", 3.0)
+            logger.debug(f"[img2img] Linear shift mode: using scheduler default shift={mu}")
 
         self._configure_scheduler(mu, num_inference_steps, device, log_prefix="[img2img]")
 
@@ -1475,12 +1506,15 @@ class ZImagePipeline:
 
         # 3. Prepare timesteps
         image_seq_len = (latent_height // 2) * (latent_width // 2)
-        if shift is not None:
-            # Use user-provided shift value
-            mu = shift
-            logger.debug(f"[Pipeline] Using user-provided shift/mu: {mu}")
-        else:
-            # Calculate shift based on resolution (dynamic shift)
+
+        # Determine mu based on scheduler mode:
+        # - use_dynamic_shifting=True (FLUX-style): ALWAYS calculate mu from resolution
+        #   The shift parameter (3.0 turbo, 6.0 base) is NOT used as mu - that would be wrong!
+        # - use_dynamic_shifting=False (linear): use the shift parameter directly
+        use_dynamic = getattr(self.scheduler, "use_dynamic_shifting", False)
+
+        if use_dynamic:
+            # FLUX-style exponential shift: calculate mu from resolution (0.5 to 1.15 range)
             mu = calculate_shift(
                 image_seq_len,
                 self.scheduler.config.get("base_image_seq_len", 256),
@@ -1488,7 +1522,15 @@ class ZImagePipeline:
                 self.scheduler.config.get("base_shift", 0.5),
                 self.scheduler.config.get("max_shift", 1.15),
             )
-            logger.debug(f"[Pipeline] Calculated shift/mu for resolution: {mu:.4f}")
+            logger.debug(f"[Pipeline] Dynamic shifting: calculated mu={mu:.4f} from resolution")
+        elif shift is not None:
+            # Linear shift mode with user-provided shift value
+            mu = shift
+            logger.debug(f"[Pipeline] Linear shift mode: using shift={mu}")
+        else:
+            # Linear shift mode with scheduler's default shift
+            mu = getattr(self.scheduler, "shift", 3.0)
+            logger.debug(f"[Pipeline] Linear shift mode: using scheduler default shift={mu}")
 
         self._configure_scheduler(mu, num_inference_steps, device, log_prefix="[Pipeline]")
         timesteps = self.scheduler.timesteps
@@ -2049,12 +2091,12 @@ class ZImagePipeline:
 
         # Prepare timesteps
         image_seq_len = (latent_height // 2) * (latent_width // 2)
-        if shift is not None:
-            # Use user-provided shift value
-            mu = shift
-            logger.debug(f"[Pipeline] Using user-provided shift/mu: {mu}")
-        else:
-            # Calculate shift based on resolution (dynamic shift)
+
+        # Determine mu based on scheduler mode (same logic as __call__)
+        use_dynamic = getattr(self.scheduler, "use_dynamic_shifting", False)
+
+        if use_dynamic:
+            # FLUX-style exponential shift: calculate mu from resolution
             mu = calculate_shift(
                 image_seq_len,
                 self.scheduler.config.get("base_image_seq_len", 256),
@@ -2062,7 +2104,15 @@ class ZImagePipeline:
                 self.scheduler.config.get("base_shift", 0.5),
                 self.scheduler.config.get("max_shift", 1.15),
             )
-            logger.debug(f"[Pipeline] Calculated shift/mu for resolution: {mu:.4f}")
+            logger.debug(f"[_denoise] Dynamic shifting: calculated mu={mu:.4f} from resolution")
+        elif shift is not None:
+            # Linear shift mode with user-provided shift value
+            mu = shift
+            logger.debug(f"[_denoise] Linear shift mode: using shift={mu}")
+        else:
+            # Linear shift mode with scheduler's default shift
+            mu = getattr(self.scheduler, "shift", 3.0)
+            logger.debug(f"[_denoise] Linear shift mode: using scheduler default shift={mu}")
 
         self._configure_scheduler(mu, num_inference_steps, device, log_prefix="[_denoise]")
 
@@ -2302,8 +2352,13 @@ class ZImagePipeline:
             from llm_dit.schedulers import FlowMatchScheduler
 
             actual_shift = cls._detect_variant_shift(model_path)
-            scheduler = FlowMatchScheduler(shift=actual_shift)
-            logger.info(f"Using custom FlowMatchScheduler with shift={actual_shift}")
+            # Z-Image ALWAYS uses dynamic shifting (FLUX-style exponential)
+            # per DiffSynth-Studio reference implementation
+            scheduler = FlowMatchScheduler(
+                shift=actual_shift,
+                use_dynamic_shifting=True,  # Always true for Z-Image
+            )
+            logger.info(f"Using FlowMatchScheduler: shift={actual_shift}, mode=dynamic (FLUX-style)")
         else:
             logger.debug("Loading scheduler...")
             scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(

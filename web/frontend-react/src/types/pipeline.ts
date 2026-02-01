@@ -116,6 +116,7 @@ export interface ParamSchema {
   placeholder?: string;
   rows?: number;
   required?: boolean;
+  max_count?: number;  // Maximum number of images (for image type controls)
 }
 
 /**

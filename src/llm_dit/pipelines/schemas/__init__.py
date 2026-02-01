@@ -47,6 +47,7 @@ class ParamSchema:
         placeholder: Placeholder text for textarea/text inputs
         rows: Number of rows for textarea inputs
         required: Whether the field is required for generation
+        max_count: Maximum number of images allowed (for image type controls)
     """
     id: str
     type: ParamType
@@ -62,6 +63,7 @@ class ParamSchema:
     placeholder: str | None = None
     rows: int | None = None
     required: bool = False
+    max_count: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dict, excluding None values for cleaner JSON."""

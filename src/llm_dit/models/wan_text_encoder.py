@@ -1,7 +1,7 @@
 """
 Wan UMT5-XXL Text Encoder.
 
-Last Updated: 2026-01-13
+Last Updated: 2026-02-01
 
 Custom T5 encoder implementation matching Wan's weight format.
 Based on DiffSynth-Studio reference implementation.
@@ -14,6 +14,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from llm_dit.layers import T5LayerNorm
+
 
 def fp16_clamp(x: torch.Tensor) -> torch.Tensor:
     """Clamp tensor to avoid fp16 overflow."""
@@ -22,21 +24,7 @@ def fp16_clamp(x: torch.Tensor) -> torch.Tensor:
         x = torch.clamp(x, min=-clamp, max=clamp)
     return x
 
-
-class T5LayerNorm(nn.Module):
-    """T5-style RMSNorm."""
-
-    def __init__(self, dim: int, eps: float = 1e-6):
-        super().__init__()
-        self.dim = dim
-        self.eps = eps
-        self.weight = nn.Parameter(torch.ones(dim))
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = x * torch.rsqrt(x.float().pow(2).mean(dim=-1, keepdim=True) + self.eps)
-        if self.weight.dtype in [torch.float16, torch.bfloat16]:
-            x = x.type_as(self.weight)
-        return self.weight * x
+# Note: T5LayerNorm is imported from llm_dit.layers (alias for RMSNorm)
 
 
 class GELU(nn.Module):

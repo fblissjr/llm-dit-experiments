@@ -17,7 +17,7 @@
 
 | Area | Entry Point | Status |
 |------|-------------|--------|
-| **LTX-2** | [ltx2/AGENTS.md](ltx2/AGENTS.md) | Active |
+| **LTX-2** | [ltx2/CLAUDE.md](ltx2/CLAUDE.md) | Active |
 | **Research Findings** | [ltx2/docs/findings/](ltx2/docs/findings/) | Reference |
 | **Metrics** | [metrics/](metrics/) | Active |
 | **Viewer** | [viewer/](viewer/) | Active |
@@ -131,10 +131,10 @@ class MyExperiment(LTX2ExperimentBase):
 
 ```
 experiments/
-├── AGENTS.md              # This file (navigation hub)
+├── CLAUDE.md              # This file (navigation hub)
 ├── base.py                # Shared experiment infrastructure
 ├── ltx2/                  # LTX-2 experiments (ACTIVE)
-│   ├── AGENTS.md          # LTX-2 specific context
+│   ├── CLAUDE.md          # LTX-2 specific context
 │   ├── base.py            # LTX2ExperimentBase (inherits from experiments/base.py)
 │   ├── prompts.py         # CENTRALIZED PROMPTS (MUST USE)
 │   ├── docs/              # Documentation

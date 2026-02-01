@@ -219,6 +219,7 @@ def generate_video(
     device: Optional[torch.device] = None,
     dtype: Optional[torch.dtype] = None,
     use_progress: bool = True,  # Use rich SamplingProgress display
+    debug_latents: bool = False,
 ) -> torch.Tensor:
     """
     Generate video using pure PyTorch diffusion loop.
@@ -247,6 +248,8 @@ def generate_video(
         callback: Optional callback(step, total_steps, latents) for progress
         device: Override device (default: model device)
         dtype: Override dtype (default: model dtype)
+        debug_latents: If True, log detailed latent/velocity statistics at key denoising steps.
+            Useful for debugging generation quality issues without changing global log level.
 
     Returns:
         If vae provided: Video tensor [B, C, F, H, W] or [F, H, W, C] uint8
@@ -411,30 +414,28 @@ def generate_video(
             # Uniform timesteps for standard T2V - sigma directly, no scaling!
             timestep = sigma.expand(1, num_tokens)
 
-        # DEBUG: Track latent inter-token variation at key steps
-        if i in [0, 20, len(sigmas) - 2]:
+        # Track latent inter-token variation at key steps
+        if debug_latents and i in [0, 20, len(sigmas) - 2]:
             latent_inter_token = latents.std(dim=1).mean()  # Variation across tokens
             latent_overall_std = latents.std()
-            print(f"[DEBUG LATENTS Step {i}] inter-token std: {latent_inter_token:.4f}, overall std: {latent_overall_std:.4f}")
+            logger.debug(f"Step {i} latent stats: inter-token std={latent_inter_token:.4f}, overall std={latent_overall_std:.4f}")
 
         # Classifier-free guidance
         if config.guidance_scale > 1.0:
             # Set debug step for attention diagnostics (only on step 0)
             for block in model.transformer_blocks:
                 block._debug_step = i
-            # Also enable cross-attention KV debug for block 0 at step 0, 20, and 39
-            if i in [0, 20, len(sigmas) - 2]:
+            # Enable cross-attention KV debug for block 0 at key steps
+            if debug_latents and i in [0, 20, len(sigmas) - 2]:
                 model.transformer_blocks[0].attn2._debug_cross_attn = True
                 model.transformer_blocks[0].attn2._debug_cross_attn_post = True
-                print(f"[DEBUG] Enabling cross-attn debug for step {i}")
+                logger.debug(f"Step {i}: cross-attention debug enabled")
 
             # Unconditional pass (zero embeddings)
             uncond_embeds = torch.zeros_like(prompt_embeds)
-            # DEBUG: Verify conditional embeddings are different from unconditional
-            if i == 0:
-                print(f"[DEBUG CFG] prompt_embeds (cond): mean={prompt_embeds.mean():.4f}, std={prompt_embeds.std():.4f}")
-                print(f"[DEBUG CFG] uncond_embeds: mean={uncond_embeds.mean():.4f}, std={uncond_embeds.std():.4f}")
-                print(f"[DEBUG UNCOND PASS]")
+            # Log embedding statistics at step 0 for CFG verification
+            if debug_latents and i == 0:
+                logger.debug(f"CFG embeddings: cond mean={prompt_embeds.mean():.4f} std={prompt_embeds.std():.4f}, uncond mean={uncond_embeds.mean():.4f} std={uncond_embeds.std():.4f}")
             uncond_modality = create_video_modality(latents, timestep, positions, uncond_embeds)
             velocity_uncond, _ = model(video=uncond_modality)
             del uncond_modality, uncond_embeds  # Free memory before conditional pass
@@ -442,11 +443,11 @@ def generate_video(
             torch.cuda.empty_cache()
 
             # Conditional pass
-            if i in [0, 20, len(sigmas) - 2]:
-                print(f"[DEBUG COND PASS - Step {i}]")
+            if debug_latents and i in [0, 20, len(sigmas) - 2]:
+                logger.debug(f"Step {i}: conditional pass")
                 model.transformer_blocks[0].attn2._debug_cross_attn = True  # Re-enable for cond pass
                 model.transformer_blocks[0].attn2._debug_cross_attn_post = True
-                model.args_preprocessor._debug_context = True  # Debug caption projection
+                model.args_preprocessor._debug_context = True  # Caption projection debug
             cond_modality = create_video_modality(latents, timestep, positions, prompt_embeds)
             velocity_cond, _ = model(video=cond_modality)
             del cond_modality  # Free modality tensor
@@ -455,12 +456,14 @@ def generate_video(
             velocity = velocity_cond + (config.guidance_scale - 1.0) * (
                 velocity_cond - velocity_uncond
             )
-            # DEBUG: Print velocity statistics at key steps
-            if i in [0, len(sigmas) // 2, len(sigmas) - 2]:
-                print(f"[DEBUG] Step {i}: sigma={sigma:.4f}")
-                print(f"  velocity_cond: mean={velocity_cond.mean():.4f}, std={velocity_cond.std():.4f}")
-                print(f"  velocity_uncond: mean={velocity_uncond.mean():.4f}, std={velocity_uncond.std():.4f}")
-                print(f"  velocity_guided: mean={velocity.mean():.4f}, std={velocity.std():.4f}, range=[{velocity.min():.4f}, {velocity.max():.4f}]")
+            # Log velocity statistics at key steps
+            if debug_latents and i in [0, len(sigmas) // 2, len(sigmas) - 2]:
+                logger.debug(
+                    f"Step {i} sigma={sigma:.4f}: "
+                    f"v_cond mean={velocity_cond.mean():.4f} std={velocity_cond.std():.4f}, "
+                    f"v_uncond mean={velocity_uncond.mean():.4f} std={velocity_uncond.std():.4f}, "
+                    f"v_guided mean={velocity.mean():.4f} std={velocity.std():.4f} range=[{velocity.min():.4f}, {velocity.max():.4f}]"
+                )
             del velocity_uncond, velocity_cond  # Free after blend
         else:
             modality = create_video_modality(latents, timestep, positions, prompt_embeds)
@@ -545,6 +548,7 @@ def generate_video_with_offloading(
     optimization: Optional[LTX2OptimizationConfig] = None,
     gemma_variant: str = "bf16",  # Gemma3 variant: bf16, 8bit, q4-qat
     use_progress: bool = True,  # Use rich progress display for denoising
+    debug_latents: bool = False,
 ) -> torch.Tensor:
     """
     Generate video with sequential component offloading for 24GB GPUs.
@@ -579,6 +583,8 @@ def generate_video_with_offloading(
         callback: Optional callback(stage, step, total) for progress
         optimization: LTX2OptimizationConfig with device placement and memory settings.
             If None, uses LTX2OptimizationConfig.for_24gb_gpu() defaults.
+        debug_latents: If True, log detailed latent/velocity statistics at key denoising steps.
+            Useful for debugging generation quality issues without changing global log level.
 
     Returns:
         Video tensor [F, H, W, C] in uint8 format
@@ -759,6 +765,7 @@ def generate_video_with_offloading(
         attention_mask=attention_mask,
         callback=progress_callback,
         use_progress=use_progress,
+        debug_latents=debug_latents,
     )
 
     # Unload transformer and connectors

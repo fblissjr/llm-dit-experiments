@@ -114,6 +114,10 @@ class RMSNorm(nn.Module):
     Root Mean Square Layer Normalization.
 
     More efficient than LayerNorm as it doesn't require mean computation.
+
+    Note: This uses 'scale' instead of 'weight' to match FLUX.2 checkpoint format.
+    Migration to llm_dit.layers.RMSNorm would require loader key mapping (scale->weight).
+    See: llm_dit.layers.normalization.RMSNorm for the canonical implementation.
     """
 
     def __init__(self, dim: int):

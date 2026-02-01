@@ -142,8 +142,9 @@ class TestLatentPackingUtilities:
         assert len(shapes) >= layer_num + 1
 
 
+@pytest.mark.skip(reason="LAYERED components archived - see .archive/qwen_image_layered/")
 class TestTimestepEmbeddings:
-    """Test TimestepEmbeddings with use_additional_t_cond support."""
+    """Test TimestepEmbeddings with use_additional_t_cond support (LAYERED-specific)."""
 
     def test_import(self):
         from llm_dit.models._qwen_image_dit_components import TimestepEmbeddings
@@ -284,8 +285,9 @@ class TestQwenImageDiT:
         assert dit.dtype == dtype
 
 
+@pytest.mark.skip(reason="LAYERED components archived - see .archive/qwen_image_layered/")
 class TestQwenImageDiTModel:
-    """Test QwenImageDiTModel internal class."""
+    """Test QwenImageDiTModel internal class (LAYERED-specific)."""
 
     def test_import(self):
         from llm_dit.models._qwen_image_dit_components import QwenImageDiTModel
@@ -374,8 +376,9 @@ class TestQwenImageVAE:
         assert vae.dtype == dtype
 
 
+@pytest.mark.skip(reason="LAYERED components archived - see .archive/qwen_image_layered/")
 class TestQwenImageVAEComponents:
-    """Test internal VAE components."""
+    """Test internal VAE components (LAYERED-specific)."""
 
     def test_causal_conv3d_import(self):
         from llm_dit.models._qwen_image_vae_components import QwenImageCausalConv3d

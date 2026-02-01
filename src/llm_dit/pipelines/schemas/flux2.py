@@ -1,30 +1,29 @@
 """
 FLUX.2 Pipeline Schema
 
-last updated: 2026-01-25
+last updated: 2026-01-31
 
 FLUX.2 is an image generation pipeline with:
 - Klein models: 4 distilled + 4 base variants
 - Reference image support for style/subject transfer
 - Block-by-block offloading for low VRAM
 - FP8 variants for reduced memory usage
+
+NOTE: Model names MUST match keys in FLUX2_MODEL_INFO (constants.py)
 """
 
 from . import register_pipeline, PipelineSchema, ParamSchema
 
 
-# FLUX.2 model variants
+# FLUX.2 model variants - must match keys in FLUX2_MODEL_INFO
+# Note: Only 9B variants included (4B not in use)
 FLUX2_MODELS = [
     # Distilled models (fast, 4 steps)
-    "flux2-klein-4b-distilled",
-    "flux2-klein-4b-distilled-fp8",
-    "flux2-klein-9b-distilled",
-    "flux2-klein-9b-distilled-fp8",
+    "klein-9b",
+    "klein-9b-fp8",
     # Base models (quality, 50 steps)
-    "flux2-klein-4b-base",
-    "flux2-klein-4b-base-fp8",
-    "flux2-klein-9b-base",
-    "flux2-klein-9b-base-fp8",
+    "klein-base-9b",
+    "klein-base-9b-fp8",
 ]
 
 # Dimension presets
@@ -52,7 +51,7 @@ register_pipeline(PipelineSchema(
     supports_reference_images=True,
     endpoint="/api/flux2/generate",
     params=[
-        # === Basic Parameters ===
+        # === Prompt ===
         ParamSchema(
             id="prompt",
             type="textarea",
@@ -63,11 +62,34 @@ register_pipeline(PipelineSchema(
             required=True,
             tooltip="Detailed description of the image.",
         ),
+
+        # === Reference Images (key FLUX.2 feature - right after prompt) ===
+        ParamSchema(
+            id="reference_images",
+            type="image",
+            label="Reference Images",
+            group="basic",
+            tooltip="Upload reference images for style/subject transfer (up to 4 images).",
+            max_count=4,
+        ),
+        ParamSchema(
+            id="reference_strength",
+            type="slider",
+            label="Reference Strength",
+            default=0.8,
+            min=0.0,
+            max=1.0,
+            step=0.05,
+            group="basic",
+            tooltip="How strongly to use reference images.",
+        ),
+
+        # === Model & Dimensions ===
         ParamSchema(
             id="model_name",
             type="select",
             label="Model",
-            default="flux2-klein-4b-distilled",
+            default="klein-9b-fp8",
             options=FLUX2_MODELS,
             group="basic",
             tooltip="Model variant. Distilled = fast (4 steps), Base = quality (50 steps). FP8 saves VRAM.",
@@ -103,6 +125,8 @@ register_pipeline(PipelineSchema(
             group="basic",
             tooltip="Quick dimension presets.",
         ),
+
+        # === Generation Settings ===
         ParamSchema(
             id="num_steps",
             type="slider",
@@ -135,26 +159,6 @@ register_pipeline(PipelineSchema(
             step=1,
             group="basic",
             tooltip="Random seed for reproducibility. -1 for random.",
-        ),
-
-        # === Reference Images ===
-        ParamSchema(
-            id="reference_images",
-            type="image",
-            label="Reference Images",
-            group="advanced",
-            tooltip="Upload reference images for style/subject transfer (up to 4 images).",
-        ),
-        ParamSchema(
-            id="reference_strength",
-            type="slider",
-            label="Reference Strength",
-            default=0.8,
-            min=0.0,
-            max=1.0,
-            step=0.05,
-            group="advanced",
-            tooltip="How strongly to use reference images.",
         ),
 
         # === Memory & Performance ===
