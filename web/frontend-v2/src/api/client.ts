@@ -182,18 +182,23 @@ export async function* generateStream(
 
           try {
             const parsed = JSON.parse(data);
+            // Server sends total_steps, but we normalize to total
+            const total = parsed.total ?? parsed.total_steps;
 
-            if (parsed.step !== undefined && parsed.total !== undefined) {
+            if (parsed.step !== undefined && total !== undefined) {
+              console.log('[generateStream] Progress event:', parsed.step, '/', total);
               yield {
                 type: 'progress',
                 step: parsed.step,
-                total: parsed.total,
+                total: total,
                 message: parsed.message,
               };
-            } else if (parsed.output_path || parsed.urls) {
+            } else if (parsed.output_path || parsed.urls || parsed.type === 'complete') {
+              console.log('[generateStream] Result event:', parsed);
               yield { type: 'result', data: parsed as GenerationResult };
-            } else if (parsed.error) {
-              yield { type: 'error', error: parsed.error };
+            } else if (parsed.error || parsed.type === 'error') {
+              console.log('[generateStream] Error event:', parsed);
+              yield { type: 'error', error: parsed.error || parsed.message };
             }
           } catch {
             // Skip malformed JSON

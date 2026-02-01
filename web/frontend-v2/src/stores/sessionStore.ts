@@ -151,6 +151,7 @@ export const useSessionStore = create<SessionState>()(
             // Use SSE streaming for video/progress pipelines
             console.log('[sessionStore] Using generateStream to:', pipeline.endpoint);
             for await (const event of generateStream(pipeline.endpoint, params)) {
+              console.log('[sessionStore] Received event:', event.type, event);
               // Check for cancellation
               if (abortController?.signal.aborted) {
                 set((state) => {
@@ -161,6 +162,7 @@ export const useSessionStore = create<SessionState>()(
               }
 
               if (event.type === 'progress') {
+                console.log('[sessionStore] Setting progress:', event.step, '/', event.total);
                 set((state) => {
                   state.progress = {
                     step: event.step,
