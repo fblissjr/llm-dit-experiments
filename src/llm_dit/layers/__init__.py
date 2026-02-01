@@ -15,7 +15,7 @@ Design Goals:
 Modules:
 - normalization: RMSNorm, LayerNorm variants
 - feedforward: FeedForward, SwiGLU, GeGLU variants
-- (future) attention: Attention primitives
+- attention: Attention with configurable QK normalization
 """
 
 from llm_dit.layers.normalization import RMSNorm, rms_norm, T5LayerNorm
@@ -26,6 +26,13 @@ from llm_dit.layers.feedforward import (
     ZIMAGE_FFN_PRESET,
     WAN_T5_FFN_PRESET,
     CONNECTOR_FFN_PRESET,
+)
+from llm_dit.layers.attention import (
+    Attention,
+    QKNormType,
+    CONNECTOR_ATTN_PRESET,
+    ZIMAGE_ATTN_PRESET,
+    CONTEXT_REFINER_ATTN_PRESET,
 )
 
 __all__ = [
@@ -40,4 +47,10 @@ __all__ = [
     "ZIMAGE_FFN_PRESET",
     "WAN_T5_FFN_PRESET",
     "CONNECTOR_FFN_PRESET",
+    # Attention
+    "Attention",
+    "QKNormType",
+    "CONNECTOR_ATTN_PRESET",
+    "ZIMAGE_ATTN_PRESET",
+    "CONTEXT_REFINER_ATTN_PRESET",
 ]

@@ -14,8 +14,12 @@ Requires:
 Run:
     Z_IMAGE_MODEL_PATH=/path/to/model pytest tests/e2e/z_image/test_pure_pytorch.py -v -s
 
-Last updated: 2026-01-29
+Last updated: 2026-02-01
 """
+
+import json
+from datetime import datetime
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -23,6 +27,56 @@ import torch
 from PIL import Image
 
 pytestmark = [pytest.mark.e2e, pytest.mark.requires_gpu, pytest.mark.requires_model]
+
+
+# Default generation parameters for Base model (non-Turbo)
+# Z-Image Base requires CFG, Turbo has CFG baked into weights (guidance_scale=0.0)
+BASE_MODEL_DEFAULTS = {
+    "guidance_scale": 4.0,  # Required for Base model
+    "num_inference_steps": 30,
+    "shift": 6.0,  # Base model default
+}
+
+
+def save_generation_metadata(
+    output_dir: Path,
+    image_path: Path,
+    prompt: str,
+    seed: int,
+    height: int,
+    width: int,
+    num_inference_steps: int,
+    guidance_scale: float,
+    shift: float,
+    negative_prompt: str | None = None,
+    variant: str = "base",
+    **extra_params,
+) -> Path:
+    """Save generation metadata alongside the image.
+
+    Creates a JSON file with all parameters used to generate the image,
+    enabling reproducibility and regression testing.
+    """
+    metadata = {
+        "timestamp": datetime.now().isoformat(),
+        "image_file": image_path.name,
+        "prompt": prompt,
+        "negative_prompt": negative_prompt,
+        "seed": seed,
+        "height": height,
+        "width": width,
+        "num_inference_steps": num_inference_steps,
+        "guidance_scale": guidance_scale,
+        "shift": shift,
+        "variant": variant,
+        **extra_params,
+    }
+
+    metadata_path = output_dir / f"{image_path.stem}_metadata.json"
+    with open(metadata_path, "w") as f:
+        json.dump(metadata, f, indent=2)
+
+    return metadata_path
 
 
 class TestPurePyTorchLoading:
@@ -93,17 +147,45 @@ class TestPurePyTorchGeneration:
             vae_device="cuda",
         )
 
+        # Generation parameters - use Base model defaults (NOT Turbo)
+        # Turbo: guidance_scale=0.0 (baked in), steps=9, shift=3.0
+        # Base: guidance_scale=4.0+, steps=30+, shift=6.0
+        prompt = "A cat sleeping in sunlight"
+        seed = 42
+        height = 512
+        width = 512
+        num_inference_steps = 30
+        guidance_scale = BASE_MODEL_DEFAULTS["guidance_scale"]
+        shift = BASE_MODEL_DEFAULTS["shift"]
+
         image = pipe(
-            "A cat sleeping in sunlight",
-            height=512,
-            width=512,
-            num_inference_steps=30,
-            generator=torch.Generator("cpu").manual_seed(42),
+            prompt,
+            height=height,
+            width=width,
+            num_inference_steps=num_inference_steps,
+            guidance_scale=guidance_scale,
+            shift=shift,
+            generator=torch.Generator("cpu").manual_seed(seed),
         )
 
-        # Save for inspection
+        # Save image
         output_path = output_dir / "pure_pytorch_basic.png"
         image.save(output_path)
+
+        # Save metadata for reproducibility
+        save_generation_metadata(
+            output_dir=output_dir,
+            image_path=output_path,
+            prompt=prompt,
+            seed=seed,
+            height=height,
+            width=width,
+            num_inference_steps=num_inference_steps,
+            guidance_scale=guidance_scale,
+            shift=shift,
+            variant="base",
+            scheduler_type=type(pipe.scheduler).__name__,
+        )
 
         # Verify not noise using variance check
         result = image_verifier(image)
@@ -113,6 +195,7 @@ class TestPurePyTorchGeneration:
 
         print(f"Image hash: {result['hash']}, size: {result['size']}")
         print(f"Variance: {result['variance']:.1f}")
+        print(f"Parameters: guidance_scale={guidance_scale}, steps={num_inference_steps}, shift={shift}")
 
     @pytest.mark.slow
     def test_reproducibility_with_seed(self, z_image_model_path, image_verifier):
@@ -277,16 +360,41 @@ class TestVisualVerification:
             vae_device="cuda",
         )
 
+        # Use Base model parameters (guidance_scale required for non-Turbo)
+        prompt = "A bright red apple on a white background"
+        seed = 42
+        height = 512
+        width = 512
+        num_inference_steps = 30
+        guidance_scale = BASE_MODEL_DEFAULTS["guidance_scale"]
+        shift = BASE_MODEL_DEFAULTS["shift"]
+
         image = pipe(
-            "A bright red apple on a white background",
-            height=512,
-            width=512,
-            num_inference_steps=30,
-            generator=torch.Generator("cpu").manual_seed(42),
+            prompt,
+            height=height,
+            width=width,
+            num_inference_steps=num_inference_steps,
+            guidance_scale=guidance_scale,
+            shift=shift,
+            generator=torch.Generator("cpu").manual_seed(seed),
         )
 
         output_path = output_dir / "visual_verification.png"
         image.save(output_path)
+
+        # Save metadata for reproducibility
+        save_generation_metadata(
+            output_dir=output_dir,
+            image_path=output_path,
+            prompt=prompt,
+            seed=seed,
+            height=height,
+            width=width,
+            num_inference_steps=num_inference_steps,
+            guidance_scale=guidance_scale,
+            shift=shift,
+            variant="base",
+        )
 
         arr = np.array(image)
 
@@ -301,6 +409,7 @@ class TestVisualVerification:
 
         print(f"Saved: {output_path}")
         print(f"Variance: {variance:.1f}, Mean: {mean:.1f}")
+        print(f"Parameters: guidance_scale={guidance_scale}, steps={num_inference_steps}, shift={shift}")
 
     @pytest.mark.slow
     def test_prompt_affects_output(self, z_image_model_path, image_verifier):
@@ -315,6 +424,10 @@ class TestVisualVerification:
             vae_device="cuda",
         )
 
+        # Use Base model parameters
+        guidance_scale = BASE_MODEL_DEFAULTS["guidance_scale"]
+        shift = BASE_MODEL_DEFAULTS["shift"]
+
         # Same seed, different prompts
         gen1 = torch.Generator("cpu").manual_seed(42)
         image1 = pipe(
@@ -322,6 +435,8 @@ class TestVisualVerification:
             height=512,
             width=512,
             num_inference_steps=30,
+            guidance_scale=guidance_scale,
+            shift=shift,
             generator=gen1,
         )
 
@@ -331,6 +446,8 @@ class TestVisualVerification:
             height=512,
             width=512,
             num_inference_steps=30,
+            guidance_scale=guidance_scale,
+            shift=shift,
             generator=gen2,
         )
 
@@ -351,6 +468,11 @@ class TestShiftImpactOnGeneration:
         """Different shift values produce different outputs."""
         from llm_dit.pipelines import ZImagePipeline
 
+        # Use Base model parameters
+        guidance_scale = BASE_MODEL_DEFAULTS["guidance_scale"]
+        prompt = "A mountain landscape"
+        seed = 42
+
         results = {}
         for shift in [3.0, 6.0]:
             pipe = ZImagePipeline.from_pretrained(
@@ -365,17 +487,33 @@ class TestShiftImpactOnGeneration:
             # Verify the shift was set
             assert pipe.scheduler.shift == shift
 
-            gen = torch.Generator("cpu").manual_seed(42)
+            gen = torch.Generator("cpu").manual_seed(seed)
             image = pipe(
-                "A mountain landscape",
+                prompt,
                 height=512,
                 width=512,
                 num_inference_steps=30,
+                guidance_scale=guidance_scale,
                 generator=gen,
             )
 
             output_path = output_dir / f"shift_{shift}.png"
             image.save(output_path)
+
+            # Save metadata
+            save_generation_metadata(
+                output_dir=output_dir,
+                image_path=output_path,
+                prompt=prompt,
+                seed=seed,
+                height=512,
+                width=512,
+                num_inference_steps=30,
+                guidance_scale=guidance_scale,
+                shift=shift,
+                variant="base",
+            )
+
             results[shift] = np.array(image)
 
         # Different shifts should produce different results
