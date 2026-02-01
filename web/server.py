@@ -2384,6 +2384,9 @@ async def get_generation_config():
     Returns default values for width, height, steps, shift, long_prompt_mode, hidden_layer, SLG, and FMTT.
     Also returns feature flags indicating which advanced features are enabled in config.
     The UI should call this on load to sync with server config.
+
+    If a default_preset is configured for the current pipeline (e.g., zimage.default_preset),
+    the preset's generation params (steps, guidance_scale, shift, negative_prompt) are used.
     """
     if runtime_config is None:
         return {
@@ -2396,6 +2399,8 @@ async def get_generation_config():
             "long_prompt_mode": "interpolate",
             "hidden_layer": -2,
             "layer_weights": None,
+            "default_preset": "",
+            "negative_prompt": "",
             # SLG settings
             "slg_scale": 0.0,
             "slg_layers": None,
@@ -2427,19 +2432,60 @@ async def get_generation_config():
         or getattr(runtime_config, "fmtt_scale", 0.0) > 0
     )
 
+    # Default generation params from RuntimeConfig (turbo defaults)
+    steps = runtime_config.steps
+    guidance_scale = runtime_config.guidance_scale
+    shift = runtime_config.shift
+    d_noise = getattr(runtime_config, "d_noise", 1.0)
+    default_preset = ""
+    negative_prompt = ""
+
+    # Try to load default_preset from zimage config and use its values
+    # This makes the API preset-aware: config.toml holds infrastructure,
+    # presets hold generation params (steps, guidance_scale, shift, negative_prompt)
+    try:
+        config_dict = runtime_config.to_dict() if hasattr(runtime_config, 'to_dict') else {}
+        zimage_config = config_dict.get("zimage", {})
+        if isinstance(zimage_config, dict):
+            default_preset = zimage_config.get("default_preset", "")
+
+        if default_preset:
+            from llm_dit.presets import get_preset_registry
+            presets_dir = config_dict.get("presets_dir", "presets")
+            registry = get_preset_registry(presets_dir)
+            preset = registry.get(default_preset)
+            if preset:
+                # Use preset values for generation params
+                if preset.steps is not None:
+                    steps = preset.steps
+                if preset.guidance_scale is not None:
+                    guidance_scale = preset.guidance_scale
+                if preset.shift is not None:
+                    shift = preset.shift
+                if preset.d_noise is not None:
+                    d_noise = preset.d_noise
+                if preset.negative_prompt:
+                    negative_prompt = preset.negative_prompt
+    except Exception as e:
+        # If preset loading fails, fall back to RuntimeConfig values
+        logger.warning(f"Failed to load default preset '{default_preset}': {e}")
+
     return {
         # Z-Image variant (turbo/base) - determines default parameter values
         "zimage_variant": getattr(runtime_config, "zimage_variant", "turbo"),
         "width": runtime_config.width,
         "height": runtime_config.height,
-        "steps": runtime_config.steps,
-        "guidance_scale": runtime_config.guidance_scale,
-        "shift": runtime_config.shift,
+        "steps": steps,
+        "guidance_scale": guidance_scale,
+        "shift": shift,
         "dynamic_shift": getattr(runtime_config, "dynamic_shift", False),
-        "d_noise": getattr(runtime_config, "d_noise", 1.0),
+        "d_noise": d_noise,
         "long_prompt_mode": runtime_config.long_prompt_mode,
         "hidden_layer": runtime_config.hidden_layer,
         "layer_weights": getattr(runtime_config, "layer_weights", None),
+        # Preset info
+        "default_preset": default_preset,
+        "negative_prompt": negative_prompt,
         # SLG settings
         "slg_scale": getattr(runtime_config, "slg_scale", 0.0),
         "slg_layers": getattr(runtime_config, "slg_layers", None),

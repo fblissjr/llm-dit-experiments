@@ -1,0 +1,187 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --pipeline-color: #3b82f6;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+}
+
+body {
+  @apply bg-gray-900 text-gray-100 antialiased;
+}
+
+/* Form Controls */
+@layer components {
+  .form-control {
+    @apply space-y-1.5;
+  }
+
+  .form-label {
+    @apply text-sm font-medium text-gray-300;
+  }
+
+  .form-input {
+    @apply w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg
+           text-gray-100 placeholder-gray-500
+           focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none
+           disabled:opacity-50 disabled:cursor-not-allowed
+           transition-colors;
+  }
+
+  .form-textarea {
+    @apply form-input resize-none;
+  }
+
+  .form-select {
+    @apply form-input appearance-none cursor-pointer
+           bg-[url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20fill%3D%22none%22%20viewBox%3D%220%200%2024%2024%22%20stroke%3D%22%236b7280%22%3E%3Cpath%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%20stroke-width%3D%222%22%20d%3D%22M19%209l-7%207-7-7%22%2F%3E%3C%2Fsvg%3E')]
+           bg-[length:1.25rem] bg-[right_0.5rem_center] bg-no-repeat
+           pr-10;
+  }
+
+  /* Slider */
+  .slider-track {
+    @apply h-2 rounded-full appearance-none cursor-pointer;
+    background: linear-gradient(
+      to right,
+      var(--pipeline-color) 0%,
+      var(--pipeline-color) var(--fill-percent, 50%),
+      #374151 var(--fill-percent, 50%),
+      #374151 100%
+    );
+  }
+
+  .slider-track::-webkit-slider-thumb {
+    @apply appearance-none w-4 h-4 rounded-full bg-white shadow-md
+           hover:scale-110 transition-transform cursor-grab active:cursor-grabbing;
+  }
+
+  .slider-track::-moz-range-thumb {
+    @apply w-4 h-4 rounded-full bg-white shadow-md border-0
+           hover:scale-110 transition-transform cursor-grab active:cursor-grabbing;
+  }
+
+  .slider-value {
+    @apply text-sm font-mono text-gray-400 min-w-[3rem] text-right;
+  }
+
+  /* Checkbox */
+  .form-checkbox {
+    @apply w-5 h-5 rounded border-gray-600 bg-gray-800 text-blue-500
+           focus:ring-2 focus:ring-blue-500 focus:ring-offset-0
+           cursor-pointer;
+  }
+
+  /* Buttons */
+  .btn {
+    @apply px-4 py-2 rounded-lg font-medium transition-all
+           disabled:opacity-50 disabled:cursor-not-allowed
+           focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900;
+  }
+
+  .btn-primary {
+    @apply btn text-white focus:ring-blue-500;
+    background-color: var(--pipeline-color, #3b82f6);
+  }
+
+  .btn-primary:hover:not(:disabled) {
+    filter: brightness(1.1);
+  }
+
+  .btn-secondary {
+    @apply btn bg-gray-700 text-gray-100 hover:bg-gray-600 focus:ring-gray-500;
+  }
+
+  .btn-ghost {
+    @apply btn bg-transparent text-gray-400 hover:text-gray-100 hover:bg-gray-800;
+  }
+
+  /* Section header (collapsible) */
+  .section-header {
+    @apply flex items-center justify-between text-sm font-medium text-gray-300
+           cursor-pointer select-none;
+  }
+
+  .section-content {
+    @apply overflow-hidden transition-all duration-200;
+  }
+
+  /* Tab styling */
+  .tab {
+    @apply px-4 py-2 text-sm font-medium rounded-lg transition-colors;
+  }
+
+  .tab-active {
+    @apply bg-gray-700 text-white;
+  }
+
+  .tab-inactive {
+    @apply text-gray-400 hover:text-gray-200 hover:bg-gray-800;
+  }
+
+  /* Pipeline pill selector */
+  .pipeline-pill {
+    @apply px-3 py-1.5 text-sm font-medium rounded-full transition-all
+           border-2 border-transparent;
+  }
+
+  .pipeline-pill-active {
+    @apply text-white;
+    background-color: var(--pipeline-color);
+    border-color: var(--pipeline-color);
+  }
+
+  .pipeline-pill-inactive {
+    @apply bg-gray-800 text-gray-400 hover:text-gray-200;
+    border-color: #374151;
+  }
+
+  /* Card */
+  .card {
+    @apply bg-gray-800 rounded-xl border border-gray-700;
+  }
+
+  /* Upload area */
+  .upload-area {
+    @apply border-2 border-dashed border-gray-600 rounded-lg p-4
+           flex flex-col items-center justify-center gap-2
+           cursor-pointer transition-colors
+           hover:border-gray-500 hover:bg-gray-800/50;
+  }
+
+  .upload-area-active {
+    @apply border-blue-500 bg-blue-500/10;
+  }
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  @apply w-2;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-gray-900;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-gray-700 rounded-full hover:bg-gray-600;
+}
+
+/* Animation utilities */
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.animate-spin {
+  animation: spin 1s linear infinite;
+}
+
+.animate-pulse {
+  animation: pulse 2s ease-in-out infinite;
+}
