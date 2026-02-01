@@ -669,22 +669,18 @@ class ZImageConfig:
     | Model path         | models/Z-Image  | models/Z-Image-Turbo |
 
     Both variants use the same Qwen3-4B text encoder and DiT architecture.
+
+    Generation parameters (steps, guidance_scale, shift, negative_prompt) are
+    defined in presets/ and loaded via default_preset. This config only holds
+    infrastructure settings (paths, variant selection).
     """
 
     model_path: str = ""  # Path to Z-Image model (turbo or base)
     text_encoder_path: str = ""  # Optional separate path for text encoder
     variant: str = "auto"  # auto, turbo, base (auto-detects from scheduler_config.json)
 
-    # Variant-aware defaults (None = use variant default)
-    default_steps: int | None = None  # None = 9 for turbo, 35 for base
-    default_guidance_scale: float | None = None  # None = 0.0 for turbo, 4.0 for base
-    default_shift: float | None = None  # None = 3.0 for turbo, 6.0 for base
-
-    # Base model specific
-    default_negative_prompt: str = ""  # Default negative prompt for base model
-    default_cfg_normalization: float = 0.0  # 0.0 disabled, 1.0 for realism
-
-    # Preset configuration
+    # Preset configuration - defines steps, guidance_scale, shift, negative_prompt
+    # Presets are loaded from presets/zimage/{preset_name}.md
     default_preset: str = ""  # Default preset to load (e.g., "photorealistic")
 
 

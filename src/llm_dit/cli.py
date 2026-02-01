@@ -1980,17 +1980,8 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
                     zimage = toml_config.zimage
                     config.zimage_model_path = getattr(zimage, "model_path", "") or config.zimage_model_path
                     config.zimage_variant = getattr(zimage, "variant", "auto")
-                    # Apply variant defaults from config if specified
-                    if getattr(zimage, "default_steps", None) is not None:
-                        config.steps = zimage.default_steps
-                    if getattr(zimage, "default_guidance_scale", None) is not None:
-                        config.guidance_scale = zimage.default_guidance_scale
-                    if getattr(zimage, "default_shift", None) is not None:
-                        config.shift = zimage.default_shift
-                    if getattr(zimage, "default_negative_prompt", None):
-                        config.negative_prompt = zimage.default_negative_prompt
-                    if getattr(zimage, "default_cfg_normalization", None) is not None:
-                        config.cfg_normalization = zimage.default_cfg_normalization
+                    # Generation params (steps, guidance_scale, shift, negative_prompt) are now
+                    # handled by presets - see presets/zimage/. CLI flags still override.
 
                 # Check for Wan section
                 if hasattr(toml_config, "wan"):
