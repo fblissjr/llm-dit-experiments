@@ -4811,6 +4811,7 @@ def load_pipeline(
     lora_paths: Optional[list] = None,
     lora_scales: Optional[list] = None,
     enable_compile: bool = False,
+    attention_backend: str = "auto",
 ):
     """Load the full generation pipeline."""
     global pipeline
@@ -4824,6 +4825,7 @@ def load_pipeline(
     logger.info(f"  DiT device: {dit_device}")
     logger.info(f"  VAE device: {vae_device}")
     logger.info(f"  Quantization: {quantization}")
+    logger.info(f"  Attention backend: {attention_backend}")
     logger.info(f"  Torch Compile: {enable_compile}")
     start = time.time()
 
@@ -4836,6 +4838,7 @@ def load_pipeline(
         dit_device=dit_device,
         vae_device=vae_device,
         quantization=quantization,
+        attention_backend=attention_backend,
         # Use our custom FlowMatchScheduler with FLUX-style dynamic shifting
         # This fixes the pure noise bug for Z-Image-Base model
         use_custom_scheduler=True,
@@ -5418,6 +5421,7 @@ def load_zimage_pipeline_on_demand():
                 lora_paths=runtime_config.lora_paths,
                 lora_scales=runtime_config.lora_scales,
                 enable_compile=getattr(runtime_config, "compile", False),
+                attention_backend=getattr(runtime_config, "attention_backend", "auto"),
             )
             logger.info("[Z-Image] Pipeline loaded successfully")
             return True

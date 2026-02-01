@@ -294,18 +294,30 @@ export const useSessionStore = create<SessionState>()(
         pipeline: { name: string; color: string },
         params: FormValues
       ) => {
+        // Don't store base64 data URLs in history - they're too large for localStorage
+        // Only persist file paths (like /outputs/...) which can be fetched later
+        const url = result.urls[0] ?? '';
+        const isBase64 = url.startsWith('data:');
+        const thumbnailUrl = isBase64 ? '' : url;
+
+        // Create a lightweight result without base64 URLs for storage
+        const storableResult: GenerationResult = {
+          ...result,
+          urls: result.urls.map((u) => (u.startsWith('data:') ? '' : u)),
+        };
+
         const historyItem: HistoryItem = {
           id: result.id,
           pipelineId: result.pipelineId,
           pipelineName: pipeline.name,
           pipelineColor: pipeline.color,
-          thumbnailUrl: result.urls[0] ?? '',
+          thumbnailUrl,
           prompt: (params.prompt as string) ?? '',
           shortPrompt: truncatePrompt((params.prompt as string) ?? ''),
           keyParams: extractKeyParams(params),
           timestamp: result.timestamp,
           params,
-          result,
+          result: storableResult,
         };
 
         set((state) => {
