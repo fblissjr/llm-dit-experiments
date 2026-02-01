@@ -271,7 +271,7 @@ export const useSessionStore = create<SessionState>()(
       },
 
       /**
-       * Load parameters from a history item into the form
+       * Load parameters from a history item into the form and display the result
        */
       loadHistoryParams: (item) => {
         const formStore = useFormStore.getState();
@@ -286,6 +286,16 @@ export const useSessionStore = create<SessionState>()(
 
         // Apply the parameters
         formStore.setValues(item.pipelineId, item.params);
+
+        // Display the historical result if it has valid URLs
+        if (item.result && item.result.urls.length > 0 && item.result.urls[0]) {
+          set((state) => {
+            state.result = item.result;
+            state.status = 'completed';
+            state.error = null;
+            state.progress = null;
+          });
+        }
       },
 
       // Internal: Add result to history
