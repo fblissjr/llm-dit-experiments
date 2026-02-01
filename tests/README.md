@@ -22,14 +22,14 @@ uv run pytest tests/unit/ -v
 
 | Document | Purpose |
 |----------|---------|
-| **[AGENTS.md](AGENTS.md)** | Comprehensive testing guide for agents |
+| **[CLAUDE.md](CLAUDE.md)** | Comprehensive testing guide for agents |
 | [backends/README.md](backends/README.md) | Portable backend system for 1:1 comparison |
 
 ## structure
 
 ```
 tests/
-├── AGENTS.md              # Testing guide for agents (start here)
+├── CLAUDE.md              # Testing guide for agents (start here)
 ├── README.md              # This file
 ├── unit/                  # Fast, no GPU required (~500 tests)
 │   ├── test_ltx2_*.py     # LTX-2 components
@@ -124,4 +124,4 @@ uv run pytest tests/ --collect-only
 | **Semantic** | Output matches prompt | Visual inspection |
 | **Temporal** | Motion is coherent | Watch video |
 
-See [AGENTS.md](AGENTS.md) for detailed verification workflow.
+See [CLAUDE.md](CLAUDE.md) for detailed verification workflow.

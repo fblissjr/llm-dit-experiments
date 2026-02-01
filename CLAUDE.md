@@ -9,11 +9,12 @@ Quick reference for LLM agents. Uses progressive disclosure - read only what you
 Core principles:
 - **Principle 1**: Clean, easy-to-extend, easy-to-maintain, modular architecture
 - **Principle 2**: Documentation and Testing as First-Class Output - session logging, state files
-- **Principle 3**: Progressive Disclosure for Onboarding - layered docs, domain AGENTS.md
+- **Principle 3**: Progressive Disclosure for Onboarding - layered docs, domain CLAUDE.md
 - **Principle 4**: State Management for Session Continuity to future Claude agents - handoff protocols
 - **Principle 5**: No lazy imports unless justified; keep imports organized and consistent
 
-## latest update - zimage base working in web ui and server
+## latest updates
+**[Read for for daily logs of decisions, development, findings, progress, errors, and any other useful info from prior sessions, with a file for each day and multiple entries per day. Sort by date descending for most recent](internal/log/)**
 
 ## onboarding path
 
@@ -21,7 +22,7 @@ New Claude session? Read in this order:
 
 | Step | File | Purpose |
 |------|------|---------|
-| 1 | This file (`AGENTS.md`) | Critical rules, quick reference |
+| 1 | This file (`CLAUDE.md`) | Critical rules, quick reference |
 | 2 | `internal/state/current.md` | What's happening now |
 | 3 | `internal/state/todos.md` | Immediate tasks, handoffs |
 | 4 | `internal/principles/guiding_principles.md` | How we work (if making decisions) |
@@ -178,10 +179,10 @@ uv run scripts/generate.py --model-type flux2 \
 
 | Task | Read | Why |
 |------|------|-----|
-| **Web/UI development** | [internal/web/AGENTS.md](internal/web/AGENTS.md) | React frontend, design system |
+| **Web/UI development** | [internal/web/CLAUDE.md](internal/web/CLAUDE.md) | React frontend, design system |
 | Picking new work | [spec.md](spec.md) | Prioritized backlog (P0-P5) |
-| Writing/running tests | [tests/AGENTS.md](tests/AGENTS.md) | Complete testing guide |
-| Research/experiments | [experiments/AGENTS.md](experiments/AGENTS.md) | Research protocols |
+| Writing/running tests | [tests/CLAUDE.md](tests/CLAUDE.md) | Complete testing guide |
+| Research/experiments | [experiments/CLAUDE.md](experiments/CLAUDE.md) | Research protocols |
 | Architecture decisions | [internal/principles/guiding_principles.md](internal/principles/guiding_principles.md) | Design rationale |
 | Debugging | [internal/state/lessons_learned.md](internal/state/lessons_learned.md) | Past solutions |
 | **Adding new pipeline** | [internal/checklists/pipeline_integration.md](internal/checklists/pipeline_integration.md) | **Complete checklist** for config integration |
@@ -225,7 +226,7 @@ Full index: [internal/docs/README.md](internal/docs/README.md)
 | NEEDS-VERIFICATION | Previous results may have bugs |
 | DEAD-END | Tested, doesn't work |
 
-Research tracking: [experiments/AGENTS.md](experiments/AGENTS.md)
+Research tracking: [experiments/CLAUDE.md](experiments/CLAUDE.md)
 
 ## architecture
 
@@ -248,4 +249,4 @@ uv run pytest tests/unit/ -v
 uv run pytest tests/ -v -k ltx2
 ```
 
-Full testing guide: [tests/AGENTS.md](tests/AGENTS.md)
+Full testing guide: [tests/CLAUDE.md](tests/CLAUDE.md)

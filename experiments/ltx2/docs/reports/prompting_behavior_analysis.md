@@ -487,4 +487,4 @@ prompt_B = "A red ball sits still [frames 0-5]. The ball begins rolling [frames 
 
 ### Research Context
 - `experiments/ltx2/ltx2_research_guide.md`
-- `experiments/ltx2/AGENTS.md`
+- `experiments/ltx2/CLAUDE.md`

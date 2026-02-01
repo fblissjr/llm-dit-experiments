@@ -39,7 +39,7 @@ TEST_PROMPTS = get_all_prompts(quick=True)  # 5 prompts for fast testing
 ## Quick Links
 
 **Navigation:**
-- **[../AGENTS.md](../AGENTS.md)** - Parent navigation (all experiments)
+- **[../CLAUDE.md](../CLAUDE.md)** - Parent navigation (all experiments)
 - **[docs/findings/](docs/findings/)** - Consolidated research findings with status
 
 **Prompts:**

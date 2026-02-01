@@ -171,7 +171,7 @@ print(f"Dim 4 std: {per_dim_std[4]:.2f}")      # ~2752.6
 - `src/llm_dit/vl/qwen3_4b_stats.npz` - Reference statistics for Qwen3-4B layer -2
 - `src/llm_dit/vl/blending.py` - Outlier masking functions
 - `internal/research/hidden_layer_selection.md` - Layer selection research
-- `experiments/qwen3_vl/AGENTS.md` - VL experiment findings
+- `experiments/qwen3_vl/CLAUDE.md` - VL experiment findings
 
 ---
 
