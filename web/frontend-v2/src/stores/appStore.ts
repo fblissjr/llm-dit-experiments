@@ -206,17 +206,31 @@ export const useAppStore = create<AppState>()(
     },
 
     /**
-     * Load presets for a pipeline (cached)
+     * Load presets for a pipeline and apply default preset if configured
      */
     loadPresets: async (pipelineId) => {
       // Skip if already loaded
       if (get().presets[pipelineId]) return;
 
       try {
-        const presets = await fetchPresets(pipelineId);
+        const { presets, defaultPreset } = await fetchPresets(pipelineId);
         set((state) => {
           state.presets[pipelineId] = presets;
         });
+
+        // Apply default preset if one is configured
+        if (defaultPreset && presets.length > 0) {
+          const preset = presets.find((p) => p.name === defaultPreset);
+          if (preset && preset.params) {
+            // Import formStore here to avoid circular dependency
+            const { useFormStore } = await import('./formStore');
+            const formStore = useFormStore.getState();
+
+            // Apply preset params (includes negative_prompt, steps, guidance_scale, etc.)
+            formStore.applyPreset(pipelineId, preset.params);
+            formStore.setValue(pipelineId, 'preset', defaultPreset);
+          }
+        }
       } catch {
         // Silently fail - presets are optional
         set((state) => {

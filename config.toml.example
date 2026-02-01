@@ -108,8 +108,6 @@ d_noise = 1.0                    # Sigma schedule scaling (from RES4LYF research
                                  # Not used for Z-Image-Turbo. Leave commented/omit for Z-Image.
 
 [optimization]
-# Legacy optimization flags (use [pytorch] section for new code)
-flash_attn = true               # Enable Flash Attention (deprecated: use attention_backend instead)
 compile = false                  # torch.compile the transformer
                                  # false: faster startup, good for interactive use
                                  # true: ~10% speedup after warmup, good for batch processing

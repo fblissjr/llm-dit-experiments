@@ -84,13 +84,16 @@ export async function fetchPipelineDefaults(
 export async function fetchPresets(
   pipelineId: string,
   variant?: string
-): Promise<GenerationPreset[]> {
+): Promise<{ presets: GenerationPreset[]; defaultPreset: string }> {
   const url = variant
     ? `/api/presets/${pipelineId}?variant=${variant}`
     : `/api/presets/${pipelineId}`;
 
-  const response = await request<{ presets: GenerationPreset[] }>(url);
-  return response.presets;
+  const response = await request<{ presets: GenerationPreset[]; default_preset: string }>(url);
+  return {
+    presets: response.presets,
+    defaultPreset: response.default_preset ?? '',
+  };
 }
 
 /**
