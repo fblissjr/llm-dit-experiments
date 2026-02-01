@@ -29,8 +29,9 @@ from PIL import Image
 pytestmark = [pytest.mark.e2e, pytest.mark.requires_gpu, pytest.mark.requires_model]
 
 
-# Default generation parameters for Base model (non-Turbo)
-# Z-Image Base requires CFG, Turbo has CFG baked into weights (guidance_scale=0.0)
+# DEPRECATED: Use zimage_base_preset fixture instead
+# Kept temporarily for backwards compatibility with existing tests
+# TODO: Remove once all tests migrate to preset fixtures
 BASE_MODEL_DEFAULTS = {
     "guidance_scale": 4.0,  # Required for Base model
     "num_inference_steps": 30,
@@ -521,3 +522,119 @@ class TestShiftImpactOnGeneration:
         assert diff > 5, (
             f"Different shifts should affect output (diff={diff:.1f})"
         )
+
+
+class TestPresetBasedGeneration:
+    """Tests using the production preset system for configuration.
+
+    These tests demonstrate using the same GenerationPreset infrastructure
+    as the production web UI, ensuring test configs stay in sync.
+    """
+
+    @pytest.mark.slow
+    def test_basic_generation_with_preset(
+        self, z_image_model_path, output_dir, image_verifier, zimage_base_preset
+    ):
+        """Visual verification using production preset system."""
+        from llm_dit.pipelines import ZImagePipeline
+
+        preset = zimage_base_preset
+
+        pipe = ZImagePipeline.from_pretrained(
+            z_image_model_path,
+            use_diffusers=False,
+            encoder_device="cpu",
+            dit_device="cuda",
+            vae_device="cuda",
+        )
+
+        # Extract parameters from preset
+        prompt = preset.metadata["prompt"]
+        seed = preset.metadata["seed"]
+        height = preset.metadata["height"]
+        width = preset.metadata["width"]
+        min_variance = preset.metadata["min_variance"]
+        max_variance = preset.metadata["max_variance"]
+
+        image = pipe(
+            prompt,
+            height=height,
+            width=width,
+            num_inference_steps=preset.steps,
+            guidance_scale=preset.guidance_scale,
+            shift=preset.shift,
+            generator=torch.Generator("cpu").manual_seed(seed),
+        )
+
+        # Save image
+        output_path = output_dir / "preset_based_generation.png"
+        image.save(output_path)
+
+        # Save metadata for reproducibility
+        save_generation_metadata(
+            output_dir=output_dir,
+            image_path=output_path,
+            prompt=prompt,
+            seed=seed,
+            height=height,
+            width=width,
+            num_inference_steps=preset.steps,
+            guidance_scale=preset.guidance_scale,
+            shift=preset.shift,
+            variant=preset.variant or "base",
+            preset_name=preset.name,
+        )
+
+        # Validate using preset thresholds
+        result = image_verifier(image, min_variance=min_variance, max_variance=max_variance)
+        assert result["is_valid"], (
+            f"Image failed preset validation (variance={result['variance']:.1f}, "
+            f"expected {min_variance}-{max_variance})"
+        )
+
+        print(f"Preset: {preset.name}")
+        print(f"Image hash: {result['hash']}, size: {result['size']}")
+        print(f"Variance: {result['variance']:.1f} (range: {min_variance}-{max_variance})")
+        print(f"Parameters: guidance_scale={preset.guidance_scale}, steps={preset.steps}, shift={preset.shift}")
+
+    def test_preset_matches_hardcoded_defaults(self, zimage_base_preset):
+        """Verify preset values match the legacy BASE_MODEL_DEFAULTS.
+
+        This test ensures the preset system is configured correctly and
+        matches the previously hardcoded values. Once migration is complete,
+        this test can be removed.
+        """
+        preset = zimage_base_preset
+
+        assert preset.guidance_scale == BASE_MODEL_DEFAULTS["guidance_scale"], (
+            f"guidance_scale mismatch: preset={preset.guidance_scale}, "
+            f"hardcoded={BASE_MODEL_DEFAULTS['guidance_scale']}"
+        )
+        assert preset.steps == BASE_MODEL_DEFAULTS["num_inference_steps"], (
+            f"steps mismatch: preset={preset.steps}, "
+            f"hardcoded={BASE_MODEL_DEFAULTS['num_inference_steps']}"
+        )
+        assert preset.shift == BASE_MODEL_DEFAULTS["shift"], (
+            f"shift mismatch: preset={preset.shift}, "
+            f"hardcoded={BASE_MODEL_DEFAULTS['shift']}"
+        )
+
+    def test_preset_has_required_metadata(self, zimage_base_preset):
+        """Verify preset has all required test metadata fields."""
+        preset = zimage_base_preset
+
+        required_fields = ["prompt", "seed", "height", "width", "min_variance", "max_variance"]
+        for field in required_fields:
+            assert field in preset.metadata, f"Missing required metadata field: {field}"
+
+    def test_preset_factory_works(self, preset_factory):
+        """Verify the preset factory can load arbitrary presets."""
+        # Load the zimage base test preset
+        preset = preset_factory("zimage_base_test")
+        assert preset.name == "zimage_base_test"
+        assert preset.category == "testing"
+
+        # Verify it has the expected parameters
+        assert preset.guidance_scale == 4.0
+        assert preset.steps == 30
+        assert preset.shift == 6.0

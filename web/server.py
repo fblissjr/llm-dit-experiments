@@ -2465,6 +2465,119 @@ async def get_generation_config():
     }
 
 
+# =============================================================================
+# Presets API (for generation presets)
+# =============================================================================
+
+
+@app.get("/api/presets")
+async def get_all_presets():
+    """Return all generation presets with metadata.
+
+    Returns:
+        dict with:
+        - presets: List of preset objects with name, description, category, params
+    """
+    from llm_dit.presets import get_preset_registry
+
+    try:
+        registry = get_preset_registry()
+    except ValueError:
+        # Registry not initialized - initialize with default path
+        from llm_dit.presets import get_preset_registry
+        presets_dir = "presets"
+        if runtime_config is not None:
+            # Try to get presets_dir from config if available
+            config_dict = runtime_config.to_dict() if hasattr(runtime_config, 'to_dict') else {}
+            presets_dir = config_dict.get("presets_dir", "presets")
+        registry = get_preset_registry(presets_dir)
+
+    all_presets = registry.get_all()
+    return {
+        "presets": [p.to_api_response() for p in all_presets.values()],
+    }
+
+
+@app.get("/api/presets/{pipeline_id}")
+async def get_presets_for_pipeline(pipeline_id: str, variant: Optional[str] = None):
+    """Return presets that apply to a specific pipeline.
+
+    Args:
+        pipeline_id: Pipeline identifier (e.g., "zimage", "ltx2")
+        variant: Optional variant filter (e.g., "base", "turbo")
+
+    Returns:
+        dict with:
+        - presets: List of preset objects applicable to this pipeline
+        - default_preset: Name of the default preset (from config or schema)
+    """
+    from llm_dit.presets import get_preset_registry
+
+    try:
+        registry = get_preset_registry()
+    except ValueError:
+        # Registry not initialized - initialize with default path
+        from llm_dit.presets import get_preset_registry
+        presets_dir = "presets"
+        if runtime_config is not None:
+            config_dict = runtime_config.to_dict() if hasattr(runtime_config, 'to_dict') else {}
+            presets_dir = config_dict.get("presets_dir", "presets")
+        registry = get_preset_registry(presets_dir)
+
+    # Get presets for this pipeline (and optional variant filter)
+    presets = registry.list_for_pipeline(pipeline_id, variant=variant)
+
+    # Determine default preset from config
+    default_preset = ""
+    if runtime_config is not None:
+        config_dict = runtime_config.to_dict() if hasattr(runtime_config, 'to_dict') else {}
+        # Check pipeline-specific default_preset
+        pipeline_config = config_dict.get(pipeline_id, {})
+        if isinstance(pipeline_config, dict):
+            default_preset = pipeline_config.get("default_preset", "")
+
+    return {
+        "presets": [p.to_api_response() for p in presets],
+        "default_preset": default_preset,
+    }
+
+
+@app.get("/api/presets/preset/{name}")
+async def get_preset_by_name(name: str):
+    """Get full details for a specific preset.
+
+    Args:
+        name: Preset name
+
+    Returns:
+        Full preset object with all parameters
+
+    Raises:
+        404 if preset not found
+    """
+    from llm_dit.presets import get_preset_registry
+
+    try:
+        registry = get_preset_registry()
+    except ValueError:
+        # Registry not initialized - initialize with default path
+        from llm_dit.presets import get_preset_registry
+        presets_dir = "presets"
+        if runtime_config is not None:
+            config_dict = runtime_config.to_dict() if hasattr(runtime_config, 'to_dict') else {}
+            presets_dir = config_dict.get("presets_dir", "presets")
+        registry = get_preset_registry(presets_dir)
+
+    preset = registry.get(name)
+    if preset is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Preset '{name}' not found. Available: {registry.list_names()}",
+        )
+
+    return preset.to_api_response()
+
+
 @app.get("/api/resolution-config")
 async def get_resolution_config(model: Optional[str] = None):
     """Get resolution constraints for client-side validation.

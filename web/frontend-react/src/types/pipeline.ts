@@ -110,6 +110,7 @@ export interface ParamSchema {
   max?: number;
   step?: number;
   options?: string[];
+  options_endpoint?: string;  // API endpoint for dynamic options (presets)
   group: GroupType;
   tooltip?: string;
   conditional?: Record<string, unknown>;
@@ -117,6 +118,18 @@ export interface ParamSchema {
   rows?: number;
   required?: boolean;
   max_count?: number;  // Maximum number of images (for image type controls)
+}
+
+/**
+ * Generation preset for a pipeline
+ */
+export interface GenerationPreset {
+  name: string;
+  description: string;
+  category: string;
+  pipelines: string[];
+  variant: string | null;
+  params: Record<string, unknown>;
 }
 
 /**

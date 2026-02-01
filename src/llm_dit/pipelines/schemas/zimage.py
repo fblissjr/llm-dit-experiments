@@ -1,7 +1,7 @@
 """
 Z-Image Pipeline Schema
 
-last updated: 2026-01-27
+last updated: 2026-02-01
 
 Z-Image (S3-DiT 6B) is the primary image generation pipeline with two variants:
 - Turbo: Fast 9-step distilled generation (CFG baked in)
@@ -29,12 +29,6 @@ DIMENSION_PRESETS = [
     "896x1152",   # Portrait 3:4
 ]
 
-# Default negative prompt for Z-Image base variant (when user input is empty)
-DEFAULT_NEGATIVE_PROMPT = (
-    "low quality, worst quality, blurry, pixelated, noisy, artifacts, watermark, text, logo, "
-    "bad anatomy, bad hands, extra limbs"
-)
-
 
 register_pipeline(PipelineSchema(
     id="zimage",
@@ -51,6 +45,16 @@ register_pipeline(PipelineSchema(
     params=[
         # === Basic Parameters ===
         ParamSchema(
+            id="preset",
+            type="select",
+            label="Preset",
+            default="photorealistic",
+            options=[],  # Populated dynamically from API
+            options_endpoint="/api/presets/zimage",
+            group="basic",
+            tooltip="Load a generation preset with pre-configured settings. Presets provide negative prompts, CFG, and steps optimized for different use cases.",
+        ),
+        ParamSchema(
             id="prompt",
             type="textarea",
             label="Prompt",
@@ -64,12 +68,12 @@ register_pipeline(PipelineSchema(
             id="negative_prompt",
             type="textarea",
             label="Negative Prompt",
-            default=DEFAULT_NEGATIVE_PROMPT,
+            default="",  # Populated when preset is selected
             placeholder="Elements to avoid (blur, artifacts, etc.)...",
             rows=2,
             group="basic",
             conditional={"_variant": "base"},  # Only show for base variant
-            tooltip="What to avoid in the image. Uses CFG to steer away from unwanted elements.",
+            tooltip="What to avoid. Preset populates this - edit to customize.",
         ),
         ParamSchema(
             id="width",

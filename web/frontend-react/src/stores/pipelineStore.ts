@@ -2,17 +2,23 @@
  * Pipeline Store
  *
  * Manages pipeline schemas fetched from the API and current pipeline selection.
+ * Also manages generation presets for each pipeline.
  */
 
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
-import type { PipelineSchema } from '@/types';
+import type { PipelineSchema, GenerationPreset } from '@/types';
 
 interface PipelineState {
   // Data
   pipelines: Record<string, PipelineSchema>;
   selectedPipelineId: string | null;
   serverDefaults: Record<string, unknown>;  // Defaults from server (includes zimage_variant)
+
+  // Presets: keyed by pipeline ID
+  presets: Record<string, GenerationPreset[]>;
+  defaultPresets: Record<string, string>;  // Pipeline ID -> default preset name
+  presetsLoading: Record<string, boolean>;
 
   // Loading state
   isLoading: boolean;
@@ -24,8 +30,11 @@ interface PipelineState {
 
   // Actions
   fetchPipelines: () => Promise<void>;
+  fetchPresets: (pipelineId: string) => Promise<void>;
   selectPipeline: (id: string) => void;
   getPipeline: (id: string) => PipelineSchema | undefined;
+  getPreset: (pipelineId: string, presetName: string) => GenerationPreset | undefined;
+  getPresetsForPipeline: (pipelineId: string) => GenerationPreset[];
 }
 
 export const usePipelineStore = create<PipelineState>()(
@@ -34,6 +43,9 @@ export const usePipelineStore = create<PipelineState>()(
     pipelines: {},
     selectedPipelineId: null,
     serverDefaults: {},
+    presets: {},
+    defaultPresets: {},
+    presetsLoading: {},
     isLoading: false,
     error: null,
 
@@ -108,6 +120,62 @@ export const usePipelineStore = create<PipelineState>()(
 
     getPipeline: (id: string) => {
       return get().pipelines[id];
+    },
+
+    /**
+     * Fetch presets for a specific pipeline.
+     * Results are cached - subsequent calls return cached data.
+     */
+    fetchPresets: async (pipelineId: string) => {
+      // Skip if already loading or loaded
+      const state = get();
+      if (state.presetsLoading[pipelineId] || state.presets[pipelineId]) {
+        return;
+      }
+
+      set((state) => {
+        state.presetsLoading[pipelineId] = true;
+      });
+
+      try {
+        const response = await fetch(`/api/presets/${pipelineId}`);
+        if (!response.ok) {
+          throw new Error(`Failed to fetch presets: ${response.statusText}`);
+        }
+
+        const data = await response.json();
+        // API returns { presets: [...], default_preset: string }
+        const presets: GenerationPreset[] = data.presets || [];
+        const defaultPreset: string = data.default_preset || '';
+
+        set((state) => {
+          state.presets[pipelineId] = presets;
+          state.defaultPresets[pipelineId] = defaultPreset;
+          state.presetsLoading[pipelineId] = false;
+        });
+      } catch (error) {
+        console.error(`Failed to fetch presets for ${pipelineId}:`, error);
+        set((state) => {
+          state.presets[pipelineId] = [];
+          state.presetsLoading[pipelineId] = false;
+        });
+      }
+    },
+
+    /**
+     * Get a specific preset by name for a pipeline.
+     */
+    getPreset: (pipelineId: string, presetName: string) => {
+      const presets = get().presets[pipelineId];
+      if (!presets) return undefined;
+      return presets.find((p) => p.name === presetName);
+    },
+
+    /**
+     * Get all presets for a pipeline.
+     */
+    getPresetsForPipeline: (pipelineId: string) => {
+      return get().presets[pipelineId] || [];
     },
   }))
 );

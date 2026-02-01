@@ -469,6 +469,9 @@ class LTX2Config:
     tile_overlap_temporal: int = 4  # Temporal overlap
     tile_overlap_spatial: int = 32  # Spatial overlap
 
+    # Preset configuration
+    default_preset: str = ""  # Default preset to load (e.g., "cinematic")
+
     def get_dtype(self) -> torch.dtype:
         """Get torch dtype for computation.
 
@@ -645,6 +648,7 @@ class Flux2Config:
     block_offload: bool = True  # Enable block-by-block GPU offloading for low VRAM
     default_steps: int | None = None  # Default steps (None = model default: 4 distilled, 50 base)
     default_guidance: float | None = None  # Default CFG (None = model default: 1.0 distilled, 4.0 base)
+    default_preset: str = ""  # Default preset to load (e.g., "quality")
 
 
 @dataclass
@@ -679,6 +683,9 @@ class ZImageConfig:
     # Base model specific
     default_negative_prompt: str = ""  # Default negative prompt for base model
     default_cfg_normalization: float = 0.0  # 0.0 disabled, 1.0 for realism
+
+    # Preset configuration
+    default_preset: str = ""  # Default preset to load (e.g., "photorealistic")
 
 
 @dataclass
@@ -1297,6 +1304,7 @@ class Config:
 
     model_path: str = ""
     templates_dir: str | None = None
+    presets_dir: str = "presets"  # Directory containing generation presets
 
     encoder: EncoderConfig = field(default_factory=EncoderConfig)
     pipeline: PipelineConfig = field(default_factory=PipelineConfig)
@@ -1345,6 +1353,7 @@ class Config:
             default_pipeline=data.get("default_pipeline", "none"),
             model_path=data.get("model_path", ""),
             templates_dir=data.get("templates_dir"),
+            presets_dir=data.get("presets_dir", "presets"),
             encoder=EncoderConfig(**encoder_data),
             pipeline=PipelineConfig(**pipeline_data),
             generation=GenerationConfig(**generation_data),

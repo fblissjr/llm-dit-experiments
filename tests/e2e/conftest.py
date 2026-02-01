@@ -1,7 +1,7 @@
 """
 Pytest configuration for E2E tests.
 
-Last Updated: 2026-01-22
+Last Updated: 2026-02-01
 
 Provides shared fixtures and configuration for end-to-end tests.
 This file is designed to be portable - copy to LTX-2 repo along with
@@ -441,3 +441,115 @@ def reference_config():
     if not _backends_imported:
         pytest.skip("Backend module not available")
     return _backend_module.REFERENCE_CONFIG
+
+
+# =============================================================================
+# Generation Preset Fixtures
+# =============================================================================
+
+
+@pytest.fixture(scope="session")
+def preset_registry():
+    """Production preset registry - same one used by server.
+
+    Session-scoped for efficiency (presets are loaded once per test session).
+    """
+    from pathlib import Path
+
+    from llm_dit.presets import get_preset_registry
+
+    presets_dir = Path(__file__).parent.parent.parent / "presets"
+    return get_preset_registry(presets_dir)
+
+
+@pytest.fixture
+def zimage_base_preset(preset_registry):
+    """Z-Image Base test preset.
+
+    Returns a GenerationPreset with:
+    - guidance_scale: 4.0
+    - steps: 30
+    - shift: 6.0
+    - seed: 42 (in metadata)
+    - prompt: "A cat sleeping in sunlight" (in metadata)
+    """
+    preset = preset_registry.get("zimage_base_test")
+    if preset is None:
+        pytest.skip("zimage_base_test preset not found")
+    return preset
+
+
+@pytest.fixture
+def zimage_turbo_preset(preset_registry):
+    """Z-Image Turbo test preset.
+
+    Returns a GenerationPreset with:
+    - guidance_scale: 0.0 (CFG baked in)
+    - steps: 9
+    - shift: 3.0
+    """
+    preset = preset_registry.get("zimage_turbo_test")
+    if preset is None:
+        pytest.skip("zimage_turbo_test preset not found")
+    return preset
+
+
+@pytest.fixture
+def flux2_distilled_preset(preset_registry):
+    """FLUX.2 distilled (Klein) test preset.
+
+    Returns a GenerationPreset with:
+    - guidance_scale: 1.0
+    - steps: 4
+    """
+    preset = preset_registry.get("flux2_distilled_test")
+    if preset is None:
+        pytest.skip("flux2_distilled_test preset not found")
+    return preset
+
+
+@pytest.fixture
+def flux2_base_preset(preset_registry):
+    """FLUX.2 base (non-distilled) test preset.
+
+    Returns a GenerationPreset with:
+    - guidance_scale: 3.5
+    - steps: 28
+    """
+    preset = preset_registry.get("flux2_base_test")
+    if preset is None:
+        pytest.skip("flux2_base_test preset not found")
+    return preset
+
+
+@pytest.fixture
+def preset_factory(preset_registry):
+    """Factory for loading any preset by name.
+
+    Usage:
+        def test_something(preset_factory):
+            preset = preset_factory("photorealistic")
+            assert preset.guidance_scale == 4.0
+    """
+    def _factory(name: str):
+        preset = preset_registry.get(name)
+        if preset is None:
+            available = preset_registry.list_names()
+            pytest.fail(f"Preset '{name}' not found. Available: {available}")
+        return preset
+    return _factory
+
+
+@pytest.fixture
+def test_presets_by_pipeline(preset_registry):
+    """Factory for getting test presets for a specific pipeline.
+
+    Usage:
+        def test_zimage_variants(test_presets_by_pipeline):
+            presets = test_presets_by_pipeline("zimage")
+            assert len(presets) >= 2  # base and turbo
+    """
+    def _factory(pipeline_id: str, variant: str | None = None):
+        presets = preset_registry.list_for_pipeline(pipeline_id, variant=variant)
+        return [p for p in presets if p.category == "testing"]
+    return _factory

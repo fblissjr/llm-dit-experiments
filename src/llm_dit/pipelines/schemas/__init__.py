@@ -40,6 +40,7 @@ class ParamSchema:
         max: Maximum value for slider/number inputs
         step: Step increment for slider/number inputs
         options: List of valid options for select inputs
+        options_endpoint: API endpoint to fetch options dynamically (for select)
         group: Grouping for progressive disclosure (basic shown, advanced collapsed)
         tooltip: Help text shown on hover/focus
         conditional: Show only when another field matches condition
@@ -57,6 +58,7 @@ class ParamSchema:
     max: float | None = None
     step: float | None = None
     options: list[str] | None = None
+    options_endpoint: str | None = None  # API endpoint for dynamic options
     group: GroupType = "basic"
     tooltip: str | None = None
     conditional: dict[str, Any] | None = None

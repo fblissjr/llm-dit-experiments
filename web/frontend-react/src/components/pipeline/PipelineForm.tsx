@@ -8,6 +8,9 @@
  * The formValues object is passed directly from the store, and individual param values
  * are resolved with defaults at the ParamControl level to avoid recreating objects
  * on every render (which would break controlled inputs like sliders).
+ *
+ * PRESETS: When a preset is selected, its params are merged into form values.
+ * User edits after preset selection override the preset values.
  */
 
 import { useEffect, useCallback, useMemo } from 'react';
@@ -20,11 +23,14 @@ import { GenerateButton } from '../generation/GenerateButton';
 import { groupParams } from '@/types';
 
 export function PipelineForm(): JSX.Element | null {
-  const { pipelines, selectedPipelineId, serverDefaults } = usePipelineStore(
+  const { pipelines, selectedPipelineId, serverDefaults, fetchPresets, getPreset, presets } = usePipelineStore(
     useShallow((state) => ({
       pipelines: state.pipelines,
       selectedPipelineId: state.selectedPipelineId,
       serverDefaults: state.serverDefaults,
+      fetchPresets: state.fetchPresets,
+      getPreset: state.getPreset,
+      presets: state.presets,
     }))
   );
 
@@ -60,17 +66,51 @@ export function PipelineForm(): JSX.Element | null {
     }
   }, [pipeline, serverDefaults, initializeFormValues, isInitialized]);
 
-  // Memoize param groups to avoid recreating on every render
-  const paramGroups = useMemo(
-    () => (pipeline ? groupParams(pipeline.params) : []),
-    [pipeline]
-  );
+  // Fetch presets when pipeline changes
+  useEffect(() => {
+    if (pipeline) {
+      fetchPresets(pipeline.id);
+    }
+  }, [pipeline?.id, fetchPresets]);
+
+  // Memoize param groups with dynamically loaded preset options
+  const paramGroups = useMemo(() => {
+    if (!pipeline) return [];
+
+    // Get preset names for this pipeline
+    const pipelinePresets = presets[pipeline.id] || [];
+    const presetNames = pipelinePresets.map((p) => p.name);
+
+    // If we have presets, inject them into the preset param's options
+    const paramsWithPresetOptions = pipeline.params.map((param) => {
+      if (param.id === 'preset' && param.options_endpoint && presetNames.length > 0) {
+        return {
+          ...param,
+          options: ['', ...presetNames],  // Empty string for "None" option
+        };
+      }
+      return param;
+    });
+
+    return groupParams(paramsWithPresetOptions);
+  }, [pipeline, presets]);
 
   // Stable callback for param changes
   const handleParamChange = useCallback(
     (paramId: string, value: unknown) => {
       if (!pipeline) return;
       setFormValue(pipeline.id, paramId, value);
+
+      // Handle preset selection -> merge preset params into form values
+      if (paramId === 'preset' && typeof value === 'string' && value) {
+        const preset = getPreset(pipeline.id, value);
+        if (preset?.params) {
+          // Merge all preset params into form values
+          Object.entries(preset.params).forEach(([key, val]) => {
+            setFormValue(pipeline.id, key, val);
+          });
+        }
+      }
 
       // Handle dimension preset -> width/height sync
       if (paramId === 'dimension_preset' && typeof value === 'string') {
@@ -89,7 +129,7 @@ export function PipelineForm(): JSX.Element | null {
         setFormValue(pipeline.id, 'guidance', isBase ? 3.5 : 1.0);
       }
     },
-    [pipeline?.id, setFormValue]
+    [pipeline?.id, setFormValue, getPreset]
   );
 
   if (!pipeline) {
