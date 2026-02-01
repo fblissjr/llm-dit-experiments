@@ -62,8 +62,9 @@ function validateParam(
     }
   }
 
-  // Select validation
-  if (param.type === 'select' && param.options) {
+  // Select validation - skip for dynamic options (options_endpoint)
+  // Dynamic options are loaded from API and not in param.options
+  if (param.type === 'select' && param.options && !param.options_endpoint) {
     if (!param.options.includes(String(value))) {
       return { paramId: param.id, message: `${param.label} has an invalid value` };
     }
