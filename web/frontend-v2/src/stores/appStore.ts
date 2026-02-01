@@ -24,6 +24,7 @@ import {
   fetchVRAMStatus,
   fetchPipelineDefaults,
 } from '@/api/client';
+import { useFormStore } from './formStore';
 
 interface AppState {
   // Pipeline data
@@ -222,8 +223,6 @@ export const useAppStore = create<AppState>()(
         if (defaultPreset && presets.length > 0) {
           const preset = presets.find((p) => p.name === defaultPreset);
           if (preset && preset.params) {
-            // Import formStore here to avoid circular dependency
-            const { useFormStore } = await import('./formStore');
             const formStore = useFormStore.getState();
 
             // Apply preset params (includes negative_prompt, steps, guidance_scale, etc.)
