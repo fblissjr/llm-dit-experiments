@@ -6,8 +6,9 @@
  */
 
 import { useMemo, useCallback } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { useAppStore, useFormStore } from '@/stores';
-import type { GroupType, ParamSchema } from '@/api/types';
+import type { GroupType, ParamSchema, FormValues, ValidationError } from '@/api/types';
 import { ParamGroup } from './ParamGroup';
 import { ParamControl } from './ParamControl';
 
@@ -21,18 +22,38 @@ const groupOrder: GroupType[] = [
   'enhancement',
 ];
 
+// Empty array/object constants to avoid creating new references
+const EMPTY_PRESETS: never[] = [];
+const EMPTY_ERRORS: ValidationError[] = [];
+const EMPTY_FORM_VALUES: FormValues = {};
+
 export function PipelineForm() {
   const selectedPipelineId = useAppStore((s) => s.selectedPipelineId);
-  const pipeline = useAppStore((s) => s.getSelectedPipeline());
-  const presets = useAppStore((s) => s.presets[selectedPipelineId ?? ''] ?? []);
+
+  // Use useShallow for object/array selectors to prevent infinite re-renders
+  // In Zustand v5, selectors returning new objects trigger re-renders due to reference inequality
+  const pipeline = useAppStore(
+    useShallow((s) => (selectedPipelineId ? s.pipelines[selectedPipelineId] : null))
+  );
+  const presets = useAppStore(
+    useShallow((s) => s.presets[selectedPipelineId ?? ''] ?? EMPTY_PRESETS)
+  );
+
+  // Function references are stable - no useShallow needed
   const getPipelineColor = useAppStore((s) => s.getPipelineColor);
 
-  const formValues = useFormStore((s) =>
-    selectedPipelineId ? s.getResolvedValues(selectedPipelineId) : {}
+  // Use useShallow for computed objects that return new references
+  const formValues = useFormStore(
+    useShallow((s) =>
+      selectedPipelineId ? s.getResolvedValues(selectedPipelineId) : EMPTY_FORM_VALUES
+    )
   );
-  const errors = useFormStore((s) =>
-    selectedPipelineId ? (s.errors[selectedPipelineId] ?? []) : []
+  const errors = useFormStore(
+    useShallow((s) =>
+      selectedPipelineId ? (s.errors[selectedPipelineId] ?? EMPTY_ERRORS) : EMPTY_ERRORS
+    )
   );
+
   const setValue = useFormStore((s) => s.setValue);
   const applyPreset = useFormStore((s) => s.applyPreset);
 

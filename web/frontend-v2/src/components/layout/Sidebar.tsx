@@ -4,6 +4,7 @@
  * Desktop history panel shown on the right side.
  */
 
+import { useShallow } from 'zustand/react/shallow';
 import { cn } from '@/utils';
 import { useAppStore, useSessionStore } from '@/stores';
 import { HistoryList } from '@/components/history/HistoryList';
@@ -15,7 +16,8 @@ interface SidebarProps {
 export function Sidebar({ className }: SidebarProps) {
   const isHistoryOpen = useAppStore((s) => s.isHistoryOpen);
   const toggleHistory = useAppStore((s) => s.toggleHistory);
-  const history = useSessionStore((s) => s.history);
+  // Use useShallow for array selector - history array changes frequently
+  const history = useSessionStore(useShallow((s) => s.history));
 
   if (!isHistoryOpen) {
     return (

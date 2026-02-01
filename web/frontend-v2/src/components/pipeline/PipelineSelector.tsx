@@ -5,6 +5,7 @@
  * Uses pills for desktop, dropdown for mobile when >3 pipelines.
  */
 
+import { useShallow } from 'zustand/react/shallow';
 import { cn } from '@/utils';
 import { useAppStore } from '@/stores';
 import { useIsMobile } from '@/hooks';
@@ -14,10 +15,15 @@ export function PipelineSelector() {
   const activeTab = useAppStore((s) => s.activeTab);
   const selectedPipelineId = useAppStore((s) => s.selectedPipelineId);
   const selectPipeline = useAppStore((s) => s.selectPipeline);
-  const getPipelinesForTab = useAppStore((s) => s.getPipelinesForTab);
   const getPipelineColor = useAppStore((s) => s.getPipelineColor);
 
-  const pipelines = getPipelinesForTab(activeTab);
+  // Use useShallow for array selector - filters return new arrays
+  const pipelines = useAppStore(
+    useShallow((s) => {
+      const category = activeTab === 'image' ? 'image' : 'video';
+      return Object.values(s.pipelines).filter((p) => p.category === category);
+    })
+  );
 
   if (pipelines.length === 0) {
     return null;

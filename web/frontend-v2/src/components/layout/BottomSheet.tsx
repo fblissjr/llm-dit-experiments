@@ -5,6 +5,7 @@
  */
 
 import { useState, useRef, useEffect } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { cn } from '@/utils';
 import { useAppStore, useSessionStore } from '@/stores';
 import { HistoryList } from '@/components/history/HistoryList';
@@ -16,7 +17,8 @@ interface BottomSheetProps {
 export function BottomSheet({ className }: BottomSheetProps) {
   const isHistoryOpen = useAppStore((s) => s.isHistoryOpen);
   const toggleHistory = useAppStore((s) => s.toggleHistory);
-  const history = useSessionStore((s) => s.history);
+  // Use useShallow for array selector - history array changes frequently
+  const history = useSessionStore(useShallow((s) => s.history));
 
   const [isDragging, setIsDragging] = useState(false);
   const [dragOffset, setDragOffset] = useState(0);

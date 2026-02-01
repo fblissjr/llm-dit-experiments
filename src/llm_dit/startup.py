@@ -178,9 +178,9 @@ class PipelineLoader:
 
         # torch.compile
         if self.config.compile:
-            logger.info("Compiling transformer with torch.compile...")
+            logger.info(f"Compiling transformer with torch.compile (mode={self.config.compile_mode})...")
             try:
-                pipeline.transformer = torch.compile(pipeline.transformer, mode="reduce-overhead")
+                pipeline.transformer = torch.compile(pipeline.transformer, mode=self.config.compile_mode)
                 logger.info("  Transformer compiled (first run will be slow)")
             except Exception as e:
                 logger.warning(f"  Failed to compile: {e}")

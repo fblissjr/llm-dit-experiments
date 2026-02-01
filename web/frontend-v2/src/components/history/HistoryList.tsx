@@ -4,11 +4,13 @@
  * Scrollable list of history items with empty state.
  */
 
+import { useShallow } from 'zustand/react/shallow';
 import { useSessionStore } from '@/stores';
 import { HistoryCard } from './HistoryCard';
 
 export function HistoryList() {
-  const history = useSessionStore((s) => s.history);
+  // Use useShallow for array selector to prevent infinite re-renders
+  const history = useSessionStore(useShallow((s) => s.history));
   const clearHistory = useSessionStore((s) => s.clearHistory);
 
   if (history.length === 0) {
