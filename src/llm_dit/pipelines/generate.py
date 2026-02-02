@@ -549,6 +549,8 @@ def generate_video_with_offloading(
     gemma_variant: str = "bf16",  # Gemma3 variant: bf16, 8bit, q4-qat
     use_progress: bool = True,  # Use rich progress display for denoising
     debug_latents: bool = False,
+    lora_path: Optional[Union[str, Path, List[Union[str, Path]]]] = None,
+    lora_scale: Optional[Union[float, List[float]]] = None,
 ) -> torch.Tensor:
     """
     Generate video with sequential component offloading for 24GB GPUs.
@@ -585,6 +587,13 @@ def generate_video_with_offloading(
             If None, uses LTX2OptimizationConfig.for_24gb_gpu() defaults.
         debug_latents: If True, log detailed latent/velocity statistics at key denoising steps.
             Useful for debugging generation quality issues without changing global log level.
+        lora_path: Optional path to LoRA weights (.safetensors). Can be:
+            - Single path (str or Path)
+            - List of paths for stacking multiple LoRAs
+        lora_scale: LoRA scale factor(s). Can be:
+            - Single float (applied to all LoRAs if multiple paths)
+            - List of floats (one per LoRA path)
+            - None: defaults to 0.8 for each LoRA
 
     Returns:
         Video tensor [F, H, W, C] in uint8 format
@@ -750,6 +759,42 @@ def generate_video_with_offloading(
         logger.debug(f"Skipping connectors (embed_dim={embed_dim} already projected)")
 
     logger.debug(f"Transformer loaded: {model.get_num_params() / 1e9:.2f}B params")
+
+    # Load LoRA weights if specified
+    if lora_path is not None:
+        from llm_dit.utils.lora import load_lora as _load_lora
+
+        # Normalize to lists
+        if isinstance(lora_path, (str, Path)):
+            lora_paths = [lora_path]
+        else:
+            lora_paths = list(lora_path)
+
+        if lora_scale is None:
+            lora_scales = [0.8] * len(lora_paths)  # Default scale
+        elif isinstance(lora_scale, (int, float)):
+            lora_scales = [float(lora_scale)] * len(lora_paths)
+        else:
+            lora_scales = list(lora_scale)
+
+        if len(lora_paths) != len(lora_scales):
+            raise ValueError(
+                f"Number of LoRA paths ({len(lora_paths)}) must match "
+                f"number of scales ({len(lora_scales)})"
+            )
+
+        total_updated = 0
+        for path, scale in zip(lora_paths, lora_scales):
+            logger.info(f"Loading LoRA: {path} (scale={scale})")
+            updated = _load_lora(
+                model,
+                path,
+                scale=scale,
+                device=optimization.transformer_device,
+                dtype=dtype,
+            )
+            total_updated += updated
+        logger.info(f"LoRA loading complete: {total_updated} layers updated")
 
     # Generate latents (no VAE decode yet)
     def progress_callback(step, total, _latents):

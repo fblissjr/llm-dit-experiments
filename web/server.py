@@ -683,6 +683,8 @@ class LTX2GenerateRequest(BaseModel):
     guidance_scale: float = 3.5  # CFG scale (3.0-4.0 recommended)
     seed: Optional[int] = None  # Random seed
     enable_audio: bool = False  # Generate audio alongside video
+    lora_path: Optional[str] = None  # Path to LoRA weights (.safetensors)
+    lora_scale: Optional[float] = None  # LoRA scale (default 0.8)
 
 
 class Flux2GenerateRequest(BaseModel):
@@ -2094,6 +2096,8 @@ async def ltx2_generate_stream(request: LTX2GenerateRequest):
                     model_path=model_path,
                     callback=progress_callback,
                     use_progress=False,  # Disable tqdm, use callback instead
+                    lora_path=request.lora_path,
+                    lora_scale=request.lora_scale,
                 )
 
             # Start generation in background
