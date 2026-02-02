@@ -8,8 +8,11 @@ This module provides the infrastructure for establishing quality baselines
 and detecting regressions in video generation.
 
 Usage:
-    # Generate a baseline
+    # Generate a baseline from tier config
     result = generate_baseline(config_tier="smoke", seed=42)
+
+    # Generate a baseline from preset
+    result = generate_baseline_from_preset("ltx2_smoke_test")
 
     # Compare baselines
     comparison = compare_baselines(new_path, reference_path)
@@ -23,7 +26,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -274,6 +277,168 @@ def generate_baseline(
     # Save baseline metadata
     with open(output_dir / "baseline_result.json", "w") as f:
         json.dump(baseline_result.to_dict(), f, indent=2)
+
+    logger.info(f"Generation complete in {generation_time:.1f}s")
+    logger.info(f"Peak VRAM: {peak_vram:.1f} GB")
+    logger.info(f"Video stats: mean={baseline_result.mean_pixel_value:.4f}, std={baseline_result.std_pixel_value:.4f}")
+
+    # Cleanup
+    _cleanup_gpu()
+
+    return baseline_result
+
+
+def generate_baseline_from_preset(
+    preset_name: str,
+    output_dir: Optional[Path] = None,
+    save_video: bool = True,
+    **overrides: Any,
+) -> BaselineResult:
+    """Generate a baseline video using a preset configuration.
+
+    This function loads generation parameters from a preset file and uses
+    them to generate a baseline video. Presets provide a structured way
+    to define test configurations with all necessary parameters.
+
+    Args:
+        preset_name: Name of the preset (e.g., "ltx2_smoke_test")
+        output_dir: Output directory (uses default baselines dir if None)
+        save_video: Whether to save the video to disk
+        **overrides: Optional parameter overrides (seed, prompt, etc.)
+
+    Returns:
+        BaselineResult with generation metadata and output path
+
+    Example:
+        result = generate_baseline_from_preset("ltx2_smoke_test")
+        result = generate_baseline_from_preset("ltx2_smoke_test", seed=123)
+    """
+    import json
+    from datetime import datetime
+
+    from tests.fixtures.configs.presets import get_test_preset
+
+    # Load preset
+    preset = get_test_preset(preset_name, **overrides)
+
+    # Extract parameters from preset
+    seed = preset.metadata.get("seed", 42)
+    prompt = preset.metadata.get("prompt", SMOKE_TEST_PROMPT)
+    num_frames = preset.metadata.get("num_frames", 33)
+    height = preset.metadata.get("height", 512)
+    width = preset.metadata.get("width", 768)
+
+    # Build config from preset
+    config = GenerationConfig(
+        num_frames=num_frames,
+        height=height,
+        width=width,
+        num_inference_steps=getattr(preset, "steps", 30),
+        guidance_scale=getattr(preset, "guidance_scale", 3.0),
+        seed=seed,
+    )
+
+    # Setup output directory
+    if output_dir is None:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_dir = BASELINE_OUTPUT_DIR / f"{preset_name}_seed{seed}_{timestamp}"
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    logger.info(f"Generating baseline from preset: {preset_name}")
+    logger.info(f"Prompt: {prompt[:80]}...")
+    logger.info(f"Config: {config.num_frames} frames, {config.height}x{config.width}")
+    logger.info(f"Output: {output_dir}")
+
+    # Clean GPU before generation
+    _cleanup_gpu()
+
+    # Track VRAM usage
+    if torch.cuda.is_available():
+        torch.cuda.reset_peak_memory_stats()
+
+    # Generate video
+    backend = get_backend()
+    start_time = time.time()
+
+    result = backend.generate_video(
+        prompt=prompt,
+        config=config,
+        output_dir=output_dir,
+        save_video=save_video,
+    )
+
+    generation_time = time.time() - start_time
+    peak_vram = 0.0
+    if torch.cuda.is_available():
+        peak_vram = torch.cuda.max_memory_allocated() / (1024**3)
+
+    # Compute video statistics
+    video = result.video
+    if video.dtype == torch.uint8:
+        video_float = video.float() / 255.0
+    else:
+        video_float = video.float()
+
+    baseline_result = BaselineResult(
+        prompt=prompt,
+        seed=seed,
+        config_tier=preset_name,
+        output_path=output_dir / "video.mp4",
+        frames_generated=video.shape[0],
+        height=video.shape[1],
+        width=video.shape[2],
+        generation_time_seconds=generation_time,
+        peak_vram_gb=peak_vram,
+        mean_pixel_value=float(video_float.mean()),
+        std_pixel_value=float(video_float.std()),
+        min_pixel_value=float(video_float.min()),
+        max_pixel_value=float(video_float.max()),
+        backend_name=backend.name,
+        timestamp=datetime.now().isoformat(),
+    )
+
+    # Save baseline metadata with preset info
+    metadata = {
+        **baseline_result.to_dict(),
+        "preset_name": preset_name,
+        "preset_description": preset.description if hasattr(preset, "description") else None,
+        "generation_parameters": {
+            "num_frames": config.num_frames,
+            "height": config.height,
+            "width": config.width,
+            "num_inference_steps": config.num_inference_steps,
+            "guidance_scale": config.guidance_scale,
+        },
+    }
+
+    with open(output_dir / "baseline_result.json", "w") as f:
+        json.dump(metadata, f, indent=2)
+
+    # Also save video_metadata.json for Z-Image test pattern compatibility
+    with open(output_dir / "video_metadata.json", "w") as f:
+        json.dump({
+            "timestamp": baseline_result.timestamp,
+            "video_file": "video.mp4",
+            "prompt": prompt,
+            "seed": seed,
+            "num_frames": config.num_frames,
+            "height": config.height,
+            "width": config.width,
+            "num_inference_steps": config.num_inference_steps,
+            "guidance_scale": config.guidance_scale,
+            "preset_name": preset_name,
+            "video_stats": {
+                "mean": baseline_result.mean_pixel_value,
+                "std": baseline_result.std_pixel_value,
+                "min": baseline_result.min_pixel_value,
+                "max": baseline_result.max_pixel_value,
+            },
+            "performance": {
+                "generation_time_seconds": generation_time,
+                "peak_vram_gb": peak_vram,
+            },
+        }, f, indent=2)
 
     logger.info(f"Generation complete in {generation_time:.1f}s")
     logger.info(f"Peak VRAM: {peak_vram:.1f} GB")

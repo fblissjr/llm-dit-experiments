@@ -343,3 +343,74 @@ class TestBaselineQuality:
         # Real images have lower spatial differences than noise
         # Random noise ~40-50, real video typically < 20
         assert mean_spatial_diff < 30, f"Video appears noisy: spatial diff={mean_spatial_diff:.2f}"
+
+
+class TestPresetBaselines:
+    """Tests using preset-based configuration."""
+
+    @pytest.mark.skipif(not models_available(), reason="LTX-2 models not found")
+    @pytest.mark.skipif(not sufficient_vram(), reason="Insufficient VRAM (<16GB)")
+    def test_smoke_preset_generation(self):
+        """Generate baseline using ltx2_smoke_test preset.
+
+        This test validates that:
+        1. Presets load correctly from presets/testing/
+        2. All parameters are applied from the preset
+        3. Metadata is saved alongside video output
+        """
+        from tests.baselines import generate_baseline_from_preset
+
+        result = generate_baseline_from_preset("ltx2_smoke_test")
+
+        # Verify output exists
+        assert result.output_path.exists(), f"Video not saved: {result.output_path}"
+        assert result.frames_generated > 0, "No frames generated"
+
+        # Verify metadata file exists (Z-Image pattern)
+        metadata_path = result.output_path.parent / "video_metadata.json"
+        assert metadata_path.exists(), f"Metadata not saved: {metadata_path}"
+
+        # Verify metadata content
+        import json
+        with open(metadata_path) as f:
+            metadata = json.load(f)
+
+        assert metadata["preset_name"] == "ltx2_smoke_test"
+        assert "prompt" in metadata
+        assert "seed" in metadata
+        assert "video_stats" in metadata
+
+        logger.info(f"Preset baseline generated: {result.output_path}")
+        logger.info(f"Metadata saved: {metadata_path}")
+
+    @pytest.mark.slow
+    @pytest.mark.skipif(not models_available(), reason="LTX-2 models not found")
+    @pytest.mark.skipif(not sufficient_vram(), reason="Insufficient VRAM (<16GB)")
+    def test_short_preset_generation(self):
+        """Generate baseline using ltx2_short_test preset."""
+        from tests.baselines import generate_baseline_from_preset
+
+        result = generate_baseline_from_preset("ltx2_short_test")
+
+        assert result.output_path.exists()
+        assert result.frames_generated == 33
+
+        # Verify metadata
+        metadata_path = result.output_path.parent / "video_metadata.json"
+        assert metadata_path.exists()
+
+        logger.info(f"Short preset baseline: {result.output_path}")
+
+    @pytest.mark.skipif(not models_available(), reason="LTX-2 models not found")
+    @pytest.mark.skipif(not sufficient_vram(), reason="Insufficient VRAM (<16GB)")
+    def test_preset_with_override(self):
+        """Test preset generation with parameter overrides."""
+        from tests.baselines import generate_baseline_from_preset
+
+        # Override seed from preset
+        result = generate_baseline_from_preset("ltx2_smoke_test", seed=123)
+
+        assert result.output_path.exists()
+        assert result.seed == 123
+
+        logger.info(f"Preset with override: seed={result.seed}")

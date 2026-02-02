@@ -19,14 +19,18 @@ Usage:
 
 from .ltx2_baseline_runner import (
     BaselineResult,
+    ComparisonResult,
     compare_baselines,
     generate_baseline,
+    generate_baseline_from_preset,
     get_baseline_config,
 )
 
 __all__ = [
     "BaselineResult",
+    "ComparisonResult",
     "generate_baseline",
+    "generate_baseline_from_preset",
     "compare_baselines",
     "get_baseline_config",
 ]
