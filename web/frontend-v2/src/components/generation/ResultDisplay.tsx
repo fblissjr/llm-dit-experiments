@@ -4,11 +4,14 @@
  * Shows the generated image or video result.
  */
 
+import { useState } from 'react';
 import { useSessionStore } from '@/stores';
+import { ImageViewer } from '@/components/viewer/ImageViewer';
 
 export function ResultDisplay() {
   const result = useSessionStore((s) => s.result);
   const clearResult = useSessionStore((s) => s.clearResult);
+  const [showViewer, setShowViewer] = useState(false);
 
   if (!result || result.urls.length === 0) {
     return (
@@ -37,25 +40,34 @@ export function ResultDisplay() {
   // Check outputType first, then file extension (data URLs don't have extensions)
   const isVideo = result.outputType === 'video' || (url && (url.endsWith('.mp4') || url.endsWith('.webm')));
 
+  const handleImageClick = () => {
+    if (!isVideo) {
+      setShowViewer(true);
+    }
+  };
+
   return (
-    <div className="card overflow-hidden">
-      {/* Media display */}
-      <div className="relative bg-gray-950">
-        {isVideo ? (
-          <video
-            src={url}
-            controls
-            autoPlay
-            loop
-            className="w-full max-h-[600px] object-contain"
-          />
-        ) : (
-          <img
-            src={url}
-            alt="Generated content"
-            className="w-full max-h-[600px] object-contain"
-          />
-        )}
+    <>
+      <div className="card overflow-hidden">
+        {/* Media display */}
+        <div className="relative bg-gray-950">
+          {isVideo ? (
+            <video
+              src={url}
+              controls
+              autoPlay
+              loop
+              className="w-full max-h-[600px] object-contain"
+            />
+          ) : (
+            <img
+              src={url}
+              alt="Generated content"
+              className="w-full max-h-[600px] object-contain cursor-pointer hover:opacity-90 transition-opacity"
+              onClick={handleImageClick}
+              title="Click to view full screen"
+            />
+          )}
 
         {/* Close button */}
         <button
@@ -109,6 +121,16 @@ export function ResultDisplay() {
           Download
         </a>
       </div>
-    </div>
+      </div>
+
+      {/* Image viewer modal */}
+      {showViewer && !isVideo && (
+        <ImageViewer
+          url={url}
+          alt="Generated content"
+          onClose={() => setShowViewer(false)}
+        />
+      )}
+    </>
   );
 }

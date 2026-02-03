@@ -142,6 +142,7 @@ export interface HistoryItem {
   pipelineName: string;
   pipelineColor: string;
   thumbnailUrl: string;
+  fullImageUrl?: string; // Full resolution URL (only available in current session for base64 images)
   prompt: string;
   shortPrompt: string;
   keyParams: string;

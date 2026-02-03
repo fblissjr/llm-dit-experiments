@@ -17,7 +17,7 @@ import type {
   FormValues,
 } from '@/api/types';
 import { generate, generateStream } from '@/api/client';
-import { generateUUID } from '@/utils';
+import { generateUUID, createThumbnail, isBase64DataUrl } from '@/utils';
 import { useAppStore } from './appStore';
 import { useFormStore } from './formStore';
 
@@ -287,10 +287,19 @@ export const useSessionStore = create<SessionState>()(
         // Apply the parameters
         formStore.setValues(item.pipelineId, item.params);
 
-        // Display the historical result if it has valid URLs
-        if (item.result && item.result.urls.length > 0 && item.result.urls[0]) {
+        // Display the historical result if available
+        // Use fullImageUrl if available (current session), otherwise use stored URLs
+        const hasValidUrl = item.fullImageUrl || (item.result.urls.length > 0 && item.result.urls[0]);
+
+        if (hasValidUrl) {
+          const displayResult: GenerationResult = {
+            ...item.result,
+            // If we have fullImageUrl, use it; otherwise use stored URLs
+            urls: item.fullImageUrl ? [item.fullImageUrl] : item.result.urls,
+          };
+
           set((state) => {
-            state.result = item.result;
+            state.result = displayResult;
             state.status = 'completed';
             state.error = null;
             state.progress = null;
@@ -299,21 +308,35 @@ export const useSessionStore = create<SessionState>()(
       },
 
       // Internal: Add result to history
-      addToHistory: (
+      addToHistory: async (
         result: GenerationResult,
         pipeline: { name: string; color: string },
         params: FormValues
       ) => {
-        // Don't store base64 data URLs in history - they're too large for localStorage
-        // Only persist file paths (like /outputs/...) which can be fetched later
         const url = result.urls[0] ?? '';
-        const isBase64 = url.startsWith('data:');
-        const thumbnailUrl = isBase64 ? '' : url;
+        let thumbnailUrl = url;
+        let fullImageUrl: string | undefined = undefined;
 
-        // Create a lightweight result without base64 URLs for storage
+        // If it's a base64 data URL, create a small thumbnail for storage
+        // and keep the full image URL in memory (not persisted)
+        if (isBase64DataUrl(url)) {
+          try {
+            thumbnailUrl = await createThumbnail(url);
+            // Keep full URL in memory for current session viewing
+            fullImageUrl = url;
+          } catch (error) {
+            console.error('Failed to create thumbnail:', error);
+            thumbnailUrl = ''; // Fallback to empty if thumbnail creation fails
+          }
+        } else {
+          // For file paths, use the same URL for both thumbnail and full view
+          fullImageUrl = url;
+        }
+
+        // Create lightweight result for storage (strip base64 URLs)
         const storableResult: GenerationResult = {
           ...result,
-          urls: result.urls.map((u) => (u.startsWith('data:') ? '' : u)),
+          urls: result.urls.map((u) => (isBase64DataUrl(u) ? '' : u)),
         };
 
         const historyItem: HistoryItem = {
@@ -322,6 +345,7 @@ export const useSessionStore = create<SessionState>()(
           pipelineName: pipeline.name,
           pipelineColor: pipeline.color,
           thumbnailUrl,
+          fullImageUrl, // Will be undefined after reload from localStorage
           prompt: (params.prompt as string) ?? '',
           shortPrompt: truncatePrompt((params.prompt as string) ?? ''),
           keyParams: extractKeyParams(params),
