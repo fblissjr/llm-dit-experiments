@@ -121,7 +121,7 @@ export function LeftNav() {
           <div
             className={cn(
               'section-content',
-              isModelsExpanded ? 'max-h-96' : 'max-h-0'
+              isModelsExpanded ? 'max-h-[2000px]' : 'max-h-0'
             )}
           >
             <ModelManager />
@@ -197,7 +197,7 @@ export function LeftNav() {
           <div
             className={cn(
               'section-content space-y-1',
-              isPipelinesExpanded ? 'max-h-96' : 'max-h-0'
+              isPipelinesExpanded ? 'max-h-[2000px]' : 'max-h-0'
             )}
           >
             {pipelines.map((pipeline) => {
