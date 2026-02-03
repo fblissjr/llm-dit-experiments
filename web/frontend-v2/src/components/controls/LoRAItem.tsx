@@ -40,9 +40,6 @@ export function LoRAItem({
   // Calculate fill percentage for slider visual
   const fillPercent = ((scale - scaleMin) / (scaleMax - scaleMin)) * 100;
 
-  // Find current selection in available loras
-  const selectedLora = availableLoras.find((l) => l.path === path);
-
   // Group LoRAs by directory for better organization
   const lorasByDirectory = availableLoras.reduce(
     (acc, lora) => {
