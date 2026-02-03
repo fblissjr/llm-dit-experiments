@@ -12,6 +12,7 @@ import type {
   VRAMStatus,
   GenerationResult,
   FormValues,
+  ModelStatusResponse,
 } from './types';
 
 class APIError extends Error {
@@ -225,6 +226,65 @@ export async function uploadImage(file: File): Promise<string> {
 
   const data = await response.json();
   return data.url || data.path;
+}
+
+/**
+ * Model Management APIs
+ */
+
+/**
+ * Get model status for a pipeline
+ */
+export async function fetchModelStatus(pipelineId: string): Promise<ModelStatusResponse> {
+  const response = await request<{
+    status: string;
+    vram_mb?: number;
+    estimated_vram_mb?: number;
+    error?: string;
+  }>(`/api/models/${pipelineId}/status`);
+
+  return {
+    status: response.status as ModelStatusResponse['status'],
+    vramMB: response.vram_mb,
+    estimatedVramMB: response.estimated_vram_mb,
+    error: response.error,
+  };
+}
+
+/**
+ * Load a model for a pipeline
+ */
+export async function loadModel(pipelineId: string): Promise<ModelStatusResponse> {
+  const response = await request<{
+    status: string;
+    vram_mb?: number;
+    error?: string;
+  }>(`/api/models/${pipelineId}/load`, {
+    method: 'POST',
+  });
+
+  return {
+    status: response.status as ModelStatusResponse['status'],
+    vramMB: response.vram_mb,
+    error: response.error,
+  };
+}
+
+/**
+ * Unload a model for a pipeline
+ */
+export async function unloadModel(pipelineId: string): Promise<ModelStatusResponse> {
+  const response = await request<{
+    status: string;
+    error?: string;
+  }>(`/api/models/${pipelineId}/unload`, {
+    method: 'POST',
+  });
+
+  return {
+    status: response.status as ModelStatusResponse['status'],
+    error: response.error,
+  };
 }
 
 export { APIError };

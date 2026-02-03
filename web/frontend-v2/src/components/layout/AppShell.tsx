@@ -9,7 +9,8 @@ import { useEffect } from 'react';
 import { cn } from '@/utils';
 import { useAppStore } from '@/stores';
 import { useIsMobile, useIsDesktop } from '@/hooks';
-import { TabBar } from './TabBar';
+import { LeftNav } from './LeftNav';
+import { MobileNav } from './MobileNav';
 import { Sidebar } from './Sidebar';
 import { BottomSheet } from './BottomSheet';
 
@@ -21,6 +22,7 @@ export function AppShell({ children }: AppShellProps) {
   const isMobile = useIsMobile();
   const isDesktop = useIsDesktop();
   const isHistoryOpen = useAppStore((s) => s.isHistoryOpen);
+  const isLeftNavOpen = useAppStore((s) => s.isLeftNavOpen);
   const setIsMobile = useAppStore((s) => s.setIsMobile);
 
   // Sync mobile state with store
@@ -30,16 +32,18 @@ export function AppShell({ children }: AppShellProps) {
 
   return (
     <div className="min-h-screen bg-gray-900 text-gray-100">
-      {/* Top navigation */}
-      <header className="fixed top-0 left-0 right-0 bg-gray-900/95 backdrop-blur border-b border-gray-800 z-30">
-        <TabBar />
-      </header>
+      {/* Left navigation (desktop only) */}
+      {isDesktop && <LeftNav />}
 
       {/* Main content area */}
       <main
         className={cn(
-          'pt-14 min-h-screen',
-          // Adjust for sidebar on desktop
+          'min-h-screen transition-all',
+          // Padding for mobile bottom nav
+          isMobile && 'pb-16',
+          // Adjust for left nav on desktop
+          isDesktop && isLeftNavOpen && 'ml-72',
+          // Adjust for history sidebar on desktop
           isDesktop && isHistoryOpen && 'mr-80'
         )}
       >
@@ -54,6 +58,9 @@ export function AppShell({ children }: AppShellProps) {
       ) : (
         <BottomSheet />
       )}
+
+      {/* Mobile bottom navigation */}
+      {isMobile && <MobileNav />}
     </div>
   );
 }

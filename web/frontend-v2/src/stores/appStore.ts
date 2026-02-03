@@ -17,12 +17,17 @@ import type {
   GenerationPreset,
   VRAMStatus,
   FormValues,
+  ModelStatus,
+  ModelStatusResponse,
 } from '@/api/types';
 import {
   fetchPipelines,
   fetchPresets,
   fetchVRAMStatus,
   fetchPipelineDefaults,
+  fetchModelStatus,
+  loadModel,
+  unloadModel,
 } from '@/api/client';
 
 interface AppState {
@@ -31,6 +36,9 @@ interface AppState {
   serverDefaults: Record<string, FormValues>;
   presets: Record<string, GenerationPreset[]>;
 
+  // Model state
+  modelStatus: Record<string, ModelStatusResponse>;
+
   // Navigation
   activeTab: 'image' | 'video';
   selectedPipelineId: string | null;
@@ -38,6 +46,7 @@ interface AppState {
   // UI state
   isMobile: boolean;
   isHistoryOpen: boolean;
+  isLeftNavOpen: boolean;
 
   // VRAM
   vram: VRAMStatus | null;
@@ -52,8 +61,15 @@ interface AppState {
   selectPipeline: (pipelineId: string) => void;
   setIsMobile: (isMobile: boolean) => void;
   toggleHistory: () => void;
+  toggleLeftNav: () => void;
   refreshVRAM: () => Promise<void>;
   loadPresets: (pipelineId: string) => Promise<void>;
+
+  // Model management
+  refreshModelStatus: (pipelineId: string) => Promise<void>;
+  refreshAllModelStatus: () => Promise<void>;
+  loadPipelineModel: (pipelineId: string) => Promise<void>;
+  unloadPipelineModel: (pipelineId: string) => Promise<void>;
 
   // Computed
   getPipelinesForTab: (tab: 'image' | 'video') => PipelineSchema[];
@@ -77,10 +93,12 @@ export const useAppStore = create<AppState>()(
     pipelines: {},
     serverDefaults: {},
     presets: {},
+    modelStatus: {},
     activeTab: 'image',
     selectedPipelineId: null,
     isMobile: false,
     isHistoryOpen: false,
+    isLeftNavOpen: true,
     vram: null,
     isLoading: true,
     error: null,
@@ -191,6 +209,12 @@ export const useAppStore = create<AppState>()(
       });
     },
 
+    toggleLeftNav: () => {
+      set((state) => {
+        state.isLeftNavOpen = !state.isLeftNavOpen;
+      });
+    },
+
     /**
      * Refresh VRAM status from server
      */
@@ -237,6 +261,91 @@ export const useAppStore = create<AppState>()(
         // Silently fail - presets are optional
         set((state) => {
           state.presets[pipelineId] = [];
+        });
+      }
+    },
+
+    /**
+     * Model Management
+     */
+
+    /**
+     * Refresh model status for a single pipeline
+     */
+    refreshModelStatus: async (pipelineId) => {
+      try {
+        const status = await fetchModelStatus(pipelineId);
+        set((state) => {
+          state.modelStatus[pipelineId] = status;
+        });
+      } catch {
+        // If API fails, mark as unloaded
+        set((state) => {
+          state.modelStatus[pipelineId] = { status: 'unloaded' };
+        });
+      }
+    },
+
+    /**
+     * Refresh model status for all pipelines
+     */
+    refreshAllModelStatus: async () => {
+      const pipelineIds = Object.keys(get().pipelines);
+      await Promise.all(
+        pipelineIds.map((id) => get().refreshModelStatus(id))
+      );
+    },
+
+    /**
+     * Load a pipeline model
+     */
+    loadPipelineModel: async (pipelineId) => {
+      // Set to loading state
+      set((state) => {
+        state.modelStatus[pipelineId] = { status: 'loading' };
+      });
+
+      try {
+        const result = await loadModel(pipelineId);
+        set((state) => {
+          state.modelStatus[pipelineId] = result;
+        });
+
+        // Refresh VRAM after loading
+        get().refreshVRAM();
+      } catch (error) {
+        set((state) => {
+          state.modelStatus[pipelineId] = {
+            status: 'error',
+            error: error instanceof Error ? error.message : 'Failed to load model',
+          };
+        });
+      }
+    },
+
+    /**
+     * Unload a pipeline model
+     */
+    unloadPipelineModel: async (pipelineId) => {
+      // Set to loading state (unloading)
+      set((state) => {
+        state.modelStatus[pipelineId] = { status: 'loading' };
+      });
+
+      try {
+        const result = await unloadModel(pipelineId);
+        set((state) => {
+          state.modelStatus[pipelineId] = result;
+        });
+
+        // Refresh VRAM after unloading
+        get().refreshVRAM();
+      } catch (error) {
+        set((state) => {
+          state.modelStatus[pipelineId] = {
+            status: 'error',
+            error: error instanceof Error ? error.message : 'Failed to unload model',
+          };
         });
       }
     },

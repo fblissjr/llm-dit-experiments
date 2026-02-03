@@ -24,8 +24,8 @@ export function Sidebar({ className }: SidebarProps) {
       <button
         onClick={toggleHistory}
         className={cn(
-          'fixed right-4 top-20 p-2 bg-gray-800 rounded-lg border border-gray-700',
-          'hover:bg-gray-700 transition-colors',
+          'fixed right-4 top-4 p-2 bg-gray-800 rounded-lg border border-gray-700',
+          'hover:bg-gray-700 transition-colors z-20',
           className
         )}
         title="Open history"
@@ -50,8 +50,8 @@ export function Sidebar({ className }: SidebarProps) {
   return (
     <aside
       className={cn(
-        'fixed right-0 top-14 bottom-0 w-80 bg-gray-900 border-l border-gray-700',
-        'flex flex-col',
+        'fixed right-0 top-0 bottom-0 w-80 bg-gray-900 border-l border-gray-700',
+        'flex flex-col z-20',
         className
       )}
     >

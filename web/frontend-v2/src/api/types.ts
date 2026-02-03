@@ -87,6 +87,18 @@ export interface VRAMStatus {
 }
 
 /**
+ * Model status from /api/models/{pipeline_id}/status
+ */
+export type ModelStatus = 'loaded' | 'unloaded' | 'loading' | 'error';
+
+export interface ModelStatusResponse {
+  status: ModelStatus;
+  vramMB?: number;
+  estimatedVramMB?: number;
+  error?: string;
+}
+
+/**
  * Generation progress update (SSE)
  */
 export interface GenerationProgress {

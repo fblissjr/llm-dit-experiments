@@ -7,20 +7,26 @@
 
 import { useEffect } from 'react';
 import { useAppStore, useFormStore, useSessionStore } from '@/stores';
-import { useAppShortcuts, useIsDesktop } from '@/hooks';
+import { useAppShortcuts, useIsDesktop, useIsMobile } from '@/hooks';
 import { AppShell } from '@/components/layout';
-import { PipelineSelector, PipelineForm } from '@/components/pipeline';
+import { PipelineForm } from '@/components/pipeline';
 import { GenerateButton, ProgressDisplay, ResultDisplay } from '@/components/generation';
 
 function PipelineView() {
   const selectedPipelineId = useAppStore((s) => s.selectedPipelineId);
+  const getSelectedPipeline = useAppStore((s) => s.getSelectedPipeline);
+  const getPipelineColor = useAppStore((s) => s.getPipelineColor);
   const toggleHistory = useAppStore((s) => s.toggleHistory);
+  const toggleLeftNav = useAppStore((s) => s.toggleLeftNav);
   const isDesktop = useIsDesktop();
+  const isMobile = useIsMobile();
 
   const resetPipeline = useFormStore((s) => s.resetPipeline);
   const validate = useFormStore((s) => s.validate);
 
   const startGeneration = useSessionStore((s) => s.startGeneration);
+
+  const selectedPipeline = getSelectedPipeline();
 
   // Register keyboard shortcuts
   useAppShortcuts({
@@ -33,6 +39,7 @@ function PipelineView() {
       }
     },
     onToggleHistory: toggleHistory,
+    onToggleNav: isDesktop ? toggleLeftNav : undefined,
     onReset: () => {
       if (selectedPipelineId) {
         resetPipeline(selectedPipelineId);
@@ -44,7 +51,19 @@ function PipelineView() {
     <div className={isDesktop ? 'grid grid-cols-2 gap-8' : 'space-y-6'}>
       {/* Left column: Form */}
       <div className="space-y-6">
-        <PipelineSelector />
+        {/* Pipeline header - show on mobile or when no left nav */}
+        {isMobile && selectedPipeline && (
+          <div>
+            <h2
+              className="text-xl font-semibold"
+              style={{ color: getPipelineColor(selectedPipeline.id) }}
+            >
+              {selectedPipeline.name}
+            </h2>
+            <p className="text-sm text-gray-400 mt-1">{selectedPipeline.description}</p>
+          </div>
+        )}
+
         <PipelineForm />
 
         {/* Progress display */}
@@ -54,10 +73,18 @@ function PipelineView() {
         <GenerateButton />
 
         {/* Keyboard hints */}
-        <div className="text-xs text-gray-500 text-center">
-          <kbd className="px-1.5 py-0.5 bg-gray-800 rounded">Ctrl+Enter</kbd> to generate
-          {' | '}
-          <kbd className="px-1.5 py-0.5 bg-gray-800 rounded">Ctrl+H</kbd> for history
+        <div className="text-xs text-gray-500 text-center space-x-2">
+          <span>
+            <kbd className="px-1.5 py-0.5 bg-gray-800 rounded">Ctrl+Enter</kbd> generate
+          </span>
+          <span>
+            <kbd className="px-1.5 py-0.5 bg-gray-800 rounded">Ctrl+H</kbd> history
+          </span>
+          {isDesktop && (
+            <span>
+              <kbd className="px-1.5 py-0.5 bg-gray-800 rounded">Ctrl+B</kbd> nav
+            </span>
+          )}
         </div>
       </div>
 

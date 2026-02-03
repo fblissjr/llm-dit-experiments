@@ -57,6 +57,7 @@ export function useKeyboardShortcuts(shortcuts: ShortcutConfig[]): void {
 export function useAppShortcuts(config: {
   onGenerate?: () => void;
   onToggleHistory?: () => void;
+  onToggleNav?: () => void;
   onReset?: () => void;
 }): void {
   const shortcuts: ShortcutConfig[] = [];
@@ -76,6 +77,15 @@ export function useAppShortcuts(config: {
       ctrl: true,
       action: config.onToggleHistory,
       description: 'Toggle history',
+    });
+  }
+
+  if (config.onToggleNav) {
+    shortcuts.push({
+      key: 'b',
+      ctrl: true,
+      action: config.onToggleNav,
+      description: 'Toggle navigation',
     });
   }
 
