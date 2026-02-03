@@ -28,7 +28,7 @@ from typing import Any, AsyncIterator, Dict, List, Optional, Union
 
 import httpx
 import torch
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from PIL import Image
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
@@ -101,6 +101,11 @@ app.add_middleware(
 
 # Static files (CSS, JS)
 app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"), name="static")
+
+# Uploads directory for user-uploaded images (reference images, img2img, etc.)
+UPLOADS_DIR = Path("uploads")
+UPLOADS_DIR.mkdir(exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=UPLOADS_DIR), name="uploads")
 
 # Global pipeline/encoder (loaded on startup)
 pipeline = None  # Z-Image pipeline
@@ -5976,6 +5981,54 @@ async def get_model_status(pipeline_id: str):
         "status": "loaded" if loaded else "unloaded",
         "components": components if loaded else [],
         "total_vram_mb": total_vram_mb if loaded else 0,
+    }
+
+
+# =============================================================================
+# File Upload API
+# =============================================================================
+
+
+@app.post("/api/upload")
+async def upload_file(file: UploadFile = File(...)):
+    """Upload an image file for use in generation.
+
+    Saves the file to uploads/ directory and returns a URL for serving.
+    Used for reference images in FLUX.2, input images for img2img, etc.
+
+    Returns:
+        {"url": "/uploads/filename.png", "path": "uploads/filename.png"}
+    """
+    import uuid
+    from datetime import datetime
+
+    # Validate file type
+    if not file.content_type or not file.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="Only image files are allowed")
+
+    # Generate unique filename to avoid collisions
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    unique_id = uuid.uuid4().hex[:8]
+    original_ext = Path(file.filename or "image.png").suffix or ".png"
+    filename = f"{timestamp}_{unique_id}{original_ext}"
+    file_path = UPLOADS_DIR / filename
+
+    # Save file
+    try:
+        contents = await file.read()
+        with open(file_path, "wb") as f:
+            f.write(contents)
+    except Exception as e:
+        logger.error(f"Failed to save uploaded file: {e}")
+        raise HTTPException(status_code=500, detail="Failed to save file")
+
+    logger.info(f"[Upload] Saved {filename} ({len(contents)} bytes)")
+
+    return {
+        "url": f"/uploads/{filename}",
+        "path": str(file_path),
+        "filename": filename,
+        "size_bytes": len(contents),
     }
 
 
