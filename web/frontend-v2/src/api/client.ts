@@ -209,26 +209,6 @@ export async function* generateStream(
 }
 
 /**
- * Upload an image and get a URL back
- */
-export async function uploadImage(file: File): Promise<string> {
-  const formData = new FormData();
-  formData.append('file', file);
-
-  const response = await fetch('/api/upload', {
-    method: 'POST',
-    body: formData,
-  });
-
-  if (!response.ok) {
-    throw new APIError('Upload failed', response.status);
-  }
-
-  const data = await response.json();
-  return data.url || data.path;
-}
-
-/**
  * Model Management APIs
  */
 
