@@ -30,8 +30,10 @@ export function MobileNav() {
   );
 
   // Get current pipeline info
-  const currentPipeline = useAppStore((s) => s.pipelines[selectedPipelineId]);
-  const currentColor = getPipelineColor(selectedPipelineId);
+  const currentPipeline = useAppStore((s) =>
+    selectedPipelineId ? s.pipelines[selectedPipelineId] : null
+  );
+  const currentColor = selectedPipelineId ? getPipelineColor(selectedPipelineId) : '#6b7280';
 
   const handlePipelineSelect = (pipelineId: string) => {
     selectPipeline(pipelineId);
