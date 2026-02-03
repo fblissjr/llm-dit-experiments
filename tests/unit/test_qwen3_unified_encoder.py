@@ -1,7 +1,7 @@
 """
 Unit tests for Qwen3 Unified Encoder.
 
-Last Updated: 2026-02-01
+Last Updated: 2026-02-03
 
 Tests the unified Qwen3UnifiedEncoder that supports both Z-Image and FLUX.2 modes.
 
@@ -33,15 +33,15 @@ class TestQwen3UnifiedEncoderImports:
         from llm_dit.encoders.qwen3_unified import (
             ZIMAGE_CONFIG,
             KLEIN_4B_CONFIG,
-            KLEIN_8B_CONFIG,
+            KLEIN_9B_CONFIG,
             PRESETS,
         )
         assert ZIMAGE_CONFIG is not None
         assert KLEIN_4B_CONFIG is not None
-        assert KLEIN_8B_CONFIG is not None
+        assert KLEIN_9B_CONFIG is not None
         assert "zimage" in PRESETS
         assert "klein-4b" in PRESETS
-        assert "klein-8b" in PRESETS
+        assert "klein-9b" in PRESETS
 
     def test_import_factory(self):
         """Test factory function import."""
@@ -119,14 +119,14 @@ class TestPresetConfigs:
         assert KLEIN_4B_CONFIG.enable_thinking is False
         assert KLEIN_4B_CONFIG.output_dim == 7680
 
-    def test_klein_8b_preset(self):
-        """Test Klein 8B preset config."""
-        from llm_dit.encoders.qwen3_unified import KLEIN_8B_CONFIG
+    def test_klein_9b_preset(self):
+        """Test Klein 9B preset config."""
+        from llm_dit.encoders.qwen3_unified import KLEIN_9B_CONFIG
 
-        assert KLEIN_8B_CONFIG.layer_indices == [9, 18, 27]
-        assert KLEIN_8B_CONFIG.concat_mode == "concat"
-        assert KLEIN_8B_CONFIG.enable_thinking is False
-        assert KLEIN_8B_CONFIG.output_dim == 12288
+        assert KLEIN_9B_CONFIG.layer_indices == [9, 18, 27]
+        assert KLEIN_9B_CONFIG.concat_mode == "concat"
+        assert KLEIN_9B_CONFIG.enable_thinking is False
+        assert KLEIN_9B_CONFIG.output_dim == 12288
 
 
 class TestQwen3UnifiedEncoderInit:
@@ -271,10 +271,10 @@ class TestEnableThinking:
 
     def test_klein_has_thinking_disabled(self):
         """Test Klein presets have thinking disabled."""
-        from llm_dit.encoders.qwen3_unified import KLEIN_4B_CONFIG, KLEIN_8B_CONFIG
+        from llm_dit.encoders.qwen3_unified import KLEIN_4B_CONFIG, KLEIN_9B_CONFIG
 
         assert KLEIN_4B_CONFIG.enable_thinking is False
-        assert KLEIN_8B_CONFIG.enable_thinking is False
+        assert KLEIN_9B_CONFIG.enable_thinking is False
 
     @patch("transformers.AutoModelForCausalLM")
     @patch("transformers.AutoTokenizer")

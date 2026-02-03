@@ -735,20 +735,23 @@ def generate_image(
     logger.info("Stage 1: Encoding text...")
 
     if encoder is None:
-        from llm_dit.encoders.qwen3_flux2 import Qwen3Flux2Encoder
+        from llm_dit.encoders.qwen3_unified import Qwen3UnifiedEncoder
 
         # Use custom encoder path if provided, otherwise use model default
         model_info = FLUX2_MODEL_INFO[model_name.lower()]
         text_encoder_spec = encoder_path or model_info["text_encoder"]
         logger.info(f"Loading encoder from: {text_encoder_spec}")
+
+        # Determine preset based on model
+        preset = "klein-9b" if "9b" in model_name.lower() or "8b" in model_name.lower() else "klein-4b"
         layers_str = str(config.output_layers) if config.output_layers else "[9, 18, 27]"
-        logger.debug(f"[TextEnc] max_length={config.max_text_length}, pad_to_max={config.pad_to_max}, layers={layers_str}")
-        encoder = Qwen3Flux2Encoder.from_pretrained(
-            text_encoder_spec,
+        logger.debug(f"[TextEnc] preset={preset}, max_length={config.max_text_length}, pad_to_max={config.pad_to_max}, layers={layers_str}")
+
+        # Use unified encoder with FLUX.2 Klein preset
+        encoder = Qwen3UnifiedEncoder.from_preset(
+            preset,
+            model_path=text_encoder_spec,
             device=config.device,
-            max_length=config.max_text_length,
-            pad_to_max=config.pad_to_max,
-            output_layers=config.output_layers,
         )
 
     # Encode text
@@ -842,7 +845,7 @@ def generate_image(
     txt_ids = txt_ids.to(device)
 
     # Move reference tokens to device if present
-    if ref_tokens is not None:
+    if ref_tokens is not None and ref_ids is not None:
         ref_tokens = ref_tokens.to(device)
         ref_ids = ref_ids.to(device)
 
