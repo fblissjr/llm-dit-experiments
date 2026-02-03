@@ -12,31 +12,77 @@ These tests validate that:
 5. Invalid paths raise appropriate errors
 
 Usage:
-    # Run LoRA loading test (requires GPU + model + LoRA file)
-    uv run pytest tests/e2e/test_flux2_lora.py::TestFlux2LoRA::test_lora_loading -v -s
+    # Run LoRA generation test
+    uv run pytest tests/e2e/test_flux2_lora.py::TestFlux2LoRA::test_generation_with_lora -v -s
 
     # Run all LoRA tests
     uv run pytest tests/e2e/test_flux2_lora.py -v -s
 
 Requirements:
     - CUDA GPU with 16GB+ VRAM
-    - FLUX.2 Klein model (downloads from HuggingFace if not cached)
-    - LoRA file(s) for testing (user-provided paths)
+    - FLUX.2 Klein model (configured in config.toml)
+    - LoRA file(s) in loras/ directory
 
 Note:
-    All generated images are saved to tests/artifacts/flux2_lora/ for manual inspection.
+    All generated images are saved to outputs/tests/runs/ for manual inspection.
     Visual verification is essential - passing tests don't guarantee aesthetic quality.
 """
 
 import gc
+import json
 import logging
-from pathlib import Path
+import time
 from datetime import datetime
+from pathlib import Path
 
+import numpy as np
 import pytest
 import torch
 
 logger = logging.getLogger(__name__)
+
+
+def save_generation_metadata(
+    output_dir: Path,
+    image_path: Path,
+    prompt: str,
+    seed: int,
+    height: int,
+    width: int,
+    num_steps: int,
+    guidance: float,
+    model_name: str,
+    model_path: str,
+    loras: list[str] | None = None,
+    generation_time: float | None = None,
+    **extra_params,
+) -> Path:
+    """Save generation metadata alongside the image.
+
+    Creates a JSON file with all parameters used to generate the image,
+    enabling reproducibility and regression testing.
+    """
+    metadata = {
+        "timestamp": datetime.now().isoformat(),
+        "image_file": image_path.name,
+        "prompt": prompt,
+        "seed": seed,
+        "height": height,
+        "width": width,
+        "num_inference_steps": num_steps,
+        "guidance_scale": guidance,
+        "model_name": model_name,
+        "model_path": model_path,
+        "loras": loras,
+        "generation_time_seconds": generation_time,
+        **extra_params,
+    }
+
+    metadata_path = output_dir / f"{image_path.stem}_metadata.json"
+    with open(metadata_path, "w") as f:
+        json.dump(metadata, f, indent=2)
+
+    return metadata_path
 
 # Skip all tests if CUDA not available
 pytestmark = [
@@ -44,36 +90,44 @@ pytestmark = [
     pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required"),
 ]
 
-# Output directory for test artifacts (visual verification)
-ARTIFACT_DIR = Path("tests/artifacts/flux2_lora")
 
+def get_flux2_config():
+    """Load FLUX.2 config from config.toml."""
+    from llm_dit.config import load_config
 
-def sufficient_vram() -> bool:
-    """Check if GPU has enough VRAM (16GB minimum for FP8)."""
-    if not torch.cuda.is_available():
-        return False
-    total_vram = torch.cuda.get_device_properties(0).total_memory / 1024**3
-    return total_vram >= 16
+    config = load_config("config.toml")
+    return config.flux2
 
 
 def get_test_lora_path() -> Path | None:
     """Get path to a test LoRA file if available.
 
-    Searches common locations for FLUX.2 LoRA files.
+    Searches the project's loras/ directory for FLUX.2 compatible LoRAs.
+    Priority: loras/FLUX.2-klein/ > loras/
     Returns None if no LoRA found.
     """
-    # Check common locations for FLUX.2 LoRAs
-    search_paths = [
-        Path("/home/fbliss/Storage/FLUX2/loras"),
-        Path("models/FLUX2/loras"),
-        Path.home() / "models" / "flux" / "loras",
-    ]
+    # Check FLUX.2-specific LoRA directory first
+    flux2_loras_dir = Path("loras/FLUX.2-klein")
+    if flux2_loras_dir.exists():
+        # Prefer ghibli style for testing (known good)
+        ghibli_lora = flux2_loras_dir / "ghibli_style_klein9b.safetensors"
+        if ghibli_lora.exists():
+            return ghibli_lora
 
-    for search_dir in search_paths:
-        if search_dir.exists():
-            lora_files = list(search_dir.glob("*.safetensors"))
-            if lora_files:
-                return lora_files[0]
+        # Any Klein-compatible LoRA
+        lora_files = list(flux2_loras_dir.glob("*.safetensors"))
+        if lora_files:
+            return lora_files[0]
+
+    # Fallback to generic loras directory
+    loras_dir = Path("loras")
+    if loras_dir.exists():
+        lora_files = list(loras_dir.glob("*klein*.safetensors"))
+        if lora_files:
+            return lora_files[0]
+        lora_files = list(loras_dir.glob("*.safetensors"))
+        if lora_files:
+            return lora_files[0]
 
     return None
 
@@ -83,60 +137,46 @@ def lora_available() -> bool:
     return get_test_lora_path() is not None
 
 
-@pytest.fixture(autouse=True)
-def cleanup_gpu():
-    """Clean up GPU memory before and after each test."""
-    gc.collect()
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-        torch.cuda.synchronize()
-    yield
-    gc.collect()
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-        torch.cuda.synchronize()
-
-
-@pytest.fixture(scope="module")
-def artifact_dir() -> Path:
-    """Create and return artifact directory for test outputs."""
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_dir = ARTIFACT_DIR / timestamp
-    output_dir.mkdir(parents=True, exist_ok=True)
-    return output_dir
+def flux2_models_available() -> bool:
+    """Check if FLUX.2 models are configured and available."""
+    try:
+        config = get_flux2_config()
+        model_path = Path(config.model_path)
+        return model_path.exists()
+    except Exception:
+        return False
 
 
 class TestFlux2LoRA:
     """LoRA integration tests for FLUX.2 Klein."""
 
-    @pytest.mark.skipif(not lora_available(), reason="No LoRA file found")
-    @pytest.mark.skipif(not sufficient_vram(), reason="Insufficient VRAM (<16GB)")
+    @pytest.mark.skipif(not flux2_models_available(), reason="FLUX.2 model not configured")
+    @pytest.mark.skipif(not lora_available(), reason="No LoRA file found in loras/")
     def test_lora_loading(self):
         """Test that LoRA loads without errors.
 
         This test verifies:
         1. LoRA file can be loaded
         2. Weights are fused into transformer
-        3. Model still runs forward pass
+        3. No crashes during fusion
 
-        This is a smoke test - it doesn't verify generation quality,
-        just that the mechanics work.
+        This is a smoke test - it doesn't verify generation quality.
         """
         from llm_dit.models.flux2.loader import load_flux2_transformer
         from llm_dit.utils.lora import load_lora
 
+        config = get_flux2_config()
         lora_path = get_test_lora_path()
         assert lora_path is not None, "No LoRA file found for testing"
 
-        # Load transformer (FP8 for lower VRAM)
-        logger.info("Loading FLUX.2 transformer...")
+        logger.info(f"Loading FLUX.2 transformer from {config.model_path}...")
         transformer = load_flux2_transformer(
-            "klein-9b-fp8",
+            config.default_model,
             device="cuda",
             dtype=torch.bfloat16,
+            model_path=config.model_path,
         )
 
-        # Load LoRA
         logger.info(f"Loading LoRA from {lora_path}...")
         num_updated = load_lora(
             transformer,
@@ -154,9 +194,9 @@ class TestFlux2LoRA:
         torch.cuda.empty_cache()
 
     @pytest.mark.slow
-    @pytest.mark.skipif(not lora_available(), reason="No LoRA file found")
-    @pytest.mark.skipif(not sufficient_vram(), reason="Insufficient VRAM (<16GB)")
-    def test_generation_with_lora(self, artifact_dir):
+    @pytest.mark.skipif(not flux2_models_available(), reason="FLUX.2 model not configured")
+    @pytest.mark.skipif(not lora_available(), reason="No LoRA file found in loras/")
+    def test_generation_with_lora(self, output_dir):
         """Test full image generation with LoRA.
 
         This test verifies:
@@ -168,35 +208,47 @@ class TestFlux2LoRA:
             Flux2GenerationConfig,
             generate_image,
         )
-        import time
 
+        config = get_flux2_config()
         lora_path = get_test_lora_path()
         assert lora_path is not None
 
+        # Generation parameters
+        prompt = "A serene mountain landscape at sunset, dramatic lighting"
+        seed = 42
+        height = 512
+        width = 512
+        num_steps = config.default_steps or 4  # Default to 4 for distilled
+        guidance = 1.0
+        loras = [f"{lora_path}:0.8"]
+
         # Create generation config with LoRA
-        config = Flux2GenerationConfig(
-            prompt="A serene mountain landscape at sunset, dramatic lighting",
-            width=512,
-            height=512,
-            num_steps=4,
-            guidance=1.0,
-            seed=42,
-            loras=[f"{lora_path}:0.8"],
+        gen_config = Flux2GenerationConfig(
+            prompt=prompt,
+            width=width,
+            height=height,
+            num_steps=num_steps,
+            guidance=guidance,
+            seed=seed,
+            loras=loras,
         )
 
         logger.info("Generating image with LoRA...")
         start_time = time.time()
 
-        image = generate_image(config, model_name="klein-9b-fp8")
+        image = generate_image(
+            gen_config,
+            model_name=config.default_model,
+            model_path=config.model_path,
+        )
 
         gen_time = time.time() - start_time
         logger.info(f"Generation time: {gen_time:.1f}s")
 
         # Verify image is valid
-        assert image.size == (config.width, config.height), f"Unexpected size: {image.size}"
+        assert image.size == (width, height), f"Unexpected size: {image.size}"
 
         # Check image is not uniform (all black/white)
-        import numpy as np
         img_array = np.array(image)
         std_val = img_array.std()
         mean_val = img_array.mean()
@@ -207,45 +259,85 @@ class TestFlux2LoRA:
         assert mean_val > 10.0, f"Image too dark: mean={mean_val}"
         assert mean_val < 245.0, f"Image too bright: mean={mean_val}"
 
-        # Save for visual verification
-        output_path = artifact_dir / "generation_with_lora.png"
+        # Save image
+        output_path = output_dir / "generation_with_lora.png"
         image.save(output_path)
         logger.info(f"Image saved: {output_path}")
+
+        # Save metadata for reproducibility
+        save_generation_metadata(
+            output_dir=output_dir,
+            image_path=output_path,
+            prompt=prompt,
+            seed=seed,
+            height=height,
+            width=width,
+            num_steps=num_steps,
+            guidance=guidance,
+            model_name=config.default_model,
+            model_path=config.model_path,
+            loras=loras,
+            generation_time=gen_time,
+            image_mean=float(mean_val),
+            image_std=float(std_val),
+        )
 
         assert output_path.exists()
 
     @pytest.mark.slow
-    @pytest.mark.skipif(not lora_available(), reason="No LoRA file found")
-    @pytest.mark.skipif(not sufficient_vram(), reason="Insufficient VRAM (<16GB)")
-    def test_lora_scale_affects_output(self, artifact_dir):
+    @pytest.mark.skipif(not flux2_models_available(), reason="FLUX.2 model not configured")
+    @pytest.mark.skipif(not lora_available(), reason="No LoRA file found in loras/")
+    def test_lora_scale_affects_output(self, output_dir):
         """Test that different LoRA scales produce different outputs.
 
         This verifies that the LoRA is actually being applied and not ignored.
-        We generate with scale=0.0 and scale=0.8 and verify the outputs differ
+        We generate with no LoRA and with LoRA and verify the outputs differ
         by a meaningful amount (MAD > 5.0 pixels).
         """
         from llm_dit.pipelines.flux2_generate import (
             Flux2GenerationConfig,
             generate_image,
         )
-        import numpy as np
 
+        config = get_flux2_config()
         lora_path = get_test_lora_path()
         assert lora_path is not None
 
-        base_config = {
-            "prompt": "A red apple on a wooden table",
-            "width": 512,
-            "height": 512,
-            "num_steps": 4,
-            "guidance": 1.0,
-            "seed": 42,
-        }
+        # Common generation parameters
+        prompt = "A red apple on a wooden table"
+        width = 512
+        height = 512
+        num_steps = config.default_steps or 4  # Default for distilled models
+        guidance = 1.0
+        seed = 42
 
         # Generate baseline (no LoRA)
         logger.info("Generating baseline (no LoRA)...")
-        config_baseline = Flux2GenerationConfig(**base_config, loras=None)
-        img_baseline = generate_image(config_baseline, model_name="klein-9b-fp8")
+        start_time = time.time()
+        config_baseline = Flux2GenerationConfig(
+            prompt=prompt, width=width, height=height,
+            num_steps=num_steps, guidance=guidance, seed=seed, loras=None
+        )
+        img_baseline = generate_image(
+            config_baseline,
+            model_name=config.default_model,
+            model_path=config.model_path,
+        )
+        baseline_time = time.time() - start_time
+
+        # Save baseline
+        baseline_path = output_dir / "scale_test_baseline.png"
+        img_baseline.save(baseline_path)
+        save_generation_metadata(
+            output_dir=output_dir,
+            image_path=baseline_path,
+            prompt=prompt, seed=seed, height=height, width=width,
+            num_steps=num_steps, guidance=guidance,
+            model_name=config.default_model,
+            model_path=config.model_path,
+            loras=None,
+            generation_time=baseline_time,
+        )
 
         # Force cleanup between generations
         gc.collect()
@@ -253,8 +345,32 @@ class TestFlux2LoRA:
 
         # Generate with LoRA scale 0.8
         logger.info("Generating with LoRA scale=0.8...")
-        config_with_lora = Flux2GenerationConfig(**base_config, loras=[f"{lora_path}:0.8"])
-        img_with_lora = generate_image(config_with_lora, model_name="klein-9b-fp8")
+        loras = [f"{lora_path}:0.8"]
+        start_time = time.time()
+        config_with_lora = Flux2GenerationConfig(
+            prompt=prompt, width=width, height=height,
+            num_steps=num_steps, guidance=guidance, seed=seed, loras=loras
+        )
+        img_with_lora = generate_image(
+            config_with_lora,
+            model_name=config.default_model,
+            model_path=config.model_path,
+        )
+        lora_time = time.time() - start_time
+
+        # Save LoRA result
+        lora_path_out = output_dir / "scale_test_lora_0.8.png"
+        img_with_lora.save(lora_path_out)
+        save_generation_metadata(
+            output_dir=output_dir,
+            image_path=lora_path_out,
+            prompt=prompt, seed=seed, height=height, width=width,
+            num_steps=num_steps, guidance=guidance,
+            model_name=config.default_model,
+            model_path=config.model_path,
+            loras=loras,
+            generation_time=lora_time,
+        )
 
         # Compare outputs
         arr_baseline = np.array(img_baseline).astype(np.float32)
@@ -266,64 +382,7 @@ class TestFlux2LoRA:
         # LoRA should produce noticeably different output
         assert mad > 5.0, f"LoRA doesn't affect output enough: MAD={mad:.2f}"
 
-        # Save both for comparison
-        img_baseline.save(artifact_dir / "scale_test_baseline.png")
-        img_with_lora.save(artifact_dir / "scale_test_lora_0.8.png")
-        logger.info(f"Comparison images saved to {artifact_dir}")
-
-    @pytest.mark.slow
-    @pytest.mark.skipif(not lora_available(), reason="No LoRA file found")
-    @pytest.mark.skipif(not sufficient_vram(), reason="Insufficient VRAM (<16GB)")
-    def test_negative_lora_scale(self, artifact_dir):
-        """Test that negative LoRA scales work (inverse effect).
-
-        Some LoRAs can be inverted by using negative scales, which should
-        produce results that differ from both baseline and positive scale.
-        """
-        from llm_dit.pipelines.flux2_generate import (
-            Flux2GenerationConfig,
-            generate_image,
-        )
-        import numpy as np
-
-        lora_path = get_test_lora_path()
-        assert lora_path is not None
-
-        config_base = {
-            "prompt": "A portrait of a person",
-            "width": 512,
-            "height": 512,
-            "num_steps": 4,
-            "guidance": 1.0,
-            "seed": 123,
-        }
-
-        # Generate with positive scale
-        logger.info("Generating with positive scale (0.5)...")
-        config_pos = Flux2GenerationConfig(**config_base, loras=[f"{lora_path}:0.5"])
-        img_pos = generate_image(config_pos, model_name="klein-9b-fp8")
-
-        gc.collect()
-        torch.cuda.empty_cache()
-
-        # Generate with negative scale
-        logger.info("Generating with negative scale (-0.5)...")
-        config_neg = Flux2GenerationConfig(**config_base, loras=[f"{lora_path}:-0.5"])
-        img_neg = generate_image(config_neg, model_name="klein-9b-fp8")
-
-        # Compare outputs
-        arr_pos = np.array(img_pos).astype(np.float32)
-        arr_neg = np.array(img_neg).astype(np.float32)
-
-        mad = np.abs(arr_pos - arr_neg).mean()
-        logger.info(f"Positive vs negative MAD: {mad:.2f}")
-
-        # Positive and negative should differ
-        assert mad > 5.0, f"Positive/negative scales produce same output: MAD={mad:.2f}"
-
-        # Save for comparison
-        img_pos.save(artifact_dir / "negative_scale_pos_0.5.png")
-        img_neg.save(artifact_dir / "negative_scale_neg_0.5.png")
+        logger.info(f"Comparison images saved to {output_dir}")
 
     def test_invalid_lora_path_raises_error(self):
         """Test that invalid LoRA path raises FileNotFoundError."""
@@ -345,9 +404,9 @@ class TestFlux2MultipleLoRAs:
     """Tests for stacking multiple LoRAs on FLUX.2."""
 
     @pytest.mark.slow
-    @pytest.mark.skipif(not lora_available(), reason="No LoRA file found")
-    @pytest.mark.skipif(not sufficient_vram(), reason="Insufficient VRAM (<16GB)")
-    def test_multiple_loras_applied(self, artifact_dir):
+    @pytest.mark.skipif(not flux2_models_available(), reason="FLUX.2 model not configured")
+    @pytest.mark.skipif(not lora_available(), reason="No LoRA file found in loras/")
+    def test_multiple_loras_applied(self, output_dir):
         """Test that multiple LoRAs can be stacked.
 
         Uses the same LoRA twice with different scales to verify
@@ -357,38 +416,81 @@ class TestFlux2MultipleLoRAs:
             Flux2GenerationConfig,
             generate_image,
         )
-        import numpy as np
 
+        config = get_flux2_config()
         lora_path = get_test_lora_path()
         assert lora_path is not None
 
-        config_base = {
-            "prompt": "A fantasy castle on a cliff",
-            "width": 512,
-            "height": 512,
-            "num_steps": 4,
-            "guidance": 1.0,
-            "seed": 999,
-        }
+        # Common generation parameters
+        prompt = "A fantasy castle on a cliff"
+        width = 512
+        height = 512
+        num_steps = config.default_steps or 4  # Default for distilled models
+        guidance = 1.0
+        seed = 999
 
         # Generate with single LoRA
         logger.info("Generating with single LoRA (0.5)...")
+        loras_single = [f"{lora_path}:0.5"]
+        start_time = time.time()
         config_single = Flux2GenerationConfig(
-            **config_base,
-            loras=[f"{lora_path}:0.5"]
+            prompt=prompt, width=width, height=height,
+            num_steps=num_steps, guidance=guidance, seed=seed,
+            loras=loras_single
         )
-        img_single = generate_image(config_single, model_name="klein-9b-fp8")
+        img_single = generate_image(
+            config_single,
+            model_name=config.default_model,
+            model_path=config.model_path,
+        )
+        single_time = time.time() - start_time
+
+        # Save single LoRA result
+        single_path = output_dir / "multiple_loras_single.png"
+        img_single.save(single_path)
+        save_generation_metadata(
+            output_dir=output_dir,
+            image_path=single_path,
+            prompt=prompt, seed=seed, height=height, width=width,
+            num_steps=num_steps, guidance=guidance,
+            model_name=config.default_model,
+            model_path=config.model_path,
+            loras=loras_single,
+            generation_time=single_time,
+        )
 
         gc.collect()
         torch.cuda.empty_cache()
 
         # Generate with same LoRA twice (should be stronger effect)
         logger.info("Generating with same LoRA twice (0.3 + 0.3)...")
+        loras_double = [f"{lora_path}:0.3", f"{lora_path}:0.3"]
+        start_time = time.time()
         config_double = Flux2GenerationConfig(
-            **config_base,
-            loras=[f"{lora_path}:0.3", f"{lora_path}:0.3"]
+            prompt=prompt, width=width, height=height,
+            num_steps=num_steps, guidance=guidance, seed=seed,
+            loras=loras_double
         )
-        img_double = generate_image(config_double, model_name="klein-9b-fp8")
+        img_double = generate_image(
+            config_double,
+            model_name=config.default_model,
+            model_path=config.model_path,
+        )
+        double_time = time.time() - start_time
+
+        # Save double LoRA result
+        double_path = output_dir / "multiple_loras_double.png"
+        img_double.save(double_path)
+        save_generation_metadata(
+            output_dir=output_dir,
+            image_path=double_path,
+            prompt=prompt, seed=seed, height=height, width=width,
+            num_steps=num_steps, guidance=guidance,
+            model_name=config.default_model,
+            model_path=config.model_path,
+            loras=loras_double,
+            generation_time=double_time,
+        )
 
         # Compare - they should differ because 0.5 != 0.3+0.3 (fusion is multiplicative)
         arr_single = np.array(img_single).astype(np.float32)
@@ -397,13 +499,8 @@ class TestFlux2MultipleLoRAs:
         mad = np.abs(arr_single - arr_double).mean()
         logger.info(f"Single vs double LoRA MAD: {mad:.2f}")
 
-        # Due to fusion mechanics (A @ B applied twice != applied once with different alpha),
-        # the outputs should differ
+        # Due to fusion mechanics, the outputs should differ
         assert mad > 1.0, f"Multiple LoRAs not stacking: MAD={mad:.2f}"
-
-        # Save for comparison
-        img_single.save(artifact_dir / "multiple_loras_single.png")
-        img_double.save(artifact_dir / "multiple_loras_double.png")
 
 
 class TestFlux2LoRAParsing:

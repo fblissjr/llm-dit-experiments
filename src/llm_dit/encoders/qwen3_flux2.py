@@ -1,4 +1,9 @@
 """
+-----
+**IMPORTANT**:
+QUESTION TO CLAUDE: IS THIS DEPRECATED???
+-----
+
 Qwen3 Encoder for FLUX.2 Klein models.
 
 Last Updated: 2026-01-23

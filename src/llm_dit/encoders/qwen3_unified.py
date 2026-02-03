@@ -46,11 +46,11 @@ import torch.nn as nn
 from einops import rearrange
 
 from llm_dit.encoders.qwen3_base import (
-    Qwen3EncoderMixin,
+    KLEIN_DEFAULT_LAYERS,
     QWEN3_4B_HIDDEN_DIM,
     QWEN3_8B_HIDDEN_DIM,
     ZIMAGE_DEFAULT_LAYER,
-    KLEIN_DEFAULT_LAYERS,
+    Qwen3EncoderMixin,
 )
 
 logger = logging.getLogger(__name__)
@@ -67,6 +67,7 @@ class Qwen3EncoderConfig:
     This config class encapsulates all the differences between
     Z-Image and FLUX.2 Klein encoder configurations.
     """
+
     # Layer extraction configuration
     layer_indices: List[int] = field(default_factory=lambda: [-2])
 
@@ -117,7 +118,7 @@ KLEIN_4B_CONFIG = Qwen3EncoderConfig(
     output_dim=3 * QWEN3_4B_HIDDEN_DIM,  # 7680
 )
 
-KLEIN_8B_CONFIG = Qwen3EncoderConfig(
+KLEIN_9B_CONFIG = Qwen3EncoderConfig(
     layer_indices=KLEIN_DEFAULT_LAYERS,  # [9, 18, 27]
     concat_mode="concat",
     enable_thinking=False,  # CRITICAL: Must be False for FLUX.2
@@ -130,7 +131,7 @@ KLEIN_8B_CONFIG = Qwen3EncoderConfig(
 PRESETS = {
     "zimage": ZIMAGE_CONFIG,
     "klein-4b": KLEIN_4B_CONFIG,
-    "klein-8b": KLEIN_8B_CONFIG,
+    "klein-9b": KLEIN_9B_CONFIG,
 }
 
 
@@ -185,7 +186,7 @@ class Qwen3UnifiedEncoder(nn.Module, Qwen3EncoderMixin):
         Create encoder from preset name.
 
         Args:
-            preset: Preset name ("zimage", "klein-4b", "klein-8b")
+            preset: Preset name ("zimage", "klein-4b", "klein-9b")
             model_path: Model path (uses default for preset if not specified)
             device: Target device
 
@@ -193,9 +194,7 @@ class Qwen3UnifiedEncoder(nn.Module, Qwen3EncoderMixin):
             Configured encoder instance
         """
         if preset not in PRESETS:
-            raise ValueError(
-                f"Unknown preset: {preset}. Available: {list(PRESETS.keys())}"
-            )
+            raise ValueError(f"Unknown preset: {preset}. Available: {list(PRESETS.keys())}")
 
         config = PRESETS[preset]
 
@@ -203,7 +202,7 @@ class Qwen3UnifiedEncoder(nn.Module, Qwen3EncoderMixin):
         default_paths = {
             "zimage": "Tongyi-MAI/Z-Image-Turbo",
             "klein-4b": "Qwen/Qwen3-4B-FP8",
-            "klein-8b": "Qwen/Qwen3-8B-FP8",
+            "klein-9b": "Qwen/Qwen3-8B-FP8",
         }
 
         if model_path is None:
@@ -442,7 +441,7 @@ class Qwen3UnifiedEncoder(nn.Module, Qwen3EncoderMixin):
         if self._model is not None:
             self._model.to(device)
         self._target_device = device
-        self._is_offloaded = (device.type == "cpu")
+        self._is_offloaded = device.type == "cpu"
         return self
 
 
@@ -458,7 +457,7 @@ def get_unified_encoder(
     Use this instead of directly importing Qwen3Encoder or Qwen3Flux2Encoder.
 
     Args:
-        preset: Encoder preset ("zimage", "klein-4b", "klein-8b")
+        preset: Encoder preset ("zimage", "klein-4b", "klein-9b")
         model_path: Optional model path override
         device: Target device
 

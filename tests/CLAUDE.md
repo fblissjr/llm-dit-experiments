@@ -388,6 +388,23 @@ LLM_DIT_TEST_BACKEND=ltx2 uv run pytest tests/e2e/test_baseline_portable.py -v -
 
 **Passing tests do NOT guarantee correct output.**
 
+### when to verify visually
+
+- After any change to: pipeline, scheduler, VAE, conditioning
+- Before merging PRs that touch generation code
+- When tests pass but you're uncertain about output quality
+
+### what "passing" looks like
+
+| Metric | Acceptable Range | Red Flag |
+|--------|------------------|----------|
+| SSIM vs baseline | > 0.85 | < 0.70 |
+| PSNR | > 25 dB | < 20 dB |
+| Visual artifacts | None | Any blocky/glitchy regions |
+| Prompt adherence | Matches semantically | Missing key elements |
+
+**Note:** These thresholds are guidelines. Some intentional changes (new features, quality improvements) will legitimately change output. Use judgment.
+
 ### before implementing features that affect generation
 ```bash
 # Generate baseline with existing infrastructure
@@ -403,4 +420,19 @@ Verify:
 ```bash
 # Extract frames for inspection
 ffmpeg -i outputs/baselines/*/video.mp4 -vf "select=eq(n\,0)+eq(n\,16)+eq(n\,32)" -vsync vfr /tmp/claude/frames_%02d.png
+```
+
+### updating baselines
+
+Only update when:
+1. Change is intentional (new feature, bug fix)
+2. New output is visually correct (human verified)
+3. You document WHY in commit message
+
+```bash
+# Generate new baseline
+uv run pytest tests/e2e/test_<pipeline>_baselines.py -v -s
+
+# Compare with previous (visual inspection required)
+# There is no automated threshold - you must look at the output
 ```

@@ -6,6 +6,10 @@ Quick reference for LLM agents. Read only what you need.
 
 **This is a hobbyist exploration platform** - not a product with a finish line. New models, experiments, and features are continuously added. The codebase evolves to support whatever we're curious about next.
 
+## hardware
+
+This machine has an **RTX 4090 with 24GB VRAM**. Tests requiring GPU should always work.
+
 ## core principle
 
 **ALWAYS rely on retrieval and search over assumptions.**
@@ -26,6 +30,87 @@ Never assume you know where code is or what exists. Always verify by reading.
 | 3 | Domain docs (see below) | Based on your task |
 
 **Optional:** [VISION.md](VISION.md) for architecture philosophy, [spec.md](spec.md) for backlog.
+
+## request lifecycle (end-to-end)
+
+Understanding the full request flow is critical before modifying any layer.
+
+### startup flow
+
+When you run `uv run web/server.py --config config.toml`:
+
+```
+server.py main()
+    |
+    v
+cli.py: create_base_parser() - defines CLI args
+    |
+    v
+cli.py: load_runtime_config(args)
+    |
+    v
+config.py: Config.from_toml() - parses TOML into dataclass
+    |
+    v
+cli.py: merges TOML + CLI into RuntimeConfig
+    |
+    v
+server.py: stores as global `runtime_config`
+    |
+    v
+startup.py: PipelineLoader(runtime_config) - loads models
+    |
+    v
+pipelines/*.py: ZImagePipeline, LTX2Pipeline, etc.
+```
+
+### api request flow
+
+When client sends POST /api/generate:
+
+```
+HTTP Request (JSON body)
+    |
+    v
+server.py: Pydantic schema (GenerateRequest, LTX2GenerateRequest)
+    |
+    v
+server.py: endpoint merges request + runtime_config
+    |
+    v
+pipelines/*.py: pipeline(prompt, **merged_params)
+    |
+    v
+Model execution -> Response
+```
+
+### key files in the chain
+
+| Layer | File | What to grep |
+|-------|------|--------------|
+| **Entry point** | `web/server.py` | `main()`, `@app.post` |
+| **CLI parsing** | `src/llm_dit/cli.py` | `create_base_parser`, `RuntimeConfig` |
+| **Config dataclasses** | `src/llm_dit/config.py` | `class <Pipeline>Config`, `from_toml` |
+| **Model loading** | `src/llm_dit/startup.py` | `PipelineLoader`, `_load_<pipeline>` |
+| **Execution** | `src/llm_dit/pipelines/*.py` | `generate_*`, `__call__` |
+
+### hot-reload vs restart
+
+Some config changes apply immediately; others require server restart.
+
+**Hot-reload safe** (change without restart) - see `web/server.py` lines 147-207:
+- Scheduler params: `shift`, `d_noise`, `dynamic_shift`
+- Generation defaults: `height`, `width`, `steps`, `guidance_scale`
+- Feature params: `dype_*`, `slg_*`, `fmtt_*`
+- Cache settings, tiled VAE, seed
+
+**Requires restart** (model reload) - see `web/server.py` lines 210-239:
+- Model paths: `model_path`, `text_encoder_path`, `vl_model_path`
+- Device placement: `encoder_device`, `dit_device`, `vae_device`
+- Quantization: `quantization`, `dtype`
+- Memory: `cpu_offload`
+- Compilation: `compile`, `flash_attn`
+- LoRA: `lora_paths`, `lora_scales`
 
 ## critical rules
 
@@ -139,6 +224,20 @@ This is a **multi-workstream project**. Work happens in parallel across layers:
 | `spec.md` | Backlog item complete |
 | `lessons_learned.md` | After debugging |
 | `log_YYYY-MM-DD.md` | Every session |
+
+## debugging quick reference
+
+For full debugging patterns, see [lessons_learned.md](internal/state/lessons_learned.md).
+
+**Common failure modes:**
+
+| Symptom | Likely Cause | Check |
+|---------|--------------|-------|
+| Silent wrong output | Tokenizer mismatch | Verify chat template matches training |
+| OOM on generation | Component not offloaded | Check device placement in startup.py |
+| Config not applied | Hot-reload vs restart | See hot-reload table above |
+| Tests pass, bad output | Visual verification skipped | Always verify baselines visually |
+| API returns error | Pydantic validation | Check request schema in server.py |
 
 ## navigation by task
 
