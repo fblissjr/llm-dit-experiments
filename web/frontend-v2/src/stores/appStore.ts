@@ -17,7 +17,6 @@ import type {
   GenerationPreset,
   VRAMStatus,
   FormValues,
-  ModelStatus,
   ModelStatusResponse,
 } from '@/api/types';
 import {
