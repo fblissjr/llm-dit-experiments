@@ -287,4 +287,35 @@ export async function unloadModel(pipelineId: string): Promise<ModelStatusRespon
   };
 }
 
+/**
+ * LoRA Management APIs
+ */
+
+export interface LoRAFile {
+  path: string;
+  name: string;
+  directory: string;
+  size_mb: number;
+}
+
+export interface LoRAListResponse {
+  loras: LoRAFile[];
+  directories: string[];
+  count: number;
+}
+
+/**
+ * Fetch all available LoRA files from configured directories
+ */
+export async function fetchAvailableLoras(): Promise<LoRAListResponse> {
+  return request<LoRAListResponse>('/api/loras');
+}
+
+/**
+ * Fetch LoRA files for a specific pipeline
+ */
+export async function fetchLorasForPipeline(pipelineId: string): Promise<LoRAListResponse> {
+  return request<LoRAListResponse>(`/api/loras/${pipelineId}`);
+}
+
 export { APIError };

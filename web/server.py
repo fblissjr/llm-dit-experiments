@@ -5980,6 +5980,96 @@ async def get_model_status(pipeline_id: str):
 
 
 # =============================================================================
+# LoRA Management API
+# =============================================================================
+
+
+@app.get("/api/loras")
+async def list_available_loras():
+    """List all available LoRA files from configured directories.
+
+    Scans directories in [lora].paths config for .safetensors files.
+    Returns sorted list of relative paths.
+    """
+    from pathlib import Path
+
+    lora_files = []
+    lora_dirs = runtime_config.lora_paths if runtime_config else []
+
+    # If no paths configured, check default locations
+    if not lora_dirs:
+        lora_dirs = ["loras"]
+
+    for lora_dir in lora_dirs:
+        dir_path = Path(lora_dir)
+        if not dir_path.exists():
+            logger.debug(f"LoRA directory not found: {lora_dir}")
+            continue
+
+        # Find all .safetensors files recursively
+        for safetensor_file in dir_path.rglob("*.safetensors"):
+            # Store relative path from the lora directory
+            relative_path = str(safetensor_file)
+            lora_files.append({
+                "path": relative_path,
+                "name": safetensor_file.stem,  # Filename without extension
+                "directory": str(safetensor_file.parent),
+                "size_mb": round(safetensor_file.stat().st_size / (1024 * 1024), 1),
+            })
+
+    # Sort by name (case-insensitive)
+    lora_files.sort(key=lambda x: x["name"].lower())
+
+    return {
+        "loras": lora_files,
+        "directories": lora_dirs,
+        "count": len(lora_files),
+    }
+
+
+@app.get("/api/loras/{pipeline_id}")
+async def list_loras_for_pipeline(pipeline_id: str):
+    """List LoRA files available for a specific pipeline.
+
+    Filters LoRAs by pipeline-specific directories.
+    """
+    from pathlib import Path
+
+    pipeline_lora_dirs = {
+        "flux2": ["loras/FLUX.2-klein", "loras/flux2"],
+        "ltx2": ["loras/LTX-2", "loras/ltx2"],
+        "zimage": ["loras/Z-Image", "loras/zimage"],
+    }
+
+    # Get pipeline-specific dirs or fall back to all configured
+    dirs = pipeline_lora_dirs.get(pipeline_id.lower(), runtime_config.lora_paths if runtime_config else ["loras"])
+
+    lora_files = []
+    for lora_dir in dirs:
+        dir_path = Path(lora_dir)
+        if not dir_path.exists():
+            continue
+
+        for safetensor_file in dir_path.rglob("*.safetensors"):
+            relative_path = str(safetensor_file)
+            lora_files.append({
+                "path": relative_path,
+                "name": safetensor_file.stem,
+                "directory": str(safetensor_file.parent),
+                "size_mb": round(safetensor_file.stat().st_size / (1024 * 1024), 1),
+            })
+
+    lora_files.sort(key=lambda x: x["name"].lower())
+
+    return {
+        "loras": lora_files,
+        "pipeline_id": pipeline_id,
+        "directories": dirs,
+        "count": len(lora_files),
+    }
+
+
+# =============================================================================
 # Configuration Management API
 # =============================================================================
 
