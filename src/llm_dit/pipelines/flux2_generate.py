@@ -125,6 +125,11 @@ class Flux2GenerationConfig:
     # Single ref: up to 2024^2, multiple refs: up to 1024^2 each
     ref_limit_pixels: Optional[int] = None
 
+    # Match output dimensions to reference image (0-indexed)
+    # When set, width/height are overridden to match the specified reference image
+    # This is the official FLUX.2 approach - output matches reference, not vice versa
+    match_image_size: Optional[int] = None
+
     # LoRA weights: list of "path:scale" or just "path" (default scale 0.8)
     # Example: ["style.safetensors:0.7", "detail.safetensors:0.5"]
     loras: Optional[list[str]] = None
@@ -198,6 +203,9 @@ def preprocess_reference_image(
 ) -> torch.Tensor:
     """Preprocess a single reference image for VAE encoding.
 
+    Matches the official FLUX.2 implementation: caps pixels (preserving aspect ratio)
+    and crops to multiples of ensure_multiple. Does NOT resize to match output.
+
     Args:
         img: PIL Image
         limit_pixels: Maximum total pixels (resizes if exceeded)
@@ -214,7 +222,7 @@ def preprocess_reference_image(
     orig_w, orig_h = img.size
     logger.debug(f"[REF:Preprocess] Original dimensions: {orig_w}x{orig_h}")
 
-    # Cap pixels if needed
+    # Cap pixels if needed (preserves aspect ratio)
     if limit_pixels is not None:
         w, h = img.size
         if w * h > limit_pixels:
@@ -249,6 +257,7 @@ def encode_reference_images(
 ) -> tuple[torch.Tensor, torch.Tensor] | tuple[None, None]:
     """Encode reference images into latent tokens with position IDs.
 
+    Matches the official FLUX.2 implementation (sampling.py encode_image_refs).
     Each reference image gets a unique time coordinate (t=10, t=20, etc.)
     to distinguish it from the generated image (t=0).
 
@@ -267,7 +276,7 @@ def encode_reference_images(
     if not images:
         return None, None
 
-    # Set pixel limit based on number of images
+    # Set pixel limit based on number of images (matches official code)
     if limit_pixels is None:
         if len(images) > 1:
             limit_pixels = 1024**2  # 1MP each for multiple refs
@@ -285,7 +294,7 @@ def encode_reference_images(
     for idx, img in enumerate(images):
         logger.debug(f"[REF:Encode] Processing reference image {idx}...")
 
-        # Preprocess
+        # Preprocess (preserves aspect ratio, just caps pixels + 16px crop)
         img_tensor = preprocess_reference_image(img, limit_pixels=limit_pixels)
         img_tensor = img_tensor.unsqueeze(0).to(device).to(dtype)  # [1, 3, H, W]
         logger.debug(f"[REF:Encode] Image {idx} input tensor shape: {list(img_tensor.shape)}")
@@ -725,6 +734,31 @@ def generate_image(
         if torch.cuda.is_available():
             torch.cuda.manual_seed(config.seed)
 
+    # ===========================================================================
+    # Match output dimensions to reference image (official FLUX.2 approach)
+    # ===========================================================================
+    width = config.width
+    height = config.height
+
+    if config.match_image_size is not None and config.is_editing_mode:
+        ref_images = load_reference_images(config)
+        idx = config.match_image_size
+        if idx < 0 or idx >= len(ref_images):
+            logger.warning(
+                f"match_image_size={idx} is out of range (0-{len(ref_images)-1}), "
+                f"using default dimensions: {width}x{height}"
+            )
+        else:
+            ref_img = ref_images[idx]
+            ref_w, ref_h = ref_img.size
+            # Round to multiples of 16 (required for latent space)
+            width = (ref_w // 16) * 16
+            height = (ref_h // 16) * 16
+            logger.info(f"Matched dimensions from reference image {idx}: {width}x{height}")
+            # Update config so downstream code uses correct dimensions
+            config.width = width
+            config.height = height
+
     mode = "editing" if config.is_editing_mode else "text-to-image"
     logger.info(f"Generating {config.width}x{config.height} image ({mode} mode) with {config.num_steps} steps")
 
@@ -792,6 +826,7 @@ def generate_image(
 
         # Load and encode reference images
         ref_images = load_reference_images(config)
+
         ref_tokens, ref_ids = encode_reference_images(
             vae=vae,
             images=ref_images,

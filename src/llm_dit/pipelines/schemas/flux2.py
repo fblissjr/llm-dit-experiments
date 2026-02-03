@@ -73,6 +73,21 @@ register_pipeline(PipelineSchema(
             max_count=4,
         ),
         ParamSchema(
+            id="match_image_size",
+            type="select",
+            label="Match Output to Reference",
+            default="none",
+            options=[
+                "none",
+                "0 (First Image)",
+                "1 (Second Image)",
+                "2 (Third Image)",
+                "3 (Fourth Image)",
+            ],
+            group="basic",
+            tooltip="Match output dimensions to a reference image. Prevents squishing when ref has different aspect ratio.",
+        ),
+        ParamSchema(
             id="reference_strength",
             type="slider",
             label="Reference Strength",

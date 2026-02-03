@@ -3,13 +3,15 @@
  *
  * Shared component for uploading reference/input images.
  * Supports drag-and-drop, validation, and preview.
+ * Reports image dimensions via onDimensionsChange for auto-matching output size.
  */
 
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 
 interface ImageUploadProps {
   value: string | string[] | null;  // Base64 or URL(s)
   onChange: (value: string | string[] | null) => void;
+  onDimensionsChange?: (dimensions: { width: number; height: number } | null) => void;
   maxCount?: number;
   maxSizeMB?: number;
   acceptedFormats?: string[];
@@ -22,6 +24,7 @@ interface ImageUploadProps {
 export function ImageUpload({
   value,
   onChange,
+  onDimensionsChange,
   maxCount = 1,
   maxSizeMB = 10,
   acceptedFormats = ['image/png', 'image/jpeg', 'image/webp'],
@@ -32,9 +35,35 @@ export function ImageUpload({
 }: ImageUploadProps) {
   const [isDragging, setIsDragging] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [dimensions, setDimensions] = useState<{ width: number; height: number } | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const images = Array.isArray(value) ? value : value ? [value] : [];
+
+  // Read dimensions of first image when images change
+  useEffect(() => {
+    if (images.length === 0) {
+      setDimensions(null);
+      onDimensionsChange?.(null);
+      return;
+    }
+
+    const firstImage = images[0];
+    const img = new Image();
+    img.onload = () => {
+      // Round to multiples of 16 (required by most models)
+      const width = Math.round(img.width / 16) * 16;
+      const height = Math.round(img.height / 16) * 16;
+      const dims = { width, height };
+      setDimensions(dims);
+      onDimensionsChange?.(dims);
+    };
+    img.onerror = () => {
+      setDimensions(null);
+      onDimensionsChange?.(null);
+    };
+    img.src = firstImage;
+  }, [images, onDimensionsChange]);
 
   const handleFiles = useCallback(
     async (files: FileList) => {
@@ -150,6 +179,13 @@ export function ImageUpload({
             </div>
           ))}
         </div>
+      )}
+
+      {/* Show dimensions of first image */}
+      {dimensions && (
+        <p className="text-xs text-gray-500 mb-2">
+          Reference: {dimensions.width}x{dimensions.height}px
+        </p>
       )}
 
       {/* Drop zone */}

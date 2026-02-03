@@ -701,6 +701,7 @@ class Flux2GenerateRequest(BaseModel):
     model_path: Optional[str] = None  # Custom model path (overrides HuggingFace)
     vae_path: Optional[str] = None  # Custom VAE path (overrides HuggingFace)
     reference_images: Optional[List[str]] = None  # Base64 encoded reference images for editing
+    match_image_size: Optional[str] = "none"  # "none" or "0 (First Image)", "1 (Second Image)", etc.
     loras: Optional[List[str]] = None  # LoRA weights ["path:scale", ...]
 
     # Text encoding options
@@ -2235,6 +2236,16 @@ async def flux2_generate(request: Flux2GenerateRequest):
                 img = Image.open(io.BytesIO(img_data)).convert("RGB")
                 ref_images.append(img)
 
+        # Parse match_image_size from UI string to int
+        # "none" -> None, "0 (First Image)" -> 0, etc.
+        match_image_size: Optional[int] = None
+        if request.match_image_size and request.match_image_size != "none":
+            # Extract the number from the start of the string (e.g., "0 (First Image)" -> 0)
+            try:
+                match_image_size = int(request.match_image_size.split()[0])
+            except (ValueError, IndexError):
+                match_image_size = None
+
         # Create generation config
         config = Flux2GenerationConfig(
             prompt=request.prompt,
@@ -2244,6 +2255,7 @@ async def flux2_generate(request: Flux2GenerateRequest):
             guidance=guidance,
             seed=request.seed,
             reference_images=ref_images,
+            match_image_size=match_image_size,
             block_offload=request.block_offload,
             loras=request.loras,
             # Text encoding options
