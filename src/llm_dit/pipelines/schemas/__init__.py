@@ -19,7 +19,7 @@ from dataclasses import dataclass, field, asdict
 from typing import Literal, Any
 
 
-ParamType = Literal["textarea", "slider", "number", "checkbox", "select", "image", "color"]
+ParamType = Literal["textarea", "slider", "number", "checkbox", "select", "image", "color", "lora_list"]
 OutputType = Literal["image", "video", "layers"]
 GroupType = Literal["basic", "advanced", "expert", "scheduler", "optimization", "enhancement"]
 
@@ -48,7 +48,9 @@ class ParamSchema:
         placeholder: Placeholder text for textarea/text inputs
         rows: Number of rows for textarea inputs
         required: Whether the field is required for generation
-        max_count: Maximum number of images allowed (for image type controls)
+        max_count: Maximum number of items allowed (for image/lora_list types)
+        scale_min: Minimum scale value for lora_list type (default -2.0)
+        scale_max: Maximum scale value for lora_list type (default 2.0)
     """
     id: str
     type: ParamType
@@ -66,6 +68,9 @@ class ParamSchema:
     rows: int | None = None
     required: bool = False
     max_count: int | None = None
+    # LoRA-specific constraints
+    scale_min: float | None = None
+    scale_max: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dict, excluding None values for cleaner JSON."""

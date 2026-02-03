@@ -5,3 +5,5 @@ export { Select } from './Select';
 export { Checkbox } from './Checkbox';
 export { ImageUpload } from './ImageUpload';
 export { ColorPicker } from './ColorPicker';
+export { LoRAList } from './LoRAList';
+export { LoRAItem } from './LoRAItem';

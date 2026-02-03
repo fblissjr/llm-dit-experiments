@@ -125,6 +125,10 @@ class Flux2GenerationConfig:
     # Single ref: up to 2024^2, multiple refs: up to 1024^2 each
     ref_limit_pixels: Optional[int] = None
 
+    # LoRA weights: list of "path:scale" or just "path" (default scale 0.8)
+    # Example: ["style.safetensors:0.7", "detail.safetensors:0.5"]
+    loras: Optional[list[str]] = None
+
     # Text encoding options
     max_text_length: int = 512  # Maximum text tokens (can increase for longer prompts)
     pad_to_max: bool = True  # Whether to pad all sequences to max_text_length
@@ -819,6 +823,19 @@ def generate_image(
             block_offload=config.block_offload,
         )
         log_gpu_memory("after transformer load")
+
+    # Load LoRA weights if specified
+    if config.loras:
+        from llm_dit.utils.lora import load_lora, parse_lora_spec
+
+        total_updated = 0
+        for spec in config.loras:
+            path, scale = parse_lora_spec(spec)
+            logger.info(f"Loading LoRA: {path} (scale={scale})")
+            updated = load_lora(transformer, path, scale=scale)
+            total_updated += updated
+        logger.info(f"LoRA complete: {total_updated} layers updated")
+        log_gpu_memory("after LoRA fusion")
 
     # Move embeddings to device
     txt_embeddings = txt_embeddings.to(device)

@@ -35,6 +35,7 @@ MANIFEST
 .claude
 scripts/archive
 models/
+loras/
 outputs/
 embeddings/*
 test_images/*

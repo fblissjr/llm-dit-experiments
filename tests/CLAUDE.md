@@ -1,8 +1,48 @@
 # testing guide for agents
 
-*last updated: 2026-01-22*
+*last updated: 2026-02-03*
 
 Quick reference for LLM agents running tests in this codebase.
+
+## core principle
+
+**ALWAYS rely on retrieval and search over assumptions.**
+
+Before writing tests, search for existing patterns:
+```bash
+grep -rn "class Test.*<Feature>" tests/
+grep -rn "def test_.*<feature>" tests/
+ls tests/baselines/   # Use existing baseline infrastructure
+ls presets/testing/   # Use existing preset configs
+```
+
+## shared test infrastructure (USE THIS)
+
+**Do NOT create new test frameworks. Use the existing infrastructure:**
+
+| Infrastructure | Location | Purpose |
+|----------------|----------|---------|
+| **Presets** | `presets/testing/<pipeline>_*.md` | Test configs (YAML frontmatter) |
+| **Baselines** | `tests/baselines/` | Generation and comparison utilities |
+| **Backends** | `tests/backends/` | Portable test protocol |
+
+### generating baselines
+```python
+from tests.baselines import generate_baseline, generate_baseline_from_preset
+
+# Use preset (preferred)
+result = generate_baseline_from_preset("ltx2_smoke_test")
+
+# Or use config tier
+result = generate_baseline(config_tier="smoke", seed=42)
+```
+
+### new feature test checklist
+When adding tests for a new feature, cover:
+- [ ] **Loading** - Feature loads without errors
+- [ ] **Generation** - Feature works in full pipeline
+- [ ] **Parameter effects** - Changing values changes output
+- [ ] **Error handling** - Invalid inputs handled gracefully
 
 ## tdd workflow (test-driven development)
 
@@ -348,12 +388,19 @@ LLM_DIT_TEST_BACKEND=ltx2 uv run pytest tests/e2e/test_baseline_portable.py -v -
 
 **Passing tests do NOT guarantee correct output.**
 
-After e2e tests, always verify:
-1. Video plays without artifacts
+### before implementing features that affect generation
+```bash
+# Generate baseline with existing infrastructure
+uv run pytest tests/e2e/test_<pipeline>_baselines.py::Test<Pipeline>Baselines::test_smoke_baseline_generation -v -s
+```
+
+### after e2e tests
+Verify:
+1. Video/image plays without artifacts
 2. Content matches prompt semantically
-3. Motion is temporally coherent
+3. Motion is temporally coherent (for video)
 
 ```bash
 # Extract frames for inspection
-ffmpeg -i outputs/tests/runs/*/video.mp4 -vf "select=eq(n\,0)+eq(n\,16)+eq(n\,32)" -vsync vfr /tmp/frames_%02d.png
+ffmpeg -i outputs/baselines/*/video.mp4 -vf "select=eq(n\,0)+eq(n\,16)+eq(n\,32)" -vsync vfr /tmp/claude/frames_%02d.png
 ```

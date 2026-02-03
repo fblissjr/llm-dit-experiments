@@ -7,7 +7,7 @@
  */
 
 // Param type - determines which control renders
-export type ParamType = 'textarea' | 'slider' | 'number' | 'checkbox' | 'select' | 'image' | 'color';
+export type ParamType = 'textarea' | 'slider' | 'number' | 'checkbox' | 'select' | 'image' | 'color' | 'lora_list';
 
 // Output type - affects result display
 export type OutputType = 'image' | 'video' | 'layers';
@@ -35,6 +35,9 @@ export interface ParamSchema {
   rows?: number;
   required?: boolean;
   max_count?: number;
+  // LoRA-specific constraints
+  scale_min?: number;
+  scale_max?: number;
 }
 
 /**

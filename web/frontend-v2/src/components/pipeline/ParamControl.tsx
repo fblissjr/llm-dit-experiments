@@ -14,6 +14,7 @@ import {
   Checkbox,
   ImageUpload,
   ColorPicker,
+  LoRAList,
 } from '@/components/controls';
 
 interface ParamControlProps {
@@ -134,6 +135,16 @@ export function ParamControl({
           value={(value as string) ?? '#ffffff'}
           onChange={onChange}
           tooltip={param.tooltip}
+          disabled={disabled}
+        />
+      );
+
+    case 'lora_list':
+      return (
+        <LoRAList
+          param={param}
+          value={(value as string[]) ?? []}
+          onChange={onChange}
           disabled={disabled}
         />
       );

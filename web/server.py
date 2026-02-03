@@ -701,6 +701,7 @@ class Flux2GenerateRequest(BaseModel):
     model_path: Optional[str] = None  # Custom model path (overrides HuggingFace)
     vae_path: Optional[str] = None  # Custom VAE path (overrides HuggingFace)
     reference_images: Optional[List[str]] = None  # Base64 encoded reference images for editing
+    loras: Optional[List[str]] = None  # LoRA weights ["path:scale", ...]
 
     # Text encoding options
     max_text_length: int = 512  # Max text tokens (512 default, increase for longer prompts)
@@ -2244,6 +2245,7 @@ async def flux2_generate(request: Flux2GenerateRequest):
             seed=request.seed,
             reference_images=ref_images,
             block_offload=request.block_offload,
+            loras=request.loras,
             # Text encoding options
             max_text_length=request.max_text_length,
             pad_to_max=request.pad_to_max,

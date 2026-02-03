@@ -178,5 +178,18 @@ register_pipeline(PipelineSchema(
             group="optimization",
             tooltip="Use torch.compile for faster inference (slow first run).",
         ),
+
+        # === LoRA Enhancement ===
+        ParamSchema(
+            id="loras",
+            type="lora_list",
+            label="LoRA Weights",
+            default=[],
+            group="enhancement",
+            tooltip="LoRA files with strength (path:scale format, e.g. style.safetensors:0.8).",
+            scale_min=-2.0,
+            scale_max=2.0,
+            max_count=5,
+        ),
     ],
 ))
