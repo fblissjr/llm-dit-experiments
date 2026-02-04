@@ -50,7 +50,7 @@ import gc
 import math
 import logging
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Callable, Optional
 
 import torch
 import torchvision
@@ -460,7 +460,7 @@ def denoise(
     guidance: float | None = None,
     img_cond_seq: torch.Tensor | None = None,
     img_cond_seq_ids: torch.Tensor | None = None,
-    progress_callback: callable | None = None,
+    progress_callback: Callable | None = None,
 ) -> torch.Tensor:
     """
     FLUX.2 denoising loop with flow matching.
@@ -711,7 +711,7 @@ def generate_image(
     encoder_path: Optional[str] = None,
     model_path: Optional[str] = None,
     vae_path: Optional[str] = None,
-    progress_callback: callable | None = None,
+    progress_callback: Callable | None = None,
 ) -> Image.Image:
     """
     Generate an image using FLUX.2 Klein.
@@ -988,7 +988,7 @@ def generate_image_with_progress(
     encoder_path: Optional[str] = None,
     model_path: Optional[str] = None,
     vae_path: Optional[str] = None,
-    progress_callback: callable | None = None,
+    progress_callback: Callable | None = None,
 ) -> Image.Image:
     """
     Generate an image using FLUX.2 Klein with progress callback support.
