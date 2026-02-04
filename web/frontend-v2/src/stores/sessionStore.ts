@@ -440,7 +440,12 @@ export const useSessionStore = create<SessionState>()(
       name: 'llm-dit-history',
       storage: createJSONStorage(() => quotaHandlingStorage),
       partialize: (state) => ({
-        history: state.history,
+        // Strip fullImageUrl from history items - it's only for current session
+        // and contains full base64 data that would blow up localStorage
+        history: state.history.map((item) => ({
+          ...item,
+          fullImageUrl: undefined,
+        })),
       }),
     }
   )
