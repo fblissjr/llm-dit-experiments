@@ -101,16 +101,17 @@ export function HistoryCard({ item }: HistoryCardProps) {
               </div>
             )}
 
-            {/* Remove button (on hover) */}
+            {/* Remove button - always visible on mobile, hover on desktop */}
             <button
               onClick={handleRemove}
-              className="absolute top-0.5 right-0.5 p-1 bg-gray-900/80 rounded
-                         opacity-0 group-hover:opacity-100 transition-opacity
-                         hover:bg-red-600 z-10"
+              className="absolute -top-1 -right-1 p-1.5 bg-gray-800 border border-gray-600 rounded-full
+                         opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity
+                         hover:bg-red-600 hover:border-red-500 active:bg-red-700 z-10
+                         min-w-[28px] min-h-[28px] flex items-center justify-center"
               title="Remove from history"
             >
               <svg
-                className="w-3 h-3"
+                className="w-3.5 h-3.5"
                 fill="none"
                 viewBox="0 0 24 24"
                 stroke="currentColor"

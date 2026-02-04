@@ -2412,9 +2412,32 @@ async def get_pipeline_defaults(pipeline_id: str):
     # Overlay RuntimeConfig values if available
     if runtime_config is not None:
         config_dict = runtime_config.to_dict()
+
+        # Map schema param IDs to RuntimeConfig field names
+        # Schema uses clean names, config uses prefixed names for clarity
+        param_to_config_map = {
+            # FLUX.2 mappings
+            "block_offload": "flux2_block_offload",
+            "compile": "compile",
+            # LTX-2 mappings
+            "cpu_offload": "cpu_offload",
+            # Z-Image mappings
+            "shift": "shift",
+            "guidance_scale": "guidance_scale",
+            "steps": "steps",
+            "width": "width",
+            "height": "height",
+        }
+
         for param in schema.params:
+            # First check direct match (param.id == config field name)
             if param.id in config_dict:
                 defaults[param.id] = config_dict[param.id]
+            # Then check mapped name
+            elif param.id in param_to_config_map:
+                config_key = param_to_config_map[param.id]
+                if config_key in config_dict:
+                    defaults[param.id] = config_dict[config_key]
 
         # Add special _variant field for conditional visibility
         # This tells the UI which variant is configured (base/turbo)
