@@ -179,6 +179,7 @@ class RuntimeConfig:
     flux2_output_path: str = "flux2_output.png"  # Output image path
     flux2_input_images: list[str] | None = None  # Input image paths for editing mode
     flux2_encoder_path: str | None = None  # Custom path for Qwen3 encoder (auto-detects dtype)
+    flux2_encoder_device: str = "cuda"  # Device for text encoder (cuda recommended)
     flux2_model_path: str | None = None  # Local path to transformer weights (file or directory)
     flux2_vae_path: str | None = None  # Local path to VAE weights (file or directory)
 
@@ -1970,6 +1971,10 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
                     config.flux2_encoder_path = flux2.encoder_path or config.flux2_encoder_path
                     config.flux2_model_name = flux2.default_model or config.flux2_model_name
                     config.flux2_block_offload = flux2.block_offload
+                    # Read offload_between_stages from TOML (defaults to True for memory efficiency)
+                    config.flux2_offload_between_stages = getattr(flux2, "offload_between_stages", True)
+                    # Read encoder_device from TOML (defaults to cuda)
+                    config.flux2_encoder_device = getattr(flux2, "encoder_device", "cuda")
                     if flux2.default_steps is not None:
                         config.flux2_num_steps = flux2.default_steps
                     if flux2.default_guidance is not None:

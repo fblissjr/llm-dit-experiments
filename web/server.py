@@ -2246,6 +2246,11 @@ async def flux2_generate(request: Flux2GenerateRequest):
             except (ValueError, IndexError):
                 match_image_size = None
 
+        # Get offload settings from runtime config (config.toml)
+        offload_between_stages = True
+        if runtime_config:
+            offload_between_stages = getattr(runtime_config, "flux2_offload_between_stages", True)
+
         # Create generation config
         config = Flux2GenerationConfig(
             prompt=request.prompt,
@@ -2257,6 +2262,7 @@ async def flux2_generate(request: Flux2GenerateRequest):
             reference_images=ref_images,
             match_image_size=match_image_size,
             block_offload=request.block_offload,
+            offload_between_stages=offload_between_stages,
             loras=request.loras,
             # Text encoding options
             max_text_length=request.max_text_length,
@@ -2362,6 +2368,11 @@ async def flux2_generate_stream(request: Flux2GenerateRequest):
                 except (ValueError, IndexError):
                     match_image_size = None
 
+            # Get offload settings from runtime config (config.toml)
+            offload_between_stages = True
+            if runtime_config:
+                offload_between_stages = getattr(runtime_config, "flux2_offload_between_stages", True)
+
             # Create generation config
             config = Flux2GenerationConfig(
                 prompt=request.prompt,
@@ -2373,6 +2384,7 @@ async def flux2_generate_stream(request: Flux2GenerateRequest):
                 reference_images=ref_images,
                 match_image_size=match_image_size,
                 block_offload=request.block_offload,
+                offload_between_stages=offload_between_stages,
                 loras=request.loras,
                 max_text_length=request.max_text_length,
                 pad_to_max=request.pad_to_max,
