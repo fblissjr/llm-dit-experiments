@@ -131,7 +131,7 @@ class Flux2GenerationConfig:
     # This is the official FLUX.2 approach - output matches reference, not vice versa
     match_image_size: Optional[int] = None
 
-    # LoRA weights: list of "path:scale" or just "path" (default scale 0.8)
+    # LoRA weights: list of "path:scale" or just "path" (default scale 1.0)
     # Example: ["style.safetensors:0.7", "detail.safetensors:0.5"]
     loras: Optional[list[str]] = None
 

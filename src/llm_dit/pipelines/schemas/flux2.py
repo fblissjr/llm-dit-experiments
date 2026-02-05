@@ -88,18 +88,6 @@ register_pipeline(PipelineSchema(
             group="basic",
             tooltip="Match output dimensions to a reference image. Prevents squishing when ref has different aspect ratio.",
         ),
-        ParamSchema(
-            id="reference_strength",
-            type="slider",
-            label="Reference Strength",
-            default=0.8,
-            min=0.0,
-            max=1.0,
-            step=0.05,
-            group="basic",
-            tooltip="How strongly to use reference images.",
-        ),
-
         # === Model & Dimensions ===
         ParamSchema(
             id="model_name",
