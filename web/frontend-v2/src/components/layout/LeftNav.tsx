@@ -9,7 +9,7 @@ import { useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { cn } from '@/utils';
 import { useAppStore } from '@/stores';
-import { ModelManager } from '@/components/models/ModelManager';
+import { ModelManager } from '@/components/model-manager/ModelManager';
 
 export function LeftNav() {
   const isLeftNavOpen = useAppStore((s) => s.isLeftNavOpen);

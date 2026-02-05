@@ -645,7 +645,9 @@ class Flux2Config:
     vae_path: str = ""  # Path to VAE weights (file or directory)
     encoder_path: str = ""  # Path to Qwen3 encoder (optional, uses HuggingFace if empty)
     default_model: str = "klein-9b-fp8"  # Default model variant
-    block_offload: bool = True  # Enable block-by-block GPU offloading for low VRAM
+    block_offload: bool = False  # Enable block-by-block GPU offloading (slower but uses ~5GB less VRAM)
+    offload_between_stages: bool = True  # Three-stage offloading: encoder -> transformer -> VAE
+    encoder_device: str = "cuda"  # Device for text encoder (cuda recommended, encoder offloads after use)
     default_steps: int | None = None  # Default steps (None = model default: 4 distilled, 50 base)
     default_guidance: float | None = None  # Default CFG (None = model default: 1.0 distilled, 4.0 base)
     default_preset: str = ""  # Default preset to load (e.g., "quality")

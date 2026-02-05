@@ -169,12 +169,16 @@ export function ImageUpload({
                 alt={`Upload ${index + 1}`}
                 className="w-full h-full object-cover"
               />
+              {/* Remove button - always visible on mobile for accessibility */}
               <button
                 type="button"
                 onClick={() => removeImage(index)}
-                className="absolute top-1 right-1 w-5 h-5 bg-gray-900/80 rounded-full flex items-center justify-center text-gray-300 hover:text-white hover:bg-red-600 transition-colors opacity-0 group-hover:opacity-100"
+                className="absolute -top-2 -right-2 w-7 h-7 bg-gray-800 border border-gray-600 rounded-full flex items-center justify-center text-gray-300 hover:text-white hover:bg-red-600 hover:border-red-500 active:bg-red-700 transition-colors opacity-100 md:opacity-0 md:group-hover:opacity-100 z-10"
+                title="Remove image"
               >
-                ×
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
               </button>
             </div>
           ))}

@@ -69,11 +69,12 @@ export function ResultDisplay() {
             />
           )}
 
-        {/* Close button */}
+        {/* Close button - 44px minimum touch target for mobile */}
         <button
           onClick={clearResult}
-          className="absolute top-2 right-2 p-2 bg-gray-900/80 rounded-lg
-                     hover:bg-gray-800 transition-colors"
+          className="absolute top-2 right-2 p-3 bg-gray-900/80 rounded-lg
+                     hover:bg-gray-800 active:bg-gray-700 transition-colors
+                     min-w-[44px] min-h-[44px] flex items-center justify-center"
           title="Clear result"
         >
           <svg
@@ -99,11 +100,11 @@ export function ResultDisplay() {
           <span>{(result.durationMs / 1000).toFixed(1)}s</span>
         </div>
 
-        {/* Download button */}
+        {/* Download button - larger touch target for mobile */}
         <a
           href={url}
           download
-          className="btn-ghost px-3 py-1 text-sm flex items-center gap-1"
+          className="btn-ghost px-4 py-2 text-sm flex items-center gap-2 min-h-[44px]"
         >
           <svg
             className="w-4 h-4"

@@ -50,7 +50,7 @@ import gc
 import math
 import logging
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Callable, Optional
 
 import torch
 import torchvision
@@ -460,6 +460,7 @@ def denoise(
     guidance: float | None = None,
     img_cond_seq: torch.Tensor | None = None,
     img_cond_seq_ids: torch.Tensor | None = None,
+    progress_callback: Callable | None = None,
 ) -> torch.Tensor:
     """
     FLUX.2 denoising loop with flow matching.
@@ -476,6 +477,7 @@ def denoise(
         guidance: Guidance scale (None for distilled models)
         img_cond_seq: Reference image tokens [B, ref_tokens, channels] (optional)
         img_cond_seq_ids: Reference image position IDs [B, ref_tokens, 4] (optional)
+        progress_callback: Optional callback(step, total, stage) for progress updates
 
     Returns:
         Denoised latents [B, seq_len, channels]
@@ -535,6 +537,10 @@ def denoise(
     for step_idx, (t_curr, t_prev) in enumerate(
         tqdm(zip(timesteps[:-1], timesteps[1:]), total=num_steps, desc="Denoising")
     ):
+        # Report progress if callback provided
+        if progress_callback is not None:
+            progress_callback(step_idx + 1, num_steps, "Denoising")
+
         # =====================================================================
         # Step Start
         # =====================================================================
@@ -705,6 +711,7 @@ def generate_image(
     encoder_path: Optional[str] = None,
     model_path: Optional[str] = None,
     vae_path: Optional[str] = None,
+    progress_callback: Callable | None = None,
 ) -> Image.Image:
     """
     Generate an image using FLUX.2 Klein.
@@ -721,6 +728,7 @@ def generate_image(
         encoder_path: Custom path for text encoder (overrides model default, auto-detects dtype)
         model_path: Local path to transformer weights (file or directory)
         vae_path: Local path to VAE weights (file or directory)
+        progress_callback: Optional callback(step, total, stage) for progress updates
 
     Returns:
         Generated PIL Image
@@ -936,6 +944,7 @@ def generate_image(
         guidance=guidance,
         img_cond_seq=ref_tokens,
         img_cond_seq_ids=ref_ids,
+        progress_callback=progress_callback,
     )
 
     # Move latents to CPU and offload transformer
@@ -968,6 +977,50 @@ def generate_image(
 
     logger.info("Generation complete!")
     return image
+
+
+def generate_image_with_progress(
+    config: Flux2GenerationConfig,
+    model_name: str = "klein-9b",
+    encoder=None,
+    transformer=None,
+    vae=None,
+    encoder_path: Optional[str] = None,
+    model_path: Optional[str] = None,
+    vae_path: Optional[str] = None,
+    progress_callback: Callable | None = None,
+) -> Image.Image:
+    """
+    Generate an image using FLUX.2 Klein with progress callback support.
+
+    This is a convenience wrapper around generate_image that explicitly
+    exposes the progress_callback parameter for SSE streaming.
+
+    Args:
+        config: Generation configuration
+        model_name: Model variant
+        encoder: Pre-loaded encoder (optional)
+        transformer: Pre-loaded transformer (optional)
+        vae: Pre-loaded VAE (optional)
+        encoder_path: Custom path for text encoder
+        model_path: Local path to transformer weights
+        vae_path: Local path to VAE weights
+        progress_callback: Callback(step, total, stage) for progress updates
+
+    Returns:
+        Generated PIL Image
+    """
+    return generate_image(
+        config=config,
+        model_name=model_name,
+        encoder=encoder,
+        transformer=transformer,
+        vae=vae,
+        encoder_path=encoder_path,
+        model_path=model_path,
+        vae_path=vae_path,
+        progress_callback=progress_callback,
+    )
 
 
 def quick_generate(

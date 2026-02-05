@@ -1,10 +1,11 @@
 /**
  * Slider Control
  *
- * Range slider with value display and visual fill.
+ * Range slider with value display, visual fill, and manual input.
+ * On mobile, tapping the value opens an input field for precise entry.
  */
 
-import { useId } from 'react';
+import { useId, useState, useRef, useEffect } from 'react';
 import { cn } from '@/utils';
 
 interface SliderProps {
@@ -35,9 +36,63 @@ export function Slider({
   className,
 }: SliderProps) {
   const id = useId();
+  const [isEditing, setIsEditing] = useState(false);
+  const [inputValue, setInputValue] = useState(value.toString());
+  const inputRef = useRef<HTMLInputElement>(null);
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Sync input value when value prop changes (but not while editing)
+  useEffect(() => {
+    if (!isEditing) {
+      setInputValue(value.toString());
+    }
+  }, [value, isEditing]);
+
+  // Focus input when entering edit mode
+  useEffect(() => {
+    if (isEditing && inputRef.current) {
+      inputRef.current.focus();
+      inputRef.current.select();
+    }
+  }, [isEditing]);
+
+  const handleSliderChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     onChange(parseFloat(e.target.value));
+  };
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setInputValue(e.target.value);
+  };
+
+  const handleInputBlur = () => {
+    commitInputValue();
+    setIsEditing(false);
+  };
+
+  const handleInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      commitInputValue();
+      setIsEditing(false);
+    } else if (e.key === 'Escape') {
+      setInputValue(value.toString());
+      setIsEditing(false);
+    }
+  };
+
+  const commitInputValue = () => {
+    const parsed = parseFloat(inputValue);
+    if (!isNaN(parsed)) {
+      // Clamp to valid range
+      const clamped = Math.min(max, Math.max(min, parsed));
+      // Round to step precision
+      const precision = step < 1 ? Math.ceil(-Math.log10(step)) : 0;
+      const rounded = Math.round(clamped / step) * step;
+      const finalValue = Number(rounded.toFixed(precision));
+      onChange(finalValue);
+      setInputValue(finalValue.toString());
+    } else {
+      // Reset to current value if invalid
+      setInputValue(value.toString());
+    }
   };
 
   // Calculate fill percentage for visual feedback
@@ -50,7 +105,44 @@ export function Slider({
           {label}
         </label>
         {showValue && (
-          <span className="slider-value">{formatValue(value)}</span>
+          <>
+            {isEditing ? (
+              <input
+                ref={inputRef}
+                type="number"
+                value={inputValue}
+                onChange={handleInputChange}
+                onBlur={handleInputBlur}
+                onKeyDown={handleInputKeyDown}
+                min={min}
+                max={max}
+                step={step}
+                disabled={disabled}
+                className={cn(
+                  'w-20 px-3 py-2 text-sm text-right',
+                  'bg-gray-800 border border-blue-500 rounded-lg',
+                  'text-gray-200 focus:outline-none',
+                  'tabular-nums min-h-[36px]'
+                )}
+              />
+            ) : (
+              <button
+                type="button"
+                onClick={() => !disabled && setIsEditing(true)}
+                disabled={disabled}
+                className={cn(
+                  'slider-value px-3 py-1.5 -mr-2 rounded-lg',
+                  'hover:bg-gray-700 active:bg-gray-600 transition-colors',
+                  'cursor-pointer min-w-[3.5rem] min-h-[36px] text-right',
+                  'flex items-center justify-end',
+                  disabled && 'cursor-not-allowed opacity-50'
+                )}
+                title="Tap to edit value"
+              >
+                {formatValue(value)}
+              </button>
+            )}
+          </>
         )}
       </div>
       <div className="mt-2">
@@ -58,12 +150,12 @@ export function Slider({
           type="range"
           id={id}
           value={value}
-          onChange={handleChange}
+          onChange={handleSliderChange}
           min={min}
           max={max}
           step={step}
           disabled={disabled}
-          className="slider-track w-full"
+          className="slider-track w-full h-2"
           style={{
             background: `linear-gradient(to right, var(--pipeline-color, #3b82f6) 0%, var(--pipeline-color, #3b82f6) ${fillPercent}%, #374151 ${fillPercent}%, #374151 100%)`,
           }}

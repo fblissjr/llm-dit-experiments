@@ -49,7 +49,8 @@ register_pipeline(PipelineSchema(
     supports_history=True,
     supports_img2img=False,
     supports_reference_images=True,
-    endpoint="/api/flux2/generate",
+    supports_streaming=True,  # Enable SSE progress streaming
+    endpoint="/api/flux2/generate/stream",  # Stream endpoint for progress updates
     params=[
         # === Prompt ===
         ParamSchema(
@@ -76,7 +77,7 @@ register_pipeline(PipelineSchema(
             id="match_image_size",
             type="select",
             label="Match Output to Reference",
-            default="none",
+            default="0 (First Image)",
             options=[
                 "none",
                 "0 (First Image)",
