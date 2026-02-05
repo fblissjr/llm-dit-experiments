@@ -6237,6 +6237,43 @@ async def unload_all_models():
     }
 
 
+def _get_flux2_config_metadata() -> dict:
+    """Build config tags and warnings for FLUX.2 pipeline status."""
+    if runtime_config is None:
+        return {"config_tags": [], "config_warnings": []}
+
+    config_tags = []
+    config_warnings = []
+
+    quantization = getattr(runtime_config, "flux2_quantization", "none") or "none"
+    compile_enabled = getattr(runtime_config, "flux2_compile", False)
+    compile_vae = getattr(runtime_config, "flux2_compile_vae", False)
+    compile_mode = getattr(runtime_config, "flux2_compile_mode", "reduce-overhead")
+    block_offload = getattr(runtime_config, "flux2_block_offload", False)
+
+    if quantization != "none":
+        config_tags.append({"key": "quantization", "label": quantization.upper(), "color": "purple"})
+    if compile_enabled:
+        config_tags.append({"key": "compile", "label": f"compiled ({compile_mode})", "color": "blue"})
+    if compile_vae:
+        config_tags.append({"key": "compile_vae", "label": "VAE compiled", "color": "blue"})
+    if block_offload:
+        config_tags.append({"key": "block_offload", "label": "block offload", "color": "orange"})
+
+    if compile_enabled and block_offload:
+        config_warnings.append({
+            "severity": "error",
+            "message": "compile=true is incompatible with block_offload=true. Loading will fail.",
+        })
+    if quantization != "none" and block_offload:
+        config_warnings.append({
+            "severity": "error",
+            "message": f"quantization={quantization} is incompatible with block_offload=true. Loading will fail.",
+        })
+
+    return {"config_tags": config_tags, "config_warnings": config_warnings}
+
+
 @app.get("/api/models/{pipeline_id}/status")
 async def get_model_status(pipeline_id: str):
     """Get the status of a specific pipeline model.
@@ -6249,6 +6286,7 @@ async def get_model_status(pipeline_id: str):
     loaded = False
     components = []
     total_vram_mb = 0
+    config_meta: dict = {}
 
     if pid in ("zimage", "z-image"):
         loaded = pipeline is not None
@@ -6274,6 +6312,7 @@ async def get_model_status(pipeline_id: str):
             total_vram_mb = sum(c["vramMB"] for c in components)
     elif pid == "flux2":
         loaded = flux2_pipeline is not None
+        config_meta = _get_flux2_config_metadata()
         if loaded:
             components = [
                 {"name": "encoder", "vramMB": 2000},
@@ -6289,6 +6328,8 @@ async def get_model_status(pipeline_id: str):
         "status": "loaded" if loaded else "unloaded",
         "components": components if loaded else [],
         "total_vram_mb": total_vram_mb if loaded else 0,
+        "vram_mb": total_vram_mb if loaded else 0,
+        **config_meta,
     }
 
 

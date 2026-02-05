@@ -87,6 +87,20 @@ export interface VRAMStatus {
 }
 
 /**
+ * Config metadata from /api/models/{pipeline_id}/status
+ */
+export interface ConfigTag {
+  key: string;
+  label: string;
+  color: string;
+}
+
+export interface ConfigWarning {
+  severity: 'error' | 'warning';
+  message: string;
+}
+
+/**
  * Model status from /api/models/{pipeline_id}/status
  */
 export type ModelStatus = 'loaded' | 'unloaded' | 'loading' | 'error';
@@ -96,6 +110,8 @@ export interface ModelStatusResponse {
   vramMB?: number;
   estimatedVramMB?: number;
   error?: string;
+  configTags?: ConfigTag[];
+  configWarnings?: ConfigWarning[];
 }
 
 /**

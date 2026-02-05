@@ -219,15 +219,20 @@ export async function fetchModelStatus(pipelineId: string): Promise<ModelStatusR
   const response = await request<{
     status: string;
     vram_mb?: number;
+    total_vram_mb?: number;
     estimated_vram_mb?: number;
     error?: string;
+    config_tags?: ModelStatusResponse['configTags'];
+    config_warnings?: ModelStatusResponse['configWarnings'];
   }>(`/api/models/${pipelineId}/status`);
 
   return {
     status: response.status as ModelStatusResponse['status'],
-    vramMB: response.vram_mb,
+    vramMB: response.vram_mb ?? response.total_vram_mb,
     estimatedVramMB: response.estimated_vram_mb,
     error: response.error,
+    configTags: response.config_tags,
+    configWarnings: response.config_warnings,
   };
 }
 

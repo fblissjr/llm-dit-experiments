@@ -5,6 +5,16 @@ last updated: 2026-02-05
 All notable changes to this project will be documented in this file.
 Uses [Semantic Versioning](https://semver.org/).
 
+## 0.6.2
+
+### added
+- FLUX.2 config visibility in ModelCard: colored badges for active optimization settings (FP8, compile, block_offload)
+- Proactive config validation: incompatible settings (compile+block_offload, quantization+block_offload) shown as warnings before loading
+- Generic data-driven config tag/warning system: backend provides tags, frontend renders them (pipeline-agnostic)
+
+### fixed
+- ModelCard VRAM display: backend now returns `vram_mb` alias (frontend expected this but only `total_vram_mb` was returned)
+
 ## 0.6.1
 
 ### added
