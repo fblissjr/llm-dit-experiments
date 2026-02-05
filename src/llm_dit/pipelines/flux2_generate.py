@@ -68,6 +68,7 @@ from llm_dit.models.flux2.constants import (
     TOTAL_SPATIAL_COMPRESSION,
     LATENT_CHANNELS_AFTER_PATCHIFY,
     FLUX2_MODEL_INFO,
+    get_encoder_preset,
 )
 
 logger = logging.getLogger(__name__)
@@ -791,7 +792,7 @@ def generate_image(
         logger.info(f"Loading encoder from: {text_encoder_spec}")
 
         # Determine preset based on model
-        preset = "klein-9b" if "9b" in model_name.lower() or "8b" in model_name.lower() else "klein-4b"
+        preset = get_encoder_preset(model_name)
         layers_str = str(config.output_layers) if config.output_layers else "[9, 18, 27]"
         logger.debug(f"[TextEnc] preset={preset}, max_length={config.max_text_length}, pad_to_max={config.pad_to_max}, layers={layers_str}")
 

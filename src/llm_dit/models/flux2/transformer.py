@@ -698,6 +698,11 @@ class Flux2Transformer(nn.Module):
         # When torch.compile traces this function, is_compiling() returns True and all
         # logging is skipped, allowing clean graph capture with no breaks.
         _tracing = torch.compiler.is_compiling()
+        if _tracing and self._block_offload_enabled:
+            raise RuntimeError(
+                "torch.compile is incompatible with block_offload. "
+                "Set block_offload=false when using compile=true."
+            )
 
         if not _tracing:
             logger.debug(

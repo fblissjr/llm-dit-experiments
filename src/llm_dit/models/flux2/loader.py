@@ -590,9 +590,10 @@ def load_flux2_transformer(
         )
         _log_memory_state("After torchao quantization")
     elif quantize_to and quantize_to != "none" and block_offload:
-        logger.warning(
-            "[FLUX2:Loader] quantize_to=%s ignored: incompatible with block_offload "
-            "(torchao requires all weights on GPU)", quantize_to
+        raise ValueError(
+            f"quantize_to='{quantize_to}' is incompatible with block_offload=True. "
+            "torchao quantization requires all weights on GPU. "
+            "Set block_offload=false or quantization='none'."
         )
 
     return model

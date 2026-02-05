@@ -226,6 +226,19 @@ FLUX2_MODEL_INFO = {
 # Helper Functions
 # =============================================================================
 
+def get_encoder_preset(model_name: str) -> str:
+    """Get the encoder preset name for a FLUX.2 model variant.
+
+    Args:
+        model_name: Model variant name (e.g., "klein-9b", "klein-4b-fp8")
+
+    Returns:
+        Preset name: "klein-9b" or "klein-4b"
+    """
+    name = model_name.lower()
+    return "klein-9b" if "9b" in name or "8b" in name else "klein-4b"
+
+
 def get_model_params(model_name: str):
     """
     Get parameter dataclass for a model variant.

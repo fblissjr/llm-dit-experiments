@@ -355,13 +355,14 @@ class Qwen3UnifiedEncoder(nn.Module, Qwen3EncoderMixin):
         if not self._is_loaded:
             self._load_model()
 
+        # Start async GPU transfer if offloaded (DMA runs in parallel with tokenization)
+        needs_sync = False
         if self._is_offloaded:
-            # Use non_blocking=True when shuttling from pinned memory for async DMA
             self._model.to(self._target_device, non_blocking=self._is_pinned)
-            if self._is_pinned and self._target_device.type == "cuda":
-                torch.cuda.synchronize()  # Ensure transfer completes before forward
+            needs_sync = self._is_pinned and self._target_device.type == "cuda"
             self._is_offloaded = False
 
+        # Tokenize on CPU while DMA transfer runs in the background
         all_input_ids = []
         all_attention_masks = []
 
@@ -388,7 +389,11 @@ class Qwen3UnifiedEncoder(nn.Module, Qwen3EncoderMixin):
             all_input_ids.append(model_inputs["input_ids"])
             all_attention_masks.append(model_inputs["attention_mask"])
 
-        # Batch inputs
+        # Synchronize after tokenization (DMA may already be done by this point)
+        if needs_sync:
+            torch.cuda.synchronize()
+
+        # Batch inputs and move to model device
         input_ids = torch.cat(all_input_ids, dim=0).to(self._model.device)
         attention_mask = torch.cat(all_attention_masks, dim=0).to(self._model.device)
 
@@ -434,17 +439,25 @@ class Qwen3UnifiedEncoder(nn.Module, Qwen3EncoderMixin):
         return self.forward([prompt])
 
     def offload(self) -> None:
-        """Offload model to CPU and free GPU memory."""
+        """Offload model to CPU and free GPU memory.
+
+        When pinned memory is enabled, re-pins parameters after the CPU
+        round-trip. PyTorch allocates new (non-pinned) CPU tensors when
+        moving from CUDA back to CPU, so the original pinned memory is lost.
+        """
         if self._model is not None:
+            self._model.to("cpu")
             if self._is_pinned:
-                # Fast path: move to CPU with pinned memory already set up
-                logger.info("Offloading encoder to CPU (pinned memory)...")
-                self._model.to("cpu")
-                gc.collect()
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-            else:
-                self._offload_with_cleanup(self._model)
+                # Re-pin after CUDA round-trip (PyTorch allocates new non-pinned CPU tensors)
+                for param in self._model.parameters():
+                    if not param.data.is_pinned():
+                        param.data = param.data.pin_memory()
+                for buf in self._model.buffers():
+                    if not buf.data.is_pinned():
+                        buf.data = buf.data.pin_memory()
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
         self._is_offloaded = True
 
     def offload_to_pinned(self) -> None:

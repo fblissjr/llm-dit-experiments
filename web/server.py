@@ -132,6 +132,7 @@ flux2_pipeline = None
 import threading
 _zimage_loading_lock = threading.Lock()
 _zimage_loading_in_progress = False
+_flux2_loading_lock = threading.Lock()
 
 # In-memory history (cleared on server restart)
 generation_history = []
@@ -5993,85 +5994,104 @@ async def vram_load_flux2():
             detail="FLUX.2 model_path not configured. Set flux2.model_path in config.toml",
         )
 
-    # Unload other pipelines first to free VRAM
-    unload_all_pipelines_except("flux2")
+    with _flux2_loading_lock:
+        # Double-check inside lock (another thread may have loaded it)
+        if flux2_pipeline is not None:
+            status = get_vram_status()
+            return {
+                "success": True,
+                "message": "FLUX.2 pipeline already loaded",
+                "vram": status.get("vram"),
+            }
 
-    try:
-        from pathlib import Path
-        from llm_dit.models.flux2.loader import load_flux2_transformer, load_flux2_vae
-        from llm_dit.encoders.qwen3_unified import Qwen3UnifiedEncoder
+        # Unload other pipelines first to free VRAM
+        unload_all_pipelines_except("flux2")
 
-        model_path_obj = Path(model_path).expanduser()
-        if not model_path_obj.exists():
-            raise ValueError(f"FLUX.2 model path does not exist: {model_path}")
+        loaded_encoder = None
+        loaded_transformer = None
+        loaded_vae = None
+        try:
+            from pathlib import Path
+            from llm_dit.models.flux2.loader import load_flux2_transformer, load_flux2_vae
+            from llm_dit.encoders.qwen3_unified import Qwen3UnifiedEncoder
+            from llm_dit.models.flux2.constants import get_encoder_preset
 
-        model_name = getattr(runtime_config, "flux2_model_name", "klein-9b") if runtime_config else "klein-9b"
-        block_offload = getattr(runtime_config, "flux2_block_offload", False) if runtime_config else False
-        quantization = getattr(runtime_config, "flux2_quantization", "none") if runtime_config else "none"
-        compile_transformer = getattr(runtime_config, "flux2_compile", False) if runtime_config else False
-        compile_vae_flag = getattr(runtime_config, "flux2_compile_vae", False) if runtime_config else False
-        compile_mode = getattr(runtime_config, "flux2_compile_mode", "max-autotune-no-cudagraphs") if runtime_config else "max-autotune-no-cudagraphs"
-        encoder_path = getattr(runtime_config, "flux2_encoder_path", None) if runtime_config else None
+            model_path_obj = Path(model_path).expanduser()
+            if not model_path_obj.exists():
+                raise ValueError(f"FLUX.2 model path does not exist: {model_path}")
 
-        logger.info(f"[FLUX.2] Loading pipeline from {model_path} (quantization={quantization}, compile={compile_transformer})")
+            model_name = getattr(runtime_config, "flux2_model_name", "klein-9b") if runtime_config else "klein-9b"
+            block_offload = getattr(runtime_config, "flux2_block_offload", False) if runtime_config else False
+            quantization = getattr(runtime_config, "flux2_quantization", "none") if runtime_config else "none"
+            compile_transformer = getattr(runtime_config, "flux2_compile", False) if runtime_config else False
+            compile_vae_flag = getattr(runtime_config, "flux2_compile_vae", False) if runtime_config else False
+            compile_mode = getattr(runtime_config, "flux2_compile_mode", "max-autotune-no-cudagraphs") if runtime_config else "max-autotune-no-cudagraphs"
+            encoder_path = getattr(runtime_config, "flux2_encoder_path", None) if runtime_config else None
 
-        # Stage 1: Load encoder
-        from llm_dit.models.flux2.constants import FLUX2_MODEL_INFO
-        model_info = FLUX2_MODEL_INFO.get(model_name.lower(), {})
-        preset = "klein-9b" if "9b" in model_name.lower() or "8b" in model_name.lower() else "klein-4b"
-        text_encoder_spec = encoder_path or model_info.get("text_encoder", "Qwen/Qwen3-8B")
+            logger.info(f"[FLUX.2] Loading pipeline from {model_path} (quantization={quantization}, compile={compile_transformer})")
 
-        logger.info(f"[FLUX.2] Loading encoder from: {text_encoder_spec}")
-        loaded_encoder = Qwen3UnifiedEncoder.from_preset(preset, model_path=text_encoder_spec, device="cuda")
-        # Offload encoder to CPU with pinned memory for fast GPU shuttle via DMA
-        loaded_encoder.offload_to_pinned()
-        logger.info("[FLUX.2] Encoder loaded and offloaded to CPU with pinned memory")
+            # Stage 1: Load encoder
+            from llm_dit.models.flux2.constants import FLUX2_MODEL_INFO
+            model_info = FLUX2_MODEL_INFO.get(model_name.lower(), {})
+            preset = get_encoder_preset(model_name)
+            text_encoder_spec = encoder_path or model_info.get("text_encoder", "Qwen/Qwen3-8B")
 
-        # Stage 2: Load transformer
-        logger.info(f"[FLUX.2] Loading transformer: {model_name}")
-        loaded_transformer = load_flux2_transformer(
-            model_name,
-            device="cuda",
-            model_path=model_path,
-            block_offload=block_offload,
-            quantize_to=quantization,
-        )
+            logger.info(f"[FLUX.2] Loading encoder from: {text_encoder_spec}")
+            loaded_encoder = Qwen3UnifiedEncoder.from_preset(preset, model_path=text_encoder_spec, device="cuda")
+            # Offload encoder to CPU with pinned memory for fast GPU shuttle via DMA
+            loaded_encoder.offload_to_pinned()
+            logger.info("[FLUX.2] Encoder loaded and offloaded to CPU with pinned memory")
 
-        # Apply torch.compile to transformer if configured
-        if compile_transformer and not block_offload:
-            logger.info(f"[FLUX.2] Compiling transformer with mode={compile_mode}")
-            loaded_transformer = torch.compile(loaded_transformer, mode=compile_mode)
-            logger.info("[FLUX.2] Transformer compiled (warmup will occur on first forward pass)")
+            # Stage 2: Load transformer
+            logger.info(f"[FLUX.2] Loading transformer: {model_name}")
+            loaded_transformer = load_flux2_transformer(
+                model_name,
+                device="cuda",
+                model_path=model_path,
+                block_offload=block_offload,
+                quantize_to=quantization,
+            )
 
-        # Stage 3: Load VAE
-        logger.info(f"[FLUX.2] Loading VAE")
-        loaded_vae = load_flux2_vae(model_name, device="cuda", vae_path=vae_path)
+            # Apply torch.compile to transformer if configured
+            if compile_transformer and not block_offload:
+                logger.info(f"[FLUX.2] Compiling transformer with mode={compile_mode}")
+                loaded_transformer = torch.compile(loaded_transformer, mode=compile_mode)
+                logger.info("[FLUX.2] Transformer compiled (warmup will occur on first forward pass)")
 
-        # Apply torch.compile to VAE if configured
-        if compile_vae_flag:
-            logger.info(f"[FLUX.2] Compiling VAE decoder with mode={compile_mode}")
-            loaded_vae.decode = torch.compile(loaded_vae.decode, mode=compile_mode)
-            logger.info("[FLUX.2] VAE decoder compiled")
+            # Stage 3: Load VAE
+            logger.info(f"[FLUX.2] Loading VAE")
+            loaded_vae = load_flux2_vae(model_name, device="cuda", vae_path=vae_path)
 
-        # Store persistent model references
-        flux2_pipeline = {
-            "encoder": loaded_encoder,
-            "transformer": loaded_transformer,
-            "vae": loaded_vae,
-            "model_name": model_name,
-        }
+            # Apply torch.compile to VAE if configured
+            if compile_vae_flag:
+                logger.info(f"[FLUX.2] Compiling VAE decoder with mode={compile_mode}")
+                loaded_vae.decode = torch.compile(loaded_vae.decode, mode=compile_mode)
+                logger.info("[FLUX.2] VAE decoder compiled")
 
-        status = get_vram_status()
-        return {
-            "success": True,
-            "message": f"FLUX.2 pipeline loaded (quantization={quantization}, compile={compile_transformer})",
-            "vram": status.get("vram"),
-        }
-    except Exception as e:
-        logger.error(f"[FLUX.2] Failed to load pipeline: {e}")
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=503, detail=f"Failed to load FLUX.2 pipeline: {e}")
+            # Store persistent model references (only after all three succeed)
+            flux2_pipeline = {
+                "encoder": loaded_encoder,
+                "transformer": loaded_transformer,
+                "vae": loaded_vae,
+                "model_name": model_name,
+            }
+
+            status = get_vram_status()
+            return {
+                "success": True,
+                "message": f"FLUX.2 pipeline loaded (quantization={quantization}, compile={compile_transformer})",
+                "vram": status.get("vram"),
+            }
+        except Exception as e:
+            # Clean up any partially loaded models
+            del loaded_encoder, loaded_transformer, loaded_vae
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            logger.error(f"[FLUX.2] Failed to load pipeline: {e}")
+            import traceback
+            traceback.print_exc()
+            raise HTTPException(status_code=503, detail=f"Failed to load FLUX.2 pipeline: {e}")
 
 
 @app.post("/api/vram/unload-flux2")
