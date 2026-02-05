@@ -2252,6 +2252,10 @@ async def flux2_generate(request: Flux2GenerateRequest):
         if runtime_config:
             offload_between_stages = getattr(runtime_config, "flux2_offload_between_stages", True)
 
+        # Force offload when models aren't pre-loaded (encoder would stay on GPU during transformer load)
+        if not isinstance(flux2_pipeline, dict):
+            offload_between_stages = True
+
         # Create generation config
         config = Flux2GenerationConfig(
             prompt=request.prompt,
@@ -2385,6 +2389,10 @@ async def flux2_generate_stream(request: Flux2GenerateRequest):
             offload_between_stages = True
             if runtime_config:
                 offload_between_stages = getattr(runtime_config, "flux2_offload_between_stages", True)
+
+            # Force offload when models aren't pre-loaded (encoder would stay on GPU during transformer load)
+            if not isinstance(flux2_pipeline, dict):
+                offload_between_stages = True
 
             # Create generation config
             config = Flux2GenerationConfig(
