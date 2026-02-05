@@ -2285,6 +2285,15 @@ async def flux2_generate(request: Flux2GenerateRequest):
         if model_path:
             logger.info(f"[FLUX.2] Using model path: {model_path}")
 
+        # Pass persistent models if pipeline is preloaded
+        persistent_encoder = None
+        persistent_transformer = None
+        persistent_vae = None
+        if isinstance(flux2_pipeline, dict):
+            persistent_encoder = flux2_pipeline.get("encoder")
+            persistent_transformer = flux2_pipeline.get("transformer")
+            persistent_vae = flux2_pipeline.get("vae")
+
         # Run in executor to not block event loop
         loop = asyncio.get_event_loop()
         image = await loop.run_in_executor(
@@ -2292,6 +2301,9 @@ async def flux2_generate(request: Flux2GenerateRequest):
             lambda: generate_image(
                 config,
                 model_name=request.model_name,
+                encoder=persistent_encoder,
+                transformer=persistent_transformer,
+                vae=persistent_vae,
                 model_path=model_path,
                 vae_path=vae_path,
             )
@@ -2423,9 +2435,21 @@ async def flux2_generate_stream(request: Flux2GenerateRequest):
                         {"step": step, "total": total, "stage": stage}
                     )
 
+                # Pass persistent models if pipeline is preloaded
+                p_encoder = None
+                p_transformer = None
+                p_vae = None
+                if isinstance(flux2_pipeline, dict):
+                    p_encoder = flux2_pipeline.get("encoder")
+                    p_transformer = flux2_pipeline.get("transformer")
+                    p_vae = flux2_pipeline.get("vae")
+
                 return generate_image_with_progress(
                     config,
                     model_name=request.model_name,
+                    encoder=p_encoder,
+                    transformer=p_transformer,
+                    vae=p_vae,
                     model_path=model_path,
                     vae_path=vae_path,
                     progress_callback=callback,
@@ -5598,7 +5622,9 @@ def unload_all_pipelines_except(keep: str = None):
     if keep != "flux2":
         global flux2_pipeline
         if flux2_pipeline is not None:
-            del flux2_pipeline
+            if isinstance(flux2_pipeline, dict):
+                for key in list(flux2_pipeline.keys()):
+                    del flux2_pipeline[key]
             flux2_pipeline = None
             unloaded.append("FLUX.2")
 
@@ -5971,37 +5997,81 @@ async def vram_load_flux2():
     unload_all_pipelines_except("flux2")
 
     try:
-        from llm_dit.pipelines.flux2_generate import Flux2GenerationConfig, generate_image
-
-        # Create a minimal config just to trigger pipeline loading
-        # The generate_image function handles loading internally
-        logger.info(f"[FLUX.2] Loading pipeline on-demand from {model_path}")
-
-        # Import the pipeline module to trigger loading
-        from llm_dit.pipelines import flux2_generate
-
-        # Note: FLUX.2 doesn't have a global pipeline object like others
-        # It loads internally on generate_image calls
-        # For now, just verify paths exist
         from pathlib import Path
+        from llm_dit.models.flux2.loader import load_flux2_transformer, load_flux2_vae
+        from llm_dit.encoders.qwen3_unified import Qwen3UnifiedEncoder
 
         model_path_obj = Path(model_path).expanduser()
         if not model_path_obj.exists():
             raise ValueError(f"FLUX.2 model path does not exist: {model_path}")
 
-        # Set sentinel value so status endpoint shows "loaded"
-        # Actual model loading happens on first generate call
-        flux2_pipeline = "configured"
+        model_name = getattr(runtime_config, "flux2_model_name", "klein-9b") if runtime_config else "klein-9b"
+        block_offload = getattr(runtime_config, "flux2_block_offload", False) if runtime_config else False
+        quantization = getattr(runtime_config, "flux2_quantization", "none") if runtime_config else "none"
+        compile_transformer = getattr(runtime_config, "flux2_compile", False) if runtime_config else False
+        compile_vae_flag = getattr(runtime_config, "flux2_compile_vae", False) if runtime_config else False
+        compile_mode = getattr(runtime_config, "flux2_compile_mode", "max-autotune-no-cudagraphs") if runtime_config else "max-autotune-no-cudagraphs"
+        encoder_path = getattr(runtime_config, "flux2_encoder_path", None) if runtime_config else None
+
+        logger.info(f"[FLUX.2] Loading pipeline from {model_path} (quantization={quantization}, compile={compile_transformer})")
+
+        # Stage 1: Load encoder
+        from llm_dit.models.flux2.constants import FLUX2_MODEL_INFO
+        model_info = FLUX2_MODEL_INFO.get(model_name.lower(), {})
+        preset = "klein-9b" if "9b" in model_name.lower() or "8b" in model_name.lower() else "klein-4b"
+        text_encoder_spec = encoder_path or model_info.get("text_encoder", "Qwen/Qwen3-8B")
+
+        logger.info(f"[FLUX.2] Loading encoder from: {text_encoder_spec}")
+        loaded_encoder = Qwen3UnifiedEncoder.from_preset(preset, model_path=text_encoder_spec, device="cuda")
+        # Offload encoder to CPU with pinned memory for fast GPU shuttle via DMA
+        loaded_encoder.offload_to_pinned()
+        logger.info("[FLUX.2] Encoder loaded and offloaded to CPU with pinned memory")
+
+        # Stage 2: Load transformer
+        logger.info(f"[FLUX.2] Loading transformer: {model_name}")
+        loaded_transformer = load_flux2_transformer(
+            model_name,
+            device="cuda",
+            model_path=model_path,
+            block_offload=block_offload,
+            quantize_to=quantization,
+        )
+
+        # Apply torch.compile to transformer if configured
+        if compile_transformer and not block_offload:
+            logger.info(f"[FLUX.2] Compiling transformer with mode={compile_mode}")
+            loaded_transformer = torch.compile(loaded_transformer, mode=compile_mode)
+            logger.info("[FLUX.2] Transformer compiled (warmup will occur on first forward pass)")
+
+        # Stage 3: Load VAE
+        logger.info(f"[FLUX.2] Loading VAE")
+        loaded_vae = load_flux2_vae(model_name, device="cuda", vae_path=vae_path)
+
+        # Apply torch.compile to VAE if configured
+        if compile_vae_flag:
+            logger.info(f"[FLUX.2] Compiling VAE decoder with mode={compile_mode}")
+            loaded_vae.decode = torch.compile(loaded_vae.decode, mode=compile_mode)
+            logger.info("[FLUX.2] VAE decoder compiled")
+
+        # Store persistent model references
+        flux2_pipeline = {
+            "encoder": loaded_encoder,
+            "transformer": loaded_transformer,
+            "vae": loaded_vae,
+            "model_name": model_name,
+        }
 
         status = get_vram_status()
         return {
             "success": True,
-            "message": "FLUX.2 configured and ready (loads on first generation)",
+            "message": f"FLUX.2 pipeline loaded (quantization={quantization}, compile={compile_transformer})",
             "vram": status.get("vram"),
         }
     except Exception as e:
-        logger.error(f"[FLUX.2] Failed to verify pipeline: {e}")
-        raise HTTPException(status_code=503, detail=f"Failed to verify FLUX.2 pipeline: {e}")
+        logger.error(f"[FLUX.2] Failed to load pipeline: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=503, detail=f"Failed to load FLUX.2 pipeline: {e}")
 
 
 @app.post("/api/vram/unload-flux2")
@@ -6016,10 +6086,15 @@ async def vram_unload_flux2():
 
     unloaded = flux2_pipeline is not None
     if unloaded:
+        # Explicitly delete model references to free GPU memory
+        if isinstance(flux2_pipeline, dict):
+            for key in list(flux2_pipeline.keys()):
+                del flux2_pipeline[key]
         flux2_pipeline = None
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+        logger.info("[FLUX.2] Pipeline unloaded, VRAM freed")
 
     status = get_vram_status()
     return {

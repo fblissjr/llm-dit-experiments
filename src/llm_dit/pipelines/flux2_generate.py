@@ -736,6 +736,12 @@ def generate_image(
     device = torch.device(config.device)
     dtype = config.dtype
 
+    # Track which models were externally provided (persistent) vs loaded internally.
+    # Persistent models must NOT be deleted after use — they stay alive across requests.
+    encoder_is_persistent = encoder is not None
+    transformer_is_persistent = transformer is not None
+    vae_is_persistent = vae is not None
+
     # Set seed for reproducibility
     if config.seed is not None:
         torch.manual_seed(config.seed)
@@ -811,11 +817,12 @@ def generate_image(
     )
 
     # Offload encoder
-    if config.offload_between_stages:
+    if config.offload_between_stages or encoder_is_persistent:
         logger.info("Offloading encoder...")
         encoder.offload()
-        del encoder
-        cleanup_memory()
+        if not encoder_is_persistent:
+            del encoder
+            cleanup_memory()
         log_gpu_memory("after encoder offload + cleanup")
 
     # ===========================================================================
@@ -847,7 +854,7 @@ def generate_image(
             logger.info(f"Encoded reference images: {ref_tokens.shape[1]} tokens")
 
         # Optionally offload VAE (will reload for decode)
-        if config.offload_between_stages:
+        if config.offload_between_stages and not vae_is_persistent:
             logger.info("Offloading VAE (will reload for decode)...")
             del vae
             vae = None
@@ -949,7 +956,7 @@ def generate_image(
 
     # Move latents to CPU and offload transformer
     latents = latents.cpu()
-    if config.offload_between_stages:
+    if config.offload_between_stages and not transformer_is_persistent:
         logger.info("Offloading transformer...")
         del transformer
         cleanup_memory()
@@ -970,7 +977,7 @@ def generate_image(
     # Decode to image
     image = latents_to_image(latents, vae, height=config.height, width=config.width)
 
-    if config.offload_between_stages:
+    if config.offload_between_stages and not vae_is_persistent:
         logger.info("Offloading VAE...")
         del vae
         cleanup_memory()

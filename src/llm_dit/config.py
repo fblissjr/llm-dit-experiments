@@ -652,6 +652,12 @@ class Flux2Config:
     default_guidance: float | None = None  # Default CFG (None = model default: 1.0 distilled, 4.0 base)
     default_preset: str = ""  # Default preset to load (e.g., "quality")
 
+    # Performance optimization
+    compile: bool = False  # torch.compile the transformer
+    compile_vae: bool = False  # torch.compile the VAE decoder
+    compile_mode: str = "max-autotune-no-cudagraphs"  # torch.compile mode
+    quantization: str = "none"  # Post-load quantization: "none", "fp8", "int8"
+
 
 @dataclass
 class ZImageConfig:

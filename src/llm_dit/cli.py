@@ -182,6 +182,10 @@ class RuntimeConfig:
     flux2_encoder_device: str = "cuda"  # Device for text encoder (cuda recommended)
     flux2_model_path: str | None = None  # Local path to transformer weights (file or directory)
     flux2_vae_path: str | None = None  # Local path to VAE weights (file or directory)
+    flux2_compile: bool = False  # torch.compile the transformer
+    flux2_compile_vae: bool = False  # torch.compile the VAE decoder
+    flux2_compile_mode: str = "max-autotune-no-cudagraphs"  # torch.compile mode
+    flux2_quantization: str = "none"  # Post-load quantization: "none", "fp8", "int8"
 
     # Z-Image variant configuration
     zimage_variant: str = "auto"  # auto, turbo, base
@@ -1975,6 +1979,10 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
                     config.flux2_offload_between_stages = getattr(flux2, "offload_between_stages", True)
                     # Read encoder_device from TOML (defaults to cuda)
                     config.flux2_encoder_device = getattr(flux2, "encoder_device", "cuda")
+                    config.flux2_compile = getattr(flux2, "compile", False)
+                    config.flux2_compile_vae = getattr(flux2, "compile_vae", False)
+                    config.flux2_compile_mode = getattr(flux2, "compile_mode", "max-autotune-no-cudagraphs")
+                    config.flux2_quantization = getattr(flux2, "quantization", "none")
                     if flux2.default_steps is not None:
                         config.flux2_num_steps = flux2.default_steps
                     if flux2.default_guidance is not None:

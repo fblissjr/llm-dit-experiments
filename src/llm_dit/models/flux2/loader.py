@@ -395,6 +395,7 @@ def load_flux2_transformer(
     model_path: str | None = None,
     block_offload: bool = False,
     validate: bool = True,
+    quantize_to: str = "none",
 ) -> Flux2Transformer:
     """
     Load a FLUX.2 transformer model (pure PyTorch).
@@ -407,6 +408,9 @@ def load_flux2_transformer(
         model_path: Direct path to weights file or directory (overrides HF download)
         block_offload: If True, enable block-by-block GPU offloading (slower but uses less VRAM)
         validate: If True, run sanity checks on loaded weights (catches FP8 dequant issues)
+        quantize_to: Post-load quantization via torchao ("none", "fp8", "int8").
+                     "fp8" replaces Linear weights with Float8Tensor for SM89 FP8 tensor cores.
+                     Incompatible with block_offload (requires all weights on GPU).
 
     Returns:
         Loaded Flux2Transformer
@@ -573,6 +577,23 @@ def load_flux2_transformer(
     # Validate loaded weights (catches FP8 dequantization issues)
     if validate:
         _validate_transformer_weights(model, is_fp8)
+
+    # Post-load quantization via torchao (after model is on GPU)
+    if quantize_to and quantize_to != "none" and not block_offload:
+        from llm_dit.quantization.torchao_utils import quantize_model_torchao_filtered
+        logger.info(f"[FLUX2:Loader] Applying torchao {quantize_to} quantization...")
+        _log_memory_state("Before torchao quantization")
+        model, stats = quantize_model_torchao_filtered(model, method=quantize_to)  # type: ignore[assignment]
+        logger.info(
+            f"[FLUX2:Loader] Quantization complete: "
+            f"{stats['quantized_layers']}/{stats['total_linear_layers']} layers quantized"
+        )
+        _log_memory_state("After torchao quantization")
+    elif quantize_to and quantize_to != "none" and block_offload:
+        logger.warning(
+            "[FLUX2:Loader] quantize_to=%s ignored: incompatible with block_offload "
+            "(torchao requires all weights on GPU)", quantize_to
+        )
 
     return model
 

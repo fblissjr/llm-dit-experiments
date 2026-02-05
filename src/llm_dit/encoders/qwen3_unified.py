@@ -174,6 +174,7 @@ class Qwen3UnifiedEncoder(nn.Module, Qwen3EncoderMixin):
         self._num_layers = None
         self._is_loaded = False
         self._is_offloaded = False
+        self._is_pinned = False
 
     @classmethod
     def from_preset(
@@ -355,7 +356,10 @@ class Qwen3UnifiedEncoder(nn.Module, Qwen3EncoderMixin):
             self._load_model()
 
         if self._is_offloaded:
-            self._model.to(self._target_device)
+            # Use non_blocking=True when shuttling from pinned memory for async DMA
+            self._model.to(self._target_device, non_blocking=self._is_pinned)
+            if self._is_pinned and self._target_device.type == "cuda":
+                torch.cuda.synchronize()  # Ensure transfer completes before forward
             self._is_offloaded = False
 
         all_input_ids = []
@@ -432,8 +436,49 @@ class Qwen3UnifiedEncoder(nn.Module, Qwen3EncoderMixin):
     def offload(self) -> None:
         """Offload model to CPU and free GPU memory."""
         if self._model is not None:
-            self._offload_with_cleanup(self._model)
+            if self._is_pinned:
+                # Fast path: move to CPU with pinned memory already set up
+                logger.info("Offloading encoder to CPU (pinned memory)...")
+                self._model.to("cpu")
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+            else:
+                self._offload_with_cleanup(self._model)
         self._is_offloaded = True
+
+    def offload_to_pinned(self) -> None:
+        """Offload model to CPU with pinned memory for fast GPU shuttle.
+
+        Pinned (page-locked) memory enables direct DMA transfers between
+        CPU and GPU, avoiding the intermediate copy through a staging buffer.
+        This makes subsequent .to("cuda", non_blocking=True) calls ~2-3x faster.
+
+        Safe to call on systems with sufficient RAM (encoder is ~8GB for Qwen3-8B).
+        """
+        if self._model is None:
+            return
+
+        logger.info("Offloading encoder to CPU with pinned memory...")
+        self._model.to("cpu")
+
+        # Pin all parameter and buffer memory for DMA transfers
+        pinned_count = 0
+        for param in self._model.parameters():
+            if not param.data.is_pinned():
+                param.data = param.data.pin_memory()
+                pinned_count += 1
+        for buf in self._model.buffers():
+            if not buf.data.is_pinned():
+                buf.data = buf.data.pin_memory()
+
+        self._is_offloaded = True
+        self._is_pinned = True
+        logger.info(f"Encoder offloaded with {pinned_count} pinned tensors")
+
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
     def to(self, device: Union[str, torch.device]) -> "Qwen3UnifiedEncoder":
         """Move encoder to device."""
