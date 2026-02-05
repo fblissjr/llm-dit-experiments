@@ -171,34 +171,52 @@ frequency_modulation = false     # Enable timestep-based RoPE frequency scaling 
 # vae_path = "/path/to/FLUX.2-klein/FLUX.2-klein-9B"
 # encoder_path = "/path/to/Qwen3-8B"   # Qwen3 text encoder (auto-downloads if empty)
 default_model = "klein-9b-fp8"
-block_offload = true                     # Block-by-block GPU offloading (slower but uses ~5GB less VRAM)
-offload_between_stages = true            # Three-stage offloading: encoder -> transformer -> VAE
-encoder_device = "cuda"                  # Device for text encoder
 default_steps = 4                        # Override model default steps (None = auto)
 default_guidance = 1.0                   # Override model default CFG (None = auto)
+offload_between_stages = true            # Three-stage offloading: encoder -> transformer -> VAE
+encoder_device = "cuda"                  # Device for text encoder
 
-# Performance optimization (Phase 1-2)
-# These settings control persistent model loading optimizations in the server.
+# Block offload: stream transformer blocks between CPU and GPU one at a time.
+# Uses ~5GB less VRAM but significantly slower per step.
+# INCOMPATIBLE with quantization and compile (will raise ValueError at load time).
+block_offload = true
+
+# Performance optimization (persistent model loading)
 # When the server loads FLUX.2 via /api/vram/load-flux2, models are preloaded
-# and kept resident across requests, eliminating per-request loading overhead.
+# and kept resident across requests. Encoder uses pinned memory shuttle with
+# shadow buffers for zero-allocation DMA transfers between CPU and GPU.
 #
-# quantization: Post-load quantization via torchao
-#   "none"  - No quantization, BF16 weights (~18GB VRAM for 9B transformer)
-#   "fp8"   - FP8 dynamic quantization (~9GB VRAM, uses SM89 FP8 tensor cores)
-#             Requires RTX 4090+ (compute capability 8.9+)
-#   "int8"  - INT8 weight-only quantization (~9GB VRAM, works on any GPU)
-# NOTE: Incompatible with block_offload=true (requires all weights on GPU)
+# Two configuration profiles:
+#
+# --- Profile A: Maximum performance (RTX 4090 with FP8) ---
+#   block_offload = false
+#   quantization = "fp8"
+#   compile = true
+#   compile_vae = true
+#   Result: ~9GB transformer + ~1GB VAE + encoder shuttles from CPU
+#
+# --- Profile B: Low VRAM (block offload, no compile) ---
+#   block_offload = true
+#   quantization = "none"
+#   compile = false
+#   compile_vae = false
+#   Result: ~5GB peak (blocks stream one at a time)
+#
+# quantization: Post-load torchao quantization applied to transformer
+#   "none" - BF16 weights (~18GB VRAM for 9B transformer)
+#   "fp8"  - FP8 dynamic quantization (~9GB VRAM, SM89+ required)
+#   "int8" - INT8 weight-only (~9GB VRAM, any GPU)
+# INCOMPATIBLE with block_offload=true (raises ValueError)
 quantization = "none"
-#
+
 # compile: torch.compile the transformer for kernel fusion + GEMM autotuning
-# First request after server load triggers ~30-60s warmup compilation.
-# Subsequent requests benefit from 30-50% denoising speedup.
-# NOTE: Incompatible with block_offload=true
+# First request after load triggers ~30-60s warmup. Subsequent requests 30-50% faster.
+# INCOMPATIBLE with block_offload=true (raises RuntimeError)
 compile = false
-#
+
 # compile_vae: torch.compile the VAE decoder (20-40% decode speedup)
 compile_vae = false
-#
+
 # compile_mode: torch.compile backend mode
 #   "max-autotune-no-cudagraphs" - Safe default: autotuned kernels, no CUDA graphs
 #   "max-autotune"               - Adds CUDA graph capture (requires static shapes)

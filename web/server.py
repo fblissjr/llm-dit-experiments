@@ -6028,6 +6028,13 @@ async def vram_load_flux2():
             compile_mode = getattr(runtime_config, "flux2_compile_mode", "max-autotune-no-cudagraphs") if runtime_config else "max-autotune-no-cudagraphs"
             encoder_path = getattr(runtime_config, "flux2_encoder_path", None) if runtime_config else None
 
+            # Validate incompatible settings before loading anything
+            if compile_transformer and block_offload:
+                raise ValueError(
+                    "compile=true is incompatible with block_offload=true. "
+                    "Set block_offload=false when using compile=true."
+                )
+
             logger.info(f"[FLUX.2] Loading pipeline from {model_path} (quantization={quantization}, compile={compile_transformer})")
 
             # Stage 1: Load encoder
