@@ -16,7 +16,7 @@ Uses [Semantic Versioning](https://semver.org/).
 - Loading lock (`_flux2_loading_lock`) for concurrent `/api/vram/load-flux2` request safety
 
 ### fixed
-- Pinned memory lost after first CUDA round-trip: `offload()` now re-pins parameters after `model.to("cpu")`
+- Pinned memory lost after first CUDA round-trip: `offload()` now uses shadow buffer pattern to copy CUDA tensors directly into pre-allocated pinned buffers (0 allocations vs 2N per cycle)
 - Partial model cleanup on load failure: leaked encoder/transformer memory now explicitly freed
 - DMA transfer now overlaps with tokenization in encoder `forward()` (~0.5-1s latency reduction)
 

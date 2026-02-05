@@ -175,6 +175,8 @@ class Qwen3UnifiedEncoder(nn.Module, Qwen3EncoderMixin):
         self._is_loaded = False
         self._is_offloaded = False
         self._is_pinned = False
+        # Shadow buffers: persistent pinned CPU tensors reused across offload cycles
+        self._pinned_shadows: dict[str, torch.Tensor] = {}
 
     @classmethod
     def from_preset(
@@ -441,20 +443,34 @@ class Qwen3UnifiedEncoder(nn.Module, Qwen3EncoderMixin):
     def offload(self) -> None:
         """Offload model to CPU and free GPU memory.
 
-        When pinned memory is enabled, re-pins parameters after the CPU
-        round-trip. PyTorch allocates new (non-pinned) CPU tensors when
-        moving from CUDA back to CPU, so the original pinned memory is lost.
+        When shadow buffers exist (from offload_to_pinned), copies CUDA
+        tensors directly into the pre-allocated pinned buffers. This avoids
+        the 2N allocation + 2N copy overhead of model.to("cpu") + re-pin
+        on every cycle, replacing it with 0 allocations + N copies.
+
+        The tradeoff is ~8GB of pinned CPU RAM stays resident while the
+        model is on GPU, which is acceptable on 32GB+ systems.
         """
         if self._model is not None:
-            self._model.to("cpu")
-            if self._is_pinned:
-                # Re-pin after CUDA round-trip (PyTorch allocates new non-pinned CPU tensors)
-                for param in self._model.parameters():
-                    if not param.data.is_pinned():
-                        param.data = param.data.pin_memory()
-                for buf in self._model.buffers():
-                    if not buf.data.is_pinned():
-                        buf.data = buf.data.pin_memory()
+            if self._is_pinned and self._pinned_shadows:
+                # Fast path: copy CUDA -> pre-allocated pinned buffers directly
+                for name, param in self._model.named_parameters():
+                    pinned = self._pinned_shadows.get(name)
+                    if pinned is not None:
+                        pinned.copy_(param.data)
+                        param.data = pinned
+                    else:
+                        # Fallback for params not in shadow dict (should not happen)
+                        param.data = param.data.cpu().pin_memory()
+                for name, buf in self._model.named_buffers():
+                    pinned = self._pinned_shadows.get(name)
+                    if pinned is not None:
+                        pinned.copy_(buf.data)
+                        buf.data = pinned
+                    else:
+                        buf.data = buf.data.cpu().pin_memory()
+            else:
+                self._model.to("cpu")
             gc.collect()
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
@@ -467,6 +483,10 @@ class Qwen3UnifiedEncoder(nn.Module, Qwen3EncoderMixin):
         CPU and GPU, avoiding the intermediate copy through a staging buffer.
         This makes subsequent .to("cuda", non_blocking=True) calls ~2-3x faster.
 
+        Also stores references to the pinned tensors as shadow buffers so that
+        subsequent offload() calls can copy CUDA->pinned directly without
+        re-allocating pinned memory on every cycle.
+
         Safe to call on systems with sufficient RAM (encoder is ~8GB for Qwen3-8B).
         """
         if self._model is None:
@@ -475,19 +495,22 @@ class Qwen3UnifiedEncoder(nn.Module, Qwen3EncoderMixin):
         logger.info("Offloading encoder to CPU with pinned memory...")
         self._model.to("cpu")
 
-        # Pin all parameter and buffer memory for DMA transfers
+        # Pin all parameter and buffer memory, storing references as shadow buffers
         pinned_count = 0
-        for param in self._model.parameters():
+        self._pinned_shadows = {}
+        for name, param in self._model.named_parameters():
             if not param.data.is_pinned():
                 param.data = param.data.pin_memory()
                 pinned_count += 1
-        for buf in self._model.buffers():
+            self._pinned_shadows[name] = param.data
+        for name, buf in self._model.named_buffers():
             if not buf.data.is_pinned():
                 buf.data = buf.data.pin_memory()
+            self._pinned_shadows[name] = buf.data
 
         self._is_offloaded = True
         self._is_pinned = True
-        logger.info(f"Encoder offloaded with {pinned_count} pinned tensors")
+        logger.info(f"Encoder offloaded with {pinned_count} pinned tensors (shadow buffers stored)")
 
         gc.collect()
         if torch.cuda.is_available():
