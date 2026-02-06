@@ -250,47 +250,6 @@ const ApiClient = {
     },
 
     // =========================================================================
-    // VL (Vision-Language) Conditioning
-    // =========================================================================
-
-    async getVLStatus() {
-        const response = await fetch(`${API_BASE}/api/vl/status`);
-        return response.json();
-    },
-
-    async getVLConfig() {
-        const response = await fetch(`${API_BASE}/api/vl/config`);
-        return response.json();
-    },
-
-    async extractVLEmbeddings(data) {
-        const response = await fetch(`${API_BASE}/api/vl/extract`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(data),
-        });
-        return response.json();
-    },
-
-    async deleteVLCache(embeddingsId) {
-        await fetch(`${API_BASE}/api/vl/cache/${embeddingsId}`, { method: 'DELETE' });
-    },
-
-    async clearVLCache() {
-        const response = await fetch(`${API_BASE}/api/system/vl-cache`, { method: 'DELETE' });
-        return response.json();
-    },
-
-    async generateWithVL(data) {
-        const response = await fetch(`${API_BASE}/api/vl/generate`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(data),
-        });
-        return this._handleImageResponse(response);
-    },
-
-    // =========================================================================
     // Z-Image Generation
     // =========================================================================
 

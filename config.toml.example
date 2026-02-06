@@ -239,12 +239,6 @@ use_api = false                  # false=use local encoder model, true=use remot
 api_url = ""                     # API URL for rewriting (empty = use [api].url)
 api_model = "Qwen3-4B"           # Model ID for TEXT-ONLY rewriting via API
 
-# VL (Vision-Language) rewriter - can analyze images when rewriting
-vl_enabled = true                # Show VL model option in rewriter UI
-preload_vl = false               # Preload local VL at startup (false = load on-demand)
-vl_api_model = ""                # Model ID for VL rewriting via API (e.g., "qwen2.5-vl-72b-mlx")
-                                 # Empty = use local VL from [vl].model_path
-
 # Generation parameters (apply to all rewriter backends)
 # See https://huggingface.co/Qwen/Qwen3-4B#best-practices for optimal settings
 temperature = 0.6                # 0.6 for thinking mode (NEVER use 0.0 - causes repetition)
@@ -253,18 +247,7 @@ top_k = 20                       # Top-k sampling
 min_p = 0.0                      # Min probability cutoff (0.0 = disabled)
 presence_penalty = 0.0           # 0.0-2.0, increase if seeing repetitive output
 max_tokens = 1024                # Max tokens to generate
-timeout = 120.0                  # API timeout in seconds (VL models need longer)
-
-[vl]
-# Vision conditioning: extract embeddings from images to blend with text
-# For image-to-image style transfer, NOT for prompt rewriting
-# RESEARCH STATUS: Zero-shot VL conditioning showed limited viability
-model_path = ""                  # Path to Qwen3-VL-4B-Instruct (empty = disabled)
-device = "cpu"                   # cpu/cuda/auto - CPU recommended to save VRAM
-default_alpha = 0.3              # VL influence: 0.0=pure text, 1.0=pure VL (0.3 recommended)
-default_hidden_layer = -6        # Layer for VL embeddings (-6 works better than -2 for VL)
-auto_unload = true               # Unload Qwen3-VL after extraction to free memory
-target_std = 58.75               # Scale VL embeddings to match text embedding statistics
+timeout = 120.0                  # API timeout in seconds
 
 [slg]
 # Skip Layer Guidance (SLG) for improved structure/anatomy

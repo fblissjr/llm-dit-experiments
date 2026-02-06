@@ -106,9 +106,6 @@ app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"), na
 pipeline = None  # Z-Image pipeline
 encoder = None  # For encoder-only mode
 rewriter_backend = None  # API backend for rewriting (if configured)
-vl_extractor = None  # Qwen3-VL embedding extractor (if configured)
-vl_rewriter = None  # Qwen3-VL instance for vision rewriting (may share with vl_extractor)
-vl_embeddings_cache = {}  # Cache for extracted VL embeddings (keyed by hash)
 runtime_config = None  # RuntimeConfig from CLI/TOML
 encoder_only_mode = False
 
@@ -213,7 +210,6 @@ REQUIRES_RESTART = {
     "model_path",
     "text_encoder_path",
     "templates_dir",
-    "vl_model_path",
     "qwen_image_model_path",
     "qwen_image_edit_model_path",
     # Device placement
@@ -580,49 +576,8 @@ class RewriteRequest(BaseModel):
     top_k: Optional[int] = None  # Top-k sampling (default: 20 for Qwen3)
     min_p: Optional[float] = None  # Minimum probability (default: 0.0)
     presence_penalty: Optional[float] = None  # Presence penalty (0-2, default: 0.0)
-    # VL rewriter fields
-    model: str = "qwen3-4b"  # "qwen3-4b" (text-only) or "qwen3-vl" (vision+text)
-    image: Optional[str] = None  # Base64-encoded image (VL model only)
-
-
-class VLExtractRequest(BaseModel):
-    """Request to extract VL embeddings from an image."""
-
-    image: str  # Base64-encoded image
-    text: Optional[str] = None  # Optional text description with image
-    hidden_layer: int = -2  # Which hidden layer to extract (-2 = penultimate)
-    image_tokens_only: bool = False  # Only extract image token embeddings
-    scale_to_text: bool = True  # Scale embeddings to match text statistics
-
-
-class VLGenerateRequest(BaseModel):
-    """Request for VL-conditioned generation."""
-
-    prompt: str  # Text prompt
-    vl_image: Optional[str] = None  # Base64-encoded reference image (optional)
-    vl_embeddings_id: Optional[str] = None  # ID of pre-extracted embeddings (optional)
-    vl_alpha: float = 0.3  # VL influence (0.0=text, 1.0=VL)
-    vl_hidden_layer: int = -2  # Hidden layer for VL extraction
-    vl_image_tokens_only: bool = False  # Only use image tokens
-    vl_text: Optional[str] = None  # Text description with reference image
-    vl_blend_mode: str = "linear"  # linear, style_only, graduated, attention_weighted
-    # Standard generation params
-    system_prompt: Optional[str] = None
-    thinking_content: Optional[str] = None
-    assistant_content: Optional[str] = None
-    force_think_block: bool = False
-    strip_quotes: bool = False
-    width: int = 1024
-    height: int = 1024
-    steps: int = 9
-    seed: Optional[int] = None
-    template: Optional[str] = None
-    guidance_scale: float = 0.0
-    shift: float = 3.0
-    dynamic_shift: bool = False  # Calculate shift based on resolution (overrides shift)
-    d_noise: float = 1.0  # Sigma schedule scaling (<1.0 = sharper, >1.0 = softer)
-    long_prompt_mode: str = "interpolate"
-    hidden_layer: int = -2  # For text encoder
+    model: str = "qwen3-4b"  # Rewriter model to use
+    image: Optional[str] = None  # Base64-encoded image (for API VL models)
 
 
 class QwenImageDecomposeRequest(BaseModel):
@@ -741,7 +696,7 @@ _ZIMAGE_PYDANTIC_DEFAULTS = {
 }
 
 
-def apply_zimage_variant_defaults(request: Union[GenerateRequest, Img2ImgRequest, "VLGenerateRequest"]) -> None:
+def apply_zimage_variant_defaults(request: Union[GenerateRequest, Img2ImgRequest]) -> None:
     """Apply Z-Image variant-aware defaults to request in-place.
 
     The Pydantic request classes have hardcoded Turbo defaults (steps=9, shift=3.0,
@@ -752,7 +707,7 @@ def apply_zimage_variant_defaults(request: Union[GenerateRequest, Img2ImgRequest
     client didn't override them) and replaces them with variant-appropriate values.
 
     Args:
-        request: GenerateRequest, Img2ImgRequest, or VLGenerateRequest to modify in-place
+        request: GenerateRequest or Img2ImgRequest to modify in-place
 
     Note:
         - Only applies when runtime_config is available and variant is "base"
@@ -801,7 +756,7 @@ async def health():
         "pipeline_loaded": pipeline is not None,
         "encoder_loaded": encoder is not None,
         "encoder_only_mode": encoder_only_mode,
-        "vl_available": vl_extractor is not None,
+
         "qwen_image_available": qwen_image_pipeline is not None,
     }
 
@@ -1459,344 +1414,6 @@ async def qwen_image_2512_generate(request: QwenImage2512GenerateRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# =============================================================================
-# Vision Conditioning (Qwen3-VL) Endpoints
-# =============================================================================
-
-
-@app.get("/api/vl/status")
-async def vl_status():
-    """Check VL conditioning status and configuration."""
-    if runtime_config is None:
-        return {
-            "available": False,
-            "reason": "Runtime config not loaded",
-        }
-
-    vl_configured = bool(runtime_config.vl_model_path)
-    vl_loaded = vl_extractor is not None
-
-    return {
-        "available": vl_loaded,
-        "configured": vl_configured,
-        "model_path": runtime_config.vl_model_path if vl_configured else None,
-        "device": runtime_config.vl_device if vl_configured else None,
-        "default_alpha": runtime_config.vl_alpha if vl_configured else 0.3,
-        "default_hidden_layer": runtime_config.vl_hidden_layer if vl_configured else -2,
-        "blend_modes": [
-            "interpolate",  # RECOMMENDED: compresses all VL tokens
-            "adain_per_dim",  # Best for style transfer
-            "adain",  # Transfer VL statistics to text
-            "linear",  # WARNING: truncates, loses most VL info
-            "style_only",  # Blend only style dimensions
-            "graduated",  # Graduated alpha per token
-            "attention_weighted",  # Falls back to interpolate
-        ],
-        "cached_embeddings": list(vl_embeddings_cache.keys()),
-    }
-
-
-@app.get("/api/vl/config")
-async def vl_config():
-    """Get VL conditioning default parameters from server config."""
-    if runtime_config is None:
-        return {
-            "alpha": 0.3,
-            "hidden_layer": -2,
-            "auto_unload": True,
-            "blend_mode": "linear",
-        }
-    return {
-        "alpha": runtime_config.vl_alpha,
-        "hidden_layer": runtime_config.vl_hidden_layer,
-        "auto_unload": runtime_config.vl_auto_unload,
-        "blend_mode": runtime_config.vl_blend_mode,
-    }
-
-
-@app.post("/api/vl/extract")
-async def vl_extract(request: VLExtractRequest):
-    """Extract VL embeddings from an uploaded image.
-
-    Returns an embeddings ID that can be used with /api/vl/generate.
-    This allows pre-extracting embeddings and reusing them across generations.
-    """
-    if vl_extractor is None:
-        raise HTTPException(
-            status_code=503, detail="VL extractor not loaded. Configure vl.model_path in config."
-        )
-
-    try:
-        # Decode base64 image
-        image_data = base64.b64decode(request.image)
-        image = Image.open(io.BytesIO(image_data)).convert("RGB")
-
-        logger.info(f"[VL] Extracting embeddings from {image.size[0]}x{image.size[1]} image")
-        logger.info(
-            f"[VL] hidden_layer={request.hidden_layer}, image_tokens_only={request.image_tokens_only}"
-        )
-
-        start = time.time()
-
-        # Extract embeddings
-        result = vl_extractor.extract(
-            image=image,
-            text=request.text,
-            hidden_layer=request.hidden_layer,
-            image_tokens_only=request.image_tokens_only,
-            scale_to_text=request.scale_to_text,
-        )
-
-        extract_time = time.time() - start
-
-        # Generate cache ID
-        image_hash = hashlib.md5(image_data).hexdigest()[:8]
-        text_hash = hashlib.md5((request.text or "").encode()).hexdigest()[:4]
-        cache_id = f"vl_{image_hash}_{text_hash}_L{request.hidden_layer}"
-
-        # Cache the embeddings
-        vl_embeddings_cache[cache_id] = {
-            "embeddings": result.embeddings,
-            "num_tokens": result.num_tokens,
-            "hidden_layer": result.hidden_layer,
-            "original_std": result.original_std,
-            "scaled_std": result.scaled_std,
-            "text": request.text,
-            "timestamp": time.time(),
-        }
-
-        logger.info(
-            f"[VL] Extracted {result.num_tokens} tokens in {extract_time:.2f}s -> {cache_id}"
-        )
-
-        return {
-            "embeddings_id": cache_id,
-            "num_tokens": result.num_tokens,
-            "shape": list(result.embeddings.shape),
-            "hidden_layer": result.hidden_layer,
-            "original_std": result.original_std,
-            "scaled_std": result.scaled_std,
-            "extract_time": extract_time,
-        }
-
-    except Exception as e:
-        logger.error(f"[VL] Extraction failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/api/vl/generate")
-async def vl_generate(request: VLGenerateRequest):
-    """Generate an image with VL conditioning.
-
-    This endpoint supports three modes:
-    1. vl_image provided: Extract VL embeddings on-the-fly and generate
-    2. vl_embeddings_id provided: Use pre-extracted embeddings
-    3. Neither provided: Falls back to standard text-only generation
-    """
-    # Apply variant-aware defaults (Base vs Turbo)
-    apply_zimage_variant_defaults(request)
-
-    if pipeline is None:
-        raise HTTPException(status_code=503, detail="Pipeline not loaded")
-
-    # Get VL embeddings
-    vl_emb = None
-
-    if request.vl_embeddings_id:
-        # Use cached embeddings
-        cached = vl_embeddings_cache.get(request.vl_embeddings_id)
-        if cached is None:
-            raise HTTPException(
-                status_code=404, detail=f"Embeddings not found: {request.vl_embeddings_id}"
-            )
-        vl_emb = cached["embeddings"]
-        logger.info(f"[VL] Using cached embeddings: {request.vl_embeddings_id}")
-
-    elif request.vl_image:
-        # Extract on-the-fly
-        if vl_extractor is None:
-            raise HTTPException(
-                status_code=503,
-                detail="VL extractor not loaded. Configure vl.model_path in config.",
-            )
-
-        try:
-            image_data = base64.b64decode(request.vl_image)
-            image = Image.open(io.BytesIO(image_data)).convert("RGB")
-
-            logger.info(
-                f"[VL] Extracting embeddings on-the-fly from {image.size[0]}x{image.size[1]} image"
-            )
-
-            result = vl_extractor.extract(
-                image=image,
-                text=request.vl_text,
-                hidden_layer=request.vl_hidden_layer,
-                image_tokens_only=request.vl_image_tokens_only,
-            )
-            vl_emb = result.embeddings
-
-        except Exception as e:
-            logger.error(f"[VL] On-the-fly extraction failed: {e}")
-            raise HTTPException(status_code=500, detail=f"VL extraction failed: {e}")
-
-    try:
-        logger.info("=" * 60)
-        logger.info("VL-CONDITIONED GENERATION REQUEST")
-        logger.info("=" * 60)
-        logger.info(f"  Prompt: {request.prompt[:80]}...")
-        logger.info(f"  VL alpha: {request.vl_alpha}")
-        logger.info(f"  VL blend mode: {request.vl_blend_mode}")
-        logger.info(f"  Size: {request.width}x{request.height}")
-        logger.info(f"  Steps: {request.steps}")
-
-        # Encode text prompt
-        enc = encoder if encoder is not None else (pipeline.encoder if pipeline else None)
-        if enc is None:
-            raise HTTPException(status_code=503, detail="Encoder not loaded")
-
-        text_output = enc.encode(
-            request.prompt,
-            template=request.template,
-            system_prompt=request.system_prompt,
-            thinking_content=request.thinking_content,
-            assistant_content=request.assistant_content,
-            force_think_block=request.force_think_block,
-            remove_quotes=request.strip_quotes,
-            long_prompt_mode=request.long_prompt_mode,
-            hidden_layer=request.hidden_layer,
-        )
-        text_emb = text_output.embeddings[0]
-
-        # Blend VL and text embeddings
-        if vl_emb is not None and request.vl_alpha > 0:
-            from llm_dit.vl import (
-                blend_adain,
-                blend_adain_per_dim,
-                blend_embeddings,
-                blend_interpolate,
-                blend_per_token,
-                blend_style_only,
-                create_graduated_alpha,
-            )
-
-            if request.vl_blend_mode == "linear":
-                # WARNING: truncates VL to text length, losing most image info
-                blended = blend_embeddings(vl_emb, text_emb, request.vl_alpha)
-            elif request.vl_blend_mode == "interpolate":
-                # RECOMMENDED: compresses all VL tokens via interpolation
-                blended = blend_interpolate(vl_emb, text_emb, request.vl_alpha)
-            elif request.vl_blend_mode == "adain":
-                # Transfer VL statistics (mean/std) to text structure
-                blended = blend_adain(text_emb, vl_emb, request.vl_alpha)
-            elif request.vl_blend_mode == "adain_per_dim":
-                # Per-dimension AdaIN - best for style transfer
-                blended = blend_adain_per_dim(text_emb, vl_emb, request.vl_alpha)
-            elif request.vl_blend_mode == "style_only":
-                blended = blend_style_only(vl_emb, text_emb, request.vl_alpha)
-            elif request.vl_blend_mode == "graduated":
-                seq_len = min(vl_emb.shape[0], text_emb.shape[0])
-                token_alphas = create_graduated_alpha(seq_len, 0.0, request.vl_alpha * 2)
-                blended = blend_per_token(vl_emb, text_emb, token_alphas)
-            elif request.vl_blend_mode == "attention_weighted":
-                # For now, fall back to interpolate (attention weights not yet available)
-                blended = blend_interpolate(vl_emb, text_emb, request.vl_alpha)
-            else:
-                # Default to interpolate (recommended)
-                blended = blend_interpolate(vl_emb, text_emb, request.vl_alpha)
-
-            logger.info(f"[VL] Blended embeddings: shape={blended.shape}, std={blended.std():.2f}")
-            prompt_embeds = blended.unsqueeze(0)  # Add batch dim
-        else:
-            prompt_embeds = text_emb.unsqueeze(0)
-
-        # Set up generator
-        generator = None
-        if request.seed is not None:
-            generator = torch.Generator()
-            generator.manual_seed(request.seed)
-
-        start = time.time()
-
-        # Generate using prompt_embeds directly
-        image = pipeline(
-            prompt_embeds=prompt_embeds,
-            height=request.height,
-            width=request.width,
-            num_inference_steps=request.steps,
-            guidance_scale=request.guidance_scale,
-            cfg_normalization=request.cfg_normalization,
-            cfg_truncation=request.cfg_truncation,
-            shift=None if request.dynamic_shift else request.shift,
-            d_noise=request.d_noise,
-            generator=generator,
-        )
-
-        gen_time = time.time() - start
-        logger.info(f"[VL] Generated in {gen_time:.1f}s")
-        logger.info("=" * 60)
-
-        # Convert to PNG bytes
-        img_bytes = io.BytesIO()
-        image.save(img_bytes, format="PNG")
-        img_bytes.seek(0)
-
-        # Store in history with VL info
-        img_bytes_copy = io.BytesIO()
-        image.save(img_bytes_copy, format="PNG")
-        img_b64 = base64.b64encode(img_bytes_copy.getvalue()).decode("ascii")
-
-        history_entry = {
-            "id": len(generation_history),
-            "timestamp": time.time(),
-            "model_type": "zimage",  # Z-Image with VL conditioning
-            "prompt": request.prompt,
-            "vl_alpha": request.vl_alpha,
-            "vl_blend_mode": request.vl_blend_mode,
-            "vl_embeddings_id": request.vl_embeddings_id,
-            "width": request.width,
-            "height": request.height,
-            "steps": request.steps,
-            "seed": request.seed,
-            "gen_time": gen_time,
-            "image_b64": img_b64,
-        }
-        generation_history.insert(0, history_entry)
-        if len(generation_history) > MAX_HISTORY:
-            generation_history.pop()
-
-        return StreamingResponse(
-            img_bytes,
-            media_type="image/png",
-            headers={
-                "X-Generation-Time": str(gen_time),
-                "X-Seed": str(request.seed) if request.seed else "random",
-                "X-VL-Alpha": str(request.vl_alpha),
-                "X-VL-Blend-Mode": request.vl_blend_mode,
-            },
-        )
-
-    except Exception as e:
-        logger.error(f"[VL] Generation failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.delete("/api/vl/cache/{embeddings_id}")
-async def vl_clear_cache_entry(embeddings_id: str):
-    """Clear a specific cached VL embedding."""
-    if embeddings_id in vl_embeddings_cache:
-        del vl_embeddings_cache[embeddings_id]
-        return {"deleted": embeddings_id}
-    raise HTTPException(status_code=404, detail=f"Embeddings not found: {embeddings_id}")
-
-
-@app.delete("/api/vl/cache")
-async def vl_clear_cache():
-    """Clear all cached VL embeddings."""
-    global vl_embeddings_cache
-    count = len(vl_embeddings_cache)
-    vl_embeddings_cache = {}
-    return {"cleared": count}
 
 
 # =====================================================================
@@ -3446,59 +3063,19 @@ async def get_rewriter_config():
 
 @app.get("/api/rewriter-models")
 async def get_rewriter_models():
-    """Return available rewriter models.
-
-    Models:
-    - qwen3-4b: Text-only model (always available)
-    - qwen3-vl: Vision+text model (available if vl_model_path is configured)
-    - qwen3-vl-api: Vision+text model via API (available if vl_api_model is configured)
-    """
+    """Return available rewriter models."""
     models = [
         {
             "id": "qwen3-4b",
             "name": "Qwen3-4B (Text)",
             "supports_image": False,
-            "loaded": True,  # Always available via encoder
+            "loaded": True,
         }
     ]
-
-    # Check if VL rewriter via API is available (higher priority than local VL)
-    vl_api_available = False
-    if (
-        runtime_config
-        and runtime_config.rewriter_vl_api_model
-        and runtime_config.rewriter_vl_enabled
-    ):
-        vl_api_available = True
-        models.append(
-            {
-                "id": "qwen3-vl-api",
-                "name": f"VL via API ({runtime_config.rewriter_vl_api_model})",
-                "supports_image": True,
-                "loaded": True,  # API is always available
-            }
-        )
-
-    # Check if local VL rewriter is available
-    vl_local_available = False
-    vl_loaded = False
-    if runtime_config and runtime_config.vl_model_path and runtime_config.rewriter_vl_enabled:
-        vl_local_available = True
-        vl_loaded = vl_rewriter is not None or vl_extractor is not None
-        models.append(
-            {
-                "id": "qwen3-vl",
-                "name": "Qwen3-VL (Vision+Text)",
-                "supports_image": True,
-                "loaded": vl_loaded,
-            }
-        )
 
     return {
         "models": models,
         "default": "qwen3-4b",
-        "vl_available": vl_api_available or vl_local_available,
-        "vl_enabled": runtime_config.rewriter_vl_enabled if runtime_config else True,
     }
 
 
@@ -4389,379 +3966,6 @@ async def list_rewriters():
     return {"rewriters": rewriters}
 
 
-async def _rewrite_with_vl_api(request: RewriteRequest) -> dict:
-    """
-    Handle VL-based rewriting via remote API (heylookitsanllm).
-
-    Uses the configured vl_api_model for vision+text generation.
-    """
-    import re
-
-    # Check if VL API is available
-    if not runtime_config or not runtime_config.rewriter_vl_api_model:
-        raise HTTPException(
-            status_code=400,
-            detail="VL API model not configured. Set rewriter.vl_api_model in config.toml.",
-        )
-
-    if not runtime_config.rewriter_vl_enabled:
-        raise HTTPException(
-            status_code=400,
-            detail="VL rewriter is disabled. Enable with rewriter.vl_enabled=true in config.",
-        )
-
-    # Determine API URL
-    api_url = runtime_config.rewriter_api_url or runtime_config.api_url
-    if not api_url:
-        raise HTTPException(
-            status_code=400,
-            detail="No API URL configured. Set rewriter.api_url or api.url in config.toml.",
-        )
-
-    # Create API backend with VL model
-    from llm_dit.backends.api import APIBackend, APIBackendConfig
-
-    timeout = runtime_config.rewriter_timeout if runtime_config else 120.0
-    vl_api_config = APIBackendConfig(
-        base_url=api_url,
-        model_id=runtime_config.rewriter_vl_api_model,
-        timeout=timeout,
-    )
-    vl_api_backend = APIBackend(vl_api_config)
-
-    # Get template loader from encoder (for template lookup)
-    enc = encoder if encoder is not None else (pipeline.encoder if pipeline else None)
-
-    # Determine system prompt
-    system_prompt = None
-    rewriter_name = "custom"
-
-    if request.custom_system_prompt:
-        system_prompt = request.custom_system_prompt.strip()
-        rewriter_name = "custom"
-    elif request.rewriter:
-        if enc is None or enc.templates is None:
-            raise HTTPException(status_code=400, detail="No templates loaded")
-
-        rewriter_template = enc.templates.get(request.rewriter)
-        if rewriter_template is None:
-            raise HTTPException(
-                status_code=404, detail=f"Rewriter template not found: {request.rewriter}"
-            )
-
-        if rewriter_template.category != "rewriter":
-            raise HTTPException(
-                status_code=400, detail=f"Template '{request.rewriter}' is not a rewriter template"
-            )
-
-        system_prompt = rewriter_template.content
-        rewriter_name = request.rewriter
-    else:
-        # Use a default system prompt for VL rewriting
-        system_prompt = "Describe what you see in this image in detail, suitable for use as an image generation prompt."
-        rewriter_name = "default_vl"
-
-    # Get generation parameters (use 'is not None' to preserve 0 values)
-    max_tokens = (
-        request.max_tokens
-        if request.max_tokens is not None
-        else (runtime_config.rewriter_max_tokens if runtime_config else 1024)
-    )
-    temperature = (
-        request.temperature
-        if request.temperature is not None
-        else (runtime_config.rewriter_temperature if runtime_config else 0.6)
-    )
-    top_p = (
-        request.top_p
-        if request.top_p is not None
-        else (runtime_config.rewriter_top_p if runtime_config else 0.95)
-    )
-    top_k = (
-        request.top_k
-        if request.top_k is not None
-        else (runtime_config.rewriter_top_k if runtime_config else 20)
-    )
-    min_p = (
-        request.min_p
-        if request.min_p is not None
-        else (runtime_config.rewriter_min_p if runtime_config else 0.0)
-    )
-    presence_penalty = (
-        request.presence_penalty
-        if request.presence_penalty is not None
-        else (runtime_config.rewriter_presence_penalty if runtime_config else 0.0)
-    )
-
-    try:
-        start = time.time()
-        logger.info(
-            f"[VL API Rewrite] Using: {rewriter_name} (model: {runtime_config.rewriter_vl_api_model})"
-        )
-        if request.prompt:
-            logger.info(f"[VL API Rewrite] Input prompt: {request.prompt[:100]}...")
-        logger.info(f"[VL API Rewrite] Has image: {request.image is not None}")
-        logger.info(f"[VL API Rewrite] Params: max_tokens={max_tokens}, temperature={temperature}")
-
-        # Generate using VL API backend
-        # The image should already be in data URL format from the request
-        generated = vl_api_backend.generate(
-            prompt=request.prompt,
-            image=request.image,  # Pass the data URL directly
-            system_prompt=system_prompt,
-            max_new_tokens=max_tokens,
-            temperature=temperature,
-            top_p=top_p,
-            top_k=top_k,
-            min_p=min_p,
-            presence_penalty=presence_penalty,
-        )
-
-        gen_time = time.time() - start
-        logger.info(f"[VL API Rewrite] Generated {len(generated)} chars in {gen_time:.2f}s")
-
-        # Parse thinking content (same logic as local rewrite)
-        thinking_content = None
-        rewritten_prompt = generated
-
-        think_match = re.search(r"<think>\s*(.*?)\s*</think>", generated, re.DOTALL)
-        if think_match:
-            thinking_content = think_match.group(1).strip()
-            rewritten_prompt = re.sub(
-                r"<think>.*?</think>\s*", "", generated, flags=re.DOTALL
-            ).strip()
-            logger.info(f"[VL API Rewrite] Extracted thinking ({len(thinking_content)} chars)")
-
-        # Clean up any remaining tags
-        if thinking_content:
-            thinking_content = re.sub(r"</?think>", "", thinking_content).strip()
-        if rewritten_prompt:
-            rewritten_prompt = re.sub(r"</?think>", "", rewritten_prompt).strip()
-            # Strip surrounding quotes if the entire prompt is wrapped
-            if rewritten_prompt.startswith('"') and rewritten_prompt.endswith('"'):
-                rewritten_prompt = rewritten_prompt[1:-1].strip()
-
-        return {
-            "original_prompt": request.prompt or "(image only)",
-            "rewritten_prompt": rewritten_prompt,
-            "thinking_content": thinking_content,
-            "rewriter": rewriter_name,
-            "backend": "vl-api",
-            "model": runtime_config.rewriter_vl_api_model,
-            "gen_time": gen_time,
-        }
-
-    except httpx.TimeoutException as e:
-        logger.error(f"[VL API Rewrite] Timeout after {timeout}s: {e}")
-        raise HTTPException(
-            status_code=504,
-            detail=f"API request timed out after {timeout}s. Try increasing rewriter.timeout in config.toml.",
-        )
-    except httpx.HTTPStatusError as e:
-        # Parse API error details if available
-        error_detail = str(e)
-        try:
-            error_json = e.response.json()
-            if "detail" in error_json:
-                error_detail = error_json["detail"]
-        except Exception:
-            pass
-        logger.error(f"[VL API Rewrite] HTTP {e.response.status_code}: {error_detail}")
-        raise HTTPException(status_code=e.response.status_code, detail=f"API error: {error_detail}")
-    except httpx.ConnectError as e:
-        logger.error(f"[VL API Rewrite] Connection failed: {e}")
-        raise HTTPException(
-            status_code=503, detail=f"Cannot connect to API at {api_url}. Is the server running?"
-        )
-    except Exception as e:
-        logger.error(f"[VL API Rewrite] Failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-async def _rewrite_with_vl(request: RewriteRequest) -> dict:
-    """
-    Handle VL-based rewriting (image+text or image-only).
-
-    Loads Qwen3-VL on-demand if not already loaded.
-    """
-    global vl_rewriter, vl_extractor
-
-    # Check if VL is available
-    if not runtime_config or not runtime_config.vl_model_path:
-        raise HTTPException(
-            status_code=400, detail="VL model not configured. Set vl.model_path in config.toml."
-        )
-
-    if not runtime_config.rewriter_vl_enabled:
-        raise HTTPException(
-            status_code=400,
-            detail="VL rewriter is disabled. Enable with rewriter.vl_enabled=true in config.",
-        )
-
-    # Load VL model on-demand if not already loaded
-    # Try to reuse vl_extractor if available (same model)
-    if vl_rewriter is None:
-        if vl_extractor is not None:
-            logger.info("[VL Rewrite] Reusing existing VL extractor for rewriting")
-            vl_rewriter = vl_extractor
-        else:
-            logger.info(f"[VL Rewrite] Loading Qwen3-VL from {runtime_config.vl_model_path}")
-            from llm_dit.vl import VLEmbeddingExtractor
-
-            vl_dtype = torch.bfloat16 if runtime_config.vl_device == "cuda" else torch.float32
-            vl_rewriter = VLEmbeddingExtractor.from_pretrained(
-                runtime_config.vl_model_path,
-                device=runtime_config.vl_device,
-                dtype=vl_dtype,
-            )
-            logger.info("[VL Rewrite] Qwen3-VL loaded for rewriting")
-
-    # Decode image if provided
-    pil_image = None
-    if request.image:
-        try:
-            # Handle data URL format (data:image/png;base64,...)
-            image_data = request.image
-            if image_data.startswith("data:"):
-                # Extract base64 part after the comma
-                image_data = image_data.split(",", 1)[1]
-            image_bytes = base64.b64decode(image_data)
-            pil_image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-            logger.info(f"[VL Rewrite] Decoded image: {pil_image.size}")
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=f"Failed to decode image: {e}")
-
-    # Get template loader from encoder (for template lookup)
-    enc = encoder if encoder is not None else (pipeline.encoder if pipeline else None)
-
-    # Determine system prompt
-    system_prompt = None
-    rewriter_name = "custom"
-
-    if request.custom_system_prompt:
-        system_prompt = request.custom_system_prompt.strip()
-        rewriter_name = "custom"
-    elif request.rewriter:
-        if enc is None or enc.templates is None:
-            raise HTTPException(status_code=400, detail="No templates loaded")
-
-        rewriter_template = enc.templates.get(request.rewriter)
-        if rewriter_template is None:
-            raise HTTPException(
-                status_code=404, detail=f"Rewriter template not found: {request.rewriter}"
-            )
-
-        if rewriter_template.category != "rewriter":
-            raise HTTPException(
-                status_code=400, detail=f"Template '{request.rewriter}' is not a rewriter template"
-            )
-
-        system_prompt = rewriter_template.content
-        rewriter_name = request.rewriter
-    else:
-        # Use a default system prompt for VL rewriting
-        system_prompt = "Describe what you see in this image in detail, suitable for use as an image generation prompt."
-        rewriter_name = "default_vl"
-
-    # Get generation parameters (use 'is not None' to preserve 0 values)
-    max_tokens = (
-        request.max_tokens
-        if request.max_tokens is not None
-        else (runtime_config.rewriter_max_tokens if runtime_config else 1024)
-    )
-    temperature = (
-        request.temperature
-        if request.temperature is not None
-        else (runtime_config.rewriter_temperature if runtime_config else 0.6)
-    )
-    top_p = (
-        request.top_p
-        if request.top_p is not None
-        else (runtime_config.rewriter_top_p if runtime_config else 0.95)
-    )
-    top_k = (
-        request.top_k
-        if request.top_k is not None
-        else (runtime_config.rewriter_top_k if runtime_config else 20)
-    )
-    min_p = (
-        request.min_p
-        if request.min_p is not None
-        else (runtime_config.rewriter_min_p if runtime_config else 0.0)
-    )
-    presence_penalty = (
-        request.presence_penalty
-        if request.presence_penalty is not None
-        else (runtime_config.rewriter_presence_penalty if runtime_config else 0.0)
-    )
-
-    try:
-        start = time.time()
-        logger.info(f"[VL Rewrite] Using: {rewriter_name} (model: qwen3-vl)")
-        if request.prompt:
-            logger.info(f"[VL Rewrite] Input prompt: {request.prompt[:100]}...")
-        logger.info(f"[VL Rewrite] Has image: {pil_image is not None}")
-        logger.info(f"[VL Rewrite] Params: max_tokens={max_tokens}, temperature={temperature}")
-
-        # Generate using VL model
-        generated = vl_rewriter.generate(
-            prompt=request.prompt,
-            image=pil_image,
-            system_prompt=system_prompt,
-            max_new_tokens=max_tokens,
-            temperature=temperature,
-            top_p=top_p,
-            top_k=top_k,
-            min_p=min_p,
-            presence_penalty=presence_penalty,
-        )
-
-        gen_time = time.time() - start
-        logger.info(f"[VL Rewrite] Generated {len(generated)} chars in {gen_time:.2f}s")
-
-        # Parse thinking content (same logic as text-only rewrite)
-        import re
-
-        thinking_content = None
-        rewritten_prompt = generated
-
-        think_match = re.search(r"<think>\s*(.*?)\s*</think>", generated, re.DOTALL)
-        if think_match:
-            thinking_content = think_match.group(1).strip()
-            rewritten_prompt = re.sub(
-                r"<think>.*?</think>\s*", "", generated, flags=re.DOTALL
-            ).strip()
-            logger.info(f"[VL Rewrite] Extracted thinking ({len(thinking_content)} chars)")
-
-        # Clean up any remaining tags
-        if thinking_content:
-            thinking_content = re.sub(r"</?think>", "", thinking_content).strip()
-        if rewritten_prompt:
-            rewritten_prompt = re.sub(r"</?think>", "", rewritten_prompt).strip()
-            # Strip surrounding quotes if the entire prompt is wrapped
-            if rewritten_prompt.startswith('"') and rewritten_prompt.endswith('"'):
-                rewritten_prompt = rewritten_prompt[1:-1].strip()
-
-        # Clear CUDA cache
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-
-        return {
-            "original_prompt": request.prompt or "(image only)",
-            "rewritten_prompt": rewritten_prompt,
-            "thinking_content": thinking_content,
-            "rewriter": rewriter_name,
-            "backend": "vl",
-            "model": "qwen3-vl",
-            "gen_time": gen_time,
-        }
-
-    except Exception as e:
-        logger.error(f"[VL Rewrite] Failed: {e}")
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-        raise HTTPException(status_code=500, detail=str(e))
-
 
 @app.post("/api/rewrite")
 async def rewrite_prompt(request: RewriteRequest):
@@ -4775,40 +3979,15 @@ async def rewrite_prompt(request: RewriteRequest):
     1. Template mode: Use `rewriter` to specify a rewriter template
     2. Ad-hoc mode: Use `custom_system_prompt` for custom rewriting instructions
 
-    Model selection:
-    - qwen3-4b: Text-only model (default)
-    - qwen3-vl: Vision+text model (requires vl_model_path configured)
-    - qwen3-vl-api: Vision+text via remote API (requires vl_api_model configured)
-
-    Backend selection (for qwen3-4b):
+    Backend selection:
     - If rewriter_use_api is True and rewriter_backend is configured, uses API backend
     - Otherwise, uses the local encoder's backend
     """
-    global vl_rewriter
-
-    # Validate that at least prompt or image is provided
-    if not request.prompt and not request.image:
-        raise HTTPException(
-            status_code=400, detail="At least one of 'prompt' or 'image' must be provided"
-        )
-
-    # Handle VL model selection
-    if request.model == "qwen3-vl":
-        return await _rewrite_with_vl(request)
-    elif request.model == "qwen3-vl-api":
-        return await _rewrite_with_vl_api(request)
-
-    # If image provided but model is not VL, warn and ignore
-    if request.image:
-        logger.warning(
-            "[Rewrite] Image provided but model is qwen3-4b (text-only). Image will be ignored."
-        )
-
-    # Require prompt for text-only model
+    # Validate prompt is provided
     if not request.prompt:
         raise HTTPException(
             status_code=400,
-            detail="Text prompt is required for qwen3-4b model. Use qwen3-vl for image-only rewriting.",
+            detail="Text prompt is required.",
         )
 
     # Determine which backend to use for generation
@@ -5463,13 +4642,12 @@ async def system_status():
         "pipeline_loaded": pipeline is not None,
         "encoder_loaded": encoder is not None,
         "encoder_only_mode": encoder_only_mode,
-        "vl_available": vl_extractor is not None,
+
         "qwen_image_available": qwen_image_pipeline is not None,
         "qwen_image_t2i_available": qwen_image_t2i_pipeline is not None,
         "ltx2_pipeline": ltx2_pipeline is not None,
         "flux2_pipeline": flux2_pipeline is not None,
         "fmtt_cached": False,
-        "vl_cache_count": len(vl_embeddings_cache),
         "history_count": len(generation_history),
     }
 
@@ -5572,15 +4750,6 @@ async def clear_cache():
         "freed_gb": round(freed_gb, 2),
         "message": f"Freed {freed_gb:.2f} GB of cached memory",
     }
-
-
-@app.delete("/api/system/vl-cache")
-async def clear_vl_cache():
-    """Clear all cached VL embeddings."""
-    global vl_embeddings_cache
-    count = len(vl_embeddings_cache)
-    vl_embeddings_cache = {}
-    return {"cleared": count}
 
 
 # =============================================================================
@@ -6740,7 +5909,6 @@ def main():
     logger.debug(f"[Config] FLUX.2 model: {getattr(runtime_config, 'flux2_model_path', None)}")
     logger.debug(f"[Config] FLUX.2 VAE: {getattr(runtime_config, 'flux2_vae_path', None)}")
     logger.debug(f"[Config] LTX-2 model: {getattr(runtime_config, 'ltx2_model_path', None)}")
-    logger.debug(f"[Config] VL model: {getattr(runtime_config, 'vl_model_path', None)}")
     logger.debug(f"[Config] Debug mode: {getattr(runtime_config, 'debug', False)}")
 
     # Store config path for reference
@@ -6855,46 +6023,6 @@ def main():
             )
         else:
             logger.warning("[Rewriter] use_api=True but no API URL configured. Using local model.")
-
-    # Initialize VL extractor if configured
-    global vl_extractor, vl_rewriter
-    if runtime_config.vl_model_path:
-        logger.info(f"[VL] Loading Qwen3-VL from {runtime_config.vl_model_path}")
-        logger.info(
-            f"[VL] Device: {runtime_config.vl_device}, default alpha: {runtime_config.vl_alpha}"
-        )
-        try:
-            from llm_dit.vl import VLEmbeddingExtractor
-
-            # Determine torch dtype
-            vl_dtype = torch.bfloat16 if runtime_config.vl_device == "cuda" else torch.float32
-
-            vl_extractor = VLEmbeddingExtractor.from_pretrained(
-                runtime_config.vl_model_path,
-                device=runtime_config.vl_device,
-                dtype=vl_dtype,
-            )
-            logger.info(f"[VL] Qwen3-VL loaded successfully")
-            logger.info(f"[VL] Default blend mode: {runtime_config.vl_blend_mode}")
-
-            # If VL rewriter preload is enabled, share the extractor
-            if runtime_config.rewriter_preload_vl:
-                vl_rewriter = vl_extractor
-                logger.info("[VL Rewrite] Preloaded Qwen3-VL for rewriting (shared with extractor)")
-        except Exception as e:
-            logger.error(f"[VL] Failed to load Qwen3-VL: {e}")
-            logger.warning("[VL] Vision conditioning will be disabled")
-            vl_extractor = None
-    else:
-        logger.info("[VL] No vl_model_path configured, vision conditioning disabled")
-
-        # Log VL rewriter status
-        if runtime_config.rewriter_vl_enabled:
-            logger.info(
-                "[VL Rewrite] VL rewriter enabled but no model configured (on-demand loading)"
-            )
-        else:
-            logger.info("[VL Rewrite] VL rewriter disabled")
 
     # Run server
     import time

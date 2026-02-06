@@ -97,10 +97,6 @@ const AppState = {
     // Current generation parameters (for reuse)
     currentParams: null,
 
-    // VL conditioning state
-    vlEmbeddingsId: null,
-    vlImagePreview: null,
-
     // Img2Img state
     img2imgImage: null,
     img2imgMaskCtx: null,
@@ -122,7 +118,6 @@ const AppState = {
 
     // Feature availability flags (loaded from server)
     features: {
-        vlEnabled: false,
         qwenImageEnabled: false,
         qwenImage2512Enabled: false,
     },

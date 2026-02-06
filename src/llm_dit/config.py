@@ -316,28 +316,6 @@ class PyTorchConfig:
 
 
 @dataclass
-class VLConfig:
-    """Configuration for Qwen3-VL vision conditioning.
-
-    This enables zero-shot vision conditioning by extracting embeddings from
-    Qwen3-VL and blending them with text embeddings.
-
-    Key insight: Qwen3-VL-4B's text model shares architecture with Qwen3-4B
-    (hidden_size=2560), enabling direct embedding transfer without training.
-    """
-
-    model_path: str = ""  # Path to Qwen3-VL model (empty = disabled)
-    device: str = "cpu"  # Device for Qwen3-VL (cpu recommended to save VRAM)
-    default_alpha: float = (
-        0.3  # Default interpolation ratio (0.0=text, 1.0=VL) - research validated
-    )
-    default_hidden_layer: int = -6  # Layer -6 produces best results (research validated)
-    text_tokens_only: bool = True  # Use only text token positions (image tokens cause artifacts)
-    auto_unload: bool = True  # Unload after extraction to save VRAM
-    target_std: float = 58.75  # Target std for scaling (research validated from experiments)
-
-
-@dataclass
 class LTX2Config:
     """Configuration for LTX-2 video generation model.
 
@@ -1209,12 +1187,6 @@ class RewriterConfig:
     for text generation. When use_api is True and api_url is set,
     the rewriter will use the API backend instead of the local model.
 
-    VL Rewriting:
-    - When vl_enabled is True and vl.model_path is configured, users can
-      select Qwen3-VL for vision-enabled prompt rewriting in the web UI.
-    - VL model is loaded on-demand when first selected (unless preload_vl is True).
-    - Supports image-only, text-only, or combined image+text rewriting.
-
     Qwen3 Best Practices (thinking mode):
     - temperature=0.6, top_p=0.95, top_k=20, min_p=0 (default)
     - DO NOT use greedy decoding (causes repetition)
@@ -1234,14 +1206,8 @@ class RewriterConfig:
     min_p: float = 0.0  # Qwen3: 0.0 (disabled)
     presence_penalty: float = 0.0  # 0-2, helps reduce endless repetitions
     max_tokens: int = 1024  # Maximum tokens to generate
-    # VL rewriter settings
-    vl_enabled: bool = True  # Allow VL model selection in rewriter UI
-    preload_vl: bool = False  # Load Qwen3-VL at startup for rewriter (uses vl.model_path)
-    vl_api_model: str = (
-        ""  # Model ID for VL via API (e.g., "qwen2.5-vl-72b-mlx"). Empty = use local VL
-    )
     # API timeout settings
-    timeout: float = 120.0  # API request timeout in seconds (VL models need longer)
+    timeout: float = 120.0  # API request timeout in seconds
 
 
 @dataclass
@@ -1264,7 +1230,6 @@ class Config:
     lora: LoRAConfig = field(default_factory=LoRAConfig)
     pytorch: PyTorchConfig = field(default_factory=PyTorchConfig)
     rewriter: RewriterConfig = field(default_factory=RewriterConfig)
-    vl: VLConfig = field(default_factory=VLConfig)
     zimage: ZImageConfig = field(default_factory=ZImageConfig)
     qwen_image: QwenImageConfig = field(default_factory=QwenImageConfig)
     ltx2: LTX2Config = field(default_factory=LTX2Config)
@@ -1287,7 +1252,6 @@ class Config:
         lora_data = data.pop("lora", {})
         pytorch_data = data.pop("pytorch", {})
         rewriter_data = data.pop("rewriter", {})
-        vl_data = data.pop("vl", {})
         zimage_data = data.pop("zimage", {})
         qwen_image_data = data.pop("qwen_image", {})
         ltx2_data = data.pop("ltx2", {})
@@ -1312,7 +1276,6 @@ class Config:
             lora=LoRAConfig(**lora_data),
             pytorch=PyTorchConfig(**pytorch_data),
             rewriter=RewriterConfig(**rewriter_data),
-            vl=VLConfig(**vl_data),
             zimage=ZImageConfig(**zimage_data),
             qwen_image=QwenImageConfig(**qwen_image_data),
             ltx2=LTX2Config(**ltx2_data),
@@ -1461,19 +1424,7 @@ class Config:
                 "min_p": self.rewriter.min_p,
                 "presence_penalty": self.rewriter.presence_penalty,
                 "max_tokens": self.rewriter.max_tokens,
-                "vl_enabled": self.rewriter.vl_enabled,
-                "preload_vl": self.rewriter.preload_vl,
-                "vl_api_model": self.rewriter.vl_api_model,
                 "timeout": self.rewriter.timeout,
-            },
-            "vl": {
-                "model_path": self.vl.model_path,
-                "device": self.vl.device,
-                "default_alpha": self.vl.default_alpha,
-                "default_hidden_layer": self.vl.default_hidden_layer,
-                "text_tokens_only": self.vl.text_tokens_only,
-                "auto_unload": self.vl.auto_unload,
-                "target_std": self.vl.target_std,
             },
             "zimage": {
                 "model_path": self.zimage.model_path,

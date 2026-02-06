@@ -303,18 +303,7 @@ class RuntimeConfig:
     rewriter_min_p: float = 0.0  # Qwen3: 0.0 (disabled)
     rewriter_max_tokens: int = 1024  # Maximum tokens to generate
     rewriter_presence_penalty: float = 0.0  # 0-2, helps reduce endless repetitions
-    rewriter_vl_enabled: bool = True  # Allow VL model selection in rewriter UI
-    rewriter_preload_vl: bool = False  # Load Qwen3-VL at startup for rewriter
-    rewriter_vl_api_model: str = ""  # Model ID for VL via API (e.g., "qwen2.5-vl-72b-mlx")
     rewriter_timeout: float = 120.0  # API request timeout in seconds
-
-    # Vision conditioning (Qwen3-VL)
-    vl_model_path: str = ""  # Path to Qwen3-VL model (empty = disabled)
-    vl_device: str = "cpu"  # Device for Qwen3-VL
-    vl_alpha: float = 0.3  # Default interpolation ratio (0.0=text, 1.0=VL)
-    vl_hidden_layer: int = -2  # Hidden layer to extract
-    vl_auto_unload: bool = True  # Unload after extraction to save VRAM
-    vl_blend_mode: str = "interpolate"  # interpolate (recommended), adain_per_dim, adain, linear
 
     # DyPE (Dynamic Position Extrapolation) for high-resolution generation
     dype_enabled: bool = False  # Enable DyPE
@@ -1161,62 +1150,6 @@ def create_base_parser(
         help="Force local encoder (for A/B testing API vs local)",
     )
 
-    # Vision conditioning (Qwen3-VL)
-    vl_group = parser.add_argument_group("Vision Conditioning (Qwen3-VL)")
-    vl_group.add_argument(
-        "--vl-model-path",
-        type=str,
-        default=None,
-        help="Path to Qwen3-VL model (enables vision conditioning)",
-    )
-    vl_group.add_argument(
-        "--vl-device",
-        type=str,
-        choices=["cpu", "cuda", "auto"],
-        default=None,
-        help="Device for Qwen3-VL (default: cpu to save VRAM)",
-    )
-    vl_group.add_argument(
-        "--vl-alpha",
-        type=float,
-        default=None,
-        help="VL influence ratio (0.0=pure text, 1.0=pure VL, default: 0.3)",
-    )
-    vl_group.add_argument(
-        "--vl-hidden-layer",
-        type=int,
-        default=None,
-        help="Hidden layer to extract from Qwen3-VL (default: -2, penultimate)",
-    )
-    vl_group.add_argument(
-        "--vl-no-auto-unload",
-        action="store_true",
-        help="Keep Qwen3-VL loaded after extraction (uses more VRAM)",
-    )
-    vl_group.add_argument(
-        "--vl-blend-mode",
-        type=str,
-        choices=[
-            "interpolate",
-            "adain_per_dim",
-            "adain",
-            "linear",
-            "style_only",
-            "graduated",
-            "attention_weighted",
-        ],
-        default=None,
-        help=(
-            "Blending strategy: "
-            "interpolate (recommended, compresses all VL tokens), "
-            "adain_per_dim (best for style transfer), "
-            "adain (transfer VL statistics to text), "
-            "linear (WARNING: truncates, loses most VL info), "
-            "style_only (blend only style dimensions), "
-            "graduated (more VL for later tokens)"
-        ),
-    )
-
     # Rewriter settings
     rewriter_group = parser.add_argument_group("Rewriter")
     rewriter_group.add_argument(
@@ -1993,19 +1926,7 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
                     config.rewriter_min_p = getattr(rewriter, "min_p", 0.0)
                     config.rewriter_presence_penalty = getattr(rewriter, "presence_penalty", 0.0)
                     config.rewriter_max_tokens = getattr(rewriter, "max_tokens", 512)
-                    config.rewriter_vl_enabled = getattr(rewriter, "vl_enabled", True)
-                    config.rewriter_preload_vl = getattr(rewriter, "preload_vl", False)
-                    config.rewriter_vl_api_model = getattr(rewriter, "vl_api_model", "")
                     config.rewriter_timeout = getattr(rewriter, "timeout", 120.0)
-
-                # Check for VL section
-                if hasattr(toml_config, "vl"):
-                    vl = toml_config.vl
-                    config.vl_model_path = getattr(vl, "model_path", "")
-                    config.vl_device = getattr(vl, "device", "cpu")
-                    config.vl_alpha = getattr(vl, "default_alpha", 0.3)
-                    config.vl_hidden_layer = getattr(vl, "default_hidden_layer", -2)
-                    config.vl_auto_unload = getattr(vl, "auto_unload", True)
 
                 # Check for Qwen-Image section
                 if hasattr(toml_config, "qwen_image"):

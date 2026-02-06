@@ -221,15 +221,8 @@ async function handleFormSubmit(e) {
         let endpoint;
         let statusMsg = 'Generating...';
 
-        // VL conditioning
-        const vlParams = getVLParams();
-        if (vlParams && modelType === 'zimage') {
-            Object.assign(params, { vl: vlParams });
-            endpoint = 'vl';
-            statusMsg = 'Generating with VL conditioning...';
-        }
         // Img2Img
-        else if (img2imgParams && modelType === 'zimage') {
+        if (img2imgParams && modelType === 'zimage') {
             Object.assign(params, img2imgParams);
             endpoint = 'img2img';
             statusMsg = 'Generating with Img2Img...';
@@ -249,9 +242,6 @@ async function handleFormSubmit(e) {
         // Make API call
         let data;
         switch (endpoint) {
-            case 'vl':
-                data = await ApiClient.generateWithVL(params);
-                break;
             case 'img2img':
                 data = await ApiClient.img2img(params);
                 break;
@@ -436,13 +426,6 @@ async function refreshSystemStatus() {
             }
         }
 
-        // VL Cache status
-        const vlCacheStatus = document.getElementById('vlCacheStatus');
-        if (vlCacheStatus) {
-            const count = data.vl_cache_count || 0;
-            vlCacheStatus.textContent = `${count} item${count !== 1 ? 's' : ''}`;
-        }
-
     } catch (err) {
         console.error('Failed to refresh system status:', err);
         // Show error in GPU memory info
@@ -510,21 +493,6 @@ function setupSettingsModal() {
             }
             await refreshSystemStatus();
             clearCacheBtn.disabled = false;
-        });
-    }
-
-    const clearVlCacheBtn = document.getElementById('clearVlCacheBtn');
-    if (clearVlCacheBtn) {
-        clearVlCacheBtn.addEventListener('click', async () => {
-            clearVlCacheBtn.disabled = true;
-            try {
-                const result = await ApiClient.clearVLCache();
-                showSettingsMessage(`Cleared ${result.cleared || 0} VL cache entries`, 'success');
-            } catch (err) {
-                showSettingsMessage('Failed to clear VL cache', 'error');
-            }
-            await refreshSystemStatus();
-            clearVlCacheBtn.disabled = false;
         });
     }
 
@@ -777,17 +745,6 @@ function setupResultActionButtons() {
         });
     }
 
-    // Use as VL Reference
-    const useVL = document.getElementById('resultUseVL');
-    if (useVL) {
-        useVL.addEventListener('click', async () => {
-            const result = getCurrentResult();
-            if (result) {
-                await useAsVLReference(result.base64);
-            }
-        });
-    }
-
     // Use in Qwen Edit
     const useQwenEdit = document.getElementById('resultUseQwenEdit');
     if (useQwenEdit) {
@@ -860,17 +817,6 @@ function setupLightboxActionButtons() {
         });
     }
 
-    // Use as VL Reference
-    const useVL = document.getElementById('lightboxUseVL');
-    if (useVL) {
-        useVL.addEventListener('click', async () => {
-            if (lightboxImageData) {
-                closeImageModal();
-                await useAsVLReference(lightboxImageData.base64);
-            }
-        });
-    }
-
     // Use in Qwen Edit
     const useQwenEdit = document.getElementById('lightboxUseQwenEdit');
     if (useQwenEdit) {
@@ -911,7 +857,6 @@ async function initializeApp() {
     initHistoryEvents();
     initTemplateEvents();
     initRewriterEvents();
-    initVLEvents();
     initImg2ImgEvents();
     initLayerBlendEvents();
     initAdvancedEvents();
@@ -991,7 +936,6 @@ async function initializeApp() {
         loadTemplates(),
         loadGenerationConfig(),
         loadHistory(),
-        checkVLStatus(),
         checkQwenImageStatus(),
         checkQwenImage2512Status(),
         loadRewriterConfig(),
