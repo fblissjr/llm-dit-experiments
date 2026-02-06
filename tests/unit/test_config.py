@@ -5,8 +5,6 @@ Tests TOML parsing, CLI overrides, device resolution, and v5 quantization API.
 These tests run on any platform without GPU or model files.
 """
 
-import warnings
-
 import pytest
 import torch
 
@@ -37,17 +35,13 @@ class TestEncoderConfig:
         assert config.trust_remote_code is True
         assert config.max_length == 512
 
-    def test_quantization_8bit(self):
-        config = EncoderConfig(quantization="8bit")
-        assert config.quantization == "8bit"
+    def test_quantization_int8(self):
+        config = EncoderConfig(quantization="int8")
+        assert config.quantization == "int8"
 
-    def test_quantization_4bit(self):
-        config = EncoderConfig(quantization="4bit")
-        assert config.quantization == "4bit"
-
-    def test_quantization_none_returns_none_config(self):
-        config = EncoderConfig(quantization="none")
-        assert config.get_quantization_config() is None
+    def test_quantization_fp8_weight_only(self):
+        config = EncoderConfig(quantization="fp8-weight-only")
+        assert config.quantization == "fp8-weight-only"
 
     def test_get_dtype(self):
         config = EncoderConfig(dtype="bfloat16")
@@ -68,43 +62,6 @@ class TestEncoderConfig:
     def test_get_device_explicit(self):
         config = EncoderConfig(device="cpu")
         assert config.get_device() == "cpu"
-
-
-class TestEncoderConfigDeprecation:
-    """Test deprecated load_in_8bit/load_in_4bit migration."""
-
-    def test_load_in_8bit_migration(self):
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            config = EncoderConfig(load_in_8bit=True)
-
-            # Should migrate to new field
-            assert config.quantization == "8bit"
-
-            # Should emit deprecation warning
-            assert len(w) == 1
-            assert issubclass(w[0].category, DeprecationWarning)
-            assert "deprecated" in str(w[0].message).lower()
-
-    def test_load_in_4bit_migration(self):
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            config = EncoderConfig(load_in_4bit=True)
-
-            assert config.quantization == "4bit"
-            assert len(w) == 1
-            assert issubclass(w[0].category, DeprecationWarning)
-
-    def test_new_quantization_takes_precedence(self):
-        """If both old and new fields set, new field wins (no migration)."""
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            config = EncoderConfig(quantization="4bit", load_in_8bit=True)
-
-            # New field takes precedence, no migration occurs
-            assert config.quantization == "4bit"
-            # No warning since quantization was explicitly set
-            assert len(w) == 0
 
 
 class TestPipelineConfig:

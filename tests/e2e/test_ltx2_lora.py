@@ -92,17 +92,20 @@ class TestLTX2LoRA:
         This is a smoke test - it doesn't verify generation quality,
         just that the mechanics work.
         """
-        from llm_dit.models.ltx2 import load_ltx2_transformer_fp8_native
+        from llm_dit.models.ltx2 import load_ltx2_transformer
+        from llm_dit.quantization import quantize_component
         from llm_dit.utils.lora import load_lora
 
-        # Load transformer
+        # Load transformer and quantize
         logger.info("Loading transformer...")
-        model = load_ltx2_transformer_fp8_native(
+        model = load_ltx2_transformer(
             "models/LTX-2/transformer",
             dtype=torch.bfloat16,
             device="cuda",
             video_only=True,
-            verbose=True,
+        )
+        model, _stats = quantize_component(  # type: ignore[assignment]
+            model, method="fp8-weight-only", component_type="transformer"
         )
 
         # Load LoRA
@@ -281,15 +284,18 @@ class TestLTX2LoRA:
     @pytest.mark.skipif(not sufficient_vram(), reason="Insufficient VRAM (<16GB)")
     def test_invalid_lora_path_raises_error(self):
         """Test that invalid LoRA path raises appropriate error."""
-        from llm_dit.models.ltx2 import load_ltx2_transformer_fp8_native
+        from llm_dit.models.ltx2 import load_ltx2_transformer
+        from llm_dit.quantization import quantize_component
         from llm_dit.utils.lora import load_lora
 
-        model = load_ltx2_transformer_fp8_native(
+        model = load_ltx2_transformer(
             "models/LTX-2/transformer",
             dtype=torch.bfloat16,
             device="cuda",
             video_only=True,
-            verbose=False,
+        )
+        model, _stats = quantize_component(  # type: ignore[assignment]
+            model, method="fp8-weight-only", component_type="transformer"
         )
 
         with pytest.raises(FileNotFoundError):

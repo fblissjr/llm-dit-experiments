@@ -417,8 +417,8 @@ class Gemma3Encoder:
             device: Device to load on ("cuda", "cpu", "auto").
             dtype: Model dtype (typically bfloat16).
             max_sequence_length: Maximum sequence length for encoding.
-            load_in_4bit: Apply additional 4-bit quantization (on top of QAT).
-            load_in_8bit: Apply additional 8-bit quantization.
+            load_in_4bit: Legacy flag, kept for variant loader compat. Ignored by _load_model().
+            load_in_8bit: Legacy flag, kept for variant loader compat. Ignored by _load_model().
             max_memory: Memory limits per device for CPU offloading.
                        Example: {0: "18GiB", "cpu": "32GiB"} limits GPU 0 to 18GB.
             connectors_path: Path to connector weights (safetensors).
@@ -475,7 +475,7 @@ class Gemma3Encoder:
             device: Device to load on.
             dtype: Model dtype as string.
             max_sequence_length: Max sequence length.
-            quantization: Additional quantization ("4bit", "8bit", or None).
+            quantization: Quantization method (torchao unified) or None for no quantization.
             max_memory: Memory limits for CPU offloading. Example: {0: "18GiB", "cpu": "32GiB"}.
             connectors_path: Path to connector weights shard.
                             Defaults to text_encoder/ jointly-trained weights.
@@ -539,16 +539,9 @@ class Gemma3Encoder:
 
         logger.info(f"Loading Gemma 3 text encoder (no vision) from: {self._text_encoder_path}")
 
-        # Build quantization config if needed
-        quantization_config = None
-        if self._load_in_4bit or self._load_in_8bit:
-            from transformers import BitsAndBytesConfig
-
-            quantization_config = BitsAndBytesConfig(
-                load_in_4bit=self._load_in_4bit,
-                load_in_8bit=self._load_in_8bit,
-                bnb_4bit_compute_dtype=self._dtype,
-            )
+        # Quantization is applied post-load by the variant loaders
+        # (gemma3_variants.py) via quantize_component(). The _load_in_4bit/8bit
+        # flags are only used for metadata tracking, not BnB config.
 
         # Determine device map
         device_map = None
@@ -646,13 +639,6 @@ class Gemma3Encoder:
             logger.info(f"Moving model to {device_name}...")
             self._model = self._model.to(device=device_name)
         # else: keep on CPU
-
-        # Apply quantization if requested
-        if quantization_config is not None:
-            logger.warning(
-                "Quantization requested but not applied during manual loading. "
-                "Model loaded in full precision."
-            )
 
         # Load tokenizer from LOCAL LTX-2 files (AUTHORITATIVE SOURCE)
         # Vocab size analysis (2026-01-20):
@@ -878,7 +864,7 @@ class Gemma3Encoder:
             hidden_dim=self.embedding_dim,
             max_sequence_length=self._max_sequence_length,
             capabilities=capabilities,
-            quantization="q4_0" if not self._load_in_4bit else "q4_bnb",
+            quantization="q4_0" if self._load_in_4bit else ("int8" if self._load_in_8bit else "none"),
             device=self.device,
             dtype=self._dtype,
         )

@@ -5,6 +5,44 @@ last updated: 2026-02-06
 All notable changes to this project will be documented in this file.
 Uses [Semantic Versioning](https://semver.org/).
 
+## 0.7.0
+
+### added
+- Unified `quantize_component()` entry point for all model components across all pipelines
+- `ComponentQuantConfig` and `PipelineQuantConfig` dataclasses for type-safe quantization config
+- Global `[quantization]` TOML section with per-pipeline overrides (resolution: pipeline override > global default)
+- `get_pipeline_quant_config()` on RuntimeConfig for resolving effective quantization per pipeline
+- `get_quant_compile_warnings()` for detecting dangerous quant + compile combinations
+- `VALID_METHODS` constant: `none`, `fp8-dynamic`, `fp8-weight-only`, `int8`, `int4`
+- New unit tests for `quantize_component()`, `VALID_METHODS`, compile warnings, and stats dict shape
+
+### removed
+- `fp8_native.py` (manual FP8 casting with allowlist) -- replaced by `Float8WeightOnlyConfig`
+- `fp8_inference.py` (DiffSynth-style `F.linear` patching context manager) -- replaced by `Float8DynamicActivationFloat8WeightConfig`
+- `quantization/config.py` (`QuantizationMethod` enum and BitsAndBytes helpers) -- no longer needed
+- `quantize_model_torchao()` and `quantize_model_torchao_filtered()` from torchao_utils
+- `create_fp8_filter_fn()` and `analyze_fp8_compatibility()` from torchao_utils
+- All BitsAndBytes quantization paths (4bit, 8bit NF4) across all pipelines
+- DiffSynth FP8 context manager usage from Qwen-Image pipelines
+- `_build_quantization_config()` from `qwen_image_2512.py`
+- `QUANTIZATION_PRESETS` dict from QwenImageConfig
+- `test_fp8_inference.py` test file
+
+### changed
+- All 4 pipelines (FLUX.2, LTX-2, Z-Image, Qwen-Image) now use `quantize_component()` as sole quantization entry point
+- torchao is the sole quantization backend (BitsAndBytes dependency removed from quantization paths)
+- `get_recommended_method()` returns unified method names (`"fp8-weight-only"` instead of `"fp8"`, `"int8"` instead of `"8bit"`)
+- Encoder quantization uses post-load pattern (load BF16 then quantize) instead of BnB during-load
+- Config field names unified: removed `flux2_quantization`, `ltx2_quantize`, `qwen_image_quantize_*` in favor of `<pipeline>_quant_<component>`
+- Updated `docs/reference/quantization.md` with migration table from old to new API
+- **Missed layers cleanup**: Fixed remaining ~40% of codebase still referencing old method names
+  - Fixed runtime crash bugs: `generate.py` default param, CLI choices, Qwen variant defaults, QwenImageConfig validation
+  - Removed BnB from: EncoderConfig, BackendConfig, backends/qwen_image.py, encoders/gemma3.py, backends/transformers.py
+  - Deleted dead code: `utils/quantization.py` (quanto module), `is_bitsandbytes_available()`, BnB migration tests
+  - Fixed config wiring: `ltx2_quantize` TOML default from `"fp8"` to `"fp8-weight-only"`
+  - Removed `bitsandbytes` from `pyproject.toml` dependencies
+  - Updated `vae_utils.py` to remove `"8bit"` BnB method, only `"int8"` remains for VAE
+
 ## 0.6.3
 
 ### changed

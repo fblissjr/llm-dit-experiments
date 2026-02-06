@@ -14,8 +14,8 @@ All variants share the 60-layer DiT architecture with 2x2 latent packing.
 from . import register_pipeline, PipelineSchema, ParamSchema
 
 
-# Common quantization options for all Qwen variants
-QUANTIZATION_OPTIONS = ["none", "4bit", "8bit", "fp8", "diffsynth-fp8"]
+# Common quantization options for all Qwen variants (unified torchao methods)
+QUANTIZATION_OPTIONS = ["none", "fp8-dynamic", "fp8-weight-only", "int8", "int4"]
 
 # Resolution options (Qwen models are trained on specific resolutions)
 RESOLUTION_OPTIONS_640 = ["640x640", "512x768", "768x512"]

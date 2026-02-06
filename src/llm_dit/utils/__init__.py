@@ -159,19 +159,10 @@ from llm_dit.utils.metrics import (
     compute_video_siglip_score,
 )
 
-from llm_dit.utils.quantization import (
-    QuantizationPrecision,
-    quantize_model,
-    estimate_quantized_size,
-    EXCLUDE_PATTERNS,
-    SKIP_ROOT_MODULES,
-)
-
 from llm_dit.utils.availability import (
     is_torchao_available,
     is_flash_attn_available,
     is_diffusers_available,
-    is_bitsandbytes_available,
     is_xformers_available,
     is_sage_attn_available,
     get_diffusers_version,
@@ -303,17 +294,10 @@ __all__ = [
     "SigLIPScorer",
     "compute_siglip_score",
     "compute_video_siglip_score",
-    # Quantization
-    "QuantizationPrecision",
-    "quantize_model",
-    "estimate_quantized_size",
-    "EXCLUDE_PATTERNS",
-    "SKIP_ROOT_MODULES",
     # Availability checks
     "is_torchao_available",
     "is_flash_attn_available",
     "is_diffusers_available",
-    "is_bitsandbytes_available",
     "is_xformers_available",
     "is_sage_attn_available",
     "get_diffusers_version",

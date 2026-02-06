@@ -121,8 +121,8 @@ class QwenImagePipeline:
             text_encoder_device: Device for text encoder (defaults to device)
             vae_device: Device for VAE (defaults to device)
             dtype: Model dtype (default: bfloat16)
-            text_encoder_quantization: Quantization for text encoder: "none", "4bit", "8bit"
-            dit_quantization: Quantization for DiT: "none", "4bit", "8bit"
+            text_encoder_quantization: Quantization for text encoder (torchao unified)
+            dit_quantization: Quantization for DiT (torchao unified)
             compile_model: If True, compile DiT with torch.compile
             compile_mode: torch.compile mode: "reduce-overhead", "max-autotune", "default"
             cpu_offload: If True, enable CPU offload for memory-constrained setups

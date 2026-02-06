@@ -6030,11 +6030,14 @@ async def vram_load_flux2():
 
             model_name = getattr(runtime_config, "flux2_model_name", "klein-9b") if runtime_config else "klein-9b"
             block_offload = getattr(runtime_config, "flux2_block_offload", False) if runtime_config else False
-            quantization = getattr(runtime_config, "flux2_quantization", "none") if runtime_config else "none"
             compile_transformer = getattr(runtime_config, "flux2_compile", False) if runtime_config else False
             compile_vae_flag = getattr(runtime_config, "flux2_compile_vae", False) if runtime_config else False
             compile_mode = getattr(runtime_config, "flux2_compile_mode", "max-autotune-no-cudagraphs") if runtime_config else "max-autotune-no-cudagraphs"
             encoder_path = getattr(runtime_config, "flux2_encoder_path", None) if runtime_config else None
+
+            # Resolve quantization from unified config
+            quant_config = runtime_config.get_pipeline_quant_config("flux2") if runtime_config else None
+            quantization = quant_config.transformer.method if quant_config else "none"
 
             # Validate incompatible settings before loading anything
             if compile_transformer and block_offload:
@@ -6245,22 +6248,43 @@ async def unload_all_models():
     }
 
 
-def _get_flux2_config_metadata() -> dict:
-    """Build config tags and warnings for FLUX.2 pipeline status."""
+def _get_pipeline_config_metadata(pipeline: str) -> dict:
+    """Build config tags and warnings for any pipeline's status.
+
+    Uses the unified quantization config system. Supports pipeline-specific
+    compile and block_offload settings where applicable.
+    """
     if runtime_config is None:
         return {"config_tags": [], "config_warnings": []}
 
     config_tags = []
     config_warnings = []
 
-    quantization = getattr(runtime_config, "flux2_quantization", "none") or "none"
-    compile_enabled = getattr(runtime_config, "flux2_compile", False)
-    compile_vae = getattr(runtime_config, "flux2_compile_vae", False)
-    compile_mode = getattr(runtime_config, "flux2_compile_mode", "reduce-overhead")
-    block_offload = getattr(runtime_config, "flux2_block_offload", False)
+    # Resolve quantization from unified config
+    quant_config = runtime_config.get_pipeline_quant_config(pipeline)
 
-    if quantization != "none":
-        config_tags.append({"key": "quantization", "label": quantization.upper(), "color": "purple"})
+    # Add quantization tags for each component
+    for component in ("encoder", "transformer", "vae"):
+        comp_config = getattr(quant_config, component)
+        if comp_config.method != "none":
+            config_tags.append({
+                "key": f"quant_{component}",
+                "label": f"{component}: {comp_config.method.upper()}",
+                "color": "purple",
+            })
+
+    # Pipeline-specific settings
+    compile_enabled = False
+    compile_mode = "default"
+    compile_vae = False
+    block_offload = False
+
+    if pipeline == "flux2":
+        compile_enabled = getattr(runtime_config, "flux2_compile", False)
+        compile_vae = getattr(runtime_config, "flux2_compile_vae", False)
+        compile_mode = getattr(runtime_config, "flux2_compile_mode", "default")
+        block_offload = getattr(runtime_config, "flux2_block_offload", False)
+
     if compile_enabled:
         config_tags.append({"key": "compile", "label": f"compiled ({compile_mode})", "color": "blue"})
     if compile_vae:
@@ -6268,20 +6292,21 @@ def _get_flux2_config_metadata() -> dict:
     if block_offload:
         config_tags.append({"key": "block_offload", "label": "block offload", "color": "orange"})
 
-    if compile_enabled and quantization != "none" and "autotune" in compile_mode:
-        config_warnings.append({
-            "severity": "warning",
-            "message": f"compile_mode={compile_mode} with {quantization} quantization causes 5+ min autotune on first request. Consider compile_mode=default.",
-        })
+    # Warnings from unified quantization system
+    from llm_dit.quantization import get_quant_compile_warnings
+    if compile_enabled:
+        for warning_msg in get_quant_compile_warnings(quant_config.transformer.method, compile_mode):
+            config_warnings.append({"severity": "warning", "message": warning_msg})
+
     if compile_enabled and block_offload:
         config_warnings.append({
             "severity": "error",
             "message": "compile=true is incompatible with block_offload=true. Loading will fail.",
         })
-    if quantization != "none" and block_offload:
+    if quant_config.transformer.method != "none" and block_offload:
         config_warnings.append({
             "severity": "error",
-            "message": f"quantization={quantization} is incompatible with block_offload=true. Loading will fail.",
+            "message": f"quantization={quant_config.transformer.method} is incompatible with block_offload=true. Loading will fail.",
         })
 
     return {"config_tags": config_tags, "config_warnings": config_warnings}
@@ -6325,7 +6350,7 @@ async def get_model_status(pipeline_id: str):
             total_vram_mb = sum(c["vramMB"] for c in components)
     elif pid == "flux2":
         loaded = flux2_pipeline is not None
-        config_meta = _get_flux2_config_metadata()
+        config_meta = _get_pipeline_config_metadata("flux2")
         if loaded:
             components = [
                 {"name": "encoder", "vramMB": 2000},

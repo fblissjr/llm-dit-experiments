@@ -1,22 +1,25 @@
 """
 TorchAO quantization utilities.
 
-Provides functions for applying TorchAO quantization to models
-and checking TorchAO availability.
+Provides quantize_component() as the unified entry point for quantizing
+any model component (encoder, transformer, VAE).
 
-Includes filtered quantization that skips layers with dimensions
-not compatible with FP8 _scaled_mm (requires multiples of 16).
-
-last updated: 2025-12-29
+last updated: 2026-02-06
 """
 
 import logging
-from typing import Callable, Optional, Union
+import re
+from typing import Callable, Optional
 
 import torch
 import torch.nn as nn
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Canonical method strings (matches config.VALID_QUANT_METHODS)
+# ---------------------------------------------------------------------------
+VALID_METHODS = ("none", "fp8-dynamic", "fp8-weight-only", "int8", "int4")
 
 _TORCHAO_AVAILABLE = None
 
@@ -41,87 +44,6 @@ def get_torchao_version() -> Optional[str]:
     return None
 
 
-def quantize_model_torchao(
-    model: nn.Module,
-    method: str,
-    in_place: bool = True,
-) -> nn.Module:
-    """
-    Apply TorchAO quantization to a PyTorch model.
-
-    This is for standalone models (not diffusers pipelines).
-    For diffusers pipelines, use get_quantization_config() instead.
-
-    Args:
-        model: PyTorch model to quantize
-        method: Quantization method ("fp8" or "int8")
-        in_place: If True, modify model in-place. If False, return new model.
-
-    Returns:
-        Quantized model
-
-    Example:
-        from llm_dit.quantization import quantize_model_torchao
-        quantize_model_torchao(model, "fp8")
-    """
-    if not is_torchao_available():
-        raise ImportError(
-            "TorchAO is not available. Install with: uv add torchao"
-        )
-
-    import torchao.quantization as tao_quant
-
-    if not in_place:
-        import copy
-        model = copy.deepcopy(model)
-
-    method = method.lower().strip()
-
-    if method == "fp8":
-        # FP8 dynamic quantization
-        # Quantizes both weights and activations to FP8
-        # Best for RTX 4090+ (compute capability 8.9+)
-        logger.info("Applying TorchAO FP8 dynamic quantization...")
-        # Use new config API to avoid deprecation warning
-        try:
-            from torchao.quantization import Float8DynamicActivationFloat8WeightConfig, PerTensor
-            config = Float8DynamicActivationFloat8WeightConfig(granularity=PerTensor())
-        except ImportError:
-            # Fall back to old API if new one not available
-            config = tao_quant.float8_dynamic_activation_float8_weight()
-        tao_quant.quantize_(model, config)
-        logger.info("FP8 quantization applied successfully")
-
-    elif method == "int8":
-        # INT8 weight-only quantization
-        # Only quantizes weights, activations stay in original dtype
-        # Works on any GPU
-        logger.info("Applying TorchAO INT8 weight-only quantization...")
-        tao_quant.quantize_(
-            model,
-            tao_quant.int8_weight_only(),
-        )
-        logger.info("INT8 quantization applied successfully")
-
-    elif method == "int4":
-        # INT4 weight-only quantization
-        # Maximum compression, some quality loss
-        logger.info("Applying TorchAO INT4 weight-only quantization...")
-        tao_quant.quantize_(
-            model,
-            tao_quant.int4_weight_only(),
-        )
-        logger.info("INT4 quantization applied successfully")
-
-    else:
-        raise ValueError(
-            f"Unknown TorchAO method: {method}. "
-            "Supported: fp8, int8, int4"
-        )
-
-    return model
-
-
 def check_fp8_support() -> bool:
     """
     Check if FP8 is supported on current GPU.
@@ -135,11 +57,9 @@ def check_fp8_support() -> bool:
     if not torch.cuda.is_available():
         return False
 
-    # Get compute capability
     major, minor = torch.cuda.get_device_capability()
     compute_cap = major + minor / 10
 
-    # FP8 requires 8.9+ (Ada Lovelace) or 9.0+ (Hopper)
     return compute_cap >= 8.9
 
 
@@ -148,15 +68,15 @@ def get_recommended_method() -> str:
     Get recommended quantization method for current hardware.
 
     Returns:
-        Recommended method string ("fp8", "int8", or "8bit")
+        Recommended method string using unified method names.
     """
     if not torch.cuda.is_available():
-        return "8bit"  # BitsAndBytes for CPU-only
+        return "int8"
 
     if check_fp8_support():
-        return "fp8"  # TorchAO FP8 for RTX 4090+ / H100
+        return "fp8-weight-only"
 
-    return "int8"  # TorchAO INT8 for older GPUs
+    return "int8"
 
 
 def is_fp8_compatible_layer(module: nn.Module) -> bool:
@@ -165,242 +85,215 @@ def is_fp8_compatible_layer(module: nn.Module) -> bool:
 
     FP8 _scaled_mm requires both in_features and out_features
     to be multiples of 16 for tensor core operations.
-
-    Args:
-        module: PyTorch module to check
-
-    Returns:
-        True if the layer is FP8-compatible, False otherwise
     """
     if not isinstance(module, nn.Linear):
-        return True  # Non-linear layers don't have this constraint
+        return True
 
     return module.in_features % 16 == 0 and module.out_features % 16 == 0
 
 
-def create_fp8_filter_fn(
-    skip_incompatible: bool = True,
+# ---------------------------------------------------------------------------
+# Unified quantization entry point
+# ---------------------------------------------------------------------------
+
+def _build_method_map() -> dict:
+    """Build METHOD_MAP lazily (imports torchao at call time, not import time)."""
+    from torchao.quantization import (
+        Float8DynamicActivationFloat8WeightConfig,
+        Float8WeightOnlyConfig,
+        Int4WeightOnlyConfig,
+        Int8WeightOnlyConfig,
+        PerRow,
+        PerTensor,
+    )
+
+    return {
+        "fp8-dynamic": lambda g: Float8DynamicActivationFloat8WeightConfig(
+            granularity=PerRow() if g == "per-row" else PerTensor()
+        ),
+        "fp8-weight-only": lambda _g: Float8WeightOnlyConfig(),
+        "int8": lambda _g: Int8WeightOnlyConfig(),
+        "int4": lambda _g: Int4WeightOnlyConfig(),
+    }
+
+
+# Encoder layers that should NOT be quantized (embeddings, norms, LM head)
+_ENCODER_SKIP_PATTERNS = [
+    r".*embed_tokens.*",
+    r".*lm_head.*",
+    r".*norm.*",
+    r".*rotary_emb.*",
+]
+
+# Transformer layers that should NOT be quantized (norms, projections)
+_TRANSFORMER_SKIP_PATTERNS = [
+    r".*norm.*",
+]
+
+
+def _build_fqn_filter(
+    skip_patterns: list[str],
+    method: str,
     verbose: bool = True,
 ) -> Callable[[nn.Module, str], bool]:
+    """Build a filter function that skips modules matching regex patterns.
+
+    For FP8 methods, also skips Linear layers with non-16-aligned dims.
     """
-    Create a filter function for TorchAO FP8 quantization.
+    compiled = [re.compile(p) for p in skip_patterns]
+    is_fp8 = method in ("fp8-dynamic", "fp8-weight-only")
+    stats: dict[str, list[str]] = {"quantized": [], "skipped": []}
 
-    The filter function determines which layers to quantize.
-    Layers with dimensions not divisible by 16 are skipped
-    because FP8 _scaled_mm requires 16-aligned dimensions.
-
-    Args:
-        skip_incompatible: If True, skip layers with non-16-aligned dimensions
-        verbose: If True, log skipped layers
-
-    Returns:
-        Filter function for use with torchao.quantization.quantize_()
-
-    Example:
-        filter_fn = create_fp8_filter_fn(skip_incompatible=True)
-        quantize_(model, float8_dynamic_activation_float8_weight(), filter_fn=filter_fn)
-    """
-    skipped_count = 0
-    quantized_count = 0
-
-    def filter_fn(module: nn.Module, fqn: str) -> bool:
-        nonlocal skipped_count, quantized_count
-
-        # CRITICAL: Return False for non-Linear modules to recurse into children
-        # True = "quantize this module", False = "recurse into children"
+    def _filter(module: nn.Module, fqn: str) -> bool:
         if not isinstance(module, nn.Linear):
-            return False
+            return False  # recurse into children
 
-        # Now we know it's a Linear layer - apply FP8 compatibility checks
-        if skip_incompatible and not is_fp8_compatible_layer(module):
+        # Check skip patterns
+        for pattern in compiled:
+            if pattern.match(fqn):
+                stats["skipped"].append(fqn)
+                if verbose:
+                    logger.debug(f"  [SKIP] {fqn} (pattern match)")
+                return False
+
+        # FP8 dim-16 check
+        if is_fp8 and not is_fp8_compatible_layer(module):
+            stats["skipped"].append(fqn)
             if verbose:
-                logger.info(
-                    f"Skipping FP8 for {fqn}: shape [{module.out_features}, {module.in_features}] "
-                    f"not 16-aligned (in={module.in_features % 16}, out={module.out_features % 16})"
+                logger.debug(
+                    f"  [SKIP] {fqn}: [{module.out_features}, {module.in_features}] "
+                    f"not 16-aligned"
                 )
-            skipped_count += 1
             return False
 
-        quantized_count += 1
+        stats["quantized"].append(fqn)
         return True
 
-    return filter_fn
+    # Attach stats dict so caller can read it after quantize_() completes
+    _filter._stats = stats  # type: ignore[attr-defined]
+    return _filter
 
 
-def quantize_model_torchao_filtered(
+def quantize_component(
     model: nn.Module,
-    method: str = "fp8",
-    skip_incompatible: bool = True,
-    in_place: bool = True,
+    method: str,
+    component_type: str = "transformer",
+    granularity: str = "per-tensor",
     verbose: bool = True,
 ) -> tuple[nn.Module, dict]:
-    """
-    Apply TorchAO quantization with automatic skipping of incompatible layers.
+    """Unified quantization entry point for any model component.
 
-    For FP8 quantization, layers with dimensions not divisible by 16 are
-    automatically skipped because CUDA's _scaled_mm requires 16-aligned dims.
+    Applies torchao quantization with component-specific filter logic:
+    - encoder: skips embed_tokens, norms, lm_head, rotary_emb
+    - transformer: skips norms + dim-16 check for FP8
+    - vae: delegates to vae_utils.quantize_vae() for Conv2d int8
 
     Args:
-        model: PyTorch model to quantize
-        method: Quantization method ("fp8", "fp8-filtered", "int8", "int4")
-        skip_incompatible: If True, skip FP8-incompatible layers (default: True)
-        in_place: If True, modify model in-place (default: True)
-        verbose: If True, log skipped layers (default: True)
+        model: Model to quantize (modified in place)
+        method: One of VALID_METHODS ("none", "fp8-dynamic", "fp8-weight-only",
+                "int8", "int4")
+        component_type: "encoder", "transformer", or "vae"
+        granularity: "per-tensor" or "per-row" (FP8 only)
+        verbose: Log progress
 
     Returns:
-        Tuple of (quantized_model, stats_dict) where stats_dict contains:
-        - total_linear_layers: Total number of Linear layers
-        - quantized_layers: Number of layers that were quantized
-        - skipped_layers: Number of layers that were skipped
-        - skipped_layer_names: List of skipped layer names
-
-    Example:
-        model, stats = quantize_model_torchao_filtered(model, "fp8")
-        print(f"Quantized {stats['quantized_layers']}/{stats['total_linear_layers']} layers")
+        (model, stats_dict) where stats_dict has:
+        quantized_layers, skipped_layers, total_layers, method, component_type
     """
-    if not is_torchao_available():
-        raise ImportError(
-            "TorchAO is not available. Install with: uv add torchao"
+    if method == "none":
+        return model, {
+            "quantized_layers": 0,
+            "skipped_layers": 0,
+            "total_layers": 0,
+            "method": "none",
+            "component_type": component_type,
+        }
+
+    if method not in VALID_METHODS:
+        raise ValueError(
+            f"Unknown quantization method: '{method}'. "
+            f"Valid: {', '.join(VALID_METHODS)}"
         )
+
+    if not is_torchao_available():
+        raise ImportError("TorchAO is not available. Install with: uv add torchao")
+
+    # VAE special case: Conv2d needs different handling
+    if component_type == "vae":
+        from .vae_utils import quantize_vae
+
+        vae_method = "int8" if method in ("int8", "int4") else "none"
+        if method in ("fp8-dynamic", "fp8-weight-only"):
+            logger.warning(
+                f"FP8 not recommended for VAE Conv2d layers. "
+                f"Falling back to int8 for VAE."
+            )
+            vae_method = "int8"
+        model = quantize_vae(model, method=vae_method)
+        return model, {
+            "quantized_layers": -1,  # vae_utils doesn't track per-layer
+            "skipped_layers": 0,
+            "total_layers": -1,
+            "method": vae_method,
+            "component_type": "vae",
+        }
 
     import torchao.quantization as tao_quant
 
-    if not in_place:
-        import copy
-        model = copy.deepcopy(model)
+    method_map = _build_method_map()
+    config = method_map[method](granularity)
 
-    method = method.lower().strip()
-    if method == "fp8-filtered":
-        method = "fp8"  # Normalize the method name
-
-    # Count layers before quantization
-    total_layers = sum(1 for m in model.modules() if isinstance(m, nn.Linear))
-
-    # Track skipped layers
-    skipped_layers = []
-
-    quantized_layers = []
-    layer_count = [0]  # Use list to allow mutation in nested function
-
-    def tracking_filter_fn(module: nn.Module, fqn: str) -> bool:
-        # CRITICAL: Return False for non-Linear modules to recurse into children
-        # True = "quantize this module", False = "recurse into children"
-        if not isinstance(module, nn.Linear):
-            return False
-
-        layer_count[0] += 1
-
-        # Now we know it's a Linear layer - apply FP8 compatibility checks
-        if method == "fp8" and skip_incompatible:
-            if not is_fp8_compatible_layer(module):
-                if verbose:
-                    logger.info(
-                        f"  [SKIP] {fqn}: [{module.out_features}, {module.in_features}] "
-                        f"(in%16={module.in_features % 16}, out%16={module.out_features % 16})"
-                    )
-                skipped_layers.append(fqn)
-                return False
-
-        quantized_layers.append(fqn)
-
-        # Show progress every 50 layers (or every layer if verbose)
-        if verbose:
-            logger.info(f"  [QUANT] {fqn}: [{module.out_features}, {module.in_features}]")
-        elif layer_count[0] % 50 == 0:
-            logger.info(f"  Progress: {layer_count[0]}/{total_layers} layers processed...")
-
-        return True
-
-    if method == "fp8":
-        logger.info("Applying TorchAO FP8 dynamic quantization (with filtering)...")
-        # Use new config API to avoid deprecation warning
-        try:
-            from torchao.quantization import Float8DynamicActivationFloat8WeightConfig, PerTensor
-            config = Float8DynamicActivationFloat8WeightConfig(granularity=PerTensor())
-        except ImportError:
-            # Fall back to old API if new one not available
-            config = tao_quant.float8_dynamic_activation_float8_weight()
-        tao_quant.quantize_(
-            model,
-            config,
-            filter_fn=tracking_filter_fn,
-        )
-
-    elif method == "int8":
-        logger.info("Applying TorchAO INT8 weight-only quantization...")
-        tao_quant.quantize_(
-            model,
-            tao_quant.int8_weight_only(),
-            filter_fn=tracking_filter_fn if skip_incompatible else None,
-        )
-
-    elif method == "int4":
-        logger.info("Applying TorchAO INT4 weight-only quantization...")
-        tao_quant.quantize_(
-            model,
-            tao_quant.int4_weight_only(),
-            filter_fn=tracking_filter_fn if skip_incompatible else None,
-        )
-
+    # Select filter based on component type
+    if component_type == "encoder":
+        skip_patterns = _ENCODER_SKIP_PATTERNS
+    elif component_type == "transformer":
+        skip_patterns = _TRANSFORMER_SKIP_PATTERNS
     else:
-        raise ValueError(
-            f"Unknown TorchAO method: {method}. "
-            "Supported: fp8, fp8-filtered, int8, int4"
-        )
+        skip_patterns = _TRANSFORMER_SKIP_PATTERNS  # default
 
-    quantized_count = total_layers - len(skipped_layers)
+    filter_fn = _build_fqn_filter(skip_patterns, method, verbose=verbose)
+
+    total_linear = sum(1 for m in model.modules() if isinstance(m, nn.Linear))
     logger.info(
-        f"Quantization complete: {quantized_count}/{total_layers} layers quantized, "
-        f"{len(skipped_layers)} skipped"
+        f"Quantizing {component_type} with {method} "
+        f"(granularity={granularity}, {total_linear} linear layers)..."
     )
 
-    stats = {
-        "total_linear_layers": total_layers,
+    tao_quant.quantize_(model, config, filter_fn=filter_fn)
+
+    # Read stats from filter function
+    filter_stats = filter_fn._stats  # type: ignore[attr-defined]
+    quantized_count = len(filter_stats["quantized"])
+    skipped_count = len(filter_stats["skipped"])
+
+    logger.info(
+        f"Quantization complete: {quantized_count}/{total_linear} layers quantized, "
+        f"{skipped_count} skipped"
+    )
+
+    return model, {
         "quantized_layers": quantized_count,
-        "skipped_layers": len(skipped_layers),
-        "skipped_layer_names": skipped_layers,
+        "skipped_layers": skipped_count,
+        "total_layers": total_linear,
+        "method": method,
+        "component_type": component_type,
     }
 
-    return model, stats
 
-
-def analyze_fp8_compatibility(model: nn.Module) -> dict:
-    """
-    Analyze a model's FP8 compatibility without quantizing.
+def get_quant_compile_warnings(method: str, compile_mode: str) -> list[str]:
+    """Return warnings for dangerous quant + compile combinations.
 
     Args:
-        model: PyTorch model to analyze
+        method: Quantization method string
+        compile_mode: torch.compile mode string
 
     Returns:
-        Dict with compatibility analysis:
-        - total_linear_layers: Total Linear layers
-        - compatible_layers: FP8-compatible layers
-        - incompatible_layers: Layers that would be skipped
-        - compatibility_rate: Percentage of compatible layers
-        - incompatible_layer_info: List of dicts with layer details
+        List of warning strings (empty if no issues)
     """
-    total = 0
-    compatible = 0
-    incompatible_info = []
-
-    for name, module in model.named_modules():
-        if isinstance(module, nn.Linear):
-            total += 1
-            if is_fp8_compatible_layer(module):
-                compatible += 1
-            else:
-                incompatible_info.append({
-                    "name": name,
-                    "in_features": module.in_features,
-                    "out_features": module.out_features,
-                    "in_remainder": module.in_features % 16,
-                    "out_remainder": module.out_features % 16,
-                })
-
-    return {
-        "total_linear_layers": total,
-        "compatible_layers": compatible,
-        "incompatible_layers": total - compatible,
-        "compatibility_rate": (compatible / total * 100) if total > 0 else 0,
-        "incompatible_layer_info": incompatible_info,
-    }
+    warnings = []
+    if method == "fp8-dynamic" and "autotune" in compile_mode:
+        warnings.append(
+            f"fp8-dynamic + compile_mode={compile_mode} causes 5+ minute autotune "
+            f"warmup on first request. Consider fp8-weight-only instead."
+        )
+    return warnings

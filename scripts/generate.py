@@ -600,8 +600,8 @@ def run_ltx2_generation(args, config, logger) -> int:
         text_encoder_device=config.ltx2_text_encoder_device,
         transformer_device=config.ltx2_transformer_device,
         vae_device=config.ltx2_vae_device,
-        quantize_transformer=(config.ltx2_quantize == "fp8"),
-        precision="fp8-native" if config.ltx2_quantize == "fp8" else "bf16",
+        quantize_transformer=(config.ltx2_quantize not in (None, "none", "")),
+        precision=config.ltx2_quantize if config.ltx2_quantize not in (None, "none", "") else "none",
         cleanup_between_stages=not config.ltx2_skip_cleanup,
     )
 

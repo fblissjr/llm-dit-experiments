@@ -87,7 +87,7 @@ class EncoderFactory:
             model_path: Path to model or HuggingFace ID.
             model_subfolder: Subfolder containing model weights.
             tokenizer_subfolder: Subfolder containing tokenizer.
-            quantization: Quantization mode (none, 4bit, 8bit, int8_dynamic).
+            quantization: Quantization mode (torchao unified: none, fp8-dynamic, fp8-weight-only, int8, int4).
             device: Device to load on (auto, cuda, cpu).
             dtype: Model dtype (bfloat16, float16).
             enable_cache: Enable embedding cache.

@@ -78,7 +78,7 @@ class Qwen3Encoder:
         model_subfolder: str = "text_encoder",
         tokenizer_subfolder: str = "tokenizer",
         quantization: Optional[str] = None,
-        quantization_config: Optional["BitsAndBytesConfig"] = None,
+        quantization_config: Optional[object] = None,
         device: str = "auto",
         dtype: str = "bfloat16",
         enable_cache: bool = False,
@@ -92,8 +92,8 @@ class Qwen3Encoder:
             model_path: Path to model or HuggingFace ID.
             model_subfolder: Subfolder containing text encoder (default: "text_encoder").
             tokenizer_subfolder: Subfolder containing tokenizer (default: "tokenizer").
-            quantization: Quantization mode (none, 4bit, 8bit, int8_dynamic).
-            quantization_config: BitsAndBytesConfig for explicit quantization.
+            quantization: Quantization mode (none, fp8-dynamic, fp8-weight-only, int8, int4).
+            quantization_config: Optional quantization config object (legacy, usually None).
             device: Device to load model on (auto, cuda, cpu).
             dtype: Model dtype (bfloat16, float16).
             enable_cache: Enable embedding cache.

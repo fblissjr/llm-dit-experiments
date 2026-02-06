@@ -69,7 +69,6 @@ class QwenImage2512Pipeline:
         pipe,
         device: torch.device = None,
         dtype: torch.dtype = torch.bfloat16,
-        use_diffsynth_fp8: bool = False,
     ):
         """
         Initialize the pipeline wrapper.
@@ -78,13 +77,11 @@ class QwenImage2512Pipeline:
             pipe: Loaded diffusers QwenImagePipeline
             device: Device for inference
             dtype: Model dtype
-            use_diffsynth_fp8: Use DiffSynth-style FP8 inference
         """
         self.pipe = pipe
         self._device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self._dtype = dtype
         self._cpu_offload_enabled = False
-        self._use_diffsynth_fp8 = use_diffsynth_fp8
 
     @classmethod
     def from_pretrained(
@@ -105,16 +102,15 @@ class QwenImage2512Pipeline:
             dtype: Model dtype (bfloat16 recommended)
             cpu_offload: Enable sequential CPU offload for memory efficiency
             quantize_transformer: Quantization for transformer (60-layer DiT, 39GB):
-                "fp8" = TorchAO FP8 dynamic (~20GB, default for RTX 4090)
-                "diffsynth-fp8" = DiffSynth-style FP8 (runtime F.linear patching)
-                "int8" = TorchAO INT8 weight-only (~20GB)
-                "4bit" = BitsAndBytes NF4 (~10GB, more quality loss)
-                "8bit" = BitsAndBytes INT8 (~20GB)
+                "fp8-dynamic" = FP8 weights + activations (~20GB, RTX 4090+)
+                "fp8-weight-only" = FP8 weights, BF16 activations (~20GB)
+                "int8" = INT8 weight-only (~20GB)
+                "int4" = INT4 weight-only (~10GB)
                 None = no quantization (~39GB, requires 48GB+ VRAM)
             quantize_text_encoder: Quantization for text encoder (Qwen2.5-VL-7B, 16GB):
                 None = no quantization (~16GB, best quality, CPU offload recommended)
-                "8bit" = BitsAndBytes INT8 (~8GB)
-                "4bit" = BitsAndBytes NF4 (~4GB, significant quality loss)
+                "int8" = INT8 weight-only (~8GB)
+                "int4" = INT4 weight-only (~4GB)
 
         Returns:
             Initialized QwenImage2512Pipeline
@@ -139,41 +135,37 @@ class QwenImage2512Pipeline:
 
         from diffusers import QwenImagePipeline
 
-        # Check for DiffSynth-style FP8 (runtime patching, not TorchAO)
-        use_diffsynth_fp8 = quantize_transformer == "diffsynth-fp8"
-        if use_diffsynth_fp8:
-            # DiffSynth FP8 uses runtime F.linear patching - don't pass to TorchAO
-            effective_transformer_quant = None
-            logger.info("Using DiffSynth-style FP8 (runtime F.linear patching)")
-        else:
-            effective_transformer_quant = quantize_transformer
-
-        # Build quantization config if needed
-        pipe_quant_config = cls._build_quantization_config(
-            quantize_transformer=effective_transformer_quant,
-            quantize_text_encoder=quantize_text_encoder,
+        # Load pipeline in full precision
+        logger.info(
+            f"Loading with quantization: transformer={quantize_transformer}, "
+            f"text_encoder={quantize_text_encoder}"
+        )
+        pipe = QwenImagePipeline.from_pretrained(
+            str(model_path),
+            dtype=dtype,
         )
 
-        # Load pipeline with quantization
-        if pipe_quant_config:
+        # Apply post-load quantization via unified system
+        if quantize_transformer and quantize_transformer != "none":
+            from llm_dit.quantization import quantize_component
+
+            pipe.transformer, stats = quantize_component(
+                pipe.transformer, method=quantize_transformer, component_type="transformer"
+            )
             logger.info(
-                f"Loading with quantization: transformer={effective_transformer_quant}, "
-                f"text_encoder={quantize_text_encoder}"
+                f"Transformer quantized: {stats['quantized_layers']}/{stats['total_layers']} layers "
+                f"({quantize_transformer})"
             )
-            pipe = QwenImagePipeline.from_pretrained(
-                str(model_path),
-                dtype=dtype,
-                quantization_config=pipe_quant_config,
+
+        if quantize_text_encoder and quantize_text_encoder != "none":
+            from llm_dit.quantization import quantize_component
+
+            pipe.text_encoder, stats = quantize_component(
+                pipe.text_encoder, method=quantize_text_encoder, component_type="encoder"
             )
-        else:
-            if not use_diffsynth_fp8:
-                logger.warning(
-                    "Loading without quantization - requires 48GB+ VRAM. "
-                    "Use quantize_transformer='fp8' and quantize_text_encoder='4bit' for RTX 4090."
-                )
-            pipe = QwenImagePipeline.from_pretrained(
-                str(model_path),
-                dtype=dtype,
+            logger.info(
+                f"Text encoder quantized: {stats['quantized_layers']}/{stats['total_layers']} layers "
+                f"({quantize_text_encoder})"
             )
 
         # Enable CPU offload for memory management
@@ -181,18 +173,10 @@ class QwenImage2512Pipeline:
             logger.info("Enabling model CPU offload")
             pipe.enable_model_cpu_offload()
 
-        # For DiffSynth FP8, pre-convert weights for memory savings
-        if use_diffsynth_fp8:
-            from llm_dit.quantization import enable_fp8_weights
-
-            logger.info("Converting transformer weights to FP8 for memory savings...")
-            enable_fp8_weights(pipe.transformer)
-
         instance = cls(
             pipe=pipe,
             device=device,
             dtype=dtype,
-            use_diffsynth_fp8=use_diffsynth_fp8,
         )
         instance._cpu_offload_enabled = cpu_offload
 
@@ -200,98 +184,10 @@ class QwenImage2512Pipeline:
             f"QwenImage2512Pipeline loaded: "
             f"quantize_transformer={quantize_transformer}, "
             f"quantize_text_encoder={quantize_text_encoder}, "
-            f"cpu_offload={cpu_offload}, "
-            f"diffsynth_fp8={use_diffsynth_fp8}"
+            f"cpu_offload={cpu_offload}"
         )
 
         return instance
-
-    @staticmethod
-    def _build_quantization_config(
-        quantize_transformer: Optional[str],
-        quantize_text_encoder: Optional[str] = None,
-    ):
-        """Build PipelineQuantizationConfig for component quantization."""
-        from diffusers.quantizers import PipelineQuantizationConfig
-
-        if not quantize_transformer and not quantize_text_encoder:
-            return None
-
-        quant_mapping = {}
-
-        # Transformer quantization
-        if quantize_transformer:
-            if quantize_transformer in ("fp8", "int8"):
-                from diffusers import TorchAoConfig
-
-                from llm_dit.quantization import check_fp8_support
-
-                if quantize_transformer == "fp8":
-                    if not check_fp8_support():
-                        raise RuntimeError(
-                            "FP8 requires compute capability 8.9+ (RTX 4090/H100). "
-                            "Use 'int8' or '8bit' instead."
-                        )
-                    quant_mapping["transformer"] = TorchAoConfig("float8dq")
-                    logger.info("Transformer: TorchAO FP8 dynamic quantization")
-                else:
-                    quant_mapping["transformer"] = TorchAoConfig("int8wo")
-                    logger.info("Transformer: TorchAO INT8 weight-only quantization")
-
-            elif quantize_transformer in ("4bit", "8bit"):
-                try:
-                    from diffusers import BitsAndBytesConfig
-                except ImportError:
-                    raise ImportError(
-                        "bitsandbytes required for 4bit/8bit. Install with: uv add bitsandbytes"
-                    )
-
-                if quantize_transformer == "4bit":
-                    quant_mapping["transformer"] = BitsAndBytesConfig(
-                        load_in_4bit=True,
-                        bnb_4bit_quant_type="nf4",
-                        bnb_4bit_compute_dtype=torch.bfloat16,
-                    )
-                    logger.info("Transformer: BitsAndBytes 4-bit quantization")
-                else:
-                    quant_mapping["transformer"] = BitsAndBytesConfig(load_in_8bit=True)
-                    logger.info("Transformer: BitsAndBytes 8-bit quantization")
-            else:
-                raise ValueError(
-                    f"Unknown transformer quantization: {quantize_transformer}. "
-                    "Use 'fp8', 'int8' (TorchAO) or '4bit', '8bit' (BitsAndBytes)"
-                )
-
-        # Text encoder quantization
-        if quantize_text_encoder:
-            if quantize_text_encoder in ("4bit", "8bit"):
-                try:
-                    from transformers import BitsAndBytesConfig as TransformersBnbConfig
-                except ImportError:
-                    raise ImportError(
-                        "bitsandbytes required for 4bit/8bit. Install with: uv add bitsandbytes"
-                    )
-
-                if quantize_text_encoder == "4bit":
-                    quant_mapping["text_encoder"] = TransformersBnbConfig(
-                        load_in_4bit=True,
-                        bnb_4bit_quant_type="nf4",
-                        bnb_4bit_compute_dtype=torch.bfloat16,
-                    )
-                    logger.info("Text encoder: BitsAndBytes 4-bit quantization (~4GB)")
-                else:
-                    quant_mapping["text_encoder"] = TransformersBnbConfig(load_in_8bit=True)
-                    logger.info("Text encoder: BitsAndBytes 8-bit quantization (~8GB)")
-            else:
-                raise ValueError(
-                    f"Unknown text encoder quantization: {quantize_text_encoder}. "
-                    "Use '4bit' or '8bit' (BitsAndBytes)"
-                )
-
-        if not quant_mapping:
-            return None
-
-        return PipelineQuantizationConfig(quant_mapping=quant_mapping)
 
     @property
     def device(self) -> torch.device:
@@ -354,17 +250,6 @@ class QwenImage2512Pipeline:
             f"cfg={cfg_scale}, seed={seed}"
         )
 
-        # Import FP8 context manager if needed
-        if self._use_diffsynth_fp8:
-            from llm_dit.quantization import fp8_inference
-
-            context_manager = fp8_inference()
-            logger.debug("Using DiffSynth-style FP8 inference")
-        else:
-            from contextlib import nullcontext
-
-            context_manager = nullcontext()
-
         # Initialize FBCache for inference acceleration
         fbcache_ctx = None
         fbcache_state = None
@@ -379,22 +264,19 @@ class QwenImage2512Pipeline:
                 "The transformer block signatures differ from Z-Image. "
                 "Proceeding without FBCache acceleration."
             )
-            # Disable fbcache for this generation
             fbcache = False
 
-        # Run generation (optionally with FP8 context)
-        with context_manager:
-            result = self.pipe(
-                prompt=prompt,
-                negative_prompt=negative_prompt,
-                true_cfg_scale=cfg_scale,
-                height=height,
-                width=width,
-                num_inference_steps=num_inference_steps,
-                generator=generator,
-                max_sequence_length=max_sequence_length,
-                callback_on_step_end=fbcache_callback,
-            )
+        result = self.pipe(
+            prompt=prompt,
+            negative_prompt=negative_prompt,
+            true_cfg_scale=cfg_scale,
+            height=height,
+            width=width,
+            num_inference_steps=num_inference_steps,
+            generator=generator,
+            max_sequence_length=max_sequence_length,
+            callback_on_step_end=fbcache_callback,
+        )
 
         # Clean up FBCache
         if fbcache_ctx is not None:

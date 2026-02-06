@@ -8,7 +8,7 @@ Do NOT import or use any diffusers components.
 
 Provides factory functions to load different Gemma3 variants:
 - bf16: Full precision bfloat16 (~24GB VRAM)
-- 8bit: BitsAndBytes 8-bit quantization (~12GB VRAM)
+- 8bit: TorchAO int8 quantization (~12GB VRAM)
 - q4-qat: Pre-quantized Q4 QAT model (~3GB VRAM)
 
 All variants use:
@@ -20,7 +20,7 @@ the LTX-2 specific components that are critical for video generation quality.
 
 Memory Savings on RTX 4090:
 - bf16: ~24GB (may OOM during generation)
-- 8bit: ~12GB (safe, good quality)
+- 8bit: ~12GB (safe, good quality, torchao int8)
 - q4-qat: ~3GB (maximum headroom for transformer)
 
 Usage:
@@ -79,7 +79,7 @@ def create_gemma3_encoder(
     Args:
         variant: Which Gemma3 variant to load:
             - "bf16": Standard bfloat16 precision (~24GB)
-            - "8bit": BitsAndBytes 8-bit quantization (~12GB)
+            - "8bit": TorchAO int8 quantization (~12GB)
             - "q4-qat": Pre-quantized Q4 QAT model (~3GB)
         model_path: Path to LTX-2 model directory (contains tokenizer/, text_encoder/)
         text_encoder_path: Override path for Gemma model weights.
@@ -212,9 +212,8 @@ def _load_8bit_encoder(
     4. Load LTX-2 connector weights (full precision)
     5. Assemble into encoder
 
-    Note: Uses torchao instead of BitsAndBytes because LTX-2's sharded
-    checkpoint format requires manual weight loading, which is incompatible
-    with BitsAndBytes' from_pretrained hook.
+    Note: Uses torchao for all quantization. LTX-2's sharded checkpoint
+    format requires manual weight loading.
     """
     try:
         from transformers import AutoTokenizer, Gemma3ForCausalLM
@@ -251,19 +250,24 @@ def _load_8bit_encoder(
             device="cpu",  # Load on CPU first
             dtype=dtype,
             max_sequence_length=max_sequence_length,
-            load_in_8bit=False,  # Don't use BnB, we'll use torchao
+            load_in_8bit=False,
             connectors_path=connectors_path,
             tokenizer_path=tokenizer_path,
             use_connector=use_connector,
         )
         encoder._load_model()
 
-        # Step 2: Apply torchao int8 quantization
+        # Step 2: Apply int8 quantization via unified system
         if has_torchao and encoder._model is not None:
-            from torchao.quantization import int8_weight_only, quantize_
+            from llm_dit.quantization import quantize_component
 
-            logger.info("Applying torchao int8 weight quantization...")
-            quantize_(encoder._model, int8_weight_only())
+            logger.info("Applying int8 quantization via unified system...")
+            encoder._model, stats = quantize_component(
+                encoder._model, method="int8", component_type="encoder"
+            )
+            logger.info(
+                f"Quantized: {stats['quantized_layers']}/{stats['total_layers']} layers"
+            )
             _log_memory_usage("After int8 quantization (CPU)")
 
         # Step 3: Move to target device
@@ -300,12 +304,15 @@ def _load_8bit_encoder(
         )
         model.requires_grad_(False)
 
-        # Apply int8 quantization
+        # Apply int8 quantization via unified system
         if has_torchao:
-            from torchao.quantization import int8_weight_only, quantize_
+            from llm_dit.quantization import quantize_component
 
-            logger.info("Applying torchao int8 weight quantization...")
-            quantize_(model, int8_weight_only())
+            logger.info("Applying int8 quantization via unified system...")
+            model, stats = quantize_component(model, method="int8", component_type="encoder")
+            logger.info(
+                f"Quantized: {stats['quantized_layers']}/{stats['total_layers']} layers"
+            )
 
         # Move to target device
         target_device = device if device != "auto" else "cuda"
@@ -407,8 +414,8 @@ def _load_q4_qat_encoder(
     The Q4 QAT model must be downloaded separately from HuggingFace:
     - Model: google/gemma-3-12b-it-qat-q4_0-unquantized (or similar)
 
-    Note: Unlike BitsAndBytes quantization, Q4 QAT models are pre-quantized
-    and load directly without runtime quantization overhead.
+    Note: Q4 QAT models are pre-quantized and load directly without
+    runtime quantization overhead.
     """
     try:
         from transformers import AutoTokenizer, Gemma3ForCausalLM
@@ -445,12 +452,15 @@ def _load_q4_qat_encoder(
     )
     model.requires_grad_(False)
 
-    # Step 2: Apply int4 quantization (reduces ~24GB -> ~3GB)
+    # Step 2: Apply int4 quantization (reduces ~24GB -> ~3GB) via unified system
     if has_torchao:
-        from torchao.quantization import int4_weight_only, quantize_
+        from llm_dit.quantization import quantize_component
 
-        logger.info("Applying torchao int4 weight quantization...")
-        quantize_(model, int4_weight_only())
+        logger.info("Applying int4 quantization via unified system...")
+        model, stats = quantize_component(model, method="int4", component_type="encoder")
+        logger.info(
+            f"Quantized: {stats['quantized_layers']}/{stats['total_layers']} layers"
+        )
         _log_memory_usage("After int4 quantization (CPU)")
 
     # Step 3: Move to target device
@@ -568,7 +578,7 @@ def estimate_encoder_memory(variant: Gemma3Variant) -> dict:
             "connectors_gb": 0.5,
             "activations_gb": 1.0,
             "peak_gb": 14.0,
-            "description": "BitsAndBytes 8-bit quantization",
+            "description": "TorchAO int8 quantization",
         },
         "q4-qat": {
             "model_gb": 3.0,

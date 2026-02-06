@@ -18,7 +18,7 @@ import torch
 
 logger = logging.getLogger(__name__)
 
-VAEQuantMethod = Literal["none", "int8", "8bit"]
+VAEQuantMethod = Literal["none", "int8"]
 
 
 def quantize_vae(
@@ -30,13 +30,12 @@ def quantize_vae(
     """
     Quantize VAE for VRAM savings.
 
-    VAE has Conv2d layers, so only int8/8bit are supported:
+    VAE has Conv2d layers, so only int8 is supported:
     - int8: TorchAO dynamic quantization (Conv2d + Linear)
-    - 8bit: BitsAndBytes 8-bit (would require reload, not supported here)
 
     Args:
         vae: VAE model to quantize
-        method: Quantization method ("none", "int8", "8bit")
+        method: Quantization method ("none", "int8")
         quantize_encoder: Whether to quantize encoder (default: False, rarely needed)
         quantize_decoder: Whether to quantize decoder (default: True, used in generation)
 
@@ -51,19 +50,12 @@ def quantize_vae(
     if method == "none":
         return vae
 
-    if method == "8bit":
-        logger.warning(
-            "VAE 8-bit quantization via BitsAndBytes requires reloading the model. "
-            "Use 'int8' for post-load quantization, or reload with quantization_config."
-        )
-        return vae
-
     if method == "int8":
         return _quantize_vae_int8(vae, quantize_encoder, quantize_decoder)
 
     raise ValueError(
         f"Unknown VAE quantization method: {method}. "
-        f"Valid options: none, int8, 8bit"
+        f"Valid options: none, int8"
     )
 
 
@@ -122,7 +114,7 @@ def estimate_vae_vram(quantization: VAEQuantMethod) -> int:
 
     if quantization == "none":
         return base_vram
-    elif quantization in ("int8", "8bit"):
+    elif quantization == "int8":
         return base_vram // 2  # ~50% reduction
     else:
         return base_vram
@@ -150,12 +142,6 @@ def get_vae_quant_info(method: VAEQuantMethod) -> dict:
             "vram_reduction": "~50%",
             "quality": "99%+",
             "supported_layers": "Conv2d, Linear",
-        },
-        "8bit": {
-            "name": "BitsAndBytes 8-bit",
-            "vram_reduction": "~50%",
-            "quality": "99%+",
-            "supported_layers": "Conv2d, Linear (requires reload)",
         },
     }
     return info.get(method, info["none"])

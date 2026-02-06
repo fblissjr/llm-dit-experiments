@@ -1,13 +1,14 @@
 """
 Test cross-attention vs self-attention weight statistics.
 
-Last Updated: 2026-01-20
+Last Updated: 2026-02-06
 
 Checks if FP8 quantization is crushing cross-attention weights.
 """
 
 import torch
-from llm_dit.models.ltx2 import load_ltx2_transformer, load_ltx2_transformer_fp8_native
+from llm_dit.models.ltx2 import load_ltx2_transformer
+from llm_dit.quantization import quantize_component
 
 
 def main():
@@ -16,12 +17,15 @@ def main():
     print("=" * 80)
 
     # Load model with FP8 quantization (as used in generation)
-    print("\nLoading transformer with FP8 quantization...")
-    model_fp8 = load_ltx2_transformer_fp8_native(
+    print("\nLoading transformer with fp8-weight-only quantization...")
+    model_fp8 = load_ltx2_transformer(
         "models/LTX-2/transformer",
         dtype=torch.bfloat16,
         device="cpu",
         video_only=True,
+    )
+    model_fp8, _stats = quantize_component(  # type: ignore[assignment]
+        model_fp8, method="fp8-weight-only", component_type="transformer"
     )
 
     print("\n--- Block 0 Weight Statistics ---")

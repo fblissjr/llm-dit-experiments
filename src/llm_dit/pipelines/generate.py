@@ -542,7 +542,7 @@ def generate_video_with_offloading(
     text_encoder_path: Optional[Union[str, Path]] = None,
     precomputed_embeddings: Optional[torch.Tensor] = None,
     quantize: bool = True,
-    precision: str = "fp8-native",  # Changed default: native FP8 has no memory leak
+    precision: str = "fp8-weight-only",  # Unified torchao method
     dtype: torch.dtype = torch.bfloat16,
     callback: Optional[Callable[[str, int, int], None]] = None,
     optimization: Optional[LTX2OptimizationConfig] = None,
@@ -575,12 +575,12 @@ def generate_video_with_offloading(
             - Distributed inference (encode on one machine, generate on another)
         quantize: If True, quantize transformer for memory efficiency.
             DEPRECATED: Use optimization.quantize_transformer instead.
-        precision: Quantization method.
+        precision: Quantization method (torchao unified).
             DEPRECATED: Use optimization.precision instead.
-            - "fp8-native" (default): Official LTX-2 approach, no memory leak
-            - "fp8-quanto": Quanto FP8 (legacy, has memory leak issue)
-            - "int8-quanto": Quanto INT8
-            - "int4-quanto": Quanto INT4 (lowest quality)
+            - "fp8-weight-only" (default): FP8 weights, BF16 activations
+            - "fp8-dynamic": FP8 weights + FP8 activations
+            - "int8": INT8 weight-only
+            - "int4": INT4 weight-only (max compression)
         dtype: Base dtype for loading (bf16 recommended)
         callback: Optional callback(stage, step, total) for progress
         optimization: LTX2OptimizationConfig with device placement and memory settings.
@@ -706,39 +706,33 @@ def generate_video_with_offloading(
 
     logger.info("Stage 2: Loading transformer...")
 
-    if effective_quantize:
-        if effective_precision == "fp8-native":
-            # Native FP8: official LTX-2 approach with no memory leak
-            from llm_dit.models.ltx2 import load_ltx2_transformer_fp8_native
+    # Always load in BF16 first, then apply quantization via unified system
+    from llm_dit.models.ltx2 import load_ltx2_transformer
 
-            model = load_ltx2_transformer_fp8_native(
-                model_path / "transformer",
-                dtype=dtype,
-                device=optimization.transformer_device,
-                video_only=True,
-                verbose=True,
-            )
-        else:
-            # Legacy quanto quantization (fp8-quanto, int8-quanto, int4-quanto)
-            from llm_dit.models.ltx2 import load_ltx2_transformer_quantized
+    # Load to CPU first if quantizing (reduces peak GPU memory)
+    load_device = "cpu" if effective_quantize else optimization.transformer_device
+    model = load_ltx2_transformer(
+        model_path / "transformer",
+        dtype=dtype,
+        device=load_device,
+        video_only=True,
+    )
 
-            model = load_ltx2_transformer_quantized(
-                model_path / "transformer",
-                precision=effective_precision,  # type: ignore[arg-type]
-                dtype=dtype,
-                video_only=True,
-                verbose=True,
-            )
-            model = model.to(optimization.transformer_device)
-    else:
-        from llm_dit.models.ltx2 import load_ltx2_transformer
+    if effective_quantize and effective_precision != "none":
+        from llm_dit.quantization import quantize_component
 
-        model = load_ltx2_transformer(
-            model_path / "transformer",
-            dtype=dtype,
-            device="cpu",
-            video_only=True,
+        # Apply quantization on CPU, then move to GPU (smaller transfer)
+        model, stats = quantize_component(  # type: ignore[assignment]
+            model,
+            method=effective_precision,
+            component_type="transformer",
         )
+        logger.info(
+            f"Transformer quantized: {stats['quantized_layers']}/{stats['total_layers']} layers "
+            f"({effective_precision})"
+        )
+
+    if load_device == "cpu":
         model = model.to(optimization.transformer_device)
 
     # Only load connectors if embeddings need processing (188160 -> 3840 projection)

@@ -128,9 +128,9 @@ class RuntimeConfig:
     qwen_image_steps: int | None = None  # Diffusion steps (None = variant default: 40/25/50)
     qwen_image_resolution: int | None = None  # Resolution (None = variant default: 1024/640/640)
     qwen_image_quantize_text_encoder: str = (
-        "none"  # none/4bit/8bit - CPU offload makes quant optional
+        "none"  # none/fp8-dynamic/fp8-weight-only/int8/int4 - CPU offload makes quant optional
     )
-    qwen_image_quantize_transformer: str | None = None  # None = variant default (fp8/diffsynth-fp8)
+    qwen_image_quantize_transformer: str | None = None  # None = variant default (fp8-weight-only/fp8-dynamic)
 
     # LTX-2 video generation
     ltx2_model_path: str = ""  # Path to LTX-2 model directory
@@ -150,7 +150,7 @@ class RuntimeConfig:
     ltx2_text_encoder_device: str = "cpu"  # cpu recommended for 24GB
     ltx2_transformer_device: str = "cuda"  # DiT on GPU
     ltx2_vae_device: str = "cuda"  # VAE on GPU
-    ltx2_quantize: str = "fp8"  # fp8 or none
+    ltx2_quantize: str = "fp8-weight-only"  # torchao unified method or none
     ltx2_skip_cleanup: bool = False  # Skip memory cleanup between stages
     ltx2_gemma_variant: str = "bf16"  # bf16, 8bit, q4-qat - Gemma3 backbone variant
 
@@ -190,6 +190,31 @@ class RuntimeConfig:
     # Z-Image variant configuration
     zimage_variant: str = "auto"  # auto, turbo, base
     zimage_model_path: str | None = None  # Path to Z-Image model (overrides config.toml)
+
+    # -------------------------------------------------------------------------
+    # Unified quantization (global defaults from [quantization] TOML section)
+    # Per-pipeline overrides: None = use global default
+    # -------------------------------------------------------------------------
+    quant_encoder_default: str = "none"
+    quant_transformer_default: str = "fp8-weight-only"
+    quant_vae_default: str = "none"
+    quant_granularity: str = "per-tensor"
+
+    # Per-pipeline overrides (None = use global default)
+    flux2_quant_encoder: str | None = None
+    flux2_quant_transformer: str | None = None
+    flux2_quant_vae: str | None = None
+
+    ltx2_quant_encoder: str | None = None
+    ltx2_quant_transformer: str | None = None
+    ltx2_quant_vae: str | None = None
+
+    z_image_quant_encoder: str | None = None
+    z_image_quant_transformer: str | None = None
+
+    qwen_image_quant_encoder: str | None = None
+    qwen_image_quant_transformer: str | None = None
+    qwen_image_quant_vae: str | None = None
 
     # Device placement
     encoder_device: str = "auto"
@@ -376,17 +401,17 @@ class RuntimeConfig:
             "qwenimage-t2i": {
                 "steps": 40,
                 "resolution": 1024,
-                "quantize_transformer": "fp8",  # TorchAO for 60-layer DiT
+                "quantize_transformer": "fp8-weight-only",
             },
             "qwenimage-edit": {
                 "steps": 25,
                 "resolution": 640,
-                "quantize_transformer": "diffsynth-fp8",  # DiffSynth-style for 8B DiT
+                "quantize_transformer": "fp8-dynamic",
             },
             "qwenimage-layered": {
                 "steps": 50,
                 "resolution": 640,
-                "quantize_transformer": "diffsynth-fp8",
+                "quantize_transformer": "fp8-dynamic",
             },
         }
         return defaults.get(self.model_type, {})
@@ -411,6 +436,55 @@ class RuntimeConfig:
             return self.qwen_image_quantize_transformer
         variant_defaults = self.get_qwen_variant_defaults()
         return variant_defaults.get("quantize_transformer", "none")
+
+    def get_pipeline_quant_config(self, pipeline: str) -> "PipelineQuantConfig":
+        """Resolve effective quantization: per-pipeline override > global default.
+
+        Args:
+            pipeline: One of "flux2", "ltx2", "z_image", "qwen_image"
+
+        Returns:
+            PipelineQuantConfig with resolved methods for encoder/transformer/vae
+        """
+        from .config import ComponentQuantConfig, PipelineQuantConfig
+
+        g = self.quant_granularity
+
+        def _resolve(override: str | None, default: str) -> ComponentQuantConfig:
+            method = override if override is not None else default
+            return ComponentQuantConfig(method=method, granularity=g)
+
+        if pipeline == "flux2":
+            return PipelineQuantConfig(
+                encoder=_resolve(self.flux2_quant_encoder, self.quant_encoder_default),
+                transformer=_resolve(self.flux2_quant_transformer, self.quant_transformer_default),
+                vae=_resolve(self.flux2_quant_vae, self.quant_vae_default),
+            )
+        elif pipeline == "ltx2":
+            return PipelineQuantConfig(
+                encoder=_resolve(self.ltx2_quant_encoder, self.quant_encoder_default),
+                transformer=_resolve(self.ltx2_quant_transformer, self.quant_transformer_default),
+                vae=_resolve(self.ltx2_quant_vae, self.quant_vae_default),
+            )
+        elif pipeline == "z_image":
+            return PipelineQuantConfig(
+                encoder=_resolve(self.z_image_quant_encoder, self.quant_encoder_default),
+                transformer=_resolve(self.z_image_quant_transformer, "none"),
+                vae=ComponentQuantConfig(method="none", granularity=g),
+            )
+        elif pipeline == "qwen_image":
+            return PipelineQuantConfig(
+                encoder=_resolve(self.qwen_image_quant_encoder, self.quant_encoder_default),
+                transformer=_resolve(self.qwen_image_quant_transformer, self.quant_transformer_default),
+                vae=_resolve(self.qwen_image_quant_vae, self.quant_vae_default),
+            )
+        else:
+            # Unknown pipeline: return global defaults
+            return PipelineQuantConfig(
+                encoder=ComponentQuantConfig(method=self.quant_encoder_default, granularity=g),
+                transformer=ComponentQuantConfig(method=self.quant_transformer_default, granularity=g),
+                vae=ComponentQuantConfig(method=self.quant_vae_default, granularity=g),
+            )
 
     def to_dict(self) -> dict:
         """
@@ -555,16 +629,16 @@ def create_base_parser(
     qwen_group.add_argument(
         "--qwen-image-quantize-text-encoder",
         type=str,
-        choices=["none", "4bit", "8bit", "fp8", "int8"],
+        choices=["none", "fp8-dynamic", "fp8-weight-only", "int8", "int4"],
         default=None,
-        help="Quantization for text encoder (Qwen2.5-VL-7B): none (CPU offload), 4bit, 8bit",
+        help="Quantization for text encoder (Qwen2.5-VL-7B): torchao methods",
     )
     qwen_group.add_argument(
         "--qwen-image-quantize-transformer",
         type=str,
-        choices=["none", "4bit", "8bit", "fp8", "int8", "diffsynth-fp8"],
+        choices=["none", "fp8-dynamic", "fp8-weight-only", "int8", "int4"],
         default=None,
-        help="Quantization for DiT (variant default: t2i=fp8, edit/layered=diffsynth-fp8)",
+        help="Quantization for DiT (variant default: fp8-weight-only)",
     )
 
     # LTX-2 video generation
@@ -683,7 +757,7 @@ def create_base_parser(
         default=None,
         help="Gemma3 backbone variant for text encoding. "
         "bf16: Full precision (~24GB). "
-        "8bit: BitsAndBytes 8-bit (~12GB). "
+        "8bit: TorchAO int8 quantization (~12GB). "
         "q4-qat: Pre-quantized Q4 QAT (~3GB). "
         "Default: bf16",
     )
@@ -908,13 +982,13 @@ def create_base_parser(
     opt_group.add_argument(
         "--quantization",
         type=str,
-        choices=["none", "4bit", "8bit", "int8_dynamic"],
+        choices=["none", "fp8-dynamic", "fp8-weight-only", "int8", "int4"],
         default=None,
         help=(
             "Text encoder quantization: "
             "none (default), "
-            "4bit/8bit (BitsAndBytes), "
-            "int8_dynamic (torchao, ~50%% VRAM reduction)"
+            "fp8-dynamic/fp8-weight-only (RTX 4090+), "
+            "int8/int4 (torchao, any GPU)"
         ),
     )
 
@@ -1963,7 +2037,7 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
                     config.ltx2_text_encoder_device = getattr(ltx2, "text_encoder_device", "cpu")
                     config.ltx2_transformer_device = getattr(ltx2, "transformer_device", "cuda")
                     config.ltx2_vae_device = getattr(ltx2, "vae_device", "cuda")
-                    config.ltx2_quantize = getattr(ltx2, "quantize", "fp8")
+                    config.ltx2_quantize = getattr(ltx2, "quantize", "fp8-weight-only")
                     config.ltx2_skip_cleanup = getattr(ltx2, "skip_cleanup", False)
 
                 # Check for FLUX.2 section
@@ -2076,6 +2150,29 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
         server_cfg = raw_toml.get("server", {})
         config.host = server_cfg.get("host", config.host)
         config.port = server_cfg.get("port", config.port)
+
+        # Parse unified [quantization] section (global defaults)
+        quant_cfg = raw_toml.get("quantization", {})
+        if quant_cfg:
+            config.quant_encoder_default = quant_cfg.get("encoder", config.quant_encoder_default)
+            config.quant_transformer_default = quant_cfg.get("transformer", config.quant_transformer_default)
+            config.quant_vae_default = quant_cfg.get("vae", config.quant_vae_default)
+            config.quant_granularity = quant_cfg.get("granularity", config.quant_granularity)
+
+        # Parse per-pipeline quantization overrides from their respective sections
+        for pipeline_key, field_prefix in [
+            ("flux2", "flux2_quant"),
+            ("ltx2", "ltx2_quant"),
+            ("zimage", "z_image_quant"),
+            ("qwen_image", "qwen_image_quant"),
+        ]:
+            section = raw_toml.get(pipeline_key, {})
+            for component in ("encoder", "transformer", "vae"):
+                toml_key = f"quantization_{component}"
+                if toml_key in section:
+                    attr_name = f"{field_prefix}_{component}"
+                    if hasattr(config, attr_name):
+                        setattr(config, attr_name, section[toml_key])
 
     # Apply CLI overrides using shared function
     config = _apply_cli_overrides(args, config)

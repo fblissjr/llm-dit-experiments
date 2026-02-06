@@ -78,12 +78,13 @@ See [docs/reference/cli_flags.md](docs/reference/cli_flags.md) for full CLI refe
 
 ## Features
 
-**Quantization** (VRAM reduction):
-- BitsAndBytes: `4bit` NF4 (~75%), `8bit` INT8 (~50%)
-- TorchAO: `fp8` dynamic (~50%, RTX 4090+), `int8` weight-only (~50%)
+**Quantization** (unified torchao, VRAM reduction):
+- `fp8-dynamic`: FP8 weights + activations (~50%, RTX 4090+)
+- `fp8-weight-only`: FP8 weights, BF16 compute (~50%, compile-safe)
+- `int8`: INT8 weight-only (~50%, any GPU)
+- `int4`: INT4 weight-only (~75%, max compression)
 
 **Generation**:
-- Vision Conditioning via Qwen3-VL (zero-shot style transfer)
 - Skip Layer Guidance for improved anatomy
 - DyPE for high-resolution (2K-4K)
 - Long prompt compression (4 modes for >1504 tokens)

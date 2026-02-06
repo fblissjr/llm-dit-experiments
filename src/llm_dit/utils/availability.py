@@ -194,26 +194,6 @@ def get_cuda_capability() -> Tuple[int, int]:
 
 
 @lru_cache(maxsize=1)
-def is_bitsandbytes_available() -> bool:
-    """
-    Check if bitsandbytes is available for quantization.
-
-    bitsandbytes provides:
-    - 8-bit optimizers
-    - 4-bit and 8-bit quantization via transformers integration
-
-    Returns:
-        True if bitsandbytes is importable, False otherwise.
-    """
-    try:
-        import bitsandbytes  # noqa: F401
-
-        return True
-    except ImportError:
-        return False
-
-
-@lru_cache(maxsize=1)
 def is_xformers_available() -> bool:
     """
     Check if xformers is available.
@@ -255,7 +235,6 @@ def log_availability_status() -> None:
         "torchao": is_torchao_available(),
         "flash_attn": is_flash_attn_available(),
         "diffusers": is_diffusers_available(),
-        "bitsandbytes": is_bitsandbytes_available(),
         "xformers": is_xformers_available(),
         "sage_attn": is_sage_attn_available(),
         "fp8_support": check_fp8_support(),

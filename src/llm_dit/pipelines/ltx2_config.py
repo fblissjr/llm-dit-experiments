@@ -14,7 +14,7 @@ Reference: coderef/LTX-2/packages/ltx-pipelines/README.md
 """
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal  # noqa: F401 (kept for potential future use)
 
 
 @dataclass
@@ -32,7 +32,7 @@ class LTX2OptimizationConfig:
         vae_device: Device for VAE decoder. "cuda" for decoding.
         quantize_transformer: Whether to use FP8 quantization. Essential for
             fitting the 13B transformer on 24GB.
-        precision: Quantization precision. "fp8-native" (recommended) or "bf16".
+        precision: Quantization precision. "fp8-weight-only" (recommended) or "bf16".
         cleanup_between_stages: Whether to run garbage collection and CUDA
             cache clearing between pipeline stages. Matches reference repo
             default (on). Disable for speed on high-VRAM systems.
@@ -49,11 +49,9 @@ class LTX2OptimizationConfig:
     transformer_device: str = "cuda"
     vae_device: str = "cuda"
 
-    # Quantization
-    quantize_transformer: bool = True  # FP8 quantization
-    precision: Literal["fp8-native", "bf16", "fp8-quanto", "int8-quanto", "int4-quanto"] = (
-        "fp8-native"
-    )
+    # Quantization (unified method names from config.VALID_QUANT_METHODS)
+    quantize_transformer: bool = True  # Whether to quantize transformer
+    precision: str = "fp8-weight-only"  # Quantization method: none, fp8-dynamic, fp8-weight-only, int8, int4
 
     # Memory management
     cleanup_between_stages: bool = True  # Match ref repo default
@@ -80,7 +78,7 @@ class LTX2OptimizationConfig:
             transformer_device="cuda",
             vae_device="cuda",
             quantize_transformer=True,
-            precision="fp8-native",
+            precision="fp8-weight-only",
             cleanup_between_stages=True,
         )
 
@@ -100,7 +98,7 @@ class LTX2OptimizationConfig:
             transformer_device="cuda",
             vae_device="cuda",
             quantize_transformer=False,  # Full precision
-            precision="bf16",
+            precision="none",
             cleanup_between_stages=False,  # Skip cleanup for speed
         )
 
@@ -120,6 +118,6 @@ class LTX2OptimizationConfig:
             transformer_device="cuda",
             vae_device="cpu",  # Decode on CPU
             quantize_transformer=True,
-            precision="fp8-native",
+            precision="fp8-weight-only",
             cleanup_between_stages=True,
         )

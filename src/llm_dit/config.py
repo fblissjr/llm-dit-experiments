@@ -2,14 +2,9 @@
 TOML-based configuration for llm-dit-experiments.
 
 Supports profiles for different hardware configurations, including:
-- Quantization via BitsAndBytesConfig (4-bit or 8-bit)
+- Quantization via torchao (fp8-dynamic, fp8-weight-only, int8, int4)
 - CPU offloading for memory-constrained systems
 - Device selection (cuda, mps, cpu)
-
-Transformers v5 Migration:
-- load_in_8bit/load_in_4bit are DEPRECATED in transformers v5
-- Use quantization="8bit" or quantization="4bit" instead
-- The config automatically builds BitsAndBytesConfig internally
 
 Example config (config.toml):
 
@@ -31,7 +26,7 @@ Example config (config.toml):
 
     [low_vram.encoder]
     device = "cpu"
-    quantization = "8bit"
+    quantization = "int8"
     cpu_offload = true
 
     [low_vram.pipeline]
@@ -40,7 +35,6 @@ Example config (config.toml):
 
 import logging
 import os
-import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, ClassVar, List, Literal
@@ -57,6 +51,75 @@ except ImportError:
         import tomli as tomllib
     except ImportError:
         tomllib = None
+
+
+# ---------------------------------------------------------------------------
+# Unified quantization config (shared across all pipelines)
+# ---------------------------------------------------------------------------
+
+# Canonical method strings accepted by quantize_component()
+VALID_QUANT_METHODS = ("none", "fp8-dynamic", "fp8-weight-only", "int8", "int4")
+
+
+@dataclass
+class ComponentQuantConfig:
+    """Quantization config for a single model component (encoder, transformer, VAE)."""
+
+    method: str = "none"  # none, fp8-dynamic, fp8-weight-only, int8, int4
+    granularity: str = "per-tensor"  # per-tensor, per-row (FP8 only)
+
+    def __post_init__(self) -> None:
+        if self.method not in VALID_QUANT_METHODS:
+            raise ValueError(
+                f"Invalid quantization method: '{self.method}'. "
+                f"Valid options: {', '.join(VALID_QUANT_METHODS)}"
+            )
+        if self.granularity not in ("per-tensor", "per-row"):
+            raise ValueError(
+                f"Invalid granularity: '{self.granularity}'. "
+                f"Valid options: per-tensor, per-row"
+            )
+
+    @property
+    def is_none(self) -> bool:
+        return self.method == "none"
+
+    @property
+    def is_fp8(self) -> bool:
+        return self.method in ("fp8-dynamic", "fp8-weight-only")
+
+
+@dataclass
+class PipelineQuantConfig:
+    """Resolved quantization config for all components of a pipeline."""
+
+    encoder: ComponentQuantConfig = field(default_factory=ComponentQuantConfig)
+    transformer: ComponentQuantConfig = field(default_factory=ComponentQuantConfig)
+    vae: ComponentQuantConfig = field(default_factory=ComponentQuantConfig)
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "PipelineQuantConfig":
+        """Parse from dict like {encoder: "fp8-weight-only", transformer: "int8", vae: "none"}."""
+        granularity = data.get("granularity", "per-tensor")
+        return cls(
+            encoder=ComponentQuantConfig(
+                method=data.get("encoder", "none"), granularity=granularity,
+            ),
+            transformer=ComponentQuantConfig(
+                method=data.get("transformer", "none"), granularity=granularity,
+            ),
+            vae=ComponentQuantConfig(
+                method=data.get("vae", "none"), granularity=granularity,
+            ),
+        )
+
+    def to_dict(self) -> dict:
+        return {
+            "encoder": self.encoder.method,
+            "transformer": self.transformer.method,
+            "vae": self.vae.method,
+            "granularity": self.encoder.granularity,
+        }
 
 
 # Qwen-Image optimization presets for different hardware/memory configurations
@@ -98,9 +161,9 @@ QWEN_IMAGE_PRESETS = {
         "cpu_offload": True,
     },
     "amd_mi300": {
-        # AMD ROCm support with DiffSynth FP8
-        "quantize_text_encoder": "8bit",
-        "quantize_transformer": "diffsynth-fp8",
+        # AMD ROCm support
+        "quantize_text_encoder": "int8",
+        "quantize_transformer": "fp8-dynamic",
         "quantize_vae": "int8",
         "offload_type": "model",
         "cpu_offload": True,
@@ -112,51 +175,21 @@ QWEN_IMAGE_PRESETS = {
 class EncoderConfig:
     """Configuration for the text encoder (LLM).
 
-    Transformers v5 Migration Notes:
-    - load_in_8bit/load_in_4bit are DEPRECATED
-    - Use quantization="8bit" or quantization="4bit" instead
-    - Config will auto-migrate legacy fields with a deprecation warning
-
-    Quantization Options:
+    Quantization Options (torchao unified):
     - "none": No quantization (full precision)
-    - "4bit": BitsAndBytes 4-bit quantization (NF4)
-    - "8bit": BitsAndBytes 8-bit quantization (INT8)
-    - "int8_dynamic": PyTorch native int8 dynamic quantization (torchao)
-        - Uses torch.ao.quantization.quantize_dynamic()
-        - ~50% VRAM reduction, well-validated for LLMs
-        - Applied post-load, no BitsAndBytes dependency
+    - "fp8-dynamic": FP8 weights + FP8 activations (RTX 4090+)
+    - "fp8-weight-only": FP8 weights, BF16 activations
+    - "int8": INT8 weight-only
+    - "int4": INT4 weight-only (max compression)
     """
 
     device: str = "auto"  # auto, cuda, mps, cpu
     dtype: str = "bfloat16"  # bfloat16, float16, float32
-    quantization: str = "none"  # none, 4bit, 8bit, int8_dynamic
+    quantization: str = "none"  # none, fp8-dynamic, fp8-weight-only, int8, int4
     cpu_offload: bool = False  # Offload to CPU after encoding
     trust_remote_code: bool = True
     max_length: int = 512
     hidden_layer: int = -2  # Which layer to extract embeddings from (-1=last, -2=penultimate)
-
-    # DEPRECATED: These fields are kept for backwards compatibility only
-    # They will be removed in a future version
-    load_in_8bit: bool = False
-    load_in_4bit: bool = False
-
-    def __post_init__(self):
-        """Handle deprecation migration from load_in_8bit/load_in_4bit to quantization."""
-        # Migrate legacy fields if used
-        if self.load_in_8bit and self.quantization == "none":
-            warnings.warn(
-                "load_in_8bit is deprecated in transformers v5. Use quantization='8bit' instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            self.quantization = "8bit"
-        elif self.load_in_4bit and self.quantization == "none":
-            warnings.warn(
-                "load_in_4bit is deprecated in transformers v5. Use quantization='4bit' instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            self.quantization = "4bit"
 
     def get_dtype(self) -> torch.dtype:
         """Convert string dtype to torch.dtype."""
@@ -177,94 +210,6 @@ class EncoderConfig:
             else:
                 return "cpu"
         return self.device
-
-    def get_quantization_config(self) -> "BitsAndBytesConfig | None":
-        """Get BitsAndBytesConfig for transformers v5.
-
-        Returns:
-            BitsAndBytesConfig if BitsAndBytes quantization is enabled, None otherwise.
-            Returns None for int8_dynamic (handled separately via post-load quantization).
-
-        Note:
-            This is the v5-compliant way to configure quantization.
-            The config should be passed to from_pretrained() as:
-
-                model = AutoModel.from_pretrained(
-                    model_path,
-                    quantization_config=config.encoder.get_quantization_config(),
-                )
-
-            For int8_dynamic, use needs_post_load_quantization() and
-            apply_post_load_quantization() instead.
-        """
-        if self.quantization in ("none", "int8_dynamic"):
-            return None
-
-        try:
-            from transformers import BitsAndBytesConfig
-        except ImportError:
-            raise ImportError(
-                "BitsAndBytesConfig requires transformers>=4.30.0. "
-                "Install with: pip install transformers>=4.30.0"
-            )
-
-        if self.quantization == "8bit":
-            return BitsAndBytesConfig(load_in_8bit=True)
-        elif self.quantization == "4bit":
-            return BitsAndBytesConfig(
-                load_in_4bit=True,
-                bnb_4bit_compute_dtype=self.get_dtype(),
-            )
-        else:
-            raise ValueError(
-                f"Unknown quantization: {self.quantization}. "
-                f"Valid options: none, 4bit, 8bit, int8_dynamic"
-            )
-
-    def needs_post_load_quantization(self) -> bool:
-        """Check if post-load quantization is needed.
-
-        Returns:
-            True if int8_dynamic quantization should be applied after model loading.
-        """
-        return self.quantization == "int8_dynamic"
-
-    def apply_post_load_quantization(self, model: "torch.nn.Module") -> "torch.nn.Module":
-        """Apply post-load quantization (int8_dynamic) to the model.
-
-        Uses torch.ao.quantization.quantize_dynamic() to apply int8 dynamic
-        quantization to all Linear layers. This provides ~50% VRAM reduction
-        with minimal quality impact for LLMs.
-
-        Args:
-            model: The loaded model to quantize
-
-        Returns:
-            Quantized model (in-place modification)
-
-        Raises:
-            ValueError: If quantization mode is not int8_dynamic
-        """
-        if self.quantization != "int8_dynamic":
-            raise ValueError(
-                f"apply_post_load_quantization() only valid for int8_dynamic, "
-                f"got {self.quantization}"
-            )
-
-        import torch.ao.quantization as tq
-
-        logger.info("Applying int8 dynamic quantization (torchao)...")
-
-        # Quantize all Linear layers to int8
-        model = tq.quantize_dynamic(
-            model,
-            {torch.nn.Linear},
-            dtype=torch.qint8,
-        )
-
-        logger.info("  int8 dynamic quantization applied successfully")
-        return model
-
 
 @dataclass
 class PipelineConfig:
@@ -719,15 +664,15 @@ class QwenImageConfig:
     cpu_offload: bool = True  # Enable sequential CPU offload for memory efficiency
 
     # Quantization (for VRAM-constrained GPUs like RTX 4090)
-    # Valid options: none, 4bit, 8bit, fp8, fp8-filtered, int8, diffsynth-fp8
+    # Valid options: none, fp8-dynamic, fp8-weight-only, int8, int4
     # - none: Full precision (BF16)
-    # - 4bit/8bit: BitsAndBytes quantization (any GPU)
-    # - fp8/fp8-filtered: TorchAO FP8 (RTX 4090+, 2x faster)
+    # - fp8-dynamic: FP8 weights + activations (RTX 4090+, SM89+)
+    # - fp8-weight-only: FP8 weights, BF16 compute (RTX 4090+, compile-safe)
     # - int8: TorchAO INT8 weight-only (any GPU)
-    # - diffsynth-fp8: Runtime FP8 patching (RTX 4090+, AMD MI300)
-    quantize_text_encoder: str = "none"  # Qwen2.5-VL-7B: 14GB -> 7GB (fp8) or 3.5GB (4bit)
-    quantize_transformer: str = "none"  # DiT: 8GB -> 4GB (fp8) or 2GB (4bit)
-    quantize_vae: str = "none"  # VAE: 500MB -> 250MB (int8). Only int8/8bit for Conv2d
+    # - int4: TorchAO INT4 weight-only (max compression)
+    quantize_text_encoder: str = "none"  # Qwen2.5-VL-7B: 14GB -> 7GB (fp8) or 4GB (int4)
+    quantize_transformer: str = "none"  # DiT: 8GB -> 4GB (fp8) or 2GB (int4)
+    quantize_vae: str = "none"  # VAE: 500MB -> 250MB (int8). Only int8 for Conv2d
 
     # Offloading strategy
     # - model: enable_model_cpu_offload() - swap entire components
@@ -778,8 +723,8 @@ class QwenImageConfig:
 
     def validate_quantization(self) -> None:
         """Validate quantization settings and check hardware compatibility."""
-        valid_quant = ("none", "4bit", "8bit", "fp8", "fp8-filtered", "int8", "diffsynth-fp8")
-        valid_vae_quant = ("none", "int8", "8bit")  # Only int8/8bit for Conv2d
+        valid_quant = ("none", "fp8-dynamic", "fp8-weight-only", "int8", "int4")
+        valid_vae_quant = ("none", "int8")  # Only int8 for Conv2d
         valid_offload = ("model", "group", "sequential")
 
         for field, value in [
@@ -804,7 +749,7 @@ class QwenImageConfig:
             )
 
         # Check FP8 hardware compatibility
-        fp8_options = ("fp8", "fp8-filtered", "diffsynth-fp8")
+        fp8_options = ("fp8-dynamic", "fp8-weight-only")
         uses_fp8 = (
             self.quantize_text_encoder in fp8_options or self.quantize_transformer in fp8_options
         )

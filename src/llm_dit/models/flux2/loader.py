@@ -580,15 +580,19 @@ def load_flux2_transformer(
 
     # Post-load quantization via torchao (after model is on GPU)
     if quantize_to and quantize_to != "none" and not block_offload:
-        from llm_dit.quantization.torchao_utils import quantize_model_torchao_filtered
-        logger.info(f"[FLUX2:Loader] Applying torchao {quantize_to} quantization...")
-        _log_memory_state("Before torchao quantization")
-        model, stats = quantize_model_torchao_filtered(model, method=quantize_to)  # type: ignore[assignment]
+        from llm_dit.quantization import quantize_component
+        logger.info(f"[FLUX2:Loader] Applying {quantize_to} quantization...")
+        _log_memory_state("Before quantization")
+        model, stats = quantize_component(  # type: ignore[assignment]
+            model,
+            method=quantize_to,
+            component_type="transformer",
+        )
         logger.info(
             f"[FLUX2:Loader] Quantization complete: "
-            f"{stats['quantized_layers']}/{stats['total_linear_layers']} layers quantized"
+            f"{stats['quantized_layers']}/{stats['total_layers']} layers quantized"
         )
-        _log_memory_state("After torchao quantization")
+        _log_memory_state("After quantization")
     elif quantize_to and quantize_to != "none" and block_offload:
         raise ValueError(
             f"quantize_to='{quantize_to}' is incompatible with block_offload=True. "

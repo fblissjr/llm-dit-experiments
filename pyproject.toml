@@ -22,7 +22,6 @@ dependencies = [
     "pillow",
     "numpy",  # Used by experiments/compare/diff.py for image difference calculations
     "tomli; python_version < '3.11'",  # TOML config support
-    "bitsandbytes; sys_platform != 'darwin'",  # 8-bit quantization (Linux/CUDA only)
     "httpx",  # API backend support
     "uvicorn>=0.38.0",
     "fastapi>=0.123.4",
