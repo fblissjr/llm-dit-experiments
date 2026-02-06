@@ -99,7 +99,6 @@ def main():
         max_sequence_length=256,
         connectors_path="models/LTX-2/connectors/diffusion_pytorch_model.safetensors",
         use_connector=True,
-        load_in_8bit=True,
     )
 
     # Encode test prompt

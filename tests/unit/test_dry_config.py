@@ -223,14 +223,19 @@ class TestCLIToRuntimeConfig:
             "prompts",  # Script-specific positional
             "version",  # Just prints version
             "embeddings_file",  # Script-specific (generate.py)
+            "ltx2_output",  # Script-specific output path
+            "flux2_output",  # Script-specific output path
+            "flux2_input_image",  # Script-specific input path
+            "flux2_offload",  # Action flag (sets offload_between_stages=true)
+            "flux2_no_offload",  # Action flag (sets offload_between_stages=false)
+            "wan_output",  # Script-specific output path
+            "torch_dtype",  # Legacy dtype flag, superseded by config
         }
 
         # CLI arg names that map to different RuntimeConfig field names
         cli_to_runtime_mapping = {
             "text_encoder_device": "encoder_device",
             "template": "default_template",
-            "vl_no_auto_unload": "vl_auto_unload",  # Inverted flag
-            "rewriter_no_vl": "rewriter_vl_enabled",  # Inverted flag
             "qwen_image_layers": "qwen_image_layer_num",  # Different naming
             "dype": "dype_enabled",  # Boolean flag maps to enabled field
         }

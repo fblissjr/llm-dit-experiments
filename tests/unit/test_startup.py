@@ -406,7 +406,7 @@ class TestPipelineLoaderLoadEncoder:
 
         loader = PipelineLoader(config)
 
-        with patch("llm_dit.startup.ZImageTextEncoder") as MockEncoder:
+        with patch("llm_dit.encoders.ZImageTextEncoder") as MockEncoder:
             mock_encoder = MagicMock()
             mock_encoder.device = "cpu"
             MockEncoder.from_pretrained = MagicMock(return_value=mock_encoder)

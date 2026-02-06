@@ -375,34 +375,5 @@ register_pipeline(PipelineSchema(
                     "deeper negative numbers = earlier layers (more syntactic).",
         ),
 
-        # === VL Conditioning ===
-        ParamSchema(
-            id="vl_enabled",
-            type="checkbox",
-            label="Enable VL Conditioning",
-            default=False,
-            group="advanced",
-            tooltip="Use Qwen3-VL vision-language model for image-guided generation.",
-        ),
-        ParamSchema(
-            id="vl_image",
-            type="image",
-            label="Reference Image",
-            group="advanced",
-            conditional={"vl_enabled": True},
-            tooltip="Upload an image to use as visual reference.",
-        ),
-        ParamSchema(
-            id="vl_strength",
-            type="slider",
-            label="VL Strength",
-            default=0.8,
-            min=0.0,
-            max=1.0,
-            step=0.05,
-            group="advanced",
-            conditional={"vl_enabled": True},
-            tooltip="How strongly to use the reference image.",
-        ),
     ],
 ))

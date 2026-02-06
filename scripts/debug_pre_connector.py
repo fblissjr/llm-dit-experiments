@@ -28,7 +28,6 @@ def main():
         max_sequence_length=256,
         connectors_path="models/LTX-2/connectors/diffusion_pytorch_model.safetensors",
         use_connector=False,  # NO CONNECTOR
-        load_in_8bit=True,
     )
 
     prompt = "A fluffy orange cat walking through a sunny garden"
@@ -94,7 +93,6 @@ def main():
         max_sequence_length=256,
         connectors_path="models/LTX-2/connectors/diffusion_pytorch_model.safetensors",
         use_connector=True,  # WITH CONNECTOR
-        load_in_8bit=True,
     )
 
     output_with_conn = encoder_with_conn.encode(prompt, return_padded=True)

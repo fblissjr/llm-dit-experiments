@@ -28,7 +28,6 @@ def main():
         model_id="models/LTX-2/text_encoder",
         device="cuda",
         dtype=torch.bfloat16,
-        load_in_8bit=True,
     )
 
     prompt = "A cat walking through a sunny garden"

@@ -285,7 +285,7 @@ model_path = "/test/path"
 
 [low_vram.encoder]
 device = "cuda"
-quantization = "8bit"
+quantization = "int8"
 cpu_offload = true
 """
     )

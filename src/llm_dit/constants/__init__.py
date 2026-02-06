@@ -152,34 +152,6 @@ QWEN3_EMBEDDING_4B_CONFIG = {
     "supports_enable_thinking": False,
 }
 
-# Qwen3-VL-4B-Instruct configuration
-# NOTE: This is the NON-THINKING variant. Qwen3-VL-4B-Thinking is a separate model.
-QWEN3_VL_4B_CONFIG = {
-    "hidden_size": 2560,  # Text component
-    "num_hidden_layers": 36,  # Text layers
-    "num_attention_heads": 32,
-    "num_key_value_heads": 8,
-    "head_dim": 128,
-    "intermediate_size": 9728,
-    "max_position_embeddings": 262144,  # Much higher than 4B
-    "rope_theta": 5_000_000,  # 5x higher than 4B
-    "rope_scaling": {
-        "mrope_interleaved": True,
-        "mrope_section": [24, 20, 20],
-        "rope_type": "default",
-    },
-    "vocab_size": 151936,
-    # Vision component
-    "vision_hidden_size": 1024,
-    "vision_output_size": 2560,  # Projects to text hidden size
-    "vision_depth": 24,
-    "vision_patch_size": 16,
-    # Instruct variant does NOT use thinking (separate Thinking model exists)
-    "supports_enable_thinking": False,
-    "is_thinking_model": False,
-}
-
-
 # =============================================================================
 # GENERATION DEFAULTS
 # =============================================================================
@@ -191,17 +163,6 @@ QWEN3_4B_GENERATION_DEFAULTS = {
     "top_k": 20,
     "do_sample": True,
     "repetition_penalty": 1.0,
-}
-
-# Qwen3-VL-4B-Instruct generation defaults (from model card README.md)
-# NOTE: This is for the Instruct variant. Thinking variant has different defaults.
-QWEN3_VL_GENERATION_DEFAULTS = {
-    "temperature": 0.7,
-    "top_p": 0.8,
-    "top_k": 20,
-    "do_sample": True,
-    "repetition_penalty": 1.0,
-    "presence_penalty": 1.5,  # From model card - helps reduce repetitions
 }
 
 
@@ -317,17 +278,14 @@ def get_generation_defaults(model_type: str) -> dict:
     """Get generation defaults for a specific model type.
 
     Args:
-        model_type: One of "qwen3_4b", "qwen3_vl"
+        model_type: One of "qwen3_4b"
 
     Returns:
         Dictionary of generation parameters
     """
     if model_type in ("qwen3_4b", "qwen3-4b", "text"):
         return QWEN3_4B_GENERATION_DEFAULTS.copy()
-    elif model_type in ("qwen3_vl", "qwen3-vl", "vl", "vision"):
-        return QWEN3_VL_GENERATION_DEFAULTS.copy()
     else:
-        # Default to Qwen3-4B settings
         return QWEN3_4B_GENERATION_DEFAULTS.copy()
 
 
@@ -335,15 +293,13 @@ def get_model_config(model_type: str) -> dict:
     """Get model configuration for a specific model type.
 
     Args:
-        model_type: One of "qwen3_4b", "qwen3_vl", "qwen3_embedding"
+        model_type: One of "qwen3_4b", "qwen3_embedding"
 
     Returns:
         Dictionary of model configuration
     """
     if model_type in ("qwen3_4b", "qwen3-4b", "text"):
         return QWEN3_4B_CONFIG.copy()
-    elif model_type in ("qwen3_vl", "qwen3-vl", "vl", "vision"):
-        return QWEN3_VL_4B_CONFIG.copy()
     elif model_type in ("qwen3_embedding", "qwen3-embedding", "embedding"):
         return QWEN3_EMBEDDING_4B_CONFIG.copy()
     else:
@@ -354,10 +310,9 @@ def supports_enable_thinking(model_type: str) -> bool:
     """Check if a model supports thinking mode.
 
     For Qwen3-4B: True (supports enable_thinking parameter in chat template)
-    For Qwen3-VL-4B-Instruct: False (non-thinking model, Thinking variant is separate)
 
     Args:
-        model_type: One of "qwen3_4b", "qwen3_vl"
+        model_type: One of "qwen3_4b"
 
     Returns:
         True if model supports thinking mode

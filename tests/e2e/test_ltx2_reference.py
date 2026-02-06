@@ -128,7 +128,6 @@ class TestLTX2ReferenceSmoke:
         logger.info("Loading encoder...")
         encoder = Gemma3Encoder(
             model_id="models/LTX-2/text_encoder/",
-            load_in_8bit=True,
             device="cuda",
         )
 
@@ -224,7 +223,6 @@ class TestLTX2ReferenceT2V:
         # Load and encode
         encoder = Gemma3Encoder(
             model_id="models/LTX-2/text_encoder/",
-            load_in_8bit=True,
             device="cuda",
         )
         prompt = REFERENCE_PROMPTS["cat_walking"]
@@ -313,7 +311,6 @@ class TestLTX2ReferenceI2V:
         # Load and encode
         encoder = Gemma3Encoder(
             model_id="models/LTX-2/text_encoder/",
-            load_in_8bit=True,
             device="cuda",
         )
         prompt = "A cat walking through a garden"

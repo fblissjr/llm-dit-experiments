@@ -1206,26 +1206,10 @@ def create_base_parser(
         help="Maximum tokens to generate for rewriter (default: 512)",
     )
     rewriter_group.add_argument(
-        "--rewriter-no-vl",
-        action="store_true",
-        help="Disable VL model selection in rewriter UI",
-    )
-    rewriter_group.add_argument(
-        "--rewriter-preload-vl",
-        action="store_true",
-        help="Preload Qwen3-VL for rewriter at startup (uses vl.model_path)",
-    )
-    rewriter_group.add_argument(
-        "--rewriter-vl-api-model",
-        type=str,
-        default=None,
-        help="Model ID for VL rewriting via API (e.g., qwen2.5-vl-72b-mlx)",
-    )
-    rewriter_group.add_argument(
         "--rewriter-timeout",
         type=float,
         default=None,
-        help="API request timeout in seconds (default: 120, VL models may need longer)",
+        help="API request timeout in seconds (default: 120)",
     )
 
     # DyPE (Dynamic Position Extrapolation) for high-resolution generation

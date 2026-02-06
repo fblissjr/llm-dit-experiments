@@ -43,7 +43,6 @@ def main():
         max_sequence_length=256,
         connectors_path="models/LTX-2/connectors/diffusion_pytorch_model.safetensors",
         use_connector=False,  # No connector
-        load_in_8bit=True,
     )
 
     prompt = "A fluffy orange cat walking through a sunny garden"

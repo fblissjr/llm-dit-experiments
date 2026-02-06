@@ -161,7 +161,6 @@ class LLMDitBackend(Backend):
 
         encoder = Gemma3Encoder(
             model_id=str(self.model_path / "text_encoder"),
-            load_in_8bit=True,
             device="cuda",
         )
 

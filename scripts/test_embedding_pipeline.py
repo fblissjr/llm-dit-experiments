@@ -105,7 +105,6 @@ def main():
         max_sequence_length=256,
         connectors_path="models/LTX-2/connectors/diffusion_pytorch_model.safetensors",
         use_connector=False,  # Disable connector to see raw feature extractor output
-        load_in_8bit=True,  # Use 8-bit for memory efficiency
     )
 
     # Encode test prompt
@@ -138,7 +137,6 @@ def main():
         max_sequence_length=256,
         connectors_path="models/LTX-2/connectors/diffusion_pytorch_model.safetensors",
         use_connector=True,
-        load_in_8bit=True,
     )
 
     print("\nEncoding prompt (WITH CONNECTOR)...")

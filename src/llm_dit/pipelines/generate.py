@@ -677,7 +677,6 @@ def generate_video_with_offloading(
                 model_id=str(text_encoder_path),
                 device=optimization.text_encoder_device,
                 dtype=dtype,
-                load_in_8bit=False,
             )
 
         logger.info("Encoding prompt...")

@@ -1,36 +1,27 @@
 """
 TOML-based configuration for llm-dit-experiments.
 
-Supports profiles for different hardware configurations, including:
-- Quantization via torchao (fp8-dynamic, fp8-weight-only, int8, int4)
-- CPU offloading for memory-constrained systems
-- Device selection (cuda, mps, cpu)
+Flat config format with per-pipeline sections. Quantization uses unified
+torchao methods: none, fp8-dynamic, fp8-weight-only, int8, int4.
 
 Example config (config.toml):
 
-    [default]
+    default_pipeline = "none"
     model_path = "/path/to/model"
-    templates_dir = "templates/z_image"
-    dtype = "bfloat16"
 
-    [default.encoder]
+    [quantization]
+    encoder = "none"
+    transformer = "fp8-weight-only"
+    vae = "none"
+
+    [encoder]
     device = "cuda"
     quantization = "none"
-    cpu_offload = false
 
-    [default.pipeline]
-    device = "cuda"
-
-    [low_vram]
-    model_path = "/path/to/model"
-
-    [low_vram.encoder]
-    device = "cpu"
-    quantization = "int8"
-    cpu_offload = true
-
-    [low_vram.pipeline]
-    device = "cuda"
+    [flux2]
+    model_path = "/path/to/FLUX.2-klein"
+    quantization = "fp8-weight-only"
+    compile = true
 """
 
 import logging
@@ -125,26 +116,21 @@ class PipelineQuantConfig:
 # Qwen-Image optimization presets for different hardware/memory configurations
 QWEN_IMAGE_PRESETS = {
     "balanced": {
-        # Good defaults for most systems
-        "quantize_text_encoder": "8bit",
+        "quantize_text_encoder": "int8",
         "quantize_transformer": "none",
         "quantize_vae": "none",
         "offload_type": "model",
         "cpu_offload": True,
     },
     "rtx4090_fp8": {
-        # Maximum performance on RTX 4090 (FP8 + torch.compile)
-        # ~13GB VRAM: 7GB text encoder + 4GB DiT + 0.25GB VAE
-        "quantize_text_encoder": "fp8",
-        "quantize_transformer": "fp8",
+        "quantize_text_encoder": "fp8-weight-only",
+        "quantize_transformer": "fp8-weight-only",
         "quantize_vae": "int8",
         "offload_type": "none",
         "cpu_offload": False,
     },
     "rtx4090_group": {
-        # RTX 4090 with group offloading for larger batches
-        # ~16-18GB VRAM with streaming DiT blocks
-        "quantize_text_encoder": "8bit",
+        "quantize_text_encoder": "int8",
         "quantize_transformer": "none",
         "quantize_vae": "int8",
         "offload_type": "group",
@@ -152,16 +138,14 @@ QWEN_IMAGE_PRESETS = {
         "cpu_offload": True,
     },
     "max_vram_savings": {
-        # Minimum VRAM (~8-10GB), quality trade-off
-        "quantize_text_encoder": "4bit",
-        "quantize_transformer": "4bit",
+        "quantize_text_encoder": "int4",
+        "quantize_transformer": "int4",
         "quantize_vae": "int8",
         "offload_type": "group",
         "num_blocks_per_group": 1,
         "cpu_offload": True,
     },
     "amd_mi300": {
-        # AMD ROCm support
         "quantize_text_encoder": "int8",
         "quantize_transformer": "fp8-dynamic",
         "quantize_vae": "int8",
@@ -579,7 +563,7 @@ class Flux2Config:
     compile: bool = False  # torch.compile the transformer
     compile_vae: bool = False  # torch.compile the VAE decoder
     compile_mode: str = "default"  # torch.compile mode
-    quantization: str = "none"  # Post-load quantization: "none", "fp8", "int8"
+    quantization: str = "none"  # none, fp8-dynamic, fp8-weight-only, int8, int4
 
 
 @dataclass
@@ -738,7 +722,7 @@ class QwenImageConfig:
                 if not check_fp8_support():
                     logger.warning(
                         "FP8 quantization requires RTX 4090+ (compute 8.9+) or AMD MI300. "
-                        "FP8 may not work on this hardware. Consider 'int8' or '8bit' instead."
+                        "FP8 may not work on this hardware. Consider 'int8' instead."
                     )
             except ImportError:
                 pass  # quantization module not available
@@ -1309,17 +1293,10 @@ class Config:
             model_path = "/path/to/model"
 
             [encoder]
-            quantization = "8bit"
+            quantization = "int8"
 
             [pipeline]
             device = "cuda"
-
-        Example profile-based TOML (legacy):
-            [default]
-            model_path = "/path/to/model"
-
-            [default.encoder]
-            quantization = "8bit"
         """
         if tomllib is None:
             raise ImportError(
@@ -1468,7 +1445,7 @@ PRESETS = {
         encoder=EncoderConfig(
             device="cuda",
             dtype="bfloat16",
-            quantization="8bit",  # v5 API
+            quantization="int8",
             cpu_offload=True,
         ),
         pipeline=PipelineConfig(

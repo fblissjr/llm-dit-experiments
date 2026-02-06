@@ -53,7 +53,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
 
 import torch
-from transformers import AutoTokenizer, BitsAndBytesConfig, Gemma3ForConditionalGeneration
+from transformers import AutoTokenizer, Gemma3ForConditionalGeneration
 
 
 def cleanup_memory() -> None:
@@ -90,11 +90,9 @@ def load_text_encoder_8bit(
     text_encoder_path = Path(model_path) / "text_encoder"
     tokenizer_path = Path(model_path) / "tokenizer"
 
-    quantization_config = BitsAndBytesConfig(load_in_8bit=True)
 
     text_encoder = Gemma3ForConditionalGeneration.from_pretrained(
         str(text_encoder_path),
-        quantization_config=quantization_config,
         dtype=torch.bfloat16,
         device_map=device_map,
     )

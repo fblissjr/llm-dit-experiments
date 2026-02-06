@@ -34,7 +34,6 @@ def main():
         model_id="models/LTX-2/text_encoder",
         device="cuda",
         dtype=torch.bfloat16,
-        load_in_8bit=True,
     )
 
     # Get projected embeddings (before connector)

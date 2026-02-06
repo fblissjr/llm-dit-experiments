@@ -240,9 +240,8 @@ class TestPositionIdCreation:
         for w in range(width):
             assert torch.all(ids_2d[:, w, 2] == w)
 
-        # Coordinate 3 (l): linear position 0 to H*W-1
-        linear_expected = torch.arange(height * width).view(height, width)
-        assert torch.all(ids_2d[..., 3] == linear_expected)
+        # Coordinate 3 (l): always 0 for images (text uses l for sequence position)
+        assert torch.all(ids_2d[..., 3] == 0)
 
     def test_create_text_ids_shape(self):
         """Test create_text_ids produces correct shape."""
@@ -331,9 +330,8 @@ class TestAxesDimension:
         """Test Klein4B axes dimensions."""
         params = Klein4BParams()
 
-        # Klein4B has axes_dim=[24,24,24,24], sum=96
-        # This is different from head_dim (128) but valid
-        assert sum(params.axes_dim) == 96
+        # Klein4B has axes_dim=[32,32,32,32], sum=128 = head_dim (3072/24)
+        assert sum(params.axes_dim) == 128
         assert len(params.axes_dim) == 4
 
     def test_axes_dim_are_equal(self):

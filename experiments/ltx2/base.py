@@ -230,7 +230,6 @@ class LTX2ExperimentBase(ExperimentRunnerBase):
 
             self.encoder = Gemma3Encoder(
                 model_id=model_path,  # Gemma3Encoder expects model_id
-                load_in_8bit=use_8bit,
                 device=self.device,
             )
 

@@ -133,26 +133,26 @@ class TestConfig:
         data = {
             "model_path": "/path/to/model",
             "templates_dir": "templates",
-            "encoder": {"device": "cpu", "quantization": "8bit"},
+            "encoder": {"device": "cpu", "quantization": "int8"},
             "generation": {"width": 512, "height": 512},
         }
         config = Config.from_dict(data)
 
         assert config.model_path == "/path/to/model"
         assert config.encoder.device == "cpu"
-        assert config.encoder.quantization == "8bit"
+        assert config.encoder.quantization == "int8"
         assert config.generation.width == 512
 
     def test_to_dict(self):
         config = Config(
             model_path="/test/path",
-            encoder=EncoderConfig(quantization="8bit"),
+            encoder=EncoderConfig(quantization="int8"),
             generation=GenerationConfig(width=512),
         )
         data = config.to_dict()
 
         assert data["model_path"] == "/test/path"
-        assert data["encoder"]["quantization"] == "8bit"
+        assert data["encoder"]["quantization"] == "int8"
         assert data["generation"]["width"] == 512
         # Should NOT include deprecated fields
         assert "load_in_8bit" not in data["encoder"]
@@ -175,7 +175,7 @@ class TestConfigTOML:
         config = Config.from_toml(test_config_file, profile="low_vram")
 
         assert config.encoder.device == "cuda"
-        assert config.encoder.quantization == "8bit"
+        assert config.encoder.quantization == "int8"
         assert config.encoder.cpu_offload is True
 
     def test_missing_profile_raises(self, test_config_file):
@@ -199,7 +199,7 @@ class TestPresets:
 
     def test_low_vram_preset(self):
         config = get_preset("low_vram")
-        assert config.encoder.quantization == "8bit"
+        assert config.encoder.quantization == "int8"
         assert config.encoder.cpu_offload is True
         assert config.pipeline.enable_model_cpu_offload is True
 
@@ -222,7 +222,7 @@ class TestLoadConfig:
 
     def test_load_from_preset(self):
         config = load_config(preset="low_vram")
-        assert config.encoder.quantization == "8bit"
+        assert config.encoder.quantization == "int8"
 
     def test_load_default(self):
         config = load_config()

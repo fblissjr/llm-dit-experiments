@@ -222,6 +222,7 @@ class TestGradientCheckpointing:
         result = gradient_checkpoint_forward(
             module,
             False,  # use_gradient_checkpointing
+            False,  # use_gradient_checkpointing_offload
             x,
         )
         expected = module(x)
@@ -241,6 +242,7 @@ class TestGradientCheckpointing:
         result = gradient_checkpoint_forward(
             module,
             True,  # use_gradient_checkpointing
+            False,  # use_gradient_checkpointing_offload
             x,
         )
         expected = module(x)
@@ -250,8 +252,8 @@ class TestGradientCheckpointing:
         """Test enable_gradient_checkpointing utility."""
         from llm_dit.training.gradient_checkpoint import enable_gradient_checkpointing
 
-        # Test with HuggingFace-style method
-        mock_model = MagicMock()
+        # Use spec=[] so the mock has no attributes by default
+        mock_model = MagicMock(spec=[])
         mock_model.gradient_checkpointing_enable = MagicMock()
         enable_gradient_checkpointing(mock_model)
         mock_model.gradient_checkpointing_enable.assert_called_once()
@@ -260,7 +262,7 @@ class TestGradientCheckpointing:
         """Test disable_gradient_checkpointing utility."""
         from llm_dit.training.gradient_checkpoint import disable_gradient_checkpointing
 
-        mock_model = MagicMock()
+        mock_model = MagicMock(spec=[])
         mock_model.gradient_checkpointing_disable = MagicMock()
         disable_gradient_checkpointing(mock_model)
         mock_model.gradient_checkpointing_disable.assert_called_once()
@@ -296,8 +298,8 @@ class TestFlowMatchSFTLoss:
         pipe.scheduler.training_target = training_target
 
         def training_weight(timestep):
-            # Uniform weight
-            return torch.ones_like(timestep)
+            # Uniform scalar weight
+            return torch.tensor(1.0)
 
         pipe.scheduler.training_weight = training_weight
 

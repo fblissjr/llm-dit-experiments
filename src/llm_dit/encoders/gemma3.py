@@ -402,8 +402,7 @@ class Gemma3Encoder:
         device: str = "cuda",
         dtype: torch.dtype = torch.bfloat16,
         max_sequence_length: int = 256,
-        load_in_4bit: bool = False,
-        load_in_8bit: bool = False,
+        quantization_variant: str = "bf16",
         max_memory: Optional[dict] = None,
         connectors_path: Optional[str] = None,
         tokenizer_path: Optional[str] = None,
@@ -417,8 +416,8 @@ class Gemma3Encoder:
             device: Device to load on ("cuda", "cpu", "auto").
             dtype: Model dtype (typically bfloat16).
             max_sequence_length: Maximum sequence length for encoding.
-            load_in_4bit: Legacy flag, kept for variant loader compat. Ignored by _load_model().
-            load_in_8bit: Legacy flag, kept for variant loader compat. Ignored by _load_model().
+            quantization_variant: Variant metadata: "bf16", "int8", "q4_0". Used for
+                                  encoder_info reporting, not for model loading.
             max_memory: Memory limits per device for CPU offloading.
                        Example: {0: "18GiB", "cpu": "32GiB"} limits GPU 0 to 18GB.
             connectors_path: Path to connector weights (safetensors).
@@ -434,8 +433,7 @@ class Gemma3Encoder:
         self._device_str = device
         self._dtype = dtype
         self._max_sequence_length = max_sequence_length
-        self._load_in_4bit = load_in_4bit
-        self._load_in_8bit = load_in_8bit
+        self._quantization_variant = quantization_variant
         self._max_memory = max_memory
         self._connectors_path = connectors_path or DEFAULT_CONNECTOR_WEIGHTS_SHARD
         # CRITICAL: Text encoder model/config and tokenizer are in DIFFERENT directories!
@@ -499,8 +497,7 @@ class Gemma3Encoder:
             device=device,
             dtype=dtype_torch,
             max_sequence_length=max_sequence_length,
-            load_in_4bit=(quantization == "4bit"),
-            load_in_8bit=(quantization == "8bit"),
+            quantization_variant="q4_0" if quantization in ("4bit", "q4_0") else ("int8" if quantization in ("8bit", "int8") else "bf16"),
             max_memory=max_memory,
             connectors_path=connectors_path,
             tokenizer_path=tokenizer_path,
@@ -540,8 +537,8 @@ class Gemma3Encoder:
         logger.info(f"Loading Gemma 3 text encoder (no vision) from: {self._text_encoder_path}")
 
         # Quantization is applied post-load by the variant loaders
-        # (gemma3_variants.py) via quantize_component(). The _load_in_4bit/8bit
-        # flags are only used for metadata tracking, not BnB config.
+        # (gemma3_variants.py) via quantize_component(). The _quantization_variant
+        # flag is only used for metadata tracking, not model loading.
 
         # Determine device map
         device_map = None
@@ -864,7 +861,7 @@ class Gemma3Encoder:
             hidden_dim=self.embedding_dim,
             max_sequence_length=self._max_sequence_length,
             capabilities=capabilities,
-            quantization="q4_0" if self._load_in_4bit else ("int8" if self._load_in_8bit else "none"),
+            quantization=self._quantization_variant if self._quantization_variant != "bf16" else "none",
             device=self.device,
             dtype=self._dtype,
         )

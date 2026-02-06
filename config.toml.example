@@ -1,410 +1,279 @@
 # llm-dit-experiments Configuration
-# last updated: 2026-02-05
+# last updated: 2026-02-06
 #
-# Flat config format (no profile prefix needed).
-# Copy this file to config.toml and modify paths for your setup.
-# CLI flags override config values. Run `uv run scripts/generate.py --help` for all options.
+# Copy this file to config.toml and edit paths for your setup.
+# CLI flags override config values. Run `uv run web/server.py --help` for all options.
 #
 # Usage:
 #   cp config.toml.example config.toml
-#   # Edit paths in config.toml
-#   uv run scripts/generate.py --config config.toml "A cat"
-#   uv run python -m web.server
+#   uv run web/server.py
 #
-# Supported Models:
+# Supported Pipelines:
 #   - Z-Image (Alibaba/Tongyi) - turbo distilled text-to-image
-#   - Qwen-Image-Edit-2511 - instruction-based image editing
-#   - Qwen-Image-2512 - text-to-image generation (pure t2i, 39GB transformer)
-#   - Qwen-Image-Layered - multi-layer decomposition (deprioritized)
-#   - LTX-2 - 19B video+audio generation (Lightricks)
-#   - FLUX.2 Klein - 4B/9B image generation (Black Forest Labs)
+#   - FLUX.2 Klein (Black Forest Labs) - 4B/9B image generation
+#   - LTX-2 (Lightricks) - 19B video+audio generation
+#   - Qwen-Image (Alibaba) - text-to-image and instruction-based editing
 
 # =============================================================================
 # Top-Level Settings
 # =============================================================================
 
-# default_pipeline controls which model loads at server startup
+# Which pipeline to preload at server startup
 # Options: "none", "z-image", "qwen-image", "flux2", "ltx2"
-# "none" = no preload, all models load on-demand when first requested
+# "none" = no preload, models load on-demand when first requested
 default_pipeline = "none"
 
-# Model paths - configure paths for models you want to use
-# Only the model matching default_pipeline will load at startup
-# model_path = "/path/to/ZImage-Turbo"  # Z-Image transformer
+# Z-Image model path (also used as default model_path for scripts)
+# model_path = "/path/to/Z-Image-Turbo"
 templates_dir = "templates/z_image"
 
-[encoder]
-# Text encoder (Qwen3-4B) configuration for Z-Image
-# Extracts hidden states from text prompts for DiT conditioning
-device = "cuda"                  # cpu/cuda/mps/auto - GPU for speed
-dtype = "bfloat16"               # bfloat16/float16/float32 - RTX 4090 has native BF16
-quantization = "none"            # Quantization options:
-                                 # none: No quantization (default, ~14GB for text encoder)
-                                 # fp8: TorchAO FP8 dynamic (RTX 4090+, ~50% VRAM, may skip non-16-aligned layers)
-                                 # fp8-filtered: Same as fp8 but explicitly skips incompatible layers with logging
-                                 # int8: TorchAO INT8 weight-only (~50% VRAM, works on any GPU)
-                                 # 4bit: BitsAndBytes NF4 (~75% VRAM reduction, slight quality loss)
-                                 # 8bit: BitsAndBytes INT8 (~50% VRAM reduction)
-                                 # Note: FP8 requires dimensions divisible by 16. For models with incompatible
-                                 # layers (e.g., Qwen2.5-VL vision encoder), use fp8-filtered or 4bit instead.
-cpu_offload = false              # Move encoder to CPU after encoding to free VRAM
-max_length = 4096                # Tokenizer max length (DiT limit is 1504, see long_prompt_mode)
-hidden_layer = -2                # Layer for embeddings: -1=last, -2=penultimate (default), -3, etc.
-                                 # Z-Image was trained with -2. Middle layers (-10 to -18) are experimental.
+# =============================================================================
+# Unified Quantization (all pipelines inherit these defaults)
+# =============================================================================
+# Per-pipeline overrides: use quantization_<component> in each pipeline section.
+#
+# Available methods:
+#   none           - No quantization (BF16 weights)
+#   fp8-dynamic    - FP8 weights + activations (fastest, SM89+, NOT compile-safe with autotune)
+#   fp8-weight-only - FP8 weights, BF16 compute (compile-safe, recommended default)
+#   int8           - INT8 weight-only (any GPU)
+#   int4           - INT4 weight-only (max compression, quality tradeoff)
 
-# Multi-layer blending (experimental) - blend embeddings from multiple layers
-# Format: {layer: weight, ...} - weights are normalized to sum to 1.0
-# Example presets (also available in Web UI):
-#   Semantic:  {-2: 0.7, -6: 0.3}   - penultimate + deeper semantic
-#   Balanced:  {-2: 0.6, -5: 0.4}   - subtle blend of adjacent layers
-#   Deep:      {-2: 0.7, -10: 0.3}  - add deeper conceptual features
-#   Middle:    {-2: 0.5, -19: 0.5}  - middle layers + output
-#   Structure: {-3: 0.5, -8: 0.5}   - focus on structural layers
-#   Top 3:     {-1: 0.33, -2: 0.34, -3: 0.33} - blend top 3 output layers
-# CLI usage: --layer-weights "-2:0.7,-6:0.3"
-# When set, overrides hidden_layer. Leave commented to use single layer mode.
-# layer_weights = {-2: 0.7, -6: 0.3}
+[quantization]
+encoder = "none"
+transformer = "fp8-weight-only"
+vae = "none"
+granularity = "per-tensor"     # per-tensor or per-row (FP8 only)
+
+# =============================================================================
+# Text Encoder (Z-Image / Qwen-Image only)
+# =============================================================================
+# Other pipelines (FLUX.2, LTX-2) have their own encoder settings.
+
+[encoder]
+device = "cuda"                  # cpu/cuda/mps/auto
+dtype = "bfloat16"               # bfloat16/float16/float32
+quantization = "none"            # See [quantization] section for available methods
+                                 # FP8 methods automatically skip incompatible layers
+                                 # (embed_tokens, norms, lm_head)
+hidden_layer = -2                # Embedding extraction layer: -1=last, -2=penultimate (default)
+                                 # Z-Image trained with -2. Middle layers (-10 to -18) experimental.
 
 [pipeline]
-# DiT and VAE pipeline configuration
-device = "auto"                  # cpu/cuda/mps/auto - auto selects cuda if available
-dtype = "bfloat16"               # bfloat16/float16/float32 - match encoder dtype
-enable_model_cpu_offload = false      # Offload inactive components to CPU between steps (slower)
-enable_sequential_cpu_offload = false # More aggressive: offload each layer individually (slowest)
+device = "auto"                  # cpu/cuda/mps/auto
+dtype = "bfloat16"               # bfloat16/float16/float32
+enable_model_cpu_offload = false
+enable_sequential_cpu_offload = false
 
 [generation]
-# Default generation parameters
-height = 1024                    # Image height in pixels (must be multiple of 16)
-width = 1024                     # Image width in pixels (must be multiple of 16)
-num_inference_steps = 9          # Diffusion steps: 8-9 optimal for turbo model (distilled)
-guidance_scale = 0.0             # CFG scale: MUST be 0.0 for Z-Image-Turbo (CFG baked into weights)
-                                 # For Qwen-Image models: use 4.0-7.0
-cfg_normalization = 0.0          # CFG norm clamping (0.0 = disabled, 1.0-2.0 typical)
-                                 # Clamps combined prediction norm relative to positive prediction
-                                 # Prevents CFG from over-amplifying. Useful for non-distilled models.
-cfg_truncation = 1.0             # CFG truncation threshold (1.0 = never truncate, 0.5-0.8 typical)
-                                 # Stops applying CFG after this fraction of denoising progress
-                                 # E.g., 0.7 = no CFG for final 30% of steps. Reduces late-stage artifacts.
-cfg_norm_mode = "clamp"          # CFG normalization mode: "clamp" or "match"
-                                 # "clamp" = limit pred norm to factor * pos_norm (original)
-                                 # "match" = scale pred to exactly match pos_norm (DiffSynth-style)
-                                 # Only relevant when guidance_scale > 0 (not used for Z-Image-Turbo)
-enable_thinking = true           # Add empty <think></think> block - model was trained with this
-default_template = ""            # Auto-apply this template to all prompts (empty = none)
+height = 1024                    # Must be multiple of 16
+width = 1024                     # Must be multiple of 16
+enable_thinking = true           # Add empty <think></think> block (Z-Image trained with this)
+default_template = ""            # Auto-apply template to all prompts (empty = none)
+
+# CFG options (only relevant when guidance_scale > 0)
+cfg_truncation = 1.0             # Stop CFG after this fraction of steps (1.0 = never)
+cfg_norm_mode = "clamp"          # "clamp" or "match"
 
 [scheduler]
-# FlowMatch scheduler configuration
-shift = 3.0                      # Timestep shift: compresses sigma schedule for fewer steps
-                                 # Formula: sigma' = shift * sigma / (1 + (shift-1) * sigma)
-                                 # Values 2.5-4.0 are equivalent due to turbo distillation robustness
-                                 # <1.5 = incomplete denoising, >6.0 = potential artifacts
-dynamic_shift = false            # Calculate shift based on resolution (overrides shift)
-                                 # Uses linear interpolation: base_shift=0.5 at 512x512, max_shift=1.15 at 2048x2048
-                                 # Recommended for high-resolution generation
-d_noise = 1.0                    # Sigma schedule scaling (from RES4LYF research)
-                                 # <1.0 = sharper/more detail (try 0.95-0.98)
-                                 # >1.0 = softer/deeper colors (try 1.02-1.05)
-# shift_terminal = 0.02          # Stretch sigma to end at this value instead of 0 (Qwen-Image only)
-                                 # Not used for Z-Image-Turbo. Leave commented/omit for Z-Image.
+dynamic_shift = true             # Calculate shift from resolution (overrides fixed shift)
+# shift = 3.0                    # Fixed shift (used when dynamic_shift = false)
+# d_noise = 1.0                  # Sigma scaling: <1.0 = sharper, >1.0 = softer
 
 [optimization]
-compile = false                  # torch.compile the transformer
-                                 # false: faster startup, good for interactive use
-                                 # true: ~10% speedup after warmup, good for batch processing
-                                 # NOTE: torch.compile is INCOMPATIBLE with CPU offload
-compile_mode = "default"         # torch.compile mode (default is CPU-offload safe, no CUDA graphs)
-cpu_offload = true              # Offload transformer to CPU (very slow, last resort)
+compile = true                   # torch.compile the transformer (~10% speedup after warmup)
+compile_mode = "default"         # default, max-autotune-no-cudagraphs, max-autotune, reduce-overhead
 
 [pytorch]
-# PyTorch-native features and attention backend selection
 attention_backend = "auto"       # auto/flash_attn_2/flash_attn_3/sage/xformers/sdpa
-                                 # auto: selects best available in priority order:
-                                 #   flash_attn_3 (H100) > flash_attn_2 (RTX 4090) > sage > xformers > sdpa
-                                 # flash_attn_2: ~2x speedup on RTX 4090, exact FP16
-                                 # sage: SageAttention2++ INT8, ~9% faster than FA2, negligible quality loss
-                                 # sdpa: PyTorch native, always available, reference quality
-use_custom_scheduler = true      # Use pure-PyTorch FlowMatchScheduler instead of diffusers
-                                 # Recommended for consistent shift behavior across diffusers versions
-tiled_vae = false                # Process VAE in tiles for large images (2K+)
-                                 # Required for resolutions > 1536 to avoid OOM
-tile_size = 512                  # VAE tile size in pixels (latent = tile_size / 8)
-tile_overlap = 64                # Overlap between tiles for seamless blending
-embedding_cache = true           # LRU cache for text embeddings (faster repeated prompts)
-cache_size = 100                 # Max cached embeddings before LRU eviction
-long_prompt_mode = "interpolate" # How to handle prompts > 1504 tokens:
-                                 # truncate: cut off end (fastest, loses content)
-                                 # interpolate: smooth resampling (default, preserves all content)
-                                 # pool: average pooling (experimental)
-                                 # attention_pool: importance-weighted pooling (experimental)
+use_custom_scheduler = true      # Pure-PyTorch FlowMatchScheduler (recommended)
+tiled_vae = false                # Process VAE in tiles for 2K+ images
+tile_size = 512
+tile_overlap = 64
+embedding_cache = true           # LRU cache for text embeddings
+cache_size = 100
+long_prompt_mode = "interpolate" # truncate, interpolate, pool, attention_pool
 
 [lora]
-# LoRA adapters for style/concept customization
-paths = []                       # List of LoRA safetensors paths, e.g., ["/path/to/style.safetensors"]
-scales = []                      # Scale for each LoRA (0.0-1.0 typical), e.g., [0.8]
+paths = []                       # e.g., ["/path/to/style.safetensors"]
+scales = []                      # e.g., [0.8]
+
+# =============================================================================
+# DyPE - High Resolution Generation (2K-4K+)
+# =============================================================================
+# Training-free technique: dynamically adjusts RoPE frequencies per diffusion timestep.
 
 [dype]
-# DyPE (Dynamic Position Extrapolation) for high-resolution generation (2K-4K+)
-# Training-free technique that dynamically adjusts RoPE frequencies based on diffusion timestep
-# Enables generating at higher resolutions than training (1024) without quality loss
-# Based on ComfyUI-DyPE implementation
-enabled = false                  # Enable DyPE (required for 2K+ resolution)
+enabled = false
 method = "vision_yarn"           # vision_yarn (best), yarn, ntk
-dype_scale = 2.0                 # Magnitude (lambda_s) - proven value from community
-dype_exponent = 2.0              # Decay speed (lambda_t) - 2.0=quadratic decay
-dype_start_sigma = 1.0           # When to start (0-1, 1.0=from beginning)
-base_shift = 0.5                 # Noise schedule shift at base resolution
-max_shift = 1.15                 # Noise schedule shift at max resolution
-base_resolution = 1024           # Training resolution (Z-Image: 1024)
-anisotropic = false              # Per-axis scaling for extreme aspect ratios (21:9, etc.)
-multipass = "single"             # single, twopass (512->target), threepass (256->512->target)
-pass2_strength = 0.5             # img2img strength for second pass (0.3-0.7 recommended)
-pass3_strength = 0.4             # img2img strength for third pass
-frequency_modulation = false     # Enable timestep-based RoPE frequency scaling (experimental)
+dype_scale = 2.0                 # Magnitude (2.0 for 2K, 4.0 for 4K)
+dype_exponent = 2.0              # Decay speed (2.0 = quadratic)
+dype_start_sigma = 1.0
+base_shift = 0.5
+max_shift = 1.15
+base_resolution = 1024
+anisotropic = false
+multipass = "single"             # single, twopass, threepass
+pass2_strength = 0.5
+pass3_strength = 0.4
+frequency_modulation = false     # Experimental
+
+# =============================================================================
+# FLUX.2 Klein
+# =============================================================================
+# 8 model variants: distilled (4 steps) and base (50 steps) in 4B/9B sizes.
+# Text encoder: Qwen3-8B (separate from Z-Image's Qwen3-4B).
 
 [flux2]
-# FLUX.2 Klein configuration
-# Family of 8 model variants:
-#   Distilled (4 steps, CFG=1.0): klein-9b, klein-9b-fp8, klein-4b, klein-4b-fp8
-#   Base (50 steps, CFG=4.0): klein-base-9b, klein-base-9b-fp8, klein-base-4b, klein-base-4b-fp8
-#
 # model_path = "/path/to/FLUX.2-klein/FLUX.2-klein-9b-fp8"
 # vae_path = "/path/to/FLUX.2-klein/FLUX.2-klein-9B"
-# encoder_path = "/path/to/Qwen3-8B"   # Qwen3 text encoder (auto-downloads if empty)
+# encoder_path = "/path/to/Qwen3-8B"
 default_model = "klein-9b-fp8"
-default_steps = 4                        # Override model default steps (None = auto)
-default_guidance = 1.0                   # Override model default CFG (None = auto)
-offload_between_stages = true            # Three-stage offloading: encoder -> transformer -> VAE
-encoder_device = "cuda"                  # Device for text encoder
+default_steps = 4
+default_guidance = 1.0
+offload_between_stages = true    # Three-stage: encoder -> transformer -> VAE
+encoder_device = "cuda"
 
-# Block offload: stream transformer blocks between CPU and GPU one at a time.
-# Uses ~5GB less VRAM but significantly slower per step.
-# INCOMPATIBLE with quantization and compile (will raise ValueError at load time).
-block_offload = true
+# Block offload: stream transformer blocks one at a time (~5GB less VRAM, slower).
+# INCOMPATIBLE with quantization and compile.
+block_offload = false
 
-# Performance optimization (persistent model loading)
-# When the server loads FLUX.2 via /api/vram/load-flux2, models are preloaded
-# and kept resident across requests. Encoder uses pinned memory shuttle with
-# shadow buffers for zero-allocation DMA transfers between CPU and GPU.
-#
-# Two configuration profiles:
-#
-# --- Profile A: Maximum performance (RTX 4090 with FP8) ---
-#   block_offload = false
-#   quantization = "fp8"
-#   compile = true
-#   compile_vae = true
-#   Result: ~9GB transformer + ~1GB VAE + encoder shuttles from CPU
-#
-# --- Profile B: Low VRAM (block offload, no compile) ---
-#   block_offload = true
-#   quantization = "none"
-#   compile = false
-#   compile_vae = false
-#   Result: ~5GB peak (blocks stream one at a time)
-#
-# quantization: Post-load torchao quantization applied to transformer
-#   "none" - BF16 weights (~18GB VRAM for 9B transformer)
-#   "fp8"  - FP8 dynamic quantization (~9GB VRAM, SM89+ required)
-#   "int8" - INT8 weight-only (~9GB VRAM, any GPU)
-# INCOMPATIBLE with block_offload=true (raises ValueError)
-quantization = "none"
+# Quantization (unified torchao methods): none, fp8-dynamic, fp8-weight-only, int8, int4
+# INCOMPATIBLE with block_offload=true
+quantization = "fp8-weight-only"
 
-# compile: torch.compile the transformer for kernel fusion + GEMM autotuning
-# First request after load triggers ~30-60s warmup. Subsequent requests 30-50% faster.
-# INCOMPATIBLE with block_offload=true (raises RuntimeError)
-compile = false
-
-# compile_vae: torch.compile the VAE decoder (20-40% decode speedup)
-compile_vae = false
-
-# compile_mode: torch.compile backend mode
-#   "max-autotune-no-cudagraphs" - Safe default: autotuned kernels, no CUDA graphs
-#   "max-autotune"               - Adds CUDA graph capture (requires static shapes)
-#   "reduce-overhead"            - Maximum performance via CUDA graph trees
-compile_mode = "max-autotune-no-cudagraphs"
-
-[api]
-# Remote text encoder API (for distributed inference)
-# When set, encoder runs on remote server (e.g., Mac) while DiT runs locally
-url = ""                         # API URL, e.g., "http://mac-host:8080" (empty = use local encoder)
-model = "Qwen3-4B"               # Model ID for embedding extraction (must be Qwen3-4B for Z-Image)
-
-[rewriter]
-# Prompt rewriter: expands short prompts into detailed descriptions
-# This generates NEW text, separate from embedding extraction
-# Three backends: local (encoder model), API text-only, API vision-language
-
-# Text-only rewriter backend
-use_api = false                  # false=use local encoder model, true=use remote API
-api_url = ""                     # API URL for rewriting (empty = use [api].url)
-api_model = "Qwen3-4B"           # Model ID for TEXT-ONLY rewriting via API
-
-# Generation parameters (apply to all rewriter backends)
-# See https://huggingface.co/Qwen/Qwen3-4B#best-practices for optimal settings
-temperature = 0.6                # 0.6 for thinking mode (NEVER use 0.0 - causes repetition)
-top_p = 0.95                     # Nucleus sampling threshold
-top_k = 20                       # Top-k sampling
-min_p = 0.0                      # Min probability cutoff (0.0 = disabled)
-presence_penalty = 0.0           # 0.0-2.0, increase if seeing repetitive output
-max_tokens = 1024                # Max tokens to generate
-timeout = 120.0                  # API timeout in seconds
-
-[slg]
-# Skip Layer Guidance (SLG) for improved structure/anatomy
-# Compares predictions with/without specific transformer layers, scales difference
-# Best for human/animal subjects. Based on SD3.5 and STG paper.
-# Z-Image specific: 30 DiT layers, turbo-distilled (8-9 steps)
-enabled = false                  # Enable SLG (requires ~2x inference time during active range)
-scale = 2.5                      # Guidance scale (2.0-3.0 typical for Z-Image)
-layers = [7, 8, 9, 10, 11, 12]   # Layers to skip (middle layers for Z-Image, 0-indexed)
-start = 0.05                     # Start SLG at 5% of steps (after initial noise)
-stop = 0.5                       # Stop SLG at 50% of steps (turbo needs wider window than SD3.5)
-
-[fmtt]
-# Flow Map Trajectory Tilting (FMTT) for test-time reward optimization
-# Uses SigLIP2 to guide generation toward text-aligned images
-# Reference: arXiv:2511.22688 (Test-Time Scaling of Diffusion Models with Flow Maps)
-# Memory: ~16GB with encoder on CPU, ~24GB with encoder on CUDA
-enabled = false                  # Enable FMTT (use with encoder on CPU for RTX 4090)
-guidance_scale = 1.0             # Reward gradient scale (0.5-2.0 typical)
-guidance_start = 0.0             # Start FMTT at this fraction of steps
-guidance_stop = 0.5              # Stop FMTT at this fraction of steps
-normalize_mode = "unit"          # Gradient normalization: unit, clip, none
-decode_scale = 0.5               # Intermediate VAE decode resolution (0.5 saves VRAM)
-siglip_model = "google/siglip2-giant-opt-patch16-384"  # SigLIP model (~4GB VRAM)
-siglip_device = "cpu"            # Device for SigLIP (cuda/cpu) - CPU recommended for RTX 4090
+# torch.compile (INCOMPATIBLE with block_offload=true)
+compile = true
+compile_vae = true
+compile_mode = "default"
 
 # =============================================================================
-# Qwen-Image Configuration (All Variants)
+# Z-Image
 # =============================================================================
-# Unified configuration for all Qwen-Image variants:
-#   - qwenimage-t2i: Pure text-to-image (60-layer DiT, 39GB bf16)
-#   - qwenimage-edit: Instruction-based editing (8B DiT)
-#   - qwenimage-layered: Multi-layer decomposition (deprioritized)
-#
-# Use --model-type to select variant. Variant-aware defaults:
-#   | Variant  | Steps | Resolution | Quantization     |
-#   |----------|-------|------------|------------------|
-#   | t2i      | 40    | 1024       | fp8              |
-#   | edit     | 25    | 640        | diffsynth-fp8    |
-#   | layered  | 50    | 640        | diffsynth-fp8    |
-#
-# All variants use Qwen2.5-VL-7B as text encoder (3584 hidden dim).
+# Turbo: 9 steps, CFG=0 (baked in), shift=3.0
+# Base: 35 steps, CFG=4.0, shift=6.0
+
+[zimage]
+# model_path = "/path/to/Z-Image-Turbo"
+variant = "turbo"                # turbo, base, auto
+
+# =============================================================================
+# Qwen-Image (All Variants)
+# =============================================================================
+# Variants: qwenimage-t2i (60-layer DiT), qwenimage-edit (8B DiT),
+#           qwenimage-layered (decomposition)
+# Text encoder: Qwen2.5-VL-7B (3584 hidden dim)
 
 [qwen_image]
-# Model path - use the appropriate model for your --model-type
-# model_path = "/path/to/Qwen-Image-2512"  # or Qwen-Image-Edit-2511, etc.
-cpu_offload = true               # Enable CPU offload (REQUIRED for RTX 4090)
-                                 # Moves text encoder and VAE to CPU, keeps DiT on GPU
+# model_path = "/path/to/Qwen-Image-2512"
+cpu_offload = true               # REQUIRED for RTX 4090
 
-# These are variant-aware - leave unset to use variant defaults
-# num_inference_steps = ...      # Variant default: t2i=40, edit=25, layered=50
-# resolution = ...               # Variant default: t2i=1024, edit=640, layered=640
+cfg_scale = 4.0
+layer_num = 4                    # Layered variant only
 
-cfg_scale = 4.0                  # CFG scale (4.0 for all variants)
-layer_num = 4                    # Only for layered variant
-
-# Text encoder quantization
-# With cpu_offload=true, text encoder runs on CPU - no GPU VRAM needed
-quantize_text_encoder = "none"   # Options: none (recommended), 8bit, 4bit
-                                 # none: Full precision on CPU (best quality)
-                                 # 8bit: Good quality + reduced CPU RAM
-                                 # 4bit: Only if RAM constrained (slight quality loss)
-
-# Transformer (DiT) quantization
-# Variant-aware default: t2i uses fp8, edit/layered use diffsynth-fp8
-# quantize_transformer = "diffsynth-fp8"
-                                 # diffsynth-fp8: DiffSynth-style FP8 (recommended for edit/layered)
-                                 #   - Runtime F.linear patching with torch._scaled_mm
-                                 #   - AMD ROCm support (float8_e4m3fnuz)
-                                 # fp8: TorchAO FP8 (recommended for t2i)
-                                 # int8: TorchAO INT8
-                                 # 8bit: BitsAndBytes INT8
-                                 # 4bit: BitsAndBytes NF4 (quality loss)
-                                 # none: No quantization (doesn't fit on 24GB for t2i)
+# Quantization (unified torchao methods): none, fp8-dynamic, fp8-weight-only, int8, int4
+quantize_text_encoder = "none"
+quantize_transformer = "none"
 
 # =============================================================================
-# LTX-2 Configuration (Video + Audio Generation)
+# LTX-2 (Video + Audio)
 # =============================================================================
-# LTX-2 is a 19B parameter video generation model from Lightricks:
-#   - 14B video transformer + 5B audio transformer
-#   - Text encoder: Gemma 3-12B (NOT Qwen3)
-#   - Output: Video (512x768 typical) + optional audio
-#   - Memory: FP8 model (25GB) + CPU offload for RTX 4090
-#
-# Available model variants:
-#   | Model                            | Size   | RTX 4090 | Notes |
-#   |----------------------------------|--------|----------|-------|
-#   | ltx-2-19b-dev.safetensors        | 40.3GB | No       | Full BF16 |
-#   | ltx-2-19b-dev-fp8.safetensors    | 25.2GB | Yes      | Native FP8 on SM89 |
-#   | ltx-2-19b-dev-fp4.safetensors    | 18.6GB | Slow     | FP4 emulated on SM89 |
-#   | ltx-2-19b-distilled.safetensors  | 40.3GB | No       | Full BF16 distilled |
-#   | ltx-2-19b-distilled-fp8          | 25.3GB | Yes      | Recommended |
-#
-# IMPORTANT: RTX 4090 (SM89) has NATIVE FP8 tensor core support but FP4 is EMULATED.
-# FP8 is faster than FP4 on RTX 4090 despite larger size. Use FP4 only on Hopper+.
-#
-# Memory strategy for 24GB VRAM:
-#   1. Use FP8 model with model-level CPU offloading
-#   2. Sequential loading: Encoder -> Unload -> Transformer -> VAE
-#   3. Tiled VAE for large video decode
-#   4. SageAttention INT8/FP16 for attention efficiency
-#   5. Peak VRAM: ~23-24GB with proper offloading
+# 19B model: 14B video transformer + 5B audio transformer
+# Text encoder: Gemma 3-12B (NOT Qwen3)
+# RTX 4090: Use FP8 model + CPU offloading
 
 [ltx2]
-# Model paths
-# model_path = "/path/to/LTX-2"    # Directory containing model files
-transformer_file = "ltx-2-19b-distilled-fp8.safetensors"  # Native FP8 on RTX 4090
+# model_path = "/path/to/LTX-2"
+transformer_file = "ltx-2-19b-distilled-fp8.safetensors"
 
-# Text encoder (Gemma 3-12B) - uses [encoder] settings with overrides
-# Note: LTX-2 uses Gemma 3, not Qwen3. The encoder factory auto-selects based on pipeline.
+# Gemma 3-12B text encoder
 encoder_model_id = "models/LTX-2/text_encoder"
-encoder_quantization = "none"    # Gemma 3 already ships with Q4 QAT
-encoder_cpu_offload = true       # Offload after encoding (REQUIRED for 24GB)
+encoder_quantization = "none"    # Q4 QAT already quantized
+encoder_cpu_offload = true       # REQUIRED for 24GB
 
-# LoRA configuration (optional)
-# The ltx-2-19b-distilled-lora-384 LoRA provides additional quality/speed tradeoffs
-# "384" refers to LoRA rank (inner dimension of low-rank matrices)
-lora_path = ""                   # Path to LoRA safetensors, e.g., "/path/to/lora-384.safetensors"
-lora_scale = 1.0                 # LoRA blend scale (0.0-1.0, 1.0 = full strength)
+# LoRA
+lora_path = ""
+lora_scale = 1.0
 
-# CPU offloading during generation
-# Model-level offload: ~20-50% slower but enables 24GB inference
-# Sequential offload: ~3-5x slower, layer-by-layer streaming
+# Offloading
 offload_mode = "model"           # none, model, sequential, group
-num_blocks_per_group = 2         # For group offload: DiT blocks to keep on GPU
+num_blocks_per_group = 2
 
-# Video generation defaults
-height = 768                     # Video height (multiple of 32)
-width = 512                      # Video width (multiple of 32)
-num_frames = 33                  # Number of frames (33-65 typical for 24GB)
-fps = 24                         # Output FPS
-num_inference_steps = 12         # Diffusion steps (8+4 for distilled, 40 for full)
-guidance_scale = 3.5             # CFG scale (3.0-4.0 recommended)
+# Video defaults
+height = 768
+width = 512
+num_frames = 33
+fps = 24
+num_inference_steps = 12
+guidance_scale = 3.5
 
-# Audio generation
-audio_enabled = false            # Enable audio stream generation
-audio_negative_prompt = ""       # Negative prompt for audio CFG
+# Audio
+audio_enabled = false
+audio_negative_prompt = ""
 
-# Distillation (for ltx-2-19b-distilled models)
-use_distilled = true             # Use distilled model (8+4 step) - matches transformer_file
-distilled_steps_stage1 = 8       # First stage steps (distilled)
-distilled_steps_stage2 = 4       # Second stage steps (distilled)
+# Distillation
+use_distilled = true
+distilled_steps_stage1 = 8
+distilled_steps_stage2 = 4
 
-# Image-to-video (optional)
-input_image = ""                 # Path to input image for I2V mode
-image_weight = 0.7               # Blend weight for input image (0.0-1.0)
+# Image-to-video
+input_image = ""
+image_weight = 0.7
 
-# VAE settings
-tiled_vae = true                 # REQUIRED for video decode on 24GB
-tile_size_temporal = 8           # Temporal tile size (frames)
-tile_size_spatial = 256          # Spatial tile size (pixels)
-tile_overlap_temporal = 4        # Temporal overlap
-tile_overlap_spatial = 32        # Spatial overlap
+# VAE (tiled REQUIRED for video on 24GB)
+tiled_vae = true
+tile_size_temporal = 8
+tile_size_spatial = 256
+tile_overlap_temporal = 4
+tile_overlap_spatial = 32
 
 # =============================================================================
-# Web Server Configuration
+# Remote API / Rewriter / Server
 # =============================================================================
+
+[api]
+url = ""                         # Remote encoder API, e.g., "http://mac:8080"
+model = "Qwen3-4B"
+
+[rewriter]
+use_api = false
+api_url = ""
+api_model = "Qwen3-4B"
+temperature = 0.6
+top_p = 0.95
+top_k = 20
+min_p = 0.0
+presence_penalty = 0.0
+max_tokens = 1024
+timeout = 120.0
+
+# =============================================================================
+# Advanced Z-Image Features
+# =============================================================================
+
+[slg]
+# Skip Layer Guidance: improves structure/anatomy (~2x inference time)
+enabled = false
+scale = 2.5
+layers = [7, 8, 9, 10, 11, 12]
+start = 0.05
+stop = 0.5
+
+[fmtt]
+# Flow Map Trajectory Tilting: SigLIP2-guided reward optimization
+enabled = false
+guidance_scale = 1.0
+guidance_start = 0.0
+guidance_stop = 0.5
+normalize_mode = "unit"
+decode_scale = 0.5
+siglip_model = "google/siglip2-giant-opt-patch16-384"
+siglip_device = "cpu"            # CPU recommended for RTX 4090
+
+# =============================================================================
+# Web Server
+# =============================================================================
+
 [server]
-host = "127.0.0.1"               # 0.0.0.0 for network access, 127.0.0.1 for local only
+host = "127.0.0.1"              # 0.0.0.0 for network access
 port = 7860

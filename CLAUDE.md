@@ -105,7 +105,7 @@ Some config changes apply immediately; others require server restart.
 - Cache settings, tiled VAE, seed
 
 **Requires restart** (model reload) - see `web/server.py` lines 210-239:
-- Model paths: `model_path`, `text_encoder_path`, `vl_model_path`
+- Model paths: `model_path`, `text_encoder_path`
 - Device placement: `encoder_device`, `dit_device`, `vae_device`
 - Quantization: `quantization`, `dtype`
 - Memory: `cpu_offload`
@@ -129,6 +129,24 @@ Config values ALWAYS win. Code should:
 **Config architecture:** Model-specific dataclasses in `src/llm_dit/config.py`:
 - `LTX2Config`, `Flux2Config`, `ZImageConfig`, `QwenImageConfig`, etc.
 - **Check these BEFORE adding new fields** - they may already exist!
+
+## DRY Configuration Principles
+
+Every config parameter must flow through all layers without gaps:
+
+1. **config.toml** (user-facing) -> **Config dataclass** (config.py) -> **RuntimeConfig** (cli.py) -> **Backend/Pipeline** (usage)
+2. **CLI flag** (cli.py) -> **RuntimeConfig** (cli.py) -> **Backend/Pipeline** (usage)
+
+Key CLI flags and their config paths:
+
+| CLI Flag | RuntimeConfig Field | Config Dataclass |
+|----------|-------------------|------------------|
+| `--hidden-layer` | `hidden_layer` | `EncoderConfig.hidden_layer` |
+| `--quantization` | `quantization` | `EncoderConfig.quantization` |
+| `--compile` | `compile` | `OptimizationConfig.compile` |
+| `--flash-attn` | `flash_attn` | `OptimizationConfig.flash_attn` |
+
+When adding a new parameter, always check `tests/unit/test_dry_config.py` which validates config consistency automatically.
 
 ## feature implementation workflow
 

@@ -49,21 +49,23 @@ class TestFlowMatchScheduler:
         from llm_dit.schedulers import FlowMatchScheduler
 
         shift = 3.0
+        num_steps = 9
         scheduler = FlowMatchScheduler(shift=shift)
-        scheduler.set_timesteps(num_inference_steps=9, device="cpu")
+        scheduler.set_timesteps(num_inference_steps=num_steps, device="cpu")
 
         # First sigma should be close to 1.0 (shifted)
         # sigma_unshifted = 1.0, shifted = 3*1/(1+2*1) = 1.0
         assert scheduler.sigmas[0].item() == pytest.approx(1.0, abs=1e-5)
 
-        # Last sigma should be 0.0
+        # Last sigma (appended) should be 0.0
         assert scheduler.sigmas[-1].item() == pytest.approx(0.0, abs=1e-5)
 
-        # Check intermediate values follow the formula
-        for i, sigma in enumerate(scheduler.sigmas):
-            sigma_unshifted = 1.0 - i / 9  # Linear from 1 to 0
+        # Check the first num_steps sigmas follow the formula
+        # linspace(1.0, 0.0, 9) gives 9 values with spacing 1/8
+        for i in range(num_steps):
+            sigma_unshifted = 1.0 - i / (num_steps - 1)  # linspace from 1 to 0
             expected = shift * sigma_unshifted / (1 + (shift - 1) * sigma_unshifted)
-            assert sigma.item() == pytest.approx(expected, abs=1e-5)
+            assert scheduler.sigmas[i].item() == pytest.approx(expected, abs=1e-5)
 
     def test_step_output_shape(self):
         from llm_dit.schedulers import FlowMatchScheduler
@@ -90,9 +92,10 @@ class TestFlowMatchScheduler:
 
         original = torch.randn(1, 4, 64, 64)
         noise = torch.randn_like(original)
-        timestep_idx = 4
+        # Pass an actual timestep value (from scheduler.timesteps)
+        timestep = scheduler.timesteps[4]
 
-        noisy = scheduler.add_noise(original, noise, timestep_idx)
+        noisy = scheduler.add_noise(original, noise, timestep)
 
         assert noisy.shape == original.shape
         # With sigma > 0, noisy should be different from original
@@ -109,15 +112,16 @@ class TestFlowMatchScheduler:
         assert scheduler.sigmas[-1].item() == pytest.approx(0.0, abs=1e-5)
 
     def test_shift_terminal_stretches_sigma(self):
-        """With shift_terminal, final sigma should end at that value."""
+        """With shift_terminal, second-to-last sigma should end at that value."""
         from llm_dit.schedulers import FlowMatchScheduler
 
         terminal = 0.02
         scheduler = FlowMatchScheduler(shift=3.0, shift_terminal=terminal)
         scheduler.set_timesteps(num_inference_steps=50, device="cpu")
 
-        # Final sigma should be close to shift_terminal
-        assert scheduler.sigmas[-1].item() == pytest.approx(terminal, abs=1e-4)
+        # sigmas[-1] is the appended 0 (target for final denoising step)
+        # sigmas[-2] is the last computed sigma, which should be close to shift_terminal
+        assert scheduler.sigmas[-2].item() == pytest.approx(terminal, abs=1e-4)
 
         # First sigma should still be 1.0
         assert scheduler.sigmas[0].item() == pytest.approx(1.0, abs=1e-5)
@@ -142,7 +146,8 @@ class TestFlowMatchScheduler:
             scheduler = FlowMatchScheduler(shift=3.0, shift_terminal=terminal)
             scheduler.set_timesteps(num_inference_steps=50, device="cpu")
 
-            assert scheduler.sigmas[-1].item() == pytest.approx(terminal, abs=1e-4), \
+            # sigmas[-2] is the last computed sigma (sigmas[-1] is appended 0)
+            assert scheduler.sigmas[-2].item() == pytest.approx(terminal, abs=1e-4), \
                 f"Failed for terminal={terminal}"
 
     def test_scale_model_input(self):

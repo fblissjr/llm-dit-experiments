@@ -179,8 +179,6 @@ def _load_bf16_encoder(
         device=device,
         dtype=dtype,
         max_sequence_length=max_sequence_length,
-        load_in_4bit=False,
-        load_in_8bit=False,
         connectors_path=connectors_path,
         tokenizer_path=tokenizer_path,
         use_connector=use_connector,
@@ -250,7 +248,6 @@ def _load_8bit_encoder(
             device="cpu",  # Load on CPU first
             dtype=dtype,
             max_sequence_length=max_sequence_length,
-            load_in_8bit=False,
             connectors_path=connectors_path,
             tokenizer_path=tokenizer_path,
             use_connector=use_connector,
@@ -378,8 +375,7 @@ def _load_8bit_encoder(
         encoder._device_str = device
         encoder._dtype = dtype
         encoder._max_sequence_length = max_sequence_length
-        encoder._load_in_4bit = False
-        encoder._load_in_8bit = True
+        encoder._quantization_variant = "int8"
         encoder._max_memory = None
         encoder._connectors_path = connectors_path
         encoder._text_encoder_path = encoder_path
@@ -532,8 +528,7 @@ def _load_q4_qat_encoder(
     encoder._device_str = device
     encoder._dtype = dtype
     encoder._max_sequence_length = max_sequence_length
-    encoder._load_in_4bit = True  # Mark as Q4
-    encoder._load_in_8bit = False
+    encoder._quantization_variant = "q4_0"
     encoder._max_memory = None
     encoder._connectors_path = connectors_path
     encoder._text_encoder_path = encoder_path

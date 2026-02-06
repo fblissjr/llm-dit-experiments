@@ -47,7 +47,6 @@ def main():
         max_sequence_length=256,
         connectors_path=str(connectors_path),
         use_connector=True,
-        load_in_8bit=True,
     )
 
     # Force model loading

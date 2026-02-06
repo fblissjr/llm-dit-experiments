@@ -5,6 +5,27 @@ last updated: 2026-02-06
 All notable changes to this project will be documented in this file.
 Uses [Semantic Versioning](https://semver.org/).
 
+## 0.7.1
+
+### removed
+- Entire VL (Vision Conditioning) module: `src/llm_dit/vl/`, VL endpoints in server.py, VLConfig, VL CLI args, VL frontend JS, VL documentation
+- VL experiment files: `experiments/qwen3_vl/`, `experiments/test_vl_ablation.py`, `experiments/qwen3_vl_poc.py`
+- VL schema entries from Z-Image ParamSchemas (vl_enabled, vl_image, vl_strength)
+- VL constants (QWEN3_VL_4B_CONFIG, QWEN3_VL_GENERATION_DEFAULTS)
+- `load_in_4bit`/`load_in_8bit` boolean flags from Gemma3Encoder (replaced by `quantization_variant: str`)
+- BitsAndBytes `load_in_8bit` parameter from 14 script/test files
+
+### changed
+- `config.toml.example` rewritten: added `[quantization]` section, all methods use unified torchao names, fixed `compile_mode` default
+- Gemma3Encoder variant metadata: two booleans replaced by `_quantization_variant: str` ("bf16", "int8", "q4_0")
+- Config presets use unified names: "8bit"->"int8", "fp8"->"fp8-weight-only", "4bit"->"int4"
+- CLAUDE.md: added "DRY Configuration Principles" section with `--hidden-layer` reference
+
+### fixed
+- 27 unit test failures resolved (wrong mock patch targets, argument mismatches, outdated expectations)
+- 3 missed VL CLI args in cli.py (`--rewriter-no-vl`, `--rewriter-preload-vl`, `--rewriter-vl-api-model`)
+- config.toml/config.py warning messages referencing deleted method names
+
 ## 0.7.0
 
 ### added
