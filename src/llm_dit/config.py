@@ -174,6 +174,7 @@ class EncoderConfig:
     trust_remote_code: bool = True
     max_length: int = 512
     hidden_layer: int = -2  # Which layer to extract embeddings from (-1=last, -2=penultimate)
+    layer_weights: dict[int, float] | None = None  # Multi-layer blending weights (overrides hidden_layer)
 
     def get_dtype(self) -> torch.dtype:
         """Convert string dtype to torch.dtype."""
@@ -238,6 +239,11 @@ class GenerationConfig:
     cfg_norm_mode: str = "clamp"  # CFG norm mode: "clamp" or "match" (DiffSynth-style)
     enable_thinking: bool = True
     default_template: str | None = None
+    seed: int | None = None  # Random seed for reproducibility
+    negative_prompt: str | None = None  # Negative prompt for CFG
+    system_prompt: str | None = None  # System prompt override
+    thinking_content: str | None = None  # Thinking content override
+    assistant_content: str | None = None  # Assistant content override
 
 
 @dataclass
@@ -248,6 +254,8 @@ class OptimizationConfig:
     compile: bool = False  # Enable torch.compile
     compile_mode: str = "default"  # torch.compile mode (default is CPU-offload safe)
     cpu_offload: bool = False  # Enable CPU offload for transformer
+    dit_device: str = "auto"  # DiT device placement
+    vae_device: str = "auto"  # VAE device placement
 
 
 @dataclass
@@ -271,6 +279,7 @@ class APIConfig:
 
     url: str = ""  # API URL, e.g., "http://mac-host:8080" (empty = use local encoder)
     model: str = "Qwen3-4B"  # Model ID for embedding extraction
+    local_encoder: bool = False  # Use local encoder even when API is configured
 
 
 @dataclass
@@ -375,6 +384,23 @@ class LTX2Config:
     tile_size_spatial: int = 256  # Spatial tile size (pixels)
     tile_overlap_temporal: int = 4  # Temporal overlap
     tile_overlap_spatial: int = 32  # Spatial overlap
+
+    # Embedding precomputation
+    save_embeddings: str | None = None  # Save embeddings to this path (skip generation)
+    load_embeddings: str | None = None  # Load precomputed embeddings from this path
+
+    # Output
+    output_path: str = "output.mp4"  # Output video path
+
+    # Device placement
+    text_encoder_device: str = "cpu"  # Device for Gemma3 (cpu recommended for 24GB)
+    transformer_device: str = "cuda"  # Device for DiT transformer
+    vae_device: str = "cuda"  # Device for VAE decoder
+
+    # Quantization
+    quantize: str = "fp8"  # Transformer quantization (none, fp8)
+    skip_cleanup: bool = False  # Skip memory cleanup between stages
+    gemma_variant: str = "bf16"  # Gemma3 backbone: bf16, 8bit, q4-qat
 
     # Preset configuration
     default_preset: str = ""  # Default preset to load (e.g., "cinematic")
@@ -1195,6 +1221,955 @@ class RewriterConfig:
 
 
 @dataclass
+class LoggingConfig:
+    """Logging configuration for file and console output."""
+
+    enabled: bool = False
+    log_dir: str = ""
+    log_level: str = "INFO"
+    json_format: bool = True
+
+
+@dataclass
+class WanConfig:
+    """Configuration for Wan/HuMo video generation."""
+
+    humo_path: str = ""  # Path to HuMo transformer
+    base_path: str = ""  # Path to Wan2.1-T2V for VAE/text encoder
+    whisper_path: str = ""  # Path to Whisper (optional, for audio)
+    humo_variant: str = "17B"  # "17B" or "1.7B"
+    num_frames: int = 97  # Number of frames (97 = ~3.9s at 25fps)
+    fps: int = 25  # Output framerate
+    height: int = 720  # Video height (multiple of 16)
+    width: int = 1280  # Video width (multiple of 16)
+    guidance_scale: float = 5.0  # Text guidance (scale_t)
+    audio_scale: float = 0.0  # Audio guidance (scale_a), 0 = T2V mode
+    num_inference_steps: int = 50  # Diffusion steps
+    offload_mode: str = "model"  # none, model, sequential
+    output_path: str = "wan_output.mp4"  # Output video path
+
+
+@dataclass
+class RuntimeConfig:
+    """Unified runtime configuration composing all sub-configs.
+
+    This replaces the old 158-field flat RuntimeConfig. Instead of flat fields
+    like `flux2_model_path`, access via `flux2.model_path`.
+
+    Sub-configs are the canonical config.py dataclasses -- same ones used by
+    Config.from_toml(). Adding a new parameter only requires:
+    1. Add field to the sub-config dataclass
+    2. Add to config.toml
+    That's it. No manual mapping needed.
+    """
+
+    # Top-level settings (not pipeline-specific)
+    default_pipeline: str = "none"  # none, z-image, qwen-image, flux2, ltx2
+    model_type: str = "zimage"  # zimage, qwenimage-layered, qwenimage-t2i, qwenimage-edit, ltx2, wan
+    model_path: str = ""  # Z-Image model path (legacy, prefer zimage.model_path)
+    text_encoder_path: str | None = None
+    templates_dir: str | None = None
+
+    # Server
+    host: str = "127.0.0.1"
+    port: int = 7860
+    debug: bool = False
+    verbose: bool = False
+
+    # Composed sub-configs (reuse config.py dataclasses directly)
+    encoder: EncoderConfig = field(default_factory=EncoderConfig)
+    generation: GenerationConfig = field(default_factory=GenerationConfig)
+    optimization: OptimizationConfig = field(default_factory=OptimizationConfig)
+    scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
+    logging: LoggingConfig = field(default_factory=LoggingConfig)
+    rewriter: RewriterConfig = field(default_factory=RewriterConfig)
+    quant: PipelineQuantConfig = field(default_factory=PipelineQuantConfig)
+    api: APIConfig = field(default_factory=APIConfig)
+    lora: LoRAConfig = field(default_factory=LoRAConfig)
+    pytorch: PyTorchConfig = field(default_factory=PyTorchConfig)
+
+    # Pipeline-specific configs
+    flux2: Flux2Config = field(default_factory=Flux2Config)
+    ltx2: LTX2Config = field(default_factory=LTX2Config)
+    zimage: ZImageConfig = field(default_factory=ZImageConfig)
+    qwen_image: QwenImageConfig = field(default_factory=QwenImageConfig)
+    wan: WanConfig = field(default_factory=WanConfig)
+
+    # Feature configs
+    dype: DyPEConfig = field(default_factory=DyPEConfig)
+    slg: SLGConfig = field(default_factory=SLGConfig)
+    fmtt: FMTTConfig = field(default_factory=FMTTConfig)
+    fbcache: FBCacheRuntimeConfig = field(default_factory=FBCacheRuntimeConfig)
+
+    # Mutable state set at runtime (not from config files)
+    config_path: str | None = None  # Path to config file used
+    current_profile: str | None = None  # Active config profile
+
+    # -----------------------------------------------------------------------
+    # Convenience properties for backward compatibility during migration.
+    # These allow code to access config via the old flat-field pattern while
+    # we migrate server.py to use sub-configs directly. Remove once Phase 3
+    # (router decomposition) is complete.
+    # -----------------------------------------------------------------------
+
+    @property
+    def encoder_device(self) -> str:
+        return self.encoder.device
+
+    @encoder_device.setter
+    def encoder_device(self, value: str) -> None:
+        self.encoder.device = value
+
+    @property
+    def dit_device(self) -> str:
+        return self.optimization.dit_device
+
+    @dit_device.setter
+    def dit_device(self, value: str) -> None:
+        self.optimization.dit_device = value
+
+    @property
+    def vae_device(self) -> str:
+        return self.optimization.vae_device
+
+    @vae_device.setter
+    def vae_device(self, value: str) -> None:
+        self.optimization.vae_device = value
+
+    @property
+    def dtype(self) -> str:
+        return self.encoder.dtype
+
+    @dtype.setter
+    def dtype(self, value: str) -> None:
+        self.encoder.dtype = value
+
+    @property
+    def hidden_layer(self) -> int:
+        return self.encoder.hidden_layer
+
+    @hidden_layer.setter
+    def hidden_layer(self, value: int) -> None:
+        self.encoder.hidden_layer = value
+
+    @property
+    def flash_attn(self) -> bool:
+        return self.optimization.flash_attn
+
+    @flash_attn.setter
+    def flash_attn(self, value: bool) -> None:
+        self.optimization.flash_attn = value
+
+    @property
+    def compile(self) -> bool:
+        return self.optimization.compile
+
+    @compile.setter
+    def compile(self, value: bool) -> None:
+        self.optimization.compile = value
+
+    @property
+    def compile_mode(self) -> str:
+        return self.optimization.compile_mode
+
+    @compile_mode.setter
+    def compile_mode(self, value: str) -> None:
+        self.optimization.compile_mode = value
+
+    @property
+    def cpu_offload(self) -> bool:
+        return self.optimization.cpu_offload
+
+    @cpu_offload.setter
+    def cpu_offload(self, value: bool) -> None:
+        self.optimization.cpu_offload = value
+
+    @property
+    def shift(self) -> float:
+        return self.scheduler.shift
+
+    @shift.setter
+    def shift(self, value: float) -> None:
+        self.scheduler.shift = value
+
+    @property
+    def shift_terminal(self) -> float | None:
+        return self.scheduler.shift_terminal
+
+    @shift_terminal.setter
+    def shift_terminal(self, value: float | None) -> None:
+        self.scheduler.shift_terminal = value
+
+    @property
+    def steps(self) -> int:
+        return self.generation.num_inference_steps
+
+    @steps.setter
+    def steps(self, value: int) -> None:
+        self.generation.num_inference_steps = value
+
+    @property
+    def guidance_scale(self) -> float:
+        return self.generation.guidance_scale
+
+    @guidance_scale.setter
+    def guidance_scale(self, value: float) -> None:
+        self.generation.guidance_scale = value
+
+    @property
+    def height(self) -> int:
+        return self.generation.height
+
+    @height.setter
+    def height(self, value: int) -> None:
+        self.generation.height = value
+
+    @property
+    def width(self) -> int:
+        return self.generation.width
+
+    @width.setter
+    def width(self, value: int) -> None:
+        self.generation.width = value
+
+    @property
+    def seed(self) -> int | None:
+        return self.generation.seed
+
+    @seed.setter
+    def seed(self, value: int | None) -> None:
+        self.generation.seed = value
+
+    @property
+    def negative_prompt(self) -> str | None:
+        return self.generation.negative_prompt
+
+    @negative_prompt.setter
+    def negative_prompt(self, value: str | None) -> None:
+        self.generation.negative_prompt = value
+
+    @property
+    def enable_thinking(self) -> bool:
+        return self.generation.enable_thinking
+
+    @property
+    def default_template(self) -> str | None:
+        return self.generation.default_template
+
+    @property
+    def cfg_normalization(self) -> float:
+        return self.generation.cfg_normalization
+
+    @property
+    def cfg_truncation(self) -> float:
+        return self.generation.cfg_truncation
+
+    @property
+    def attention_backend(self) -> str | None:
+        return self.pytorch.attention_backend
+
+    @property
+    def long_prompt_mode(self) -> str:
+        return self.pytorch.long_prompt_mode
+
+    @property
+    def tiled_vae(self) -> bool:
+        return self.pytorch.tiled_vae
+
+    @property
+    def lora_paths(self) -> list[str]:
+        return self.lora.paths
+
+    @property
+    def lora_scales(self) -> list[float]:
+        return self.lora.scales
+
+    @property
+    def api_url(self) -> str | None:
+        url = self.api.url
+        return url if url else None
+
+    @property
+    def api_model(self) -> str:
+        return self.api.model
+
+    # Qwen-Image backward-compat properties
+    @property
+    def qwen_image_model_path(self) -> str:
+        return self.qwen_image.model_path
+
+    @qwen_image_model_path.setter
+    def qwen_image_model_path(self, value: str) -> None:
+        self.qwen_image.model_path = value
+
+    @property
+    def qwen_image_edit_model_path(self) -> str:
+        return self.qwen_image.edit_model_path
+
+    @property
+    def qwen_image_cpu_offload(self) -> bool:
+        return self.qwen_image.cpu_offload
+
+    @property
+    def qwen_image_layer_num(self) -> int:
+        return self.qwen_image.layer_num
+
+    @property
+    def qwen_image_cfg_scale(self) -> float:
+        return self.qwen_image.cfg_scale
+
+    @property
+    def qwen_image_resolution(self) -> int | None:
+        return getattr(self.qwen_image, "resolution", None)
+
+    @property
+    def qwen_image_steps(self) -> int | None:
+        return getattr(self.qwen_image, "num_inference_steps", None)
+
+    @property
+    def qwen_image_quantize_text_encoder(self) -> str:
+        return getattr(self.qwen_image, "quantize_text_encoder", "none")
+
+    @property
+    def qwen_image_quantize_transformer(self) -> str | None:
+        return getattr(self.qwen_image, "quantize_transformer", None)
+
+    # FLUX.2 backward-compat properties
+    @property
+    def flux2_model_path(self) -> str | None:
+        return self.flux2.model_path or None
+
+    @property
+    def flux2_vae_path(self) -> str | None:
+        return self.flux2.vae_path
+
+    @property
+    def flux2_encoder_path(self) -> str | None:
+        return self.flux2.encoder_path
+
+    @property
+    def flux2_model_name(self) -> str:
+        return self.flux2.default_model
+
+    @property
+    def flux2_compile(self) -> bool:
+        return getattr(self.flux2, "compile", False)
+
+    @property
+    def flux2_compile_vae(self) -> bool:
+        return getattr(self.flux2, "compile_vae", False)
+
+    @property
+    def flux2_compile_mode(self) -> str:
+        return getattr(self.flux2, "compile_mode", "default")
+
+    @property
+    def flux2_block_offload(self) -> bool:
+        return self.flux2.block_offload
+
+    @property
+    def flux2_offload_between_stages(self) -> bool:
+        return getattr(self.flux2, "offload_between_stages", True)
+
+    @property
+    def flux2_quantization(self) -> str:
+        return getattr(self.flux2, "quantization", "none")
+
+    @property
+    def flux2_num_steps(self) -> int | None:
+        return self.flux2.default_steps
+
+    @property
+    def flux2_guidance(self) -> float | None:
+        return self.flux2.default_guidance
+
+    # LTX-2 backward-compat properties
+    @property
+    def ltx2_model_path(self) -> str:
+        return self.ltx2.model_path
+
+    @ltx2_model_path.setter
+    def ltx2_model_path(self, value: str) -> None:
+        self.ltx2.model_path = value
+
+    # Z-Image backward-compat properties
+    @property
+    def zimage_model_path(self) -> str | None:
+        return self.zimage.model_path or None
+
+    @zimage_model_path.setter
+    def zimage_model_path(self, value: str) -> None:
+        self.zimage.model_path = value
+
+    @property
+    def zimage_variant(self) -> str:
+        return self.zimage.variant
+
+    @zimage_variant.setter
+    def zimage_variant(self, value: str) -> None:
+        self.zimage.variant = value
+
+    # Rewriter backward-compat properties
+    @property
+    def rewriter_use_api(self) -> bool:
+        return self.rewriter.use_api
+
+    @property
+    def rewriter_api_url(self) -> str:
+        return self.rewriter.api_url
+
+    @property
+    def rewriter_api_model(self) -> str:
+        return self.rewriter.api_model
+
+    @property
+    def rewriter_temperature(self) -> float:
+        return self.rewriter.temperature
+
+    @property
+    def rewriter_top_p(self) -> float:
+        return self.rewriter.top_p
+
+    @property
+    def rewriter_top_k(self) -> int:
+        return self.rewriter.top_k
+
+    @property
+    def rewriter_min_p(self) -> float:
+        return self.rewriter.min_p
+
+    @property
+    def rewriter_presence_penalty(self) -> float:
+        return self.rewriter.presence_penalty
+
+    @property
+    def rewriter_max_tokens(self) -> int:
+        return self.rewriter.max_tokens
+
+    # DyPE backward-compat properties
+    @property
+    def dype_enabled(self) -> bool:
+        return self.dype.enabled
+
+    @dype_enabled.setter
+    def dype_enabled(self, value: bool) -> None:
+        self.dype.enabled = value
+
+    @property
+    def dype_method(self) -> str:
+        return self.dype.method
+
+    @property
+    def dype_scale(self) -> float:
+        return self.dype.dype_scale
+
+    # SLG backward-compat properties
+    @property
+    def slg_scale(self) -> float:
+        return self.slg.scale
+
+    @property
+    def slg_layers(self) -> list[int] | None:
+        return self.slg.layers
+
+    # FMTT backward-compat properties
+    @property
+    def fmtt_scale(self) -> float:
+        return self.fmtt.guidance_scale
+
+    # Wan backward-compat properties
+    @property
+    def wan_humo_path(self) -> str:
+        return self.wan.humo_path
+
+    @property
+    def wan_base_path(self) -> str:
+        return self.wan.base_path
+
+    @property
+    def wan_whisper_path(self) -> str:
+        return self.wan.whisper_path
+
+    @property
+    def wan_humo_variant(self) -> str:
+        return self.wan.humo_variant
+
+    @property
+    def wan_num_frames(self) -> int:
+        return self.wan.num_frames
+
+    @property
+    def wan_fps(self) -> int:
+        return self.wan.fps
+
+    @property
+    def wan_height(self) -> int:
+        return self.wan.height
+
+    @property
+    def wan_width(self) -> int:
+        return self.wan.width
+
+    @property
+    def wan_guidance_scale(self) -> float:
+        return self.wan.guidance_scale
+
+    @property
+    def wan_audio_scale(self) -> float:
+        return self.wan.audio_scale
+
+    @property
+    def wan_steps(self) -> int:
+        return self.wan.num_inference_steps
+
+    @property
+    def wan_offload_mode(self) -> str:
+        return self.wan.offload_mode
+
+    @property
+    def wan_output_path(self) -> str:
+        return self.wan.output_path
+
+    # Additional scheduler backward-compat
+    @property
+    def dynamic_shift(self) -> bool:
+        return self.scheduler.dynamic_shift
+
+    @dynamic_shift.setter
+    def dynamic_shift(self, value: bool) -> None:
+        self.scheduler.dynamic_shift = value
+
+    @property
+    def d_noise(self) -> float:
+        return self.scheduler.d_noise
+
+    @d_noise.setter
+    def d_noise(self, value: float) -> None:
+        self.scheduler.d_noise = value
+
+    # Additional generation backward-compat
+    @property
+    def cfg_norm_mode(self) -> str:
+        return self.generation.cfg_norm_mode
+
+    @cfg_norm_mode.setter
+    def cfg_norm_mode(self, value: str) -> None:
+        self.generation.cfg_norm_mode = value
+
+    @property
+    def system_prompt(self) -> str | None:
+        return self.generation.system_prompt
+
+    @system_prompt.setter
+    def system_prompt(self, value: str | None) -> None:
+        self.generation.system_prompt = value
+
+    @property
+    def thinking_content(self) -> str | None:
+        return self.generation.thinking_content
+
+    @thinking_content.setter
+    def thinking_content(self, value: str | None) -> None:
+        self.generation.thinking_content = value
+
+    @property
+    def assistant_content(self) -> str | None:
+        return self.generation.assistant_content
+
+    @assistant_content.setter
+    def assistant_content(self, value: str | None) -> None:
+        self.generation.assistant_content = value
+
+    # Additional encoder backward-compat
+    @property
+    def quantization(self) -> str:
+        return self.encoder.quantization
+
+    @quantization.setter
+    def quantization(self, value: str) -> None:
+        self.encoder.quantization = value
+
+    @property
+    def layer_weights(self) -> dict[int, float] | None:
+        return self.encoder.layer_weights
+
+    @layer_weights.setter
+    def layer_weights(self, value: dict[int, float] | None) -> None:
+        self.encoder.layer_weights = value
+
+    # Additional pytorch backward-compat
+    @property
+    def embedding_cache(self) -> bool:
+        return self.pytorch.embedding_cache
+
+    @property
+    def cache_size(self) -> int:
+        return self.pytorch.cache_size
+
+    @property
+    def tile_size(self) -> int:
+        return self.pytorch.tile_size
+
+    @property
+    def tile_overlap(self) -> int:
+        return self.pytorch.tile_overlap
+
+    @property
+    def use_custom_scheduler(self) -> bool:
+        return self.pytorch.use_custom_scheduler
+
+    # Additional api backward-compat
+    @property
+    def local_encoder(self) -> bool:
+        return self.api.local_encoder
+
+    # Additional logging backward-compat
+    @property
+    def log_dir(self) -> str | None:
+        d = self.logging.log_dir
+        return d if d else None
+
+    @log_dir.setter
+    def log_dir(self, value: str | None) -> None:
+        self.logging.log_dir = value or ""
+
+    # Additional LTX-2 backward-compat
+    @property
+    def ltx2_num_frames(self) -> int:
+        return self.ltx2.num_frames
+
+    @property
+    def ltx2_fps(self) -> int:
+        return self.ltx2.fps
+
+    @property
+    def ltx2_guidance_scale(self) -> float:
+        return self.ltx2.guidance_scale
+
+    @property
+    def ltx2_steps(self) -> int | None:
+        return getattr(self.ltx2, "num_inference_steps", None)
+
+    @property
+    def ltx2_encoder_model_id(self) -> str:
+        return getattr(self.ltx2, "encoder_model_id", "models/LTX-2/text_encoder")
+
+    @property
+    def ltx2_lora_path(self) -> str:
+        return getattr(self.ltx2, "lora_path", "")
+
+    @property
+    def ltx2_lora_scale(self) -> float:
+        return getattr(self.ltx2, "lora_scale", 1.0)
+
+    @property
+    def ltx2_audio(self) -> bool:
+        return getattr(self.ltx2, "audio_enabled", False)
+
+    @property
+    def ltx2_save_embeddings(self) -> str | None:
+        return self.ltx2.save_embeddings
+
+    @ltx2_save_embeddings.setter
+    def ltx2_save_embeddings(self, value: str | None) -> None:
+        self.ltx2.save_embeddings = value
+
+    @property
+    def ltx2_load_embeddings(self) -> str | None:
+        return self.ltx2.load_embeddings
+
+    @ltx2_load_embeddings.setter
+    def ltx2_load_embeddings(self, value: str | None) -> None:
+        self.ltx2.load_embeddings = value
+
+    @property
+    def ltx2_text_encoder_device(self) -> str:
+        return self.ltx2.text_encoder_device
+
+    @property
+    def ltx2_transformer_device(self) -> str:
+        return self.ltx2.transformer_device
+
+    @property
+    def ltx2_vae_device(self) -> str:
+        return self.ltx2.vae_device
+
+    @property
+    def ltx2_quantize(self) -> str:
+        return self.ltx2.quantize
+
+    @property
+    def ltx2_skip_cleanup(self) -> bool:
+        return self.ltx2.skip_cleanup
+
+    @property
+    def ltx2_gemma_variant(self) -> str:
+        return self.ltx2.gemma_variant
+
+    @property
+    def ltx2_output_path(self) -> str:
+        return self.ltx2.output_path
+
+    # Additional FLUX.2 backward-compat
+    @property
+    def flux2_seed(self) -> int | None:
+        return getattr(self.flux2, "seed", None)
+
+    @property
+    def flux2_output_path(self) -> str:
+        return getattr(self.flux2, "output_path", "flux2_output.png")
+
+    @property
+    def flux2_input_images(self) -> list[str] | None:
+        return getattr(self.flux2, "input_images", None)
+
+    @property
+    def flux2_encoder_device(self) -> str:
+        return getattr(self.flux2, "encoder_device", "cuda")
+
+    # Additional Qwen-Image backward-compat
+    @property
+    def qwen_image_edit_only(self) -> bool:
+        return getattr(self.qwen_image, "edit_only", False)
+
+    @property
+    def qwen_image_offload_type(self) -> str:
+        return getattr(self.qwen_image, "offload_type", "pipeline")
+
+    # Additional DyPE backward-compat
+    @property
+    def dype_exponent(self) -> float:
+        return self.dype.dype_exponent
+
+    @property
+    def dype_start_sigma(self) -> float:
+        return self.dype.dype_start_sigma
+
+    @property
+    def dype_base_shift(self) -> float:
+        return getattr(self.dype, "base_shift", 0.5)
+
+    @property
+    def dype_max_shift(self) -> float:
+        return getattr(self.dype, "max_shift", 1.15)
+
+    @property
+    def dype_base_resolution(self) -> int:
+        return getattr(self.dype, "base_resolution", 1024)
+
+    @property
+    def dype_anisotropic(self) -> bool:
+        return getattr(self.dype, "anisotropic", False)
+
+    @property
+    def dype_multipass(self) -> str:
+        return getattr(self.dype, "multipass", "single")
+
+    @property
+    def dype_pass2_strength(self) -> float:
+        return getattr(self.dype, "pass2_strength", 0.5)
+
+    @property
+    def dype_pass3_strength(self) -> float:
+        return getattr(self.dype, "pass3_strength", 0.4)
+
+    @property
+    def dype_frequency_modulation(self) -> bool:
+        return getattr(self.dype, "frequency_modulation", False)
+
+    # FBCache backward-compat (note: the old field was just `fbcache`)
+    @property
+    def fbcache_enabled(self) -> bool:
+        return self.fbcache.enabled
+
+    @property
+    def fbcache_threshold(self) -> float | None:
+        return getattr(self.fbcache, "middle_threshold", None)
+
+    @property
+    def fbcache_log(self) -> bool:
+        return getattr(self.fbcache, "log_residuals", False)
+
+    # Additional rewriter backward-compat
+    @property
+    def rewriter_timeout(self) -> float:
+        return self.rewriter.timeout
+
+    # -----------------------------------------------------------------------
+    # Methods
+    # -----------------------------------------------------------------------
+
+    def get_dtype(self) -> "torch.dtype":
+        import torch
+
+        dtype_map = {
+            "bfloat16": torch.bfloat16,
+            "float16": torch.float16,
+            "float32": torch.float32,
+        }
+        return dtype_map.get(self.dtype, torch.bfloat16)
+
+    def resolve_device(self, device: str) -> str:
+        """Resolve 'auto' to actual device."""
+        import torch
+
+        if device == "auto":
+            if torch.cuda.is_available():
+                return "cuda"
+            elif torch.backends.mps.is_available():
+                return "mps"
+            else:
+                return "cpu"
+        return device
+
+    @property
+    def encoder_device_resolved(self) -> str:
+        return self.resolve_device(self.encoder_device)
+
+    @property
+    def dit_device_resolved(self) -> str:
+        return self.resolve_device(self.dit_device)
+
+    @property
+    def vae_device_resolved(self) -> str:
+        return self.resolve_device(self.vae_device)
+
+    def get_qwen_variant_defaults(self) -> dict:
+        """Return variant-specific defaults for Qwen-Image models."""
+        defaults = {
+            "qwenimage-t2i": {
+                "steps": 40,
+                "resolution": 1024,
+                "quantize_transformer": "fp8-weight-only",
+                "guidance_scale": 4.0,
+            },
+            "qwenimage-edit": {
+                "steps": 25,
+                "resolution": 640,
+                "quantize_transformer": "fp8-dynamic",
+                "guidance_scale": 4.0,
+            },
+            "qwenimage-layered": {
+                "steps": 50,
+                "resolution": 640,
+                "quantize_transformer": "fp8-dynamic",
+                "guidance_scale": 4.0,
+            },
+        }
+        return defaults.get(self.model_type, {})
+
+    def get_qwen_image_steps(self) -> int:
+        """Get effective steps, using variant default if not explicitly set."""
+        if self.qwen_image_steps is not None:
+            return self.qwen_image_steps
+        return self.get_qwen_variant_defaults().get("steps", 40)
+
+    def get_qwen_image_resolution(self) -> int:
+        """Get effective resolution, using variant default if not explicitly set."""
+        if self.qwen_image_resolution is not None:
+            return self.qwen_image_resolution
+        return self.get_qwen_variant_defaults().get("resolution", 1024)
+
+    def get_qwen_image_quantize_transformer(self) -> str:
+        """Get effective transformer quantization."""
+        if self.qwen_image_quantize_transformer is not None:
+            return self.qwen_image_quantize_transformer
+        return self.get_qwen_variant_defaults().get("quantize_transformer", "none")
+
+    def get_pipeline_quant_config(self, pipeline: str) -> PipelineQuantConfig:
+        """Resolve effective quantization for a pipeline."""
+        enc_default = self.quant.encoder.method
+        tf_default = self.quant.transformer.method
+        vae_default = self.quant.vae.method
+        g = self.quant.encoder.granularity  # same for all components
+
+        def _resolve(override: str | None, default: str) -> ComponentQuantConfig:
+            method = override if override is not None else default
+            return ComponentQuantConfig(method=method, granularity=g)
+
+        if pipeline == "flux2":
+            return PipelineQuantConfig(
+                encoder=_resolve(getattr(self.flux2, "quant_encoder", None), enc_default),
+                transformer=_resolve(getattr(self.flux2, "quant_transformer", None), tf_default),
+                vae=_resolve(getattr(self.flux2, "quant_vae", None), vae_default),
+            )
+        elif pipeline == "ltx2":
+            return PipelineQuantConfig(
+                encoder=_resolve(getattr(self.ltx2, "quant_encoder", None), enc_default),
+                transformer=_resolve(getattr(self.ltx2, "quant_transformer", None), tf_default),
+                vae=_resolve(getattr(self.ltx2, "quant_vae", None), vae_default),
+            )
+        elif pipeline == "z_image":
+            return PipelineQuantConfig(
+                encoder=_resolve(getattr(self.zimage, "quant_encoder", None), enc_default),
+                transformer=_resolve(getattr(self.zimage, "quant_transformer", None), "none"),
+                vae=ComponentQuantConfig(method="none", granularity=g),
+            )
+        elif pipeline == "qwen_image":
+            return PipelineQuantConfig(
+                encoder=_resolve(getattr(self.qwen_image, "quant_encoder", None), enc_default),
+                transformer=_resolve(getattr(self.qwen_image, "quant_transformer", None), tf_default),
+                vae=_resolve(getattr(self.qwen_image, "quant_vae", None), vae_default),
+            )
+        else:
+            return PipelineQuantConfig(
+                encoder=ComponentQuantConfig(method=enc_default, granularity=g),
+                transformer=ComponentQuantConfig(method=tf_default, granularity=g),
+                vae=ComponentQuantConfig(method=vae_default, granularity=g),
+            )
+
+    def to_dict(self) -> dict:
+        """Serialize to dictionary for API responses."""
+        from dataclasses import fields as dc_fields, asdict
+
+        result: dict[str, Any] = {}
+        for f in dc_fields(self):
+            value = getattr(self, f.name)
+            if hasattr(value, "__dataclass_fields__"):
+                # Nested dataclass - flatten with prefix for backward compat
+                result[f.name] = asdict(value)
+            else:
+                result[f.name] = value
+        return result
+
+    @classmethod
+    def from_toml_config(cls, toml_config: "Config") -> "RuntimeConfig":
+        """Create RuntimeConfig directly from a parsed Config (TOML).
+
+        This is the simplified replacement for the old 280-line manual mapping.
+        Since RuntimeConfig now composes the same dataclasses as Config, we just
+        assign them directly.
+        """
+        rc = cls()
+        rc.default_pipeline = toml_config.default_pipeline or rc.default_pipeline
+        rc.model_path = toml_config.model_path or rc.model_path
+        rc.templates_dir = toml_config.templates_dir or rc.templates_dir
+
+        # Direct sub-config assignment (this is the whole point of the refactor)
+        rc.encoder = toml_config.encoder
+        rc.generation = toml_config.generation
+        rc.optimization = toml_config.optimization
+        rc.scheduler = toml_config.scheduler
+        rc.api = toml_config.api
+        rc.lora = toml_config.lora
+        rc.pytorch = toml_config.pytorch
+        rc.rewriter = toml_config.rewriter
+        rc.logging = toml_config.logging
+        rc.zimage = toml_config.zimage
+        rc.qwen_image = toml_config.qwen_image
+        rc.ltx2 = toml_config.ltx2
+        rc.flux2 = toml_config.flux2
+        rc.dype = toml_config.dype
+        rc.slg = toml_config.slg
+        rc.fmtt = toml_config.fmtt
+        rc.fbcache = toml_config.fbcache
+
+        rc.wan = toml_config.wan
+
+        return rc
+
+
+@dataclass
 class Config:
     """Complete configuration for Z-Image, Qwen-Image, and LTX-2 generation."""
 
@@ -1214,6 +2189,7 @@ class Config:
     lora: LoRAConfig = field(default_factory=LoRAConfig)
     pytorch: PyTorchConfig = field(default_factory=PyTorchConfig)
     rewriter: RewriterConfig = field(default_factory=RewriterConfig)
+    logging: LoggingConfig = field(default_factory=LoggingConfig)
     zimage: ZImageConfig = field(default_factory=ZImageConfig)
     qwen_image: QwenImageConfig = field(default_factory=QwenImageConfig)
     ltx2: LTX2Config = field(default_factory=LTX2Config)
@@ -1222,6 +2198,7 @@ class Config:
     slg: SLGConfig = field(default_factory=SLGConfig)
     fmtt: FMTTConfig = field(default_factory=FMTTConfig)
     fbcache: FBCacheRuntimeConfig = field(default_factory=FBCacheRuntimeConfig)
+    wan: WanConfig = field(default_factory=WanConfig)
     enhancement: EnhancementConfig = field(default_factory=EnhancementConfig)
 
     @classmethod
@@ -1236,6 +2213,7 @@ class Config:
         lora_data = data.pop("lora", {})
         pytorch_data = data.pop("pytorch", {})
         rewriter_data = data.pop("rewriter", {})
+        logging_data = data.pop("logging", {})
         zimage_data = data.pop("zimage", {})
         qwen_image_data = data.pop("qwen_image", {})
         ltx2_data = data.pop("ltx2", {})
@@ -1244,6 +2222,7 @@ class Config:
         slg_data = data.pop("slg", {})
         fmtt_data = data.pop("fmtt", {})
         fbcache_data = data.pop("fbcache", {})
+        wan_data = data.pop("wan", {})
         enhancement_data = data.pop("enhancement", {})
 
         return cls(
@@ -1260,6 +2239,7 @@ class Config:
             lora=LoRAConfig(**lora_data),
             pytorch=PyTorchConfig(**pytorch_data),
             rewriter=RewriterConfig(**rewriter_data),
+            logging=LoggingConfig(**logging_data),
             zimage=ZImageConfig(**zimage_data),
             qwen_image=QwenImageConfig(**qwen_image_data),
             ltx2=LTX2Config(**ltx2_data),
@@ -1268,6 +2248,7 @@ class Config:
             slg=SLGConfig(**slg_data),
             fmtt=FMTTConfig(**fmtt_data),
             fbcache=FBCacheRuntimeConfig(**fbcache_data),
+            wan=WanConfig(**wan_data),
             enhancement=EnhancementConfig(**enhancement_data),
         )
 
@@ -1402,6 +2383,12 @@ class Config:
                 "presence_penalty": self.rewriter.presence_penalty,
                 "max_tokens": self.rewriter.max_tokens,
                 "timeout": self.rewriter.timeout,
+            },
+            "logging": {
+                "enabled": self.logging.enabled,
+                "log_dir": self.logging.log_dir,
+                "log_level": self.logging.log_level,
+                "json_format": self.logging.json_format,
             },
             "zimage": {
                 "model_path": self.zimage.model_path,

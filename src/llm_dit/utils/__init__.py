@@ -90,10 +90,7 @@ from llm_dit.utils.vision_yarn import (
 
 from llm_dit.utils.logging_config import (
     setup_logging,
-    get_context_logger,
-    log_generation,
     JSONFormatter,
-    ContextLogger,
 )
 
 from llm_dit.utils.prompt_rewriter import (
@@ -241,10 +238,7 @@ __all__ = [
     "find_newbase_ntk",
     # Logging
     "setup_logging",
-    "get_context_logger",
-    "log_generation",
     "JSONFormatter",
-    "ContextLogger",
     # Prompt rewriting
     "PromptRewriter",
     "detect_language",

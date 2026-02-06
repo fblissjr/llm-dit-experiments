@@ -435,28 +435,30 @@ class TestTiledVAEDecoder:
 
 
 class TestRuntimeConfig:
-    """Test RuntimeConfig with new PyTorch fields."""
+    """Test RuntimeConfig PyTorch fields via sub-configs."""
 
     def test_pytorch_fields_default(self):
-        from llm_dit.cli import RuntimeConfig
+        from llm_dit.config import RuntimeConfig
 
         config = RuntimeConfig()
 
-        assert config.attention_backend is None
+        assert config.attention_backend == "auto"
         assert config.use_custom_scheduler is False
         assert config.tiled_vae is False
         assert config.tile_size == 512
         assert config.tile_overlap == 64
 
     def test_pytorch_fields_custom(self):
-        from llm_dit.cli import RuntimeConfig
+        from llm_dit.config import PyTorchConfig, RuntimeConfig
 
         config = RuntimeConfig(
-            attention_backend="flash_attn_2",
-            use_custom_scheduler=True,
-            tiled_vae=True,
-            tile_size=256,
-            tile_overlap=32,
+            pytorch=PyTorchConfig(
+                attention_backend="flash_attn_2",
+                use_custom_scheduler=True,
+                tiled_vae=True,
+                tile_size=256,
+                tile_overlap=32,
+            ),
         )
 
         assert config.attention_backend == "flash_attn_2"

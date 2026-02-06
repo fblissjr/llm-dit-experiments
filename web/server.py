@@ -22,7 +22,6 @@ import re
 import time
 import traceback
 import zipfile
-from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any, AsyncIterator, Dict, List, Optional, Union
 
@@ -35,58 +34,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
-# Basic console logging (file logging added in setup_file_logging)
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    datefmt="%H:%M:%S",
-)
 logger = logging.getLogger(__name__)
-
-
-def setup_file_logging(config: dict) -> None:
-    """Set up file logging with rotation based on config.
-
-    Args:
-        config: Logging configuration dict with keys:
-            - enabled: bool
-            - log_dir: str (relative to project root)
-            - log_level: str (DEBUG, INFO, WARNING, ERROR)
-            - max_bytes: int (max file size before rotation)
-            - backup_count: int (number of backup files to keep)
-    """
-    if not config.get("enabled", False):
-        return
-
-    log_dir = Path(__file__).parent.parent / config.get("log_dir", "logs")
-    log_dir.mkdir(parents=True, exist_ok=True)
-
-    log_file = log_dir / "server.log"
-    log_level = getattr(logging, config.get("log_level", "INFO").upper(), logging.INFO)
-    max_bytes = config.get("max_bytes", 10 * 1024 * 1024)  # 10MB default
-    backup_count = config.get("backup_count", 5)
-
-    # Create rotating file handler
-    file_handler = RotatingFileHandler(
-        log_file,
-        maxBytes=max_bytes,
-        backupCount=backup_count,
-        encoding="utf-8",
-    )
-    file_handler.setLevel(log_level)
-    file_handler.setFormatter(
-        logging.Formatter(
-            "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-            datefmt="%Y-%m-%d %H:%M:%S",
-        )
-    )
-
-    # Add to root logger so all loggers write to file
-    root_logger = logging.getLogger()
-    root_logger.addHandler(file_handler)
-    root_logger.setLevel(min(root_logger.level, log_level))
-
-    logger.info(f"File logging enabled: {log_file} (max {max_bytes // 1024 // 1024}MB, {backup_count} backups)")
 
 app = FastAPI(title="Z-Image Generator")
 
@@ -103,6 +51,9 @@ app.add_middleware(
 app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"), name="static")
 
 # Global pipeline/encoder (loaded on startup)
+# NOTE: These globals are maintained for backward compatibility with endpoint
+# handlers. They are backed by ModelManager -- see main() for initialization.
+# Phase 3 (router extraction) will eliminate these in favor of app.state.model_manager.
 pipeline = None  # Z-Image pipeline
 encoder = None  # For encoder-only mode
 rewriter_backend = None  # API backend for rewriting (if configured)
@@ -113,17 +64,18 @@ encoder_only_mode = False
 qwen_image_pipeline = None
 
 # Qwen-Image T2I pipeline (pure text-to-image, separate from Qwen-Image-Layered/Edit)
-# Uses unified config via --model-type qwenimage-t2i --qwen-image-model-path
 qwen_image_t2i_pipeline = None
 
 # LTX-2 video generation (deprecated pipeline state)
 # Note: Pure PyTorch pipeline loads/unloads components per-request
-# This global is kept for backward compatibility but always remains None
 ltx2_pipeline = None
 
 # FLUX.2 Klein image generation pipeline
-# Uses Qwen3 encoder with three-stage offloading for 24GB VRAM
 flux2_pipeline = None
+
+# Unified model lifecycle manager (replaces per-pipeline load/unload functions)
+# Initialized in main(). All load/unload operations delegate to this.
+model_manager = None  # type: ignore[assignment]
 
 # Loading locks to prevent concurrent pipeline loading (which causes OOM)
 import threading
@@ -141,99 +93,9 @@ session_modified_fields = set()  # Fields modified during this session
 pending_restart_changes = {}  # Changes that require server restart
 server_start_time = None  # For uptime tracking
 
-# Fields that can be hot-reloaded without restarting
-HOT_RELOAD_SAFE = {
-    # Scheduler params
-    "shift",
-    "shift_terminal",
-    "dynamic_shift",
-    "d_noise",
-    # Generation defaults
-    "height",
-    "width",
-    "steps",
-    "guidance_scale",
-    "cfg_normalization",
-    "cfg_truncation",
-    "cfg_norm_mode",
-    # Prompt handling
-    "long_prompt_mode",
-    "hidden_layer",
-    "layer_weights",
-    "enable_thinking",
-    "default_template",
-    "system_prompt",
-    "thinking_content",
-    "assistant_content",
-    # DyPE feature params
-    "dype_enabled",
-    "dype_method",
-    "dype_scale",
-    "dype_exponent",
-    "dype_start_sigma",
-    "dype_base_shift",
-    "dype_max_shift",
-    "dype_base_resolution",
-    "dype_anisotropic",
-    "dype_multipass",
-    "dype_pass2_strength",
-    "dype_pass3_strength",
-    "dype_frequency_modulation",
-    # SLG feature params
-    "slg_scale",
-    "slg_layers",
-    "slg_start",
-    "slg_stop",
-    # FMTT feature params
-    "fmtt_scale",
-    "fmtt_start",
-    "fmtt_stop",
-    "fmtt_normalize",
-    "fmtt_decode_scale",
-    "fmtt_siglip_model",
-    "fmtt_siglip_device",
-    # Cache settings
-    "embedding_cache",
-    "cache_size",
-    # Tiled VAE (can change between generations)
-    "tiled_vae",
-    "tile_size",
-    "tile_overlap",
-    # Seed
-    "seed",
-    "negative_prompt",
-}
-
-# Fields that require server restart (model reload)
-REQUIRES_RESTART = {
-    # Model paths
-    "model_path",
-    "text_encoder_path",
-    "templates_dir",
-    "qwen_image_model_path",
-    "qwen_image_edit_model_path",
-    # Device placement
-    "encoder_device",
-    "dit_device",
-    "vae_device",
-    # Quantization
-    "quantization",
-    "dtype",
-    "qwen_image_quantize_text_encoder",
-    "qwen_image_quantize_transformer",
-    # Memory management
-    "cpu_offload",
-    "qwen_image_cpu_offload",
-    # Attention backend
-    "attention_backend",
-    "flash_attn",
-    # Compilation
-    "compile",
-    "compile_mode",
-    # LoRA (requires pipeline reload)
-    "lora_paths",
-    "lora_scales",
-}
+# Config metadata: hot-reload vs restart-required fields
+# Canonical definitions live in llm_dit.model_manager; imported here for server use
+from llm_dit.model_manager import HOT_RELOAD_SAFE, REQUIRES_RESTART
 
 
 # =============================================================================
@@ -290,19 +152,20 @@ def create_image_response(
 def unload_zimage_pipeline() -> bool:
     """Unload Z-Image pipeline (encoder + DiT + VAE) to free VRAM.
 
-    Returns True if unloaded, False if not loaded.
+    Delegates to ModelManager when available. Returns True if unloaded.
     """
     global pipeline, encoder
 
+    if model_manager is not None:
+        unloaded = model_manager.unload("zimage")
+        pipeline = None
+        encoder = None
+        return unloaded
+
+    # Fallback: pre-ModelManager codepath
     unloaded = False
     if pipeline is not None:
-        # Log variant and model path before unloading
-        if runtime_config is not None:
-            model_path = runtime_config.zimage_model_path or runtime_config.model_path
-            logger.info(f"[VRAM] Unloading Z-Image pipeline (variant={runtime_config.zimage_variant}, path={model_path})...")
-        else:
-            logger.info("[VRAM] Unloading Z-Image pipeline to free VRAM...")
-        # Move components to CPU before deletion to release CUDA memory
+        logger.info("[VRAM] Unloading Z-Image pipeline to free VRAM...")
         try:
             if hasattr(pipeline, "transformer") and pipeline.transformer is not None:
                 pipeline.transformer.to("cpu")
@@ -316,7 +179,6 @@ def unload_zimage_pipeline() -> bool:
 
     if encoder is not None:
         logger.info("[VRAM] Unloading Z-Image encoder...")
-        # Move encoder model to CPU before deletion
         try:
             if hasattr(encoder, "backend") and encoder.backend is not None:
                 if hasattr(encoder.backend, "model") and encoder.backend.model is not None:
@@ -328,23 +190,14 @@ def unload_zimage_pipeline() -> bool:
         unloaded = True
 
     if unloaded:
-        # Clear torch.compile cache (frees ~3-4GB from compiled kernels)
         try:
             import torch._dynamo
-
             torch._dynamo.reset()
-            logger.info("[VRAM] Cleared torch.compile cache")
-        except Exception as e:
-            logger.warning(f"[VRAM] Could not clear compile cache: {e}")
-
-        # Force garbage collection before CUDA cache clear
+        except Exception:
+            pass
         gc.collect()
         torch.cuda.empty_cache()
         gc.collect()
-        # Log VRAM after cleanup
-        if torch.cuda.is_available():
-            allocated = torch.cuda.memory_allocated() / 1024**3
-            logger.info(f"[VRAM] Z-Image unloaded. CUDA allocated: {allocated:.2f} GB")
 
     return unloaded
 
@@ -405,7 +258,14 @@ def unload_ltx2_pipeline() -> bool:
 
 
 def get_vram_status() -> dict:
-    """Get current VRAM usage and loaded models status."""
+    """Get current VRAM usage and loaded models status.
+
+    Delegates to ModelManager when available, falls back to globals.
+    """
+    if model_manager is not None:
+        return model_manager.get_vram_status()
+
+    # Fallback: pre-ModelManager codepath
     import torch
 
     status = {
@@ -4770,134 +4630,83 @@ async def vram_status():
 def unload_all_pipelines_except(keep: str = None):
     """Unload all pipelines except the specified one to free VRAM.
 
+    Delegates to ModelManager when available, syncing globals afterward.
+
     Args:
         keep: Name of pipeline to keep loaded ('zimage', 'qwen-image', 'qwen-image-t2i', 'ltx2', 'flux2')
               If None, unloads all pipelines.
     """
-    unloaded = []
+    global pipeline, encoder, qwen_image_pipeline, qwen_image_t2i_pipeline, ltx2_pipeline, flux2_pipeline
 
-    # Z-Image
+    if model_manager is not None:
+        unloaded = model_manager.unload_all_except(keep)
+        # Sync globals
+        if "zimage" in unloaded:
+            pipeline = None
+            encoder = None
+        if "qwen_image" in unloaded:
+            qwen_image_pipeline = None
+        if "qwen_image_t2i" in unloaded:
+            qwen_image_t2i_pipeline = None
+        if "flux2" in unloaded:
+            flux2_pipeline = None
+        return unloaded
+
+    # Fallback: pre-ModelManager codepath
+    unloaded = []
     if keep != "zimage":
         if unload_zimage_pipeline():
             unloaded.append("Z-Image")
-
-    # Qwen-Image Edit
     if keep != "qwen-image":
         if unload_qwen_image_pipeline():
             unloaded.append("Qwen-Image")
-
-    # Qwen-Image T2I
     if keep != "qwen-image-t2i":
         if unload_qwen_image_t2i_pipeline():
             unloaded.append("Qwen-Image T2I")
-
-    # LTX-2
     if keep != "ltx2":
         if unload_ltx2_pipeline():
             unloaded.append("LTX-2")
-
-    # FLUX.2
     if keep != "flux2":
-        global flux2_pipeline
         if flux2_pipeline is not None:
             if isinstance(flux2_pipeline, dict):
                 for key in list(flux2_pipeline.keys()):
                     del flux2_pipeline[key]
             flux2_pipeline = None
             unloaded.append("FLUX.2")
-
     if unloaded:
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
         logger.info(f"[VRAM] Unloaded pipelines to free memory: {', '.join(unloaded)}")
-
     return unloaded
 
 
 def load_zimage_pipeline_on_demand():
-    """Load Z-Image pipeline on-demand using runtime config.
+    """Load Z-Image pipeline on-demand using ModelManager.
 
     Returns True if successfully loaded, raises exception on failure.
-    Thread-safe: uses a lock to prevent concurrent loading attempts.
+    Thread-safe: ModelManager handles locking internally.
     Automatically unloads other pipelines first to free VRAM.
     """
-    global pipeline, _zimage_loading_in_progress
+    global pipeline
 
     # Fast path: already loaded
     if pipeline is not None:
         return True
 
-    # Acquire lock to prevent concurrent loading
-    with _zimage_loading_lock:
-        # Check again inside lock (another thread may have loaded it)
-        if pipeline is not None:
-            return True
+    if model_manager is None or runtime_config is None:
+        raise ValueError("Server not initialized (model_manager or runtime_config is None)")
 
-        # Check if loading is already in progress (shouldn't happen with lock, but safety check)
-        if _zimage_loading_in_progress:
-            raise ValueError("Z-Image loading already in progress, please wait")
-
-        if runtime_config is None:
-            raise ValueError("Runtime config not initialized")
-
-        # Use zimage_model_path if set, fall back to legacy model_path
-        model_path = runtime_config.zimage_model_path or runtime_config.model_path
-        if not model_path:
-            raise ValueError("Z-Image model_path not configured. Set [zimage].model_path in config.toml")
-
-        # Unload other pipelines first to free VRAM
-        unload_all_pipelines_except("zimage")
-
-        _zimage_loading_in_progress = True
-        logger.info("[Z-Image] Loading pipeline on-demand...")
-        logger.info(f"  Model path: {model_path}")
-        logger.info(f"  Variant: {runtime_config.zimage_variant}")
-
-        # Debug: log cpu_offload value to diagnose OOM issues
-        cpu_offload_value = getattr(runtime_config, "cpu_offload", "NOT_SET")
-        logger.info(f"  cpu_offload from config: {cpu_offload_value}")
-
-        # Determine encoder device - use CPU when cpu_offload is enabled to fit in 24GB VRAM
-        # cpu_offload maps to [pipeline].enable_model_cpu_offload in config
-        encoder_device = runtime_config.encoder_device
-        if getattr(runtime_config, "cpu_offload", False):
-            encoder_device = "cpu"
-            logger.info("  CPU offload enabled - placing encoder on CPU")
-
-        try:
-            load_pipeline(
-                model_path=model_path,
-                text_encoder_path=runtime_config.text_encoder_path,
-                templates_dir=runtime_config.templates_dir,
-                encoder_device=encoder_device,
-                dit_device=runtime_config.dit_device,
-                vae_device=runtime_config.vae_device,
-                quantization=runtime_config.quantization,
-                lora_paths=runtime_config.lora_paths,
-                lora_scales=runtime_config.lora_scales,
-                enable_compile=getattr(runtime_config, "compile", False),
-                attention_backend=getattr(runtime_config, "attention_backend", "auto"),
-            )
-            logger.info("[Z-Image] Pipeline loaded successfully")
-            return True
-        except Exception as e:
-            logger.error(f"[Z-Image] Failed to load pipeline: {e}")
-            # Clean up partial state on failure to avoid VRAM accumulation
-            global encoder
-            if pipeline is not None:
-                del pipeline
-                pipeline = None
-            if encoder is not None:
-                del encoder
-                encoder = None
-            gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-                logger.info("[Z-Image] Cleaned up VRAM after failed load attempt")
-            raise
-        finally:
-            _zimage_loading_in_progress = False
+    try:
+        result = model_manager.load("zimage")
+        # Sync globals for backward compatibility
+        pipeline = model_manager.get_pipeline("zimage")
+        logger.info("[Z-Image] Pipeline loaded successfully via ModelManager")
+        return True
+    except Exception as e:
+        logger.error(f"[Z-Image] Failed to load pipeline: {e}")
+        pipeline = None
+        raise
 
 
 @app.post("/api/vram/load-zimage")
@@ -4957,7 +4766,7 @@ async def vram_load_qwen_image():
     """Load Qwen-Image Edit pipeline on-demand.
 
     Uses qwen_image.model_path from config.toml.
-    Call this before editing if the pipeline was previously unloaded.
+    Delegates to ModelManager for loading.
     """
     global qwen_image_pipeline
 
@@ -4969,33 +4778,15 @@ async def vram_load_qwen_image():
             "vram": status.get("vram"),
         }
 
-    if runtime_config is None or not runtime_config.qwen_image_model_path:
+    if model_manager is None or runtime_config is None or not runtime_config.qwen_image_model_path:
         raise HTTPException(
             status_code=400,
             detail="Qwen-Image model_path not configured. Set qwen_image.model_path in config.toml",
         )
 
-    # Unload other pipelines first to free VRAM
-    unload_all_pipelines_except("qwen-image")
-
     try:
-        from llm_dit.pipelines.qwen_image_diffusers import QwenImageDiffusersPipeline
-
-        quant_te = getattr(runtime_config, "qwen_image_quantize_text_encoder", "none")
-        quant_tf = getattr(runtime_config, "qwen_image_quantize_transformer", "none")
-        quant_te = quant_te if quant_te != "none" else None
-        quant_tf = quant_tf if quant_tf != "none" else None
-
-        logger.info(f"[Qwen-Image] Loading pipeline in edit-only mode...")
-        qwen_image_pipeline = QwenImageDiffusersPipeline.from_pretrained(
-            runtime_config.qwen_image_model_path,
-            edit_model_path=runtime_config.qwen_image_edit_model_path or None,
-            cpu_offload=True,
-            edit_only=True,
-            quantize_text_encoder=quant_te,
-            quantize_transformer=quant_tf,
-        )
-        logger.info("[Qwen-Image] Edit pipeline loaded successfully")
+        result = model_manager.load("qwen_image")
+        qwen_image_pipeline = model_manager.get_pipeline("qwen_image")
 
         status = get_vram_status()
         return {
@@ -5031,8 +4822,7 @@ async def vram_unload_qwen_image():
 async def vram_load_qwen_image_t2i():
     """Load Qwen-Image T2I pipeline on-demand.
 
-    Uses qwen_image.model_path from config.toml with --model-type qwenimage-t2i.
-    Call this before generating if the pipeline was previously unloaded.
+    Delegates to ModelManager for loading.
     """
     global qwen_image_t2i_pipeline
 
@@ -5044,34 +4834,15 @@ async def vram_load_qwen_image_t2i():
             "vram": status.get("vram"),
         }
 
-    if runtime_config is None or not runtime_config.qwen_image_model_path:
+    if model_manager is None or runtime_config is None or not runtime_config.qwen_image_model_path:
         raise HTTPException(
             status_code=400,
             detail="Qwen-Image model_path not configured. Set qwen_image.model_path in config.toml",
         )
 
-    # Unload other pipelines first to free VRAM
-    unload_all_pipelines_except("qwen-image-t2i")
-
     try:
-        from llm_dit.pipelines.qwen_image_2512 import QwenImage2512Pipeline
-
-        quant_transformer = runtime_config.get_qwen_image_quantize_transformer()
-        if quant_transformer == "none":
-            quant_transformer = None
-
-        quant_text_encoder = runtime_config.qwen_image_quantize_text_encoder
-        if quant_text_encoder == "none":
-            quant_text_encoder = None
-
-        logger.info(f"[Qwen-Image T2I] Loading pipeline...")
-        qwen_image_t2i_pipeline = QwenImage2512Pipeline.from_pretrained(
-            runtime_config.qwen_image_model_path,
-            quantize_transformer=quant_transformer,
-            quantize_text_encoder=quant_text_encoder,
-            cpu_offload=runtime_config.qwen_image_cpu_offload,
-        )
-        logger.info("[Qwen-Image T2I] Pipeline loaded successfully")
+        result = model_manager.load("qwen_image_t2i")
+        qwen_image_t2i_pipeline = model_manager.get_pipeline("qwen_image_t2i")
 
         status = get_vram_status()
         return {
@@ -5150,6 +4921,9 @@ async def vram_load_flux2():
 
     Uses flux2.model_path and flux2.vae_path from config.toml.
     Call this before generating if the pipeline was previously unloaded.
+
+    Delegates to ModelManager._load_flux2() which implements the 3-stage
+    loading pattern (encoder -> transformer -> VAE) with pinned memory.
     """
     global flux2_pipeline
 
@@ -5161,147 +4935,52 @@ async def vram_load_flux2():
             "vram": status.get("vram"),
         }
 
-    # Check config for paths
-    model_path = getattr(runtime_config, "flux2_model_path", None) if runtime_config else None
-    vae_path = getattr(runtime_config, "flux2_vae_path", None) if runtime_config else None
+    if model_manager is None or runtime_config is None:
+        raise HTTPException(status_code=503, detail="Server not initialized")
 
+    model_path = getattr(runtime_config, "flux2_model_path", None)
     if not model_path:
         raise HTTPException(
             status_code=400,
             detail="FLUX.2 model_path not configured. Set flux2.model_path in config.toml",
         )
 
-    with _flux2_loading_lock:
-        # Double-check inside lock (another thread may have loaded it)
-        if flux2_pipeline is not None:
-            status = get_vram_status()
-            return {
-                "success": True,
-                "message": "FLUX.2 pipeline already loaded",
-                "vram": status.get("vram"),
-            }
+    try:
+        result = model_manager.load("flux2")
+        # Sync global for backward compatibility with endpoint handlers
+        flux2_pipeline = model_manager.get_pipeline("flux2")
 
-        # Unload other pipelines first to free VRAM
-        unload_all_pipelines_except("flux2")
-
-        loaded_encoder = None
-        loaded_transformer = None
-        loaded_vae = None
-        try:
-            from pathlib import Path
-            from llm_dit.models.flux2.loader import load_flux2_transformer, load_flux2_vae
-            from llm_dit.encoders.qwen3_unified import Qwen3UnifiedEncoder
-            from llm_dit.models.flux2.constants import get_encoder_preset
-
-            model_path_obj = Path(model_path).expanduser()
-            if not model_path_obj.exists():
-                raise ValueError(f"FLUX.2 model path does not exist: {model_path}")
-
-            model_name = getattr(runtime_config, "flux2_model_name", "klein-9b") if runtime_config else "klein-9b"
-            block_offload = getattr(runtime_config, "flux2_block_offload", False) if runtime_config else False
-            compile_transformer = getattr(runtime_config, "flux2_compile", False) if runtime_config else False
-            compile_vae_flag = getattr(runtime_config, "flux2_compile_vae", False) if runtime_config else False
-            compile_mode = getattr(runtime_config, "flux2_compile_mode", "max-autotune-no-cudagraphs") if runtime_config else "max-autotune-no-cudagraphs"
-            encoder_path = getattr(runtime_config, "flux2_encoder_path", None) if runtime_config else None
-
-            # Resolve quantization from unified config
-            quant_config = runtime_config.get_pipeline_quant_config("flux2") if runtime_config else None
-            quantization = quant_config.transformer.method if quant_config else "none"
-
-            # Validate incompatible settings before loading anything
-            if compile_transformer and block_offload:
-                raise ValueError(
-                    "compile=true is incompatible with block_offload=true. "
-                    "Set block_offload=false when using compile=true."
-                )
-
-            logger.info(f"[FLUX.2] Loading pipeline from {model_path} (quantization={quantization}, compile={compile_transformer})")
-
-            # Stage 1: Load encoder
-            from llm_dit.models.flux2.constants import FLUX2_MODEL_INFO
-            model_info = FLUX2_MODEL_INFO.get(model_name.lower(), {})
-            preset = get_encoder_preset(model_name)
-            text_encoder_spec = encoder_path or model_info.get("text_encoder", "Qwen/Qwen3-8B")
-
-            logger.info(f"[FLUX.2] Loading encoder from: {text_encoder_spec}")
-            loaded_encoder = Qwen3UnifiedEncoder.from_preset(preset, model_path=text_encoder_spec, device="cuda")
-            # Offload encoder to CPU with pinned memory for fast GPU shuttle via DMA
-            loaded_encoder.offload_to_pinned()
-            logger.info("[FLUX.2] Encoder loaded and offloaded to CPU with pinned memory")
-
-            # Stage 2: Load transformer
-            logger.info(f"[FLUX.2] Loading transformer: {model_name}")
-            loaded_transformer = load_flux2_transformer(
-                model_name,
-                device="cuda",
-                model_path=model_path,
-                block_offload=block_offload,
-                quantize_to=quantization,
-            )
-
-            # Apply torch.compile to transformer if configured
-            if compile_transformer and not block_offload:
-                logger.info(f"[FLUX.2] Compiling transformer with mode={compile_mode}")
-                loaded_transformer = torch.compile(loaded_transformer, mode=compile_mode)
-                logger.info("[FLUX.2] Transformer compiled (warmup will occur on first forward pass)")
-
-            # Stage 3: Load VAE
-            logger.info(f"[FLUX.2] Loading VAE")
-            loaded_vae = load_flux2_vae(model_name, device="cuda", vae_path=vae_path)
-
-            # Apply torch.compile to VAE if configured
-            if compile_vae_flag:
-                logger.info(f"[FLUX.2] Compiling VAE decoder with mode={compile_mode}")
-                loaded_vae.decode = torch.compile(loaded_vae.decode, mode=compile_mode)
-                logger.info("[FLUX.2] VAE decoder compiled")
-
-            # Store persistent model references (only after all three succeed)
-            flux2_pipeline = {
-                "encoder": loaded_encoder,
-                "transformer": loaded_transformer,
-                "vae": loaded_vae,
-                "model_name": model_name,
-            }
-
-            status = get_vram_status()
-            return {
-                "success": True,
-                "message": f"FLUX.2 pipeline loaded (quantization={quantization}, compile={compile_transformer})",
-                "vram": status.get("vram"),
-            }
-        except Exception as e:
-            # Clean up any partially loaded models
-            del loaded_encoder, loaded_transformer, loaded_vae
-            gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-            logger.error(f"[FLUX.2] Failed to load pipeline: {e}")
-            import traceback
-            traceback.print_exc()
-            raise HTTPException(status_code=503, detail=f"Failed to load FLUX.2 pipeline: {e}")
+        status = get_vram_status()
+        return {
+            "success": True,
+            "message": f"FLUX.2 pipeline loaded ({result.mode})",
+            "vram": status.get("vram"),
+        }
+    except Exception as e:
+        logger.error(f"[FLUX.2] Failed to load pipeline: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=503, detail=f"Failed to load FLUX.2 pipeline: {e}")
 
 
 @app.post("/api/vram/unload-flux2")
 async def vram_unload_flux2():
-    """Unload FLUX.2 Klein pipeline to free VRAM.
-
-    FLUX.2 uses ~20GB VRAM for 9B models. Unloading is recommended
-    before loading other models like Z-Image or Qwen-Image.
-    The pipeline will be reloaded automatically on next image generation request.
-    """
+    """Unload FLUX.2 Klein pipeline to free VRAM."""
     global flux2_pipeline
 
-    unloaded = flux2_pipeline is not None
-    if unloaded:
-        # Explicitly delete model references to free GPU memory
-        if isinstance(flux2_pipeline, dict):
-            for key in list(flux2_pipeline.keys()):
-                del flux2_pipeline[key]
-        flux2_pipeline = None
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-        logger.info("[FLUX.2] Pipeline unloaded, VRAM freed")
+    if model_manager is not None:
+        unloaded = model_manager.unload("flux2")
+        flux2_pipeline = None  # sync global
+    else:
+        # Fallback for pre-ModelManager codepath
+        unloaded = flux2_pipeline is not None
+        if unloaded:
+            if isinstance(flux2_pipeline, dict):
+                for key in list(flux2_pipeline.keys()):
+                    del flux2_pipeline[key]
+            flux2_pipeline = None
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
     status = get_vram_status()
     return {
@@ -5407,7 +5086,19 @@ async def unload_model_by_id(pipeline_id: str):
 @app.post("/api/models/unload-all")
 async def unload_all_models():
     """Unload all loaded models to free VRAM."""
-    unload_all_pipelines_except(None)
+    global pipeline, encoder, qwen_image_pipeline, qwen_image_t2i_pipeline, ltx2_pipeline, flux2_pipeline
+
+    if model_manager is not None:
+        model_manager.unload_all_except(None)
+        # Sync all globals
+        pipeline = None
+        encoder = None
+        qwen_image_pipeline = None
+        qwen_image_t2i_pipeline = None
+        ltx2_pipeline = None
+        flux2_pipeline = None
+    else:
+        unload_all_pipelines_except(None)
 
     status = get_vram_status()
     return {
@@ -5872,7 +5563,7 @@ async def restart_server(request: dict = None):
 def main():
     # Use shared CLI argument parser
     from llm_dit.cli import create_base_parser, load_runtime_config, setup_logging
-    from llm_dit.startup import PipelineLoader
+    from llm_dit.model_manager import ModelManager
 
     parser = create_base_parser(
         description="Z-Image web server",
@@ -5900,9 +5591,12 @@ def main():
     args = parser.parse_args()
 
     # Load unified config (handles TOML + CLI overrides)
-    global runtime_config, pipeline, encoder, rewriter_backend, encoder_only_mode
+    global runtime_config, pipeline, encoder, rewriter_backend, encoder_only_mode, model_manager
     runtime_config = load_runtime_config(args)
     setup_logging(runtime_config)
+
+    # Initialize model manager
+    model_manager = ModelManager(runtime_config)
 
     # Debug: Log all pipeline configurations
     logger.debug(f"[Config] Z-Image model: {getattr(runtime_config, 'model_path', None)}")
@@ -5942,10 +5636,11 @@ def main():
         if not zimage_path:
             logger.error("default_pipeline='z-image' but [zimage].model_path not set in config.")
             return 1
-        # Use PipelineLoader for Z-Image
-        loader = PipelineLoader(runtime_config)
+        # Use ModelManager for Z-Image
         use_api = getattr(args, "use_api_encoder", False)
-        result = loader.auto_load(encoder_only=args.encoder_only, use_api=use_api)
+        result = model_manager.load_pipeline_from_loader(
+            encoder_only=args.encoder_only, use_api=use_api
+        )
         pipeline = result.pipeline
         encoder = result.encoder
         encoder_only_mode = result.mode in ("encoder_only", "api_encoder")
@@ -5957,9 +5652,10 @@ def main():
         if not runtime_config.qwen_image_model_path:
             logger.error("default_pipeline='qwen-image' but qwen_image.model_path not set in config.")
             return 1
-        # Use PipelineLoader for Qwen-Image
-        loader = PipelineLoader(runtime_config)
-        result = loader.auto_load(encoder_only=False, use_api=False)
+        # Use ModelManager for Qwen-Image
+        result = model_manager.load_pipeline_from_loader(
+            encoder_only=False, use_api=False
+        )
         pipeline = result.pipeline
         encoder = result.encoder
         encoder_only_mode = False
@@ -5993,7 +5689,7 @@ def main():
 
         if isinstance(pipeline, QwenImageDiffusersPipeline):
             qwen_image_pipeline = pipeline
-            logger.info("[Qwen-Image] Pipeline loaded via PipelineLoader")
+            logger.info("[Qwen-Image] Pipeline loaded via ModelManager")
 
     # Log Qwen-Image on-demand modes
     if mode == "qwenimage-t2i_ondemand":
@@ -6023,6 +5719,10 @@ def main():
             )
         else:
             logger.warning("[Rewriter] use_api=True but no API URL configured. Using local model.")
+
+    # Store model_manager in app.state for router access (Phase 3 migration path)
+    app.state.model_manager = model_manager
+    app.state.runtime_config = runtime_config
 
     # Run server
     import time

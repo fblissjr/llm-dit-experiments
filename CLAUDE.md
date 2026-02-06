@@ -101,7 +101,6 @@ Some config changes apply immediately; others require server restart.
 **Hot-reload safe** (change without restart) - see `web/server.py` lines 147-207:
 - Scheduler params: `shift`, `d_noise`, `dynamic_shift`
 - Generation defaults: `height`, `width`, `steps`, `guidance_scale`
-- Feature params: `dype_*`, `slg_*`, `fmtt_*`
 - Cache settings, tiled VAE, seed
 
 **Requires restart** (model reload) - see `web/server.py` lines 210-239:

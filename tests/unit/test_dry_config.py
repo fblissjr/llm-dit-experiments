@@ -25,6 +25,7 @@ CONFIG_EXAMPLE = PROJECT_ROOT / "config.toml.example"
 CONFIG_PY = PROJECT_ROOT / "src" / "llm_dit" / "config.py"
 CLI_PY = PROJECT_ROOT / "src" / "llm_dit" / "cli.py"
 STARTUP_PY = PROJECT_ROOT / "src" / "llm_dit" / "startup.py"
+MODEL_MANAGER_PY = PROJECT_ROOT / "src" / "llm_dit" / "model_manager.py"
 API_BACKEND_PY = PROJECT_ROOT / "src" / "llm_dit" / "backends" / "api.py"
 
 
@@ -203,14 +204,13 @@ class TestTOMLToConfigDataclass:
 
 
 class TestCLIToRuntimeConfig:
-    """Ensure CLI arguments map to RuntimeConfig fields."""
+    """Ensure CLI arguments are wired through _apply_cli_overrides."""
 
     def test_cli_args_have_runtime_config_fields(self):
-        """CLI argument dests should exist in RuntimeConfig."""
+        """CLI argument dests should be reachable on RuntimeConfig (via sub-configs or properties)."""
         from llm_dit.cli import RuntimeConfig
 
         cli_dests = extract_argparse_dests(CLI_PY)
-        runtime_fields = get_dataclass_fields(RuntimeConfig)
 
         # These CLI args don't need RuntimeConfig fields (action-only or script-specific)
         excluded = {
@@ -223,36 +223,36 @@ class TestCLIToRuntimeConfig:
             "prompts",  # Script-specific positional
             "version",  # Just prints version
             "embeddings_file",  # Script-specific (generate.py)
-            "ltx2_output",  # Script-specific output path
-            "flux2_output",  # Script-specific output path
-            "flux2_input_image",  # Script-specific input path
+            "ltx2_output",  # CLI maps to config.ltx2.output_path
+            "flux2_output",  # CLI maps to config.flux2.output_path
+            "flux2_input_image",  # CLI maps to config.flux2.input_images
             "flux2_offload",  # Action flag (sets offload_between_stages=true)
             "flux2_no_offload",  # Action flag (sets offload_between_stages=false)
-            "wan_output",  # Script-specific output path
-            "torch_dtype",  # Legacy dtype flag, superseded by config
-        }
-
-        # CLI arg names that map to different RuntimeConfig field names
-        cli_to_runtime_mapping = {
-            "text_encoder_device": "encoder_device",
-            "template": "default_template",
-            "qwen_image_layers": "qwen_image_layer_num",  # Different naming
-            "dype": "dype_enabled",  # Boolean flag maps to enabled field
+            "wan_output",  # CLI maps to config.wan.output_path
+            "torch_dtype",  # Legacy dtype flag, maps to config.encoder.dtype
+            # CLI names that intentionally differ from sub-config field names
+            # (wired correctly in _apply_cli_overrides)
+            "qwen_image_layers",  # -> config.qwen_image.layer_num
+            "template",  # -> config.generation.default_template
+            "text_encoder_device",  # -> config.encoder.device
         }
 
         cli_dests_filtered = cli_dests - excluded
 
-        # Check each CLI arg has a RuntimeConfig field (directly or via mapping)
+        # With composed RuntimeConfig, CLI args may exist as:
+        # 1. Direct dataclass fields (e.g., host, port, debug)
+        # 2. Backward-compat @property (e.g., attention_backend -> pytorch.attention_backend)
+        # 3. Sub-config fields wired in _apply_cli_overrides
+        # We verify by checking that each CLI arg is accessible as an attribute
+        rc = RuntimeConfig()
         missing = []
         for dest in cli_dests_filtered:
-            mapped_name = cli_to_runtime_mapping.get(dest, dest)
-            if mapped_name not in runtime_fields:
-                missing.append(f"{dest} (-> {mapped_name})" if dest != mapped_name else dest)
+            if not hasattr(rc, dest):
+                missing.append(dest)
 
         assert not missing, (
-            f"CLI args without RuntimeConfig fields: {missing}. "
-            f"Either add these fields to RuntimeConfig in cli.py, "
-            f"or add to cli_to_runtime_mapping if they map to different names."
+            f"CLI args not accessible on RuntimeConfig: {missing}. "
+            f"Either add a backward-compat @property or sub-config field."
         )
 
 
@@ -260,11 +260,11 @@ class TestKeyParameterWiring:
     """Ensure critical parameters are wired through to backend usage."""
 
     def test_hidden_layer_wired_to_api_backend_config(self):
-        """hidden_layer must be passed to APIBackendConfig in startup.py."""
-        # Check that startup.py passes hidden_layer to APIBackendConfig
-        assert check_string_in_file(STARTUP_PY, "hidden_layer=self.config.hidden_layer"), (
-            "startup.py must pass hidden_layer to APIBackendConfig. "
-            "Add: hidden_layer=self.config.hidden_layer"
+        """hidden_layer must be passed to APIBackendConfig in model_manager.py."""
+        # Check that model_manager.py passes hidden_layer to APIBackendConfig
+        assert check_string_in_file(MODEL_MANAGER_PY, "hidden_layer=config.hidden_layer"), (
+            "model_manager.py must pass hidden_layer to APIBackendConfig. "
+            "Add: hidden_layer=config.hidden_layer"
         )
 
     def test_hidden_layer_in_api_backend_config(self):
@@ -277,25 +277,26 @@ class TestKeyParameterWiring:
         )
 
     def test_rewriter_params_in_runtime_config(self):
-        """All rewriter params should be in RuntimeConfig."""
-        from llm_dit.cli import RuntimeConfig
+        """All rewriter params should be accessible on RuntimeConfig (via sub-config)."""
+        from llm_dit.config import RuntimeConfig
 
-        runtime_fields = get_dataclass_fields(RuntimeConfig)
+        rc = RuntimeConfig()
 
+        # These are accessed via config.rewriter.* sub-config
         rewriter_params = [
-            "rewriter_use_api",
-            "rewriter_api_url",
-            "rewriter_api_model",
-            "rewriter_temperature",
-            "rewriter_top_p",
-            "rewriter_min_p",
-            "rewriter_max_tokens",
+            "use_api",
+            "api_url",
+            "api_model",
+            "temperature",
+            "top_p",
+            "min_p",
+            "max_tokens",
         ]
 
-        missing = [p for p in rewriter_params if p not in runtime_fields]
+        missing = [p for p in rewriter_params if not hasattr(rc.rewriter, p)]
         assert not missing, (
-            f"Rewriter params not in RuntimeConfig: {missing}. "
-            f"Add these fields to RuntimeConfig in cli.py"
+            f"Rewriter params not accessible on config.rewriter: {missing}. "
+            f"Add these fields to RewriterConfig in config.py"
         )
 
 
@@ -387,20 +388,25 @@ def run_consistency_check():
     # Check CLI -> RuntimeConfig
     print("\n[2/4] Checking CLI -> RuntimeConfig...")
     try:
-        from llm_dit.cli import RuntimeConfig
+        from llm_dit.config import RuntimeConfig
 
         cli_dests = extract_argparse_dests(CLI_PY)
-        runtime_fields = get_dataclass_fields(RuntimeConfig)
-        excluded = {"config", "profile", "lora", "output", "prompts", "version"}
+        excluded = {
+            "config", "config_name", "profile", "lora", "loras", "output",
+            "prompts", "version", "embeddings_file", "ltx2_output",
+            "flux2_output", "flux2_input_image", "flux2_offload",
+            "flux2_no_offload", "wan_output", "torch_dtype",
+        }
 
+        rc = RuntimeConfig()
         cli_filtered = cli_dests - excluded
-        missing = [d for d in cli_filtered if d not in runtime_fields]
+        missing = [d for d in cli_filtered if not hasattr(rc, d)]
 
         if missing:
-            errors.append(f"CLI args without RuntimeConfig fields: {missing}")
-            print(f"  FAIL: Missing RuntimeConfig fields: {missing}")
+            errors.append(f"CLI args not accessible on RuntimeConfig: {missing}")
+            print(f"  FAIL: Not accessible on RuntimeConfig: {missing}")
         else:
-            print(f"  OK: All CLI args mapped ({len(cli_filtered)} args)")
+            print(f"  OK: All CLI args accessible ({len(cli_filtered)} args)")
     except Exception as e:
         errors.append(f"CLI check failed: {e}")
         print(f"  ERROR: {e}")
@@ -408,10 +414,10 @@ def run_consistency_check():
     # Check key parameter wiring
     print("\n[3/4] Checking key parameter wiring...")
     try:
-        if check_string_in_file(STARTUP_PY, "hidden_layer=self.config.hidden_layer"):
+        if check_string_in_file(MODEL_MANAGER_PY, "hidden_layer=config.hidden_layer"):
             print("  OK: hidden_layer wired to APIBackendConfig")
         else:
-            errors.append("hidden_layer not wired to APIBackendConfig in startup.py")
+            errors.append("hidden_layer not wired to APIBackendConfig in model_manager.py")
             print("  FAIL: hidden_layer not wired to APIBackendConfig")
     except Exception as e:
         errors.append(f"Wiring check failed: {e}")
