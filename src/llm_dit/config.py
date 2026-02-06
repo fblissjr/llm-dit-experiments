@@ -1572,10 +1572,6 @@ class RuntimeConfig:
         return getattr(self.flux2, "offload_between_stages", True)
 
     @property
-    def flux2_quantization(self) -> str:
-        return getattr(self.flux2, "quantization", "none")
-
-    @property
     def flux2_num_steps(self) -> int | None:
         return self.flux2.default_steps
 
@@ -1671,64 +1667,6 @@ class RuntimeConfig:
     @property
     def slg_layers(self) -> list[int] | None:
         return self.slg.layers
-
-    # FMTT backward-compat properties
-    @property
-    def fmtt_scale(self) -> float:
-        return self.fmtt.guidance_scale
-
-    # Wan backward-compat properties
-    @property
-    def wan_humo_path(self) -> str:
-        return self.wan.humo_path
-
-    @property
-    def wan_base_path(self) -> str:
-        return self.wan.base_path
-
-    @property
-    def wan_whisper_path(self) -> str:
-        return self.wan.whisper_path
-
-    @property
-    def wan_humo_variant(self) -> str:
-        return self.wan.humo_variant
-
-    @property
-    def wan_num_frames(self) -> int:
-        return self.wan.num_frames
-
-    @property
-    def wan_fps(self) -> int:
-        return self.wan.fps
-
-    @property
-    def wan_height(self) -> int:
-        return self.wan.height
-
-    @property
-    def wan_width(self) -> int:
-        return self.wan.width
-
-    @property
-    def wan_guidance_scale(self) -> float:
-        return self.wan.guidance_scale
-
-    @property
-    def wan_audio_scale(self) -> float:
-        return self.wan.audio_scale
-
-    @property
-    def wan_steps(self) -> int:
-        return self.wan.num_inference_steps
-
-    @property
-    def wan_offload_mode(self) -> str:
-        return self.wan.offload_mode
-
-    @property
-    def wan_output_path(self) -> str:
-        return self.wan.output_path
 
     # Additional scheduler backward-compat
     @property
@@ -1922,10 +1860,6 @@ class RuntimeConfig:
     @property
     def flux2_input_images(self) -> list[str] | None:
         return getattr(self.flux2, "input_images", None)
-
-    @property
-    def flux2_encoder_device(self) -> str:
-        return getattr(self.flux2, "encoder_device", "cuda")
 
     # Additional Qwen-Image backward-compat
     @property
