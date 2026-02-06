@@ -184,7 +184,7 @@ class RuntimeConfig:
     flux2_vae_path: str | None = None  # Local path to VAE weights (file or directory)
     flux2_compile: bool = False  # torch.compile the transformer
     flux2_compile_vae: bool = False  # torch.compile the VAE decoder
-    flux2_compile_mode: str = "max-autotune-no-cudagraphs"  # torch.compile mode
+    flux2_compile_mode: str = "default"  # torch.compile mode
     flux2_quantization: str = "none"  # Post-load quantization: "none", "fp8", "int8"
 
     # Z-Image variant configuration
@@ -1878,7 +1878,7 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
                     opt = toml_config.optimization
                     config.flash_attn = getattr(opt, "flash_attn", False)
                     config.compile = getattr(opt, "compile", False)
-                    config.compile_mode = getattr(opt, "compile_mode", "max-autotune-no-cudagraphs")
+                    config.compile_mode = getattr(opt, "compile_mode", "default")
                     # Note: cpu_offload is set from [pipeline].enable_model_cpu_offload (line 1822)
                     # Do NOT override from [optimization].cpu_offload - that was a legacy conflict
 
@@ -1981,7 +1981,7 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
                     config.flux2_encoder_device = getattr(flux2, "encoder_device", "cuda")
                     config.flux2_compile = getattr(flux2, "compile", False)
                     config.flux2_compile_vae = getattr(flux2, "compile_vae", False)
-                    config.flux2_compile_mode = getattr(flux2, "compile_mode", "max-autotune-no-cudagraphs")
+                    config.flux2_compile_mode = getattr(flux2, "compile_mode", "default")
                     config.flux2_quantization = getattr(flux2, "quantization", "none")
                     if flux2.default_steps is not None:
                         config.flux2_num_steps = flux2.default_steps

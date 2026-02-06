@@ -655,7 +655,7 @@ class Flux2Config:
     # Performance optimization
     compile: bool = False  # torch.compile the transformer
     compile_vae: bool = False  # torch.compile the VAE decoder
-    compile_mode: str = "max-autotune-no-cudagraphs"  # torch.compile mode
+    compile_mode: str = "default"  # torch.compile mode
     quantization: str = "none"  # Post-load quantization: "none", "fp8", "int8"
 
 

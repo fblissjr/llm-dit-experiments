@@ -1,9 +1,20 @@
-last updated: 2026-02-05
+last updated: 2026-02-06
 
 # changelog
 
 All notable changes to this project will be documented in this file.
 Uses [Semantic Versioning](https://semver.org/).
+
+## 0.6.3
+
+### changed
+- Default `compile_mode` from `max-autotune-no-cudagraphs` to `default` for FLUX.2 and global optimization
+  - Eliminates 5+ min Triton autotune warmup when combined with FP8 quantization
+  - `default` mode still applies Inductor graph optimizations (kernel fusion, dead code elimination)
+  - Users wanting maximum throughput can still set `max-autotune-no-cudagraphs` in config.toml
+
+### added
+- Compile+FP8 autotune warning in ModelCard: warns when `max-autotune` modes are used with quantization
 
 ## 0.6.2
 

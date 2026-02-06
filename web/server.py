@@ -6268,6 +6268,11 @@ def _get_flux2_config_metadata() -> dict:
     if block_offload:
         config_tags.append({"key": "block_offload", "label": "block offload", "color": "orange"})
 
+    if compile_enabled and quantization != "none" and "autotune" in compile_mode:
+        config_warnings.append({
+            "severity": "warning",
+            "message": f"compile_mode={compile_mode} with {quantization} quantization causes 5+ min autotune on first request. Consider compile_mode=default.",
+        })
     if compile_enabled and block_offload:
         config_warnings.append({
             "severity": "error",
