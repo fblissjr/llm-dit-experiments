@@ -1228,6 +1228,10 @@ class LoggingConfig:
     log_dir: str = ""
     log_level: str = "INFO"
     json_format: bool = True
+    max_bytes: int = 10485760  # 10MB per log file
+    backup_count: int = 5  # Rotated log files to keep
+    log_requests: bool = True  # Log API request/response metadata
+    log_generation_params: bool = True  # Log generation parameters
 
 
 @dataclass

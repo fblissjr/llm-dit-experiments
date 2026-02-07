@@ -391,11 +391,11 @@ PIPELINE_UNLOADERS: dict[str, Callable] = {}
 
 
 @router.post("/api/models/{pipeline_id}/load")
-async def load_model_by_id(pipeline_id: str):
+async def load_model_by_id(pipeline_id: str, config: ConfigDep, manager: ManagerDep):
     """Load a model by pipeline ID.
 
     This is the unified API for the React frontend. Maps pipeline IDs to
-    the specific load functions.
+    the specific load functions, passing through DI dependencies.
     """
     loader_fn = PIPELINE_LOADERS.get(pipeline_id.lower())
     if not loader_fn:
@@ -405,7 +405,7 @@ async def load_model_by_id(pipeline_id: str):
         )
 
     try:
-        result = await loader_fn()
+        result = await loader_fn(config=config, manager=manager)
         return result
     except HTTPException:
         raise
@@ -415,7 +415,7 @@ async def load_model_by_id(pipeline_id: str):
 
 
 @router.post("/api/models/{pipeline_id}/unload")
-async def unload_model_by_id(pipeline_id: str):
+async def unload_model_by_id(pipeline_id: str, manager: ManagerDep):
     """Unload a model by pipeline ID."""
     unloader_fn = PIPELINE_UNLOADERS.get(pipeline_id.lower())
     if not unloader_fn:
@@ -425,7 +425,7 @@ async def unload_model_by_id(pipeline_id: str):
         )
 
     try:
-        result = await unloader_fn()
+        result = await unloader_fn(manager=manager)
         return result
     except HTTPException:
         raise
