@@ -28,6 +28,7 @@ os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
 import gc
 import logging
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple, Union
@@ -400,7 +401,11 @@ def generate_video(
       if progress_mgr is None:
           step_iter = tqdm(step_iter, desc="Denoising")
 
+      denoise_start = time.perf_counter()
+      step_times: list[float] = []
+
       for i in step_iter:
+        step_start = time.perf_counter()
         sigma = sigmas[i]
         sigma_next = sigmas[i + 1]
 
@@ -489,11 +494,23 @@ def generate_video(
             torch.cuda.synchronize()
             torch.cuda.empty_cache()
 
+        # Step timing
+        step_elapsed = time.perf_counter() - step_start
+        step_times.append(step_elapsed)
+        if i == 0 and step_elapsed > 5.0:
+            logger.info(f"[Denoise:Step 0] {step_elapsed:.1f}s (torch.compile warmup -- subsequent steps will be fast)")
+        elif i == 0 or (i + 1) % 10 == 0 or i == num_steps - 1:
+            logger.info(f"[Denoise:Step {i}] {step_elapsed:.2f}s")
+
         # Progress callback and progress manager update
         if callback is not None:
             callback(i + 1, num_steps, latents)
         if progress_mgr is not None:
             progress_mgr.advance()
+
+      # Denoising summary
+      denoise_elapsed = time.perf_counter() - denoise_start
+      logger.info(f"[Denoise] {num_steps} steps in {denoise_elapsed:.1f}s ({', '.join(f'{t:.2f}s' for t in step_times)})")
 
       # Exit progress context after loop
       if progress_mgr is not None:
@@ -514,6 +531,7 @@ def generate_video(
 
     # Decode to pixel space
     # Support both diffusers VAE (decode method) and our VAE (direct call)
+    decode_start = time.perf_counter()
     with torch.no_grad():
         if hasattr(vae, "decode"):
             # Diffusers VAE interface - requires external denormalization
@@ -527,6 +545,11 @@ def generate_video(
             # Our VideoDecoder - handles denormalization internally via
             # per_channel_statistics.un_normalize(), so DO NOT denormalize here
             video = vae(latents)
+    decode_elapsed = time.perf_counter() - decode_start
+    if decode_elapsed > 5.0:
+        logger.info(f"[Decode] VAE decode {decode_elapsed:.1f}s (torch.compile warmup -- subsequent decodes will be fast)")
+    else:
+        logger.info(f"[Decode] VAE decode {decode_elapsed:.2f}s")
 
     # Convert to [F, H, W, C] uint8 format
     video = video.squeeze(0).permute(1, 2, 3, 0)  # [B, C, T, H, W] -> [T, H, W, C]
@@ -634,6 +657,8 @@ def generate_video_with_offloading(
         text_encoder_path = model_path / "text_encoder"
 
     # Stage 1: Text Encoding (skipped if precomputed_embeddings provided)
+    gen_start = time.perf_counter()
+    stage1_start = time.perf_counter()
     if precomputed_embeddings is not None:
         logger.info("Stage 1: Using precomputed embeddings (skipping text encoder)")
         # Precomputed embeddings are [seq_len, dim], need [1, seq_len, dim]
@@ -699,7 +724,11 @@ def generate_video_with_offloading(
         if callback:
             callback("text_encoder", 1, 1)
 
+    stage1_elapsed = time.perf_counter() - stage1_start
+    logger.info(f"Stage 1 complete: {stage1_elapsed:.1f}s")
+
     # Stage 2: Transformer Denoising
+    stage2_start = time.perf_counter()
     if callback:
         callback("transformer", 0, config.num_inference_steps)
 
@@ -812,10 +841,14 @@ def generate_video_with_offloading(
         cleanup_memory()
     logger.info("Transformer unloaded")
 
+    stage2_elapsed = time.perf_counter() - stage2_start
+    logger.info(f"Stage 2 complete: {stage2_elapsed:.1f}s")
+
     if callback:
         callback("transformer", config.num_inference_steps, config.num_inference_steps)
 
     # Stage 3: VAE Decoding
+    stage3_start = time.perf_counter()
     if callback:
         callback("vae", 0, 1)
 
@@ -834,8 +867,14 @@ def generate_video_with_offloading(
 
     # Decode latents to video
     # Note: our VideoDecoder handles denormalization internally via per_channel_statistics
+    decode_start = time.perf_counter()
     with torch.no_grad():
         video = vae(latents)
+    decode_elapsed = time.perf_counter() - decode_start
+    if decode_elapsed > 5.0:
+        logger.info(f"[Decode] VAE decode {decode_elapsed:.1f}s (torch.compile warmup -- subsequent decodes will be fast)")
+    else:
+        logger.info(f"[Decode] VAE decode {decode_elapsed:.2f}s")
 
     # Convert to [F, H, W, C] uint8
     video = video.squeeze(0).permute(1, 2, 3, 0)
@@ -847,8 +886,15 @@ def generate_video_with_offloading(
         cleanup_memory()
     logger.info("VAE unloaded")
 
+    stage3_elapsed = time.perf_counter() - stage3_start
+    logger.info(f"Stage 3 complete: {stage3_elapsed:.1f}s")
+
     if callback:
         callback("vae", 1, 1)
 
-    logger.info(f"Generation complete: {video.shape}")
+    gen_elapsed = time.perf_counter() - gen_start
+    logger.info(
+        f"Generation complete: {gen_elapsed:.1f}s total "
+        f"(encode={stage1_elapsed:.1f}s, denoise={stage2_elapsed:.1f}s, decode={stage3_elapsed:.1f}s)"
+    )
     return video

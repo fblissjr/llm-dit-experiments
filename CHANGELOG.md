@@ -1,9 +1,28 @@
-last updated: 2026-02-06
+last updated: 2026-02-07
 
 # changelog
 
 All notable changes to this project will be documented in this file.
 Uses [Semantic Versioning](https://semver.org/).
+
+## 0.8.1
+
+### added
+- `docs/guides/compile_and_resolution.md` -- comprehensive torch.compile and resolution guide with ROI math, compatibility matrix, VRAM budgets, and RTX 4090 config recommendations
+- Resolution validation: Pydantic `@field_validator` snaps width/height to nearest VAE multiple (16 for FLUX.2, 32 for LTX-2) with `Field()` min/max constraints
+- Defense-in-depth: `Flux2GenerationConfig.__post_init__` snaps invalid resolutions with warning
+- Compile-aware logging in FLUX.2 router (latent token count, warmup notice)
+- `compile_enabled` and `compile_vae_enabled` fields in `/api/flux2/status` response
+- Compile warmup warning in pipeline config metadata (shown in model manager UI)
+- Frontend: `dimension_preset` dropdown now drives width/height values (one-way sync)
+- Frontend: per-image dimension display for multi-reference uploads in ImageUpload
+- Frontend: step alignment validation warns when values are not multiples of step size
+
+### changed
+- torch.compile calls now use `fullgraph=True` to catch graph breaks at compile time
+- FLUX.2 default config: `compile = false`, `compile_vae = false` (better default for 4-step distilled model)
+- FLUX.2 schema: width/height step changed from 64 to 16, min from 512 to 256
+- Dimension presets list now includes "Custom" option
 
 ## 0.8.0
 

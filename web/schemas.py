@@ -203,8 +203,15 @@ class LTX2GenerateRequest(BaseModel):
 
     prompt: str  # Text prompt
     negative_prompt: str = "worst quality, blurry, distorted, inconsistent motion"
-    width: int = 768  # Must be multiple of 32
-    height: int = 512  # Must be multiple of 32
+    width: int = Field(768, ge=256, le=1280, description="Video width (snapped to multiple of 32)")
+    height: int = Field(512, ge=256, le=1280, description="Video height (snapped to multiple of 32)")
+
+    @field_validator("width", "height")
+    @classmethod
+    def snap_to_32(cls, v: int) -> int:
+        """Snap to nearest multiple of 32 (LTX-2 VAE requirement)."""
+        snapped = round(v / 32) * 32
+        return max(256, min(1280, snapped))
     num_frames: int = 33  # Must be 8n+1 (9, 17, 25, 33, 41, 49...)
     fps: float = 24.0  # Output framerate
     num_inference_steps: int = 12  # Diffusion steps (12 for distilled)
@@ -220,8 +227,15 @@ class Flux2GenerateRequest(BaseModel):
 
     prompt: str  # Text prompt
     model_name: str = "klein-9b-fp8"  # Model variant
-    width: int = 1024  # Image width (must be multiple of 16)
-    height: int = 1024  # Image height (must be multiple of 16)
+    width: int = Field(1024, ge=256, le=2048, description="Image width (snapped to multiple of 16)")
+    height: int = Field(1024, ge=256, le=2048, description="Image height (snapped to multiple of 16)")
+
+    @field_validator("width", "height")
+    @classmethod
+    def snap_to_16(cls, v: int) -> int:
+        """Snap to nearest multiple of 16 (FLUX.2 VAE requirement)."""
+        snapped = round(v / 16) * 16
+        return max(256, min(2048, snapped))
     num_steps: Optional[int] = None  # Denoising steps (4 for distilled, 50 for base)
     guidance: Optional[float] = None  # CFG scale (1.0 for distilled, 4.0 for base)
     seed: Optional[int] = None  # Random seed

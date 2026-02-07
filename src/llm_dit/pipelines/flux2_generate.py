@@ -153,6 +153,15 @@ class Flux2GenerationConfig:
     offload_between_stages: bool = True
     block_offload: bool = False  # Block-by-block GPU offloading (slower but uses less VRAM)
 
+    def __post_init__(self) -> None:
+        """Snap width/height to multiples of 16 (VAE + patchify requirement)."""
+        if self.width % 16 != 0:
+            self.width = round(self.width / 16) * 16
+            logger.warning(f"Width snapped to {self.width} (must be multiple of 16)")
+        if self.height % 16 != 0:
+            self.height = round(self.height / 16) * 16
+            logger.warning(f"Height snapped to {self.height} (must be multiple of 16)")
+
     @property
     def latent_height(self) -> int:
         """Latent height after patchify (16x compression)."""

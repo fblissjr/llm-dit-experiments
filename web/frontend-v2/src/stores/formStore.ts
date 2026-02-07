@@ -60,6 +60,16 @@ function validateParam(
     if (param.max !== undefined && num > param.max) {
       return { paramId: param.id, message: `${param.label} must be at most ${param.max}` };
     }
+    // Step alignment warning (e.g., width/height must be multiples of 16/32)
+    if (param.step && param.step > 1) {
+      const rounded = Math.round(num / param.step) * param.step;
+      if (rounded !== num) {
+        return {
+          paramId: param.id,
+          message: `${param.label} should be a multiple of ${param.step} (nearest: ${rounded})`,
+        };
+      }
+    }
   }
 
   // Select validation - skip for dynamic options (options_endpoint)

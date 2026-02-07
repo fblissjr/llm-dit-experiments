@@ -553,10 +553,12 @@ class ModelManager:
 
             if compile_transformer and not block_offload:
                 logger.info(
-                    f"[FLUX.2] Wrapping transformer with torch.compile (mode={compile_mode}) "
+                    f"[FLUX.2] Wrapping transformer with torch.compile (mode={compile_mode}, fullgraph=True) "
                     "-- actual compilation happens on first forward pass"
                 )
-                loaded_transformer = torch.compile(loaded_transformer, mode=compile_mode)
+                loaded_transformer = torch.compile(
+                    loaded_transformer, mode=compile_mode, fullgraph=True,
+                )
 
             # Stage 3: Load VAE
             logger.info("[FLUX.2] Stage 3: Loading VAE")
@@ -564,10 +566,12 @@ class ModelManager:
 
             if compile_vae_flag:
                 logger.info(
-                    f"[FLUX.2] Wrapping VAE decoder with torch.compile (mode={compile_mode}) "
+                    f"[FLUX.2] Wrapping VAE decoder with torch.compile (mode={compile_mode}, fullgraph=True) "
                     "-- actual compilation happens on first decode"
                 )
-                loaded_vae.decode = torch.compile(loaded_vae.decode, mode=compile_mode)
+                loaded_vae.decode = torch.compile(
+                    loaded_vae.decode, mode=compile_mode, fullgraph=True,
+                )
 
             load_time = time.time() - start
 

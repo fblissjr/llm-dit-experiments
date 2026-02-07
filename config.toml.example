@@ -107,8 +107,8 @@ encoder_device = "cuda"
 offload_between_stages = true
 block_offload = false           # INCOMPATIBLE with quantization + compile
 quantization = "fp8-weight-only"
-compile = true
-compile_vae = true
+compile = false                 # marginal ROI for 4-step distilled (see docs/guides/compile_and_resolution.md)
+compile_vae = false             # marginal ROI (89s warmup, ~0.5s savings/decode)
 compile_mode = "default"
 
 

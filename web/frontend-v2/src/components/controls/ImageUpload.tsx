@@ -35,34 +35,39 @@ export function ImageUpload({
 }: ImageUploadProps) {
   const [isDragging, setIsDragging] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [dimensions, setDimensions] = useState<{ width: number; height: number } | null>(null);
+  const [allDimensions, setAllDimensions] = useState<({ width: number; height: number } | null)[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const images = Array.isArray(value) ? value : value ? [value] : [];
 
-  // Read dimensions of first image when images change
+  // Read dimensions of all images when images change
   useEffect(() => {
     if (images.length === 0) {
-      setDimensions(null);
+      setAllDimensions([]);
       onDimensionsChange?.(null);
       return;
     }
 
-    const firstImage = images[0];
-    const img = new Image();
-    img.onload = () => {
-      // Round to multiples of 16 (required by most models)
-      const width = Math.round(img.width / 16) * 16;
-      const height = Math.round(img.height / 16) * 16;
-      const dims = { width, height };
-      setDimensions(dims);
-      onDimensionsChange?.(dims);
+    const loadDimensions = async () => {
+      const dims: ({ width: number; height: number } | null)[] = [];
+      for (const src of images) {
+        const d = await new Promise<{ width: number; height: number } | null>((resolve) => {
+          const img = new Image();
+          img.onload = () => {
+            const width = Math.round(img.width / 16) * 16;
+            const height = Math.round(img.height / 16) * 16;
+            resolve({ width, height });
+          };
+          img.onerror = () => resolve(null);
+          img.src = src;
+        });
+        dims.push(d);
+      }
+      setAllDimensions(dims);
+      // Report first image dimensions for backward compatibility
+      onDimensionsChange?.(dims[0] ?? null);
     };
-    img.onerror = () => {
-      setDimensions(null);
-      onDimensionsChange?.(null);
-    };
-    img.src = firstImage;
+    loadDimensions();
   }, [images, onDimensionsChange]);
 
   const handleFiles = useCallback(
@@ -156,40 +161,42 @@ export function ImageUpload({
         )}
       </label>
 
-      {/* Preview existing images */}
+      {/* Preview existing images with per-image dimensions */}
       {images.length > 0 && (
         <div className="flex flex-wrap gap-2 mb-2">
-          {images.map((img, index) => (
-            <div
-              key={index}
-              className="relative group w-20 h-20 rounded-lg overflow-hidden border border-gray-700"
-            >
-              <img
-                src={img}
-                alt={`Upload ${index + 1}`}
-                className="w-full h-full object-cover"
-              />
-              {/* Remove button - always visible on mobile for accessibility */}
-              <button
-                type="button"
-                onClick={() => removeImage(index)}
-                className="absolute -top-2 -right-2 w-7 h-7 bg-gray-800 border border-gray-600 rounded-full flex items-center justify-center text-gray-300 hover:text-white hover:bg-red-600 hover:border-red-500 active:bg-red-700 transition-colors opacity-100 md:opacity-0 md:group-hover:opacity-100 z-10"
-                title="Remove image"
-              >
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-          ))}
+          {images.map((img, index) => {
+            const dims = allDimensions[index];
+            return (
+              <div key={index} className="flex flex-col items-center gap-1">
+                <div
+                  className="relative group w-20 h-20 rounded-lg overflow-hidden border border-gray-700"
+                >
+                  <img
+                    src={img}
+                    alt={`Upload ${index + 1}`}
+                    className="w-full h-full object-cover"
+                  />
+                  {/* Remove button - always visible on mobile for accessibility */}
+                  <button
+                    type="button"
+                    onClick={() => removeImage(index)}
+                    className="absolute -top-2 -right-2 w-7 h-7 bg-gray-800 border border-gray-600 rounded-full flex items-center justify-center text-gray-300 hover:text-white hover:bg-red-600 hover:border-red-500 active:bg-red-700 transition-colors opacity-100 md:opacity-0 md:group-hover:opacity-100 z-10"
+                    title="Remove image"
+                  >
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+                {dims && (
+                  <span className="text-[10px] text-gray-500">
+                    {dims.width}x{dims.height}
+                  </span>
+                )}
+              </div>
+            );
+          })}
         </div>
-      )}
-
-      {/* Show dimensions of first image */}
-      {dimensions && (
-        <p className="text-xs text-gray-500 mb-2">
-          Reference: {dimensions.width}x{dimensions.height}px
-        </p>
       )}
 
       {/* Drop zone */}

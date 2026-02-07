@@ -99,6 +99,11 @@ def _get_pipeline_config_metadata(config, pipeline: str) -> dict:
         for warning_msg in get_quant_compile_warnings(quant_config.transformer.method, compile_mode):
             config_warnings.append({"severity": "warning", "message": warning_msg})
 
+    if compile_enabled:
+        config_warnings.append({
+            "severity": "warning",
+            "message": "torch.compile active -- first generation at each resolution takes ~90s warmup",
+        })
     if compile_enabled and block_offload:
         config_warnings.append({
             "severity": "error",

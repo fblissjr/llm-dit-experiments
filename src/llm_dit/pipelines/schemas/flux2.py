@@ -26,7 +26,7 @@ FLUX2_MODELS = [
     "klein-base-9b-fp8",
 ]
 
-# Dimension presets
+# Dimension presets (all multiples of 16)
 DIMENSION_PRESETS = [
     "1024x1024",
     "1152x896",
@@ -35,6 +35,7 @@ DIMENSION_PRESETS = [
     "768x1344",
     "832x1216",
     "896x1152",
+    "Custom",
 ]
 
 
@@ -103,22 +104,22 @@ register_pipeline(PipelineSchema(
             type="number",
             label="Width",
             default=1024,
-            min=512,
+            min=256,
             max=2048,
-            step=64,
+            step=16,
             group="basic",
-            tooltip="Image width in pixels.",
+            tooltip="Image width in pixels (multiple of 16).",
         ),
         ParamSchema(
             id="height",
             type="number",
             label="Height",
             default=1024,
-            min=512,
+            min=256,
             max=2048,
-            step=64,
+            step=16,
             group="basic",
-            tooltip="Image height in pixels.",
+            tooltip="Image height in pixels (multiple of 16).",
         ),
         ParamSchema(
             id="dimension_preset",

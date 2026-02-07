@@ -57,13 +57,44 @@ export function PipelineForm() {
   const setValue = useFormStore((s) => s.setValue);
   const applyPreset = useFormStore((s) => s.applyPreset);
 
-  // Handle value change
+  // Handle value change with dimension_preset <-> width/height sync
   const handleChange = useCallback(
     (paramId: string) => (value: unknown) => {
       if (!selectedPipelineId) return;
+
+      // When dimension_preset changes, parse "WIDTHxHEIGHT" and update width/height
+      if (paramId === 'dimension_preset' && typeof value === 'string') {
+        const match = value.match(/^(\d+)x(\d+)$/);
+        if (match) {
+          const w = parseInt(match[1], 10);
+          const h = parseInt(match[2], 10);
+          setValue(selectedPipelineId, 'width', w);
+          setValue(selectedPipelineId, 'height', h);
+        }
+      }
+
+      // When width or height changes manually, clear preset to show it's custom
+      if (paramId === 'width' || paramId === 'height') {
+        const currentPreset = formValues.dimension_preset;
+        if (currentPreset && currentPreset !== 'Custom') {
+          // Check if the new value still matches the preset
+          const presetStr = String(currentPreset);
+          const match = presetStr.match(/^(\d+)x(\d+)$/);
+          if (match) {
+            const presetW = parseInt(match[1], 10);
+            const presetH = parseInt(match[2], 10);
+            const newW = paramId === 'width' ? Number(value) : Number(formValues.width ?? 1024);
+            const newH = paramId === 'height' ? Number(value) : Number(formValues.height ?? 1024);
+            if (newW !== presetW || newH !== presetH) {
+              setValue(selectedPipelineId, 'dimension_preset', 'Custom');
+            }
+          }
+        }
+      }
+
       setValue(selectedPipelineId, paramId, value);
     },
-    [selectedPipelineId, setValue]
+    [selectedPipelineId, setValue, formValues]
   );
 
   // Handle preset selection
