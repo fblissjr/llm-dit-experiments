@@ -11,8 +11,16 @@ Usage:
 
 import gc
 import logging
+import sys
 import time
 from pathlib import Path
+
+# Ensure project root is on sys.path so `web.routers` and `llm_dit` resolve
+# when invoked directly (e.g., `python web/server.py`).
+_project_root = str(Path(__file__).resolve().parent.parent)
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
+
 import torch
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
