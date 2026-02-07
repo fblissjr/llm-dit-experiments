@@ -5,6 +5,24 @@ last updated: 2026-02-06
 All notable changes to this project will be documented in this file.
 Uses [Semantic Versioning](https://semver.org/).
 
+## 0.8.0
+
+### added
+- 7 domain routers in `web/routers/`: core (Z-Image), flux2, ltx2, qwen_image, vram, config_mgmt, system
+- `web/schemas.py`: all Pydantic request/response models extracted from server.py
+- `web/utils.py`: shared helpers (output dirs, image saving, config merging)
+- `web/dependencies.py`: FastAPI `Depends()` for `ConfigDep` and `ManagerDep`
+
+### removed
+- 5 dead load functions from server.py: `load_pipeline()`, `load_encoder_only()`, `load_api_encoder()`, `load_hybrid_pipeline()`, `load_api_pipeline()` (replaced by ModelManager)
+- 17 unused backward-compat `@property` shims from RuntimeConfig: all `wan_*`, `flux2_quantization`, `flux2_encoder_device`, `fmtt_scale`
+- Broken integration test fixtures (`client_with_model`, `client_with_pipeline`) and their test classes (`TestEncodeEndpoint`, `TestGenerateEndpoint`)
+
+### changed
+- `web/server.py` decomposed from 5744 lines to 465 lines (globals, unload functions, startup logic)
+- All 68 API endpoints moved from monolithic server.py into 7 domain-specific router files
+- Router registration deferred to `_register_routers()` in `main()` to avoid circular imports with `web.server as srv`
+
 ## 0.7.1
 
 ### removed
