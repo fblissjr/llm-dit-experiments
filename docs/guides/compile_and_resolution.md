@@ -9,9 +9,9 @@ Performance and resolution reference for FLUX.2 Klein on RTX 4090.
 | scenario | compile transformer | compile vae | compile encoder | recommended steps |
 |----------|-------------------|-------------|-----------------|-------------------|
 | distilled, single resolution, repeated gen | YES | YES | NO | 4 |
-| distilled, varied resolutions | NO | NO | NO | 4 |
+| distilled, varied resolutions | dynamic | NO | NO | 4 |
 | base, single resolution | YES | YES | optional | 50 |
-| base, varied resolutions | NO | NO | NO | 50 |
+| base, varied resolutions | dynamic | NO | NO | 50 |
 | editing (ref images, resolution matching) | depends on pattern | NO | NO | 4-50 |
 
 **Key insight:** compile only helps when you generate many images at the *same* resolution.
@@ -98,7 +98,32 @@ block_offload = false
 quantization = "fp8-weight-only"
 ```
 
-### varied resolutions (flexibility-first)
+### varied resolutions with compile (dynamic shapes, experimental)
+
+```toml
+[flux2]
+compile = true
+compile_dynamic = true
+compile_vae = false
+compile_mode = "default"
+offload_between_stages = true
+block_offload = false
+quantization = "fp8-weight-only"
+```
+
+Dynamic shapes (`compile_dynamic = true`) tells torch.compile to generate shape-generic
+kernels that handle varying sequence lengths without retracing. This means changing
+resolution (e.g., 1024x1024 to 768x1344) will NOT trigger the ~90s recompilation.
+
+Tradeoffs:
+- first compilation may be slightly slower than static (shape guards are more complex)
+- per-step performance may be ~5-10% slower than static fullgraph=True
+- uses `fullgraph=False` as a safety measure for data-dependent branches
+
+Best for base models with varied resolutions where the 50-step per-gen speedup
+outweighs the slight per-step overhead.
+
+### varied resolutions without compile (flexibility-first)
 
 ```toml
 [flux2]
@@ -171,3 +196,6 @@ Only if `match_image_size` is active AND the matched image has a different aspec
 
 **What about `fullgraph=True`?**
 We compile with `fullgraph=True` to prevent silent graph breaks. If the model's forward pass contains code that breaks the graph (logging, Python-side conditionals), torch.compile will raise an error at compile time instead of silently falling back to eager mode. All our models use `torch.compiler.is_compiling()` guards around logging to prevent this.
+
+**What is `compile_dynamic`?**
+When `compile_dynamic = true`, torch.compile uses `dynamic=True` which generates shape-generic kernels. Instead of specializing on exact tensor sizes (e.g., `[1, 4096, 128]` for 1024x1024), dynamo creates symbolic shape guards that accept any valid size. This eliminates the ~90s recompilation when resolution changes. The tradeoff is slightly less aggressive optimization (~5-10% slower per step) since the compiler can't fully specialize on known dimensions. When enabled, `fullgraph=False` is used automatically as a safety measure. Only the image latent sequence length (dim 1 of `x` and `x_ids`) varies with resolution -- text embeddings are always `[1, 512, 4096]` due to padding.

@@ -39,6 +39,7 @@ async def flux2_status(config: ConfigDep):
         "available": True,  # FLUX.2 downloads models from HuggingFace as needed
         "loaded": srv.flux2_pipeline is not None,
         "compile_enabled": getattr(config, "flux2_compile", False),
+        "compile_dynamic": getattr(config, "flux2_compile_dynamic", False),
         "compile_vae_enabled": getattr(config, "flux2_compile_vae", False),
         "supported_models": [
             "klein-9b", "klein-9b-fp8", "klein-4b", "klein-4b-fp8",
@@ -140,11 +141,19 @@ async def flux2_generate(request: Flux2GenerateRequest, config: ConfigDep):
         # Log compile-aware resolution info
         if getattr(config, "flux2_compile", False):
             latent_tokens = (request.width * request.height) // 256
-            logger.info(
-                f"[FLUX.2] compile=true, {request.width}x{request.height} "
-                f"({latent_tokens} latent tokens) -- "
-                f"first generation at this resolution triggers ~90s warmup"
-            )
+            compile_dynamic = getattr(config, "flux2_compile_dynamic", False)
+            if compile_dynamic:
+                logger.info(
+                    f"[FLUX.2] compile=true (dynamic shapes), {request.width}x{request.height} "
+                    f"({latent_tokens} latent tokens) -- "
+                    f"resolution changes do not trigger recompilation"
+                )
+            else:
+                logger.info(
+                    f"[FLUX.2] compile=true, {request.width}x{request.height} "
+                    f"({latent_tokens} latent tokens) -- "
+                    f"first generation at this resolution triggers ~90s warmup"
+                )
         if model_path:
             logger.info(f"[FLUX.2] Using model path: {model_path}")
 

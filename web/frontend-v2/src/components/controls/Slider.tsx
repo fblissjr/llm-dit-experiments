@@ -6,7 +6,7 @@
  */
 
 import { useId, useState, useRef, useEffect } from 'react';
-import { cn } from '@/utils';
+import { cn, snapToStep } from '@/utils';
 
 interface SliderProps {
   label: string;
@@ -81,12 +81,7 @@ export function Slider({
   const commitInputValue = () => {
     const parsed = parseFloat(inputValue);
     if (!isNaN(parsed)) {
-      // Clamp to valid range
-      const clamped = Math.min(max, Math.max(min, parsed));
-      // Round to step precision
-      const precision = step < 1 ? Math.ceil(-Math.log10(step)) : 0;
-      const rounded = Math.round(clamped / step) * step;
-      const finalValue = Number(rounded.toFixed(precision));
+      const finalValue = snapToStep(parsed, step, min, max);
       onChange(finalValue);
       setInputValue(finalValue.toString());
     } else {

@@ -1,10 +1,11 @@
 /**
- * Form Store - Form Values and Validation
+ * Form Store - Form Values, Validation, and Dependent Defaults
  *
  * Manages:
  * - Form values per pipeline (user modifications only)
  * - Validation errors per pipeline
- * - Computed resolved values (schema < server < user)
+ * - Computed resolved values (schema < dependent_defaults < server < user)
+ * - User modification tracking for dependent defaults
  */
 
 import { create } from 'zustand';
@@ -19,11 +20,16 @@ interface FormState {
   // Validation errors per pipeline
   errors: Record<string, ValidationError[]>;
 
+  // Tracks which params were explicitly set by the user (not auto-applied)
+  // Used by dependent defaults to avoid overriding user intent
+  userModified: Record<string, Set<string>>;
+
   // Actions
   setValue: (pipelineId: string, paramId: string, value: unknown) => void;
   setValues: (pipelineId: string, values: FormValues) => void;
   resetPipeline: (pipelineId: string) => void;
   applyPreset: (pipelineId: string, params: FormValues) => void;
+  applyDependentDefaults: (pipelineId: string, triggerParamId: string, triggerValue: unknown) => void;
   validate: (pipelineId: string) => ValidationError[];
   clearErrors: (pipelineId: string) => void;
 
@@ -87,9 +93,10 @@ export const useFormStore = create<FormState>()(
   immer((set, get) => ({
     values: {},
     errors: {},
+    userModified: {},
 
     /**
-     * Set a single form value
+     * Set a single form value and mark it as user-modified
      */
     setValue: (pipelineId, paramId, value) => {
       set((state) => {
@@ -97,6 +104,12 @@ export const useFormStore = create<FormState>()(
           state.values[pipelineId] = {};
         }
         state.values[pipelineId][paramId] = value;
+
+        // Track that the user explicitly modified this param
+        if (!state.userModified[pipelineId]) {
+          state.userModified[pipelineId] = new Set();
+        }
+        state.userModified[pipelineId].add(paramId);
 
         // Clear error for this param if it exists
         if (state.errors[pipelineId]) {
@@ -126,6 +139,7 @@ export const useFormStore = create<FormState>()(
       set((state) => {
         state.values[pipelineId] = {};
         state.errors[pipelineId] = [];
+        state.userModified[pipelineId] = new Set();
       });
     },
 
@@ -138,6 +152,44 @@ export const useFormStore = create<FormState>()(
           ...(state.values[pipelineId] ?? {}),
           ...params,
         };
+      });
+    },
+
+    /**
+     * Apply dependent defaults when a trigger param changes.
+     *
+     * Finds all params with dependent_defaults keyed on triggerParamId,
+     * then updates their values -- but only if the user hasn't manually
+     * modified them.
+     */
+    applyDependentDefaults: (pipelineId, triggerParamId, triggerValue) => {
+      const appStore = useAppStore.getState();
+      const pipeline = appStore.pipelines[pipelineId];
+      if (!pipeline) return;
+
+      const triggerStr = String(triggerValue);
+
+      set((state) => {
+        if (!state.values[pipelineId]) {
+          state.values[pipelineId] = {};
+        }
+
+        const modified = state.userModified[pipelineId] ?? new Set();
+
+        for (const param of pipeline.params) {
+          if (!param.dependent_defaults) continue;
+
+          const mapping = param.dependent_defaults[triggerParamId];
+          if (!mapping) continue;
+
+          const newDefault = mapping[triggerStr];
+          if (newDefault === undefined) continue;
+
+          // Only apply if user hasn't manually modified this param
+          if (!modified.has(param.id)) {
+            state.values[pipelineId][param.id] = newDefault;
+          }
+        }
       });
     },
 
@@ -181,7 +233,7 @@ export const useFormStore = create<FormState>()(
     },
 
     /**
-     * Get resolved values: schema defaults < server defaults < user values
+     * Get resolved values: schema defaults < dependent defaults < server defaults < user values
      */
     getResolvedValues: (pipelineId) => {
       const appStore = useAppStore.getState();
@@ -196,6 +248,26 @@ export const useFormStore = create<FormState>()(
       for (const param of pipeline.params) {
         if (param.default !== undefined) {
           result[param.id] = param.default;
+        }
+      }
+
+      // Layer dependent defaults (between schema and server)
+      // Uses current resolved trigger values to compute dependent defaults
+      for (const param of pipeline.params) {
+        if (!param.dependent_defaults) continue;
+
+        for (const [triggerParamId, mapping] of Object.entries(param.dependent_defaults)) {
+          // Look up trigger value from user values, then server defaults, then schema defaults
+          const triggerValue = String(
+            userValues[triggerParamId] ??
+            serverDefaults[triggerParamId] ??
+            result[triggerParamId] ??
+            ''
+          );
+          const depDefault = mapping[triggerValue];
+          if (depDefault !== undefined) {
+            result[param.id] = depDefault;
+          }
         }
       }
 

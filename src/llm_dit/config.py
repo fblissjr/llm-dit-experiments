@@ -589,6 +589,7 @@ class Flux2Config:
     compile: bool = False  # torch.compile the transformer
     compile_vae: bool = False  # torch.compile the VAE decoder
     compile_mode: str = "default"  # torch.compile mode
+    compile_dynamic: bool = False  # dynamic shapes: avoid recompilation per resolution
     quantization: str = "none"  # none, fp8-dynamic, fp8-weight-only, int8, int4
 
 
@@ -1565,6 +1566,10 @@ class RuntimeConfig:
     @property
     def flux2_compile_mode(self) -> str:
         return getattr(self.flux2, "compile_mode", "default")
+
+    @property
+    def flux2_compile_dynamic(self) -> bool:
+        return getattr(self.flux2, "compile_dynamic", False)
 
     @property
     def flux2_block_offload(self) -> bool:

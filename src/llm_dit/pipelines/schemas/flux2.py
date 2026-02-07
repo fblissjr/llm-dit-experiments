@@ -142,6 +142,18 @@ register_pipeline(PipelineSchema(
             step=1,
             group="basic",
             tooltip="Inference steps. 4 for distilled, 50 for base models.",
+            dependent_defaults={
+                "model_name": {
+                    "klein-9b": 4,
+                    "klein-9b-fp8": 4,
+                    "klein-4b": 4,
+                    "klein-4b-fp8": 4,
+                    "klein-base-9b": 50,
+                    "klein-base-9b-fp8": 50,
+                    "klein-base-4b": 50,
+                    "klein-base-4b-fp8": 50,
+                },
+            },
         ),
         ParamSchema(
             id="guidance",
@@ -153,6 +165,18 @@ register_pipeline(PipelineSchema(
             step=0.1,
             group="basic",
             tooltip="Guidance strength. 1.0 for distilled, 3.5-4.0 for base.",
+            dependent_defaults={
+                "model_name": {
+                    "klein-9b": 1.0,
+                    "klein-9b-fp8": 1.0,
+                    "klein-4b": 1.0,
+                    "klein-4b-fp8": 1.0,
+                    "klein-base-9b": 4.0,
+                    "klein-base-9b-fp8": 4.0,
+                    "klein-base-4b": 4.0,
+                    "klein-base-4b-fp8": 4.0,
+                },
+            },
         ),
         ParamSchema(
             id="seed",

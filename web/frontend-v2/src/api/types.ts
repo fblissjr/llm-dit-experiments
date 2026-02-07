@@ -38,6 +38,9 @@ export interface ParamSchema {
   // LoRA-specific constraints
   scale_min?: number;
   scale_max?: number;
+  // Value-dependent defaults: when trigger param changes, this param's default updates
+  // Format: { trigger_param_id: { trigger_value: new_default } }
+  dependent_defaults?: Record<string, Record<string, unknown>>;
 }
 
 /**

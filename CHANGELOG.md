@@ -5,6 +5,24 @@ last updated: 2026-02-07
 All notable changes to this project will be documented in this file.
 Uses [Semantic Versioning](https://semver.org/).
 
+## 0.8.2
+
+### added
+- `compile_dynamic` config field for FLUX.2: `torch.compile(dynamic=True)` eliminates ~90s recompilation when resolution changes
+- `dependent_defaults` on ParamSchema: schema-driven system for auto-updating form values when a trigger param changes (e.g., switching FLUX.2 model updates steps/guidance)
+- FLUX.2 presets: `presets/flux2/distilled_fast.md` and `presets/flux2/base_quality.md`
+- NumberInput auto-snap on blur: misaligned values (e.g., 1000 for a step=16 field) auto-correct when focus leaves the input
+- `tests/unit/test_resolution_validators.py`: 51 tests for Pydantic and dataclass resolution snapping
+- `snapToStep()` shared utility in `web/frontend-v2/src/utils/numbers.ts`
+- `userModified` tracking in formStore for smart dependent default application
+- Dynamic shapes section in `docs/guides/compile_and_resolution.md`
+
+### changed
+- Slider `commitInputValue()` refactored to use shared `snapToStep()` utility
+- `getResolvedValues()` now layers dependent defaults between schema and server defaults
+- PipelineForm `handleChange` triggers `applyDependentDefaults()` when a trigger param changes
+- torch.compile uses `fullgraph=False` when `compile_dynamic=true` (safety for data-dependent branches)
+
 ## 0.8.1
 
 ### added

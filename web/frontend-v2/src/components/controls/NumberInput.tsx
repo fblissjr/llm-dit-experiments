@@ -2,10 +2,12 @@
  * NumberInput Control
  *
  * Numeric input with optional min/max/step constraints.
+ * Auto-snaps to the nearest valid step on blur (e.g., typing "1000"
+ * for a step=16 field auto-corrects to 992 or 1008).
  */
 
 import { useId } from 'react';
-import { cn } from '@/utils';
+import { cn, snapToStep } from '@/utils';
 
 interface NumberInputProps {
   label: string;
@@ -41,6 +43,15 @@ export function NumberInput({
     }
   };
 
+  const handleBlur = () => {
+    if (step && step > 0) {
+      const snapped = snapToStep(value, step, min, max);
+      if (snapped !== value) {
+        onChange(snapped);
+      }
+    }
+  };
+
   return (
     <div className={cn('form-control', className)}>
       <label htmlFor={id} className="form-label" title={tooltip}>
@@ -51,6 +62,7 @@ export function NumberInput({
         id={id}
         value={value}
         onChange={handleChange}
+        onBlur={handleBlur}
         min={min}
         max={max}
         step={step}

@@ -56,6 +56,7 @@ export function PipelineForm() {
 
   const setValue = useFormStore((s) => s.setValue);
   const applyPreset = useFormStore((s) => s.applyPreset);
+  const applyDependentDefaults = useFormStore((s) => s.applyDependentDefaults);
 
   // Handle value change with dimension_preset <-> width/height sync
   const handleChange = useCallback(
@@ -93,8 +94,18 @@ export function PipelineForm() {
       }
 
       setValue(selectedPipelineId, paramId, value);
+
+      // Check if this param triggers dependent defaults on other params
+      if (pipeline) {
+        const hasDependents = pipeline.params.some(
+          (p) => p.dependent_defaults?.[paramId]
+        );
+        if (hasDependents) {
+          applyDependentDefaults(selectedPipelineId, paramId, value);
+        }
+      }
     },
-    [selectedPipelineId, setValue, formValues]
+    [selectedPipelineId, setValue, applyDependentDefaults, formValues, pipeline]
   );
 
   // Handle preset selection

@@ -495,6 +495,7 @@ class ModelManager:
         compile_transformer = getattr(config, "flux2_compile", False)
         compile_vae_flag = getattr(config, "flux2_compile_vae", False)
         compile_mode = getattr(config, "flux2_compile_mode", "max-autotune-no-cudagraphs")
+        compile_dynamic = getattr(config, "flux2_compile_dynamic", False)
         encoder_path = getattr(config, "flux2_encoder_path", None)
         vae_path = getattr(config, "flux2_vae_path", None)
 
@@ -552,12 +553,21 @@ class ModelManager:
             )
 
             if compile_transformer and not block_offload:
+                # dynamic=True generates shape-generic kernels that handle
+                # varying sequence lengths without retracing (~90s savings per
+                # new resolution). When dynamic, use fullgraph=False as a safety
+                # measure for data-dependent branches.
+                use_fullgraph = not compile_dynamic
                 logger.info(
-                    f"[FLUX.2] Wrapping transformer with torch.compile (mode={compile_mode}, fullgraph=True) "
+                    f"[FLUX.2] Wrapping transformer with torch.compile "
+                    f"(mode={compile_mode}, fullgraph={use_fullgraph}, dynamic={compile_dynamic}) "
                     "-- actual compilation happens on first forward pass"
                 )
                 loaded_transformer = torch.compile(
-                    loaded_transformer, mode=compile_mode, fullgraph=True,
+                    loaded_transformer,
+                    mode=compile_mode,
+                    fullgraph=use_fullgraph,
+                    dynamic=compile_dynamic,
                 )
 
             # Stage 3: Load VAE

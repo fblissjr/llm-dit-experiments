@@ -51,6 +51,10 @@ class ParamSchema:
         max_count: Maximum number of items allowed (for image/lora_list types)
         scale_min: Minimum scale value for lora_list type (default -2.0)
         scale_max: Maximum scale value for lora_list type (default 2.0)
+        dependent_defaults: Maps trigger param values to this param's default.
+                     Format: {trigger_param_id: {trigger_value: new_default}}
+                     e.g., {"model_name": {"klein-base-9b": 50}} -- when
+                     model_name="klein-base-9b", this param's default becomes 50.
     """
     id: str
     type: ParamType
@@ -71,6 +75,9 @@ class ParamSchema:
     # LoRA-specific constraints
     scale_min: float | None = None
     scale_max: float | None = None
+    # Value-dependent defaults: when a trigger param changes, this param's
+    # default updates. Format: {trigger_param_id: {trigger_value: new_default}}
+    dependent_defaults: dict[str, dict[str, Any]] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dict, excluding None values for cleaner JSON."""
