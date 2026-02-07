@@ -4,7 +4,7 @@
  * Orchestrates:
  * - Grouping presets by category (hides "testing" category)
  * - Active/modified state from formStore
- * - Preset selection -> applyPreset + applyDependentDefaults
+ * - Preset selection -> applyPreset (atomic, no dependent_defaults)
  * - Restore/clear actions
  *
  * Only renders when the pipeline has presets.
@@ -28,9 +28,6 @@ export function PresetBrowser({ pipelineId }: PresetBrowserProps) {
   const presets = useAppStore(
     useShallow((s) => s.presets[pipelineId] ?? [])
   );
-  const pipeline = useAppStore(
-    useShallow((s) => s.pipelines[pipelineId] ?? null)
-  );
   const getPipelineColor = useAppStore((s) => s.getPipelineColor);
   const pipelineColor = getPipelineColor(pipelineId);
 
@@ -39,7 +36,6 @@ export function PresetBrowser({ pipelineId }: PresetBrowserProps) {
   const applyPreset = useFormStore((s) => s.applyPreset);
   const clearPreset = useFormStore((s) => s.clearPreset);
   const restorePreset = useFormStore((s) => s.restorePreset);
-  const applyDependentDefaults = useFormStore((s) => s.applyDependentDefaults);
 
   // Group presets by category, filtering out hidden categories
   const categorizedPresets = useMemo(() => {
@@ -68,20 +64,8 @@ export function PresetBrowser({ pipelineId }: PresetBrowserProps) {
       }
 
       applyPreset(pipelineId, presetName, preset.params);
-
-      // Fire dependent defaults for any params the preset set that are triggers
-      if (pipeline) {
-        for (const paramId of Object.keys(preset.params)) {
-          const hasDependents = pipeline.params.some(
-            (p) => p.dependent_defaults?.[paramId]
-          );
-          if (hasDependents) {
-            applyDependentDefaults(pipelineId, paramId, preset.params[paramId]);
-          }
-        }
-      }
     },
-    [pipelineId, presets, activePresetName, pipeline, applyPreset, clearPreset, applyDependentDefaults]
+    [pipelineId, presets, activePresetName, applyPreset, clearPreset]
   );
 
   const handleRestore = useCallback(() => {
@@ -113,7 +97,6 @@ export function PresetBrowser({ pipelineId }: PresetBrowserProps) {
           category={category}
           presets={categoryPresets}
           activePresetName={activePresetName}
-          pipelineColor={pipelineColor}
           onSelectPreset={handleSelectPreset}
         />
       ))}

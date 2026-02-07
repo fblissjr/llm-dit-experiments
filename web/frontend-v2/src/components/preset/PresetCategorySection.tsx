@@ -15,7 +15,6 @@ interface PresetCategorySectionProps {
   category: string;
   presets: GenerationPreset[];
   activePresetName: string | null;
-  pipelineColor: string;
   onSelectPreset: (name: string) => void;
 }
 
@@ -23,7 +22,6 @@ export function PresetCategorySection({
   category,
   presets,
   activePresetName,
-  pipelineColor,
   onSelectPreset,
 }: PresetCategorySectionProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -83,7 +81,9 @@ export function PresetCategorySection({
                        hover:text-white transition-colors"
             aria-label="Scroll left"
           >
-            &#8249;
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path d="M10 3L5 8l5 5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
           </button>
         )}
 
@@ -100,7 +100,6 @@ export function PresetCategorySection({
               key={preset.name}
               preset={preset}
               isActive={preset.name === activePresetName}
-              pipelineColor={pipelineColor}
               onClick={() => onSelectPreset(preset.name)}
             />
           ))}
@@ -116,7 +115,9 @@ export function PresetCategorySection({
                        hover:text-white transition-colors"
             aria-label="Scroll right"
           >
-            &#8250;
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path d="M6 3l5 5-5 5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
           </button>
         )}
       </div>

@@ -1,8 +1,7 @@
 /**
  * ActivePresetIndicator - Thin status bar showing preset state.
  *
- * Three states:
- * - No preset: "No preset selected" (dimmed)
+ * Returns null when no preset is active. Two visible states:
  * - Active (clean): checkmark + "Using 'name' preset" + [Clear]
  * - Active (modified): warning + "'name' preset modified" + [Restore] [Clear]
  */
@@ -23,11 +22,7 @@ export function ActivePresetIndicator({
   onClear,
 }: ActivePresetIndicatorProps) {
   if (!presetName) {
-    return (
-      <div className="text-xs text-gray-500 py-1">
-        No preset selected
-      </div>
-    );
+    return null;
   }
 
   if (isModified) {
@@ -37,7 +32,9 @@ export function ActivePresetIndicator({
           className="w-4 h-4 inline-flex items-center justify-center rounded-full text-white text-[10px] flex-shrink-0"
           style={{ backgroundColor: '#d97706' }}
         >
-          !
+          <svg width="8" height="8" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M8 3v6M8 12v1" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
+          </svg>
         </span>
         <span className="text-gray-300">
           &apos;{presetName}&apos; preset modified
@@ -55,7 +52,9 @@ export function ActivePresetIndicator({
           className="text-gray-500 hover:text-gray-300 transition-colors"
           aria-label="Clear preset"
         >
-          &#10005;
+          <svg width="10" height="10" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+          </svg>
         </button>
       </div>
     );
@@ -67,7 +66,9 @@ export function ActivePresetIndicator({
         className="w-4 h-4 inline-flex items-center justify-center rounded-full text-white text-[10px] flex-shrink-0"
         style={{ backgroundColor: pipelineColor }}
       >
-        &#10003;
+        <svg width="8" height="8" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <path d="M3 8.5l3.5 3.5L13 4" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
       </span>
       <span className="text-gray-300">
         Using &apos;{presetName}&apos; preset
@@ -78,7 +79,9 @@ export function ActivePresetIndicator({
         className="text-gray-500 hover:text-gray-300 transition-colors ml-auto"
         aria-label="Clear preset"
       >
-        &#10005;
+        <svg width="10" height="10" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+        </svg>
       </button>
     </div>
   );

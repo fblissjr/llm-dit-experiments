@@ -10,11 +10,10 @@ import type { GenerationPreset } from '@/api/types';
 interface PresetCardProps {
   preset: GenerationPreset;
   isActive: boolean;
-  pipelineColor: string;
   onClick: () => void;
 }
 
-export function PresetCard({ preset, isActive, pipelineColor, onClick }: PresetCardProps) {
+export function PresetCard({ preset, isActive, onClick }: PresetCardProps) {
   const paramCount = Object.keys(preset.params).length;
 
   return (
@@ -24,15 +23,16 @@ export function PresetCard({ preset, isActive, pipelineColor, onClick }: PresetC
       className={`preset-card text-left relative flex flex-col justify-between ${
         isActive ? 'preset-card-active' : ''
       }`}
-      style={isActive ? { '--pipeline-color': pipelineColor } as React.CSSProperties : undefined}
     >
       {/* Active checkmark */}
       {isActive && (
         <span
           className="absolute top-2 right-2 w-5 h-5 rounded-full flex items-center justify-center text-xs text-white"
-          style={{ backgroundColor: pipelineColor }}
+          style={{ backgroundColor: 'var(--pipeline-color)' }}
         >
-          &#10003;
+          <svg width="10" height="10" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M3 8.5l3.5 3.5L13 4" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
         </span>
       )}
 
