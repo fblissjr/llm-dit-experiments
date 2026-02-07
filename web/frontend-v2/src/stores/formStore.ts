@@ -13,6 +13,11 @@ import { immer } from 'zustand/middleware/immer';
 import type { FormValues, ValidationError, ParamSchema } from '@/api/types';
 import { useAppStore } from './appStore';
 
+interface ActivePresetState {
+  name: string;
+  params: FormValues;
+}
+
 interface FormState {
   // User-modified values per pipeline
   values: Record<string, FormValues>;
@@ -24,11 +29,16 @@ interface FormState {
   // Used by dependent defaults to avoid overriding user intent
   userModified: Record<string, Set<string>>;
 
+  // Active preset per pipeline (name + original params for modification detection)
+  activePreset: Record<string, ActivePresetState | null>;
+
   // Actions
   setValue: (pipelineId: string, paramId: string, value: unknown) => void;
   setValues: (pipelineId: string, values: FormValues) => void;
   resetPipeline: (pipelineId: string) => void;
-  applyPreset: (pipelineId: string, params: FormValues) => void;
+  applyPreset: (pipelineId: string, presetName: string, params: FormValues) => void;
+  clearPreset: (pipelineId: string) => void;
+  restorePreset: (pipelineId: string) => void;
   applyDependentDefaults: (pipelineId: string, triggerParamId: string, triggerValue: unknown) => void;
   validate: (pipelineId: string) => ValidationError[];
   clearErrors: (pipelineId: string) => void;
@@ -37,6 +47,8 @@ interface FormState {
   getResolvedValues: (pipelineId: string) => FormValues;
   getValue: (pipelineId: string, paramId: string) => unknown;
   hasErrors: (pipelineId: string) => boolean;
+  isPresetModified: (pipelineId: string) => boolean;
+  getActivePresetName: (pipelineId: string) => string | null;
 }
 
 /**
@@ -94,6 +106,7 @@ export const useFormStore = create<FormState>()(
     values: {},
     errors: {},
     userModified: {},
+    activePreset: {},
 
     /**
      * Set a single form value and mark it as user-modified
@@ -140,18 +153,66 @@ export const useFormStore = create<FormState>()(
         state.values[pipelineId] = {};
         state.errors[pipelineId] = [];
         state.userModified[pipelineId] = new Set();
+        state.activePreset[pipelineId] = null;
       });
     },
 
     /**
-     * Apply a preset's parameters to the form
+     * Apply a preset's parameters to the form.
+     * Records the preset as active and clears userModified for preset-touched
+     * params so dependent_defaults can override them later if needed.
      */
-    applyPreset: (pipelineId, params) => {
+    applyPreset: (pipelineId, presetName, params) => {
       set((state) => {
         state.values[pipelineId] = {
           ...(state.values[pipelineId] ?? {}),
           ...params,
         };
+
+        // Record active preset for modification detection
+        state.activePreset[pipelineId] = { name: presetName, params: { ...params } };
+
+        // Clear userModified for all params the preset touches.
+        // This allows dependent_defaults to override preset values when
+        // the trigger changes (e.g., switching model after applying preset).
+        if (!state.userModified[pipelineId]) {
+          state.userModified[pipelineId] = new Set();
+        }
+        for (const key of Object.keys(params)) {
+          state.userModified[pipelineId].delete(key);
+        }
+      });
+    },
+
+    /**
+     * Clear the active preset without changing form values
+     */
+    clearPreset: (pipelineId) => {
+      set((state) => {
+        state.activePreset[pipelineId] = null;
+      });
+    },
+
+    /**
+     * Restore the active preset's original values
+     */
+    restorePreset: (pipelineId) => {
+      const preset = get().activePreset[pipelineId];
+      if (!preset) return;
+
+      set((state) => {
+        state.values[pipelineId] = {
+          ...(state.values[pipelineId] ?? {}),
+          ...preset.params,
+        };
+
+        // Clear userModified for restored params
+        if (!state.userModified[pipelineId]) {
+          state.userModified[pipelineId] = new Set();
+        }
+        for (const key of Object.keys(preset.params)) {
+          state.userModified[pipelineId].delete(key);
+        }
       });
     },
 
@@ -289,6 +350,25 @@ export const useFormStore = create<FormState>()(
 
     hasErrors: (pipelineId) => {
       return (get().errors[pipelineId]?.length ?? 0) > 0;
+    },
+
+    /**
+     * Check if the active preset's values have been modified
+     */
+    isPresetModified: (pipelineId) => {
+      const preset = get().activePreset[pipelineId];
+      if (!preset) return false;
+      const resolved = get().getResolvedValues(pipelineId);
+      return Object.entries(preset.params).some(
+        ([key, val]) => resolved[key] !== val
+      );
+    },
+
+    /**
+     * Get the active preset name for a pipeline
+     */
+    getActivePresetName: (pipelineId) => {
+      return get().activePreset[pipelineId]?.name ?? null;
     },
   }))
 );

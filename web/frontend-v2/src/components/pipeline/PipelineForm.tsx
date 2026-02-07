@@ -11,6 +11,7 @@ import { useAppStore, useFormStore } from '@/stores';
 import type { GroupType, ParamSchema, FormValues, ValidationError } from '@/api/types';
 import { ParamGroup } from './ParamGroup';
 import { ParamControl } from './ParamControl';
+import { PresetBrowser } from '@/components/preset';
 
 // Define group order for consistent rendering
 const groupOrder: GroupType[] = [
@@ -23,7 +24,6 @@ const groupOrder: GroupType[] = [
 ];
 
 // Empty array/object constants to avoid creating new references
-const EMPTY_PRESETS: never[] = [];
 const EMPTY_ERRORS: ValidationError[] = [];
 const EMPTY_FORM_VALUES: FormValues = {};
 
@@ -35,10 +35,6 @@ export function PipelineForm() {
   const pipeline = useAppStore(
     useShallow((s) => (selectedPipelineId ? s.pipelines[selectedPipelineId] : null))
   );
-  const presets = useAppStore(
-    useShallow((s) => s.presets[selectedPipelineId ?? ''] ?? EMPTY_PRESETS)
-  );
-
   // Function references are stable - no useShallow needed
   const getPipelineColor = useAppStore((s) => s.getPipelineColor);
 
@@ -55,7 +51,6 @@ export function PipelineForm() {
   );
 
   const setValue = useFormStore((s) => s.setValue);
-  const applyPreset = useFormStore((s) => s.applyPreset);
   const applyDependentDefaults = useFormStore((s) => s.applyDependentDefaults);
 
   // Handle value change with dimension_preset <-> width/height sync
@@ -108,22 +103,6 @@ export function PipelineForm() {
     [selectedPipelineId, setValue, applyDependentDefaults, formValues, pipeline]
   );
 
-  // Handle preset selection
-  const handlePresetChange = useCallback(
-    (presetName: string) => {
-      if (!selectedPipelineId || !presetName) return;
-
-      const preset = presets.find((p) => p.name === presetName);
-      if (preset) {
-        // Apply preset params first
-        applyPreset(selectedPipelineId, preset.params);
-        // Then set the preset field itself
-        setValue(selectedPipelineId, 'preset', presetName);
-      }
-    },
-    [selectedPipelineId, presets, applyPreset, setValue]
-  );
-
   // Group parameters by their group field
   const groupedParams = useMemo(() => {
     if (!pipeline) return new Map<GroupType, ParamSchema[]>();
@@ -144,9 +123,6 @@ export function PipelineForm() {
     return groups;
   }, [pipeline]);
 
-  // Find preset param if it exists
-  const presetParam = pipeline?.params.find((p) => p.id === 'preset');
-
   if (!pipeline || !selectedPipelineId) {
     return (
       <div className="text-gray-400 text-center py-8">
@@ -164,27 +140,8 @@ export function PipelineForm() {
       style={{ '--pipeline-color': pipelineColor } as React.CSSProperties}
       onSubmit={(e) => e.preventDefault()}
     >
-      {/* Preset selector - special handling outside groups */}
-      {presetParam && presets.length > 0 && (
-        <div className="form-control">
-          <label className="form-label">{presetParam.label}</label>
-          <select
-            value={(formValues.preset as string) ?? ''}
-            onChange={(e) => handlePresetChange(e.target.value)}
-            className="form-select"
-          >
-            <option value="">Select a preset...</option>
-            {presets.map((preset) => (
-              <option key={preset.name} value={preset.name}>
-                {preset.name} - {preset.description}
-              </option>
-            ))}
-          </select>
-          {presetParam.tooltip && (
-            <p className="text-xs text-gray-500 mt-1">{presetParam.tooltip}</p>
-          )}
-        </div>
-      )}
+      {/* Preset browser - visual card system */}
+      <PresetBrowser pipelineId={selectedPipelineId} />
 
       {/* Render groups in order */}
       {groupOrder.map((groupId) => {

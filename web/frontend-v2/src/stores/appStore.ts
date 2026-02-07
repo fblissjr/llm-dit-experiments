@@ -251,8 +251,7 @@ export const useAppStore = create<AppState>()(
               const formStore = useFormStore.getState();
 
               // Apply preset params (includes negative_prompt, steps, guidance_scale, etc.)
-              formStore.applyPreset(pipelineId, preset.params);
-              formStore.setValue(pipelineId, 'preset', defaultPreset);
+              formStore.applyPreset(pipelineId, defaultPreset, preset.params);
             }, 0);
           }
         }

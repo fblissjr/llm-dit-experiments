@@ -5,6 +5,22 @@ last updated: 2026-02-07
 All notable changes to this project will be documented in this file.
 Uses [Semantic Versioning](https://semver.org/).
 
+## 0.8.3
+
+### added
+- Preset card browser: horizontal scroll strips with visual cards replace the old `<select>` dropdown
+- Active preset indicator with three states: none / active (checkmark) / modified (warning + Restore)
+- Preset modification detection: compares active preset's original params against current resolved values
+- `clearPreset()` and `restorePreset()` actions in formStore
+
+### changed
+- `applyPreset()` signature expanded to `(pipelineId, presetName, params)` -- records active preset and clears `userModified` for preset-touched params (synergy fix with dependent_defaults)
+- appStore `loadPresets()` updated to use new `applyPreset` signature
+- PipelineForm now renders `<PresetBrowser>` instead of a `<select>` dropdown
+
+### fixed
+- Preset + dependent_defaults synergy bug: applying a preset then switching models could leave stale preset values because `userModified` incorrectly blocked dependent_defaults updates
+
 ## 0.8.2
 
 ### added

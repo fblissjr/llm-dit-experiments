@@ -153,6 +153,44 @@ body {
   .upload-area-active {
     @apply border-blue-500 bg-blue-500/10;
   }
+
+  /* Preset card */
+  .preset-card {
+    @apply rounded-lg border border-gray-700 bg-gray-800 p-3
+           cursor-pointer transition-all
+           hover:bg-gray-700/50 hover:border-gray-600;
+    width: 160px;
+    min-height: 120px;
+    flex-shrink: 0;
+    scroll-snap-align: start;
+  }
+
+  .preset-card-active {
+    border-color: var(--pipeline-color);
+    background: color-mix(in srgb, var(--pipeline-color) 10%, transparent);
+  }
+
+  /* Horizontal scroll strip */
+  .preset-scroll {
+    @apply flex gap-3 overflow-x-auto pb-2;
+    scroll-snap-type: x mandatory;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+  }
+
+  /* Fade edges for scroll overflow */
+  .preset-scroll-container {
+    mask-image: linear-gradient(
+      to right,
+      transparent, black 8px, black calc(100% - 8px), transparent
+    );
+  }
+}
+
+@media (max-width: 640px) {
+  .preset-card {
+    width: 140px;
+  }
 }
 
 /* Scrollbar styling */
