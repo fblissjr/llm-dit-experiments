@@ -1,5 +1,5 @@
 # llm-dit-experiments configuration template
-# last updated: 2026-02-06
+# last updated: 2026-02-07
 #
 # Copy to config.toml and edit paths for your setup:
 #   cp config.toml.example config.toml
@@ -28,7 +28,7 @@ templates_dir = "templates/z_image"
 encoder = "none"
 transformer = "fp8-weight-only"
 vae = "none"
-granularity = "per-tensor"      # per-tensor or per-row (FP8 only)
+granularity = "per-tensor"      # per-tensor, per-row (FP8 only)
 
 
 # -- Shared text encoder (Z-Image / Qwen-Image) ----------------------------
@@ -64,9 +64,11 @@ dynamic_shift = true
 
 [optimization]
 compile = true                  # ~10% speedup after warmup; INCOMPATIBLE with CPU offload
+# Compile mode: default, max-autotune-no-cudagraphs, reduce-overhead
 compile_mode = "default"
 
 [pytorch]
+# Attention backend: auto, flash_attn_3, flash_attn_2, sage, xformers, sdpa
 attention_backend = "auto"
 use_custom_scheduler = true
 tiled_vae = false
@@ -74,6 +76,7 @@ tile_size = 512
 tile_overlap = 64
 embedding_cache = true
 cache_size = 100
+# Long prompt handling: truncate, interpolate, pool, attention_pool
 long_prompt_mode = "interpolate"
 
 [lora]
@@ -100,15 +103,26 @@ variant = "turbo"
 # model_path = "/path/to/FLUX.2-klein-9b-fp8"
 # vae_path = "/path/to/FLUX.2-klein-9B"
 # encoder_path = "/path/to/Qwen3-8B"
+
+# Model variant (sets default steps + guidance automatically):
+#   Distilled (4 steps, guidance=1.0): klein-4b, klein-9b, klein-4b-fp8, klein-9b-fp8
+#   Base (50 steps, guidance=4.0):     klein-base-4b, klein-base-9b, klein-base-4b-fp8, klein-base-9b-fp8
 default_model = "klein-9b-fp8"
+
+# Override model defaults (None/omit = use model default from table above)
 default_steps = 4
 default_guidance = 1.0
-encoder_device = "cuda"
-offload_between_stages = true
+
+encoder_device = "cuda"         # cuda (recommended), cpu
+offload_between_stages = true   # three-stage offload: encoder -> transformer -> VAE (saves ~5GB)
 block_offload = false           # INCOMPATIBLE with quantization + compile
+
+# Quantization: none, fp8-weight-only, fp8-dynamic, int8, int4
 quantization = "fp8-weight-only"
+
 compile = false                 # marginal ROI for 4-step distilled (see docs/guides/compile_and_resolution.md)
 compile_vae = false             # marginal ROI (89s warmup, ~0.5s savings/decode)
+# Compile mode: default, max-autotune-no-cudagraphs, reduce-overhead
 compile_mode = "default"
 
 
@@ -123,14 +137,16 @@ compile_mode = "default"
 transformer_file = "ltx-2-19b-distilled-fp8.safetensors"
 
 encoder_model_id = "google/gemma-3-12b-it-qat-q4_0-unquantized"
+# Encoder quantization: none, fp8-weight-only, fp8-dynamic, int8, int4
 encoder_quantization = "none"   # Q4 QAT ships pre-quantized
-encoder_cpu_offload = true
+encoder_cpu_offload = true      # offload encoder after encoding (REQUIRED for 24GB)
 
 lora_path = ""
-lora_scale = 1.0
+lora_scale = 1.0                # blend scale (0.0-1.0)
 
+# Offload mode: none (>48GB), model (~20-50% slower), sequential (~3-5x slower), group (configurable)
 offload_mode = "model"
-num_blocks_per_group = 2
+num_blocks_per_group = 2        # group mode only: DiT blocks to keep on GPU
 
 height = 768
 width = 512

@@ -6,7 +6,7 @@
  * Reports image dimensions via onDimensionsChange for auto-matching output size.
  */
 
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 
 interface ImageUploadProps {
   value: string | string[] | null;  // Base64 or URL(s)
@@ -38,13 +38,23 @@ export function ImageUpload({
   const [allDimensions, setAllDimensions] = useState<({ width: number; height: number } | null)[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const images = Array.isArray(value) ? value : value ? [value] : [];
+  // Stabilize images array -- without useMemo, a string value creates a new [value]
+  // array every render, which triggers the dimension-loading effect in an infinite loop.
+  const images = useMemo(
+    () => Array.isArray(value) ? value : value ? [value] : [],
+    [value]
+  );
+
+  // Keep a ref to the callback so the effect doesn't re-fire when the parent
+  // passes an unstable onDimensionsChange identity.
+  const onDimensionsChangeRef = useRef(onDimensionsChange);
+  onDimensionsChangeRef.current = onDimensionsChange;
 
   // Read dimensions of all images when images change
   useEffect(() => {
     if (images.length === 0) {
       setAllDimensions([]);
-      onDimensionsChange?.(null);
+      onDimensionsChangeRef.current?.(null);
       return;
     }
 
@@ -64,11 +74,10 @@ export function ImageUpload({
         dims.push(d);
       }
       setAllDimensions(dims);
-      // Report first image dimensions for backward compatibility
-      onDimensionsChange?.(dims[0] ?? null);
+      onDimensionsChangeRef.current?.(dims[0] ?? null);
     };
     loadDimensions();
-  }, [images, onDimensionsChange]);
+  }, [images]);
 
   const handleFiles = useCallback(
     async (files: FileList) => {

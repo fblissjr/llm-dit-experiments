@@ -53,7 +53,10 @@ export function PipelineForm() {
   const setValue = useFormStore((s) => s.setValue);
   const applyDependentDefaults = useFormStore((s) => s.applyDependentDefaults);
 
-  // Handle value change with dimension_preset <-> width/height sync
+  // Handle value change with dimension_preset <-> width/height sync.
+  // Reads formValues from store directly (getState) to avoid closing over
+  // the reactive selector -- this prevents handleChange from being recreated
+  // whenever any unrelated form value changes.
   const handleChange = useCallback(
     (paramId: string) => (value: unknown) => {
       if (!selectedPipelineId) return;
@@ -71,16 +74,17 @@ export function PipelineForm() {
 
       // When width or height changes manually, clear preset to show it's custom
       if (paramId === 'width' || paramId === 'height') {
-        const currentPreset = formValues.dimension_preset;
+        const currentValues = useFormStore.getState()
+          .getResolvedValues(selectedPipelineId);
+        const currentPreset = currentValues.dimension_preset;
         if (currentPreset && currentPreset !== 'Custom') {
-          // Check if the new value still matches the preset
           const presetStr = String(currentPreset);
           const match = presetStr.match(/^(\d+)x(\d+)$/);
           if (match) {
             const presetW = parseInt(match[1], 10);
             const presetH = parseInt(match[2], 10);
-            const newW = paramId === 'width' ? Number(value) : Number(formValues.width ?? 1024);
-            const newH = paramId === 'height' ? Number(value) : Number(formValues.height ?? 1024);
+            const newW = paramId === 'width' ? Number(value) : Number(currentValues.width ?? 1024);
+            const newH = paramId === 'height' ? Number(value) : Number(currentValues.height ?? 1024);
             if (newW !== presetW || newH !== presetH) {
               setValue(selectedPipelineId, 'dimension_preset', 'Custom');
             }
@@ -100,7 +104,7 @@ export function PipelineForm() {
         }
       }
     },
-    [selectedPipelineId, setValue, applyDependentDefaults, formValues, pipeline]
+    [selectedPipelineId, setValue, applyDependentDefaults, pipeline]
   );
 
   // Group parameters by their group field
