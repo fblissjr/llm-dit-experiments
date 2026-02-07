@@ -524,9 +524,7 @@ def create_base_parser(
     # Debug
     debug_group = parser.add_argument_group("Debug")
     debug_group.add_argument("--debug", action="store_true",
-        help="Enable debug logging")
-    debug_group.add_argument("--verbose", "-v", action="store_true",
-        help="Verbose output")
+        help="Enable DEBUG-level logging for all project modules (very noisy)")
     debug_group.add_argument("--log-dir", type=str, default=None,
         help="Directory for JSON log files with rotation (enables file logging)")
 
@@ -751,7 +749,6 @@ def _apply_cli_overrides(args: argparse.Namespace, config: RuntimeConfig) -> Run
 
     # Debug overrides
     _set_flag(args, "debug", config, "debug")
-    _set_flag(args, "verbose", config, "verbose")
     _set_if(args, "log_dir", config.logging, "log_dir")
 
     return config
@@ -839,21 +836,33 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
 def setup_logging(config: RuntimeConfig) -> None:
     """Configure logging based on runtime config.
 
+    Log level priority (highest wins):
+      --debug     -> DEBUG (all project modules)
+      config.toml -> [logging] log_level
+      default     -> INFO
+
     Uses structured JSON file logging with rotation when log_dir is set.
     Console output remains human-readable.
     """
     from llm_dit.utils.logging_config import setup_logging as configure_logging
 
-    level = logging.DEBUG if config.debug or config.verbose else logging.INFO
+    # Resolve log level: --debug overrides config.toml
+    if config.debug:
+        level = logging.DEBUG
+    else:
+        level = getattr(logging, config.logging.log_level.upper(), logging.INFO)
 
-    # Check if JSON file logging is requested
-    log_dir = config.logging.log_dir
-    enable_json = bool(log_dir)
+    # File logging: enabled if log_dir is set AND logging.enabled is true
+    log_cfg = config.logging
+    log_dir = log_cfg.log_dir
+    enable_json = log_cfg.enabled and bool(log_dir)
 
     configure_logging(
         level=level,
-        log_dir=Path(log_dir) if log_dir else None,
+        log_dir=Path(log_dir) if enable_json else None,
         enable_json_file=enable_json,
+        max_bytes=log_cfg.max_bytes,
+        backup_count=log_cfg.backup_count,
     )
 
     if config.debug:

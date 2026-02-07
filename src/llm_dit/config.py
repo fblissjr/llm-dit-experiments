@@ -1278,7 +1278,6 @@ class RuntimeConfig:
     host: str = "127.0.0.1"
     port: int = 7860
     debug: bool = False
-    verbose: bool = False
 
     # Composed sub-configs (reuse config.py dataclasses directly)
     encoder: EncoderConfig = field(default_factory=EncoderConfig)
@@ -2327,6 +2326,10 @@ class Config:
                 "log_dir": self.logging.log_dir,
                 "log_level": self.logging.log_level,
                 "json_format": self.logging.json_format,
+                "max_bytes": self.logging.max_bytes,
+                "backup_count": self.logging.backup_count,
+                "log_requests": self.logging.log_requests,
+                "log_generation_params": self.logging.log_generation_params,
             },
             "zimage": {
                 "model_path": self.zimage.model_path,

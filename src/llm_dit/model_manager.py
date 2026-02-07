@@ -552,18 +552,22 @@ class ModelManager:
             )
 
             if compile_transformer and not block_offload:
-                logger.info(f"[FLUX.2] Compiling transformer (mode={compile_mode})")
+                logger.info(
+                    f"[FLUX.2] Wrapping transformer with torch.compile (mode={compile_mode}) "
+                    "-- actual compilation happens on first forward pass"
+                )
                 loaded_transformer = torch.compile(loaded_transformer, mode=compile_mode)
-                logger.info("[FLUX.2] Transformer compiled")
 
             # Stage 3: Load VAE
             logger.info("[FLUX.2] Stage 3: Loading VAE")
             loaded_vae = load_flux2_vae(model_name, device="cuda", vae_path=vae_path)
 
             if compile_vae_flag:
-                logger.info(f"[FLUX.2] Compiling VAE decoder (mode={compile_mode})")
+                logger.info(
+                    f"[FLUX.2] Wrapping VAE decoder with torch.compile (mode={compile_mode}) "
+                    "-- actual compilation happens on first decode"
+                )
                 loaded_vae.decode = torch.compile(loaded_vae.decode, mode=compile_mode)
-                logger.info("[FLUX.2] VAE decoder compiled")
 
             load_time = time.time() - start
 

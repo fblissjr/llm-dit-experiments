@@ -11,6 +11,8 @@ Usage:
 
 import gc
 import logging
+import os
+import signal
 import sys
 import time
 from pathlib import Path
@@ -465,6 +467,22 @@ def main():
 
     host = runtime_config.host
     port = runtime_config.port
+
+    # Force-exit on second Ctrl-C to avoid hanging on CUDA cleanup / pinned memory
+    _shutting_down = False
+
+    def _force_exit(_signum, _frame):
+        nonlocal _shutting_down
+        if _shutting_down:
+            logger.info("Second interrupt received, forcing exit")
+            os._exit(1)
+        _shutting_down = True
+        logger.info("Shutting down (Ctrl-C again to force)...")
+        raise SystemExit(0)
+
+    signal.signal(signal.SIGINT, _force_exit)
+    signal.signal(signal.SIGTERM, _force_exit)
+
     logger.info(f"Starting server at http://{host}:{port} ({mode} mode)")
     uvicorn.run(app, host=host, port=port)
 

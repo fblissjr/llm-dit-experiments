@@ -309,7 +309,7 @@ def _run_qwen_image_decompose(args, config, logger, resolution: int) -> int:
             cfg_scale=config.qwen_image_cfg_scale,
             seed=seed,
             shift=config.shift if config.shift != 3.0 else None,  # Use dynamic if default
-            progress_callback=progress_callback if config.verbose else None,
+            progress_callback=progress_callback if config.debug else None,
         )
     except Exception as e:
         logger.error(f"Decomposition failed: {e}")
@@ -1089,7 +1089,7 @@ def main():
             generator=generator,
             shift=None if config.dynamic_shift else config.shift,
             d_noise=config.d_noise,
-            callback=progress_callback if config.verbose else None,
+            callback=progress_callback if config.debug else None,
         )
         gen_time = time.time() - start
 
@@ -1165,7 +1165,7 @@ def main():
             skip_layer_stop=config.slg_stop,
             shift=None if config.dynamic_shift else config.shift,
             d_noise=config.d_noise,
-            callback=progress_callback if config.verbose else None,
+            callback=progress_callback if config.debug else None,
         )
         gen_time = time.time() - start
 
@@ -1250,7 +1250,7 @@ def main():
             layer_weights=config.layer_weights,
             shift=None if config.dynamic_shift else config.shift,
             d_noise=config.d_noise,
-            callback=progress_callback if config.verbose else None,
+            callback=progress_callback if config.debug else None,
         )
         gen_time = time.time() - start
     else:
@@ -1298,7 +1298,7 @@ def main():
                 force_think_block=config.enable_thinking,
                 long_prompt_mode=config.long_prompt_mode,
                 hidden_layer=config.hidden_layer,
-                callback=progress_callback if config.verbose else None,
+                callback=progress_callback if config.debug else None,
                 # FBCache for inference acceleration
                 fbcache=config.fbcache,
                 fbcache_threshold=config.fbcache_threshold,
@@ -1328,7 +1328,7 @@ def main():
                 skip_layer_stop=config.slg_stop,
                 shift=None if config.dynamic_shift else config.shift,
                 d_noise=config.d_noise,
-                callback=progress_callback if config.verbose else None,
+                callback=progress_callback if config.debug else None,
                 # FBCache for inference acceleration
                 fbcache=config.fbcache,
                 fbcache_threshold=config.fbcache_threshold,

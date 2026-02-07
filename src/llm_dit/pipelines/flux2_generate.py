@@ -52,6 +52,8 @@ import logging
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
+import time
+
 import torch
 import torchvision
 from einops import rearrange
@@ -535,9 +537,14 @@ def denoise(
     else:
         logger.debug("[Denoise] No guidance (distilled model)")
 
+    denoise_start = time.perf_counter()
+    step_times: list[float] = []
+
     for step_idx, (t_curr, t_prev) in enumerate(
         tqdm(zip(timesteps[:-1], timesteps[1:]), total=num_steps, desc="Denoising")
     ):
+        step_start = time.perf_counter()
+
         # Report progress if callback provided
         if progress_callback is not None:
             progress_callback(step_idx + 1, num_steps, "Denoising")
@@ -610,8 +617,19 @@ def denoise(
         img = img + (t_prev - t_curr) * pred
 
         # =====================================================================
-        # Step End - Memory Tracking
+        # Step End - Timing + Memory Tracking
         # =====================================================================
+        step_elapsed = time.perf_counter() - step_start
+        step_times.append(step_elapsed)
+
+        if step_idx == 0 and step_elapsed > 5.0:
+            logger.info(
+                f"[Denoise:Step 0] {step_elapsed:.1f}s "
+                "(torch.compile warmup -- subsequent steps will be fast)"
+            )
+        else:
+            logger.info(f"[Denoise:Step {step_idx}] {step_elapsed:.2f}s")
+
         if torch.cuda.is_available():
             step_alloc, step_reserved = _log_denoise_memory(step_idx, "end")
             peak_allocated = max(peak_allocated, step_alloc)
@@ -625,8 +643,12 @@ def denoise(
     # =========================================================================
     # Denoising Complete - Summary
     # =========================================================================
+    denoise_elapsed = time.perf_counter() - denoise_start
     logger.debug("=" * 60)
-    logger.debug("[Denoise] Denoising complete")
+    logger.info(
+        f"[Denoise] {num_steps} steps in {denoise_elapsed:.1f}s "
+        f"({', '.join(f'{t:.2f}s' for t in step_times)})"
+    )
 
     if torch.cuda.is_available():
         torch.cuda.synchronize()
@@ -689,8 +711,18 @@ def latents_to_image(
         logger.debug(f"[Decode] Reshaped tensor dimensions: {list(latents.shape)}")
 
     # Decode
+    decode_start = time.perf_counter()
     with torch.no_grad():
         pixels = vae.decode(latents)
+    decode_elapsed = time.perf_counter() - decode_start
+
+    if decode_elapsed > 5.0:
+        logger.info(
+            f"[Decode] VAE decode {decode_elapsed:.1f}s "
+            "(torch.compile warmup -- subsequent decodes will be fast)"
+        )
+    else:
+        logger.info(f"[Decode] VAE decode {decode_elapsed:.2f}s")
 
     # Convert to PIL
     # pixels is in [-1, 1], convert to [0, 1]
@@ -777,10 +809,13 @@ def generate_image(
     mode = "editing" if config.is_editing_mode else "text-to-image"
     logger.info(f"Generating {config.width}x{config.height} image ({mode} mode) with {config.num_steps} steps")
 
+    gen_start = time.perf_counter()
+
     # ===========================================================================
     # Stage 1: Text Encoding
     # ===========================================================================
     log_gpu_memory("before encoder load")
+    stage1_start = time.perf_counter()
     logger.info("Stage 1: Encoding text...")
 
     if encoder is None:
@@ -861,9 +896,13 @@ def generate_image(
             vae = None
             cleanup_memory()
 
+    stage1_elapsed = time.perf_counter() - stage1_start
+    logger.info(f"Stage 1 complete: {stage1_elapsed:.1f}s")
+
     # ===========================================================================
     # Stage 2: Denoising
     # ===========================================================================
+    stage2_start = time.perf_counter()
     logger.info("Stage 2: Denoising...")
 
     if transformer is None:
@@ -962,9 +1001,13 @@ def generate_image(
         del transformer
         cleanup_memory()
 
+    stage2_elapsed = time.perf_counter() - stage2_start
+    logger.info(f"Stage 2 complete: {stage2_elapsed:.1f}s")
+
     # ===========================================================================
     # Stage 3: VAE Decode
     # ===========================================================================
+    stage3_start = time.perf_counter()
     logger.info("Stage 3: Decoding latents...")
 
     if vae is None:
@@ -983,7 +1026,12 @@ def generate_image(
         del vae
         cleanup_memory()
 
-    logger.info("Generation complete!")
+    stage3_elapsed = time.perf_counter() - stage3_start
+    gen_elapsed = time.perf_counter() - gen_start
+    logger.info(
+        f"Generation complete: {gen_elapsed:.1f}s total "
+        f"(encode={stage1_elapsed:.1f}s, denoise={stage2_elapsed:.1f}s, decode={stage3_elapsed:.1f}s)"
+    )
     return image
 
 
