@@ -13,6 +13,8 @@ Uses [Semantic Versioning](https://semver.org/).
 - Z-Image `load_lora()` no longer passes raw storage dtype to LoRA loader (delegates to `_infer_model_device_dtype`)
 
 ### added
+- HTTPS support via `ssl_certfile` / `ssl_keyfile` config fields and CLI args (uvicorn-native TLS)
+- Optional `ssl_ca_certs` for mutual TLS client certificate verification
 - `FusedLoRAState` / `LoRAFusionRecord` dataclasses for pipeline-agnostic LoRA fusion tracking
 - `get_fused_state(model)` attaches tracking state to any `nn.Module` -- works regardless of how the pipeline stores the model
 - LoRA fusion guard in `flux2_generate.py`: skips re-fusion when LoRAs already match, raises `RuntimeError` on mismatch

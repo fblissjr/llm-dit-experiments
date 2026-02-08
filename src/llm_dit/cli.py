@@ -520,6 +520,10 @@ def create_base_parser(
             help="Host to bind to (default: 127.0.0.1)")
         server_group.add_argument("--port", type=int, default=None,
             help="Port to bind to (default: 7860)")
+        server_group.add_argument("--ssl-certfile", type=str, default=None,
+            help="Path to SSL certificate file (.pem) for HTTPS")
+        server_group.add_argument("--ssl-keyfile", type=str, default=None,
+            help="Path to SSL private key file (.pem) for HTTPS")
 
     # Debug
     debug_group = parser.add_argument_group("Debug")
@@ -746,6 +750,8 @@ def _apply_cli_overrides(args: argparse.Namespace, config: RuntimeConfig) -> Run
     # Server overrides
     _set_if(args, "host", config, "host")
     _set_if(args, "port", config, "port")
+    _set_if(args, "ssl_certfile", config, "ssl_certfile")
+    _set_if(args, "ssl_keyfile", config, "ssl_keyfile")
 
     # Debug overrides
     _set_flag(args, "debug", config, "debug")
@@ -809,6 +815,9 @@ def load_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
             server_cfg = raw_toml.get("server", {})
             config.host = server_cfg.get("host", config.host)
             config.port = server_cfg.get("port", config.port)
+            config.ssl_certfile = server_cfg.get("ssl_certfile", config.ssl_certfile)
+            config.ssl_keyfile = server_cfg.get("ssl_keyfile", config.ssl_keyfile)
+            config.ssl_ca_certs = server_cfg.get("ssl_ca_certs", config.ssl_ca_certs)
 
             # Parse unified [quantization] section into quant sub-config
             quant_cfg = raw_toml.get("quantization", {})

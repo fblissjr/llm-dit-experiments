@@ -483,8 +483,17 @@ def main():
     signal.signal(signal.SIGINT, _force_exit)
     signal.signal(signal.SIGTERM, _force_exit)
 
-    logger.info(f"Starting server at http://{host}:{port} ({mode} mode)")
-    uvicorn.run(app, host=host, port=port)
+    uvicorn_kwargs: dict = {"host": host, "port": port}
+    ssl_enabled = bool(runtime_config.ssl_certfile and runtime_config.ssl_keyfile)
+    if ssl_enabled:
+        uvicorn_kwargs["ssl_certfile"] = runtime_config.ssl_certfile
+        uvicorn_kwargs["ssl_keyfile"] = runtime_config.ssl_keyfile
+        if runtime_config.ssl_ca_certs:
+            uvicorn_kwargs["ssl_ca_certs"] = runtime_config.ssl_ca_certs
+
+    protocol = "https" if ssl_enabled else "http"
+    logger.info(f"Starting server at {protocol}://{host}:{port} ({mode} mode)")
+    uvicorn.run(app, **uvicorn_kwargs)
 
 
 if __name__ == "__main__":

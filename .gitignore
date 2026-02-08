@@ -35,8 +35,8 @@ share/python-wheels/
 MANIFEST
 .claude
 scripts/archive
-models/
-loras/
+models/*
+loras/*
 outputs/
 embeddings/*
 test_images/*

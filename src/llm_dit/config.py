@@ -1278,6 +1278,9 @@ class RuntimeConfig:
     # Server
     host: str = "127.0.0.1"
     port: int = 7860
+    ssl_certfile: str = ""  # Path to SSL certificate (.pem), empty = HTTP
+    ssl_keyfile: str = ""  # Path to SSL private key (.pem)
+    ssl_ca_certs: str = ""  # Path to CA bundle (optional, for client cert verification)
     debug: bool = False
 
     # Composed sub-configs (reuse config.py dataclasses directly)
