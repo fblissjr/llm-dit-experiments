@@ -13,13 +13,47 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from PIL import Image
 
-from web.dependencies import ConfigDep
+from web.dependencies import ConfigDep, ManagerDep
 from web.schemas import Flux2GenerateRequest
 from web.utils import create_image_response
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def _ensure_correct_model(
+    requested_model: str,
+    manager,
+) -> dict | None:
+    """Verify loaded FLUX.2 model matches the request; reload if mismatched.
+
+    Returns the (possibly-updated) flux2_pipeline dict, or None if no
+    persistent pipeline is available.
+
+    When a mismatch is detected, this blocks synchronously while the
+    ModelManager unloads the old model and loads the new one. The
+    ModelManager's per-pipeline lock prevents concurrent reloads.
+    """
+    import web.server as srv
+
+    if not isinstance(srv.flux2_pipeline, dict):
+        return None
+
+    loaded_name = srv.flux2_pipeline.get("model_name")
+    if loaded_name and loaded_name.lower() != requested_model.lower():
+        logger.info(
+            f"[FLUX.2] Model mismatch: loaded='{loaded_name}', "
+            f"requested='{requested_model}'. Reloading..."
+        )
+        result = manager.reload_flux2(requested_model)
+        srv.flux2_pipeline = manager.get_pipeline("flux2")
+        logger.info(
+            f"[FLUX.2] Reload complete: now loaded='{requested_model}' "
+            f"({result.load_time:.1f}s)"
+        )
+
+    return srv.flux2_pipeline if isinstance(srv.flux2_pipeline, dict) else None
 
 
 # =============================================================================
@@ -54,7 +88,7 @@ async def flux2_status(config: ConfigDep):
 
 
 @router.post("/api/flux2/generate")
-async def flux2_generate(request: Flux2GenerateRequest, config: ConfigDep):
+async def flux2_generate(request: Flux2GenerateRequest, config: ConfigDep, manager: ManagerDep):
     """Generate image using FLUX.2 Klein.
 
     Supports both text-to-image and image editing with reference images.
@@ -157,14 +191,21 @@ async def flux2_generate(request: Flux2GenerateRequest, config: ConfigDep):
         if model_path:
             logger.info(f"[FLUX.2] Using model path: {model_path}")
 
-        # Pass persistent models if pipeline is preloaded
+        # Verify loaded model matches request; reload if mismatched
+        pipeline_dict = _ensure_correct_model(request.model_name, manager)
+
         persistent_encoder = None
         persistent_transformer = None
         persistent_vae = None
-        if isinstance(srv.flux2_pipeline, dict):
-            persistent_encoder = srv.flux2_pipeline.get("encoder")
-            persistent_transformer = srv.flux2_pipeline.get("transformer")
-            persistent_vae = srv.flux2_pipeline.get("vae")
+        if pipeline_dict is not None:
+            loaded_name = pipeline_dict.get("model_name", "unknown")
+            logger.info(
+                f"[FLUX.2] Using persistent models (loaded={loaded_name}, "
+                f"requested={request.model_name})"
+            )
+            persistent_encoder = pipeline_dict.get("encoder")
+            persistent_transformer = pipeline_dict.get("transformer")
+            persistent_vae = pipeline_dict.get("vae")
 
         # Run in executor to not block event loop
         loop = asyncio.get_event_loop()
@@ -192,6 +233,22 @@ async def flux2_generate(request: Flux2GenerateRequest, config: ConfigDep):
             generation_time=gen_time,
         )
 
+    except (AttributeError, TypeError) as e:
+        # Guard against mid-request model unload: if srv.flux2_pipeline
+        # becomes None while we hold stale references, operations on
+        # partially-freed models raise AttributeError/TypeError.
+        if srv.flux2_pipeline is None:
+            logger.warning(
+                "[FLUX.2] Model was unloaded during generation. "
+                "Returning 503."
+            )
+            raise HTTPException(
+                status_code=503,
+                detail="FLUX.2 model was unloaded during generation. Please retry.",
+            )
+        logger.error(f"[FLUX.2] Generation failed: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
     except Exception as e:
         logger.error(f"[FLUX.2] Generation failed: {e}")
         traceback.print_exc()
@@ -204,7 +261,7 @@ async def flux2_generate(request: Flux2GenerateRequest, config: ConfigDep):
 
 
 @router.post("/api/flux2/generate/stream")
-async def flux2_generate_stream(request: Flux2GenerateRequest, config: ConfigDep):
+async def flux2_generate_stream(request: Flux2GenerateRequest, config: ConfigDep, manager: ManagerDep):
     """Generate image using FLUX.2 Klein with SSE progress streaming.
 
     Returns Server-Sent Events with progress updates during generation,
@@ -218,6 +275,11 @@ async def flux2_generate_stream(request: Flux2GenerateRequest, config: ConfigDep
     """
     import web.server as srv
     from typing import AsyncIterator
+
+    # Verify loaded model matches request BEFORE entering the SSE generator.
+    # This blocks synchronously during reload, which is intentional --
+    # we want the reload to complete before we start streaming progress.
+    _ensure_correct_model(request.model_name, manager)
 
     async def generate_with_progress() -> AsyncIterator[str]:
         """Async generator for SSE events."""
@@ -316,11 +378,16 @@ async def flux2_generate_stream(request: Flux2GenerateRequest, config: ConfigDep
                         {"step": step, "total": total, "stage": stage}
                     )
 
-                # Pass persistent models if pipeline is preloaded
+                # Use persistent models (already verified by _ensure_correct_model above)
                 p_encoder = None
                 p_transformer = None
                 p_vae = None
                 if isinstance(srv.flux2_pipeline, dict):
+                    loaded_name = srv.flux2_pipeline.get("model_name", "unknown")
+                    logger.info(
+                        f"[FLUX.2] Stream: using persistent models "
+                        f"(loaded={loaded_name}, requested={request.model_name})"
+                    )
                     p_encoder = srv.flux2_pipeline.get("encoder")
                     p_transformer = srv.flux2_pipeline.get("transformer")
                     p_vae = srv.flux2_pipeline.get("vae")
@@ -373,6 +440,17 @@ async def flux2_generate_stream(request: Flux2GenerateRequest, config: ConfigDep
             # Yield final result
             yield f"data: {json.dumps({'type': 'complete', 'urls': [data_url], 'url': data_url, 'seed': gen_config.seed, 'generation_time': gen_time})}\n\n"
 
+        except (AttributeError, TypeError) as e:
+            if srv.flux2_pipeline is None:
+                logger.warning(
+                    "[FLUX.2] Model was unloaded during stream generation. "
+                    "Returning error event."
+                )
+                yield f"data: {json.dumps({'type': 'error', 'message': 'FLUX.2 model was unloaded during generation. Please retry.'})}\n\n"
+            else:
+                logger.error(f"[FLUX.2] Stream generation failed: {e}")
+                traceback.print_exc()
+                yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
         except Exception as e:
             logger.error(f"[FLUX.2] Stream generation failed: {e}")
             traceback.print_exc()

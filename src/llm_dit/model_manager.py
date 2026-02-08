@@ -470,7 +470,40 @@ class ModelManager:
             mode="full",
         )
 
-    def _load_flux2(self) -> LoadResult:
+    def reload_flux2(self, model_name: str) -> LoadResult:
+        """Unload current FLUX.2 pipeline and reload with a different model.
+
+        Thread-safe: acquires the flux2 lock. Syncs srv.flux2_pipeline
+        after reload so server globals stay consistent.
+
+        Args:
+            model_name: The model variant to load (e.g., "klein-base-9b").
+
+        Returns:
+            LoadResult with newly loaded pipeline.
+        """
+        with self._locks["flux2"]:
+            # Unload current
+            self._unload_flux2()
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+            # Load with the requested model_name
+            self._loading_in_progress["flux2"] = True
+            try:
+                result = self._load_flux2(model_name_override=model_name)
+                return result
+            except Exception:
+                self._pipelines.pop("flux2", None)
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                raise
+            finally:
+                self._loading_in_progress["flux2"] = False
+
+    def _load_flux2(self, model_name_override: Optional[str] = None) -> LoadResult:
         """Load FLUX.2 Klein pipeline with 3-stage loading.
 
         Stage 1: Load encoder, offload to CPU with pinned memory
@@ -490,7 +523,7 @@ class ModelManager:
                 "Set flux2.model_path in config.toml"
             )
 
-        model_name = getattr(config, "flux2_model_name", "klein-9b")
+        model_name = model_name_override or getattr(config, "flux2_model_name", "klein-9b")
         block_offload = getattr(config, "flux2_block_offload", False)
         compile_transformer = getattr(config, "flux2_compile", False)
         compile_vae_flag = getattr(config, "flux2_compile_vae", False)

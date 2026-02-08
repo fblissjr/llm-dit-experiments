@@ -174,8 +174,24 @@ class LoRALoader:
 
                 # Fuse into base model
                 state_dict_base = module.state_dict()
+                base_weight = state_dict_base["weight"]
+
+                # Dequantize quantized tensors (e.g., torchao Float8Tensor)
+                # before LoRA merge. Float8Tensor.to(dtype=bf16) returns another
+                # Float8Tensor, and aten.add is not implemented for that type.
+                if type(base_weight) is not torch.Tensor:
+                    if hasattr(base_weight, "dequantize"):
+                        base_weight = base_weight.dequantize()
+                    else:
+                        base_weight = base_weight.float()
+                    logger.warning(
+                        f"Dequantized weight for LoRA merge on layer '{name}' "
+                        f"(was {type(state_dict_base['weight']).__name__}). "
+                        f"Quantization is lost for this layer."
+                    )
+
                 state_dict_base["weight"] = (
-                    state_dict_base["weight"].to(device=self.device, dtype=self.dtype) + weight_lora
+                    base_weight.to(device=self.device, dtype=self.dtype) + weight_lora
                 )
                 module.load_state_dict(state_dict_base)
                 updated_num += 1
