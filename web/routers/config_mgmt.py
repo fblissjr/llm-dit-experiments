@@ -57,7 +57,7 @@ async def get_pipeline_schemas(config: ConfigDep):
     if srv.pipeline is not None:
         loaded_pipeline = "zimage"
     elif srv.qwen_image_pipeline is not None:
-        loaded_pipeline = "qwenimage-layered"
+        loaded_pipeline = "qwenimage-edit"
     elif srv.qwen_image_t2i_pipeline is not None:
         loaded_pipeline = "qwenimage-t2i"
     elif srv.ltx2_pipeline is not None:
@@ -365,12 +365,12 @@ async def get_resolution_config(config: ConfigDep, model: Optional[str] = None):
     Presets are filtered based on the active model type.
 
     Args:
-        model: Optional model filter ("zimage", "qwenimage-layered", "qwenimage-t2i")
+        model: Optional model filter ("zimage", "qwenimage-edit", "qwenimage-t2i")
                If not provided, returns presets for all models.
 
     Model-specific constraints:
     - Z-Image: Flexible resolutions, must be divisible by 16
-    - Qwen-Image-Layered: Fixed 640x640 or 1024x1024 only
+    - Qwen-Image Edit: Fixed 640x640 or 1024x1024 only
     - Qwen-Image T2I: Default 1328x1328, flexible with VAE constraints
     """
     import web.server as srv
@@ -393,11 +393,11 @@ async def get_resolution_config(config: ConfigDep, model: Optional[str] = None):
             if isinstance(srv.pipeline, ZImagePipeline):
                 current_model = "zimage"
             elif isinstance(srv.pipeline, QwenImageDiffusersPipeline):
-                current_model = "qwenimage-layered"
+                current_model = "qwenimage-edit"
         if srv.qwen_image_t2i_pipeline is not None:
             current_model = "qwenimage-t2i"
         if srv.qwen_image_pipeline is not None and current_model is None:
-            current_model = "qwenimage-layered"
+            current_model = "qwenimage-edit"
 
     # DyPE configuration (Z-Image only)
     DYPE_BASE_RESOLUTION = 1024  # Z-Image training resolution
@@ -429,7 +429,7 @@ async def get_resolution_config(config: ConfigDep, model: Optional[str] = None):
             "supports_slg": True,
             "supports_fmtt": True,
         },
-        "qwenimage-layered": {
+        "qwenimage-edit": {
             "vae_multiple": 16,
             "min_resolution": 640,
             "max_resolution": 1024,
@@ -707,8 +707,8 @@ async def get_resolution_config(config: ConfigDep, model: Optional[str] = None):
         },
     ]
 
-    # Qwen-Image-Layered presets (FIXED: only 640 or 1024 square)
-    qwenimage_layered_presets = [
+    # Qwen-Image Edit presets (FIXED: only 640 or 1024 square)
+    qwenimage_edit_presets = [
         {
             "value": "640x640",
             "label": "640 (Fast)",
@@ -808,9 +808,9 @@ async def get_resolution_config(config: ConfigDep, model: Optional[str] = None):
     ]
 
     # Select presets based on model
-    if current_model == "qwenimage-layered":
-        presets = qwenimage_layered_presets
-        constraints = model_constraints["qwenimage-layered"]
+    if current_model == "qwenimage-edit":
+        presets = qwenimage_edit_presets
+        constraints = model_constraints["qwenimage-edit"]
     elif current_model == "qwenimage-t2i":
         presets = qwenimage_t2i_presets
         constraints = model_constraints["qwenimage-t2i"]

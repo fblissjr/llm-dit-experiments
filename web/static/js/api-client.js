@@ -315,20 +315,6 @@ const ApiClient = {
     // Qwen-Image
     // =========================================================================
 
-    async getQwenImageStatus() {
-        const response = await fetch(`${API_BASE}/api/qwen-image/status`);
-        return response.json();
-    },
-
-    async qwenImageDecompose(data) {
-        const response = await fetch(`${API_BASE}/api/qwen-image/decompose`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(data),
-        });
-        return response.json();
-    },
-
     async qwenImageEditLayer(data) {
         const response = await fetch(`${API_BASE}/api/qwen-image/edit-layer`, {
             method: 'POST',

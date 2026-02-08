@@ -1,14 +1,13 @@
 """
 Qwen-Image Pipeline Schemas
 
-last updated: 2026-01-25
+last updated: 2026-02-08
 
-Qwen-Image has three distinct variants:
+Qwen-Image has two distinct variants:
 - qwenimage-t2i: Text-to-image generation (40 steps, 1024 resolution)
 - qwenimage-edit: Image editing with instructions (25 steps, 640 resolution)
-- qwenimage-layered: Layer decomposition for compositing (50 steps, 640 resolution)
 
-All variants share the 60-layer DiT architecture with 2x2 latent packing.
+Both variants share the 60-layer DiT architecture with 2x2 latent packing.
 """
 
 from . import register_pipeline, PipelineSchema, ParamSchema
@@ -210,139 +209,6 @@ register_pipeline(PipelineSchema(
             step=1,
             group="basic",
             tooltip="Random seed. -1 for random.",
-        ),
-
-        # === Memory ===
-        ParamSchema(
-            id="quantization",
-            type="select",
-            label="Quantization",
-            default="none",
-            options=QUANTIZATION_OPTIONS,
-            group="optimization",
-            tooltip="Quantization for reduced VRAM.",
-        ),
-    ],
-))
-
-
-# === Qwen-Image Layered (Layer Decomposition) ===
-register_pipeline(PipelineSchema(
-    id="qwenimage-layered",
-    name="Qwen-Image Layers",
-    description="Decompose images into editable layers for compositing",
-    output_type="layers",
-    color="pink",
-    icon="🎭",
-    category="image",
-    supports_history=True,
-    supports_img2img=True,
-    endpoint="/api/qwen-image/decompose",
-    params=[
-        # === Basic Parameters ===
-        ParamSchema(
-            id="image",
-            type="image",
-            label="Input Image",
-            group="basic",
-            required=True,
-            tooltip="The image to decompose into layers.",
-        ),
-        ParamSchema(
-            id="prompt",
-            type="textarea",
-            label="Layer Description",
-            placeholder="Describe what layers to extract...",
-            rows=3,
-            group="basic",
-            required=True,
-            tooltip="Description guiding layer decomposition (e.g., 'foreground subject, background scenery').",
-        ),
-        ParamSchema(
-            id="layer_num",
-            type="slider",
-            label="Number of Layers",
-            default=4,
-            min=2,
-            max=8,
-            step=1,
-            group="basic",
-            tooltip="How many layers to decompose into.",
-        ),
-        ParamSchema(
-            id="resolution",
-            type="select",
-            label="Resolution",
-            default="640x640",
-            options=RESOLUTION_OPTIONS_640,
-            group="basic",
-            tooltip="Output resolution for layers.",
-        ),
-        ParamSchema(
-            id="steps",
-            type="slider",
-            label="Steps",
-            default=50,
-            min=20,
-            max=100,
-            step=5,
-            group="basic",
-            tooltip="Denoising steps. 50 is default for layer decomposition.",
-        ),
-        ParamSchema(
-            id="cfg_scale",
-            type="slider",
-            label="CFG Scale",
-            default=4.0,
-            min=1.0,
-            max=10.0,
-            step=0.5,
-            group="basic",
-            tooltip="Guidance strength.",
-        ),
-        ParamSchema(
-            id="seed",
-            type="number",
-            label="Seed",
-            default=-1,
-            min=-1,
-            max=2147483647,
-            step=1,
-            group="basic",
-            tooltip="Random seed. -1 for random.",
-        ),
-
-        # === Layer Editing (after decomposition) ===
-        ParamSchema(
-            id="edit_layer_index",
-            type="number",
-            label="Edit Layer Index",
-            default=0,
-            min=0,
-            max=7,
-            step=1,
-            group="advanced",
-            tooltip="Which layer to edit (0-indexed).",
-        ),
-        ParamSchema(
-            id="layer_edit_instruction",
-            type="textarea",
-            label="Layer Edit Instruction",
-            placeholder="How to modify this layer...",
-            rows=2,
-            group="advanced",
-            tooltip="Instruction for editing a specific layer.",
-        ),
-
-        # === Blending ===
-        ParamSchema(
-            id="blend_mode",
-            type="select",
-            label="Blend Mode",
-            default="normal",
-            options=["normal", "multiply", "screen", "overlay", "soft-light"],
-            group="advanced",
-            tooltip="How layers are composited together.",
         ),
 
         # === Memory ===

@@ -233,8 +233,6 @@ def get_vram_status() -> dict:
             "qwen_image_pipeline": qwen_image_pipeline is not None,
             "qwen_image_edit": qwen_image_pipeline is not None
             and getattr(qwen_image_pipeline, "edit_pipe", None) is not None,
-            "qwen_image_decompose": qwen_image_pipeline is not None
-            and getattr(qwen_image_pipeline, "decompose_pipe", None) is not None,
             "qwen_image_t2i_pipeline": qwen_image_t2i_pipeline is not None,
             "ltx2_pipeline": ltx2_pipeline is not None,
             "flux2_pipeline": flux2_pipeline is not None,

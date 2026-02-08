@@ -5,6 +5,31 @@ last updated: 2026-02-08
 All notable changes to this project will be documented in this file.
 Uses [Semantic Versioning](https://semver.org/).
 
+## 0.8.6
+
+### fixed
+- LoRA post-fusion OOM: re-quantizes affected layers to fp8 after LoRA merge, reclaiming ~8GB VRAM on persistent models
+- LoRA spec format mismatch: filters out empty-path LoRA entries from frontend before comparison
+- FLUX.2 block_offload default: schema default changed from `true` to `false` to match `config.toml`
+
+### added
+- `log_prompts` config option: toggle prompt text logging (default: true) via `[logging]` section
+- `log_generation_params` now actually gated in generation routers (was defined but never checked)
+- HTTPS support for frontend-v2 dev server via `VITE_BACKEND_URL`, `VITE_SSL_CERT`, `VITE_SSL_KEY` env vars
+- `.env.example` in `web/frontend-v2/` documenting HTTPS env vars
+
+### removed
+- Qwen-Image-Layered pipeline: all decomposition code, endpoints, schemas, tests, and docs deleted (~15 files modified/removed)
+- `/api/qwen-image/decompose` endpoint
+- `/api/qwen-image/status` and `/api/qwen-image/config` endpoints
+- `QwenImagePipeline` (legacy pure-Python layered pipeline)
+- `QwenImageDecomposeRequest` schema
+- `qwenimage-layered` model type from CLI, config, and model manager
+
+### changed
+- README.md: updated pipeline table, added HTTPS setup section, removed Qwen-Image-Layered docs link
+- CLAUDE.md: updated to v0.8.6, added DRY Configuration Principles section, HTTPS nav link
+
 ## 0.8.5
 
 ### fixed

@@ -65,37 +65,46 @@ export function LoRAList({ param, value, onChange, disabled = false }: LoRAListP
   // Parse all specs into structured form for editing
   const items = (value || []).map(parseLoraSpec);
 
+  // Convert items to spec strings, filtering out entries with no path selected
+  const toSpecs = useCallback(
+    (list: { path: string; scale: number }[]) =>
+      list.filter((item) => item.path !== '').map((item) => formatLoraSpec(item.path, item.scale)),
+    []
+  );
+
   const handlePathChange = useCallback(
     (index: number, newPath: string) => {
       const newItems = [...items];
       newItems[index] = { ...newItems[index], path: newPath };
-      onChange(newItems.map((item) => formatLoraSpec(item.path, item.scale)));
+      onChange(toSpecs(newItems));
     },
-    [items, onChange]
+    [items, onChange, toSpecs]
   );
 
   const handleScaleChange = useCallback(
     (index: number, newScale: number) => {
       const newItems = [...items];
       newItems[index] = { ...newItems[index], scale: newScale };
-      onChange(newItems.map((item) => formatLoraSpec(item.path, item.scale)));
+      onChange(toSpecs(newItems));
     },
-    [items, onChange]
+    [items, onChange, toSpecs]
   );
 
   const handleRemove = useCallback(
     (index: number) => {
       const newItems = items.filter((_, i) => i !== index);
-      onChange(newItems.map((item) => formatLoraSpec(item.path, item.scale)));
+      onChange(toSpecs(newItems));
     },
-    [items, onChange]
+    [items, onChange, toSpecs]
   );
 
   const handleAdd = useCallback(() => {
     if (items.length >= maxCount) return;
+    // Add empty-path entry for UI display; toSpecs filters it from the
+    // API payload until a path is selected
     const newItems = [...items, { path: '', scale: 0.8 }];
-    onChange(newItems.map((item) => formatLoraSpec(item.path, item.scale)));
-  }, [items, maxCount, onChange]);
+    onChange(toSpecs(newItems));
+  }, [items, maxCount, onChange, toSpecs]);
 
   // Get LoRAs that aren't already selected
   const availableForSelection = availableLoras.filter(

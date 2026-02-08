@@ -216,10 +216,11 @@ async def encode(request: EncodeRequest):
         formatted_prompt = None
         if output.formatted_prompts:
             formatted_prompt = output.formatted_prompts[0]
-            logger.info(f"Formatted prompt ({len(formatted_prompt)} chars, {token_count} tokens):")
-            logger.info(f"---BEGIN FORMATTED PROMPT---")
-            logger.info(formatted_prompt)
-            logger.info(f"---END FORMATTED PROMPT---")
+            if srv.runtime_config.logging.log_prompts:
+                logger.info(f"Formatted prompt ({len(formatted_prompt)} chars, {token_count} tokens):")
+                logger.info(f"---BEGIN FORMATTED PROMPT---")
+                logger.info(formatted_prompt)
+                logger.info(f"---END FORMATTED PROMPT---")
 
         return {
             "shape": list(embeddings.shape),
@@ -260,19 +261,21 @@ async def generate(request: GenerateRequest):
         logger.info("=" * 60)
         logger.info("GENERATION REQUEST")
         logger.info("=" * 60)
-        logger.info(f"  Prompt: {request.prompt[:80]}...")
-        if request.negative_prompt:
-            logger.info(f"  Negative: {request.negative_prompt[:80]}...")
-        logger.info(f"  Size: {request.width}x{request.height}")
-        logger.info(f"  Steps: {request.steps}")
-        logger.info(f"  Seed: {request.seed}")
-        logger.info(f"  Template: {request.template}")
-        logger.info(f"  Force think block: {request.force_think_block}")
-        logger.info(f"  Guidance: {request.guidance_scale}")
-        logger.info(f"  Long prompt mode: {request.long_prompt_mode}")
-        logger.info(f"  Hidden layer: {request.hidden_layer}")
-        if request.layer_weights:
-            logger.info(f"  Layer weights: {request.layer_weights}")
+        if srv.runtime_config.logging.log_prompts:
+            logger.info(f"  Prompt: {request.prompt[:80]}...")
+            if request.negative_prompt:
+                logger.info(f"  Negative: {request.negative_prompt[:80]}...")
+        if srv.runtime_config.logging.log_generation_params:
+            logger.info(f"  Size: {request.width}x{request.height}")
+            logger.info(f"  Steps: {request.steps}")
+            logger.info(f"  Seed: {request.seed}")
+            logger.info(f"  Template: {request.template}")
+            logger.info(f"  Force think block: {request.force_think_block}")
+            logger.info(f"  Guidance: {request.guidance_scale}")
+            logger.info(f"  Long prompt mode: {request.long_prompt_mode}")
+            logger.info(f"  Hidden layer: {request.hidden_layer}")
+            if request.layer_weights:
+                logger.info(f"  Layer weights: {request.layer_weights}")
         logger.info("-" * 60)
         logger.info("Pipeline state:")
         logger.info(f"  pipeline.device: {srv.pipeline.device}")
@@ -354,7 +357,7 @@ async def generate(request: GenerateRequest):
         logger.info(
             f"Calling pipeline() with long_prompt_mode={request.long_prompt_mode}, hidden_layer={request.hidden_layer}..."
         )
-        if negative_prompt_to_use:
+        if negative_prompt_to_use and srv.runtime_config.logging.log_prompts:
             neg_display = negative_prompt_to_use[:60] + "..." if len(negative_prompt_to_use) > 60 else negative_prompt_to_use
             logger.info(f"  Negative prompt: {neg_display}")
         if slg_scale > 0 and slg_layers:
@@ -645,13 +648,15 @@ async def generate_stream(request: GenerateRequest):
             logger.info("=" * 60)
             logger.info("STREAMING GENERATION REQUEST")
             logger.info("=" * 60)
-            logger.info(f"  Prompt: {request.prompt[:80]}...")
-            if negative_prompt_to_use:
-                neg_display = negative_prompt_to_use[:60] + "..." if len(negative_prompt_to_use) > 60 else negative_prompt_to_use
-                logger.info(f"  Negative: {neg_display}")
-            logger.info(f"  Size: {request.width}x{request.height}")
-            logger.info(f"  Steps: {request.steps}")
-            logger.info(f"  Seed: {actual_seed}")
+            if srv.runtime_config.logging.log_prompts:
+                logger.info(f"  Prompt: {request.prompt[:80]}...")
+                if negative_prompt_to_use:
+                    neg_display = negative_prompt_to_use[:60] + "..." if len(negative_prompt_to_use) > 60 else negative_prompt_to_use
+                    logger.info(f"  Negative: {neg_display}")
+            if srv.runtime_config.logging.log_generation_params:
+                logger.info(f"  Size: {request.width}x{request.height}")
+                logger.info(f"  Steps: {request.steps}")
+                logger.info(f"  Seed: {actual_seed}")
 
             # Run generation in thread pool (blocking operation)
             loop = asyncio.get_event_loop()
@@ -806,10 +811,12 @@ async def img2img(request: Img2ImgRequest):
         logger.info("=" * 60)
         logger.info("IMG2IMG REQUEST")
         logger.info("=" * 60)
-        logger.info(f"  Prompt: {request.prompt[:80]}...")
-        logger.info(f"  Strength: {request.strength}")
-        logger.info(f"  Has mask: {request.mask_image is not None}")
-        logger.info(f"  Steps: {request.steps}")
+        if srv.runtime_config.logging.log_prompts:
+            logger.info(f"  Prompt: {request.prompt[:80]}...")
+        if srv.runtime_config.logging.log_generation_params:
+            logger.info(f"  Strength: {request.strength}")
+            logger.info(f"  Has mask: {request.mask_image is not None}")
+            logger.info(f"  Steps: {request.steps}")
         logger.info(f"  Seed: {request.seed}")
         logger.info("-" * 60)
 

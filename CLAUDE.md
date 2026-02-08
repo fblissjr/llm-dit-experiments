@@ -1,4 +1,4 @@
-# agent context (v0.8.5)
+# agent context (v0.8.6)
 
 *last updated: 2026-02-08*
 
@@ -53,6 +53,14 @@ Config values ALWAYS win. Code should:
 - **RuntimeConfig is in config.py** (cli.py re-exports it)
 - **Check these BEFORE adding new fields** - they may already exist!
 - Adding a new config parameter: only **2 touchpoints** (dataclass field + config.toml). Validate with `tests/unit/test_dry_config.py`.
+- Key CLI flags: `--hidden-layer` (encoder hidden state extraction, default -2), `--model-type`, `--config`
+
+### DRY Configuration Principles
+
+Every parameter should have exactly one source of truth. The chain is:
+`config.toml` -> `Config` dataclasses -> `RuntimeConfig` (composed) -> backend configs
+
+When adding a new parameter, only 2 files need changes: the dataclass in `config.py` + `config.toml`. The DRY consistency test (`test_dry_config.py`) validates that all layers stay in sync.
 
 ## navigation by task
 
@@ -68,6 +76,7 @@ Config values ALWAYS win. Code should:
 | **Debugging** | [lessons_learned.md](internal/state/lessons_learned.md) |
 | **Agent workflows** | [claude_workflow.md](internal/principles/claude_workflow.md) |
 | **Quantization** | [quantization.md](docs/reference/quantization.md) |
+| **HTTPS setup** | [README.md](README.md#https-setup) |
 | **Model-specific docs** | See quickstarts below |
 
 ## feature implementation workflow

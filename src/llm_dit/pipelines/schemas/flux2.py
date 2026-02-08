@@ -195,7 +195,7 @@ register_pipeline(PipelineSchema(
             id="block_offload",
             type="checkbox",
             label="Block Offload",
-            default=True,
+            default=False,
             group="optimization",
             tooltip="Enable block-by-block CPU offloading for low VRAM systems.",
         ),

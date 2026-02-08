@@ -183,7 +183,6 @@ tile_overlap_spatial = 32
 # model_path = "/path/to/Qwen-Image-2512"
 cpu_offload = true
 cfg_scale = 4.0
-layer_num = 4
 quantize_text_encoder = "none"
 quantize_transformer = "none"
 

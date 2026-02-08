@@ -230,6 +230,7 @@ class LoRALoader:
             Number of layers updated
         """
         updated_num = 0
+        dequantized_modules: list[nn.Module] = []
         state_dict = self.convert_state_dict(state_dict)
 
         # Get unique layer names
@@ -281,18 +282,27 @@ class LoRALoader:
                         merged_weight,
                         requires_grad=module.weight.requires_grad,
                     )
-                    if updated_num == 0:
-                        logger.warning(
-                            f"LoRA merge on quantized weights: dequantizing "
-                            f"from {type(state_dict_base['weight']).__name__} "
-                            f"to {merged_weight.dtype}. Quantization is lost "
-                            f"for all LoRA-affected layers."
-                        )
+                    dequantized_modules.append(module)
                 else:
                     state_dict_base["weight"] = merged_weight
                     module.load_state_dict(state_dict_base)
 
                 updated_num += 1
+
+        # Re-quantize dequantized layers to reclaim VRAM.
+        # Without this, fused layers stay at bf16 (~17GB for the whole
+        # transformer) instead of fp8 (~9GB), causing OOM on the next
+        # request when the encoder shuttle needs GPU space.
+        if dequantized_modules:
+            from torchao.quantization import float8_weight_only, quantize_
+
+            logger.info(
+                f"Re-quantizing {len(dequantized_modules)} LoRA-affected "
+                f"layers to restore fp8..."
+            )
+            for mod in dequantized_modules:
+                quantize_(mod, float8_weight_only())
+            logger.info("Re-quantization complete, VRAM reclaimed")
 
         logger.info(f"Fused {updated_num} LoRA layers (alpha={alpha})")
         return updated_num

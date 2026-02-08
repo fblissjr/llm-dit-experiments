@@ -4,13 +4,14 @@ PyTorch and Diffusers-based experimentation platform for LLM-DiT image and video
 
 ## Pipelines
 
-| Pipeline | Task | Encoder | Steps | Notes |
-|----------|------|---------|-------|-------|
-| FLUX.2 Klein | text-to-image, image editing | Qwen3-8B/4B (12288/7680 dim) | 4 | Distilled, multi-layer extraction, configurable text encoding |
-| Z-Image | text-to-image, img2img | Qwen3-4B (2560 dim) | 8-9 | CFG=0 baked, 1504 token limit |
-| LTX-2 | text-to-video | Gemma3-12B (3840 dim) | 15-40 | Pure PyTorch impl, FP8 quantization |
-| Qwen-Image-Layered | image decomposition | Qwen2.5-VL-7B (3584 dim) | 50 | Fixed 640/1024 res, outputs RGBA layers |
-| Wan Video | text-to-video | UMT5-XXL | 50 | Phase 1 integration |
+| Pipeline | Task | Encoder | Notes |
+|----------|------|---------|-------|
+| FLUX.2 Klein | text-to-image, image editing | Qwen3-8B/4B | Distilled, multi-layer extraction, LoRA support |
+| Z-Image | text-to-image, img2img | Qwen3-4B | CFG=0 baked, 1504 token limit |
+| LTX-2 | text-to-video | Gemma3-12B | Pure PyTorch, FP8 quantization |
+| Qwen-Image-2512 | text-to-image | Qwen2.5-VL-7B | 39GB transformer, requires fp8 on 24GB |
+| Qwen-Image-Edit-2511 | image editing, multi-image | Qwen2.5-VL-7B | Multi-image composition, instruction editing |
+
 
 ## Architecture
 
@@ -107,6 +108,22 @@ ssl_keyfile = "/path/to/key.pem"
 
 See [config.toml.example](config.toml.example) for all options.
 
+## HTTPS Setup
+
+### Self-signed cert (local dev)
+
+```bash
+openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 365 -nodes -subj '/CN=localhost'
+
+# Backend
+uv run web/server.py --config config.toml --ssl-certfile cert.pem --ssl-keyfile key.pem
+
+# Frontend dev server
+VITE_BACKEND_URL=https://localhost:7860 VITE_SSL_CERT=cert.pem VITE_SSL_KEY=key.pem npm run dev
+```
+
+For production, use certificates from a real CA (Let's Encrypt, etc.).
+
 ## API
 
 | Endpoint | Method | Description |
@@ -114,7 +131,9 @@ See [config.toml.example](config.toml.example) for all options.
 | `/api/generate` | POST | Z-Image generation |
 | `/api/flux2/generate` | POST | FLUX.2 generation (text-to-image, editing) |
 | `/api/ltx2/generate/stream` | POST | LTX-2 video generation (streaming) |
-| `/api/qwen-image/decompose` | POST | Image decomposition to RGBA layers |
+| `/api/qwen-image/edit-layer` | POST | Single image editing with instructions |
+| `/api/qwen-image/edit-multi` | POST | Multi-image composition |
+| `/api/qwen-image-2512/generate` | POST | Qwen-Image T2I generation |
 | `/api/models/{id}/load` | POST | Load pipeline by ID |
 | `/api/models/{id}/unload` | POST | Unload pipeline by ID |
 | `/api/loras` | GET | List available LoRAs |
@@ -135,7 +154,6 @@ See [experiments/README.md](experiments/README.md).
 **Models**:
 - [Z-Image](docs/models/z_image.md) - performance tuning, device placement
 - [LTX-2](docs/models/ltx2.md) - video generation with pure PyTorch pipeline
-- [Qwen-Image-Layered](docs/models/qwen_image_layered.md) - decomposition details
 
 **Guides**:
 - [Config Management](docs/guides/config_management.md) - web UI config editing

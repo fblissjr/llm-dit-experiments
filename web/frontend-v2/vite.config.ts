@@ -1,6 +1,11 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { resolve } from 'path'
+import fs from 'fs'
+
+const backendUrl = process.env.VITE_BACKEND_URL || 'http://localhost:7860'
+const sslCert = process.env.VITE_SSL_CERT
+const sslKey = process.env.VITE_SSL_KEY
 
 export default defineConfig({
   plugins: [react()],
@@ -12,10 +17,14 @@ export default defineConfig({
   server: {
     port: 5175,
     host: true,
+    https: sslCert && sslKey
+      ? { cert: fs.readFileSync(sslCert), key: fs.readFileSync(sslKey) }
+      : undefined,
     proxy: {
       '/api': {
-        target: 'http://localhost:7860',
+        target: backendUrl,
         changeOrigin: true,
+        secure: false,
         // Required for SSE streaming - don't buffer the response
         configure: (proxy) => {
           proxy.on('proxyRes', (proxyRes) => {
@@ -29,8 +38,9 @@ export default defineConfig({
         },
       },
       '/outputs': {
-        target: 'http://localhost:7860',
+        target: backendUrl,
         changeOrigin: true,
+        secure: false,
       },
     },
   },

@@ -54,6 +54,9 @@ def _ensure_correct_model(
         needs_reload = True
 
     # Check LoRA mismatch on the persistent transformer
+    # Filter out empty-path specs (e.g., ":0.80" from unselected UI slots)
+    if requested_loras:
+        requested_loras = [s for s in requested_loras if not s.startswith(":")]
     if not needs_reload and requested_loras:
         from llm_dit.utils.lora import get_fused_state, parse_lora_spec
 

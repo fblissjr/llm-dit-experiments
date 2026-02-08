@@ -673,7 +673,6 @@ class QwenImageConfig:
     # Generation settings
     num_inference_steps: int = 25  # Denoising steps for Edit-2511
     cfg_scale: float = 4.0  # Classifier-free guidance scale
-    layer_num: int = 4  # Number of decomposition layers (outputs layer_num+1 images)
 
     # Resolution (only 640 or 1024 supported)
     resolution: int = 1024  # Base resolution (enforced to 640 or 1024)
@@ -700,15 +699,6 @@ class QwenImageConfig:
             else:
                 return "cpu"
         return self.device
-
-    def validate_resolution(self) -> None:
-        """Validate and enforce supported resolutions."""
-        if self.resolution not in (640, 1024):
-            raise ValueError(
-                f"Qwen-Image-Layered only supports resolutions 640 or 1024, "
-                f"got {self.resolution}. The model was trained on these specific "
-                f"resolutions and other values may produce poor results."
-            )
 
     def validate_quantization(self) -> None:
         """Validate quantization settings and check hardware compatibility."""
@@ -1233,6 +1223,7 @@ class LoggingConfig:
     backup_count: int = 5  # Rotated log files to keep
     log_requests: bool = True  # Log API request/response metadata
     log_generation_params: bool = True  # Log generation parameters
+    log_prompts: bool = True  # Log prompt text in generation requests
 
 
 @dataclass
@@ -1270,7 +1261,7 @@ class RuntimeConfig:
 
     # Top-level settings (not pipeline-specific)
     default_pipeline: str = "none"  # none, z-image, qwen-image, flux2, ltx2
-    model_type: str = "zimage"  # zimage, qwenimage-layered, qwenimage-t2i, qwenimage-edit, ltx2, wan
+    model_type: str = "zimage"  # zimage, qwenimage-t2i, qwenimage-edit, ltx2, wan
     model_path: str = ""  # Z-Image model path (legacy, prefer zimage.model_path)
     text_encoder_path: str | None = None
     templates_dir: str | None = None
@@ -1516,10 +1507,6 @@ class RuntimeConfig:
     @property
     def qwen_image_cpu_offload(self) -> bool:
         return self.qwen_image.cpu_offload
-
-    @property
-    def qwen_image_layer_num(self) -> int:
-        return self.qwen_image.layer_num
 
     @property
     def qwen_image_cfg_scale(self) -> float:
@@ -1994,12 +1981,6 @@ class RuntimeConfig:
                 "quantize_transformer": "fp8-dynamic",
                 "guidance_scale": 4.0,
             },
-            "qwenimage-layered": {
-                "steps": 50,
-                "resolution": 640,
-                "quantize_transformer": "fp8-dynamic",
-                "guidance_scale": 4.0,
-            },
         }
         return defaults.get(self.model_type, {})
 
@@ -2359,7 +2340,6 @@ class Config:
                 "num_blocks_per_group": self.qwen_image.num_blocks_per_group,
                 "num_inference_steps": self.qwen_image.num_inference_steps,
                 "cfg_scale": self.qwen_image.cfg_scale,
-                "layer_num": self.qwen_image.layer_num,
                 "resolution": self.qwen_image.resolution,
                 "shift": self.qwen_image.shift,
             },

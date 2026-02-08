@@ -24,7 +24,7 @@ from typing import Literal, get_args
 from .config import Config, RuntimeConfig
 
 # Supported model types
-ModelType = Literal["zimage", "qwenimage-layered", "qwenimage-t2i", "qwenimage-edit", "ltx2", "wan", "flux2"]
+ModelType = Literal["zimage", "qwenimage-t2i", "qwenimage-edit", "ltx2", "wan", "flux2"]
 SUPPORTED_MODEL_TYPES: tuple[str, ...] = get_args(ModelType)
 
 logger = logging.getLogger(__name__)
@@ -138,7 +138,7 @@ def create_base_parser(
         type=str,
         choices=list(SUPPORTED_MODEL_TYPES),
         default=None,
-        help="Model type: zimage, qwenimage-layered, qwenimage-t2i, qwenimage-edit, ltx2, wan. Default: zimage",
+        help="Model type: zimage, qwenimage-t2i, qwenimage-edit, ltx2, wan, flux2. Default: zimage",
     )
     model_group.add_argument(
         "--model-path",
@@ -191,16 +191,10 @@ def create_base_parser(
         help="Enable CPU offload for Qwen-Image (required for RTX 4090)",
     )
     qwen_group.add_argument(
-        "--qwen-image-layers",
-        type=int,
-        default=None,
-        help="Number of decomposition layers (layered variant only, default: 4)",
-    )
-    qwen_group.add_argument(
         "--qwen-image-steps",
         type=int,
         default=None,
-        help="Diffusion steps (variant default: t2i=40, edit=25, layered=50)",
+        help="Diffusion steps (variant default: t2i=40, edit=25)",
     )
     qwen_group.add_argument(
         "--qwen-image-cfg-scale",

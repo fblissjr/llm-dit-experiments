@@ -245,7 +245,6 @@ class TestCLIToRuntimeConfig:
             "torch_dtype",  # Legacy dtype flag, maps to config.encoder.dtype
             # CLI names that intentionally differ from sub-config field names
             # (wired correctly in _apply_cli_overrides)
-            "qwen_image_layers",  # -> config.qwen_image.layer_num
             "template",  # -> config.generation.default_template
             "text_encoder_device",  # -> config.encoder.device
         }

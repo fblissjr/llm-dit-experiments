@@ -152,19 +152,6 @@ class RewriteRequest(BaseModel):
     image: Optional[str] = None  # Base64-encoded image (for API VL models)
 
 
-class QwenImageDecomposeRequest(BaseModel):
-    """Request for Qwen-Image-Layered decomposition."""
-
-    image: str  # Base64-encoded input image
-    prompt: str  # Text description of the image
-    layer_num: int = 3  # Number of decomposition layers
-    resolution: int = 1024  # 640 or 1024 only
-    steps: int = 30  # Number of inference steps
-    cfg_scale: float = 4.0  # Classifier-free guidance scale
-    seed: Optional[int] = None  # Random seed
-    shift: Optional[float] = None  # Scheduler shift (auto if None)
-
-
 class QwenImageEditLayerRequest(BaseModel):
     """Request for Qwen-Image layer editing (single image)."""
 

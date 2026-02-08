@@ -474,7 +474,7 @@ async def get_model_status(pipeline_id: str, config: ConfigDep, manager: Manager
                 {"name": "vae", "vramMB": 500},
             ]
             total_vram_mb = sum(c["vramMB"] for c in components)
-    elif pid in ("qwenimage-layered", "qwenimage-edit"):
+    elif pid == "qwenimage-edit":
         loaded = srv.qwen_image_pipeline is not None
     elif pid == "qwenimage-t2i":
         loaded = srv.qwen_image_t2i_pipeline is not None
@@ -598,7 +598,6 @@ async def list_loras_for_pipeline(pipeline_id: str, config: ConfigDep):
 PIPELINE_LOADERS.update({
     "zimage": vram_load_zimage,
     "z-image": vram_load_zimage,
-    "qwenimage-layered": vram_load_qwen_image,
     "qwenimage-edit": vram_load_qwen_image,
     "qwenimage-t2i": vram_load_qwen_image_t2i,
     "ltx2": vram_load_ltx2,
@@ -608,7 +607,6 @@ PIPELINE_LOADERS.update({
 PIPELINE_UNLOADERS.update({
     "zimage": vram_unload_zimage,
     "z-image": vram_unload_zimage,
-    "qwenimage-layered": vram_unload_qwen_image,
     "qwenimage-edit": vram_unload_qwen_image,
     "qwenimage-t2i": vram_unload_qwen_image_t2i,
     "ltx2": vram_unload_ltx2,

@@ -1,11 +1,10 @@
-"""Qwen-Image endpoints: decompose, edit, multi-edit, and text-to-image generation."""
+"""Qwen-Image endpoints: edit, multi-edit, and text-to-image generation."""
 
 import base64
 import io
 import logging
 import time
 import traceback
-import zipfile
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
@@ -15,7 +14,6 @@ import web.server as srv
 from web.dependencies import ConfigDep
 from web.schemas import (
     QwenImage2512GenerateRequest,
-    QwenImageDecomposeRequest,
     QwenImageEditLayerRequest,
     QwenImageEditMultiRequest,
 )
@@ -28,196 +26,8 @@ MAX_HISTORY = 50
 
 
 # =============================================================================
-# Qwen-Image Layered/Edit Endpoints
+# Qwen-Image Edit Endpoints
 # =============================================================================
-
-
-@router.get("/api/qwen-image/status")
-async def qwen_image_status(config: ConfigDep):
-    """Check Qwen-Image model status and configuration."""
-    # Check for either layered model or edit-only model
-    edit_only = getattr(config, "qwen_image_edit_only", False)
-    has_layered = bool(config.qwen_image_model_path)
-    has_edit = bool(getattr(config, "qwen_image_edit_model_path", ""))
-    configured = has_layered or (edit_only and has_edit)
-    loaded = srv.qwen_image_pipeline is not None
-
-    # Determine which model path to show
-    if edit_only and has_edit:
-        model_path = config.qwen_image_edit_model_path
-    else:
-        model_path = config.qwen_image_model_path
-
-    return {
-        "available": loaded,
-        "configured": configured,
-        "edit_only": edit_only,
-        "model_path": model_path if configured else None,
-        "default_layer_num": config.qwen_image_layer_num if configured else 3,
-        "default_cfg_scale": config.qwen_image_cfg_scale if configured else 4.0,
-        "default_resolution": config.qwen_image_resolution if configured else 1024,
-        "supported_resolutions": [640, 1024],
-    }
-
-
-@router.get("/api/qwen-image/config")
-async def qwen_image_config(config: ConfigDep):
-    """Get Qwen-Image default parameters from server config."""
-    return {
-        "layer_num": config.qwen_image_layer_num,
-        "cfg_scale": config.qwen_image_cfg_scale,
-        "resolution": config.qwen_image_resolution,
-        "steps": config.steps,  # Shared step count
-    }
-
-
-@router.post("/api/qwen-image/decompose")
-async def qwen_image_decompose(request: QwenImageDecomposeRequest, config: ConfigDep):
-    """Decompose an image into multiple RGBA layers.
-
-    Returns a ZIP file containing:
-    - composite.png: The original/reconstructed composite
-    - layer_1.png through layer_N.png: Decomposed RGBA layers
-
-    The layers can be composited back together to recreate the original image.
-    """
-    # Check if pipeline is loaded
-    if srv.qwen_image_pipeline is None:
-        # Try to load on-demand if configured
-        if config.qwen_image_model_path:
-            logger.info("[Qwen-Image] Loading diffusers pipeline on-demand...")
-            try:
-                from llm_dit.pipelines.qwen_image_diffusers import QwenImageDiffusersPipeline
-
-                srv.qwen_image_pipeline = QwenImageDiffusersPipeline.from_pretrained(
-                    config.qwen_image_model_path,
-                    edit_model_path=config.qwen_image_edit_model_path or None,
-                    cpu_offload=True,
-                    load_edit_model=False,  # Lazy load on first edit
-                )
-                logger.info("[Qwen-Image] Diffusers pipeline loaded successfully")
-            except Exception as e:
-                logger.error(f"[Qwen-Image] Failed to load pipeline: {e}")
-                raise HTTPException(
-                    status_code=503, detail=f"Failed to load Qwen-Image pipeline: {e}"
-                )
-        else:
-            raise HTTPException(
-                status_code=503,
-                detail="Qwen-Image pipeline not loaded. Configure qwen_image.model_path in config.",
-            )
-
-    # Validate resolution
-    if request.resolution not in (640, 1024):
-        raise HTTPException(
-            status_code=400, detail=f"Resolution must be 640 or 1024. Got: {request.resolution}"
-        )
-
-    try:
-        # Decode base64 image
-        image_data = request.image
-        if image_data.startswith("data:"):
-            image_data = image_data.split(",", 1)[1]
-        image_bytes = base64.b64decode(image_data)
-        input_image = Image.open(io.BytesIO(image_bytes)).convert("RGBA")
-
-        logger.info("=" * 60)
-        logger.info("QWEN-IMAGE DECOMPOSITION REQUEST")
-        logger.info("=" * 60)
-        logger.info(f"  Input size: {input_image.size}")
-        logger.info(f"  Prompt: {request.prompt[:80]}...")
-        logger.info(f"  Resolution: {request.resolution}x{request.resolution}")
-        logger.info(f"  Layers: {request.layer_num}")
-        logger.info(f"  CFG Scale: {request.cfg_scale}")
-        logger.info(f"  Steps: {request.steps}")
-        logger.info(f"  Seed: {request.seed}")
-
-        start = time.time()
-
-        # Run decomposition (QwenImageDiffusersPipeline uses resolution param)
-        layers = srv.qwen_image_pipeline.decompose(
-            image=input_image,
-            prompt=request.prompt,
-            layer_num=request.layer_num,
-            resolution=request.resolution,
-            num_inference_steps=request.steps,
-            cfg_scale=request.cfg_scale,
-            seed=request.seed,
-        )
-
-        gen_time = time.time() - start
-        logger.info(f"[Qwen-Image] Generated {len(layers)} layers in {gen_time:.1f}s")
-        logger.info("=" * 60)
-
-        # Convert layers to base64 for JSON response
-        layer_data = []
-        for i, layer_img in enumerate(layers):
-            layer_bytes = io.BytesIO()
-            layer_img.save(layer_bytes, format="PNG")
-            layer_b64 = base64.b64encode(layer_bytes.getvalue()).decode("ascii")
-
-            if i == 0:
-                layer_name = "Composite"
-            else:
-                layer_name = f"Layer {i}"
-
-            layer_data.append(
-                {
-                    "name": layer_name,
-                    "image": f"data:image/png;base64,{layer_b64}",
-                    "index": i,
-                }
-            )
-
-        # Create ZIP file for download
-        zip_buffer = io.BytesIO()
-        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-            for i, layer_img in enumerate(layers):
-                layer_bytes = io.BytesIO()
-                layer_img.save(layer_bytes, format="PNG")
-                layer_bytes.seek(0)
-
-                if i == 0:
-                    zip_name = "composite.png"
-                else:
-                    zip_name = f"layer_{i}.png"
-
-                zf.writestr(zip_name, layer_bytes.getvalue())
-
-        zip_buffer.seek(0)
-        zip_b64 = base64.b64encode(zip_buffer.getvalue()).decode("ascii")
-
-        # Store in history
-        history_entry = {
-            "id": len(srv.generation_history),
-            "timestamp": time.time(),
-            "model_type": "qwenimage-layered",
-            "prompt": request.prompt,
-            "resolution": request.resolution,
-            "layer_num": request.layer_num,
-            "cfg_scale": request.cfg_scale,
-            "steps": request.steps,
-            "seed": request.seed,
-            "gen_time": gen_time,
-            "image_b64": layer_data[0]["image"].split(",")[1] if layer_data else "",
-        }
-        srv.generation_history.insert(0, history_entry)
-        if len(srv.generation_history) > MAX_HISTORY:
-            srv.generation_history.pop()
-
-        return {
-            "layers": layer_data,
-            "zip_data": zip_b64,
-            "generation_time": gen_time,
-            "layer_count": len(layers),
-            "seed": request.seed,
-            "resolution": request.resolution,
-        }
-
-    except Exception as e:
-        logger.error(f"[Qwen-Image] Decomposition failed: {e}")
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/api/qwen-image/edit-layer")
@@ -579,11 +389,13 @@ async def qwen_image_2512_generate(request: QwenImage2512GenerateRequest, config
         logger.info("=" * 60)
         logger.info("QWEN-IMAGE T2I GENERATION REQUEST")
         logger.info("=" * 60)
-        logger.info(f"  Prompt: {request.prompt[:80]}...")
-        logger.info(f"  Size: {request.width}x{request.height}")
-        logger.info(f"  Steps: {request.steps}")
-        logger.info(f"  CFG Scale: {request.cfg_scale}")
-        logger.info(f"  Seed: {request.seed}")
+        if srv.runtime_config.logging.log_prompts:
+            logger.info(f"  Prompt: {request.prompt[:80]}...")
+        if srv.runtime_config.logging.log_generation_params:
+            logger.info(f"  Size: {request.width}x{request.height}")
+            logger.info(f"  Steps: {request.steps}")
+            logger.info(f"  CFG Scale: {request.cfg_scale}")
+            logger.info(f"  Seed: {request.seed}")
         logger.info("=" * 60)
 
         start = time.time()

@@ -49,7 +49,6 @@ PIPELINE_IDS = {"zimage", "flux2", "ltx2", "qwen_image", "qwen_image_t2i", "wan"
 PIPELINE_ALIASES = {
     "z-image": "zimage",
     "qwen-image": "qwen_image",
-    "qwenimage-layered": "qwen_image",
     "qwenimage-edit": "qwen_image",
     "qwenimage-t2i": "qwen_image_t2i",
     "qwen-image-t2i": "qwen_image_t2i",
@@ -369,10 +368,6 @@ class ModelManager:
                 "qwen_image_edit": (
                     self.is_loaded("qwen_image")
                     and getattr(self._pipelines.get("qwen_image"), "edit_pipe", None) is not None
-                ),
-                "qwen_image_decompose": (
-                    self.is_loaded("qwen_image")
-                    and getattr(self._pipelines.get("qwen_image"), "decompose_pipe", None) is not None
                 ),
                 "qwen_image_t2i_pipeline": self.is_loaded("qwen_image_t2i"),
                 "ltx2_pipeline": self.is_loaded("ltx2"),
@@ -1041,9 +1036,7 @@ class ModelManager:
         model_type = getattr(config, "model_type", "zimage")
 
         # Route to correct pipeline based on model_type
-        if model_type == "qwenimage-layered":
-            return self._load_qwen_image_full()
-        elif model_type == "qwenimage-t2i":
+        if model_type == "qwenimage-t2i":
             logger.info("[Qwen-Image T2I] On-demand mode")
             return LoadResult(mode="qwenimage-t2i_ondemand")
         elif model_type == "qwenimage-edit":
@@ -1135,45 +1128,6 @@ class ModelManager:
             if zimage_pipeline.vae is not None
             else None,
         )
-
-    def _load_qwen_image_full(self) -> LoadResult:
-        """Full Qwen-Image pipeline load (PipelineLoader compatibility)."""
-        from llm_dit.pipelines.qwen_image_diffusers import QwenImageDiffusersPipeline
-
-        config = self.config
-        edit_only = getattr(config, "qwen_image_edit_only", False)
-
-        logger.info("=" * 60)
-        if edit_only:
-            logger.info("LOADING QWEN-IMAGE-EDIT PIPELINE (standalone)")
-        else:
-            logger.info("LOADING QWEN-IMAGE PIPELINE")
-        logger.info("=" * 60)
-
-        quant_te = config.qwen_image_quantize_text_encoder
-        quant_tf = config.get_qwen_image_quantize_transformer()
-        quant_te = quant_te if quant_te != "none" else None
-        quant_tf = quant_tf if quant_tf != "none" else None
-
-        start = time.time()
-
-        qwen_pipeline = QwenImageDiffusersPipeline.from_pretrained(
-            config.model_path,
-            edit_model_path=config.qwen_image_edit_model_path or None,
-            edit_only=edit_only,
-            dtype=config.get_dtype(),
-            cpu_offload=config.qwen_image_cpu_offload,
-            quantize_text_encoder=quant_te,
-            quantize_transformer=quant_tf,
-            compile_transformer=config.compile,
-            compile_mode=config.compile_mode,
-        )
-
-        load_time = time.time() - start
-        self._pipelines["qwen_image"] = qwen_pipeline
-
-        logger.info(f"Qwen-Image pipeline loaded in {load_time:.1f}s")
-        return LoadResult(pipeline=qwen_pipeline, load_time=load_time, mode="full")
 
     def _load_ltx2_full(self) -> LoadResult:
         """LTX-2 startup info (PipelineLoader compatibility)."""
