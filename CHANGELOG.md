@@ -1,9 +1,23 @@
-last updated: 2026-02-07
+last updated: 2026-02-08
 
 # changelog
 
 All notable changes to this project will be documented in this file.
 Uses [Semantic Versioning](https://semver.org/).
+
+## 0.8.5
+
+### fixed
+- LoRA re-fusion OOM on persistent models: second request no longer dequantizes fp8 (9GB) to bf16 (18GB) again, preventing 26GB OOM when encoder shuttles to GPU
+- `_infer_model_device_dtype` returns bfloat16 (compute dtype) instead of uint8/float8 (storage dtype) for quantized models, so LoRA math happens in correct precision
+- Z-Image `load_lora()` no longer passes raw storage dtype to LoRA loader (delegates to `_infer_model_device_dtype`)
+
+### added
+- `FusedLoRAState` / `LoRAFusionRecord` dataclasses for pipeline-agnostic LoRA fusion tracking
+- `get_fused_state(model)` attaches tracking state to any `nn.Module` -- works regardless of how the pipeline stores the model
+- LoRA fusion guard in `flux2_generate.py`: skips re-fusion when LoRAs already match, raises `RuntimeError` on mismatch
+- `_ensure_correct_model()` now checks LoRA specs in addition to model name; auto-reloads on LoRA mismatch
+- HTTP 409 response for LoRA mismatch errors in FLUX.2 endpoints
 
 ## 0.8.4
 

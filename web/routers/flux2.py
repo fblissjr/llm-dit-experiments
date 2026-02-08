@@ -25,27 +25,50 @@ router = APIRouter()
 def _ensure_correct_model(
     requested_model: str,
     manager,
+    requested_loras: list[str] | None = None,
 ) -> dict | None:
     """Verify loaded FLUX.2 model matches the request; reload if mismatched.
 
     Returns the (possibly-updated) flux2_pipeline dict, or None if no
     persistent pipeline is available.
 
-    When a mismatch is detected, this blocks synchronously while the
-    ModelManager unloads the old model and loads the new one. The
-    ModelManager's per-pipeline lock prevents concurrent reloads.
+    Checks both model name and LoRA specs. When a mismatch is detected,
+    this blocks synchronously while the ModelManager unloads the old model
+    and loads the new one. The ModelManager's per-pipeline lock prevents
+    concurrent reloads.
     """
     import web.server as srv
 
     if not isinstance(srv.flux2_pipeline, dict):
         return None
 
+    needs_reload = False
+
+    # Check model name mismatch
     loaded_name = srv.flux2_pipeline.get("model_name")
     if loaded_name and loaded_name.lower() != requested_model.lower():
         logger.info(
             f"[FLUX.2] Model mismatch: loaded='{loaded_name}', "
             f"requested='{requested_model}'. Reloading..."
         )
+        needs_reload = True
+
+    # Check LoRA mismatch on the persistent transformer
+    if not needs_reload and requested_loras:
+        from llm_dit.utils.lora import get_fused_state, parse_lora_spec
+
+        transformer = srv.flux2_pipeline.get("transformer")
+        if transformer is not None:
+            fused_state = get_fused_state(transformer)
+            requested_specs = [parse_lora_spec(s) for s in requested_loras]
+            if not fused_state.is_empty and not fused_state.matches(requested_specs):
+                logger.info(
+                    f"[FLUX.2] LoRA mismatch: fused=[{fused_state.summary()}], "
+                    f"requested={requested_loras}. Reloading..."
+                )
+                needs_reload = True
+
+    if needs_reload:
         result = manager.reload_flux2(requested_model)
         srv.flux2_pipeline = manager.get_pipeline("flux2")
         logger.info(
@@ -192,7 +215,9 @@ async def flux2_generate(request: Flux2GenerateRequest, config: ConfigDep, manag
             logger.info(f"[FLUX.2] Using model path: {model_path}")
 
         # Verify loaded model matches request; reload if mismatched
-        pipeline_dict = _ensure_correct_model(request.model_name, manager)
+        pipeline_dict = _ensure_correct_model(
+            request.model_name, manager, requested_loras=request.loras
+        )
 
         persistent_encoder = None
         persistent_transformer = None
@@ -233,6 +258,13 @@ async def flux2_generate(request: Flux2GenerateRequest, config: ConfigDep, manag
             generation_time=gen_time,
         )
 
+    except RuntimeError as e:
+        if "LoRA mismatch" in str(e):
+            logger.warning(f"[FLUX.2] {e}")
+            raise HTTPException(status_code=409, detail=str(e))
+        logger.error(f"[FLUX.2] Generation failed: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
     except (AttributeError, TypeError) as e:
         # Guard against mid-request model unload: if srv.flux2_pipeline
         # becomes None while we hold stale references, operations on
@@ -279,7 +311,7 @@ async def flux2_generate_stream(request: Flux2GenerateRequest, config: ConfigDep
     # Verify loaded model matches request BEFORE entering the SSE generator.
     # This blocks synchronously during reload, which is intentional --
     # we want the reload to complete before we start streaming progress.
-    _ensure_correct_model(request.model_name, manager)
+    _ensure_correct_model(request.model_name, manager, requested_loras=request.loras)
 
     async def generate_with_progress() -> AsyncIterator[str]:
         """Async generator for SSE events."""
@@ -440,6 +472,14 @@ async def flux2_generate_stream(request: Flux2GenerateRequest, config: ConfigDep
             # Yield final result
             yield f"data: {json.dumps({'type': 'complete', 'urls': [data_url], 'url': data_url, 'seed': gen_config.seed, 'generation_time': gen_time})}\n\n"
 
+        except RuntimeError as e:
+            if "LoRA mismatch" in str(e):
+                logger.warning(f"[FLUX.2] {e}")
+                yield f"data: {json.dumps({'type': 'error', 'message': str(e), 'code': 409})}\n\n"
+            else:
+                logger.error(f"[FLUX.2] Stream generation failed: {e}")
+                traceback.print_exc()
+                yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
         except (AttributeError, TypeError) as e:
             if srv.flux2_pipeline is None:
                 logger.warning(

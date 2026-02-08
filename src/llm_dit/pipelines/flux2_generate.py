@@ -50,6 +50,7 @@ import gc
 import math
 import logging
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Callable, Optional
 
 import time
@@ -926,18 +927,32 @@ def generate_image(
         )
         log_gpu_memory("after transformer load")
 
-    # Load LoRA weights if specified
+    # Load LoRA weights if specified (with re-fusion guard for persistent models)
     if config.loras:
-        from llm_dit.utils.lora import load_lora, parse_lora_spec
+        from llm_dit.utils.lora import get_fused_state, load_lora, parse_lora_spec
 
-        total_updated = 0
-        for spec in config.loras:
-            path, scale = parse_lora_spec(spec)
-            logger.info(f"Loading LoRA: {path} (scale={scale})")
-            updated = load_lora(transformer, path, scale=scale)
-            total_updated += updated
-        logger.info(f"LoRA complete: {total_updated} layers updated")
-        log_gpu_memory("after LoRA fusion")
+        requested = [(parse_lora_spec(spec)) for spec in config.loras]
+        fused_state = get_fused_state(transformer)
+
+        if fused_state.matches(requested):
+            logger.info(
+                f"LoRA already fused, skipping: {fused_state.summary()}"
+            )
+        elif not fused_state.is_empty:
+            raise RuntimeError(
+                f"LoRA mismatch on persistent model: "
+                f"fused=[{fused_state.summary()}], "
+                f"requested=[{', '.join(f'{Path(p).name}@{s}' for p, s in requested)}]. "
+                f"Reload the model to change LoRAs."
+            )
+        else:
+            total_updated = 0
+            for path, scale in requested:
+                logger.info(f"Loading LoRA: {path} (scale={scale})")
+                updated = load_lora(transformer, path, scale=scale)
+                total_updated += updated
+            logger.info(f"LoRA complete: {total_updated} layers updated")
+            log_gpu_memory("after LoRA fusion")
 
     # Move embeddings to device
     txt_embeddings = txt_embeddings.to(device)

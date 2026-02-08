@@ -2,6 +2,9 @@
 
 from llm_dit.utils.lora import (
     LoRALoader,
+    LoRAFusionRecord,
+    FusedLoRAState,
+    get_fused_state,
     load_lora,
     clear_lora,
     fuse_lora,
@@ -173,6 +176,9 @@ from llm_dit.utils.availability import (
 __all__ = [
     # LoRA
     "LoRALoader",
+    "LoRAFusionRecord",
+    "FusedLoRAState",
+    "get_fused_state",
     "load_lora",
     "clear_lora",
     "fuse_lora",

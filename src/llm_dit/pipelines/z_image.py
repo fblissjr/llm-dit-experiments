@@ -614,12 +614,12 @@ class ZImagePipeline:
 
         total_updated = 0
         for path, s in zip(lora_paths, scales):
+            # Let _load_lora infer device/dtype from the model -- it handles
+            # quantized models correctly (returns compute dtype, not storage dtype).
             updated = _load_lora(
                 self.transformer,
                 path,
                 scale=s,
-                device=next(self.transformer.parameters()).device,
-                dtype=next(self.transformer.parameters()).dtype,
             )
             total_updated += updated
 

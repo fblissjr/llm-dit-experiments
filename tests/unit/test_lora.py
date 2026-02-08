@@ -388,3 +388,246 @@ class TestConv2dLoRA:
 
         assert updated == 1
         assert not torch.allclose(model.conv.weight, original_weight)
+
+
+# ============================================================================
+# FusedLoRAState Tests
+# ============================================================================
+
+
+class TestFusedLoRAState:
+    """Test LoRA fusion tracking state."""
+
+    def test_empty_state(self):
+        """Test initial state is empty."""
+        from llm_dit.utils.lora import FusedLoRAState
+
+        state = FusedLoRAState()
+        assert state.is_empty
+        assert state.summary() == "no LoRAs fused"
+
+    def test_add_and_is_fused(self, tmp_path):
+        """Test adding a record and checking if fused."""
+        from llm_dit.utils.lora import FusedLoRAState
+
+        state = FusedLoRAState()
+        lora_path = str(tmp_path / "style.safetensors")
+        state.add(lora_path, 0.8, 112)
+
+        assert not state.is_empty
+        assert state.is_fused(lora_path, 0.8)
+        assert not state.is_fused(lora_path, 0.5)  # Different scale
+        assert not state.is_fused(str(tmp_path / "other.safetensors"), 0.8)
+
+    def test_matches_same_specs(self, tmp_path):
+        """Test matches() returns True for identical specs."""
+        from llm_dit.utils.lora import FusedLoRAState
+
+        state = FusedLoRAState()
+        path_a = str(tmp_path / "a.safetensors")
+        path_b = str(tmp_path / "b.safetensors")
+        state.add(path_a, 0.5, 50)
+        state.add(path_b, 0.3, 62)
+
+        assert state.matches([(path_a, 0.5), (path_b, 0.3)])
+        # Order shouldn't matter
+        assert state.matches([(path_b, 0.3), (path_a, 0.5)])
+
+    def test_matches_different_specs(self, tmp_path):
+        """Test matches() returns False for different specs."""
+        from llm_dit.utils.lora import FusedLoRAState
+
+        state = FusedLoRAState()
+        path_a = str(tmp_path / "a.safetensors")
+        path_b = str(tmp_path / "b.safetensors")
+        state.add(path_a, 0.5, 50)
+
+        # Different number of LoRAs
+        assert not state.matches([(path_a, 0.5), (path_b, 0.3)])
+        # Different scale
+        assert not state.matches([(path_a, 0.9)])
+        # Different path
+        assert not state.matches([(path_b, 0.5)])
+
+    def test_matches_empty(self):
+        """Test matches() on empty state vs empty request."""
+        from llm_dit.utils.lora import FusedLoRAState
+
+        state = FusedLoRAState()
+        assert state.matches([])
+        assert not state.matches([("/some/path.safetensors", 1.0)])
+
+    def test_summary_format(self, tmp_path):
+        """Test human-readable summary."""
+        from llm_dit.utils.lora import FusedLoRAState
+
+        state = FusedLoRAState()
+        state.add(str(tmp_path / "anime.safetensors"), 0.8, 100)
+        state.add(str(tmp_path / "realism.safetensors"), 0.5, 100)
+
+        summary = state.summary()
+        assert "anime.safetensors@0.8" in summary
+        assert "realism.safetensors@0.5" in summary
+
+    def test_record_is_frozen(self, tmp_path):
+        """Test that LoRAFusionRecord is immutable."""
+        from llm_dit.utils.lora import LoRAFusionRecord
+        from dataclasses import FrozenInstanceError
+
+        record = LoRAFusionRecord(
+            path=str(tmp_path / "lora.safetensors"),
+            scale=0.8,
+            layers_updated=112,
+        )
+        with pytest.raises(FrozenInstanceError):
+            record.scale = 0.5  # type: ignore[misc]
+
+
+# ============================================================================
+# get_fused_state Tests
+# ============================================================================
+
+
+class TestGetFusedState:
+    """Test get_fused_state() model attachment."""
+
+    def test_creates_state_on_first_call(self):
+        """Test that state is lazily created on the model."""
+        from llm_dit.utils.lora import get_fused_state
+
+        model = nn.Linear(32, 32)
+        assert not hasattr(model, "_fused_lora_state")
+
+        state = get_fused_state(model)
+        assert hasattr(model, "_fused_lora_state")
+        assert state.is_empty
+
+    def test_returns_same_object(self):
+        """Test that subsequent calls return the same state object."""
+        from llm_dit.utils.lora import get_fused_state
+
+        model = nn.Linear(32, 32)
+        state1 = get_fused_state(model)
+        state2 = get_fused_state(model)
+        assert state1 is state2
+
+    def test_survives_dict_storage(self):
+        """Test that state survives when model is stored in a dict (FLUX.2 pattern)."""
+        from llm_dit.utils.lora import FusedLoRAState, get_fused_state
+
+        model = nn.Linear(32, 32)
+        state = get_fused_state(model)
+        state.add("/path/to/lora.safetensors", 0.8, 50)
+
+        # Simulate FLUX.2's dict-based pipeline storage
+        pipeline = {"transformer": model, "model_name": "klein-9b-fp8"}
+
+        # Retrieve from dict -- state should still be there
+        retrieved_model = pipeline["transformer"]
+        retrieved_state = get_fused_state(retrieved_model)
+        assert not retrieved_state.is_empty
+        assert retrieved_state.is_fused("/path/to/lora.safetensors", 0.8)
+
+    def test_load_lora_records_fusion(self):
+        """Test that load_lora() records fusions on the model."""
+        from llm_dit.utils.lora import LoRALoader, get_fused_state, load_lora
+
+        model = nn.Linear(32, 32)
+
+        with patch.object(LoRALoader, "fuse_lora_to_base_model", return_value=5) as mock_fuse:
+            with patch("llm_dit.utils.lora.load_safetensors", return_value={}):
+                with patch("pathlib.Path.exists", return_value=True):
+                    load_lora(model, "style.safetensors", scale=0.7)
+
+        state = get_fused_state(model)
+        assert not state.is_empty
+        assert len(state.records) == 1
+        assert state.records[0].scale == 0.7
+        assert state.records[0].layers_updated == 5
+
+
+# ============================================================================
+# _infer_model_device_dtype Tests (quantized models)
+# ============================================================================
+
+
+class TestInferModelDeviceDtype:
+    """Test _infer_model_device_dtype with quantized parameter types."""
+
+    def test_standard_bf16_model(self):
+        """Test inference on a standard bfloat16 model."""
+        from llm_dit.utils.lora import _infer_model_device_dtype
+
+        model = nn.Linear(32, 32)
+        model = model.to(dtype=torch.bfloat16)
+        device, dtype = _infer_model_device_dtype(model)
+
+        assert dtype == torch.bfloat16
+
+    def test_standard_fp32_model(self):
+        """Test inference on a standard float32 model."""
+        from llm_dit.utils.lora import _infer_model_device_dtype
+
+        model = nn.Linear(32, 32)
+        device, dtype = _infer_model_device_dtype(model)
+
+        assert dtype == torch.float32
+
+    def test_quantized_uint8_model(self):
+        """Test that uint8 storage dtype returns bfloat16 compute dtype."""
+        from llm_dit.utils.lora import _infer_model_device_dtype
+
+        model = nn.Linear(32, 32)
+        # Simulate quantized model by replacing weight with uint8 tensor
+        model.weight = nn.Parameter(
+            torch.zeros(32, 32, dtype=torch.uint8), requires_grad=False
+        )
+        device, dtype = _infer_model_device_dtype(model)
+
+        assert dtype == torch.bfloat16
+
+    def test_non_tensor_parameter_type(self):
+        """Test that non-Tensor parameter type (e.g., Float8Tensor) returns bfloat16."""
+        from llm_dit.utils.lora import _infer_model_device_dtype
+
+        # Create a mock module whose parameters() yields a non-Tensor object
+        # mimicking torchao Float8Tensor (not a torch.Tensor subclass).
+        class MockFloat8Param:
+            @property
+            def device(self):
+                return torch.device("cpu")
+            @property
+            def dtype(self):
+                return torch.float8_e4m3fn
+
+        class MockQuantizedModule(nn.Module):
+            def parameters(self, recurse=True):
+                yield MockFloat8Param()
+
+        model = MockQuantizedModule()
+        _, dtype = _infer_model_device_dtype(model)
+
+        assert dtype == torch.bfloat16
+
+    def test_explicit_dtype_overrides(self):
+        """Test that explicit dtype is never overridden."""
+        from llm_dit.utils.lora import _infer_model_device_dtype
+
+        model = nn.Linear(32, 32)
+        model.weight = nn.Parameter(
+            torch.zeros(32, 32, dtype=torch.uint8), requires_grad=False
+        )
+        # Even with quantized model, explicit dtype should win
+        device, dtype = _infer_model_device_dtype(model, dtype=torch.float16)
+
+        assert dtype == torch.float16
+
+    def test_empty_model(self):
+        """Test inference on model with no parameters."""
+        from llm_dit.utils.lora import _infer_model_device_dtype
+
+        model = nn.Module()  # No parameters
+        device, dtype = _infer_model_device_dtype(model)
+
+        assert device == "cpu"
+        assert dtype == torch.float32

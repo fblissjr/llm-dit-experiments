@@ -1,7 +1,7 @@
 """
-LoRA loading utilities for Z-Image DiT.
+LoRA loading utilities for DiT models (pipeline-agnostic).
 
-Supports loading LoRA weights and fusing them into the DiT transformer.
+Supports loading LoRA weights and fusing them into any DiT transformer.
 Based on DiffSynth-Studio's LoRA implementation for compatibility.
 
 Usage:
@@ -13,9 +13,16 @@ Usage:
     # Multiple LoRAs
     load_lora(pipeline.transformer, "/path/to/lora1.safetensors", scale=0.5)
     load_lora(pipeline.transformer, "/path/to/lora2.safetensors", scale=0.3)
+
+    # Check what's already fused on a persistent model
+    from llm_dit.utils.lora import get_fused_state
+    state = get_fused_state(pipeline.transformer)
+    if state.matches([("/path/to/lora.safetensors", 0.8)]):
+        print("Already fused, skipping")
 """
 
 import logging
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, Optional, Tuple, Union
 
@@ -24,6 +31,82 @@ import torch.nn as nn
 from safetensors.torch import load_file as load_safetensors
 
 logger = logging.getLogger(__name__)
+
+# Storage dtypes that indicate quantization -- the model's compute dtype
+# is bfloat16 (or float16/float32), not the storage format.
+_QUANTIZED_STORAGE_DTYPES = frozenset({
+    torch.uint8,
+    torch.float8_e4m3fn,
+    torch.float8_e5m2,
+    torch.int8,
+})
+
+
+# =============================================================================
+# LoRA Fusion Tracking
+# =============================================================================
+
+
+@dataclass(frozen=True)
+class LoRAFusionRecord:
+    """Immutable record of a single LoRA fusion applied to a model."""
+    path: str           # Resolved absolute path
+    scale: float
+    layers_updated: int
+
+
+@dataclass
+class FusedLoRAState:
+    """Tracks which LoRAs have been fused into a model.
+
+    Attached to model objects via get_fused_state() so that tracking
+    is pipeline-agnostic -- it works regardless of how the pipeline
+    stores its model (dict, attribute, local variable).
+    """
+    records: list[LoRAFusionRecord] = field(default_factory=list)
+
+    def is_fused(self, path: str, scale: float) -> bool:
+        """Check if a specific LoRA (path + scale) is already fused."""
+        resolved = str(Path(path).resolve())
+        return any(r.path == resolved and r.scale == scale for r in self.records)
+
+    def add(self, path: str, scale: float, layers_updated: int) -> None:
+        """Record a successful fusion."""
+        resolved = str(Path(path).resolve())
+        self.records.append(LoRAFusionRecord(resolved, scale, layers_updated))
+
+    def matches(self, requested: list[tuple[str, float]]) -> bool:
+        """Check if the fused state exactly matches a list of (path, scale) specs.
+
+        Order-independent comparison using resolved absolute paths.
+        """
+        if len(requested) != len(self.records):
+            return False
+        fused_set = {(r.path, r.scale) for r in self.records}
+        requested_set = {(str(Path(p).resolve()), s) for p, s in requested}
+        return fused_set == requested_set
+
+    @property
+    def is_empty(self) -> bool:
+        return len(self.records) == 0
+
+    def summary(self) -> str:
+        """Human-readable summary for logging."""
+        if not self.records:
+            return "no LoRAs fused"
+        parts = [f"{Path(r.path).name}@{r.scale}" for r in self.records]
+        return ", ".join(parts)
+
+
+def get_fused_state(model: nn.Module) -> FusedLoRAState:
+    """Get or create the FusedLoRAState attached to a model.
+
+    The state is stored as model._fused_lora_state so it travels with the
+    model object regardless of how the pipeline holds it.
+    """
+    if not hasattr(model, "_fused_lora_state"):
+        model._fused_lora_state = FusedLoRAState()  # type: ignore[attr-defined]
+    return model._fused_lora_state  # type: ignore[attr-defined]
 
 
 class LoRALoader:
@@ -220,7 +303,13 @@ def _infer_model_device_dtype(
     device: Optional[Union[str, torch.device]] = None,
     dtype: Optional[torch.dtype] = None,
 ) -> Tuple[Union[str, torch.device], torch.dtype]:
-    """Infer device and dtype from model parameters if not specified."""
+    """Infer device and dtype from model parameters if not specified.
+
+    For quantized models (torchao Float8Tensor, int8, etc.), the parameter's
+    .dtype returns the storage format (e.g., uint8, float8_e4m3fn) rather than
+    the compute dtype. We detect these and return bfloat16 as the compute dtype
+    so that LoRA math happens in the correct precision.
+    """
     if device is None:
         try:
             device = next(model.parameters()).device
@@ -229,7 +318,23 @@ def _infer_model_device_dtype(
 
     if dtype is None:
         try:
-            dtype = next(model.parameters()).dtype
+            param = next(model.parameters())
+            inferred = param.dtype
+            # Quantized parameters report storage dtype (uint8, float8_e4m3fn, etc.)
+            # but LoRA computation needs the compute dtype.
+            # Note: nn.Parameter is a torch.Tensor subclass, so we use isinstance()
+            # to avoid false positives. Non-Tensor types (e.g., torchao Float8Tensor)
+            # are NOT subclasses of torch.Tensor.
+            is_quantized_type = not isinstance(param, torch.Tensor)
+            is_quantized_dtype = inferred in _QUANTIZED_STORAGE_DTYPES
+            if is_quantized_type or is_quantized_dtype:
+                dtype = torch.bfloat16
+                logger.debug(
+                    f"Quantized model detected (param type={type(param).__name__}, "
+                    f"storage dtype={inferred}), using compute dtype={dtype}"
+                )
+            else:
+                dtype = inferred
         except StopIteration:
             dtype = torch.float32
 
@@ -277,7 +382,14 @@ def load_lora(
 
     # Fuse
     loader = LoRALoader(device=device, dtype=dtype)
-    return loader.fuse_lora_to_base_model(model, state_dict, alpha=scale)
+    updated = loader.fuse_lora_to_base_model(model, state_dict, alpha=scale)
+
+    # Record the fusion on the model for re-fusion prevention
+    fused_state = get_fused_state(model)
+    fused_state.add(str(lora_path), scale, updated)
+    logger.debug(f"Recorded fusion: {fused_state.summary()}")
+
+    return updated
 
 
 def fuse_lora(
