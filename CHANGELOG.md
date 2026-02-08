@@ -5,6 +5,17 @@ last updated: 2026-02-07
 All notable changes to this project will be documented in this file.
 Uses [Semantic Versioning](https://semver.org/).
 
+## 0.8.4
+
+### fixed
+- FLUX.2 model switching: frontend model dropdown now actually triggers model reload instead of silently using whatever was loaded at startup
+- LoRA crash on fp8-quantized models: `Float8Tensor + Tensor` now dequantizes before merge instead of hitting unimplemented `aten.add`
+- VRAM race between generate and unload: mid-request unload returns 503 "model was unloaded" instead of OOM cascade
+
+### added
+- `ModelManager.reload_flux2(model_name)` for model-switching with proper lock coordination
+- Loaded vs requested model_name logging in FLUX.2 generate endpoints
+
 ## 0.8.3
 
 ### added

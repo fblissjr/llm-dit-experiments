@@ -179,21 +179,36 @@ class LoRALoader:
                 # Dequantize quantized tensors (e.g., torchao Float8Tensor)
                 # before LoRA merge. Float8Tensor.to(dtype=bf16) returns another
                 # Float8Tensor, and aten.add is not implemented for that type.
-                if type(base_weight) is not torch.Tensor:
+                is_quantized = type(base_weight) is not torch.Tensor
+                if is_quantized:
                     if hasattr(base_weight, "dequantize"):
                         base_weight = base_weight.dequantize()
                     else:
                         base_weight = base_weight.float()
-                    logger.warning(
-                        f"Dequantized weight for LoRA merge on layer '{name}' "
-                        f"(was {type(state_dict_base['weight']).__name__}). "
-                        f"Quantization is lost for this layer."
-                    )
 
-                state_dict_base["weight"] = (
+                merged_weight = (
                     base_weight.to(device=self.device, dtype=self.dtype) + weight_lora
                 )
-                module.load_state_dict(state_dict_base)
+
+                if is_quantized:
+                    # Cannot use load_state_dict on quantized modules --
+                    # Float8Tensor.copy_() expects qdata on the source tensor.
+                    # Directly replace the parameter instead.
+                    module.weight = nn.Parameter(
+                        merged_weight,
+                        requires_grad=module.weight.requires_grad,
+                    )
+                    if updated_num == 0:
+                        logger.warning(
+                            f"LoRA merge on quantized weights: dequantizing "
+                            f"from {type(state_dict_base['weight']).__name__} "
+                            f"to {merged_weight.dtype}. Quantization is lost "
+                            f"for all LoRA-affected layers."
+                        )
+                else:
+                    state_dict_base["weight"] = merged_weight
+                    module.load_state_dict(state_dict_base)
+
                 updated_num += 1
 
         logger.info(f"Fused {updated_num} LoRA layers (alpha={alpha})")
