@@ -65,10 +65,12 @@ export function LoRAList({ param, value, onChange, disabled = false }: LoRAListP
   // Parse all specs into structured form for editing
   const items = (value || []).map(parseLoraSpec);
 
-  // Convert items to spec strings, filtering out entries with no path selected
+  // Convert items to spec strings for the form store.
+  // Empty-path entries (":0.80") are kept so placeholder rows persist in the UI.
+  // The backend filters these out before processing (see web/routers/flux2.py).
   const toSpecs = useCallback(
     (list: { path: string; scale: number }[]) =>
-      list.filter((item) => item.path !== '').map((item) => formatLoraSpec(item.path, item.scale)),
+      list.map((item) => formatLoraSpec(item.path, item.scale)),
     []
   );
 
@@ -100,8 +102,8 @@ export function LoRAList({ param, value, onChange, disabled = false }: LoRAListP
 
   const handleAdd = useCallback(() => {
     if (items.length >= maxCount) return;
-    // Add empty-path entry for UI display; toSpecs filters it from the
-    // API payload until a path is selected
+    // Add empty-path entry -- rendered as a dropdown row for the user to pick a LoRA.
+    // The ":0.80" spec is filtered by the backend before processing.
     const newItems = [...items, { path: '', scale: 0.8 }];
     onChange(toSpecs(newItems));
   }, [items, maxCount, onChange, toSpecs]);

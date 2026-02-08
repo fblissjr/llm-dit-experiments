@@ -178,7 +178,7 @@ async def flux2_generate(request: Flux2GenerateRequest, config: ConfigDep, manag
             match_image_size=match_image_size,
             block_offload=request.block_offload,
             offload_between_stages=offload_between_stages,
-            loras=request.loras,
+            loras=[s for s in request.loras if not s.startswith(":")] or None if request.loras else None,
             # Text encoding options
             max_text_length=request.max_text_length,
             pad_to_max=request.pad_to_max,
@@ -375,7 +375,7 @@ async def flux2_generate_stream(request: Flux2GenerateRequest, config: ConfigDep
                 match_image_size=match_image_size,
                 block_offload=request.block_offload,
                 offload_between_stages=offload_between_stages,
-                loras=request.loras,
+                loras=[s for s in request.loras if not s.startswith(":")] or None if request.loras else None,
                 max_text_length=request.max_text_length,
                 pad_to_max=request.pad_to_max,
                 output_layers=request.output_layers,
