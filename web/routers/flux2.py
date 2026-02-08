@@ -70,8 +70,12 @@ def _ensure_correct_model(
                     f"requested={requested_loras}. Reloading..."
                 )
                 needs_reload = True
+        # Drop local ref so _unload_flux2() can free GPU memory
+        del transformer
 
     if needs_reload:
+        # Clear server ref before reload so _unload_flux2() can free all VRAM
+        srv.flux2_pipeline = None
         result = manager.reload_flux2(requested_model)
         srv.flux2_pipeline = manager.get_pipeline("flux2")
         logger.info(
