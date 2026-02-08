@@ -237,39 +237,30 @@ export async function fetchModelStatus(pipelineId: string): Promise<ModelStatusR
 }
 
 /**
- * Load a model for a pipeline
+ * Load a model for a pipeline.
+ * The load endpoint returns { success, message } -- not the ModelStatusResponse shape.
+ * After a successful load, we fetch the actual model status for consistent state.
  */
 export async function loadModel(pipelineId: string): Promise<ModelStatusResponse> {
-  const response = await request<{
-    status: string;
-    vram_mb?: number;
-    error?: string;
-  }>(`/api/models/${pipelineId}/load`, {
-    method: 'POST',
-  });
+  await request<{ success: boolean; message: string }>(
+    `/api/models/${pipelineId}/load`,
+    { method: 'POST' },
+  );
 
-  return {
-    status: response.status as ModelStatusResponse['status'],
-    vramMB: response.vram_mb,
-    error: response.error,
-  };
+  return fetchModelStatus(pipelineId);
 }
 
 /**
- * Unload a model for a pipeline
+ * Unload a model for a pipeline.
+ * Same pattern as loadModel -- fetch status after the action completes.
  */
 export async function unloadModel(pipelineId: string): Promise<ModelStatusResponse> {
-  const response = await request<{
-    status: string;
-    error?: string;
-  }>(`/api/models/${pipelineId}/unload`, {
-    method: 'POST',
-  });
+  await request<{ success: boolean }>(
+    `/api/models/${pipelineId}/unload`,
+    { method: 'POST' },
+  );
 
-  return {
-    status: response.status as ModelStatusResponse['status'],
-    error: response.error,
-  };
+  return fetchModelStatus(pipelineId);
 }
 
 /**
