@@ -167,65 +167,6 @@ export function ImageUpload({
     []
   );
 
-  // Async clipboard API fallback (iOS Safari: "Copy Photo" / "Copy Subject").
-  const extractImagesFromAsyncClipboard = useCallback(async (): Promise<File[]> => {
-    if (typeof navigator?.clipboard?.read !== 'function') return [];
-    try {
-      const clipboardItems = await navigator.clipboard.read();
-      const files: File[] = [];
-      for (const clipboardItem of clipboardItems) {
-        for (const type of clipboardItem.types) {
-          if (type.startsWith('image/')) {
-            const blob = await clipboardItem.getType(type);
-            const ext = type.split('/')[1] || 'png';
-            files.push(new File([blob], `pasted-image.${ext}`, { type }));
-          }
-        }
-      }
-      return files;
-    } catch {
-      return [];
-    }
-  }, []);
-
-  // Shared paste processing logic used by both the React onPaste and the
-  // document-level native listener.
-  const processPaste = useCallback(
-    async (items: DataTransferItemList | undefined): Promise<boolean> => {
-      if (disabled || !canAddMore) return false;
-
-      // Desktop browsers (Chrome, Firefox): images available synchronously
-      const syncFiles = extractImagesFromClipboard(items);
-      if (syncFiles.length > 0) {
-        const dt = new DataTransfer();
-        syncFiles.forEach((f) => dt.items.add(f));
-        handleFiles(dt.files);
-        return true;
-      }
-
-      // iOS Safari fallback via async Clipboard API
-      const asyncFiles = await extractImagesFromAsyncClipboard();
-      if (asyncFiles.length > 0) {
-        const dt = new DataTransfer();
-        asyncFiles.forEach((f) => dt.items.add(f));
-        handleFiles(dt.files);
-        return true;
-      }
-
-      return false;
-    },
-    [disabled, canAddMore, extractImagesFromClipboard, extractImagesFromAsyncClipboard, handleFiles]
-  );
-
-  // React synthetic paste handler (fires when the component's div has focus)
-  const handlePaste = useCallback(
-    async (e: React.ClipboardEvent) => {
-      const handled = await processPaste(e.clipboardData?.items);
-      if (handled) e.preventDefault();
-    },
-    [processPaste]
-  );
-
   // Document-level paste listener so paste works from anywhere on the page,
   // matching Discord/Slack behavior: if the clipboard contains an image,
   // intercept it regardless of what element has focus.
@@ -268,12 +209,7 @@ export function ImageUpload({
   };
 
   return (
-    <div
-      className={`form-control ${className}`}
-      onPaste={handlePaste}
-      tabIndex={0}
-      style={{ outline: 'none' }}
-    >
+    <div className={`form-control ${className}`}>
       <label className="form-label" title={tooltip}>
         {label}
         {maxCount > 1 && (
