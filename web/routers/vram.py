@@ -8,11 +8,13 @@ LoRA discovery endpoints are also included here since they relate to
 model configuration.
 """
 
+import gc
 import logging
 import traceback
 from pathlib import Path
 from typing import Callable
 
+import torch
 from fastapi import APIRouter, HTTPException
 
 from web.dependencies import ConfigDep, ManagerDep
@@ -30,15 +32,15 @@ router = APIRouter()
 
 
 # =============================================================================
-# Helper functions (access server.py globals during transition)
+# Helper functions
 # =============================================================================
 
 
 def _sync_globals_after_unload(pipeline_ids: list[str]):
     """Sync server.py globals after unloading pipelines via ModelManager.
 
-    This is a transitional shim -- once all generation endpoints move to
-    routers that use ManagerDep, these globals become unnecessary.
+    Transitional shim -- flux2.py and config_mgmt.py still read these
+    globals directly. Once they migrate to ManagerDep, this can be removed.
     """
     import web.server as srv
 
@@ -53,6 +55,25 @@ def _sync_globals_after_unload(pipeline_ids: list[str]):
         elif pid == "flux2":
             srv.flux2_pipeline = None
         # ltx2 has no persistent global (loads/unloads per-request)
+
+
+def _sync_globals_after_load(pipeline_id: str, manager):
+    """Sync server.py globals after loading a pipeline via ModelManager.
+
+    Transitional shim -- flux2.py and config_mgmt.py still read these
+    globals directly. Once they migrate to ManagerDep, this can be removed.
+    """
+    import web.server as srv
+
+    if pipeline_id == "zimage":
+        srv.pipeline = manager.get_pipeline("zimage")
+        srv.encoder = manager.encoder
+    elif pipeline_id == "qwen_image":
+        srv.qwen_image_pipeline = manager.get_pipeline("qwen_image")
+    elif pipeline_id == "qwen_image_t2i":
+        srv.qwen_image_t2i_pipeline = manager.get_pipeline("qwen_image_t2i")
+    elif pipeline_id == "flux2":
+        srv.flux2_pipeline = manager.get_pipeline("flux2")
 
 
 def _get_pipeline_config_metadata(config, pipeline: str) -> dict:
@@ -144,9 +165,7 @@ async def vram_load_zimage(config: ConfigDep, manager: ManagerDep):
     Uses model_path and other settings from config.toml.
     Call this before generating if the pipeline was previously unloaded.
     """
-    import web.server as srv
-
-    if srv.pipeline is not None:
+    if manager.is_loaded("zimage"):
         status = manager.get_vram_status()
         return {
             "success": True,
@@ -163,7 +182,7 @@ async def vram_load_zimage(config: ConfigDep, manager: ManagerDep):
 
     try:
         manager.load("zimage")
-        srv.pipeline = manager.get_pipeline("zimage")
+        _sync_globals_after_load("zimage", manager)
         status = manager.get_vram_status()
         return {
             "success": True,
@@ -177,9 +196,8 @@ async def vram_load_zimage(config: ConfigDep, manager: ManagerDep):
 
 async def vram_unload_zimage(manager: ManagerDep):
     """Unload Z-Image pipeline (encoder + DiT + VAE) to free VRAM."""
-    from web.server import unload_zimage_pipeline
-
-    unloaded = unload_zimage_pipeline()
+    unloaded = manager.unload("zimage")
+    _sync_globals_after_unload(["zimage"])
 
     status = manager.get_vram_status()
     return {
@@ -191,9 +209,7 @@ async def vram_unload_zimage(manager: ManagerDep):
 
 async def vram_load_qwen_image(config: ConfigDep, manager: ManagerDep):
     """Load Qwen-Image Edit pipeline on-demand."""
-    import web.server as srv
-
-    if srv.qwen_image_pipeline is not None:
+    if manager.is_loaded("qwen_image"):
         status = manager.get_vram_status()
         return {
             "success": True,
@@ -209,7 +225,7 @@ async def vram_load_qwen_image(config: ConfigDep, manager: ManagerDep):
 
     try:
         manager.load("qwen_image")
-        srv.qwen_image_pipeline = manager.get_pipeline("qwen_image")
+        _sync_globals_after_load("qwen_image", manager)
         status = manager.get_vram_status()
         return {
             "success": True,
@@ -223,9 +239,8 @@ async def vram_load_qwen_image(config: ConfigDep, manager: ManagerDep):
 
 async def vram_unload_qwen_image(manager: ManagerDep):
     """Unload Qwen-Image pipeline to free VRAM."""
-    from web.server import unload_qwen_image_pipeline
-
-    unloaded = unload_qwen_image_pipeline()
+    unloaded = manager.unload("qwen_image")
+    _sync_globals_after_unload(["qwen_image"])
 
     status = manager.get_vram_status()
     return {
@@ -237,9 +252,7 @@ async def vram_unload_qwen_image(manager: ManagerDep):
 
 async def vram_load_qwen_image_t2i(config: ConfigDep, manager: ManagerDep):
     """Load Qwen-Image T2I pipeline on-demand."""
-    import web.server as srv
-
-    if srv.qwen_image_t2i_pipeline is not None:
+    if manager.is_loaded("qwen_image_t2i"):
         status = manager.get_vram_status()
         return {
             "success": True,
@@ -255,7 +268,7 @@ async def vram_load_qwen_image_t2i(config: ConfigDep, manager: ManagerDep):
 
     try:
         manager.load("qwen_image_t2i")
-        srv.qwen_image_t2i_pipeline = manager.get_pipeline("qwen_image_t2i")
+        _sync_globals_after_load("qwen_image_t2i", manager)
         status = manager.get_vram_status()
         return {
             "success": True,
@@ -269,9 +282,8 @@ async def vram_load_qwen_image_t2i(config: ConfigDep, manager: ManagerDep):
 
 async def vram_unload_qwen_image_t2i(manager: ManagerDep):
     """Unload Qwen-Image T2I pipeline to free VRAM."""
-    from web.server import unload_qwen_image_t2i_pipeline
-
-    unloaded = unload_qwen_image_t2i_pipeline()
+    unloaded = manager.unload("qwen_image_t2i")
+    _sync_globals_after_unload(["qwen_image_t2i"])
 
     status = manager.get_vram_status()
     return {
@@ -311,9 +323,9 @@ async def vram_unload_ltx2(manager: ManagerDep):
     Note: The pure PyTorch pipeline automatically unloads components after
     each generation. This endpoint performs a manual memory cleanup.
     """
-    from web.server import unload_ltx2_pipeline
-
-    unload_ltx2_pipeline()
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
     status = manager.get_vram_status()
     return {
@@ -329,9 +341,7 @@ async def vram_load_flux2(config: ConfigDep, manager: ManagerDep):
     Delegates to ModelManager._load_flux2() which implements the 3-stage
     loading pattern (encoder -> transformer -> VAE) with pinned memory.
     """
-    import web.server as srv
-
-    if srv.flux2_pipeline is not None:
+    if manager.is_loaded("flux2"):
         status = manager.get_vram_status()
         return {
             "success": True,
@@ -348,7 +358,7 @@ async def vram_load_flux2(config: ConfigDep, manager: ManagerDep):
 
     try:
         result = manager.load("flux2")
-        srv.flux2_pipeline = manager.get_pipeline("flux2")
+        _sync_globals_after_load("flux2", manager)
         status = manager.get_vram_status()
         return {
             "success": True,
@@ -363,10 +373,8 @@ async def vram_load_flux2(config: ConfigDep, manager: ManagerDep):
 
 async def vram_unload_flux2(manager: ManagerDep):
     """Unload FLUX.2 Klein pipeline to free VRAM."""
-    import web.server as srv
-
     unloaded = manager.unload("flux2")
-    srv.flux2_pipeline = None
+    _sync_globals_after_unload(["flux2"])
 
     status = manager.get_vram_status()
     return {
@@ -450,8 +458,6 @@ async def unload_all_models(manager: ManagerDep) -> SuccessVramResponse:
 @router.get("/api/models/{pipeline_id}/status", response_model=ModelStatusResponse)
 async def get_model_status(pipeline_id: str, config: ConfigDep, manager: ManagerDep) -> ModelStatusResponse:
     """Get the status of a specific pipeline model."""
-    import web.server as srv
-
     pid = pipeline_id.lower()
 
     loaded = False
@@ -460,7 +466,7 @@ async def get_model_status(pipeline_id: str, config: ConfigDep, manager: Manager
     config_meta: dict = {}
 
     if pid in ("zimage", "z-image"):
-        loaded = srv.pipeline is not None
+        loaded = manager.is_loaded("zimage")
         if loaded:
             components = [
                 {"name": "encoder", "vramMB": 8000},
@@ -469,11 +475,11 @@ async def get_model_status(pipeline_id: str, config: ConfigDep, manager: Manager
             ]
             total_vram_mb = sum(c["vramMB"] for c in components)
     elif pid == "qwenimage-edit":
-        loaded = srv.qwen_image_pipeline is not None
+        loaded = manager.is_loaded("qwen_image")
     elif pid == "qwenimage-t2i":
-        loaded = srv.qwen_image_t2i_pipeline is not None
+        loaded = manager.is_loaded("qwen_image_t2i")
     elif pid == "ltx2":
-        loaded = srv.ltx2_pipeline is not None
+        loaded = manager.is_loaded("ltx2")
         if loaded:
             components = [
                 {"name": "encoder", "vramMB": 3000},
@@ -482,7 +488,7 @@ async def get_model_status(pipeline_id: str, config: ConfigDep, manager: Manager
             ]
             total_vram_mb = sum(c["vramMB"] for c in components)
     elif pid == "flux2":
-        loaded = srv.flux2_pipeline is not None
+        loaded = manager.is_loaded("flux2")
         config_meta = _get_pipeline_config_metadata(config, "flux2")
         if loaded:
             components = [

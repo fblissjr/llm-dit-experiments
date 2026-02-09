@@ -55,7 +55,7 @@ _ZIMAGE_PYDANTIC_DEFAULTS = {
 }
 
 
-def apply_zimage_variant_defaults(request: Union[GenerateRequest, Img2ImgRequest]) -> None:
+def apply_zimage_variant_defaults(request: Union[GenerateRequest, Img2ImgRequest], config) -> None:
     """Apply Z-Image variant-aware defaults to request in-place.
 
     The Pydantic request classes have hardcoded Turbo defaults (steps=9, shift=3.0,
@@ -67,18 +67,17 @@ def apply_zimage_variant_defaults(request: Union[GenerateRequest, Img2ImgRequest
 
     Args:
         request: GenerateRequest or Img2ImgRequest to modify in-place
+        config: RuntimeConfig instance
 
     Note:
-        - Only applies when runtime_config is available and variant is "base"
+        - Only applies when config is available and variant is "base"
         - Only modifies values that match Pydantic defaults (client didn't override)
         - Turbo variant needs no changes (Pydantic defaults are already Turbo values)
     """
-    runtime_config = srv.runtime_config
-
     # Skip if no config or not base variant
-    if runtime_config is None:
+    if config is None:
         return
-    if runtime_config.zimage_variant != "base":
+    if config.zimage_variant != "base":
         return
 
     # Get variant defaults from constants
@@ -106,16 +105,26 @@ def apply_zimage_variant_defaults(request: Union[GenerateRequest, Img2ImgRequest
 # =============================================================================
 
 
-def _get_zimage_encoder():
+def _get_zimage_encoder(manager):
     """Get Z-Image encoder from standalone encoder or Z-Image pipeline.
 
     Returns None for Qwen-Image pipelines (they don't have a separate encoder).
     """
-    if srv.encoder is not None:
-        return srv.encoder
-    if srv.pipeline is not None and hasattr(srv.pipeline, "encoder"):
-        return srv.pipeline.encoder
+    if manager.encoder is not None:
+        return manager.encoder
+    pipeline = manager.get_pipeline("zimage")
+    if pipeline is not None and hasattr(pipeline, "encoder"):
+        return pipeline.encoder
     return None
+
+
+def _ensure_zimage_loaded(manager) -> None:
+    """Load Z-Image pipeline on-demand via ModelManager. Syncs server globals."""
+    if manager.get_pipeline("zimage") is not None:
+        return
+    manager.load("zimage")
+    srv.pipeline = manager.get_pipeline("zimage")
+    srv.encoder = manager.encoder
 
 
 # =============================================================================
@@ -151,13 +160,13 @@ async def dype_config(config: ConfigDep) -> DyPEConfigResponse:
 
 
 @router.get("/api/dype/status", response_model=DyPEStatusResponse)
-async def dype_status():
+async def dype_status(manager: ManagerDep):
     """Get DyPE feature status and recommendations.
 
     Returns whether DyPE is recommended for the current pipeline
     and suggested settings based on target resolution.
     """
-    pipeline_supports_dype = srv.pipeline is not None
+    pipeline_supports_dype = manager.get_pipeline("zimage") is not None
 
     return {
         "available": pipeline_supports_dype,
@@ -181,10 +190,10 @@ async def dype_status():
 
 
 @router.post("/api/encode", response_model=EncodeResult)
-async def encode(request: EncodeRequest) -> EncodeResult:
+async def encode(request: EncodeRequest, config: ConfigDep, manager: ManagerDep) -> EncodeResult:
     """Encode a prompt to embeddings (for distributed inference)."""
     # Use encoder from pipeline or standalone encoder
-    enc = srv.encoder if srv.encoder is not None else (srv.pipeline.encoder if srv.pipeline else None)
+    enc = _get_zimage_encoder(manager)
     if enc is None:
         raise HTTPException(status_code=503, detail="Encoder not loaded")
 
@@ -208,7 +217,7 @@ async def encode(request: EncodeRequest) -> EncodeResult:
         formatted_prompt = None
         if output.formatted_prompts:
             formatted_prompt = output.formatted_prompts[0]
-            if srv.runtime_config.logging.log_prompts:
+            if config.logging.log_prompts:
                 logger.info(f"Formatted prompt ({len(formatted_prompt)} chars, {token_count} tokens):")
                 logger.info(f"---BEGIN FORMATTED PROMPT---")
                 logger.info(formatted_prompt)
@@ -228,7 +237,7 @@ async def encode(request: EncodeRequest) -> EncodeResult:
 
 
 @router.post("/api/generate", response_model=ImageGenerationResult)
-async def generate(request: GenerateRequest) -> ImageGenerationResult:
+async def generate(request: GenerateRequest, config: ConfigDep, manager: ManagerDep) -> ImageGenerationResult:
     """Generate an image from a prompt."""
     if srv.encoder_only_mode:
         raise HTTPException(
@@ -236,9 +245,11 @@ async def generate(request: GenerateRequest) -> ImageGenerationResult:
         )
 
     # Load Z-Image pipeline on-demand if not already loaded
-    if srv.pipeline is None:
+    zimage = manager.get_pipeline("zimage")
+    if zimage is None:
         try:
-            srv.load_zimage_pipeline_on_demand()
+            _ensure_zimage_loaded(manager)
+            zimage = manager.get_pipeline("zimage")
         except Exception as e:
             logger.error(f"[Z-Image] Failed to load pipeline on-demand: {e}")
             raise HTTPException(
@@ -247,17 +258,17 @@ async def generate(request: GenerateRequest) -> ImageGenerationResult:
             )
 
     # Apply variant-aware defaults (Base vs Turbo)
-    apply_zimage_variant_defaults(request)
+    apply_zimage_variant_defaults(request, config)
 
     try:
         logger.info("=" * 60)
         logger.info("GENERATION REQUEST")
         logger.info("=" * 60)
-        if srv.runtime_config.logging.log_prompts:
+        if config.logging.log_prompts:
             logger.info(f"  Prompt: {request.prompt[:80]}...")
             if request.negative_prompt:
                 logger.info(f"  Negative: {request.negative_prompt[:80]}...")
-        if srv.runtime_config.logging.log_generation_params:
+        if config.logging.log_generation_params:
             logger.info(f"  Size: {request.width}x{request.height}")
             logger.info(f"  Steps: {request.steps}")
             logger.info(f"  Seed: {request.seed}")
@@ -270,20 +281,19 @@ async def generate(request: GenerateRequest) -> ImageGenerationResult:
                 logger.info(f"  Layer weights: {request.layer_weights}")
         logger.info("-" * 60)
         logger.info("Pipeline state:")
-        logger.info(f"  pipeline.device: {srv.pipeline.device}")
-        logger.info(f"  pipeline.dtype: {srv.pipeline.dtype}")
+        logger.info(f"  pipeline.device: {zimage.device}")
+        logger.info(f"  pipeline.dtype: {zimage.dtype}")
         logger.info(
-            f"  pipeline.encoder: {type(srv.pipeline.encoder).__name__ if srv.pipeline.encoder is not None else 'None'}"
+            f"  pipeline.encoder: {type(zimage.encoder).__name__ if zimage.encoder is not None else 'None'}"
         )
-        logger.info(f"  pipeline.transformer: {srv.pipeline.transformer is not None}")
-        logger.info(f"  pipeline.vae: {srv.pipeline.vae is not None}")
-        if srv.pipeline.encoder is not None:
-            backend = getattr(srv.pipeline.encoder, "backend", None)
+        logger.info(f"  pipeline.transformer: {zimage.transformer is not None}")
+        logger.info(f"  pipeline.vae: {zimage.vae is not None}")
+        if zimage.encoder is not None:
+            backend = getattr(zimage.encoder, "backend", None)
             logger.info(f"  encoder.backend: {type(backend).__name__ if backend else 'None'}")
-        if srv.runtime_config is not None:
-            model_path = srv.runtime_config.zimage_model_path or srv.runtime_config.model_path
-            logger.info(f"  variant: {srv.runtime_config.zimage_variant}")
-            logger.info(f"  model_path: {model_path}")
+        model_path = config.zimage_model_path or config.model_path
+        logger.info(f"  variant: {config.zimage_variant}")
+        logger.info(f"  model_path: {model_path}")
         logger.info("-" * 60)
 
         # Set up generator for reproducibility
@@ -294,7 +304,7 @@ async def generate(request: GenerateRequest) -> ImageGenerationResult:
 
         # Negative prompt: only use for base variant (turbo has CFG=0, so it has no effect)
         negative_prompt_to_use = None
-        if srv.runtime_config is not None and srv.runtime_config.zimage_variant == "base":
+        if config.zimage_variant == "base":
             negative_prompt_to_use = request.negative_prompt
 
         start = time.time()
@@ -349,7 +359,7 @@ async def generate(request: GenerateRequest) -> ImageGenerationResult:
         logger.info(
             f"Calling pipeline() with long_prompt_mode={request.long_prompt_mode}, hidden_layer={request.hidden_layer}..."
         )
-        if negative_prompt_to_use and srv.runtime_config.logging.log_prompts:
+        if negative_prompt_to_use and config.logging.log_prompts:
             neg_display = negative_prompt_to_use[:60] + "..." if len(negative_prompt_to_use) > 60 else negative_prompt_to_use
             logger.info(f"  Negative prompt: {neg_display}")
         if slg_scale > 0 and slg_layers:
@@ -387,7 +397,7 @@ async def generate(request: GenerateRequest) -> ImageGenerationResult:
             logger.info(
                 f"  Multipass: {multipass_mode}, pass2_strength={pass2_strength}, pass3_strength={pass3_strength}"
             )
-            image = srv.pipeline.generate_multipass(
+            image = zimage.generate_multipass(
                 request.prompt,
                 negative_prompt=negative_prompt_to_use,
                 final_width=request.width,
@@ -431,7 +441,7 @@ async def generate(request: GenerateRequest) -> ImageGenerationResult:
                 logger.info(f"  Step {step + 1}/{total}")
 
             # Single pass generation
-            image = srv.pipeline(
+            image = zimage(
                 request.prompt,
                 negative_prompt=negative_prompt_to_use,
                 height=request.height,
@@ -481,7 +491,7 @@ async def generate(request: GenerateRequest) -> ImageGenerationResult:
 
         # Get formatted prompt for history
         formatted_prompt = None
-        enc = srv.encoder if srv.encoder is not None else (srv.pipeline.encoder if srv.pipeline else None)
+        enc = _get_zimage_encoder(manager)
         if enc:
             try:
                 from llm_dit.conversation import Conversation
@@ -550,7 +560,7 @@ async def generate(request: GenerateRequest) -> ImageGenerationResult:
 
 
 @router.post("/api/generate/stream")
-async def generate_stream(request: GenerateRequest):
+async def generate_stream(request: GenerateRequest, config: ConfigDep, manager: ManagerDep):
     """Generate an image with SSE progress streaming.
 
     Returns Server-Sent Events with progress updates during generation,
@@ -563,7 +573,7 @@ async def generate_stream(request: GenerateRequest):
     - {"type": "error", "message": "..."} - Error occurred
     """
     # Apply variant-aware defaults (Base vs Turbo)
-    apply_zimage_variant_defaults(request)
+    apply_zimage_variant_defaults(request, config)
 
     if srv.encoder_only_mode:
         raise HTTPException(
@@ -571,9 +581,11 @@ async def generate_stream(request: GenerateRequest):
         )
 
     # Load Z-Image pipeline on-demand if not already loaded
-    if srv.pipeline is None:
+    zimage = manager.get_pipeline("zimage")
+    if zimage is None:
         try:
-            srv.load_zimage_pipeline_on_demand()
+            _ensure_zimage_loaded(manager)
+            zimage = manager.get_pipeline("zimage")
         except Exception as e:
             logger.error(f"[Z-Image] Failed to load pipeline on-demand: {e}")
             raise HTTPException(
@@ -595,7 +607,7 @@ async def generate_stream(request: GenerateRequest):
 
             # Negative prompt: only use for base variant
             negative_prompt_to_use = None
-            if srv.runtime_config is not None and srv.runtime_config.zimage_variant == "base":
+            if config.zimage_variant == "base":
                 negative_prompt_to_use = request.negative_prompt
 
             # SLG config
@@ -644,12 +656,12 @@ async def generate_stream(request: GenerateRequest):
             logger.info("=" * 60)
             logger.info("STREAMING GENERATION REQUEST")
             logger.info("=" * 60)
-            if srv.runtime_config.logging.log_prompts:
+            if config.logging.log_prompts:
                 logger.info(f"  Prompt: {request.prompt[:80]}...")
                 if negative_prompt_to_use:
                     neg_display = negative_prompt_to_use[:60] + "..." if len(negative_prompt_to_use) > 60 else negative_prompt_to_use
                     logger.info(f"  Negative: {neg_display}")
-            if srv.runtime_config.logging.log_generation_params:
+            if config.logging.log_generation_params:
                 logger.info(f"  Size: {request.width}x{request.height}")
                 logger.info(f"  Steps: {request.steps}")
                 logger.info(f"  Seed: {actual_seed}")
@@ -659,7 +671,7 @@ async def generate_stream(request: GenerateRequest):
 
             @torch.inference_mode()
             def do_generate():
-                return srv.pipeline(
+                return zimage(
                     request.prompt,
                     negative_prompt=negative_prompt_to_use,
                     height=request.height,
@@ -745,7 +757,7 @@ async def generate_stream(request: GenerateRequest):
                 "steps": request.steps,
                 "seed": actual_seed,
                 "gen_time": gen_time,
-    
+
             }
             srv.generation_history.insert(0, history_entry)
             if len(srv.generation_history) > srv.MAX_HISTORY:
@@ -787,7 +799,7 @@ async def generate_stream(request: GenerateRequest):
 
 
 @router.post("/api/img2img", response_model=ImageGenerationResult)
-async def img2img(request: Img2ImgRequest) -> ImageGenerationResult:
+async def img2img(request: Img2ImgRequest, config: ConfigDep, manager: ManagerDep) -> ImageGenerationResult:
     """Generate an image from an input image with optional differential mask.
 
     The mask controls per-pixel edit strength:
@@ -796,13 +808,15 @@ async def img2img(request: Img2ImgRequest) -> ImageGenerationResult:
     - Gray: Partial editing
     """
     # Apply variant-aware defaults (Base vs Turbo)
-    apply_zimage_variant_defaults(request)
+    apply_zimage_variant_defaults(request, config)
 
     if srv.encoder_only_mode:
         raise HTTPException(
             status_code=400, detail="Server running in encoder-only mode. Img2img not available."
         )
-    if srv.pipeline is None:
+
+    zimage = manager.get_pipeline("zimage")
+    if zimage is None:
         raise HTTPException(status_code=503, detail="Pipeline not loaded")
 
     try:
@@ -812,9 +826,9 @@ async def img2img(request: Img2ImgRequest) -> ImageGenerationResult:
         logger.info("=" * 60)
         logger.info("IMG2IMG REQUEST")
         logger.info("=" * 60)
-        if srv.runtime_config.logging.log_prompts:
+        if config.logging.log_prompts:
             logger.info(f"  Prompt: {request.prompt[:80]}...")
-        if srv.runtime_config.logging.log_generation_params:
+        if config.logging.log_generation_params:
             logger.info(f"  Strength: {request.strength}")
             logger.info(f"  Has mask: {request.mask_image is not None}")
             logger.info(f"  Steps: {request.steps}")
@@ -881,7 +895,7 @@ async def img2img(request: Img2ImgRequest) -> ImageGenerationResult:
 
         # Negative prompt: only use for base variant (turbo has CFG=0, so it has no effect)
         negative_prompt_to_use = None
-        if srv.runtime_config is not None and srv.runtime_config.zimage_variant == "base":
+        if config.zimage_variant == "base":
             negative_prompt_to_use = request.negative_prompt
 
         start = time.time()
@@ -892,7 +906,7 @@ async def img2img(request: Img2ImgRequest) -> ImageGenerationResult:
         if mask_image:
             logger.info("  Using differential diffusion with mask")
 
-        image = srv.pipeline.img2img(
+        image = zimage.img2img(
             prompt=request.prompt,
             negative_prompt=negative_prompt_to_use,
             image=input_image,
@@ -971,15 +985,15 @@ async def img2img(request: Img2ImgRequest) -> ImageGenerationResult:
 
 
 @router.post("/api/format-prompt", response_model=FormatPromptResult)
-async def format_prompt_endpoint(request: EncodeRequest) -> FormatPromptResult:
+async def format_prompt_endpoint(request: EncodeRequest, manager: ManagerDep) -> FormatPromptResult:
     """Preview the formatted prompt without encoding (fast, no GPU needed)."""
     # Use encoder from pipeline or standalone encoder
-    enc = srv.encoder if srv.encoder is not None else (srv.pipeline.encoder if srv.pipeline else None)
+    enc = _get_zimage_encoder(manager)
     if enc is None:
         # Try loading Z-Image on-demand to get the encoder
         try:
-            srv.load_zimage_pipeline_on_demand()
-            enc = srv.pipeline.encoder if srv.pipeline else None
+            _ensure_zimage_loaded(manager)
+            enc = _get_zimage_encoder(manager)
         except Exception as e:
             logger.error(f"[Z-Image] Failed to load pipeline on-demand: {e}")
 
@@ -1029,10 +1043,10 @@ async def format_prompt_endpoint(request: EncodeRequest) -> FormatPromptResult:
 
 
 @router.get("/api/templates", response_model=TemplateListResponse)
-async def list_templates() -> TemplateListResponse:
+async def list_templates(manager: ManagerDep) -> TemplateListResponse:
     """List available templates with full data for UI population."""
     # Use encoder from pipeline or standalone encoder
-    enc = _get_zimage_encoder()
+    enc = _get_zimage_encoder(manager)
     if enc is None or enc.templates is None:
         return TemplateListResponse()
 
@@ -1060,10 +1074,10 @@ async def list_templates() -> TemplateListResponse:
 
 
 @router.get("/api/rewriters", response_model=RewriterListResponse)
-async def list_rewriters() -> RewriterListResponse:
+async def list_rewriters(manager: ManagerDep) -> RewriterListResponse:
     """List available rewriter templates."""
     # Use encoder from pipeline or standalone encoder
-    enc = _get_zimage_encoder()
+    enc = _get_zimage_encoder(manager)
     if enc is None or enc.templates is None:
         return RewriterListResponse()
 
@@ -1088,7 +1102,7 @@ async def list_rewriters() -> RewriterListResponse:
 
 
 @router.post("/api/rewrite", response_model=RewriteResult)
-async def rewrite_prompt(request: RewriteRequest) -> RewriteResult:
+async def rewrite_prompt(request: RewriteRequest, config: ConfigDep, manager: ManagerDep) -> RewriteResult:
     """
     Rewrite/expand a prompt using a rewriter template or custom system prompt.
 
@@ -1121,7 +1135,7 @@ async def rewrite_prompt(request: RewriteRequest) -> RewriteResult:
         logger.info("[Rewrite] Using API backend for rewriting")
     else:
         # Use encoder from pipeline or standalone encoder
-        enc = srv.encoder if srv.encoder is not None else (srv.pipeline.encoder if srv.pipeline else None)
+        enc = _get_zimage_encoder(manager)
         if enc is not None:
             backend = getattr(enc, "backend", None)
             backend_name = "local"
@@ -1133,7 +1147,7 @@ async def rewrite_prompt(request: RewriteRequest) -> RewriteResult:
         raise HTTPException(status_code=400, detail="Backend does not support text generation")
 
     # Get template loader from encoder (for template lookup)
-    enc = srv.encoder if srv.encoder is not None else (srv.pipeline.encoder if srv.pipeline else None)
+    enc = _get_zimage_encoder(manager)
 
     # Determine system prompt: custom takes precedence, then template
     system_prompt = None
@@ -1176,33 +1190,18 @@ async def rewrite_prompt(request: RewriteRequest) -> RewriteResult:
     min_p = request.min_p
     presence_penalty = request.presence_penalty
 
-    if srv.runtime_config is not None:
-        if max_tokens is None:
-            max_tokens = srv.runtime_config.rewriter_max_tokens
-        if temperature is None:
-            temperature = srv.runtime_config.rewriter_temperature
-        if top_p is None:
-            top_p = srv.runtime_config.rewriter_top_p
-        if top_k is None:
-            top_k = srv.runtime_config.rewriter_top_k
-        if min_p is None:
-            min_p = srv.runtime_config.rewriter_min_p
-        if presence_penalty is None:
-            presence_penalty = srv.runtime_config.rewriter_presence_penalty
-    else:
-        # Fallback defaults (Qwen3 thinking mode)
-        if max_tokens is None:
-            max_tokens = 1024
-        if temperature is None:
-            temperature = 0.6
-        if top_p is None:
-            top_p = 0.95
-        if top_k is None:
-            top_k = 20
-        if min_p is None:
-            min_p = 0.0
-        if presence_penalty is None:
-            presence_penalty = 0.0
+    if max_tokens is None:
+        max_tokens = config.rewriter_max_tokens
+    if temperature is None:
+        temperature = config.rewriter_temperature
+    if top_p is None:
+        top_p = config.rewriter_top_p
+    if top_k is None:
+        top_k = config.rewriter_top_k
+    if min_p is None:
+        min_p = config.rewriter_min_p
+    if presence_penalty is None:
+        presence_penalty = config.rewriter_presence_penalty
 
     try:
         start = time.time()
@@ -1312,10 +1311,10 @@ async def rewrite_prompt(request: RewriteRequest) -> RewriteResult:
 
 
 @router.post("/api/save-embeddings", response_model=SaveEmbeddingsResult)
-async def save_embeddings_endpoint(request: EncodeRequest) -> SaveEmbeddingsResult:
+async def save_embeddings_endpoint(request: EncodeRequest, manager: ManagerDep) -> SaveEmbeddingsResult:
     """Encode and save embeddings to file for distributed inference."""
     # Use encoder from pipeline or standalone encoder
-    enc = srv.encoder if srv.encoder is not None else (srv.pipeline.encoder if srv.pipeline else None)
+    enc = _get_zimage_encoder(manager)
     if enc is None:
         raise HTTPException(status_code=503, detail="Encoder not loaded")
 

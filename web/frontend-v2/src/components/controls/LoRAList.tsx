@@ -53,7 +53,7 @@ export function LoRAList({ param, value, onChange, disabled = false }: LoRAListP
   useEffect(() => {
     fetchAvailableLoras()
       .then((response) => {
-        setAvailableLoras(response.loras);
+        setAvailableLoras(response.loras ?? []);
         setIsLoading(false);
       })
       .catch((err) => {

@@ -272,7 +272,7 @@ export function ModelManager() {
               pipelineId={pipeline.id}
               name={pipeline.name}
               color={color}
-              status={status.status}
+              status={status.status as ModelCardProps['status']}
               vramMb={status.vramMb}
               error={status.error}
               modelVariant={variant}

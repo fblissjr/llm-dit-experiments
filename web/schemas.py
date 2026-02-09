@@ -353,6 +353,69 @@ class DyPEStatusResponse(CamelModel):
     notes: List[str] = Field(default_factory=list)
 
 
+class ParamSchemaResponse(CamelModel):
+    """A single UI control definition from the pipeline schema system.
+
+    Uses extra="allow" because ParamSchema.to_dict() dynamically filters
+    None values -- the set of keys varies per param.
+    """
+
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,
+        extra="allow",
+    )
+
+    id: str
+    type: str
+    label: str
+    default: Optional[Any] = None
+    min: Optional[float] = None
+    max: Optional[float] = None
+    step: Optional[float] = None
+    options: Optional[List[str]] = None
+    options_endpoint: Optional[str] = None
+    group: str = "basic"
+    tooltip: Optional[str] = None
+    conditional: Optional[Dict[str, Any]] = None
+    placeholder: Optional[str] = None
+    rows: Optional[int] = None
+    required: bool = False
+    max_count: Optional[int] = None
+    scale_min: Optional[float] = None
+    scale_max: Optional[float] = None
+    dependent_defaults: Optional[Dict[str, Dict[str, Any]]] = None
+
+
+class PipelineSchemaResponse(CamelModel):
+    """Complete pipeline schema for frontend form generation."""
+
+    id: str
+    name: str
+    description: str
+    output_type: str
+    color: str
+    icon: Optional[str] = None
+    params: List[ParamSchemaResponse] = Field(default_factory=list)
+    supports_history: bool = True
+    supports_img2img: bool = False
+    supports_reference_images: bool = False
+    supports_streaming: bool = False
+    endpoint: Optional[str] = None
+    category: str = "image"
+
+
+class PresetDetailResponse(CamelModel):
+    """Full detail for a single generation preset."""
+
+    name: str
+    description: str = ""
+    category: str = ""
+    pipelines: List[str] = Field(default_factory=list)
+    variant: Optional[str] = None
+    params: Dict[str, Any] = Field(default_factory=dict)
+
+
 class PipelinesResponse(CamelModel):
     """All pipeline schemas for frontend form generation."""
 

@@ -14,7 +14,9 @@ from web.dependencies import ConfigDep
 from web.schemas import (
     AllPresetsResponse,
     PipelineDefaultsResponse,
+    PipelineSchemaResponse,
     PipelinesResponse,
+    PresetDetailResponse,
     PresetListResponse,
     ProfileListResponse,
     ResolutionConfigResponse,
@@ -83,7 +85,7 @@ async def get_pipeline_schemas(config: ConfigDep):
     }
 
 
-@router.get("/api/pipelines/{pipeline_id}")
+@router.get("/api/pipelines/{pipeline_id}", response_model=PipelineSchemaResponse)
 async def get_pipeline_schema(pipeline_id: str):
     """Get schema for a specific pipeline.
 
@@ -229,7 +231,7 @@ async def get_presets_for_pipeline(pipeline_id: str, config: ConfigDep, variant:
     )
 
 
-@router.get("/api/presets/preset/{name}")
+@router.get("/api/presets/preset/{name}", response_model=PresetDetailResponse)
 async def get_preset_by_name(name: str, config: ConfigDep):
     """Get full details for a specific preset.
 

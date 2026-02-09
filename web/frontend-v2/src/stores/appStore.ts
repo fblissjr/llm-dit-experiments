@@ -281,7 +281,7 @@ export const useAppStore = create<AppState>()(
         const result = await clearCacheApi();
         // Refresh context to pick up new VRAM numbers
         get().refreshContext();
-        return { freedGb: result.freedGb };
+        return { freedGb: result.freedGb ?? 0 };
       } catch {
         return { freedGb: 0 };
       }

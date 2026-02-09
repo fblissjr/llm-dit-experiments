@@ -1,0 +1,4635 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Z-Image Generator",
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/": {
+      "get": {
+        "summary": "Index",
+        "description": "Serve the main page.",
+        "operationId": "index__get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "summary": "Health",
+        "description": "Health check.",
+        "operationId": "health_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/system/unload-fmtt": {
+      "post": {
+        "summary": "Unload Fmtt",
+        "description": "Unload cached FMTT reward function (SigLIP) to free GPU memory.",
+        "operationId": "unload_fmtt_api_system_unload_fmtt_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnloadFmttResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/system/clear-cache": {
+      "post": {
+        "summary": "Clear Cache",
+        "description": "Clear CUDA cache and Python garbage collection.",
+        "operationId": "clear_cache_api_system_clear_cache_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClearCacheResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/context": {
+      "get": {
+        "summary": "Get Generation Context",
+        "description": "Get composite generation context for the frontend status bar.\n\nAggregates model variant, LoRA state, VRAM, quantization, compile,\nand session state into a single response. Designed to be polled at\n~15s intervals by the frontend.",
+        "operationId": "get_generation_context_api_context_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenerationContextResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/server/restart": {
+      "post": {
+        "summary": "Restart Server",
+        "description": "Request server restart.",
+        "operationId": "restart_server_api_server_restart_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object",
+                "title": "Request"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RestartResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/history": {
+      "get": {
+        "summary": "Get History",
+        "description": "Get generation history.",
+        "operationId": "get_history_api_history_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HistoryResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Clear History",
+        "description": "Clear all history.",
+        "operationId": "clear_history_api_history_delete",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HistoryClearResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/history/{index}": {
+      "delete": {
+        "summary": "Delete History Item",
+        "description": "Delete a history item.",
+        "operationId": "delete_history_item_api_history__index__delete",
+        "parameters": [
+          {
+            "name": "index",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Index"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HistoryDeleteResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/vram/status": {
+      "get": {
+        "summary": "Vram Status",
+        "description": "Get current VRAM usage and loaded models status.",
+        "operationId": "vram_status_api_vram_status_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VRAMStatusResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/models/{pipeline_id}/load": {
+      "post": {
+        "summary": "Load Model By Id",
+        "description": "Load a model by pipeline ID.\n\nThis is the unified API for the React frontend. Maps pipeline IDs to\nthe specific load functions, passing through DI dependencies.",
+        "operationId": "load_model_by_id_api_models__pipeline_id__load_post",
+        "parameters": [
+          {
+            "name": "pipeline_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pipeline Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessVramResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/models/{pipeline_id}/unload": {
+      "post": {
+        "summary": "Unload Model By Id",
+        "description": "Unload a model by pipeline ID.",
+        "operationId": "unload_model_by_id_api_models__pipeline_id__unload_post",
+        "parameters": [
+          {
+            "name": "pipeline_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pipeline Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessVramResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/models/unload-all": {
+      "post": {
+        "summary": "Unload All Models",
+        "description": "Unload all loaded models to free VRAM.",
+        "operationId": "unload_all_models_api_models_unload_all_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessVramResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/models/{pipeline_id}/status": {
+      "get": {
+        "summary": "Get Model Status",
+        "description": "Get the status of a specific pipeline model.",
+        "operationId": "get_model_status_api_models__pipeline_id__status_get",
+        "parameters": [
+          {
+            "name": "pipeline_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pipeline Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelStatusResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/loras": {
+      "get": {
+        "summary": "List Available Loras",
+        "description": "List all available LoRA files from configured directories.\n\nScans directories in [lora].paths config for .safetensors files.",
+        "operationId": "list_available_loras_api_loras_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoRAListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/loras/{pipeline_id}": {
+      "get": {
+        "summary": "List Loras For Pipeline",
+        "description": "List LoRA files available for a specific pipeline.",
+        "operationId": "list_loras_for_pipeline_api_loras__pipeline_id__get",
+        "parameters": [
+          {
+            "name": "pipeline_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pipeline Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoRAListResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/pipelines": {
+      "get": {
+        "summary": "Get Pipeline Schemas",
+        "description": "Return all pipeline schemas for frontend form generation.\n\nThe frontend uses these schemas to dynamically render forms without\nhardcoding pipeline-specific UI. Each schema describes:\n- Pipeline metadata (name, description, output type)\n- Form parameters with types, defaults, and constraints\n- Feature flags (img2img, streaming, reference images)\n\nReturns:\n    dict with:\n    - pipelines: Dict of pipeline_id -> PipelineSchema\n    - defaults: Current RuntimeConfig values (if loaded)\n    - loaded_pipeline: Currently loaded pipeline type (if any)",
+        "operationId": "get_pipeline_schemas_api_pipelines_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PipelinesResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/pipelines/{pipeline_id}": {
+      "get": {
+        "summary": "Get Pipeline Schema",
+        "description": "Get schema for a specific pipeline.\n\nArgs:\n    pipeline_id: Pipeline identifier (e.g., \"zimage\", \"ltx2\")\n\nReturns:\n    PipelineSchema dict for the requested pipeline\n\nRaises:\n    404 if pipeline not found",
+        "operationId": "get_pipeline_schema_api_pipelines__pipeline_id__get",
+        "parameters": [
+          {
+            "name": "pipeline_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pipeline Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PipelineSchemaResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/pipelines/{pipeline_id}/defaults": {
+      "get": {
+        "summary": "Get Pipeline Defaults",
+        "description": "Get default values for a specific pipeline.\n\nMerges schema defaults with RuntimeConfig values for the pipeline.\n\nArgs:\n    pipeline_id: Pipeline identifier\n\nReturns:\n    Dict of parameter_id -> default_value",
+        "operationId": "get_pipeline_defaults_api_pipelines__pipeline_id__defaults_get",
+        "parameters": [
+          {
+            "name": "pipeline_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pipeline Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PipelineDefaultsResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/presets": {
+      "get": {
+        "summary": "Get All Presets",
+        "description": "Return all generation presets with metadata.\n\nReturns:\n    AllPresetsResponse with list of preset objects",
+        "operationId": "get_all_presets_api_presets_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AllPresetsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/presets/{pipeline_id}": {
+      "get": {
+        "summary": "Get Presets For Pipeline",
+        "description": "Return presets that apply to a specific pipeline.\n\nArgs:\n    pipeline_id: Pipeline identifier (e.g., \"zimage\", \"ltx2\")\n    variant: Optional variant filter (e.g., \"base\", \"turbo\")\n\nReturns:\n    PresetListResponse with presets and default_preset name",
+        "operationId": "get_presets_for_pipeline_api_presets__pipeline_id__get",
+        "parameters": [
+          {
+            "name": "pipeline_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pipeline Id"
+            }
+          },
+          {
+            "name": "variant",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Variant"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PresetListResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/presets/preset/{name}": {
+      "get": {
+        "summary": "Get Preset By Name",
+        "description": "Get full details for a specific preset.\n\nArgs:\n    name: Preset name\n\nReturns:\n    Full preset object with all parameters\n\nRaises:\n    404 if preset not found",
+        "operationId": "get_preset_by_name_api_presets_preset__name__get",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PresetDetailResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/resolution-config": {
+      "get": {
+        "summary": "Get Resolution Config",
+        "description": "Get resolution constraints for client-side validation.\n\nReturns VAE multiple, min/max limits, categorized presets, and DyPE config.\nPresets are filtered based on the active model type.\n\nArgs:\n    model: Optional model filter (\"zimage\", \"qwenimage-edit\", \"qwenimage-t2i\")\n           If not provided, returns presets for all models.\n\nModel-specific constraints:\n- Z-Image: Flexible resolutions, must be divisible by 16\n- Qwen-Image Edit: Fixed 640x640 or 1024x1024 only\n- Qwen-Image T2I: Default 1328x1328, flexible with VAE constraints",
+        "operationId": "get_resolution_config_api_resolution_config_get",
+        "parameters": [
+          {
+            "name": "model",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Model"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResolutionConfigResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/rewriter-config": {
+      "get": {
+        "summary": "Get Rewriter Config",
+        "description": "Get rewriter configuration defaults from server config.\n\nQwen3 Best Practices (thinking mode):\n- temperature=0.6, top_p=0.95, top_k=20, min_p=0\n- DO NOT use greedy decoding (causes repetition)\n- presence_penalty=0-2 helps reduce endless repetitions",
+        "operationId": "get_rewriter_config_api_rewriter_config_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RewriterConfigResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/config/session": {
+      "get": {
+        "summary": "Get Session Config",
+        "description": "Get current session configuration values.\n\nReturns the current runtime_config values, the loaded profile name,\nand which fields have been modified during this session.",
+        "operationId": "get_session_config_api_config_session_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionConfigResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Update Session Config",
+        "description": "Update session defaults (hot-reload safe fields only).\n\nThese changes apply immediately but don't persist to file.\nThey last until server restart.",
+        "operationId": "update_session_config_api_config_session_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object",
+                "title": "Request"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionConfigUpdateResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/config/profiles": {
+      "get": {
+        "summary": "List Profiles",
+        "description": "List available profiles from config.toml.",
+        "operationId": "list_profiles_api_config_profiles_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfileListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/dype/config": {
+      "get": {
+        "summary": "Dype Config",
+        "description": "Get DyPE configuration defaults from server config.\n\nReturns default DyPE settings for high-resolution generation.",
+        "operationId": "dype_config_api_dype_config_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DyPEConfigResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/dype/status": {
+      "get": {
+        "summary": "Dype Status",
+        "description": "Get DyPE feature status and recommendations.\n\nReturns whether DyPE is recommended for the current pipeline\nand suggested settings based on target resolution.",
+        "operationId": "dype_status_api_dype_status_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DyPEStatusResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/encode": {
+      "post": {
+        "summary": "Encode",
+        "description": "Encode a prompt to embeddings (for distributed inference).",
+        "operationId": "encode_api_encode_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EncodeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EncodeResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/generate": {
+      "post": {
+        "summary": "Generate",
+        "description": "Generate an image from a prompt.",
+        "operationId": "generate_api_generate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GenerateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImageGenerationResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/generate/stream": {
+      "post": {
+        "summary": "Generate Stream",
+        "description": "Generate an image with SSE progress streaming.\n\nReturns Server-Sent Events with progress updates during generation,\nallowing the frontend to show step-by-step progress.\n\nEvents:\n- {\"type\": \"status\", \"message\": \"...\"} - Status updates\n- {\"type\": \"progress\", \"step\": N, \"total_steps\": M, ...} - Step progress\n- {\"type\": \"complete\", ...} - Final result with image data\n- {\"type\": \"error\", \"message\": \"...\"} - Error occurred",
+        "operationId": "generate_stream_api_generate_stream_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GenerateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/img2img": {
+      "post": {
+        "summary": "Img2Img",
+        "description": "Generate an image from an input image with optional differential mask.\n\nThe mask controls per-pixel edit strength:\n- Black (0): Preserve original\n- White (255): Allow full editing\n- Gray: Partial editing",
+        "operationId": "img2img_api_img2img_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Img2ImgRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImageGenerationResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/format-prompt": {
+      "post": {
+        "summary": "Format Prompt Endpoint",
+        "description": "Preview the formatted prompt without encoding (fast, no GPU needed).",
+        "operationId": "format_prompt_endpoint_api_format_prompt_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EncodeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FormatPromptResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/templates": {
+      "get": {
+        "summary": "List Templates",
+        "description": "List available templates with full data for UI population.",
+        "operationId": "list_templates_api_templates_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TemplateListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/rewriters": {
+      "get": {
+        "summary": "List Rewriters",
+        "description": "List available rewriter templates.",
+        "operationId": "list_rewriters_api_rewriters_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RewriterListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/rewrite": {
+      "post": {
+        "summary": "Rewrite Prompt",
+        "description": "Rewrite/expand a prompt using a rewriter template or custom system prompt.\n\nUses the same Qwen3 model loaded for text encoding to generate expanded prompts,\nor a separate API backend if configured.\n\nSupports two modes:\n1. Template mode: Use `rewriter` to specify a rewriter template\n2. Ad-hoc mode: Use `custom_system_prompt` for custom rewriting instructions\n\nBackend selection:\n- If rewriter_use_api is True and rewriter_backend is configured, uses API backend\n- Otherwise, uses the local encoder's backend",
+        "operationId": "rewrite_prompt_api_rewrite_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RewriteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RewriteResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/save-embeddings": {
+      "post": {
+        "summary": "Save Embeddings Endpoint",
+        "description": "Encode and save embeddings to file for distributed inference.",
+        "operationId": "save_embeddings_endpoint_api_save_embeddings_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EncodeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SaveEmbeddingsResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/flux2/status": {
+      "get": {
+        "summary": "Flux2 Status",
+        "description": "Get FLUX.2 Klein pipeline status.\n\nReturns availability info. FLUX.2 is always available (downloads from HuggingFace).",
+        "operationId": "flux2_status_api_flux2_status_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Flux2StatusResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/flux2/generate": {
+      "post": {
+        "summary": "Flux2 Generate",
+        "description": "Generate image using FLUX.2 Klein.\n\nSupports both text-to-image and image editing with reference images.\nReturns PNG image as binary response.",
+        "operationId": "flux2_generate_api_flux2_generate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Flux2GenerateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImageGenerationResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/flux2/generate/stream": {
+      "post": {
+        "summary": "Flux2 Generate Stream",
+        "description": "Generate image using FLUX.2 Klein with SSE progress streaming.\n\nReturns Server-Sent Events with progress updates during generation,\nallowing the frontend to show step-by-step progress.\n\nEvents:\n- {\"type\": \"status\", \"message\": \"...\"} - Status updates\n- {\"type\": \"progress\", \"step\": N, \"total_steps\": M} - Step progress\n- {\"type\": \"complete\", ...} - Final result with image data\n- {\"type\": \"error\", \"message\": \"...\"} - Error occurred",
+        "operationId": "flux2_generate_stream_api_flux2_generate_stream_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Flux2GenerateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/ltx2/status": {
+      "get": {
+        "summary": "Ltx2 Status",
+        "description": "Get LTX-2 pipeline status.\n\nReturns availability, loaded state, and VRAM usage.",
+        "operationId": "ltx2_status_api_ltx2_status_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LTX2StatusResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/ltx2/generate/stream": {
+      "post": {
+        "summary": "Ltx2 Generate Stream",
+        "description": "Generate video with SSE progress streaming.\n\nReturns Server-Sent Events with progress updates during generation,\nthen final result with video URL.\n\nUses pure PyTorch generation via generate_video_with_offloading().",
+        "operationId": "ltx2_generate_stream_api_ltx2_generate_stream_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LTX2GenerateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/qwen-image/edit-layer": {
+      "post": {
+        "summary": "Qwen Image Edit Layer",
+        "description": "Edit a decomposed layer using text instructions.\n\nUses the Qwen-Image-Edit-2511 model to modify a layer based on natural language\ninstructions. The edit model is loaded lazily on first use.\n\nReturns the edited RGBA layer as a PNG image.",
+        "operationId": "qwen_image_edit_layer_api_qwen_image_edit_layer_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QwenImageEditLayerRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/qwen-image/edit-status": {
+      "get": {
+        "summary": "Qwen Image Edit Status",
+        "description": "Check if the edit model is loaded and ready.",
+        "operationId": "qwen_image_edit_status_api_qwen_image_edit_status_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QwenImageEditStatusResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/qwen-image/edit-multi": {
+      "post": {
+        "summary": "Qwen Image Edit Multi",
+        "description": "Combine multiple images using Qwen-Image-Edit-2511.\n\nNew capability in Edit-2511 for multi-person consistency and creative\nimage merging. Supports combining 2+ images into a single coherent output.\n\nReturns the combined output as a PNG image.",
+        "operationId": "qwen_image_edit_multi_api_qwen_image_edit_multi_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QwenImageEditMultiRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/qwen-image-2512/status": {
+      "get": {
+        "summary": "Qwen Image 2512 Status",
+        "description": "Check Qwen-Image T2I pipeline status.\n\nNote: Uses unified config (--model-type qwenimage-t2i --qwen-image-model-path).",
+        "operationId": "qwen_image_2512_status_api_qwen_image_2512_status_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QwenImageT2IStatusResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/qwen-image-2512/config": {
+      "get": {
+        "summary": "Qwen Image 2512 Config",
+        "description": "Get Qwen-Image T2I configuration and defaults.\n\nNote: Uses unified config (--model-type qwenimage-t2i).\nVariant-aware defaults: T2I uses 40 steps, 1024 resolution, fp8 quantization.",
+        "operationId": "qwen_image_2512_config_api_qwen_image_2512_config_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QwenImageT2IConfigResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/qwen-image-2512/generate": {
+      "post": {
+        "summary": "Qwen Image 2512 Generate",
+        "description": "Generate an image using Qwen-Image T2I (pure text-to-image).\n\nUses unified config: --model-type qwenimage-t2i --qwen-image-model-path\nVariant-aware defaults: T2I uses 40 steps, 1024 resolution, fp8 quantization.",
+        "operationId": "qwen_image_2512_generate_api_qwen_image_2512_generate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QwenImage2512GenerateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AllPresetsResponse": {
+        "properties": {
+          "presets": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Presets"
+          }
+        },
+        "type": "object",
+        "title": "AllPresetsResponse",
+        "description": "All presets across pipelines."
+      },
+      "ClearCacheResponse": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success"
+          },
+          "freedGb": {
+            "type": "number",
+            "title": "Freedgb",
+            "default": 0.0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "success"
+        ],
+        "title": "ClearCacheResponse"
+      },
+      "ConfigTag": {
+        "properties": {
+          "key": {
+            "type": "string",
+            "title": "Key"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "color": {
+            "type": "string",
+            "title": "Color"
+          }
+        },
+        "type": "object",
+        "required": [
+          "key",
+          "label",
+          "color"
+        ],
+        "title": "ConfigTag"
+      },
+      "ConfigWarning": {
+        "properties": {
+          "severity": {
+            "type": "string",
+            "title": "Severity"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "severity",
+          "message"
+        ],
+        "title": "ConfigWarning"
+      },
+      "DyPEConfigRequest": {
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled",
+            "default": false
+          },
+          "method": {
+            "type": "string",
+            "title": "Method",
+            "default": "vision_yarn"
+          },
+          "multipass": {
+            "type": "string",
+            "title": "Multipass",
+            "default": "twopass"
+          },
+          "dype_scale": {
+            "type": "number",
+            "title": "Dype Scale",
+            "default": 2.0
+          },
+          "dype_exponent": {
+            "type": "number",
+            "title": "Dype Exponent",
+            "default": 2.0
+          },
+          "base_shift": {
+            "type": "number",
+            "title": "Base Shift",
+            "default": 0.5
+          },
+          "max_shift": {
+            "type": "number",
+            "title": "Max Shift",
+            "default": 1.15
+          },
+          "pass2_strength": {
+            "type": "number",
+            "title": "Pass2 Strength",
+            "default": 0.5
+          },
+          "pass3_strength": {
+            "type": "number",
+            "title": "Pass3 Strength",
+            "default": 0.4
+          },
+          "frequency_modulation": {
+            "type": "boolean",
+            "title": "Frequency Modulation",
+            "default": false
+          }
+        },
+        "type": "object",
+        "title": "DyPEConfigRequest",
+        "description": "DyPE configuration for high-resolution generation."
+      },
+      "DyPEConfigResponse": {
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled",
+            "default": false
+          },
+          "method": {
+            "type": "string",
+            "title": "Method",
+            "default": "vision_yarn"
+          },
+          "dypeScale": {
+            "type": "number",
+            "title": "Dypescale",
+            "default": 2.0
+          },
+          "dypeExponent": {
+            "type": "number",
+            "title": "Dypeexponent",
+            "default": 2.0
+          },
+          "dypeStartSigma": {
+            "type": "number",
+            "title": "Dypestartsigma",
+            "default": 1.0
+          },
+          "baseShift": {
+            "type": "number",
+            "title": "Baseshift",
+            "default": 0.5
+          },
+          "maxShift": {
+            "type": "number",
+            "title": "Maxshift",
+            "default": 1.15
+          },
+          "baseResolution": {
+            "type": "integer",
+            "title": "Baseresolution",
+            "default": 1024
+          },
+          "anisotropic": {
+            "type": "boolean",
+            "title": "Anisotropic",
+            "default": false
+          },
+          "multipassRecommendedThreshold": {
+            "type": "integer",
+            "title": "Multipassrecommendedthreshold",
+            "default": 2048
+          }
+        },
+        "type": "object",
+        "title": "DyPEConfigResponse"
+      },
+      "DyPEStatusResponse": {
+        "properties": {
+          "available": {
+            "type": "boolean",
+            "title": "Available",
+            "default": false
+          },
+          "supportedMethods": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Supportedmethods"
+          },
+          "recommendedForResolutions": {
+            "additionalProperties": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "type": "object",
+            "title": "Recommendedforresolutions"
+          },
+          "notes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Notes"
+          }
+        },
+        "type": "object",
+        "title": "DyPEStatusResponse",
+        "description": "DyPE feature availability and recommendations."
+      },
+      "EncodeRequest": {
+        "properties": {
+          "prompt": {
+            "type": "string",
+            "title": "Prompt"
+          },
+          "system_prompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "System Prompt"
+          },
+          "thinking_content": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Thinking Content"
+          },
+          "assistant_content": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assistant Content"
+          },
+          "force_think_block": {
+            "type": "boolean",
+            "title": "Force Think Block",
+            "default": false
+          },
+          "strip_quotes": {
+            "type": "boolean",
+            "title": "Strip Quotes",
+            "default": false
+          },
+          "template": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Template"
+          }
+        },
+        "type": "object",
+        "required": [
+          "prompt"
+        ],
+        "title": "EncodeRequest"
+      },
+      "EncodeResult": {
+        "properties": {
+          "shape": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Shape"
+          },
+          "dtype": {
+            "type": "string",
+            "title": "Dtype"
+          },
+          "encodeTime": {
+            "type": "number",
+            "title": "Encodetime"
+          },
+          "tokenCount": {
+            "type": "integer",
+            "title": "Tokencount"
+          },
+          "prompt": {
+            "type": "string",
+            "title": "Prompt"
+          },
+          "formattedPrompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Formattedprompt"
+          }
+        },
+        "type": "object",
+        "required": [
+          "shape",
+          "dtype",
+          "encodeTime",
+          "tokenCount",
+          "prompt"
+        ],
+        "title": "EncodeResult"
+      },
+      "Flux2GenerateRequest": {
+        "properties": {
+          "prompt": {
+            "type": "string",
+            "title": "Prompt"
+          },
+          "model_name": {
+            "type": "string",
+            "title": "Model Name",
+            "default": "klein-9b-fp8"
+          },
+          "width": {
+            "type": "integer",
+            "maximum": 2048.0,
+            "minimum": 256.0,
+            "title": "Width",
+            "default": 1024
+          },
+          "height": {
+            "type": "integer",
+            "maximum": 2048.0,
+            "minimum": 256.0,
+            "title": "Height",
+            "default": 1024
+          },
+          "num_steps": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Num Steps"
+          },
+          "guidance": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Guidance"
+          },
+          "seed": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Seed"
+          },
+          "block_offload": {
+            "type": "boolean",
+            "title": "Block Offload",
+            "default": false
+          },
+          "model_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Path"
+          },
+          "vae_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vae Path"
+          },
+          "reference_images": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reference Images"
+          },
+          "match_image_size": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Match Image Size",
+            "default": "none"
+          },
+          "loras": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Loras"
+          },
+          "max_text_length": {
+            "type": "integer",
+            "title": "Max Text Length",
+            "default": 512
+          },
+          "pad_to_max": {
+            "type": "boolean",
+            "title": "Pad To Max",
+            "default": true
+          },
+          "output_layers": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output Layers"
+          }
+        },
+        "type": "object",
+        "required": [
+          "prompt"
+        ],
+        "title": "Flux2GenerateRequest",
+        "description": "Request for FLUX.2 Klein image generation."
+      },
+      "Flux2StatusResponse": {
+        "properties": {
+          "available": {
+            "type": "boolean",
+            "title": "Available",
+            "default": false
+          },
+          "loaded": {
+            "type": "boolean",
+            "title": "Loaded",
+            "default": false
+          },
+          "compileEnabled": {
+            "type": "boolean",
+            "title": "Compileenabled",
+            "default": false
+          },
+          "compileDynamic": {
+            "type": "boolean",
+            "title": "Compiledynamic",
+            "default": false
+          },
+          "compileVaeEnabled": {
+            "type": "boolean",
+            "title": "Compilevaeenabled",
+            "default": false
+          },
+          "supportedModels": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Supportedmodels"
+          }
+        },
+        "type": "object",
+        "title": "Flux2StatusResponse"
+      },
+      "FormatPromptResult": {
+        "properties": {
+          "formattedPrompt": {
+            "type": "string",
+            "title": "Formattedprompt"
+          },
+          "charCount": {
+            "type": "integer",
+            "title": "Charcount"
+          },
+          "tokenCount": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tokencount"
+          },
+          "maxTokens": {
+            "type": "integer",
+            "title": "Maxtokens",
+            "default": 1504
+          },
+          "prompt": {
+            "type": "string",
+            "title": "Prompt"
+          },
+          "systemPrompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Systemprompt"
+          },
+          "thinkingContent": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Thinkingcontent"
+          },
+          "assistantContent": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assistantcontent"
+          },
+          "template": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Template"
+          },
+          "forceThinkBlock": {
+            "type": "boolean",
+            "title": "Forcethinkblock",
+            "default": false
+          },
+          "stripQuotes": {
+            "type": "boolean",
+            "title": "Stripquotes",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "formattedPrompt",
+          "charCount",
+          "prompt"
+        ],
+        "title": "FormatPromptResult"
+      },
+      "GenerateRequest": {
+        "properties": {
+          "prompt": {
+            "type": "string",
+            "title": "Prompt"
+          },
+          "negative_prompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Negative Prompt"
+          },
+          "system_prompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "System Prompt"
+          },
+          "thinking_content": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Thinking Content"
+          },
+          "assistant_content": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assistant Content"
+          },
+          "force_think_block": {
+            "type": "boolean",
+            "title": "Force Think Block",
+            "default": false
+          },
+          "strip_quotes": {
+            "type": "boolean",
+            "title": "Strip Quotes",
+            "default": false
+          },
+          "width": {
+            "type": "integer",
+            "title": "Width",
+            "default": 1024
+          },
+          "height": {
+            "type": "integer",
+            "title": "Height",
+            "default": 1024
+          },
+          "steps": {
+            "type": "integer",
+            "title": "Steps",
+            "default": 9
+          },
+          "seed": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Seed"
+          },
+          "template": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Template"
+          },
+          "guidance_scale": {
+            "type": "number",
+            "title": "Guidance Scale",
+            "default": 0.0
+          },
+          "cfg_normalization": {
+            "type": "number",
+            "title": "Cfg Normalization",
+            "default": 0.0
+          },
+          "cfg_truncation": {
+            "type": "number",
+            "title": "Cfg Truncation",
+            "default": 1.0
+          },
+          "shift": {
+            "type": "number",
+            "title": "Shift",
+            "default": 3.0
+          },
+          "dynamic_shift": {
+            "type": "boolean",
+            "title": "Dynamic Shift",
+            "default": false
+          },
+          "d_noise": {
+            "type": "number",
+            "title": "D Noise",
+            "default": 1.0
+          },
+          "long_prompt_mode": {
+            "type": "string",
+            "title": "Long Prompt Mode",
+            "default": "interpolate"
+          },
+          "hidden_layer": {
+            "type": "integer",
+            "title": "Hidden Layer",
+            "default": -2
+          },
+          "layer_weights": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "number"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Layer Weights"
+          },
+          "dype": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DyPEConfigRequest"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "slg_scale": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slg Scale"
+          },
+          "slg_layers": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slg Layers"
+          },
+          "slg_start": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slg Start"
+          },
+          "slg_stop": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slg Stop"
+          },
+          "fmtt_enabled": {
+            "type": "boolean",
+            "title": "Fmtt Enabled",
+            "default": false
+          },
+          "fmtt_scale": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fmtt Scale"
+          },
+          "fmtt_start": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fmtt Start"
+          },
+          "fmtt_stop": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fmtt Stop"
+          },
+          "fmtt_normalize": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fmtt Normalize"
+          },
+          "fmtt_decode_scale": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fmtt Decode Scale"
+          },
+          "fmtt_siglip_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fmtt Siglip Model"
+          },
+          "fmtt_siglip_device": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fmtt Siglip Device"
+          },
+          "fbcache": {
+            "type": "boolean",
+            "title": "Fbcache",
+            "default": false
+          },
+          "fbcache_threshold": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fbcache Threshold"
+          },
+          "fbcache_log": {
+            "type": "boolean",
+            "title": "Fbcache Log",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "prompt"
+        ],
+        "title": "GenerateRequest"
+      },
+      "GenerationContextResponse": {
+        "properties": {
+          "uptimeSeconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Uptimeseconds"
+          },
+          "profile": {
+            "type": "string",
+            "title": "Profile",
+            "default": "default"
+          },
+          "activePipeline": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Activepipeline"
+          },
+          "pipelineDisplayName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pipelinedisplayname"
+          },
+          "modelVariant": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Modelvariant"
+          },
+          "loras": {
+            "items": {
+              "$ref": "#/components/schemas/LoRAInfo"
+            },
+            "type": "array",
+            "title": "Loras"
+          },
+          "loraSummary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lorasummary"
+          },
+          "quantization": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Quantization"
+          },
+          "compileEnabled": {
+            "type": "boolean",
+            "title": "Compileenabled",
+            "default": false
+          },
+          "compileMode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Compilemode"
+          },
+          "blockOffload": {
+            "type": "boolean",
+            "title": "Blockoffload",
+            "default": false
+          },
+          "vramUsedGb": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vramusedgb"
+          },
+          "vramTotalGb": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vramtotalgb"
+          },
+          "vramPercent": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vrampercent"
+          },
+          "pendingRestartFields": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Pendingrestartfields"
+          },
+          "sessionModifiedFields": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Sessionmodifiedfields"
+          },
+          "fmttCached": {
+            "type": "boolean",
+            "title": "Fmttcached",
+            "default": false
+          },
+          "historyCount": {
+            "type": "integer",
+            "title": "Historycount",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "title": "GenerationContextResponse",
+        "description": "Composite status snapshot for the frontend status bar.\n\nAggregates model variant, LoRA state, VRAM, quantization, compile,\nand session state into a single response to avoid multi-endpoint polling."
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "HealthResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "default": "ok"
+          },
+          "pipelineLoaded": {
+            "type": "boolean",
+            "title": "Pipelineloaded",
+            "default": false
+          },
+          "encoderLoaded": {
+            "type": "boolean",
+            "title": "Encoderloaded",
+            "default": false
+          },
+          "encoderOnlyMode": {
+            "type": "boolean",
+            "title": "Encoderonlymode",
+            "default": false
+          },
+          "qwenImageAvailable": {
+            "type": "boolean",
+            "title": "Qwenimageavailable",
+            "default": false
+          }
+        },
+        "type": "object",
+        "title": "HealthResponse"
+      },
+      "HistoryClearResponse": {
+        "properties": {
+          "cleared": {
+            "type": "integer",
+            "title": "Cleared",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "title": "HistoryClearResponse"
+      },
+      "HistoryDeleteResponse": {
+        "properties": {
+          "deleted": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Deleted"
+          },
+          "remaining": {
+            "type": "integer",
+            "title": "Remaining",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "title": "HistoryDeleteResponse"
+      },
+      "HistoryResponse": {
+        "properties": {
+          "history": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "History"
+          }
+        },
+        "type": "object",
+        "title": "HistoryResponse"
+      },
+      "ImageGenerationResult": {
+        "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "title": "Id"
+          },
+          "pipelineId": {
+            "type": "string",
+            "title": "Pipelineid"
+          },
+          "outputType": {
+            "type": "string",
+            "title": "Outputtype",
+            "default": "image"
+          },
+          "url": {
+            "type": "string",
+            "title": "Url"
+          },
+          "urls": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Urls"
+          },
+          "thumbnailUrl": {
+            "type": "string",
+            "title": "Thumbnailurl"
+          },
+          "seed": {
+            "type": "integer",
+            "title": "Seed",
+            "default": -1
+          },
+          "generationTime": {
+            "type": "number",
+            "title": "Generationtime",
+            "default": 0.0
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "pipelineId",
+          "url",
+          "urls",
+          "thumbnailUrl"
+        ],
+        "title": "ImageGenerationResult",
+        "description": "Standardized response for image generation endpoints."
+      },
+      "Img2ImgRequest": {
+        "properties": {
+          "prompt": {
+            "type": "string",
+            "title": "Prompt"
+          },
+          "negative_prompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Negative Prompt"
+          },
+          "image": {
+            "type": "string",
+            "title": "Image"
+          },
+          "mask_image": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mask Image"
+          },
+          "strength": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Strength",
+            "description": "Denoising strength (0=no change, 1=full generation)",
+            "default": 0.75
+          },
+          "system_prompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "System Prompt"
+          },
+          "thinking_content": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Thinking Content"
+          },
+          "assistant_content": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assistant Content"
+          },
+          "force_think_block": {
+            "type": "boolean",
+            "title": "Force Think Block",
+            "default": false
+          },
+          "strip_quotes": {
+            "type": "boolean",
+            "title": "Strip Quotes",
+            "default": false
+          },
+          "width": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 4096.0,
+                "minimum": 64.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Width"
+          },
+          "height": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 4096.0,
+                "minimum": 64.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Height"
+          },
+          "steps": {
+            "type": "integer",
+            "maximum": 500.0,
+            "minimum": 1.0,
+            "title": "Steps",
+            "default": 9
+          },
+          "seed": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Seed"
+          },
+          "template": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Template"
+          },
+          "guidance_scale": {
+            "type": "number",
+            "maximum": 30.0,
+            "minimum": 0.0,
+            "title": "Guidance Scale",
+            "default": 0.0
+          },
+          "cfg_normalization": {
+            "type": "number",
+            "maximum": 10.0,
+            "minimum": 0.0,
+            "title": "Cfg Normalization",
+            "default": 0.0
+          },
+          "cfg_truncation": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Cfg Truncation",
+            "default": 1.0
+          },
+          "cfg_norm_mode": {
+            "type": "string",
+            "title": "Cfg Norm Mode",
+            "default": "clamp"
+          },
+          "shift": {
+            "type": "number",
+            "maximum": 10.0,
+            "minimum": 0.0,
+            "title": "Shift",
+            "default": 3.0
+          },
+          "dynamic_shift": {
+            "type": "boolean",
+            "title": "Dynamic Shift",
+            "default": false
+          },
+          "d_noise": {
+            "type": "number",
+            "maximum": 2.0,
+            "minimum": 0.5,
+            "title": "D Noise",
+            "default": 1.0
+          },
+          "long_prompt_mode": {
+            "type": "string",
+            "title": "Long Prompt Mode",
+            "default": "interpolate"
+          },
+          "hidden_layer": {
+            "type": "integer",
+            "maximum": -1.0,
+            "minimum": -35.0,
+            "title": "Hidden Layer",
+            "default": -2
+          },
+          "fbcache": {
+            "type": "boolean",
+            "title": "Fbcache",
+            "default": false
+          },
+          "fbcache_threshold": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fbcache Threshold"
+          },
+          "fbcache_log": {
+            "type": "boolean",
+            "title": "Fbcache Log",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "prompt",
+          "image"
+        ],
+        "title": "Img2ImgRequest",
+        "description": "Request for image-to-image generation with optional differential mask."
+      },
+      "LTX2GenerateRequest": {
+        "properties": {
+          "prompt": {
+            "type": "string",
+            "title": "Prompt"
+          },
+          "negative_prompt": {
+            "type": "string",
+            "title": "Negative Prompt",
+            "default": "worst quality, blurry, distorted, inconsistent motion"
+          },
+          "width": {
+            "type": "integer",
+            "maximum": 1280.0,
+            "minimum": 256.0,
+            "title": "Width",
+            "default": 768
+          },
+          "height": {
+            "type": "integer",
+            "maximum": 1280.0,
+            "minimum": 256.0,
+            "title": "Height",
+            "default": 512
+          },
+          "num_frames": {
+            "type": "integer",
+            "title": "Num Frames",
+            "default": 33
+          },
+          "fps": {
+            "type": "number",
+            "title": "Fps",
+            "default": 24.0
+          },
+          "num_inference_steps": {
+            "type": "integer",
+            "title": "Num Inference Steps",
+            "default": 12
+          },
+          "guidance_scale": {
+            "type": "number",
+            "title": "Guidance Scale",
+            "default": 3.5
+          },
+          "seed": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Seed"
+          },
+          "enable_audio": {
+            "type": "boolean",
+            "title": "Enable Audio",
+            "default": false
+          },
+          "lora_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lora Path"
+          },
+          "lora_scale": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lora Scale"
+          }
+        },
+        "type": "object",
+        "required": [
+          "prompt"
+        ],
+        "title": "LTX2GenerateRequest",
+        "description": "Request for LTX-2 video generation."
+      },
+      "LTX2StatusResponse": {
+        "properties": {
+          "available": {
+            "type": "boolean",
+            "title": "Available",
+            "default": false
+          },
+          "loaded": {
+            "type": "boolean",
+            "title": "Loaded",
+            "default": false
+          },
+          "vramUsedGb": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vramusedgb"
+          }
+        },
+        "type": "object",
+        "title": "LTX2StatusResponse"
+      },
+      "LoRAFileInfo": {
+        "properties": {
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "directory": {
+            "type": "string",
+            "title": "Directory"
+          },
+          "sizeMb": {
+            "type": "number",
+            "title": "Sizemb"
+          }
+        },
+        "type": "object",
+        "required": [
+          "path",
+          "name",
+          "directory",
+          "sizeMb"
+        ],
+        "title": "LoRAFileInfo",
+        "description": "A single LoRA file on disk."
+      },
+      "LoRAInfo": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "scale": {
+            "type": "number",
+            "title": "Scale"
+          },
+          "layersUpdated": {
+            "type": "integer",
+            "title": "Layersupdated"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "path",
+          "scale",
+          "layersUpdated"
+        ],
+        "title": "LoRAInfo",
+        "description": "LoRA fusion state for a single LoRA applied to the active model."
+      },
+      "LoRAListResponse": {
+        "properties": {
+          "loras": {
+            "items": {
+              "$ref": "#/components/schemas/LoRAFileInfo"
+            },
+            "type": "array",
+            "title": "Loras"
+          },
+          "directories": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Directories"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count",
+            "default": 0
+          },
+          "pipelineId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pipelineid"
+          }
+        },
+        "type": "object",
+        "title": "LoRAListResponse",
+        "description": "Available LoRA files from /api/loras."
+      },
+      "ModelStatusResponse": {
+        "properties": {
+          "pipelineId": {
+            "type": "string",
+            "title": "Pipelineid"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "components": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Components"
+          },
+          "totalVramMb": {
+            "type": "integer",
+            "title": "Totalvrammb",
+            "default": 0
+          },
+          "vramMb": {
+            "type": "integer",
+            "title": "Vrammb",
+            "default": 0
+          },
+          "modelVariant": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Modelvariant"
+          },
+          "displayName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Displayname"
+          },
+          "loras": {
+            "items": {
+              "$ref": "#/components/schemas/LoRAInfo"
+            },
+            "type": "array",
+            "title": "Loras"
+          },
+          "loraSummary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lorasummary"
+          },
+          "configTags": {
+            "items": {
+              "$ref": "#/components/schemas/ConfigTag"
+            },
+            "type": "array",
+            "title": "Configtags"
+          },
+          "configWarnings": {
+            "items": {
+              "$ref": "#/components/schemas/ConfigWarning"
+            },
+            "type": "array",
+            "title": "Configwarnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "pipelineId",
+          "status"
+        ],
+        "title": "ModelStatusResponse",
+        "description": "Status for a single pipeline model from /api/models/{id}/status."
+      },
+      "ParamSchemaResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "type": {
+            "type": "string",
+            "title": "Type"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "default": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default"
+          },
+          "min": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min"
+          },
+          "max": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max"
+          },
+          "step": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Step"
+          },
+          "options": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Options"
+          },
+          "optionsEndpoint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Optionsendpoint"
+          },
+          "group": {
+            "type": "string",
+            "title": "Group",
+            "default": "basic"
+          },
+          "tooltip": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tooltip"
+          },
+          "conditional": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Conditional"
+          },
+          "placeholder": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Placeholder"
+          },
+          "rows": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rows"
+          },
+          "required": {
+            "type": "boolean",
+            "title": "Required",
+            "default": false
+          },
+          "maxCount": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Maxcount"
+          },
+          "scaleMin": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scalemin"
+          },
+          "scaleMax": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scalemax"
+          },
+          "dependentDefaults": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dependentdefaults"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "id",
+          "type",
+          "label"
+        ],
+        "title": "ParamSchemaResponse",
+        "description": "A single UI control definition from the pipeline schema system.\n\nUses extra=\"allow\" because ParamSchema.to_dict() dynamically filters\nNone values -- the set of keys varies per param."
+      },
+      "PipelineDefaultsResponse": {
+        "properties": {},
+        "additionalProperties": true,
+        "type": "object",
+        "title": "PipelineDefaultsResponse",
+        "description": "Merged schema + config defaults for a specific pipeline.\n\nKeys are dynamic (parameter IDs vary by pipeline), so we use a\nDict[str, Any] with an extra _variant field for conditional visibility."
+      },
+      "PipelineSchemaResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description"
+          },
+          "outputType": {
+            "type": "string",
+            "title": "Outputtype"
+          },
+          "color": {
+            "type": "string",
+            "title": "Color"
+          },
+          "icon": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Icon"
+          },
+          "params": {
+            "items": {
+              "$ref": "#/components/schemas/ParamSchemaResponse"
+            },
+            "type": "array",
+            "title": "Params"
+          },
+          "supportsHistory": {
+            "type": "boolean",
+            "title": "Supportshistory",
+            "default": true
+          },
+          "supportsImg2Img": {
+            "type": "boolean",
+            "title": "Supportsimg2Img",
+            "default": false
+          },
+          "supportsReferenceImages": {
+            "type": "boolean",
+            "title": "Supportsreferenceimages",
+            "default": false
+          },
+          "supportsStreaming": {
+            "type": "boolean",
+            "title": "Supportsstreaming",
+            "default": false
+          },
+          "endpoint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Endpoint"
+          },
+          "category": {
+            "type": "string",
+            "title": "Category",
+            "default": "image"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "description",
+          "outputType",
+          "color"
+        ],
+        "title": "PipelineSchemaResponse",
+        "description": "Complete pipeline schema for frontend form generation."
+      },
+      "PipelinesResponse": {
+        "properties": {
+          "pipelines": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Pipelines"
+          },
+          "defaults": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Defaults"
+          },
+          "loadedPipeline": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Loadedpipeline"
+          }
+        },
+        "type": "object",
+        "title": "PipelinesResponse",
+        "description": "All pipeline schemas for frontend form generation."
+      },
+      "PresetDetailResponse": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description",
+            "default": ""
+          },
+          "category": {
+            "type": "string",
+            "title": "Category",
+            "default": ""
+          },
+          "pipelines": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Pipelines"
+          },
+          "variant": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Variant"
+          },
+          "params": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Params"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "PresetDetailResponse",
+        "description": "Full detail for a single generation preset."
+      },
+      "PresetListResponse": {
+        "properties": {
+          "presets": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Presets"
+          },
+          "defaultPreset": {
+            "type": "string",
+            "title": "Defaultpreset",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "title": "PresetListResponse",
+        "description": "Presets for a specific pipeline."
+      },
+      "ProfileListResponse": {
+        "properties": {
+          "profiles": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Profiles"
+          },
+          "current": {
+            "type": "string",
+            "title": "Current",
+            "default": "default"
+          },
+          "configFile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Configfile"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          }
+        },
+        "type": "object",
+        "title": "ProfileListResponse"
+      },
+      "QwenImage2512GenerateRequest": {
+        "properties": {
+          "prompt": {
+            "type": "string",
+            "title": "Prompt"
+          },
+          "negative_prompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Negative Prompt"
+          },
+          "width": {
+            "type": "integer",
+            "title": "Width",
+            "default": 1024
+          },
+          "height": {
+            "type": "integer",
+            "title": "Height",
+            "default": 1024
+          },
+          "steps": {
+            "type": "integer",
+            "title": "Steps",
+            "default": 40
+          },
+          "cfg_scale": {
+            "type": "number",
+            "title": "Cfg Scale",
+            "default": 4.0
+          },
+          "seed": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Seed"
+          },
+          "max_sequence_length": {
+            "type": "integer",
+            "title": "Max Sequence Length",
+            "default": 512
+          }
+        },
+        "type": "object",
+        "required": [
+          "prompt"
+        ],
+        "title": "QwenImage2512GenerateRequest",
+        "description": "Request for Qwen-Image T2I text-to-image generation."
+      },
+      "QwenImageEditLayerRequest": {
+        "properties": {
+          "layer_image": {
+            "type": "string",
+            "title": "Layer Image"
+          },
+          "instruction": {
+            "type": "string",
+            "title": "Instruction"
+          },
+          "steps": {
+            "type": "integer",
+            "title": "Steps",
+            "default": 40
+          },
+          "cfg_scale": {
+            "type": "number",
+            "title": "Cfg Scale",
+            "default": 4.0
+          },
+          "seed": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Seed"
+          }
+        },
+        "type": "object",
+        "required": [
+          "layer_image",
+          "instruction"
+        ],
+        "title": "QwenImageEditLayerRequest",
+        "description": "Request for Qwen-Image layer editing (single image)."
+      },
+      "QwenImageEditMultiRequest": {
+        "properties": {
+          "images": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Images"
+          },
+          "instruction": {
+            "type": "string",
+            "title": "Instruction"
+          },
+          "steps": {
+            "type": "integer",
+            "title": "Steps",
+            "default": 40
+          },
+          "cfg_scale": {
+            "type": "number",
+            "title": "Cfg Scale",
+            "default": 4.0
+          },
+          "seed": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Seed"
+          }
+        },
+        "type": "object",
+        "required": [
+          "images",
+          "instruction"
+        ],
+        "title": "QwenImageEditMultiRequest",
+        "description": "Request for Qwen-Image multi-image editing (2511 feature)."
+      },
+      "QwenImageEditStatusResponse": {
+        "properties": {
+          "available": {
+            "type": "boolean",
+            "title": "Available",
+            "default": false
+          },
+          "editModelLoaded": {
+            "type": "boolean",
+            "title": "Editmodelloaded",
+            "default": false
+          },
+          "editModelPath": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Editmodelpath"
+          },
+          "supportsMultiImage": {
+            "type": "boolean",
+            "title": "Supportsmultiimage",
+            "default": false
+          }
+        },
+        "type": "object",
+        "title": "QwenImageEditStatusResponse"
+      },
+      "QwenImageT2IConfigResponse": {
+        "properties": {
+          "modelPath": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Modelpath"
+          },
+          "steps": {
+            "type": "integer",
+            "title": "Steps",
+            "default": 40
+          },
+          "cfgScale": {
+            "type": "number",
+            "title": "Cfgscale",
+            "default": 4.0
+          },
+          "quantizeTransformer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quantizetransformer"
+          },
+          "quantizeTextEncoder": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quantizetextencoder"
+          },
+          "defaultWidth": {
+            "type": "integer",
+            "title": "Defaultwidth",
+            "default": 1024
+          },
+          "defaultHeight": {
+            "type": "integer",
+            "title": "Defaultheight",
+            "default": 1024
+          },
+          "maxSequenceLength": {
+            "type": "integer",
+            "title": "Maxsequencelength",
+            "default": 512
+          }
+        },
+        "type": "object",
+        "title": "QwenImageT2IConfigResponse"
+      },
+      "QwenImageT2IStatusResponse": {
+        "properties": {
+          "available": {
+            "type": "boolean",
+            "title": "Available",
+            "default": false
+          },
+          "configured": {
+            "type": "boolean",
+            "title": "Configured",
+            "default": false
+          },
+          "modelPath": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Modelpath"
+          },
+          "quantizeTransformer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quantizetransformer"
+          },
+          "quantizeTextEncoder": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quantizetextencoder"
+          }
+        },
+        "type": "object",
+        "title": "QwenImageT2IStatusResponse"
+      },
+      "ResolutionConfigResponse": {
+        "properties": {
+          "currentModel": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Currentmodel"
+          },
+          "modelConstraints": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Modelconstraints"
+          },
+          "activeConstraints": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Activeconstraints"
+          },
+          "vaeMultiple": {
+            "type": "integer",
+            "title": "Vaemultiple",
+            "default": 16
+          },
+          "vaeScaleFactor": {
+            "type": "integer",
+            "title": "Vaescalefactor",
+            "default": 8
+          },
+          "minResolution": {
+            "type": "integer",
+            "title": "Minresolution",
+            "default": 256
+          },
+          "maxResolution": {
+            "type": "integer",
+            "title": "Maxresolution",
+            "default": 4096
+          },
+          "defaultResolution": {
+            "type": "integer",
+            "title": "Defaultresolution",
+            "default": 1024
+          },
+          "defaultWidth": {
+            "type": "integer",
+            "title": "Defaultwidth",
+            "default": 1024
+          },
+          "defaultHeight": {
+            "type": "integer",
+            "title": "Defaultheight",
+            "default": 1024
+          },
+          "dypeBaseResolution": {
+            "type": "integer",
+            "title": "Dypebaseresolution",
+            "default": 1024
+          },
+          "aspectRatios": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Aspectratios"
+          },
+          "presets": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Presets"
+          },
+          "categories": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Categories"
+          },
+          "supportsDype": {
+            "type": "boolean",
+            "title": "Supportsdype",
+            "default": false
+          },
+          "supportsSlg": {
+            "type": "boolean",
+            "title": "Supportsslg",
+            "default": false
+          },
+          "supportsFmtt": {
+            "type": "boolean",
+            "title": "Supportsfmtt",
+            "default": false
+          }
+        },
+        "type": "object",
+        "title": "ResolutionConfigResponse",
+        "description": "Resolution constraints for client-side validation."
+      },
+      "RestartResponse": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": ""
+          },
+          "newProfile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Newprofile"
+          }
+        },
+        "type": "object",
+        "required": [
+          "success"
+        ],
+        "title": "RestartResponse"
+      },
+      "RewriteRequest": {
+        "properties": {
+          "prompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prompt"
+          },
+          "rewriter": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rewriter"
+          },
+          "custom_system_prompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Custom System Prompt"
+          },
+          "max_tokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Tokens"
+          },
+          "temperature": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Temperature"
+          },
+          "top_p": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Top P"
+          },
+          "top_k": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Top K"
+          },
+          "min_p": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min P"
+          },
+          "presence_penalty": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Presence Penalty"
+          },
+          "model": {
+            "type": "string",
+            "title": "Model",
+            "default": "qwen3-4b"
+          },
+          "image": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Image"
+          }
+        },
+        "type": "object",
+        "title": "RewriteRequest"
+      },
+      "RewriteResult": {
+        "properties": {
+          "originalPrompt": {
+            "type": "string",
+            "title": "Originalprompt"
+          },
+          "rewrittenPrompt": {
+            "type": "string",
+            "title": "Rewrittenprompt"
+          },
+          "thinkingContent": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Thinkingcontent"
+          },
+          "rewriter": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rewriter"
+          },
+          "backend": {
+            "type": "string",
+            "title": "Backend",
+            "default": "local"
+          },
+          "genTime": {
+            "type": "number",
+            "title": "Gentime",
+            "default": 0.0
+          }
+        },
+        "type": "object",
+        "required": [
+          "originalPrompt",
+          "rewrittenPrompt"
+        ],
+        "title": "RewriteResult"
+      },
+      "RewriterConfigResponse": {
+        "properties": {
+          "temperature": {
+            "type": "number",
+            "title": "Temperature"
+          },
+          "topP": {
+            "type": "number",
+            "title": "Topp"
+          },
+          "topK": {
+            "type": "integer",
+            "title": "Topk"
+          },
+          "minP": {
+            "type": "number",
+            "title": "Minp"
+          },
+          "presencePenalty": {
+            "type": "number",
+            "title": "Presencepenalty"
+          },
+          "maxTokens": {
+            "type": "integer",
+            "title": "Maxtokens"
+          },
+          "useApi": {
+            "type": "boolean",
+            "title": "Useapi"
+          },
+          "models": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Models"
+          },
+          "defaultModel": {
+            "type": "string",
+            "title": "Defaultmodel",
+            "default": "qwen3-4b"
+          }
+        },
+        "type": "object",
+        "required": [
+          "temperature",
+          "topP",
+          "topK",
+          "minP",
+          "presencePenalty",
+          "maxTokens",
+          "useApi"
+        ],
+        "title": "RewriterConfigResponse"
+      },
+      "RewriterInfo": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "RewriterInfo"
+      },
+      "RewriterListResponse": {
+        "properties": {
+          "rewriters": {
+            "items": {
+              "$ref": "#/components/schemas/RewriterInfo"
+            },
+            "type": "array",
+            "title": "Rewriters"
+          }
+        },
+        "type": "object",
+        "title": "RewriterListResponse"
+      },
+      "SaveEmbeddingsResult": {
+        "properties": {
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "shape": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Shape"
+          },
+          "encodeTime": {
+            "type": "number",
+            "title": "Encodetime"
+          }
+        },
+        "type": "object",
+        "required": [
+          "path",
+          "shape",
+          "encodeTime"
+        ],
+        "title": "SaveEmbeddingsResult"
+      },
+      "SessionConfigResponse": {
+        "properties": {
+          "values": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Values"
+          },
+          "profile": {
+            "type": "string",
+            "title": "Profile",
+            "default": "default"
+          },
+          "modified": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Modified"
+          },
+          "configFile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Configfile"
+          }
+        },
+        "type": "object",
+        "title": "SessionConfigResponse"
+      },
+      "SessionConfigUpdateResponse": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success",
+            "default": true
+          },
+          "updated": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Updated"
+          },
+          "pendingRestart": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Pendingrestart"
+          },
+          "rejected": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Rejected"
+          }
+        },
+        "type": "object",
+        "title": "SessionConfigUpdateResponse"
+      },
+      "SuccessVramResponse": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": ""
+          },
+          "vram": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vram"
+          }
+        },
+        "type": "object",
+        "required": [
+          "success"
+        ],
+        "title": "SuccessVramResponse",
+        "description": "Success response with optional VRAM snapshot."
+      },
+      "TemplateInfo": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description",
+            "default": ""
+          },
+          "category": {
+            "type": "string",
+            "title": "Category",
+            "default": "general"
+          },
+          "systemPrompt": {
+            "type": "string",
+            "title": "Systemprompt",
+            "default": ""
+          },
+          "thinkingContent": {
+            "type": "string",
+            "title": "Thinkingcontent",
+            "default": ""
+          },
+          "assistantContent": {
+            "type": "string",
+            "title": "Assistantcontent",
+            "default": ""
+          },
+          "addThinkBlock": {
+            "type": "boolean",
+            "title": "Addthinkblock",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "TemplateInfo"
+      },
+      "TemplateListResponse": {
+        "properties": {
+          "templates": {
+            "items": {
+              "$ref": "#/components/schemas/TemplateInfo"
+            },
+            "type": "array",
+            "title": "Templates"
+          }
+        },
+        "type": "object",
+        "title": "TemplateListResponse"
+      },
+      "UnloadFmttResponse": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": ""
+          },
+          "freeGb": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Freegb"
+          }
+        },
+        "type": "object",
+        "required": [
+          "success"
+        ],
+        "title": "UnloadFmttResponse"
+      },
+      "VRAMStatusResponse": {
+        "properties": {
+          "usedMb": {
+            "type": "number",
+            "title": "Usedmb",
+            "default": 0
+          },
+          "totalMb": {
+            "type": "number",
+            "title": "Totalmb",
+            "default": 24576
+          },
+          "freeMb": {
+            "type": "number",
+            "title": "Freemb",
+            "default": 24576
+          },
+          "utilizationPercent": {
+            "type": "number",
+            "title": "Utilizationpercent",
+            "default": 0
+          },
+          "breakdown": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Breakdown"
+          }
+        },
+        "type": "object",
+        "title": "VRAMStatusResponse",
+        "description": "VRAM usage from /api/vram/status (shape matches ModelManager.get_vram_status)."
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    }
+  }
+}

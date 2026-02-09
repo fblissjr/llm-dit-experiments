@@ -5,6 +5,27 @@ last updated: 2026-02-09
 All notable changes to this project will be documented in this file.
 Uses [Semantic Versioning](https://semver.org/).
 
+## 0.9.0
+
+### added
+- OpenAPI TypeScript codegen pipeline: `npm run export-openapi && npm run gen-api` generates frontend types from FastAPI OpenAPI spec
+- 3 new Pydantic response models: `ParamSchemaResponse`, `PipelineSchemaResponse`, `PresetDetailResponse`
+- `_sync_globals_after_load()` helper in `vram.py` for bidirectional global sync
+- `_ensure_qwen_image_loaded()` and `_ensure_qwen_image_t2i_loaded()` helpers for on-demand pipeline loading via ModelManager
+- `_get_zimage_encoder()` and `_ensure_zimage_loaded()` helpers in `core.py` for ModelManager access
+- `internal/state/backlog.md` -- prioritized improvement backlog
+
+### changed
+- `core.py`: all 71 `srv.*` references migrated to ConfigDep/ManagerDep dependency injection
+- `qwen_image.py`: 3 direct pipeline instantiation sites replaced with ModelManager `load()`/`get_pipeline()`
+- `vram.py`: all unload functions use `manager.unload()` instead of server.py shims; all "is loaded?" checks use `manager.is_loaded()`
+- Frontend types: hybrid strategy -- generated types re-exported where fit, hand-written kept where generated are too loose
+- `server.py`: reduced from ~491 to ~330 lines
+
+### removed
+- 6 dead functions from `server.py` (~180 lines): `unload_zimage_pipeline()`, `unload_qwen_image_pipeline()`, `unload_qwen_image_t2i_pipeline()`, `unload_ltx2_pipeline()`, `get_vram_status()`, `load_zimage_pipeline_on_demand()`
+- `gc` and `torch` imports from `server.py` (no longer needed after unload function removal)
+
 ## 0.8.9
 
 ### added

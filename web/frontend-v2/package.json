@@ -12,7 +12,7 @@
     "test": "vitest",
     "test:ui": "vitest --ui",
     "test:run": "vitest run",
-    "export-openapi": "cd ../.. && uv run scripts/export_openapi.py > web/frontend-v2/openapi.json",
+    "export-openapi": "cd ../.. && PYTHONPATH=. uv run python scripts/export_openapi.py > web/frontend-v2/openapi.json",
     "gen-api": "openapi-ts"
   },
   "dependencies": {
@@ -22,6 +22,7 @@
     "zustand": "^5.0.0"
   },
   "devDependencies": {
+    "@hey-api/openapi-ts": "^0.92.3",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",

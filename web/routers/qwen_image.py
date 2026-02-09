@@ -13,7 +13,7 @@ from fastapi.responses import StreamingResponse
 from PIL import Image
 
 import web.server as srv
-from web.dependencies import ConfigDep
+from web.dependencies import ConfigDep, ManagerDep
 from web.schemas import (
     QwenImage2512GenerateRequest,
     QwenImageEditLayerRequest,
@@ -30,13 +30,72 @@ router = APIRouter()
 MAX_HISTORY = 50
 
 
+def _ensure_qwen_image_loaded(manager, config) -> None:
+    """Load Qwen-Image edit pipeline on-demand via ModelManager.
+
+    Auto-unloads Z-Image first if loaded (VRAM constraint).
+    Syncs server globals for backward compatibility.
+    """
+    if manager.is_loaded("qwen_image"):
+        return
+
+    if not config.qwen_image_model_path:
+        raise HTTPException(
+            status_code=503,
+            detail="Qwen-Image pipeline not loaded. Configure qwen_image.model_path in config.",
+        )
+
+    # Unload Z-Image first to free VRAM for Qwen-Image-Edit
+    if manager.is_loaded("zimage"):
+        logger.info("[VRAM] Auto-unloading Z-Image to make room for Qwen-Image-Edit...")
+        manager.unload("zimage")
+        srv.pipeline = None
+        srv.encoder = None
+
+    try:
+        manager.load("qwen_image")
+        srv.qwen_image_pipeline = manager.get_pipeline("qwen_image")
+    except Exception as e:
+        logger.error(f"[Qwen-Image] Failed to load pipeline: {e}")
+        raise HTTPException(
+            status_code=503, detail=f"Failed to load Qwen-Image pipeline: {e}"
+        )
+
+
+def _ensure_qwen_image_t2i_loaded(manager, config) -> None:
+    """Load Qwen-Image T2I pipeline on-demand via ModelManager.
+
+    Syncs server globals for backward compatibility.
+    """
+    if manager.is_loaded("qwen_image_t2i"):
+        return
+
+    if not config.qwen_image_model_path:
+        raise HTTPException(
+            status_code=503,
+            detail="Qwen-Image T2I not configured. Use --model-type qwenimage-t2i --qwen-image-model-path",
+        )
+
+    try:
+        manager.load("qwen_image_t2i")
+        srv.qwen_image_t2i_pipeline = manager.get_pipeline("qwen_image_t2i")
+    except Exception as e:
+        logger.error(f"[Qwen-Image T2I] Failed to load pipeline: {e}")
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=503, detail=f"Failed to load Qwen-Image T2I pipeline: {e}"
+        )
+
+
 # =============================================================================
 # Qwen-Image Edit Endpoints
 # =============================================================================
 
 
 @router.post("/api/qwen-image/edit-layer")
-async def qwen_image_edit_layer(request: QwenImageEditLayerRequest, config: ConfigDep):
+async def qwen_image_edit_layer(
+    request: QwenImageEditLayerRequest, config: ConfigDep, manager: ManagerDep
+):
     """Edit a decomposed layer using text instructions.
 
     Uses the Qwen-Image-Edit-2511 model to modify a layer based on natural language
@@ -44,49 +103,11 @@ async def qwen_image_edit_layer(request: QwenImageEditLayerRequest, config: Conf
 
     Returns the edited RGBA layer as a PNG image.
     """
-    # Check if pipeline is loaded (we need the diffusers wrapper for editing)
-    if srv.qwen_image_pipeline is None:
-        # Try to load on-demand if configured
-        if config.qwen_image_model_path:
-            # Unload Z-Image first to free VRAM for Qwen-Image-Edit
-            if srv.pipeline is not None or srv.encoder is not None:
-                logger.info("[VRAM] Auto-unloading Z-Image to make room for Qwen-Image-Edit...")
-                srv.unload_zimage_pipeline()
-
-            # Get quantization settings from config
-            quant_te = getattr(config, "qwen_image_quantize_text_encoder", "none")
-            quant_tf = getattr(config, "qwen_image_quantize_transformer", "none")
-            quant_te = quant_te if quant_te != "none" else None
-            quant_tf = quant_tf if quant_tf != "none" else None
-
-            logger.info(
-                f"[Qwen-Image] Loading pipeline in edit-only mode (quantize_text_encoder={quant_te})..."
-            )
-            try:
-                from llm_dit.pipelines.qwen_image_diffusers import QwenImageDiffusersPipeline
-
-                srv.qwen_image_pipeline = QwenImageDiffusersPipeline.from_pretrained(
-                    config.qwen_image_model_path,
-                    edit_model_path=config.qwen_image_edit_model_path or None,
-                    cpu_offload=True,
-                    edit_only=True,  # Skip decompose model (~12GB saved)
-                    quantize_text_encoder=quant_te,
-                    quantize_transformer=quant_tf,
-                )
-                logger.info("[Qwen-Image] Edit pipeline loaded successfully")
-            except Exception as e:
-                logger.error(f"[Qwen-Image] Failed to load pipeline: {e}")
-                raise HTTPException(
-                    status_code=503, detail=f"Failed to load Qwen-Image pipeline: {e}"
-                )
-        else:
-            raise HTTPException(
-                status_code=503,
-                detail="Qwen-Image pipeline not loaded. Configure qwen_image.model_path in config.",
-            )
+    _ensure_qwen_image_loaded(manager, config)
+    qwen_pipeline = manager.get_pipeline("qwen_image")
 
     # Check if pipeline has edit capability
-    if not hasattr(srv.qwen_image_pipeline, "edit_layer"):
+    if not hasattr(qwen_pipeline, "edit_layer"):
         raise HTTPException(
             status_code=400,
             detail="Pipeline does not support layer editing. Use QwenImageDiffusersPipeline.",
@@ -112,7 +133,7 @@ async def qwen_image_edit_layer(request: QwenImageEditLayerRequest, config: Conf
         start = time.time()
 
         # Run layer edit
-        edited_layer = srv.qwen_image_pipeline.edit_layer(
+        edited_layer = qwen_pipeline.edit_layer(
             layer_image=layer_image,
             instruction=request.instruction,
             num_inference_steps=request.steps,
@@ -146,26 +167,29 @@ async def qwen_image_edit_layer(request: QwenImageEditLayerRequest, config: Conf
 
 
 @router.get("/api/qwen-image/edit-status", response_model=QwenImageEditStatusResponse)
-async def qwen_image_edit_status() -> QwenImageEditStatusResponse:
+async def qwen_image_edit_status(manager: ManagerDep) -> QwenImageEditStatusResponse:
     """Check if the edit model is loaded and ready."""
-    if srv.qwen_image_pipeline is None:
+    qwen_pipeline = manager.get_pipeline("qwen_image")
+    if qwen_pipeline is None:
         return QwenImageEditStatusResponse(available=False)
 
-    has_edit_method = hasattr(srv.qwen_image_pipeline, "edit_layer")
+    has_edit_method = hasattr(qwen_pipeline, "edit_layer")
     has_edit_pipe = (
-        hasattr(srv.qwen_image_pipeline, "has_edit_model") and srv.qwen_image_pipeline.has_edit_model
+        hasattr(qwen_pipeline, "has_edit_model") and qwen_pipeline.has_edit_model
     )
 
     return QwenImageEditStatusResponse(
         available=has_edit_method,
         edit_model_loaded=has_edit_pipe,
-        edit_model_path=getattr(srv.qwen_image_pipeline, "_edit_model_path", None),
-        supports_multi_image=hasattr(srv.qwen_image_pipeline, "edit_multi"),
+        edit_model_path=getattr(qwen_pipeline, "_edit_model_path", None),
+        supports_multi_image=hasattr(qwen_pipeline, "edit_multi"),
     )
 
 
 @router.post("/api/qwen-image/edit-multi")
-async def qwen_image_edit_multi(request: QwenImageEditMultiRequest, config: ConfigDep):
+async def qwen_image_edit_multi(
+    request: QwenImageEditMultiRequest, config: ConfigDep, manager: ManagerDep
+):
     """Combine multiple images using Qwen-Image-Edit-2511.
 
     New capability in Edit-2511 for multi-person consistency and creative
@@ -181,48 +205,11 @@ async def qwen_image_edit_multi(request: QwenImageEditMultiRequest, config: Conf
             "For single-image editing, use /api/qwen-image/edit-layer instead.",
         )
 
-    # Check if pipeline is loaded
-    if srv.qwen_image_pipeline is None:
-        if config.qwen_image_model_path:
-            # Unload Z-Image first to free VRAM for Qwen-Image-Edit
-            if srv.pipeline is not None or srv.encoder is not None:
-                logger.info("[VRAM] Auto-unloading Z-Image to make room for Qwen-Image-Edit...")
-                srv.unload_zimage_pipeline()
-
-            # Get quantization settings from config
-            quant_te = getattr(config, "qwen_image_quantize_text_encoder", "none")
-            quant_tf = getattr(config, "qwen_image_quantize_transformer", "none")
-            quant_te = quant_te if quant_te != "none" else None
-            quant_tf = quant_tf if quant_tf != "none" else None
-
-            logger.info(
-                f"[Qwen-Image] Loading pipeline in edit-only mode (quantize_text_encoder={quant_te})..."
-            )
-            try:
-                from llm_dit.pipelines.qwen_image_diffusers import QwenImageDiffusersPipeline
-
-                srv.qwen_image_pipeline = QwenImageDiffusersPipeline.from_pretrained(
-                    config.qwen_image_model_path,
-                    edit_model_path=config.qwen_image_edit_model_path or None,
-                    cpu_offload=True,
-                    edit_only=True,  # Skip decompose model (~12GB saved)
-                    quantize_text_encoder=quant_te,
-                    quantize_transformer=quant_tf,
-                )
-            except Exception as e:
-                logger.error(f"[Qwen-Image] Failed to load pipeline: {e}")
-                raise HTTPException(
-                    status_code=500, detail=f"Failed to load Qwen-Image pipeline: {e}"
-                )
-        else:
-            raise HTTPException(
-                status_code=400,
-                detail="Qwen-Image pipeline not loaded and no model path configured. "
-                "Set qwen_image.model_path in config.toml.",
-            )
+    _ensure_qwen_image_loaded(manager, config)
+    qwen_pipeline = manager.get_pipeline("qwen_image")
 
     # Check if pipeline supports multi-image editing
-    if not hasattr(srv.qwen_image_pipeline, "edit_multi"):
+    if not hasattr(qwen_pipeline, "edit_multi"):
         raise HTTPException(
             status_code=400,
             detail="Pipeline does not support multi-image editing. "
@@ -257,7 +244,7 @@ async def qwen_image_edit_multi(request: QwenImageEditMultiRequest, config: Conf
         start = time.time()
 
         # Run multi-image edit
-        combined_image = srv.qwen_image_pipeline.edit_multi(
+        combined_image = qwen_pipeline.edit_multi(
             images=pil_images,
             instruction=request.instruction,
             num_inference_steps=request.steps,
@@ -307,13 +294,15 @@ def _is_t2i_configured(config) -> bool:
 
 
 @router.get("/api/qwen-image-2512/status", response_model=QwenImageT2IStatusResponse)
-async def qwen_image_2512_status(config: ConfigDep) -> QwenImageT2IStatusResponse:
+async def qwen_image_2512_status(
+    config: ConfigDep, manager: ManagerDep
+) -> QwenImageT2IStatusResponse:
     """Check Qwen-Image T2I pipeline status.
 
     Note: Uses unified config (--model-type qwenimage-t2i --qwen-image-model-path).
     """
     configured = _is_t2i_configured(config)
-    loaded = srv.qwen_image_t2i_pipeline is not None
+    loaded = manager.is_loaded("qwen_image_t2i")
 
     return QwenImageT2IStatusResponse(
         available=loaded,
@@ -344,54 +333,24 @@ async def qwen_image_2512_config(config: ConfigDep) -> QwenImageT2IConfigRespons
 
 
 @router.post("/api/qwen-image-2512/generate")
-async def qwen_image_2512_generate(request: QwenImage2512GenerateRequest, config: ConfigDep):
+async def qwen_image_2512_generate(
+    request: QwenImage2512GenerateRequest, config: ConfigDep, manager: ManagerDep
+):
     """Generate an image using Qwen-Image T2I (pure text-to-image).
 
     Uses unified config: --model-type qwenimage-t2i --qwen-image-model-path
     Variant-aware defaults: T2I uses 40 steps, 1024 resolution, fp8 quantization.
     """
-    # Check if pipeline is loaded, load on-demand if needed
-    if srv.qwen_image_t2i_pipeline is None:
-        if config.qwen_image_model_path:
-            logger.info("[Qwen-Image T2I] Loading pipeline on-demand...")
-            try:
-                from llm_dit.pipelines import QwenImage2512Pipeline
-
-                # Get quantization settings from unified config (variant-aware)
-                quant_transformer = config.get_qwen_image_quantize_transformer()
-                if quant_transformer == "none":
-                    quant_transformer = None
-
-                quant_text_encoder = config.qwen_image_quantize_text_encoder
-                if quant_text_encoder == "none":
-                    quant_text_encoder = None
-
-                srv.qwen_image_t2i_pipeline = QwenImage2512Pipeline.from_pretrained(
-                    config.qwen_image_model_path,
-                    quantize_transformer=quant_transformer,
-                    quantize_text_encoder=quant_text_encoder,
-                    cpu_offload=config.qwen_image_cpu_offload,
-                )
-                logger.info("[Qwen-Image T2I] Pipeline loaded successfully")
-            except Exception as e:
-                logger.error(f"[Qwen-Image T2I] Failed to load pipeline: {e}")
-                traceback.print_exc()
-                raise HTTPException(
-                    status_code=503, detail=f"Failed to load Qwen-Image T2I pipeline: {e}"
-                )
-        else:
-            raise HTTPException(
-                status_code=503,
-                detail="Qwen-Image T2I not configured. Use --model-type qwenimage-t2i --qwen-image-model-path",
-            )
+    _ensure_qwen_image_t2i_loaded(manager, config)
+    t2i_pipeline = manager.get_pipeline("qwen_image_t2i")
 
     try:
         logger.info("=" * 60)
         logger.info("QWEN-IMAGE T2I GENERATION REQUEST")
         logger.info("=" * 60)
-        if srv.runtime_config.logging.log_prompts:
+        if config.logging.log_prompts:
             logger.info(f"  Prompt: {request.prompt[:80]}...")
-        if srv.runtime_config.logging.log_generation_params:
+        if config.logging.log_generation_params:
             logger.info(f"  Size: {request.width}x{request.height}")
             logger.info(f"  Steps: {request.steps}")
             logger.info(f"  CFG Scale: {request.cfg_scale}")
@@ -401,7 +360,7 @@ async def qwen_image_2512_generate(request: QwenImage2512GenerateRequest, config
         start = time.time()
 
         # Generate image
-        image = srv.qwen_image_t2i_pipeline(
+        image = t2i_pipeline(
             prompt=request.prompt,
             negative_prompt=request.negative_prompt or " ",
             height=request.height,

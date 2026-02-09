@@ -9,7 +9,6 @@ Usage:
     uv run web/server.py --encoder-only  # Fast mode, no DiT/VAE
 """
 
-import gc
 import logging
 import os
 import signal
@@ -23,7 +22,6 @@ _project_root = str(Path(__file__).resolve().parent.parent)
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
-import torch
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -115,187 +113,10 @@ pending_restart_changes = {}  # Changes that require server restart
 server_start_time = None  # For uptime tracking
 
 
-def unload_zimage_pipeline() -> bool:
-    """Unload Z-Image pipeline (encoder + DiT + VAE) to free VRAM.
-
-    Delegates to ModelManager when available. Returns True if unloaded.
-    """
-    global pipeline, encoder
-
-    if model_manager is not None:
-        unloaded = model_manager.unload("zimage")
-        pipeline = None
-        encoder = None
-        return unloaded
-
-    # Fallback: pre-ModelManager codepath
-    unloaded = False
-    if pipeline is not None:
-        logger.info("[VRAM] Unloading Z-Image pipeline to free VRAM...")
-        try:
-            if hasattr(pipeline, "transformer") and pipeline.transformer is not None:
-                pipeline.transformer.to("cpu")
-            if hasattr(pipeline, "vae") and pipeline.vae is not None:
-                pipeline.vae.to("cpu")
-        except Exception as e:
-            logger.warning(f"[VRAM] Error moving pipeline to CPU: {e}")
-        del pipeline
-        pipeline = None
-        unloaded = True
-
-    if encoder is not None:
-        logger.info("[VRAM] Unloading Z-Image encoder...")
-        try:
-            if hasattr(encoder, "backend") and encoder.backend is not None:
-                if hasattr(encoder.backend, "model") and encoder.backend.model is not None:
-                    encoder.backend.model.to("cpu")
-        except Exception as e:
-            logger.warning(f"[VRAM] Error moving encoder to CPU: {e}")
-        del encoder
-        encoder = None
-        unloaded = True
-
-    if unloaded:
-        try:
-            import torch._dynamo
-            torch._dynamo.reset()
-        except Exception:
-            pass
-        gc.collect()
-        torch.cuda.empty_cache()
-        gc.collect()
-
-    return unloaded
-
-
-def unload_qwen_image_pipeline() -> bool:
-    """Unload Qwen-Image pipeline to free VRAM.
-
-    Returns True if unloaded, False if not loaded.
-    """
-    global qwen_image_pipeline
-    import torch
-
-    if qwen_image_pipeline is not None:
-        logger.info("[VRAM] Unloading Qwen-Image pipeline to free VRAM...")
-        del qwen_image_pipeline
-        qwen_image_pipeline = None
-        gc.collect()
-        torch.cuda.empty_cache()
-        logger.info("[VRAM] Qwen-Image pipeline unloaded, CUDA cache cleared")
-        return True
-    return False
-
-
-def unload_qwen_image_t2i_pipeline() -> bool:
-    """Unload Qwen-Image T2I pipeline to free VRAM.
-
-    Returns True if unloaded, False if not loaded.
-    """
-    global qwen_image_t2i_pipeline
-
-    if qwen_image_t2i_pipeline is not None:
-        logger.info("[VRAM] Unloading Qwen-Image T2I pipeline to free VRAM...")
-        del qwen_image_t2i_pipeline
-        qwen_image_t2i_pipeline = None
-        gc.collect()
-        torch.cuda.empty_cache()
-        if torch.cuda.is_available():
-            allocated = torch.cuda.memory_allocated() / 1024**3
-            logger.info(f"[VRAM] Qwen-Image T2I unloaded. CUDA allocated: {allocated:.2f} GB")
-        return True
-    return False
-
-
-def unload_ltx2_pipeline() -> bool:
-    """Clean up VRAM after LTX-2 operations.
-
-    Note: Pure PyTorch pipeline loads/unloads components per-request via
-    generate_video_with_offloading(). This function performs a general cleanup.
-
-    Returns True after cleanup.
-    """
-    logger.info("[VRAM] Running LTX-2 memory cleanup...")
-    gc.collect()
-    torch.cuda.empty_cache()
-    if torch.cuda.is_available():
-        allocated = torch.cuda.memory_allocated() / 1024**3
-        logger.info(f"[VRAM] Cleanup complete. CUDA allocated: {allocated:.2f} GB")
-    return True
-
-
-def get_vram_status() -> dict:
-    """Get current VRAM usage and loaded models status.
-
-    Delegates to ModelManager when available, falls back to globals.
-    """
-    if model_manager is not None:
-        return model_manager.get_vram_status()
-
-    # Fallback: pre-ModelManager codepath
-    import torch
-
-    status = {
-        "cuda_available": torch.cuda.is_available(),
-        "models_loaded": {
-            "zimage_pipeline": pipeline is not None,
-            "zimage_encoder": encoder is not None,
-            "qwen_image_pipeline": qwen_image_pipeline is not None,
-            "qwen_image_edit": qwen_image_pipeline is not None
-            and getattr(qwen_image_pipeline, "edit_pipe", None) is not None,
-            "qwen_image_t2i_pipeline": qwen_image_t2i_pipeline is not None,
-            "ltx2_pipeline": ltx2_pipeline is not None,
-            "flux2_pipeline": flux2_pipeline is not None,
-        },
-        "vram": None,
-    }
-
-    if torch.cuda.is_available():
-        allocated = torch.cuda.memory_allocated() / 1024**3
-        reserved = torch.cuda.memory_reserved() / 1024**3
-        total = torch.cuda.get_device_properties(0).total_memory / 1024**3
-        status["vram"] = {
-            "allocated_gb": round(allocated, 2),
-            "reserved_gb": round(reserved, 2),
-            "total_gb": round(total, 2),
-            "free_gb": round(total - allocated, 2),
-        }
-
-    return status
-
-
 @app.get("/")
 async def index():
     """Serve the main page."""
     return FileResponse(Path(__file__).parent / "index.html")
-
-
-def load_zimage_pipeline_on_demand():
-    """Load Z-Image pipeline on-demand using ModelManager.
-
-    Returns True if successfully loaded, raises exception on failure.
-    Thread-safe: ModelManager handles locking internally.
-    Automatically unloads other pipelines first to free VRAM.
-    """
-    global pipeline
-
-    # Fast path: already loaded
-    if pipeline is not None:
-        return True
-
-    if model_manager is None or runtime_config is None:
-        raise ValueError("Server not initialized (model_manager or runtime_config is None)")
-
-    try:
-        model_manager.load("zimage")
-        # Sync globals for backward compatibility
-        pipeline = model_manager.get_pipeline("zimage")
-        logger.info("[Z-Image] Pipeline loaded successfully via ModelManager")
-        return True
-    except Exception as e:
-        logger.error(f"[Z-Image] Failed to load pipeline: {e}")
-        pipeline = None
-        raise
 
 
 def main():
