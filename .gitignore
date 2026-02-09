@@ -41,6 +41,7 @@ outputs/
 embeddings/*
 test_images/*
 experiments/outputs
+*.safetensors
 
 # PyInstaller
 #  Usually these files are written by a python script from a template

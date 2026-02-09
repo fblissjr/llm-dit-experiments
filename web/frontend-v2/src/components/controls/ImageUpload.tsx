@@ -148,6 +148,33 @@ export function ImageUpload({
     }
   };
 
+  const canAddMore = images.length < maxCount;
+
+  const handlePaste = useCallback(
+    (e: React.ClipboardEvent) => {
+      if (disabled || !canAddMore) return;
+
+      const items = e.clipboardData?.items;
+      if (!items) return;
+
+      const files: File[] = [];
+      for (let i = 0; i < items.length; i++) {
+        if (items[i].type.startsWith('image/')) {
+          const file = items[i].getAsFile();
+          if (file) files.push(file);
+        }
+      }
+
+      if (files.length === 0) return;
+
+      e.preventDefault();
+      const dt = new DataTransfer();
+      files.forEach((f) => dt.items.add(f));
+      handleFiles(dt.files);
+    },
+    [disabled, canAddMore, handleFiles]
+  );
+
   const removeImage = (index: number) => {
     const newImages = images.filter((_, i) => i !== index);
     if (maxCount === 1) {
@@ -157,10 +184,13 @@ export function ImageUpload({
     }
   };
 
-  const canAddMore = images.length < maxCount;
-
   return (
-    <div className={`form-control ${className}`}>
+    <div
+      className={`form-control ${className}`}
+      onPaste={handlePaste}
+      tabIndex={0}
+      style={{ outline: 'none' }}
+    >
       <label className="form-label" title={tooltip}>
         {label}
         {maxCount > 1 && (
@@ -245,7 +275,7 @@ export function ImageUpload({
               />
             </svg>
             <p className="text-sm">
-              Drop image here or <span className="text-blue-500">browse</span>
+              Drop or paste image here, or <span className="text-blue-500">browse</span>
             </p>
             <p className="text-xs text-gray-500 mt-1">
               Max {maxSizeMB}MB · {acceptedFormats.map((f) => f.split('/')[1]).join(', ')}
