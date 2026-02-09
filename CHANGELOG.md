@@ -38,6 +38,9 @@ Uses [Semantic Versioning](https://semver.org/).
 - `import web.server as srv` from `flux2.py` and `config_mgmt.py` (no longer access any server globals)
 - `quotaHandlingStorage` from `sessionStore.ts` (~67 lines of localStorage quota error handling) -- replaced by IndexedDB adapter
 
+### fixed
+- `/api/context` returning 500 when server started without `--profile` flag -- `getattr(config, "current_profile")` returned `None` which Pydantic rejected as non-string
+
 ## 0.8.9
 
 ### added

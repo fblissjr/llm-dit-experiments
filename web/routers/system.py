@@ -134,7 +134,7 @@ async def get_generation_context(config: ConfigDep, manager: ManagerDep):
     if server_start_time:
         uptime_seconds = int(time.time() - server_start_time)
 
-    profile = getattr(config, "current_profile", "default")
+    profile = getattr(config, "current_profile", None) or "default"
 
     # Determine active pipeline and its details
     active_pipeline = None
