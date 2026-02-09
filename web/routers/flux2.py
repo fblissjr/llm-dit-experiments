@@ -39,15 +39,17 @@ def _ensure_correct_model(
     and loads the new one. The ModelManager's per-pipeline lock prevents
     concurrent reloads.
     """
-    import web.server as srv
+    if not manager.is_loaded("flux2"):
+        return None
 
-    if not isinstance(srv.flux2_pipeline, dict):
+    pipeline_dict = manager.get_pipeline("flux2")
+    if not isinstance(pipeline_dict, dict):
         return None
 
     needs_reload = False
 
     # Check model name mismatch
-    loaded_name = srv.flux2_pipeline.get("model_name")
+    loaded_name = pipeline_dict.get("model_name")
     if loaded_name and loaded_name.lower() != requested_model.lower():
         logger.info(
             f"[FLUX.2] Model mismatch: loaded='{loaded_name}', "
@@ -62,7 +64,7 @@ def _ensure_correct_model(
     if not needs_reload and requested_loras:
         from llm_dit.utils.lora import get_fused_state, parse_lora_spec
 
-        transformer = srv.flux2_pipeline.get("transformer")
+        transformer = pipeline_dict.get("transformer")
         if transformer is not None:
             fused_state = get_fused_state(transformer)
             requested_specs = [parse_lora_spec(s) for s in requested_loras]
@@ -76,16 +78,14 @@ def _ensure_correct_model(
         del transformer
 
     if needs_reload:
-        # Clear server ref before reload so _unload_flux2() can free all VRAM
-        srv.flux2_pipeline = None
         result = manager.reload_flux2(requested_model)
-        srv.flux2_pipeline = manager.get_pipeline("flux2")
         logger.info(
             f"[FLUX.2] Reload complete: now loaded='{requested_model}' "
             f"({result.load_time:.1f}s)"
         )
+        pipeline_dict = manager.get_pipeline("flux2")
 
-    return srv.flux2_pipeline if isinstance(srv.flux2_pipeline, dict) else None
+    return pipeline_dict if isinstance(pipeline_dict, dict) else None
 
 
 # =============================================================================
@@ -94,16 +94,14 @@ def _ensure_correct_model(
 
 
 @router.get("/api/flux2/status", response_model=Flux2StatusResponse)
-async def flux2_status(config: ConfigDep) -> Flux2StatusResponse:
+async def flux2_status(config: ConfigDep, manager: ManagerDep) -> Flux2StatusResponse:
     """Get FLUX.2 Klein pipeline status.
 
     Returns availability info. FLUX.2 is always available (downloads from HuggingFace).
     """
-    import web.server as srv
-
     return Flux2StatusResponse(
         available=True,  # FLUX.2 downloads models from HuggingFace as needed
-        loaded=srv.flux2_pipeline is not None,
+        loaded=manager.is_loaded("flux2"),
         compile_enabled=getattr(config, "flux2_compile", False),
         compile_dynamic=getattr(config, "flux2_compile_dynamic", False),
         compile_vae_enabled=getattr(config, "flux2_compile_vae", False),
@@ -126,8 +124,6 @@ async def flux2_generate(request: Flux2GenerateRequest, config: ConfigDep, manag
     Supports both text-to-image and image editing with reference images.
     Returns PNG image as binary response.
     """
-    import web.server as srv
-
     try:
         # Import the FLUX.2 generation pipeline
         from llm_dit.pipelines.flux2_generate import (
@@ -169,7 +165,7 @@ async def flux2_generate(request: Flux2GenerateRequest, config: ConfigDep, manag
         offload_between_stages = getattr(config, "flux2_offload_between_stages", True)
 
         # Force offload when models aren't pre-loaded (encoder would stay on GPU during transformer load)
-        if not isinstance(srv.flux2_pipeline, dict):
+        if not manager.is_loaded("flux2"):
             offload_between_stages = True
 
         # Create generation config
@@ -277,10 +273,10 @@ async def flux2_generate(request: Flux2GenerateRequest, config: ConfigDep, manag
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
     except (AttributeError, TypeError) as e:
-        # Guard against mid-request model unload: if srv.flux2_pipeline
+        # Guard against mid-request model unload: if the pipeline
         # becomes None while we hold stale references, operations on
         # partially-freed models raise AttributeError/TypeError.
-        if srv.flux2_pipeline is None:
+        if not manager.is_loaded("flux2"):
             logger.warning(
                 "[FLUX.2] Model was unloaded during generation. "
                 "Returning 503."
@@ -320,7 +316,6 @@ async def flux2_generate_stream(request: Flux2GenerateRequest, config: ConfigDep
     - {"type": "complete", ...} - Final result with image data
     - {"type": "error", "message": "..."} - Error occurred
     """
-    import web.server as srv
     from typing import AsyncIterator
 
     # Verify loaded model matches request BEFORE entering the SSE generator.
@@ -372,7 +367,7 @@ async def flux2_generate_stream(request: Flux2GenerateRequest, config: ConfigDep
             offload_between_stages = getattr(config, "flux2_offload_between_stages", True)
 
             # Force offload when models aren't pre-loaded (encoder would stay on GPU during transformer load)
-            if not isinstance(srv.flux2_pipeline, dict):
+            if not manager.is_loaded("flux2"):
                 offload_between_stages = True
 
             # Create generation config
@@ -430,15 +425,16 @@ async def flux2_generate_stream(request: Flux2GenerateRequest, config: ConfigDep
                 p_encoder = None
                 p_transformer = None
                 p_vae = None
-                if isinstance(srv.flux2_pipeline, dict):
-                    loaded_name = srv.flux2_pipeline.get("model_name", "unknown")
+                flux2_dict = manager.get_pipeline("flux2")
+                if isinstance(flux2_dict, dict):
+                    loaded_name = flux2_dict.get("model_name", "unknown")
                     logger.info(
                         f"[FLUX.2] Stream: using persistent models "
                         f"(loaded={loaded_name}, requested={request.model_name})"
                     )
-                    p_encoder = srv.flux2_pipeline.get("encoder")
-                    p_transformer = srv.flux2_pipeline.get("transformer")
-                    p_vae = srv.flux2_pipeline.get("vae")
+                    p_encoder = flux2_dict.get("encoder")
+                    p_transformer = flux2_dict.get("transformer")
+                    p_vae = flux2_dict.get("vae")
 
                 return generate_image_with_progress(
                     gen_config,
@@ -497,7 +493,7 @@ async def flux2_generate_stream(request: Flux2GenerateRequest, config: ConfigDep
                 traceback.print_exc()
                 yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
         except (AttributeError, TypeError) as e:
-            if srv.flux2_pipeline is None:
+            if not manager.is_loaded("flux2"):
                 logger.warning(
                     "[FLUX.2] Model was unloaded during stream generation. "
                     "Returning error event."

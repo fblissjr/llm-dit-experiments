@@ -10,7 +10,7 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException
 
-from web.dependencies import ConfigDep
+from web.dependencies import ConfigDep, ManagerDep
 from web.schemas import (
     AllPresetsResponse,
     PipelineDefaultsResponse,

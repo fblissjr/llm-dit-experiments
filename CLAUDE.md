@@ -73,6 +73,7 @@ When adding a new parameter, only 2 files need changes: the dataclass in `config
 | **Research/experiments** | [experiments/CLAUDE.md](experiments/CLAUDE.md) |
 | **Post-refactor architecture** | [post_refactor_guide.md](internal/docs/architecture/post_refactor_guide.md) |
 | **Architecture decisions** | [architectural_decisions.md](internal/principles/architectural_decisions.md) |
+| **Planned improvements / tech debt** | [backlog.md](internal/state/backlog.md) |
 | **Debugging** | [lessons_learned.md](internal/state/lessons_learned.md) |
 | **Agent workflows** | [claude_workflow.md](internal/principles/claude_workflow.md) |
 | **Quantization** | [quantization.md](docs/reference/quantization.md) |
@@ -263,6 +264,6 @@ Full testing guide: [tests/CLAUDE.md](tests/CLAUDE.md)
 | File | When to Update |
 |------|----------------|
 | `internal/state/current.md` | Major milestone or blocker |
-| `internal/state/todos.md` | Session start/end |
+| `internal/state/backlog.md` | New improvement identified, or item completed/deprioritized |
 | `internal/state/lessons_learned.md` | After debugging |
 | `internal/log/log_YYYY-MM-DD.md` | Every session |
