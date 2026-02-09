@@ -11,14 +11,21 @@ import { useShallow } from 'zustand/react/shallow';
 import { cn } from '@/utils';
 import { useAppStore } from '@/stores';
 
+interface LoRABadgeInfo {
+  name: string;
+  scale: number;
+}
+
 interface ModelCardProps {
   pipelineId: string;
   name: string;
   color: string;
   status: 'unloaded' | 'loading' | 'loaded' | 'error';
-  vramMB?: number;
-  estimatedVramMB?: number;
+  vramMb?: number;
   error?: string;
+  modelVariant?: string | null;
+  loras?: LoRABadgeInfo[];
+  configTags?: { key: string; label: string; color: string }[];
   onLoad: () => void;
   onUnload: () => void;
 }
@@ -27,9 +34,11 @@ function ModelCard({
   name,
   color,
   status,
-  vramMB,
-  estimatedVramMB,
+  vramMb,
   error,
+  modelVariant,
+  loras,
+  configTags,
   onLoad,
   onUnload,
 }: ModelCardProps) {
@@ -72,14 +81,55 @@ function ModelCard({
         </span>
       </div>
 
+      {/* Model variant */}
+      {isLoaded && modelVariant && (
+        <p className="text-xs text-gray-500 mb-1">{modelVariant}</p>
+      )}
+
+      {/* LoRA badges */}
+      {isLoaded && loras && loras.length > 0 && (
+        <div className="flex flex-wrap gap-1 mb-1.5">
+          {loras.map((lora) => (
+            <span
+              key={lora.name}
+              className="inline-flex items-center gap-0.5 px-1.5 py-0.5 text-xs bg-purple-500/20 text-purple-300 rounded"
+            >
+              {lora.name}
+              <span className="text-purple-400/70">@{lora.scale.toFixed(2)}</span>
+            </span>
+          ))}
+        </div>
+      )}
+
+      {/* Config tags */}
+      {isLoaded && configTags && configTags.length > 0 && (
+        <div className="flex flex-wrap gap-1 mb-1.5">
+          {configTags.map((tag) => {
+            const colorMap: Record<string, string> = {
+              purple: 'bg-purple-500/20 text-purple-300',
+              blue: 'bg-blue-500/20 text-blue-300',
+              orange: 'bg-orange-500/20 text-orange-300',
+              green: 'bg-green-500/20 text-green-300',
+            };
+            return (
+              <span
+                key={tag.key}
+                className={cn(
+                  'inline-flex items-center px-1.5 py-0.5 text-xs rounded',
+                  colorMap[tag.color] ?? 'bg-gray-500/20 text-gray-300'
+                )}
+              >
+                {tag.label}
+              </span>
+            );
+          })}
+        </div>
+      )}
+
       {/* VRAM info */}
-      {(vramMB || estimatedVramMB) && (
+      {isLoaded && vramMb != null && vramMb > 0 && (
         <div className="text-xs text-gray-500 mb-2">
-          {isLoaded && vramMB ? (
-            <span>Using {(vramMB / 1024).toFixed(1)} GB VRAM</span>
-          ) : estimatedVramMB ? (
-            <span>Est. {(estimatedVramMB / 1024).toFixed(1)} GB VRAM</span>
-          ) : null}
+          <span>Using {(vramMb / 1024).toFixed(1)} GB VRAM</span>
         </div>
       )}
 
@@ -156,6 +206,7 @@ export function ModelManager() {
     useShallow((s) => Object.values(s.pipelines))
   );
   const modelStatus = useAppStore((s) => s.modelStatus);
+  const generationContext = useAppStore((s) => s.generationContext);
   const getPipelineColor = useAppStore((s) => s.getPipelineColor);
   const refreshAllModelStatus = useAppStore((s) => s.refreshAllModelStatus);
   const loadPipelineModel = useAppStore((s) => s.loadPipelineModel);
@@ -183,7 +234,7 @@ export function ModelManager() {
           <div className="flex items-center justify-between text-xs text-gray-400 mb-1">
             <span>VRAM Usage</span>
             <span>
-              {(vram.usedMB / 1024).toFixed(1)} / {(vram.totalMB / 1024).toFixed(1)} GB
+              {(vram.usedMb / 1024).toFixed(1)} / {(vram.totalMb / 1024).toFixed(1)} GB
             </span>
           </div>
           <div className="h-2 bg-gray-700 rounded-full overflow-hidden">
@@ -208,6 +259,13 @@ export function ModelManager() {
           const status = modelStatus[pipeline.id] ?? { status: 'unloaded' };
           const color = getPipelineColor(pipeline.id);
 
+          // Enrich with context data if this is the active pipeline
+          const isActivePipeline = generationContext?.activePipeline === pipeline.id;
+          const variant = isActivePipeline ? generationContext?.modelVariant : undefined;
+          const lorasForCard = isActivePipeline
+            ? generationContext?.loras?.map((l) => ({ name: l.name, scale: l.scale }))
+            : undefined;
+
           return (
             <ModelCard
               key={pipeline.id}
@@ -215,9 +273,11 @@ export function ModelManager() {
               name={pipeline.name}
               color={color}
               status={status.status}
-              vramMB={status.vramMB}
-              estimatedVramMB={status.estimatedVramMB}
+              vramMb={status.vramMb}
               error={status.error}
+              modelVariant={variant}
+              loras={lorasForCard}
+              configTags={status.configTags}
               onLoad={() => loadPipelineModel(pipeline.id)}
               onUnload={() => unloadPipelineModel(pipeline.id)}
             />

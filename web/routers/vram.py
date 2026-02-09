@@ -16,6 +16,13 @@ from typing import Callable
 from fastapi import APIRouter, HTTPException
 
 from web.dependencies import ConfigDep, ManagerDep
+from web.schemas import (
+    LoRAFileInfo,
+    LoRAListResponse,
+    ModelStatusResponse,
+    SuccessVramResponse,
+    VRAMStatusResponse,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -87,28 +94,24 @@ def _get_pipeline_config_metadata(config, pipeline: str) -> dict:
 
     if compile_enabled:
         config_tags.append({"key": "compile", "label": f"compiled ({compile_mode})", "color": "blue"})
-    if compile_vae:
-        config_tags.append({"key": "compile_vae", "label": "VAE compiled", "color": "blue"})
-    if block_offload:
-        config_tags.append({"key": "block_offload", "label": "block offload", "color": "orange"})
 
-    # Warnings from unified quantization system
-    from llm_dit.quantization import get_quant_compile_warnings
+        from llm_dit.quantization import get_quant_compile_warnings
 
-    if compile_enabled:
         for warning_msg in get_quant_compile_warnings(quant_config.transformer.method, compile_mode):
             config_warnings.append({"severity": "warning", "message": warning_msg})
-
-    if compile_enabled:
         config_warnings.append({
             "severity": "warning",
             "message": "torch.compile active -- first generation at each resolution takes ~90s warmup",
         })
-    if compile_enabled and block_offload:
-        config_warnings.append({
-            "severity": "error",
-            "message": "compile=true is incompatible with block_offload=true. Loading will fail.",
-        })
+        if block_offload:
+            config_warnings.append({
+                "severity": "error",
+                "message": "compile=true is incompatible with block_offload=true. Loading will fail.",
+            })
+    if compile_vae:
+        config_tags.append({"key": "compile_vae", "label": "VAE compiled", "color": "blue"})
+    if block_offload:
+        config_tags.append({"key": "block_offload", "label": "block offload", "color": "orange"})
     if quant_config.transformer.method != "none" and block_offload:
         config_warnings.append({
             "severity": "error",
@@ -123,18 +126,18 @@ def _get_pipeline_config_metadata(config, pipeline: str) -> dict:
 # =============================================================================
 
 
-@router.get("/api/vram/status")
-async def vram_status(manager: ManagerDep):
+@router.get("/api/vram/status", response_model=VRAMStatusResponse)
+async def vram_status(manager: ManagerDep) -> VRAMStatusResponse:
     """Get current VRAM usage and loaded models status."""
-    return manager.get_vram_status()
+    data = manager.get_vram_status()
+    return VRAMStatusResponse(**data)
 
 
 # =============================================================================
-# Per-Pipeline Load/Unload (legacy endpoints)
+# Per-Pipeline Load/Unload (internal -- called by unified /api/models/ endpoints)
 # =============================================================================
 
 
-@router.post("/api/vram/load-zimage")
 async def vram_load_zimage(config: ConfigDep, manager: ManagerDep):
     """Load Z-Image pipeline on-demand.
 
@@ -172,7 +175,6 @@ async def vram_load_zimage(config: ConfigDep, manager: ManagerDep):
         raise HTTPException(status_code=503, detail=f"Failed to load Z-Image pipeline: {e}")
 
 
-@router.post("/api/vram/unload-zimage")
 async def vram_unload_zimage(manager: ManagerDep):
     """Unload Z-Image pipeline (encoder + DiT + VAE) to free VRAM."""
     from web.server import unload_zimage_pipeline
@@ -187,7 +189,6 @@ async def vram_unload_zimage(manager: ManagerDep):
     }
 
 
-@router.post("/api/vram/load-qwen-image")
 async def vram_load_qwen_image(config: ConfigDep, manager: ManagerDep):
     """Load Qwen-Image Edit pipeline on-demand."""
     import web.server as srv
@@ -220,7 +221,6 @@ async def vram_load_qwen_image(config: ConfigDep, manager: ManagerDep):
         raise HTTPException(status_code=503, detail=f"Failed to load Qwen-Image Edit pipeline: {e}")
 
 
-@router.post("/api/vram/unload-qwen-image")
 async def vram_unload_qwen_image(manager: ManagerDep):
     """Unload Qwen-Image pipeline to free VRAM."""
     from web.server import unload_qwen_image_pipeline
@@ -235,7 +235,6 @@ async def vram_unload_qwen_image(manager: ManagerDep):
     }
 
 
-@router.post("/api/vram/load-qwen-image-t2i")
 async def vram_load_qwen_image_t2i(config: ConfigDep, manager: ManagerDep):
     """Load Qwen-Image T2I pipeline on-demand."""
     import web.server as srv
@@ -268,7 +267,6 @@ async def vram_load_qwen_image_t2i(config: ConfigDep, manager: ManagerDep):
         raise HTTPException(status_code=503, detail=f"Failed to load Qwen-Image T2I pipeline: {e}")
 
 
-@router.post("/api/vram/unload-qwen-image-t2i")
 async def vram_unload_qwen_image_t2i(manager: ManagerDep):
     """Unload Qwen-Image T2I pipeline to free VRAM."""
     from web.server import unload_qwen_image_t2i_pipeline
@@ -285,7 +283,6 @@ async def vram_unload_qwen_image_t2i(manager: ManagerDep):
     }
 
 
-@router.post("/api/vram/load-ltx2")
 async def vram_load_ltx2(config: ConfigDep, manager: ManagerDep):
     """Validate LTX-2 configuration.
 
@@ -308,7 +305,6 @@ async def vram_load_ltx2(config: ConfigDep, manager: ManagerDep):
         raise HTTPException(status_code=503, detail=f"LTX-2 configuration error: {e}")
 
 
-@router.post("/api/vram/unload-ltx2")
 async def vram_unload_ltx2(manager: ManagerDep):
     """Clean up VRAM after LTX-2 operations.
 
@@ -327,7 +323,6 @@ async def vram_unload_ltx2(manager: ManagerDep):
     }
 
 
-@router.post("/api/vram/load-flux2")
 async def vram_load_flux2(config: ConfigDep, manager: ManagerDep):
     """Load FLUX.2 Klein pipeline on-demand.
 
@@ -366,7 +361,6 @@ async def vram_load_flux2(config: ConfigDep, manager: ManagerDep):
         raise HTTPException(status_code=503, detail=f"Failed to load FLUX.2 pipeline: {e}")
 
 
-@router.post("/api/vram/unload-flux2")
 async def vram_unload_flux2(manager: ManagerDep):
     """Unload FLUX.2 Klein pipeline to free VRAM."""
     import web.server as srv
@@ -395,8 +389,8 @@ PIPELINE_LOADERS: dict[str, Callable] = {}
 PIPELINE_UNLOADERS: dict[str, Callable] = {}
 
 
-@router.post("/api/models/{pipeline_id}/load")
-async def load_model_by_id(pipeline_id: str, config: ConfigDep, manager: ManagerDep):
+@router.post("/api/models/{pipeline_id}/load", response_model=SuccessVramResponse)
+async def load_model_by_id(pipeline_id: str, config: ConfigDep, manager: ManagerDep) -> SuccessVramResponse:
     """Load a model by pipeline ID.
 
     This is the unified API for the React frontend. Maps pipeline IDs to
@@ -411,7 +405,7 @@ async def load_model_by_id(pipeline_id: str, config: ConfigDep, manager: Manager
 
     try:
         result = await loader_fn(config=config, manager=manager)
-        return result
+        return SuccessVramResponse(**result)
     except HTTPException:
         raise
     except Exception as e:
@@ -419,8 +413,8 @@ async def load_model_by_id(pipeline_id: str, config: ConfigDep, manager: Manager
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/api/models/{pipeline_id}/unload")
-async def unload_model_by_id(pipeline_id: str, manager: ManagerDep):
+@router.post("/api/models/{pipeline_id}/unload", response_model=SuccessVramResponse)
+async def unload_model_by_id(pipeline_id: str, manager: ManagerDep) -> SuccessVramResponse:
     """Unload a model by pipeline ID."""
     unloader_fn = PIPELINE_UNLOADERS.get(pipeline_id.lower())
     if not unloader_fn:
@@ -431,7 +425,7 @@ async def unload_model_by_id(pipeline_id: str, manager: ManagerDep):
 
     try:
         result = await unloader_fn(manager=manager)
-        return result
+        return SuccessVramResponse(**result)
     except HTTPException:
         raise
     except Exception as e:
@@ -439,22 +433,22 @@ async def unload_model_by_id(pipeline_id: str, manager: ManagerDep):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/api/models/unload-all")
-async def unload_all_models(manager: ManagerDep):
+@router.post("/api/models/unload-all", response_model=SuccessVramResponse)
+async def unload_all_models(manager: ManagerDep) -> SuccessVramResponse:
     """Unload all loaded models to free VRAM."""
     manager.unload_all_except(None)
     _sync_globals_after_unload(["zimage", "qwen_image", "qwen_image_t2i", "flux2"])
 
     status = manager.get_vram_status()
-    return {
-        "success": True,
-        "message": "All models unloaded",
-        "vram": status.get("vram"),
-    }
+    return SuccessVramResponse(
+        success=True,
+        message="All models unloaded",
+        vram=status.get("vram"),
+    )
 
 
-@router.get("/api/models/{pipeline_id}/status")
-async def get_model_status(pipeline_id: str, config: ConfigDep, manager: ManagerDep):
+@router.get("/api/models/{pipeline_id}/status", response_model=ModelStatusResponse)
+async def get_model_status(pipeline_id: str, config: ConfigDep, manager: ManagerDep) -> ModelStatusResponse:
     """Get the status of a specific pipeline model."""
     import web.server as srv
 
@@ -500,14 +494,36 @@ async def get_model_status(pipeline_id: str, config: ConfigDep, manager: Manager
     else:
         raise HTTPException(status_code=404, detail=f"Unknown pipeline: {pipeline_id}")
 
-    return {
-        "pipeline_id": pipeline_id,
-        "status": "loaded" if loaded else "unloaded",
-        "components": components if loaded else [],
-        "total_vram_mb": total_vram_mb if loaded else 0,
-        "vram_mb": total_vram_mb if loaded else 0,
-        **config_meta,
-    }
+    # Enrich with model variant and LoRA state
+    model_variant = None
+    display_name = None
+    loras_info: list = []
+    lora_summary = None
+
+    if loaded:
+        pipeline_obj = manager.get_pipeline(pid)
+        if pipeline_obj is not None:
+            # Model variant (FLUX.2 stores model_name in its pipeline dict)
+            if isinstance(pipeline_obj, dict):
+                model_variant = pipeline_obj.get("model_name")
+            # LoRA state
+            from web.utils import get_lora_info
+
+            loras_info, lora_summary = get_lora_info(pipeline_obj)
+
+    return ModelStatusResponse(
+        pipeline_id=pipeline_id,
+        status="loaded" if loaded else "unloaded",
+        components=components if loaded else [],
+        total_vram_mb=total_vram_mb if loaded else 0,
+        vram_mb=total_vram_mb if loaded else 0,
+        model_variant=model_variant,
+        display_name=display_name,
+        loras=loras_info,
+        lora_summary=lora_summary,
+        config_tags=config_meta.get("config_tags", []),
+        config_warnings=config_meta.get("config_warnings", []),
+    )
 
 
 # =============================================================================
@@ -515,8 +531,8 @@ async def get_model_status(pipeline_id: str, config: ConfigDep, manager: Manager
 # =============================================================================
 
 
-@router.get("/api/loras")
-async def list_available_loras(config: ConfigDep):
+@router.get("/api/loras", response_model=LoRAListResponse)
+async def list_available_loras(config: ConfigDep) -> LoRAListResponse:
     """List all available LoRA files from configured directories.
 
     Scans directories in [lora].paths config for .safetensors files.
@@ -535,24 +551,24 @@ async def list_available_loras(config: ConfigDep):
 
         for safetensor_file in dir_path.rglob("*.safetensors"):
             relative_path = str(safetensor_file)
-            lora_files.append({
-                "path": relative_path,
-                "name": safetensor_file.stem,
-                "directory": str(safetensor_file.parent),
-                "size_mb": round(safetensor_file.stat().st_size / (1024 * 1024), 1),
-            })
+            lora_files.append(LoRAFileInfo(
+                path=relative_path,
+                name=safetensor_file.stem,
+                directory=str(safetensor_file.parent),
+                size_mb=round(safetensor_file.stat().st_size / (1024 * 1024), 1),
+            ))
 
-    lora_files.sort(key=lambda x: x["name"].lower())
+    lora_files.sort(key=lambda x: x.name.lower())
 
-    return {
-        "loras": lora_files,
-        "directories": lora_dirs,
-        "count": len(lora_files),
-    }
+    return LoRAListResponse(
+        loras=lora_files,
+        directories=lora_dirs,
+        count=len(lora_files),
+    )
 
 
-@router.get("/api/loras/{pipeline_id}")
-async def list_loras_for_pipeline(pipeline_id: str, config: ConfigDep):
+@router.get("/api/loras/{pipeline_id}", response_model=LoRAListResponse)
+async def list_loras_for_pipeline(pipeline_id: str, config: ConfigDep) -> LoRAListResponse:
     """List LoRA files available for a specific pipeline."""
     pipeline_lora_dirs = {
         "flux2": ["loras/FLUX.2-klein", "loras/flux2"],
@@ -573,21 +589,21 @@ async def list_loras_for_pipeline(pipeline_id: str, config: ConfigDep):
 
         for safetensor_file in dir_path.rglob("*.safetensors"):
             relative_path = str(safetensor_file)
-            lora_files.append({
-                "path": relative_path,
-                "name": safetensor_file.stem,
-                "directory": str(safetensor_file.parent),
-                "size_mb": round(safetensor_file.stat().st_size / (1024 * 1024), 1),
-            })
+            lora_files.append(LoRAFileInfo(
+                path=relative_path,
+                name=safetensor_file.stem,
+                directory=str(safetensor_file.parent),
+                size_mb=round(safetensor_file.stat().st_size / (1024 * 1024), 1),
+            ))
 
-    lora_files.sort(key=lambda x: x["name"].lower())
+    lora_files.sort(key=lambda x: x.name.lower())
 
-    return {
-        "loras": lora_files,
-        "pipeline_id": pipeline_id,
-        "directories": dirs,
-        "count": len(lora_files),
-    }
+    return LoRAListResponse(
+        loras=lora_files,
+        pipeline_id=pipeline_id,
+        directories=dirs,
+        count=len(lora_files),
+    )
 
 
 # =============================================================================

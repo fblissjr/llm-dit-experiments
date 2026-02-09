@@ -1,6 +1,6 @@
 # rest api reference
 
-*last updated: 2026-01-06*
+*last updated: 2026-02-09*
 
 ## config management endpoints
 
@@ -9,7 +9,7 @@
 | `/api/config/session` | GET | Get current session config values |
 | `/api/config/session` | PUT | Update hot-reload safe parameters |
 | `/api/config/profiles` | GET | List available config profiles |
-| `/api/server/status` | GET | Get server status and uptime |
+| `/api/context` | GET | Get composite generation context (model, LoRA, VRAM, uptime) |
 | `/api/server/restart` | POST | Restart server (optionally with new profile) |
 
 ## endpoints
@@ -22,13 +22,22 @@
 | `/api/templates` | GET | List available templates |
 | `/api/resolution-config` | GET | Get resolution validation constants and presets |
 | `/api/rewriters` | GET | List available rewriter templates |
-| `/api/rewriter-models` | GET | List available rewriter models |
-| `/api/rewriter-config` | GET | Get rewriter default parameters |
+| `/api/rewriter-config` | GET | Get rewriter config (includes available models) |
 | `/api/rewrite` | POST | Rewrite prompt using Qwen3 model |
 | `/api/save-embeddings` | POST | Save embeddings to file |
 | `/api/history` | GET | Get generation history |
 | `/api/history/{index}` | DELETE | Delete specific history item |
 | `/api/history` | DELETE | Clear all history |
+| `/api/vram/status` | GET | Get VRAM usage breakdown |
+| `/api/models/{id}/status` | GET | Get model status for a pipeline |
+| `/api/models/{id}/load` | POST | Load a model for a pipeline |
+| `/api/models/{id}/unload` | POST | Unload a model for a pipeline |
+| `/api/models/unload-all` | POST | Unload all loaded models |
+| `/api/loras` | GET | List available LoRA files |
+| `/api/loras/{id}` | GET | List LoRA files for a pipeline |
+| `/api/pipelines` | GET | List all pipeline schemas |
+| `/api/pipelines/{id}/defaults` | GET | Get defaults for a pipeline |
+| `/api/presets/{id}` | GET | Get presets for a pipeline |
 | `/api/qwen-image/decompose` | POST | Decompose image into layers (Qwen-Image-Layered) |
 | `/api/qwen-image/edit-layer` | POST | Edit a decomposed layer with text instructions |
 | `/api/qwen-image/edit-status` | GET | Check if edit model is loaded |
@@ -195,14 +204,30 @@ These require server restart to take effect:
 }
 ```
 
-## server status response
+## generation context response
+
+`GET /api/context` returns a composite status snapshot (camelCase JSON):
 
 ```json
 {
-  "status": "running",
-  "uptime_seconds": 3600,
+  "uptimeSeconds": 3600,
   "profile": "rtx4090",
-  "pending_restart": {}
+  "activePipeline": "zimage",
+  "pipelineDisplayName": "Z-Image",
+  "modelVariant": "mini",
+  "loras": [{"name": "my_lora", "path": "/path/to/my_lora.safetensors", "scale": 0.8, "layersUpdated": 24}],
+  "loraSummary": "my_lora @0.80 (24 layers)",
+  "quantization": {"transformer": "float8_e4m3"},
+  "compileEnabled": true,
+  "compileMode": "default",
+  "blockOffload": false,
+  "vramUsedGb": 18.2,
+  "vramTotalGb": 24.0,
+  "vramPercent": 75.8,
+  "pendingRestartFields": [],
+  "sessionModifiedFields": ["shift"],
+  "fmttCached": false,
+  "historyCount": 5
 }
 ```
 

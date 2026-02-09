@@ -253,12 +253,11 @@ async def vram_unload_model():
     return {"message": "Unloaded", "unloaded": True}
 ```
 
-VRAM endpoints:
-- `/api/vram/unload-zimage` - Unload Z-Image (DiT + VAE + encoder)
-- `/api/vram/unload-qwen-image` - Unload Qwen-Image decompose/edit
-- `/api/vram/unload-qwen-image-t2i` - Unload Qwen T2I
-- `/api/vram/unload-ltx2` - Unload LTX-2 video (Gemma3 encoder + DiT + VAE)
-- `/api/vram/unload-flux2` - Unload FLUX.2 Klein (Qwen3 encoder + DiT + VAE)
+Unified model management endpoints:
+- `POST /api/models/{id}/load` - Load a pipeline model (e.g., `/api/models/zimage/load`)
+- `POST /api/models/{id}/unload` - Unload a pipeline model
+- `POST /api/models/unload-all` - Unload all loaded models
+- `GET /api/models/{id}/status` - Get model status for a pipeline
 
 ### async generation with run_in_executor
 
@@ -473,13 +472,13 @@ Centralizes all backend communication:
 const ApiClient = {
     // System & Status
     async getSystemStatus() {
-        const response = await fetch(`${API_BASE}/api/system/status`);
+        const response = await fetch(`${API_BASE}/api/context`);
         return response.json();
     },
 
     // VRAM Management
     async unloadZImage() {
-        const response = await fetch(`${API_BASE}/api/vram/unload-zimage`, { method: 'POST' });
+        const response = await fetch(`${API_BASE}/api/models/zimage/unload`, { method: 'POST' });
         return response.json();
     },
 
@@ -944,7 +943,7 @@ X-History-Id: 0
 Unload models to free memory:
 
 ```
-POST /api/vram/unload-zimage
+POST /api/models/zimage/unload
 
 Response:
 {
@@ -958,7 +957,7 @@ Response:
 Get runtime configuration:
 
 ```
-GET /api/generation-config
+GET /api/pipelines/zimage/defaults
 
 Response:
 {
@@ -1239,7 +1238,7 @@ FLUX.2 block offload:
 
 **VRAM out of memory:**
 - Use `/api/vram/unload-{model}` to free memory
-- Check `/api/system/status` for current usage
+- Check `/api/context` for current usage
 - Enable CPU offload in config
 
 **SSE progress not updating (LTX-2):**

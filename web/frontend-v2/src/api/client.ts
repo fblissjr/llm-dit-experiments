@@ -9,10 +9,14 @@ import type {
   PipelinesResponse,
   PipelineSchema,
   GenerationPreset,
+  PresetsResponse,
   VRAMStatus,
   GenerationResult,
   FormValues,
   ModelStatusResponse,
+  GenerationContext,
+  LoRAListResponse,
+  ClearCacheResponse,
 } from './types';
 
 class APIError extends Error {
@@ -85,16 +89,12 @@ export async function fetchPipelineDefaults(
 export async function fetchPresets(
   pipelineId: string,
   variant?: string
-): Promise<{ presets: GenerationPreset[]; defaultPreset: string }> {
+): Promise<PresetsResponse> {
   const url = variant
     ? `/api/presets/${pipelineId}?variant=${variant}`
     : `/api/presets/${pipelineId}`;
 
-  const response = await request<{ presets: GenerationPreset[]; default_preset: string }>(url);
-  return {
-    presets: response.presets,
-    defaultPreset: response.default_preset ?? '',
-  };
+  return request<PresetsResponse>(url);
 }
 
 /**
@@ -108,15 +108,7 @@ export async function fetchPresetByName(name: string): Promise<GenerationPreset>
  * Fetch current VRAM status
  */
 export async function fetchVRAMStatus(): Promise<VRAMStatus> {
-  const data = await request<Record<string, unknown>>('/api/vram/status');
-
-  return {
-    usedMB: (data.used_mb ?? data.usedMB ?? 0) as number,
-    totalMB: (data.total_mb ?? data.totalMB ?? 24576) as number,
-    freeMB: (data.free_mb ?? data.freeMB ?? 24576) as number,
-    utilizationPercent: (data.utilization_percent ?? data.utilizationPercent ?? 0) as number,
-    breakdown: (data.breakdown ?? []) as VRAMStatus['breakdown'],
-  };
+  return request<VRAMStatus>('/api/vram/status');
 }
 
 /**
@@ -137,10 +129,14 @@ export async function generate(
  *
  * Returns an async generator that yields progress events
  * and finally the result.
+ *
+ * Pass an AbortSignal to cancel the generation mid-stream.
+ * When aborted, the backend stops generating (saves GPU cycles).
  */
 export async function* generateStream(
   endpoint: string,
-  params: FormValues
+  params: FormValues,
+  signal?: AbortSignal
 ): AsyncGenerator<
   | { type: 'progress'; step: number; total: number; message?: string }
   | { type: 'result'; data: GenerationResult }
@@ -150,6 +146,7 @@ export async function* generateStream(
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(params),
+    signal,
   });
 
   if (!response.ok) {
@@ -216,24 +213,7 @@ export async function* generateStream(
  * Get model status for a pipeline
  */
 export async function fetchModelStatus(pipelineId: string): Promise<ModelStatusResponse> {
-  const response = await request<{
-    status: string;
-    vram_mb?: number;
-    total_vram_mb?: number;
-    estimated_vram_mb?: number;
-    error?: string;
-    config_tags?: ModelStatusResponse['configTags'];
-    config_warnings?: ModelStatusResponse['configWarnings'];
-  }>(`/api/models/${pipelineId}/status`);
-
-  return {
-    status: response.status as ModelStatusResponse['status'],
-    vramMB: response.vram_mb ?? response.total_vram_mb,
-    estimatedVramMB: response.estimated_vram_mb,
-    error: response.error,
-    configTags: response.config_tags,
-    configWarnings: response.config_warnings,
-  };
+  return request<ModelStatusResponse>(`/api/models/${pipelineId}/status`);
 }
 
 /**
@@ -267,19 +247,6 @@ export async function unloadModel(pipelineId: string): Promise<ModelStatusRespon
  * LoRA Management APIs
  */
 
-export interface LoRAFile {
-  path: string;
-  name: string;
-  directory: string;
-  size_mb: number;
-}
-
-export interface LoRAListResponse {
-  loras: LoRAFile[];
-  directories: string[];
-  count: number;
-}
-
 /**
  * Fetch all available LoRA files from configured directories
  */
@@ -292,6 +259,40 @@ export async function fetchAvailableLoras(): Promise<LoRAListResponse> {
  */
 export async function fetchLorasForPipeline(pipelineId: string): Promise<LoRAListResponse> {
   return request<LoRAListResponse>(`/api/loras/${pipelineId}`);
+}
+
+/**
+ * Generation Context & Server Management APIs
+ */
+
+/**
+ * Fetch composite generation context (model variant, LoRA, VRAM, etc.)
+ */
+export async function fetchGenerationContext(): Promise<GenerationContext> {
+  return request<GenerationContext>('/api/context');
+}
+
+/**
+ * Restart the server
+ */
+export async function restartServer(reason?: string): Promise<{ success: boolean; message: string }> {
+  return request<{ success: boolean; message: string }>(
+    '/api/server/restart',
+    {
+      method: 'POST',
+      body: JSON.stringify({ reason: reason ?? 'user_request' }),
+    },
+  );
+}
+
+/**
+ * Clear CUDA cache and garbage collect
+ */
+export async function clearCache(): Promise<ClearCacheResponse> {
+  return request<ClearCacheResponse>(
+    '/api/system/clear-cache',
+    { method: 'POST' },
+  );
 }
 
 export { APIError };

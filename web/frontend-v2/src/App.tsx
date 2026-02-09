@@ -149,11 +149,34 @@ export default function App() {
     initialize();
   }, [initialize]);
 
-  // Refresh VRAM periodically
+  // Poll generation context (includes VRAM data) with setTimeout chaining.
+  // setTimeout chaining ensures the next poll fires only after the previous
+  // completes, preventing request pile-up when the server is busy (e.g.,
+  // during generation).
   useEffect(() => {
-    const refreshVRAM = useAppStore.getState().refreshVRAM;
-    const interval = setInterval(refreshVRAM, 30000); // Every 30s
-    return () => clearInterval(interval);
+    const { refreshContext, refreshVRAM } = useAppStore.getState();
+    let contextTimeout: ReturnType<typeof setTimeout>;
+    let vramTimeout: ReturnType<typeof setTimeout>;
+    let cancelled = false;
+
+    const pollContext = async () => {
+      try { await refreshContext(); } catch { /* ignore */ }
+      if (!cancelled) contextTimeout = setTimeout(pollContext, 15000);
+    };
+    const pollVRAM = async () => {
+      try { await refreshVRAM(); } catch { /* ignore */ }
+      if (!cancelled) vramTimeout = setTimeout(pollVRAM, 30000);
+    };
+
+    // Initial fetch then start chaining
+    pollContext();
+    pollVRAM();
+
+    return () => {
+      cancelled = true;
+      clearTimeout(contextTimeout);
+      clearTimeout(vramTimeout);
+    };
   }, []);
 
   return (

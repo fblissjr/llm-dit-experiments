@@ -1,6 +1,7 @@
 """LTX-2 video generation endpoints: status and streaming generation."""
 
 import asyncio
+import gc
 import hashlib
 import json
 import logging
@@ -16,7 +17,7 @@ from PIL import Image
 
 from llm_dit.config import RuntimeConfig
 from web.dependencies import ConfigDep
-from web.schemas import LTX2GenerateRequest
+from web.schemas import LTX2GenerateRequest, LTX2StatusResponse
 
 logger = logging.getLogger(__name__)
 
@@ -132,8 +133,8 @@ def save_ltx2_video(video: torch.Tensor, path: str, fps: float = 24.0) -> str:
     return path
 
 
-@router.get("/api/ltx2/status")
-async def ltx2_status(config: ConfigDep):
+@router.get("/api/ltx2/status", response_model=LTX2StatusResponse)
+async def ltx2_status(config: ConfigDep) -> LTX2StatusResponse:
     """Get LTX-2 pipeline status.
 
     Returns availability, loaded state, and VRAM usage.
@@ -161,13 +162,13 @@ async def ltx2_status(config: ConfigDep):
         default_path = Path.home() / "Storage" / "LTX-2"
         ltx2_configured = default_path.exists()
 
-    return {
-        "available": ltx2_configured,
+    return LTX2StatusResponse(
+        available=ltx2_configured,
         # Note: Pure PyTorch pipeline loads/unloads components per request
         # so "loaded" always returns False (no persistent state)
-        "loaded": False,
-        "vram_used_gb": None,  # TODO: Track actual VRAM usage per model
-    }
+        loaded=False,
+        vram_used_gb=None,
+    )
 
 
 @router.post("/api/ltx2/generate/stream")
@@ -222,15 +223,16 @@ async def ltx2_generate_stream(request: LTX2GenerateRequest, config: ConfigDep):
                 )
 
                 # Generate video with component offloading
-                return generate_video_with_offloading(
-                    prompt=request.prompt,
-                    config=gen_config,
-                    model_path=model_path,
-                    callback=progress_callback,
-                    use_progress=False,  # Disable tqdm, use callback instead
-                    lora_path=request.lora_path,
-                    lora_scale=request.lora_scale,
-                )
+                with torch.no_grad():
+                    return generate_video_with_offloading(
+                        prompt=request.prompt,
+                        config=gen_config,
+                        model_path=model_path,
+                        callback=progress_callback,
+                        use_progress=False,  # Disable tqdm, use callback instead
+                        lora_path=request.lora_path,
+                        lora_scale=request.lora_scale,
+                    )
 
             # Start generation in background
             loop = asyncio.get_event_loop()
@@ -296,6 +298,10 @@ async def ltx2_generate_stream(request: LTX2GenerateRequest, config: ConfigDep):
             logger.error(f"[LTX-2] Generation failed: {e}")
             traceback.print_exc()
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+        finally:
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
     return StreamingResponse(
         generate(),

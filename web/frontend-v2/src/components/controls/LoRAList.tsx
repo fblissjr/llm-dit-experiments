@@ -7,8 +7,8 @@
  */
 
 import { useCallback, useEffect, useState } from 'react';
-import type { ParamSchema } from '@/api/types';
-import { fetchAvailableLoras, type LoRAFile } from '@/api/client';
+import type { ParamSchema, LoRAFile } from '@/api/types';
+import { fetchAvailableLoras } from '@/api/client';
 import { cn } from '@/utils';
 import { LoRAItem } from './LoRAItem';
 

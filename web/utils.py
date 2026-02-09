@@ -10,6 +10,10 @@ from typing import Optional, Union
 
 from PIL import Image
 
+from pathlib import Path
+
+from web.schemas import ImageGenerationResult, LoRAInfo
+
 
 def create_image_response(
     image=None,  # PIL Image (optional if img_b64 provided)
@@ -18,7 +22,7 @@ def create_image_response(
     generation_time: float = 0.0,
     history_id: int | None = None,
     img_b64: str | None = None,  # Pre-computed base64 (avoids double-encoding)
-) -> dict:
+) -> ImageGenerationResult:
     """Create standardized JSON response for image generation endpoints.
 
     This shared utility ensures all image endpoints (Z-Image, FLUX.2, etc.)
@@ -33,7 +37,7 @@ def create_image_response(
         img_b64: Pre-computed base64 string (skips encoding if provided)
 
     Returns:
-        dict with: id, output_type, url, urls, thumbnail_url, seed, generation_time
+        ImageGenerationResult with: id, output_type, url, urls, thumbnail_url, seed, generation_time
     """
     # Use pre-computed base64 or encode from PIL Image
     if img_b64 is None:
@@ -45,16 +49,52 @@ def create_image_response(
 
     data_url = f"data:image/png;base64,{img_b64}"
 
-    return {
-        "id": history_id if history_id is not None else f"gen-{int(time.time() * 1000)}",
-        "pipeline_id": pipeline_id,
-        "output_type": "image",
-        "url": data_url,
-        "urls": [data_url],
-        "thumbnail_url": data_url,
-        "seed": seed if seed is not None else -1,
-        "generation_time": generation_time,
-    }
+    return ImageGenerationResult(
+        id=history_id if history_id is not None else f"gen-{int(time.time() * 1000)}",
+        pipeline_id=pipeline_id,
+        output_type="image",
+        url=data_url,
+        urls=[data_url],
+        thumbnail_url=data_url,
+        seed=seed if seed is not None else -1,
+        generation_time=generation_time,
+    )
+
+
+def get_lora_info(pipeline_obj) -> tuple[list[LoRAInfo], str | None]:
+    """Extract LoRA fusion state from a pipeline's transformer.
+
+    Works for any pipeline that stores a transformer as a dict value
+    or as an attribute with _fused_lora_state.
+
+    Returns:
+        Tuple of (list of LoRAInfo models, summary string or None)
+    """
+    transformer = None
+    if isinstance(pipeline_obj, dict):
+        transformer = pipeline_obj.get("transformer")
+    elif hasattr(pipeline_obj, "transformer"):
+        transformer = pipeline_obj.transformer
+
+    if transformer is None or not hasattr(transformer, "_fused_lora_state"):
+        return [], None
+
+    from llm_dit.utils.lora import get_fused_state
+
+    state = get_fused_state(transformer)
+    if state.is_empty:
+        return [], None
+
+    loras = [
+        LoRAInfo(
+            name=Path(r.path).stem,
+            path=r.path,
+            scale=r.scale,
+            layers_updated=r.layers_updated,
+        )
+        for r in state.records
+    ]
+    return loras, state.summary()
 
 
 def decode_base64_image(data: str, mode: str = "RGB") -> Image.Image:

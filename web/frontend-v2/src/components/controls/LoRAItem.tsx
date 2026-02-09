@@ -6,9 +6,11 @@
  * Outputs "path:scale" format string.
  */
 
-import { useId, useState, useRef, useEffect } from 'react';
-import type { LoRAFile } from '@/api/client';
+import { useId, useState, useRef, useEffect, useCallback } from 'react';
+import type { LoRAFile } from '@/api/types';
 import { cn } from '@/utils';
+
+const STRENGTH_PRESETS = [0.25, 0.50, 0.75, 1.00];
 
 interface LoRAItemProps {
   path: string;
@@ -40,6 +42,8 @@ export function LoRAItem({
   const [isEditing, setIsEditing] = useState(false);
   const [inputValue, setInputValue] = useState(scale.toFixed(2));
   const inputRef = useRef<HTMLInputElement>(null);
+  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const longPressIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Sync input value when scale prop changes (but not while editing)
   useEffect(() => {
@@ -78,16 +82,46 @@ export function LoRAItem({
   const commitInputValue = () => {
     const parsed = parseFloat(inputValue);
     if (!isNaN(parsed)) {
-      // Clamp to valid range and round to 2 decimal places
       const clamped = Math.min(scaleMax, Math.max(scaleMin, parsed));
       const rounded = Math.round(clamped * 100) / 100;
       onScaleChange(rounded);
       setInputValue(rounded.toFixed(2));
     } else {
-      // Reset to current value if invalid
       setInputValue(scale.toFixed(2));
     }
   };
+
+  // Stepper: increment/decrement by 0.05, clamped
+  const step = useCallback((delta: number) => {
+    const next = Math.round((scale + delta) * 100) / 100;
+    const clamped = Math.min(scaleMax, Math.max(scaleMin, next));
+    onScaleChange(clamped);
+  }, [scale, scaleMin, scaleMax, onScaleChange]);
+
+  // Long-press: initial 0.05 step, then accelerate to 0.10 after 500ms hold
+  const startLongPress = useCallback((delta: number) => {
+    step(delta);
+    longPressTimerRef.current = setTimeout(() => {
+      longPressIntervalRef.current = setInterval(() => {
+        // Use functional approach to get latest scale via the callback
+        step(delta * 2);
+      }, 100);
+    }, 500);
+  }, [step]);
+
+  const stopLongPress = useCallback(() => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+    if (longPressIntervalRef.current) {
+      clearInterval(longPressIntervalRef.current);
+      longPressIntervalRef.current = null;
+    }
+  }, []);
+
+  // Cleanup on unmount
+  useEffect(() => stopLongPress, [stopLongPress]);
 
   // Calculate fill percentage for slider visual
   const fillPercent = ((scale - scaleMin) / (scaleMax - scaleMin)) * 100;
@@ -132,7 +166,7 @@ export function LoRAItem({
               // Single directory - flat list
               availableLoras.map((lora) => (
                 <option key={lora.path} value={lora.path}>
-                  {lora.name} ({lora.size_mb}MB)
+                  {lora.name} ({lora.sizeMb}MB)
                 </option>
               ))
             ) : (
@@ -141,7 +175,7 @@ export function LoRAItem({
                 <optgroup key={dir} label={dir}>
                   {lorasByDirectory[dir].map((lora) => (
                     <option key={lora.path} value={lora.path}>
-                      {lora.name} ({lora.size_mb}MB)
+                      {lora.name} ({lora.sizeMb}MB)
                     </option>
                   ))}
                 </optgroup>
@@ -168,69 +202,139 @@ export function LoRAItem({
         </button>
       </div>
 
-      {/* Bottom row: Scale slider with label and editable value */}
+      {/* Strength controls (visible when a LoRA is selected) */}
       {path && (
-        <div className="flex items-center gap-3 pl-5">
-          <label htmlFor={scaleId} className="text-xs text-gray-400 flex-shrink-0">
-            Strength
-          </label>
+        <div className="space-y-2 pl-5">
+          {/* Row 1: Stepper [-] value [+] */}
+          <div className="flex items-center gap-2">
+            <label htmlFor={scaleId} className="text-xs text-gray-400 flex-shrink-0 w-14">
+              Strength
+            </label>
 
-          {/* Slider - larger and more touch-friendly */}
-          <input
-            id={scaleId}
-            type="range"
-            value={scale}
-            onChange={(e) => onScaleChange(parseFloat(e.target.value))}
-            min={scaleMin}
-            max={scaleMax}
-            step={0.05}
-            disabled={disabled}
-            className={cn(
-              'flex-1 h-2 cursor-pointer rounded-full appearance-none min-w-[100px]',
-              disabled && 'opacity-50 cursor-not-allowed'
+            {/* Decrement button -- 44px touch target */}
+            <button
+              type="button"
+              disabled={disabled || scale <= scaleMin}
+              onMouseDown={() => startLongPress(-0.05)}
+              onMouseUp={stopLongPress}
+              onMouseLeave={stopLongPress}
+              onTouchStart={() => startLongPress(-0.05)}
+              onTouchEnd={stopLongPress}
+              className={cn(
+                'min-w-[44px] min-h-[44px] flex items-center justify-center',
+                'bg-gray-700 hover:bg-gray-600 active:bg-gray-500 rounded-lg transition-colors',
+                'text-gray-200 text-lg font-medium select-none',
+                (disabled || scale <= scaleMin) && 'opacity-30 cursor-not-allowed'
+              )}
+            >
+              -
+            </button>
+
+            {/* Editable value display */}
+            {isEditing ? (
+              <input
+                ref={inputRef}
+                type="number"
+                value={inputValue}
+                onChange={handleInputChange}
+                onBlur={handleInputBlur}
+                onKeyDown={handleInputKeyDown}
+                min={scaleMin}
+                max={scaleMax}
+                step={0.05}
+                disabled={disabled}
+                className={cn(
+                  'w-18 px-3 py-2 text-sm text-center',
+                  'bg-gray-800 border border-blue-500 rounded-lg',
+                  'text-gray-200 focus:outline-none',
+                  'tabular-nums min-h-[40px]'
+                )}
+              />
+            ) : (
+              <button
+                type="button"
+                onClick={() => !disabled && setIsEditing(true)}
+                disabled={disabled}
+                className={cn(
+                  'w-18 px-3 py-2 text-sm text-center tabular-nums',
+                  'bg-gray-800 border border-gray-600 rounded-lg',
+                  'text-gray-300 hover:border-gray-500 hover:bg-gray-700 active:bg-gray-600 transition-colors',
+                  'min-h-[40px] flex items-center justify-center',
+                  disabled && 'cursor-not-allowed opacity-50'
+                )}
+                title="Tap to edit value"
+              >
+                {scale.toFixed(2)}
+              </button>
             )}
-            style={{
-              background: `linear-gradient(to right, var(--pipeline-color, #3b82f6) 0%, var(--pipeline-color, #3b82f6) ${fillPercent}%, #374151 ${fillPercent}%, #374151 100%)`,
-            }}
-          />
 
-          {/* Editable value display - mobile-friendly touch targets */}
-          {isEditing ? (
+            {/* Increment button -- 44px touch target */}
+            <button
+              type="button"
+              disabled={disabled || scale >= scaleMax}
+              onMouseDown={() => startLongPress(0.05)}
+              onMouseUp={stopLongPress}
+              onMouseLeave={stopLongPress}
+              onTouchStart={() => startLongPress(0.05)}
+              onTouchEnd={stopLongPress}
+              className={cn(
+                'min-w-[44px] min-h-[44px] flex items-center justify-center',
+                'bg-gray-700 hover:bg-gray-600 active:bg-gray-500 rounded-lg transition-colors',
+                'text-gray-200 text-lg font-medium select-none',
+                (disabled || scale >= scaleMax) && 'opacity-30 cursor-not-allowed'
+              )}
+            >
+              +
+            </button>
+          </div>
+
+          {/* Row 2: Quick-set preset pills */}
+          <div className="flex items-center gap-1.5">
+            <span className="text-xs text-gray-500 w-14 flex-shrink-0">Presets</span>
+            {STRENGTH_PRESETS.filter((p) => p >= scaleMin && p <= scaleMax).map((preset) => {
+              const isActive = Math.abs(scale - preset) < 0.001;
+              return (
+                <button
+                  key={preset}
+                  type="button"
+                  onClick={() => !disabled && onScaleChange(preset)}
+                  disabled={disabled}
+                  className={cn(
+                    'px-3 py-1.5 text-xs font-medium rounded-lg transition-colors tabular-nums',
+                    'min-h-[32px]',
+                    isActive
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-gray-700/50 text-gray-400 hover:bg-gray-700 hover:text-gray-200 active:bg-gray-600',
+                    disabled && 'opacity-50 cursor-not-allowed'
+                  )}
+                >
+                  {preset.toFixed(2)}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Row 3: Slider (secondary control, visual feedback) */}
+          <div className="hidden md:flex items-center gap-2">
+            <span className="text-xs text-gray-500 w-14 flex-shrink-0" />
             <input
-              ref={inputRef}
-              type="number"
-              value={inputValue}
-              onChange={handleInputChange}
-              onBlur={handleInputBlur}
-              onKeyDown={handleInputKeyDown}
+              id={scaleId}
+              type="range"
+              value={scale}
+              onChange={(e) => onScaleChange(parseFloat(e.target.value))}
               min={scaleMin}
               max={scaleMax}
               step={0.05}
               disabled={disabled}
               className={cn(
-                'w-18 px-3 py-2 text-sm text-center',
-                'bg-gray-800 border border-blue-500 rounded-lg',
-                'text-gray-200 focus:outline-none',
-                'tabular-nums min-h-[40px]'
+                'flex-1 h-2 cursor-pointer rounded-full appearance-none min-w-[100px]',
+                disabled && 'opacity-50 cursor-not-allowed'
               )}
+              style={{
+                background: `linear-gradient(to right, var(--pipeline-color, #3b82f6) 0%, var(--pipeline-color, #3b82f6) ${fillPercent}%, #374151 ${fillPercent}%, #374151 100%)`,
+              }}
             />
-          ) : (
-            <button
-              type="button"
-              onClick={() => !disabled && setIsEditing(true)}
-              disabled={disabled}
-              className={cn(
-                'w-18 px-3 py-2 text-sm text-center tabular-nums',
-                'bg-gray-800 border border-gray-600 rounded-lg',
-                'text-gray-300 hover:border-gray-500 hover:bg-gray-700 active:bg-gray-600 transition-colors',
-                'min-h-[40px] flex items-center justify-center',
-                disabled && 'cursor-not-allowed opacity-50'
-              )}
-              title="Tap to edit value"
-            >
-              {scale.toFixed(2)}
-            </button>
-          )}
+          </div>
         </div>
       )}
     </div>

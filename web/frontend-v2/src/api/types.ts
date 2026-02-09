@@ -78,13 +78,13 @@ export interface GenerationPreset {
  * VRAM Status from /api/vram/status
  */
 export interface VRAMStatus {
-  usedMB: number;
-  totalMB: number;
-  freeMB: number;
+  usedMb: number;
+  totalMb: number;
+  freeMb: number;
   utilizationPercent: number;
   breakdown: {
     label: string;
-    sizeMB: number;
+    sizeMb: number;
     color: string;
   }[];
 }
@@ -109,12 +109,19 @@ export interface ConfigWarning {
 export type ModelStatus = 'loaded' | 'unloaded' | 'loading' | 'error';
 
 export interface ModelStatusResponse {
+  pipelineId?: string;
   status: ModelStatus;
-  vramMB?: number;
-  estimatedVramMB?: number;
-  error?: string;
+  components?: { name: string; sizeMb: number; device: string }[];
+  totalVramMb?: number;
+  vramMb?: number;
+  modelVariant?: string | null;
+  displayName?: string | null;
+  loras?: { name: string; scale: number; layersUpdated: number }[];
+  loraSummary?: string | null;
   configTags?: ConfigTag[];
   configWarnings?: ConfigWarning[];
+  // Frontend-only: set locally when a load/unload operation fails
+  error?: string;
 }
 
 /**
@@ -184,6 +191,73 @@ export interface PipelinesResponse {
  */
 export interface PresetsResponse {
   presets: GenerationPreset[];
+  defaultPreset: string;
+}
+
+/**
+ * LoRA file on disk from /api/loras
+ */
+export interface LoRAFile {
+  path: string;
+  name: string;
+  directory: string;
+  sizeMb: number;
+}
+
+/**
+ * LoRA list response from /api/loras
+ */
+export interface LoRAListResponse {
+  loras: LoRAFile[];
+  directories: string[];
+  count: number;
+  pipelineId?: string;
+}
+
+/**
+ * Clear cache response from /api/system/clear-cache
+ */
+export interface ClearCacheResponse {
+  success: boolean;
+  freedGb: number;
+  message: string;
+}
+
+/**
+ * LoRA fusion info from /api/context
+ */
+export interface LoRAInfo {
+  name: string;
+  path: string;
+  scale: number;
+  layersUpdated: number;
+}
+
+/**
+ * Composite generation context from /api/context
+ *
+ * Aggregates model variant, LoRA state, VRAM, quantization,
+ * compile, and session state into a single response.
+ */
+export interface GenerationContext {
+  uptimeSeconds: number | null;
+  profile: string;
+  activePipeline: string | null;
+  pipelineDisplayName: string | null;
+  modelVariant: string | null;
+  loras: LoRAInfo[];
+  loraSummary: string | null;
+  quantization: Record<string, string>;
+  compileEnabled: boolean;
+  compileMode: string | null;
+  blockOffload: boolean;
+  vramUsedGb: number | null;
+  vramTotalGb: number | null;
+  vramPercent: number | null;
+  pendingRestartFields: string[];
+  sessionModifiedFields: string[];
+  fmttCached: boolean;
+  historyCount: number;
 }
 
 /**

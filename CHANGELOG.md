@@ -1,9 +1,80 @@
-last updated: 2026-02-08
+last updated: 2026-02-09
 
 # changelog
 
 All notable changes to this project will be documented in this file.
 Uses [Semantic Versioning](https://semver.org/).
+
+## 0.8.9
+
+### added
+- `torch.no_grad()` wrappers on all generation executor functions (Z-Image, FLUX.2, LTX-2, Qwen-Image) to prevent autograd graph accumulation during inference
+- `finally` cleanup blocks (`gc.collect()` + `torch.cuda.empty_cache()`) on all generation endpoints (streaming and non-streaming) to recover VRAM after errors
+- `torch._dynamo.reset()` in FLUX.2 unload path to release compiled CUDA kernel cache (~3-5GB)
+- `gc.collect()` before `empty_cache()` in Qwen-Image unload paths (server.py + model_manager.py)
+- `AbortController` signal support in `generateStream()` for SSE cancellation
+- 4 new Pydantic response models: `DyPEStatusResponse`, `PipelinesResponse`, `PipelineDefaultsResponse`, `ResolutionConfigResponse`
+- `response_model=` applied to 4 remaining untyped endpoints (`/api/dype/status`, `/api/pipelines`, `/api/pipelines/{id}/defaults`, `/api/resolution-config`)
+- `create_app()` factory function in server.py for OpenAPI spec extraction
+- `scripts/export_openapi.py` for headless OpenAPI JSON export
+- `openapi-ts.config.ts` and npm scripts (`export-openapi`, `gen-api`) for TypeScript codegen scaffolding
+
+### changed
+- Frontend context polling switched from `setInterval` to `setTimeout` chaining (prevents request pile-up during slow responses)
+- Backend history entries no longer store `image_b64` (frontend IndexedDB is the image source of truth, saves ~150-250MB heap at 50 entries)
+- Qwen-Image history entries no longer store base64 image data
+
+### fixed
+- CUDA memory leak: generation without `torch.no_grad()` built autograd graphs holding intermediate tensors (estimated 2-8GB per generation)
+- CUDA memory leak: failed generations never called `empty_cache()`, leaving dead tensors in VRAM
+- CUDA memory leak: FLUX.2 unload skipped `_dynamo.reset()`, leaving compiled kernels (~3-5GB) in VRAM
+- CUDA memory leak: Qwen-Image unload skipped `gc.collect()`, leaving Python-held CUDA tensors unreclaimable
+
+## 0.8.8
+
+### added
+- Pydantic `CamelModel` base class with automatic camelCase JSON serialization (`alias_generator=to_camel`)
+- ~27 typed response models in `web/schemas.py` covering all JSON endpoints
+- `response_model=` applied to all JSON endpoints across 7 routers (OpenAPI schema now fully typed)
+- Shared `get_lora_info()` utility in `web/utils.py` for LoRA extraction
+- Shared `formatUptime()` utility and `RestartWarning` component in frontend
+- `LoRAFile`, `LoRAListResponse`, `ClearCacheResponse`, `PresetsResponse` types in `types.ts`
+
+### changed
+- All API responses now serialize as camelCase (e.g., `uptimeSeconds` instead of `uptime_seconds`)
+- Frontend `client.ts` simplified: eliminated all manual snake-to-camel mapping functions (~60 lines removed)
+- `fetchGenerationContext()`, `fetchVRAMStatus()`, `fetchModelStatus()`, `fetchPresets()`, `clearCache()` now direct typed passthrough
+- `VRAMStatus` interface updated: `usedMB` -> `usedMb` (matches Pydantic `to_camel` output)
+- `ModelStatusResponse` interface expanded to match full backend schema
+- `LoRAInfo.layers_updated` -> `layersUpdated` across frontend
+- `ModelStatusResponse.loras` field in schemas.py changed from `List[Dict]` to `List[LoRAInfo]`
+- Consolidated 3 `if compile_enabled:` blocks in `vram.py` into single block
+- Duplicate `LoRAFile`/`LoRAListResponse` types removed from `client.ts` (now in `types.ts` only)
+
+### removed
+- 2 stub endpoints: `GET /api/configs/available`, `POST /api/configs/load`
+- 10 legacy load/unload routes from `vram.py` (superseded by unified `/api/models/{id}/load|unload`)
+- 4 overlapping status endpoints merged into `/api/context`: `GET /api/system/status`, `GET /api/server/status`, `GET /api/generation-config`, `GET /api/rewriter-models`
+- `web/static/` (dead v1 frontend) and `web/archive-frontend/` directories deleted
+- Duplicate `_get_lora_info()` from `system.py` (replaced by shared `web/utils.get_lora_info()`)
+
+## 0.8.7
+
+### added
+- `GET /api/context` endpoint: composite status aggregating model variant, LoRA fusion state, VRAM, quantization, compile, and session state
+- `LoRAInfo` and `GenerationContextResponse` Pydantic models in `web/schemas.py`
+- StatusBar component: persistent compact strip showing loaded model, LoRA badges, quant badge, VRAM bar with expand/collapse
+- SettingsMenu component: server restart (with confirmation dialog), clear CUDA cache, system info, pending restart warnings
+- ConfirmDialog reusable component for destructive actions
+- Gear icon in LeftNav header for settings access on desktop
+- Generation context polling (15s interval) in App.tsx
+- ModelManager cards enriched with model variant name, LoRA badges, and config tags
+
+### changed
+- LoRA slider UX: added stepper buttons (44px touch targets with long-press acceleration), preset pills (0.25/0.50/0.75/1.00), slider moved to desktop-only secondary control
+- `get_model_status()` in vram.py now returns `model_variant`, `loras`, `lora_summary` fields
+- Model load/unload actions now refresh generation context
+- VRAM poll augmented with composite context poll (15s interval)
 
 ## 0.8.6
 

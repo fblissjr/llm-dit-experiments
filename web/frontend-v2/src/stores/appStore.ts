@@ -18,6 +18,7 @@ import type {
   VRAMStatus,
   FormValues,
   ModelStatusResponse,
+  GenerationContext,
 } from '@/api/types';
 import {
   fetchPipelines,
@@ -27,6 +28,9 @@ import {
   fetchModelStatus,
   loadModel,
   unloadModel,
+  fetchGenerationContext,
+  restartServer as restartServerApi,
+  clearCache as clearCacheApi,
 } from '@/api/client';
 
 interface AppState {
@@ -46,6 +50,10 @@ interface AppState {
   isMobile: boolean;
   isHistoryOpen: boolean;
   isLeftNavOpen: boolean;
+  isSettingsOpen: boolean;
+
+  // Generation context (composite status)
+  generationContext: GenerationContext | null;
 
   // VRAM
   vram: VRAMStatus | null;
@@ -61,7 +69,11 @@ interface AppState {
   setIsMobile: (isMobile: boolean) => void;
   toggleHistory: () => void;
   toggleLeftNav: () => void;
+  toggleSettings: () => void;
   refreshVRAM: () => Promise<void>;
+  refreshContext: () => Promise<void>;
+  restartServer: () => Promise<void>;
+  clearCache: () => Promise<{ freedGb: number }>;
   loadPresets: (pipelineId: string) => Promise<void>;
 
   // Model management
@@ -98,6 +110,8 @@ export const useAppStore = create<AppState>()(
     isMobile: false,
     isHistoryOpen: false,
     isLeftNavOpen: true,
+    isSettingsOpen: false,
+    generationContext: null,
     vram: null,
     isLoading: true,
     error: null,
@@ -214,6 +228,12 @@ export const useAppStore = create<AppState>()(
       });
     },
 
+    toggleSettings: () => {
+      set((state) => {
+        state.isSettingsOpen = !state.isSettingsOpen;
+      });
+    },
+
     /**
      * Refresh VRAM status from server
      */
@@ -225,6 +245,45 @@ export const useAppStore = create<AppState>()(
         });
       } catch {
         // Silently fail - VRAM status is non-critical
+      }
+    },
+
+    /**
+     * Refresh generation context (composite status for status bar)
+     */
+    refreshContext: async () => {
+      try {
+        const ctx = await fetchGenerationContext();
+        set((state) => {
+          state.generationContext = ctx;
+        });
+      } catch {
+        // Silently fail - context is non-critical
+      }
+    },
+
+    /**
+     * Restart the server (with health polling for recovery)
+     */
+    restartServer: async () => {
+      try {
+        await restartServerApi('user_request');
+      } catch {
+        // Expected -- server goes down during restart
+      }
+    },
+
+    /**
+     * Clear CUDA cache and refresh context
+     */
+    clearCache: async () => {
+      try {
+        const result = await clearCacheApi();
+        // Refresh context to pick up new VRAM numbers
+        get().refreshContext();
+        return { freedGb: result.freedGb };
+      } catch {
+        return { freedGb: 0 };
       }
     },
 
@@ -309,8 +368,9 @@ export const useAppStore = create<AppState>()(
           state.modelStatus[pipelineId] = result;
         });
 
-        // Refresh VRAM after loading
+        // Refresh VRAM and context after loading
         get().refreshVRAM();
+        get().refreshContext();
       } catch (error) {
         set((state) => {
           state.modelStatus[pipelineId] = {
@@ -336,8 +396,9 @@ export const useAppStore = create<AppState>()(
           state.modelStatus[pipelineId] = result;
         });
 
-        // Refresh VRAM after unloading
+        // Refresh VRAM and context after unloading
         get().refreshVRAM();
+        get().refreshContext();
       } catch (error) {
         set((state) => {
           state.modelStatus[pipelineId] = {

@@ -949,9 +949,18 @@ class ModelManager:
                 del flux2[key]
         self._pipelines.pop("flux2", None)
 
+        # Clear torch.compile cache (compiled kernels hold CUDA memory)
+        try:
+            import torch._dynamo
+            torch._dynamo.reset()
+            logger.info("[FLUX.2] Cleared torch.compile cache")
+        except Exception as e:
+            logger.warning(f"[FLUX.2] Could not clear compile cache: {e}")
+
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+        gc.collect()
         logger.info("[FLUX.2] Pipeline unloaded, VRAM freed")
         return True
 
@@ -978,6 +987,7 @@ class ModelManager:
         logger.info("[VRAM] Unloading Qwen-Image pipeline...")
         del qwen
         self._pipelines.pop("qwen_image", None)
+        gc.collect()
         torch.cuda.empty_cache()
         logger.info("[VRAM] Qwen-Image pipeline unloaded")
         return True

@@ -11,7 +11,9 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest",
     "test:ui": "vitest --ui",
-    "test:run": "vitest run"
+    "test:run": "vitest run",
+    "export-openapi": "cd ../.. && uv run scripts/export_openapi.py > web/frontend-v2/openapi.json",
+    "gen-api": "openapi-ts"
   },
   "dependencies": {
     "immer": "^10.1.1",

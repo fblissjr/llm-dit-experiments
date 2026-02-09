@@ -2,6 +2,7 @@
 
 import asyncio
 import base64
+import gc
 import io
 import json
 import logging
@@ -9,12 +10,13 @@ import time
 import traceback
 from typing import Optional
 
+import torch
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from PIL import Image
 
 from web.dependencies import ConfigDep, ManagerDep
-from web.schemas import Flux2GenerateRequest
+from web.schemas import Flux2GenerateRequest, Flux2StatusResponse, ImageGenerationResult
 from web.utils import create_image_response
 
 logger = logging.getLogger(__name__)
@@ -91,25 +93,25 @@ def _ensure_correct_model(
 # =============================================================================
 
 
-@router.get("/api/flux2/status")
-async def flux2_status(config: ConfigDep):
+@router.get("/api/flux2/status", response_model=Flux2StatusResponse)
+async def flux2_status(config: ConfigDep) -> Flux2StatusResponse:
     """Get FLUX.2 Klein pipeline status.
 
     Returns availability info. FLUX.2 is always available (downloads from HuggingFace).
     """
     import web.server as srv
 
-    return {
-        "available": True,  # FLUX.2 downloads models from HuggingFace as needed
-        "loaded": srv.flux2_pipeline is not None,
-        "compile_enabled": getattr(config, "flux2_compile", False),
-        "compile_dynamic": getattr(config, "flux2_compile_dynamic", False),
-        "compile_vae_enabled": getattr(config, "flux2_compile_vae", False),
-        "supported_models": [
+    return Flux2StatusResponse(
+        available=True,  # FLUX.2 downloads models from HuggingFace as needed
+        loaded=srv.flux2_pipeline is not None,
+        compile_enabled=getattr(config, "flux2_compile", False),
+        compile_dynamic=getattr(config, "flux2_compile_dynamic", False),
+        compile_vae_enabled=getattr(config, "flux2_compile_vae", False),
+        supported_models=[
             "klein-9b", "klein-9b-fp8", "klein-4b", "klein-4b-fp8",
             "klein-base-9b", "klein-base-9b-fp8", "klein-base-4b", "klein-base-4b-fp8"
         ],
-    }
+    )
 
 
 # =============================================================================
@@ -117,8 +119,8 @@ async def flux2_status(config: ConfigDep):
 # =============================================================================
 
 
-@router.post("/api/flux2/generate")
-async def flux2_generate(request: Flux2GenerateRequest, config: ConfigDep, manager: ManagerDep):
+@router.post("/api/flux2/generate", response_model=ImageGenerationResult)
+async def flux2_generate(request: Flux2GenerateRequest, config: ConfigDep, manager: ManagerDep) -> ImageGenerationResult:
     """Generate image using FLUX.2 Klein.
 
     Supports both text-to-image and image editing with reference images.
@@ -241,18 +243,20 @@ async def flux2_generate(request: Flux2GenerateRequest, config: ConfigDep, manag
 
         # Run in executor to not block event loop
         loop = asyncio.get_event_loop()
-        image = await loop.run_in_executor(
-            None,
-            lambda: generate_image(
-                gen_config,
-                model_name=request.model_name,
-                encoder=persistent_encoder,
-                transformer=persistent_transformer,
-                vae=persistent_vae,
-                model_path=model_path,
-                vae_path=vae_path,
-            )
-        )
+
+        def _run_generate():
+            with torch.no_grad():
+                return generate_image(
+                    gen_config,
+                    model_name=request.model_name,
+                    encoder=persistent_encoder,
+                    transformer=persistent_transformer,
+                    vae=persistent_vae,
+                    model_path=model_path,
+                    vae_path=vae_path,
+                )
+
+        image = await loop.run_in_executor(None, _run_generate)
 
         gen_time = time.time() - start_time
         logger.info(f"[FLUX.2] Generation complete in {gen_time:.1f}s")
@@ -292,6 +296,10 @@ async def flux2_generate(request: Flux2GenerateRequest, config: ConfigDep, manag
         logger.error(f"[FLUX.2] Generation failed: {e}")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
 
 # =============================================================================
@@ -431,16 +439,17 @@ async def flux2_generate_stream(request: Flux2GenerateRequest, config: ConfigDep
                     p_transformer = srv.flux2_pipeline.get("transformer")
                     p_vae = srv.flux2_pipeline.get("vae")
 
-                return generate_image_with_progress(
-                    gen_config,
-                    model_name=request.model_name,
-                    encoder=p_encoder,
-                    transformer=p_transformer,
-                    vae=p_vae,
-                    model_path=model_path,
-                    vae_path=vae_path,
-                    progress_callback=callback,
-                )
+                with torch.no_grad():
+                    return generate_image_with_progress(
+                        gen_config,
+                        model_name=request.model_name,
+                        encoder=p_encoder,
+                        transformer=p_transformer,
+                        vae=p_vae,
+                        model_path=model_path,
+                        vae_path=vae_path,
+                        progress_callback=callback,
+                    )
 
             # Start generation in background
             gen_future = loop.run_in_executor(None, run_generation)
@@ -502,6 +511,10 @@ async def flux2_generate_stream(request: Flux2GenerateRequest, config: ConfigDep
             logger.error(f"[FLUX.2] Stream generation failed: {e}")
             traceback.print_exc()
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+        finally:
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
     return StreamingResponse(
         generate_with_progress(),

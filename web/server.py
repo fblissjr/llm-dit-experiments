@@ -27,7 +27,6 @@ import torch
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-from fastapi.staticfiles import StaticFiles
 
 logger = logging.getLogger(__name__)
 
@@ -66,8 +65,18 @@ def _register_routers():
     app.include_router(ltx2_router.router)
     app.include_router(qwen_image_router.router)
 
-# Static files (CSS, JS)
-app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"), name="static")
+def create_app() -> FastAPI:
+    """Create a FastAPI app with all routers registered.
+
+    Used by the OpenAPI export script to extract the spec without running the
+    full server (which requires GPU, model paths, etc.).
+    """
+    _register_routers()
+    return app
+
+
+# Static file mount removed -- v1 frontend (web/static/) was deleted.
+# The active frontend is frontend-v2, served by Vite in dev or as a built SPA.
 
 # Global pipeline/encoder state (loaded on startup)
 # Routers access these via `import web.server as srv; srv.pipeline` etc.
@@ -171,6 +180,7 @@ def unload_qwen_image_pipeline() -> bool:
         logger.info("[VRAM] Unloading Qwen-Image pipeline to free VRAM...")
         del qwen_image_pipeline
         qwen_image_pipeline = None
+        gc.collect()
         torch.cuda.empty_cache()
         logger.info("[VRAM] Qwen-Image pipeline unloaded, CUDA cache cleared")
         return True

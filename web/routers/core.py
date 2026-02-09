@@ -3,6 +3,7 @@
 import asyncio
 import base64
 import binascii
+import gc
 import io
 import json
 import logging
@@ -18,7 +19,21 @@ from PIL import Image
 from starlette.responses import StreamingResponse
 
 from web.dependencies import ConfigDep, ManagerDep
-from web.schemas import EncodeRequest, GenerateRequest, Img2ImgRequest, RewriteRequest
+from web.schemas import (
+    DyPEConfigResponse,
+    DyPEStatusResponse,
+    EncodeRequest,
+    EncodeResult,
+    FormatPromptResult,
+    GenerateRequest,
+    ImageGenerationResult,
+    Img2ImgRequest,
+    RewriteRequest,
+    RewriteResult,
+    RewriterListResponse,
+    SaveEmbeddingsResult,
+    TemplateListResponse,
+)
 from web.utils import create_image_response
 
 import web.server as srv
@@ -108,57 +123,34 @@ def _get_zimage_encoder():
 # =============================================================================
 
 
-@router.get("/api/dype/config")
-async def dype_config(config: ConfigDep):
+@router.get("/api/dype/config", response_model=DyPEConfigResponse)
+async def dype_config(config: ConfigDep) -> DyPEConfigResponse:
     """Get DyPE configuration defaults from server config.
 
     Returns default DyPE settings for high-resolution generation.
     """
     if config is None:
-        return {
-            "enabled": False,
-            "method": "vision_yarn",
-            "dype_scale": 2.0,
-            "dype_exponent": 2.0,
-            "dype_start_sigma": 1.0,
-            "base_shift": 0.5,
-            "max_shift": 1.15,
-            "base_resolution": 1024,
-            "anisotropic": False,
-            "multipass_recommended_threshold": 2048,
-        }
+        return DyPEConfigResponse()
 
     # Get DyPE config from runtime config if available
     dype = getattr(config, "dype", None)
     if dype is not None:
-        return {
-            "enabled": dype.enabled,
-            "method": dype.method,
-            "dype_scale": dype.dype_scale,
-            "dype_exponent": dype.dype_exponent,
-            "dype_start_sigma": dype.dype_start_sigma,
-            "base_shift": dype.base_shift,
-            "max_shift": dype.max_shift,
-            "base_resolution": dype.base_resolution,
-            "anisotropic": dype.anisotropic,
-            "multipass_recommended_threshold": 2048,
-        }
+        return DyPEConfigResponse(
+            enabled=dype.enabled,
+            method=dype.method,
+            dype_scale=dype.dype_scale,
+            dype_exponent=dype.dype_exponent,
+            dype_start_sigma=dype.dype_start_sigma,
+            base_shift=dype.base_shift,
+            max_shift=dype.max_shift,
+            base_resolution=dype.base_resolution,
+            anisotropic=dype.anisotropic,
+        )
 
-    return {
-        "enabled": False,
-        "method": "vision_yarn",
-        "dype_scale": 2.0,
-        "dype_exponent": 2.0,
-        "dype_start_sigma": 1.0,
-        "base_shift": 0.5,
-        "max_shift": 1.15,
-        "base_resolution": 1024,
-        "anisotropic": False,
-        "multipass_recommended_threshold": 2048,
-    }
+    return DyPEConfigResponse()
 
 
-@router.get("/api/dype/status")
+@router.get("/api/dype/status", response_model=DyPEStatusResponse)
 async def dype_status():
     """Get DyPE feature status and recommendations.
 
@@ -188,8 +180,8 @@ async def dype_status():
 # =============================================================================
 
 
-@router.post("/api/encode")
-async def encode(request: EncodeRequest):
+@router.post("/api/encode", response_model=EncodeResult)
+async def encode(request: EncodeRequest) -> EncodeResult:
     """Encode a prompt to embeddings (for distributed inference)."""
     # Use encoder from pipeline or standalone encoder
     enc = srv.encoder if srv.encoder is not None else (srv.pipeline.encoder if srv.pipeline else None)
@@ -222,21 +214,21 @@ async def encode(request: EncodeRequest):
                 logger.info(formatted_prompt)
                 logger.info(f"---END FORMATTED PROMPT---")
 
-        return {
-            "shape": list(embeddings.shape),
-            "dtype": str(embeddings.dtype),
-            "encode_time": encode_time,
-            "token_count": token_count,
-            "prompt": request.prompt,
-            "formatted_prompt": formatted_prompt,
-        }
+        return EncodeResult(
+            shape=list(embeddings.shape),
+            dtype=str(embeddings.dtype),
+            encode_time=encode_time,
+            token_count=token_count,
+            prompt=request.prompt,
+            formatted_prompt=formatted_prompt,
+        )
     except Exception as e:
         logger.error(f"Encoding failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/api/generate")
-async def generate(request: GenerateRequest):
+@router.post("/api/generate", response_model=ImageGenerationResult)
+async def generate(request: GenerateRequest) -> ImageGenerationResult:
     """Generate an image from a prompt."""
     if srv.encoder_only_mode:
         raise HTTPException(
@@ -482,7 +474,7 @@ async def generate(request: GenerateRequest):
         logger.info(f"Generated in {gen_time:.1f}s")
         logger.info("=" * 60)
 
-        # Convert to base64 for history storage and response
+        # Convert to base64 for response
         img_bytes = io.BytesIO()
         image.save(img_bytes, format="PNG")
         img_b64 = base64.b64encode(img_bytes.getvalue()).decode("ascii")
@@ -531,7 +523,7 @@ async def generate(request: GenerateRequest):
             "cfg_normalization": request.cfg_normalization,
             "cfg_truncation": request.cfg_truncation,
             "gen_time": gen_time,
-            "image_b64": img_b64,
+
             "formatted_prompt": formatted_prompt,
         }
         srv.generation_history.insert(0, history_entry)
@@ -551,6 +543,10 @@ async def generate(request: GenerateRequest):
     except Exception as e:
         logger.error(f"Generation failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
 
 @router.post("/api/generate/stream")
@@ -662,44 +658,45 @@ async def generate_stream(request: GenerateRequest):
             loop = asyncio.get_event_loop()
 
             def do_generate():
-                return srv.pipeline(
-                    request.prompt,
-                    negative_prompt=negative_prompt_to_use,
-                    height=request.height,
-                    width=request.width,
-                    num_inference_steps=request.steps,
-                    guidance_scale=request.guidance_scale,
-                    cfg_normalization=request.cfg_normalization,
-                    cfg_truncation=request.cfg_truncation,
-                    shift=None if request.dynamic_shift else request.shift,
-                    d_noise=request.d_noise,
-                    generator=generator,
-                    template=request.template,
-                    system_prompt=request.system_prompt,
-                    thinking_content=request.thinking_content,
-                    assistant_content=request.assistant_content,
-                    force_think_block=request.force_think_block,
-                    remove_quotes=request.strip_quotes,
-                    long_prompt_mode=request.long_prompt_mode,
-                    hidden_layer=request.hidden_layer,
-                    layer_weights=request.layer_weights,
-                    skip_layer_guidance_scale=slg_scale,
-                    skip_layer_indices=slg_layers,
-                    skip_layer_start=slg_start,
-                    skip_layer_stop=slg_stop,
-                    fmtt_guidance_scale=fmtt_scale,
-                    fmtt_guidance_start=fmtt_start,
-                    fmtt_guidance_stop=fmtt_stop,
-                    fmtt_normalize_mode=fmtt_normalize,
-                    fmtt_decode_scale=fmtt_decode_scale,
-                    fmtt_siglip_model=fmtt_siglip_model,
-                    fmtt_siglip_device=fmtt_siglip_device,
-                    dype_config=dype_config,
-                    fbcache=request.fbcache,
-                    fbcache_threshold=request.fbcache_threshold,
-                    fbcache_log=request.fbcache_log,
-                    callback=progress_callback,
-                )
+                with torch.no_grad():
+                    return srv.pipeline(
+                        request.prompt,
+                        negative_prompt=negative_prompt_to_use,
+                        height=request.height,
+                        width=request.width,
+                        num_inference_steps=request.steps,
+                        guidance_scale=request.guidance_scale,
+                        cfg_normalization=request.cfg_normalization,
+                        cfg_truncation=request.cfg_truncation,
+                        shift=None if request.dynamic_shift else request.shift,
+                        d_noise=request.d_noise,
+                        generator=generator,
+                        template=request.template,
+                        system_prompt=request.system_prompt,
+                        thinking_content=request.thinking_content,
+                        assistant_content=request.assistant_content,
+                        force_think_block=request.force_think_block,
+                        remove_quotes=request.strip_quotes,
+                        long_prompt_mode=request.long_prompt_mode,
+                        hidden_layer=request.hidden_layer,
+                        layer_weights=request.layer_weights,
+                        skip_layer_guidance_scale=slg_scale,
+                        skip_layer_indices=slg_layers,
+                        skip_layer_start=slg_start,
+                        skip_layer_stop=slg_stop,
+                        fmtt_guidance_scale=fmtt_scale,
+                        fmtt_guidance_start=fmtt_start,
+                        fmtt_guidance_stop=fmtt_stop,
+                        fmtt_normalize_mode=fmtt_normalize,
+                        fmtt_decode_scale=fmtt_decode_scale,
+                        fmtt_siglip_model=fmtt_siglip_model,
+                        fmtt_siglip_device=fmtt_siglip_device,
+                        dype_config=dype_config,
+                        fbcache=request.fbcache,
+                        fbcache_threshold=request.fbcache_threshold,
+                        fbcache_log=request.fbcache_log,
+                        callback=progress_callback,
+                    )
 
             # Start generation task
             gen_task = loop.run_in_executor(None, do_generate)
@@ -748,7 +745,7 @@ async def generate_stream(request: GenerateRequest):
                 "steps": request.steps,
                 "seed": actual_seed,
                 "gen_time": gen_time,
-                "image_b64": img_b64,
+    
             }
             srv.generation_history.insert(0, history_entry)
             if len(srv.generation_history) > srv.MAX_HISTORY:
@@ -773,6 +770,10 @@ async def generate_stream(request: GenerateRequest):
             logger.error(f"[Stream] Generation failed: {e}")
             traceback.print_exc()
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+        finally:
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
     return StreamingResponse(
         generate_with_progress(),
@@ -785,8 +786,8 @@ async def generate_stream(request: GenerateRequest):
     )
 
 
-@router.post("/api/img2img")
-async def img2img(request: Img2ImgRequest):
+@router.post("/api/img2img", response_model=ImageGenerationResult)
+async def img2img(request: Img2ImgRequest) -> ImageGenerationResult:
     """Generate an image from an input image with optional differential mask.
 
     The mask controls per-pixel edit strength:
@@ -922,7 +923,7 @@ async def img2img(request: Img2ImgRequest):
         logger.info(f"Generated in {gen_time:.1f}s")
         logger.info("=" * 60)
 
-        # Convert to base64 for history storage and response
+        # Convert to base64 for response
         img_bytes = io.BytesIO()
         image.save(img_bytes, format="PNG")
         img_b64 = base64.b64encode(img_bytes.getvalue()).decode("ascii")
@@ -939,7 +940,7 @@ async def img2img(request: Img2ImgRequest):
             "steps": request.steps,
             "seed": request.seed,
             "gen_time": gen_time,
-            "image_b64": img_b64,
+
         }
         srv.generation_history.insert(0, history_entry)
         if len(srv.generation_history) > srv.MAX_HISTORY:
@@ -958,6 +959,10 @@ async def img2img(request: Img2ImgRequest):
         logger.error(f"Img2img failed: {e}")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
 
 # =============================================================================
@@ -965,8 +970,8 @@ async def img2img(request: Img2ImgRequest):
 # =============================================================================
 
 
-@router.post("/api/format-prompt")
-async def format_prompt_endpoint(request: EncodeRequest):
+@router.post("/api/format-prompt", response_model=FormatPromptResult)
+async def format_prompt_endpoint(request: EncodeRequest) -> FormatPromptResult:
     """Preview the formatted prompt without encoding (fast, no GPU needed)."""
     # Use encoder from pipeline or standalone encoder
     enc = srv.encoder if srv.encoder is not None else (srv.pipeline.encoder if srv.pipeline else None)
@@ -1005,72 +1010,76 @@ async def format_prompt_endpoint(request: EncodeRequest):
             tokens = enc.backend.tokenizer.encode(formatted, add_special_tokens=False)
             token_count = len(tokens)
 
-        return {
-            "formatted_prompt": formatted,
-            "char_count": len(formatted),
-            "token_count": token_count,
-            "max_tokens": 1504,
-            "prompt": request.prompt,
-            "system_prompt": request.system_prompt,
-            "thinking_content": request.thinking_content,
-            "assistant_content": request.assistant_content,
-            "template": request.template,
-            "force_think_block": request.force_think_block,
-            "strip_quotes": request.strip_quotes,
-        }
+        return FormatPromptResult(
+            formatted_prompt=formatted,
+            char_count=len(formatted),
+            token_count=token_count,
+            max_tokens=1504,
+            prompt=request.prompt,
+            system_prompt=request.system_prompt,
+            thinking_content=request.thinking_content,
+            assistant_content=request.assistant_content,
+            template=request.template,
+            force_think_block=request.force_think_block,
+            strip_quotes=request.strip_quotes,
+        )
     except Exception as e:
         logger.error(f"Format failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/api/templates")
-async def list_templates():
+@router.get("/api/templates", response_model=TemplateListResponse)
+async def list_templates() -> TemplateListResponse:
     """List available templates with full data for UI population."""
     # Use encoder from pipeline or standalone encoder
     enc = _get_zimage_encoder()
     if enc is None or enc.templates is None:
-        return {"templates": []}
+        return TemplateListResponse()
+
+    from web.schemas import TemplateInfo
 
     templates = []
     for name in enc.templates:
         tpl = enc.templates.get(name)
         if tpl and tpl.category != "rewriter":  # Exclude rewriter templates
             templates.append(
-                {
-                    "name": name,
-                    "description": tpl.description or "",
-                    "category": tpl.category or "general",
-                    "system_prompt": tpl.content or "",
-                    "thinking_content": tpl.thinking_content or "",
-                    "assistant_content": tpl.assistant_content or "",
-                    "add_think_block": tpl.add_think_block,
-                }
+                TemplateInfo(
+                    name=name,
+                    description=tpl.description or "",
+                    category=tpl.category or "general",
+                    system_prompt=tpl.content or "",
+                    thinking_content=tpl.thinking_content or "",
+                    assistant_content=tpl.assistant_content or "",
+                    add_think_block=tpl.add_think_block,
+                )
             )
 
     # Sort by category then name
-    templates.sort(key=lambda x: (x["category"], x["name"]))
-    return {"templates": templates}
+    templates.sort(key=lambda x: (x.category, x.name))
+    return TemplateListResponse(templates=templates)
 
 
-@router.get("/api/rewriters")
-async def list_rewriters():
+@router.get("/api/rewriters", response_model=RewriterListResponse)
+async def list_rewriters() -> RewriterListResponse:
     """List available rewriter templates."""
     # Use encoder from pipeline or standalone encoder
     enc = _get_zimage_encoder()
     if enc is None or enc.templates is None:
-        return {"rewriters": []}
+        return RewriterListResponse()
+
+    from web.schemas import RewriterInfo
 
     # Get rewriter templates (category == "rewriter")
     rewriters = []
     for tpl in enc.templates.list_by_category("rewriter"):
         rewriters.append(
-            {
-                "name": tpl.name,
-                "description": tpl.description,
-            }
+            RewriterInfo(
+                name=tpl.name,
+                description=tpl.description,
+            )
         )
 
-    return {"rewriters": rewriters}
+    return RewriterListResponse(rewriters=rewriters)
 
 
 # =============================================================================
@@ -1078,8 +1087,8 @@ async def list_rewriters():
 # =============================================================================
 
 
-@router.post("/api/rewrite")
-async def rewrite_prompt(request: RewriteRequest):
+@router.post("/api/rewrite", response_model=RewriteResult)
+async def rewrite_prompt(request: RewriteRequest) -> RewriteResult:
     """
     Rewrite/expand a prompt using a rewriter template or custom system prompt.
 
@@ -1280,14 +1289,14 @@ async def rewrite_prompt(request: RewriteRequest):
             torch.cuda.empty_cache()
             logger.debug("[Rewrite] Cleared CUDA cache after generation")
 
-        return {
-            "original_prompt": request.prompt,
-            "rewritten_prompt": rewritten_prompt,
-            "thinking_content": thinking_content,
-            "rewriter": request.rewriter,
-            "backend": backend_name,
-            "gen_time": gen_time,
-        }
+        return RewriteResult(
+            original_prompt=request.prompt,
+            rewritten_prompt=rewritten_prompt,
+            thinking_content=thinking_content,
+            rewriter=request.rewriter,
+            backend=backend_name,
+            gen_time=gen_time,
+        )
 
     except Exception as e:
         logger.error(f"Rewrite failed: {e}")
@@ -1302,8 +1311,8 @@ async def rewrite_prompt(request: RewriteRequest):
 # =============================================================================
 
 
-@router.post("/api/save-embeddings")
-async def save_embeddings_endpoint(request: EncodeRequest):
+@router.post("/api/save-embeddings", response_model=SaveEmbeddingsResult)
+async def save_embeddings_endpoint(request: EncodeRequest) -> SaveEmbeddingsResult:
     """Encode and save embeddings to file for distributed inference."""
     # Use encoder from pipeline or standalone encoder
     enc = srv.encoder if srv.encoder is not None else (srv.pipeline.encoder if srv.pipeline else None)
@@ -1345,11 +1354,11 @@ async def save_embeddings_endpoint(request: EncodeRequest):
             encoder_device=device,
         )
 
-        return {
-            "path": str(save_path),
-            "shape": list(embeddings.shape),
-            "encode_time": encode_time,
-        }
+        return SaveEmbeddingsResult(
+            path=str(save_path),
+            shape=list(embeddings.shape),
+            encode_time=encode_time,
+        )
 
     except Exception as e:
         logger.error(f"Save embeddings failed: {e}")

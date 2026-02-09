@@ -1,11 +1,13 @@
 """Qwen-Image endpoints: edit, multi-edit, and text-to-image generation."""
 
 import base64
+import gc
 import io
 import logging
 import time
 import traceback
 
+import torch
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from PIL import Image
@@ -16,6 +18,9 @@ from web.schemas import (
     QwenImage2512GenerateRequest,
     QwenImageEditLayerRequest,
     QwenImageEditMultiRequest,
+    QwenImageEditStatusResponse,
+    QwenImageT2IConfigResponse,
+    QwenImageT2IStatusResponse,
 )
 
 logger = logging.getLogger(__name__)
@@ -140,26 +145,23 @@ async def qwen_image_edit_layer(request: QwenImageEditLayerRequest, config: Conf
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/api/qwen-image/edit-status")
-async def qwen_image_edit_status():
+@router.get("/api/qwen-image/edit-status", response_model=QwenImageEditStatusResponse)
+async def qwen_image_edit_status() -> QwenImageEditStatusResponse:
     """Check if the edit model is loaded and ready."""
     if srv.qwen_image_pipeline is None:
-        return {
-            "available": False,
-            "reason": "Pipeline not loaded",
-        }
+        return QwenImageEditStatusResponse(available=False)
 
     has_edit_method = hasattr(srv.qwen_image_pipeline, "edit_layer")
     has_edit_pipe = (
         hasattr(srv.qwen_image_pipeline, "has_edit_model") and srv.qwen_image_pipeline.has_edit_model
     )
 
-    return {
-        "available": has_edit_method,
-        "edit_model_loaded": has_edit_pipe,
-        "edit_model_path": getattr(srv.qwen_image_pipeline, "_edit_model_path", None),
-        "supports_multi_image": hasattr(srv.qwen_image_pipeline, "edit_multi"),
-    }
+    return QwenImageEditStatusResponse(
+        available=has_edit_method,
+        edit_model_loaded=has_edit_pipe,
+        edit_model_path=getattr(srv.qwen_image_pipeline, "_edit_model_path", None),
+        supports_multi_image=hasattr(srv.qwen_image_pipeline, "edit_multi"),
+    )
 
 
 @router.post("/api/qwen-image/edit-multi")
@@ -304,8 +306,8 @@ def _is_t2i_configured(config) -> bool:
     )
 
 
-@router.get("/api/qwen-image-2512/status")
-async def qwen_image_2512_status(config: ConfigDep):
+@router.get("/api/qwen-image-2512/status", response_model=QwenImageT2IStatusResponse)
+async def qwen_image_2512_status(config: ConfigDep) -> QwenImageT2IStatusResponse:
     """Check Qwen-Image T2I pipeline status.
 
     Note: Uses unified config (--model-type qwenimage-t2i --qwen-image-model-path).
@@ -313,34 +315,32 @@ async def qwen_image_2512_status(config: ConfigDep):
     configured = _is_t2i_configured(config)
     loaded = srv.qwen_image_t2i_pipeline is not None
 
-    # T2I defaults: steps=40, resolution=1024, quantize_transformer=fp8
-    return {
-        "available": loaded,
-        "configured": configured,
-        "model_path": config.qwen_image_model_path,
-        "quantize_transformer": config.get_qwen_image_quantize_transformer(),
-        "quantize_text_encoder": config.qwen_image_quantize_text_encoder,
-    }
+    return QwenImageT2IStatusResponse(
+        available=loaded,
+        configured=configured,
+        model_path=config.qwen_image_model_path,
+        quantize_transformer=config.get_qwen_image_quantize_transformer(),
+        quantize_text_encoder=config.qwen_image_quantize_text_encoder,
+    )
 
 
-@router.get("/api/qwen-image-2512/config")
-async def qwen_image_2512_config(config: ConfigDep):
+@router.get("/api/qwen-image-2512/config", response_model=QwenImageT2IConfigResponse)
+async def qwen_image_2512_config(config: ConfigDep) -> QwenImageT2IConfigResponse:
     """Get Qwen-Image T2I configuration and defaults.
 
     Note: Uses unified config (--model-type qwenimage-t2i).
     Variant-aware defaults: T2I uses 40 steps, 1024 resolution, fp8 quantization.
     """
-    # T2I-specific defaults (steps=40, resolution=1024, quantize_transformer=fp8)
-    return {
-        "model_path": config.qwen_image_model_path,
-        "steps": config.get_qwen_image_steps(),
-        "cfg_scale": config.qwen_image_cfg_scale,
-        "quantize_transformer": config.get_qwen_image_quantize_transformer(),
-        "quantize_text_encoder": config.qwen_image_quantize_text_encoder,
-        "default_width": 1024,
-        "default_height": 1024,
-        "max_sequence_length": 512,
-    }
+    return QwenImageT2IConfigResponse(
+        model_path=config.qwen_image_model_path,
+        steps=config.get_qwen_image_steps(),
+        cfg_scale=config.qwen_image_cfg_scale,
+        quantize_transformer=config.get_qwen_image_quantize_transformer(),
+        quantize_text_encoder=config.qwen_image_quantize_text_encoder,
+        default_width=1024,
+        default_height=1024,
+        max_sequence_length=512,
+    )
 
 
 @router.post("/api/qwen-image-2512/generate")
@@ -422,8 +422,7 @@ async def qwen_image_2512_generate(request: QwenImage2512GenerateRequest, config
         image.save(img_bytes, format="PNG")
         img_bytes.seek(0)
 
-        # Add to history
-        img_b64 = base64.b64encode(img_bytes.getvalue()).decode("ascii")
+        # Add to history (metadata only -- frontend stores images in IndexedDB)
         history_entry = {
             "id": len(srv.generation_history),
             "timestamp": time.time(),
@@ -435,7 +434,6 @@ async def qwen_image_2512_generate(request: QwenImage2512GenerateRequest, config
             "cfg_scale": request.cfg_scale,
             "seed": request.seed,
             "generation_time": gen_time,
-            "image": f"data:image/png;base64,{img_b64}",
         }
         srv.generation_history.append(history_entry)
         if len(srv.generation_history) > MAX_HISTORY:
@@ -459,3 +457,7 @@ async def qwen_image_2512_generate(request: QwenImage2512GenerateRequest, config
         logger.error(f"[Qwen-Image T2I] Generation failed: {e}")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()

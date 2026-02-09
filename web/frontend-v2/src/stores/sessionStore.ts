@@ -218,7 +218,7 @@ export const useSessionStore = create<SessionState>()(
         try {
           if (pipeline.supports_streaming) {
             // Use SSE streaming for video/progress pipelines
-            for await (const event of generateStream(pipeline.endpoint, params)) {
+            for await (const event of generateStream(pipeline.endpoint, params, abortController?.signal)) {
               // Check for cancellation
               if (abortController?.signal.aborted) {
                 set((state) => {

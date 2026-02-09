@@ -44,7 +44,7 @@ export function ModelManager({ className, compact = false }: ModelManagerProps) 
           <div className="flex items-center justify-between text-xs text-gray-400">
             <span>VRAM Usage</span>
             <span className="font-mono">
-              {(vram.usedMB / 1024).toFixed(1)}/{(vram.totalMB / 1024).toFixed(0)}GB
+              {(vram.usedMb / 1024).toFixed(1)}/{(vram.totalMb / 1024).toFixed(0)}GB
             </span>
           </div>
           <div className="w-full h-2 bg-gray-700 rounded-full overflow-hidden">

@@ -27,10 +27,8 @@ export function ModelCard({ pipeline, status, color, onLoad, onUnload }: ModelCa
   const isLoading = status?.status === 'loading';
   const hasError = status?.status === 'error';
 
-  const vramText = status?.vramMB
-    ? `${(status.vramMB / 1024).toFixed(1)}GB`
-    : status?.estimatedVramMB
-    ? `~${(status.estimatedVramMB / 1024).toFixed(1)}GB`
+  const vramText = status?.vramMb
+    ? `${(status.vramMb / 1024).toFixed(1)}GB`
     : null;
 
   return (

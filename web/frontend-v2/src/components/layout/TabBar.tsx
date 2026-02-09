@@ -53,7 +53,7 @@ export function TabBar() {
             />
           </div>
           <span className="font-mono text-xs">
-            {(vram.usedMB / 1024).toFixed(1)}/{(vram.totalMB / 1024).toFixed(0)}GB
+            {(vram.usedMb / 1024).toFixed(1)}/{(vram.totalMb / 1024).toFixed(0)}GB
           </span>
         </div>
       )}
