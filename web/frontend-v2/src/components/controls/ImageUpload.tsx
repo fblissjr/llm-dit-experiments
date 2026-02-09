@@ -151,26 +151,53 @@ export function ImageUpload({
   const canAddMore = images.length < maxCount;
 
   const handlePaste = useCallback(
-    (e: React.ClipboardEvent) => {
+    async (e: React.ClipboardEvent) => {
       if (disabled || !canAddMore) return;
 
+      // Desktop browsers (Chrome, Firefox): images available synchronously
       const items = e.clipboardData?.items;
-      if (!items) return;
-
-      const files: File[] = [];
-      for (let i = 0; i < items.length; i++) {
-        if (items[i].type.startsWith('image/')) {
-          const file = items[i].getAsFile();
-          if (file) files.push(file);
+      if (items) {
+        const files: File[] = [];
+        for (let i = 0; i < items.length; i++) {
+          if (items[i].type.startsWith('image/')) {
+            const file = items[i].getAsFile();
+            if (file) files.push(file);
+          }
+        }
+        if (files.length > 0) {
+          e.preventDefault();
+          const dt = new DataTransfer();
+          files.forEach((f) => dt.items.add(f));
+          handleFiles(dt.files);
+          return;
         }
       }
 
-      if (files.length === 0) return;
-
-      e.preventDefault();
-      const dt = new DataTransfer();
-      files.forEach((f) => dt.items.add(f));
-      handleFiles(dt.files);
+      // iOS Safari: images not in clipboardData, must use async Clipboard API.
+      // "Copy Photo" and "Copy Subject" both deliver image/png through this path.
+      if (typeof navigator?.clipboard?.read === 'function') {
+        e.preventDefault();
+        try {
+          const clipboardItems = await navigator.clipboard.read();
+          const files: File[] = [];
+          for (const clipboardItem of clipboardItems) {
+            for (const type of clipboardItem.types) {
+              if (type.startsWith('image/')) {
+                const blob = await clipboardItem.getType(type);
+                const ext = type.split('/')[1] || 'png';
+                files.push(new File([blob], `pasted-image.${ext}`, { type }));
+              }
+            }
+          }
+          if (files.length > 0) {
+            const dt = new DataTransfer();
+            files.forEach((f) => dt.items.add(f));
+            handleFiles(dt.files);
+          }
+        } catch {
+          // Clipboard permission denied or no image data available
+        }
+      }
     },
     [disabled, canAddMore, handleFiles]
   );
