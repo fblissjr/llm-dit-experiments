@@ -9,7 +9,7 @@ const THUMBNAIL_QUALITY = 0.6;
 
 /**
  * Create a thumbnail from a base64 image data URL.
- * Returns a compressed base64 thumbnail suitable for localStorage.
+ * Returns a compressed base64 thumbnail suitable for history storage.
  *
  * @param dataUrl - Base64 data URL (e.g., "data:image/png;base64,...")
  * @param maxSize - Maximum width/height for thumbnail (default: 80px)

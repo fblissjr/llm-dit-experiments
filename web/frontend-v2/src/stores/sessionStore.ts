@@ -5,11 +5,11 @@
  * - Current generation status
  * - Progress during generation
  * - Generation results
- * - History with localStorage persistence
+ * - History with IndexedDB persistence
  */
 
 import { create } from 'zustand';
-import { persist, createJSONStorage, StateStorage } from 'zustand/middleware';
+import { persist, createJSONStorage } from 'zustand/middleware';
 import { immer } from 'zustand/middleware/immer';
 import type {
   GenerationResult,
@@ -18,6 +18,7 @@ import type {
 } from '@/api/types';
 import { generate, generateStream } from '@/api/client';
 import { generateUUID, createThumbnail, isBase64DataUrl } from '@/utils';
+import { idbStorage, migrateFromLocalStorage } from '@/utils/idbStorage';
 import { useAppStore } from './appStore';
 import { useFormStore } from './formStore';
 
@@ -49,83 +50,11 @@ interface SessionState {
   ) => void;
 }
 
-// History limits - can be adjusted based on storage needs
-const MAX_HISTORY_ITEMS = 100; // Maximum items to keep in memory
-const QUOTA_CLEANUP_RATIO = 0.5; // Keep 50% of items when quota exceeded
-const MAX_THUMBNAIL_SIZE = 100000; // 100KB max per thumbnail before stripping
+// History limits
+const MAX_HISTORY_ITEMS = 500;
 
-/**
- * Custom storage with quota error handling
- * When localStorage quota is exceeded, it trims old history items and retries
- */
-const quotaHandlingStorage: StateStorage = {
-  getItem: (name: string): string | null => {
-    try {
-      return localStorage.getItem(name);
-    } catch (error) {
-      console.warn('Failed to read from localStorage:', error);
-      return null;
-    }
-  },
-  setItem: (name: string, value: string): void => {
-    try {
-      localStorage.setItem(name, value);
-    } catch (error) {
-      if (error instanceof DOMException && error.name === 'QuotaExceededError') {
-        console.warn('localStorage quota exceeded, trimming history...');
-        try {
-          // Parse current state and trim history
-          const state = JSON.parse(value);
-          if (state?.state?.history && Array.isArray(state.state.history)) {
-            const originalCount = state.state.history.length;
-            // Keep ratio of items (most recent)
-            const keepCount = Math.max(10, Math.floor(originalCount * QUOTA_CLEANUP_RATIO));
-            state.state.history = state.state.history.slice(0, keepCount);
-            // Strip large thumbnails to save more space
-            state.state.history = state.state.history.map((item: HistoryItem) => ({
-              ...item,
-              thumbnailUrl: item.thumbnailUrl && item.thumbnailUrl.length > MAX_THUMBNAIL_SIZE ? '' : item.thumbnailUrl,
-            }));
-            // Retry with trimmed data
-            localStorage.setItem(name, JSON.stringify(state));
-            console.log(`Trimmed history from ${originalCount} to ${state.state.history.length} items`);
-          }
-        } catch (retryError) {
-          // If still failing, try more aggressive cleanup
-          console.warn('Still over quota, trying more aggressive cleanup...');
-          try {
-            const state = JSON.parse(value);
-            if (state?.state?.history) {
-              // Keep only 10 items, no thumbnails
-              state.state.history = state.state.history.slice(0, 10).map((item: HistoryItem) => ({
-                ...item,
-                thumbnailUrl: '',
-              }));
-              localStorage.setItem(name, JSON.stringify(state));
-            }
-          } catch {
-            // Last resort: clear history entirely
-            console.error('Clearing history due to persistent quota errors');
-            try {
-              localStorage.removeItem(name);
-            } catch {
-              // Give up
-            }
-          }
-        }
-      } else {
-        console.error('localStorage setItem failed:', error);
-      }
-    }
-  },
-  removeItem: (name: string): void => {
-    try {
-      localStorage.removeItem(name);
-    } catch (error) {
-      console.warn('Failed to remove from localStorage:', error);
-    }
-  },
-};
+// Migrate existing localStorage data to IndexedDB (one-time, idempotent)
+migrateFromLocalStorage('llm-dit-history');
 
 /**
  * Extract short prompt for history card
@@ -438,7 +367,7 @@ export const useSessionStore = create<SessionState>()(
     })),
     {
       name: 'llm-dit-history',
-      storage: createJSONStorage(() => quotaHandlingStorage),
+      storage: createJSONStorage(() => idbStorage),
       partialize: (state) => ({
         // Strip fullImageUrl from history items - it's only for current session
         // and contains full base64 data that would blow up localStorage

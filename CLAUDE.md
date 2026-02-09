@@ -1,6 +1,6 @@
-# agent context (v0.8.6)
+# agent context (v0.9.0)
 
-*last updated: 2026-02-08*
+*last updated: 2026-02-09*
 
 Quick reference for LLM agents. Read only what you need.
 
@@ -152,9 +152,9 @@ This is a **multi-workstream project**. Work happens in parallel across layers:
 
 ## architecture patterns (post-refactor)
 
-**Circular import prevention:** Routers do `import web.server as srv` at module level. Server imports routers in `_register_routers()` called from `main()`, NOT at module level. Never move router imports to top of server.py.
+**Circular import prevention:** Routers that need server state (generation_history, encoder_only_mode, rewriter_backend) do `import web.server as srv` at module level. Server imports routers in `_register_routers()` called from `main()`, NOT at module level. Never move router imports to top of server.py. Note: flux2.py and config_mgmt.py no longer import srv at all.
 
-**Router decomposition:** server.py (~491 lines) holds only globals, unload functions, and startup. All 68 API endpoints live in 7 domain routers under `web/routers/`. Routers access server globals via `srv.runtime_config`, `srv.flux2_pipeline`, etc.
+**Router decomposition:** server.py (~296 lines) holds only server state globals and startup. All 68 API endpoints live in 7 domain routers under `web/routers/`. All routers use `ConfigDep`/`ManagerDep` dependency injection for pipeline access. No pipeline globals remain in server.py -- ModelManager is the sole source of truth.
 
 **LoRA fusion tracking:** `model._fused_lora_state` (FusedLoRAState) tracks what's fused on persistent models. Prevents re-fusion OOM where fp8 (9GB) dequantizes to bf16 (18GB). Pipeline detects mismatch (raises RuntimeError), router handles recovery (reload).
 

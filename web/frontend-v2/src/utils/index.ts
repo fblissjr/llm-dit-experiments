@@ -4,3 +4,4 @@ export { generateUUID } from './uuid';
 export { createThumbnail, isBase64DataUrl, estimateDataUrlSize } from './thumbnail';
 export { snapToStep } from './numbers';
 export { formatUptime } from './format';
+export { idbStorage, migrateFromLocalStorage } from './idbStorage';

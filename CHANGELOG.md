@@ -8,6 +8,8 @@ Uses [Semantic Versioning](https://semver.org/).
 ## 0.9.0
 
 ### added
+- IndexedDB storage adapter (`idbStorage.ts`) for zustand persist middleware -- replaces localStorage with ~50MB+ async storage
+- One-time `migrateFromLocalStorage()` function for seamless upgrade of existing history data
 - OpenAPI TypeScript codegen pipeline: `npm run export-openapi && npm run gen-api` generates frontend types from FastAPI OpenAPI spec
 - 3 new Pydantic response models: `ParamSchemaResponse`, `PipelineSchemaResponse`, `PresetDetailResponse`
 - `_ensure_qwen_image_loaded()` and `_ensure_qwen_image_t2i_loaded()` helpers for on-demand pipeline loading via ModelManager
@@ -24,6 +26,8 @@ Uses [Semantic Versioning](https://semver.org/).
 - `config_mgmt.py`: all ~10 pipeline reads replaced with `manager.is_loaded()` loop; `import web.server as srv` removed entirely
 - Frontend types: hybrid strategy -- generated types re-exported where fit, hand-written kept where generated are too loose
 - `server.py`: reduced from ~491 to ~296 lines
+- History storage backend: localStorage -> IndexedDB (async, ~50MB+ quota, no main thread blocking)
+- `MAX_HISTORY_ITEMS` increased from 100 to 500 (IndexedDB quota supports this comfortably)
 
 ### removed
 - 6 pipeline globals from `server.py`: `pipeline`, `encoder`, `qwen_image_pipeline`, `qwen_image_t2i_pipeline`, `ltx2_pipeline`, `flux2_pipeline` -- ModelManager owns all pipeline state now
@@ -32,6 +36,7 @@ Uses [Semantic Versioning](https://semver.org/).
 - Inline sync writes to `srv.pipeline`, `srv.encoder`, `srv.qwen_image_pipeline`, `srv.qwen_image_t2i_pipeline` from `core.py` and `qwen_image.py` helper functions
 - `gc` and `torch` imports from `server.py` (no longer needed after unload function removal)
 - `import web.server as srv` from `flux2.py` and `config_mgmt.py` (no longer access any server globals)
+- `quotaHandlingStorage` from `sessionStore.ts` (~67 lines of localStorage quota error handling) -- replaced by IndexedDB adapter
 
 ## 0.8.9
 
