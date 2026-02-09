@@ -119,12 +119,10 @@ def _get_zimage_encoder(manager):
 
 
 def _ensure_zimage_loaded(manager) -> None:
-    """Load Z-Image pipeline on-demand via ModelManager. Syncs server globals."""
+    """Load Z-Image pipeline on-demand via ModelManager."""
     if manager.get_pipeline("zimage") is not None:
         return
     manager.load("zimage")
-    srv.pipeline = manager.get_pipeline("zimage")
-    srv.encoder = manager.encoder
 
 
 # =============================================================================

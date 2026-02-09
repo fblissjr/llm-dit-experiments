@@ -76,27 +76,12 @@ def create_app() -> FastAPI:
 # Static file mount removed -- v1 frontend (web/static/) was deleted.
 # The active frontend is frontend-v2, served by Vite in dev or as a built SPA.
 
-# Global pipeline/encoder state (loaded on startup)
-# Routers access these via `import web.server as srv; srv.pipeline` etc.
-# Backed by ModelManager -- see main() for initialization.
-pipeline = None  # Z-Image pipeline
-encoder = None  # For encoder-only mode
+# Global server state (non-pipeline lifecycle).
+# Routers access these via `import web.server as srv; srv.rewriter_backend` etc.
+# Pipeline state is managed exclusively by ModelManager.
 rewriter_backend = None  # API backend for rewriting (if configured)
 runtime_config = None  # RuntimeConfig from CLI/TOML
 encoder_only_mode = False
-
-# Qwen-Image pipeline (separate from Z-Image)
-qwen_image_pipeline = None
-
-# Qwen-Image T2I pipeline (pure text-to-image, separate from Qwen-Image-Layered/Edit)
-qwen_image_t2i_pipeline = None
-
-# LTX-2 video generation (deprecated pipeline state)
-# Note: Pure PyTorch pipeline loads/unloads components per-request
-ltx2_pipeline = None
-
-# FLUX.2 Klein image generation pipeline
-flux2_pipeline = None
 
 # Unified model lifecycle manager (replaces per-pipeline load/unload functions)
 # Initialized in main(). All load/unload operations delegate to this.
@@ -153,7 +138,7 @@ def main():
     args = parser.parse_args()
 
     # Load unified config (handles TOML + CLI overrides)
-    global runtime_config, pipeline, encoder, rewriter_backend, encoder_only_mode, model_manager
+    global runtime_config, rewriter_backend, encoder_only_mode, model_manager
     runtime_config = load_runtime_config(args)
     setup_logging(runtime_config)
 
@@ -186,8 +171,6 @@ def main():
         logger.info("SERVER STARTING IN ON-DEMAND MODE")
         logger.info("============================================================")
         logger.info("No models loaded at startup. Models will load on first request.")
-        pipeline = None
-        encoder = None
         encoder_only_mode = False
         mode = "on_demand"
     elif default_pipeline == "z-image":
@@ -203,8 +186,6 @@ def main():
         result = model_manager.load_pipeline_from_loader(
             encoder_only=args.encoder_only, use_api=use_api
         )
-        pipeline = result.pipeline
-        encoder = result.encoder
         encoder_only_mode = result.mode in ("encoder_only", "api_encoder")
         mode = result.mode
     elif default_pipeline == "qwen-image":
@@ -218,8 +199,6 @@ def main():
         result = model_manager.load_pipeline_from_loader(
             encoder_only=False, use_api=False
         )
-        pipeline = result.pipeline
-        encoder = result.encoder
         encoder_only_mode = False
         mode = result.mode
     elif default_pipeline == "flux2":
@@ -227,8 +206,6 @@ def main():
         logger.info("============================================================")
         # FLUX.2 loads on first request - just mark it as the intended pipeline
         logger.info("FLUX.2 will load on first generation request.")
-        pipeline = None
-        encoder = None
         encoder_only_mode = False
         mode = "flux2_on_demand"
     elif default_pipeline == "ltx2":
@@ -236,22 +213,11 @@ def main():
         logger.info("============================================================")
         # LTX-2 loads on first request - just mark it as the intended pipeline
         logger.info("LTX-2 will load on first generation request.")
-        pipeline = None
-        encoder = None
         encoder_only_mode = False
         mode = "ltx2_on_demand"
     else:
         logger.error(f"Unknown default_pipeline: '{default_pipeline}'. Valid options: none, z-image, qwen-image, flux2, ltx2")
         return 1
-
-    # If loaded pipeline is QwenImageDiffusersPipeline, also set qwen_image_pipeline
-    global qwen_image_pipeline
-    if pipeline is not None:
-        from llm_dit.pipelines.qwen_image_diffusers import QwenImageDiffusersPipeline
-
-        if isinstance(pipeline, QwenImageDiffusersPipeline):
-            qwen_image_pipeline = pipeline
-            logger.info("[Qwen-Image] Pipeline loaded via ModelManager")
 
     # Log Qwen-Image on-demand modes
     if mode == "qwenimage-t2i_ondemand":

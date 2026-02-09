@@ -34,7 +34,6 @@ def _ensure_qwen_image_loaded(manager, config) -> None:
     """Load Qwen-Image edit pipeline on-demand via ModelManager.
 
     Auto-unloads Z-Image first if loaded (VRAM constraint).
-    Syncs server globals for backward compatibility.
     """
     if manager.is_loaded("qwen_image"):
         return
@@ -49,12 +48,9 @@ def _ensure_qwen_image_loaded(manager, config) -> None:
     if manager.is_loaded("zimage"):
         logger.info("[VRAM] Auto-unloading Z-Image to make room for Qwen-Image-Edit...")
         manager.unload("zimage")
-        srv.pipeline = None
-        srv.encoder = None
 
     try:
         manager.load("qwen_image")
-        srv.qwen_image_pipeline = manager.get_pipeline("qwen_image")
     except Exception as e:
         logger.error(f"[Qwen-Image] Failed to load pipeline: {e}")
         raise HTTPException(
@@ -63,10 +59,7 @@ def _ensure_qwen_image_loaded(manager, config) -> None:
 
 
 def _ensure_qwen_image_t2i_loaded(manager, config) -> None:
-    """Load Qwen-Image T2I pipeline on-demand via ModelManager.
-
-    Syncs server globals for backward compatibility.
-    """
+    """Load Qwen-Image T2I pipeline on-demand via ModelManager."""
     if manager.is_loaded("qwen_image_t2i"):
         return
 
@@ -78,7 +71,6 @@ def _ensure_qwen_image_t2i_loaded(manager, config) -> None:
 
     try:
         manager.load("qwen_image_t2i")
-        srv.qwen_image_t2i_pipeline = manager.get_pipeline("qwen_image_t2i")
     except Exception as e:
         logger.error(f"[Qwen-Image T2I] Failed to load pipeline: {e}")
         traceback.print_exc()

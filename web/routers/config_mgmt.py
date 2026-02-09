@@ -35,8 +35,20 @@ router = APIRouter()
 # =============================================================================
 
 
+# Maps canonical ModelManager IDs to the API names the frontend expects.
+# The old code had separate globals for each and the naming differed
+# (e.g., "qwen_image" -> "qwenimage-edit"). This map makes the relationship explicit.
+_LOADED_PIPELINE_NAMES = {
+    "zimage": "zimage",
+    "qwen_image": "qwenimage-edit",
+    "qwen_image_t2i": "qwenimage-t2i",
+    "ltx2": "ltx2",
+    "flux2": "flux2",
+}
+
+
 @router.get("/api/pipelines", response_model=PipelinesResponse)
-async def get_pipeline_schemas(config: ConfigDep):
+async def get_pipeline_schemas(config: ConfigDep, manager: ManagerDep):
     """Return all pipeline schemas for frontend form generation.
 
     The frontend uses these schemas to dynamically render forms without
@@ -51,7 +63,6 @@ async def get_pipeline_schemas(config: ConfigDep):
         - defaults: Current RuntimeConfig values (if loaded)
         - loaded_pipeline: Currently loaded pipeline type (if any)
     """
-    import web.server as srv
     from llm_dit.pipelines.schemas import get_all_pipelines
 
     # Get all registered pipeline schemas
@@ -67,16 +78,10 @@ async def get_pipeline_schemas(config: ConfigDep):
 
     # Determine which pipeline is currently loaded
     loaded_pipeline = None
-    if srv.pipeline is not None:
-        loaded_pipeline = "zimage"
-    elif srv.qwen_image_pipeline is not None:
-        loaded_pipeline = "qwenimage-edit"
-    elif srv.qwen_image_t2i_pipeline is not None:
-        loaded_pipeline = "qwenimage-t2i"
-    elif srv.ltx2_pipeline is not None:
-        loaded_pipeline = "ltx2"
-    elif srv.flux2_pipeline is not None:
-        loaded_pipeline = "flux2"
+    for canonical_id, api_name in _LOADED_PIPELINE_NAMES.items():
+        if manager.is_loaded(canonical_id):
+            loaded_pipeline = api_name
+            break
 
     return {
         "pipelines": pipeline_dicts,
@@ -262,7 +267,7 @@ async def get_preset_by_name(name: str, config: ConfigDep):
 
 
 @router.get("/api/resolution-config", response_model=ResolutionConfigResponse)
-async def get_resolution_config(config: ConfigDep, model: Optional[str] = None):
+async def get_resolution_config(config: ConfigDep, manager: ManagerDep, model: Optional[str] = None):
     """Get resolution constraints for client-side validation.
 
     Returns VAE multiple, min/max limits, categorized presets, and DyPE config.
@@ -277,7 +282,6 @@ async def get_resolution_config(config: ConfigDep, model: Optional[str] = None):
     - Qwen-Image Edit: Fixed 640x640 or 1024x1024 only
     - Qwen-Image T2I: Default 1328x1328, flexible with VAE constraints
     """
-    import web.server as srv
     from llm_dit.constants import (
         ASPECT_RATIOS,
         DEFAULT_RESOLUTION,
@@ -287,21 +291,17 @@ async def get_resolution_config(config: ConfigDep, model: Optional[str] = None):
         VAE_SCALE_FACTOR,
     )
 
-    # Detect currently loaded model if not specified
+    # Detect currently loaded model if not specified.
+    # No isinstance checks needed -- ModelManager canonical IDs already
+    # distinguish pipeline types.
     current_model = model
     if current_model is None:
-        if srv.pipeline is not None:
-            from llm_dit.pipelines import ZImagePipeline
-            from llm_dit.pipelines.qwen_image_diffusers import QwenImageDiffusersPipeline
-
-            if isinstance(srv.pipeline, ZImagePipeline):
-                current_model = "zimage"
-            elif isinstance(srv.pipeline, QwenImageDiffusersPipeline):
-                current_model = "qwenimage-edit"
-        if srv.qwen_image_t2i_pipeline is not None:
-            current_model = "qwenimage-t2i"
-        if srv.qwen_image_pipeline is not None and current_model is None:
+        if manager.is_loaded("zimage"):
+            current_model = "zimage"
+        elif manager.is_loaded("qwen_image"):
             current_model = "qwenimage-edit"
+        elif manager.is_loaded("qwen_image_t2i"):
+            current_model = "qwenimage-t2i"
 
     # DyPE configuration (Z-Image only)
     DYPE_BASE_RESOLUTION = 1024  # Z-Image training resolution

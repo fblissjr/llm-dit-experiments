@@ -468,8 +468,7 @@ class ModelManager:
     def reload_flux2(self, model_name: str) -> LoadResult:
         """Unload current FLUX.2 pipeline and reload with a different model.
 
-        Thread-safe: acquires the flux2 lock. Syncs srv.flux2_pipeline
-        after reload so server globals stay consistent.
+        Thread-safe: acquires the flux2 lock.
 
         Args:
             model_name: The model variant to load (e.g., "klein-base-9b").

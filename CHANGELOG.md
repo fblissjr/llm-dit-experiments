@@ -10,21 +10,28 @@ Uses [Semantic Versioning](https://semver.org/).
 ### added
 - OpenAPI TypeScript codegen pipeline: `npm run export-openapi && npm run gen-api` generates frontend types from FastAPI OpenAPI spec
 - 3 new Pydantic response models: `ParamSchemaResponse`, `PipelineSchemaResponse`, `PresetDetailResponse`
-- `_sync_globals_after_load()` helper in `vram.py` for bidirectional global sync
 - `_ensure_qwen_image_loaded()` and `_ensure_qwen_image_t2i_loaded()` helpers for on-demand pipeline loading via ModelManager
 - `_get_zimage_encoder()` and `_ensure_zimage_loaded()` helpers in `core.py` for ModelManager access
+- `_LOADED_PIPELINE_NAMES` mapping in `config_mgmt.py` for canonical ModelManager ID -> frontend API name translation
 - `internal/state/backlog.md` -- prioritized improvement backlog
 
 ### changed
+- **Dual state unification complete:** ModelManager is now the sole source of truth for all pipeline state across all 7 routers
 - `core.py`: all 71 `srv.*` references migrated to ConfigDep/ManagerDep dependency injection
 - `qwen_image.py`: 3 direct pipeline instantiation sites replaced with ModelManager `load()`/`get_pipeline()`
 - `vram.py`: all unload functions use `manager.unload()` instead of server.py shims; all "is loaded?" checks use `manager.is_loaded()`
+- `flux2.py`: all ~20 `srv.flux2_pipeline` references replaced with `manager.is_loaded("flux2")` / `manager.get_pipeline("flux2")`; `import web.server as srv` removed entirely
+- `config_mgmt.py`: all ~10 pipeline reads replaced with `manager.is_loaded()` loop; `import web.server as srv` removed entirely
 - Frontend types: hybrid strategy -- generated types re-exported where fit, hand-written kept where generated are too loose
-- `server.py`: reduced from ~491 to ~330 lines
+- `server.py`: reduced from ~491 to ~296 lines
 
 ### removed
+- 6 pipeline globals from `server.py`: `pipeline`, `encoder`, `qwen_image_pipeline`, `qwen_image_t2i_pipeline`, `ltx2_pipeline`, `flux2_pipeline` -- ModelManager owns all pipeline state now
 - 6 dead functions from `server.py` (~180 lines): `unload_zimage_pipeline()`, `unload_qwen_image_pipeline()`, `unload_qwen_image_t2i_pipeline()`, `unload_ltx2_pipeline()`, `get_vram_status()`, `load_zimage_pipeline_on_demand()`
+- `_sync_globals_after_load()` and `_sync_globals_after_unload()` shim functions from `vram.py` + all 9 call sites
+- Inline sync writes to `srv.pipeline`, `srv.encoder`, `srv.qwen_image_pipeline`, `srv.qwen_image_t2i_pipeline` from `core.py` and `qwen_image.py` helper functions
 - `gc` and `torch` imports from `server.py` (no longer needed after unload function removal)
+- `import web.server as srv` from `flux2.py` and `config_mgmt.py` (no longer access any server globals)
 
 ## 0.8.9
 

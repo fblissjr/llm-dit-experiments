@@ -36,46 +36,6 @@ router = APIRouter()
 # =============================================================================
 
 
-def _sync_globals_after_unload(pipeline_ids: list[str]):
-    """Sync server.py globals after unloading pipelines via ModelManager.
-
-    Transitional shim -- flux2.py and config_mgmt.py still read these
-    globals directly. Once they migrate to ManagerDep, this can be removed.
-    """
-    import web.server as srv
-
-    for pid in pipeline_ids:
-        if pid == "zimage":
-            srv.pipeline = None
-            srv.encoder = None
-        elif pid == "qwen_image":
-            srv.qwen_image_pipeline = None
-        elif pid == "qwen_image_t2i":
-            srv.qwen_image_t2i_pipeline = None
-        elif pid == "flux2":
-            srv.flux2_pipeline = None
-        # ltx2 has no persistent global (loads/unloads per-request)
-
-
-def _sync_globals_after_load(pipeline_id: str, manager):
-    """Sync server.py globals after loading a pipeline via ModelManager.
-
-    Transitional shim -- flux2.py and config_mgmt.py still read these
-    globals directly. Once they migrate to ManagerDep, this can be removed.
-    """
-    import web.server as srv
-
-    if pipeline_id == "zimage":
-        srv.pipeline = manager.get_pipeline("zimage")
-        srv.encoder = manager.encoder
-    elif pipeline_id == "qwen_image":
-        srv.qwen_image_pipeline = manager.get_pipeline("qwen_image")
-    elif pipeline_id == "qwen_image_t2i":
-        srv.qwen_image_t2i_pipeline = manager.get_pipeline("qwen_image_t2i")
-    elif pipeline_id == "flux2":
-        srv.flux2_pipeline = manager.get_pipeline("flux2")
-
-
 def _get_pipeline_config_metadata(config, pipeline: str) -> dict:
     """Build config tags and warnings for a pipeline's status display.
 
@@ -182,7 +142,6 @@ async def vram_load_zimage(config: ConfigDep, manager: ManagerDep):
 
     try:
         manager.load("zimage")
-        _sync_globals_after_load("zimage", manager)
         status = manager.get_vram_status()
         return {
             "success": True,
@@ -197,8 +156,6 @@ async def vram_load_zimage(config: ConfigDep, manager: ManagerDep):
 async def vram_unload_zimage(manager: ManagerDep):
     """Unload Z-Image pipeline (encoder + DiT + VAE) to free VRAM."""
     unloaded = manager.unload("zimage")
-    _sync_globals_after_unload(["zimage"])
-
     status = manager.get_vram_status()
     return {
         "success": unloaded,
@@ -225,7 +182,6 @@ async def vram_load_qwen_image(config: ConfigDep, manager: ManagerDep):
 
     try:
         manager.load("qwen_image")
-        _sync_globals_after_load("qwen_image", manager)
         status = manager.get_vram_status()
         return {
             "success": True,
@@ -240,8 +196,6 @@ async def vram_load_qwen_image(config: ConfigDep, manager: ManagerDep):
 async def vram_unload_qwen_image(manager: ManagerDep):
     """Unload Qwen-Image pipeline to free VRAM."""
     unloaded = manager.unload("qwen_image")
-    _sync_globals_after_unload(["qwen_image"])
-
     status = manager.get_vram_status()
     return {
         "success": unloaded,
@@ -268,7 +222,6 @@ async def vram_load_qwen_image_t2i(config: ConfigDep, manager: ManagerDep):
 
     try:
         manager.load("qwen_image_t2i")
-        _sync_globals_after_load("qwen_image_t2i", manager)
         status = manager.get_vram_status()
         return {
             "success": True,
@@ -283,8 +236,6 @@ async def vram_load_qwen_image_t2i(config: ConfigDep, manager: ManagerDep):
 async def vram_unload_qwen_image_t2i(manager: ManagerDep):
     """Unload Qwen-Image T2I pipeline to free VRAM."""
     unloaded = manager.unload("qwen_image_t2i")
-    _sync_globals_after_unload(["qwen_image_t2i"])
-
     status = manager.get_vram_status()
     return {
         "success": unloaded,
@@ -358,7 +309,6 @@ async def vram_load_flux2(config: ConfigDep, manager: ManagerDep):
 
     try:
         result = manager.load("flux2")
-        _sync_globals_after_load("flux2", manager)
         status = manager.get_vram_status()
         return {
             "success": True,
@@ -374,8 +324,6 @@ async def vram_load_flux2(config: ConfigDep, manager: ManagerDep):
 async def vram_unload_flux2(manager: ManagerDep):
     """Unload FLUX.2 Klein pipeline to free VRAM."""
     unloaded = manager.unload("flux2")
-    _sync_globals_after_unload(["flux2"])
-
     status = manager.get_vram_status()
     return {
         "success": unloaded,
@@ -445,8 +393,6 @@ async def unload_model_by_id(pipeline_id: str, manager: ManagerDep) -> SuccessVr
 async def unload_all_models(manager: ManagerDep) -> SuccessVramResponse:
     """Unload all loaded models to free VRAM."""
     manager.unload_all_except(None)
-    _sync_globals_after_unload(["zimage", "qwen_image", "qwen_image_t2i", "flux2"])
-
     status = manager.get_vram_status()
     return SuccessVramResponse(
         success=True,
