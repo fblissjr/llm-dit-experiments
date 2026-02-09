@@ -667,7 +667,7 @@ async def generate_stream(request: GenerateRequest, config: ConfigDep, manager: 
             # Run generation in thread pool (blocking operation)
             loop = asyncio.get_event_loop()
 
-            @torch.inference_mode()
+            @torch.no_grad()
             def do_generate():
                 return zimage(
                     request.prompt,

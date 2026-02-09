@@ -40,6 +40,7 @@ Uses [Semantic Versioning](https://semver.org/).
 
 ### fixed
 - `/api/context` returning 500 when server started without `--profile` flag -- `getattr(config, "current_profile")` returned `None` which Pydantic rejected as non-string
+- `RuntimeError: Cannot set version_counter for inference tensor` during FP8-quantized generation -- reverted `@torch.inference_mode()` to `@torch.no_grad()` on all 4 generation executor functions (torchao's Float8Tensor dispatch requires version counter support that inference_mode disables)
 
 ## 0.8.9
 

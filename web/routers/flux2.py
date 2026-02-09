@@ -240,7 +240,7 @@ async def flux2_generate(request: Flux2GenerateRequest, config: ConfigDep, manag
         # Run in executor to not block event loop
         loop = asyncio.get_event_loop()
 
-        @torch.inference_mode()
+        @torch.no_grad()
         def _run_generate():
             return generate_image(
                 gen_config,
@@ -411,7 +411,7 @@ async def flux2_generate_stream(request: Flux2GenerateRequest, config: ConfigDep
             loop = asyncio.get_event_loop()
             progress_queue: asyncio.Queue = asyncio.Queue()
 
-            @torch.inference_mode()
+            @torch.no_grad()
             def run_generation():
                 """Run generation and put progress events in queue."""
                 def callback(step: int, total: int, stage: str = ""):

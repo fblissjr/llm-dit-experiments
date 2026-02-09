@@ -209,7 +209,7 @@ async def ltx2_generate_stream(request: LTX2GenerateRequest, config: ConfigDep):
             start_time = time.time()
 
             # Run generation in thread pool to not block event loop
-            @torch.inference_mode()
+            @torch.no_grad()
             def do_generate():
                 from llm_dit.pipelines import generate_video_with_offloading, GenerationConfig
 
