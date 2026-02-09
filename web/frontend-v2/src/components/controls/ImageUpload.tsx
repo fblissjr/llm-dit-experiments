@@ -227,23 +227,36 @@ export function ImageUpload({
   );
 
   // Document-level paste listener so paste works from anywhere on the page,
-  // matching the behavior of Discord/Slack/etc. Users don't need to click
-  // the upload area first.
+  // matching Discord/Slack behavior: if the clipboard contains an image,
+  // intercept it regardless of what element has focus.
   useEffect(() => {
-    const handler = async (e: ClipboardEvent) => {
-      // Don't intercept paste when user is typing in an input/textarea
-      const tag = (e.target as HTMLElement)?.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target as HTMLElement)?.isContentEditable) {
+    const handler = (e: ClipboardEvent) => {
+      if (disabled || !canAddMore) return;
+
+      // Check if clipboard contains images synchronously -- we must call
+      // preventDefault() during the same event dispatch tick, not after await.
+      const items = e.clipboardData?.items;
+      if (!items) return;
+
+      const files = extractImagesFromClipboard(items);
+      if (files.length === 0) {
+        // No images in clipboard -- let the event propagate normally so text
+        // paste into textarea/inputs works as expected.
         return;
       }
 
-      const handled = await processPaste(e.clipboardData?.items);
-      if (handled) e.preventDefault();
+      // Images found -- intercept the paste synchronously, then process.
+      e.preventDefault();
+      e.stopPropagation();
+
+      const dt = new DataTransfer();
+      files.forEach((f) => dt.items.add(f));
+      handleFiles(dt.files);
     };
 
     document.addEventListener('paste', handler);
     return () => document.removeEventListener('paste', handler);
-  }, [processPaste]);
+  }, [disabled, canAddMore, extractImagesFromClipboard, handleFiles]);
 
   const removeImage = (index: number) => {
     const newImages = images.filter((_, i) => i !== index);
