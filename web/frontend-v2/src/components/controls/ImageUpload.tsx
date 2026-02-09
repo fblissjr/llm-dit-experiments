@@ -150,57 +150,100 @@ export function ImageUpload({
 
   const canAddMore = images.length < maxCount;
 
-  const handlePaste = useCallback(
-    async (e: React.ClipboardEvent) => {
-      if (disabled || !canAddMore) return;
+  // Extract image files from clipboard data (sync path for desktop browsers).
+  // Returns the files found, or empty array if no images present.
+  const extractImagesFromClipboard = useCallback(
+    (items: DataTransferItemList | undefined): File[] => {
+      if (!items) return [];
+      const files: File[] = [];
+      for (let i = 0; i < items.length; i++) {
+        if (items[i].type.startsWith('image/')) {
+          const file = items[i].getAsFile();
+          if (file) files.push(file);
+        }
+      }
+      return files;
+    },
+    []
+  );
+
+  // Async clipboard API fallback (iOS Safari: "Copy Photo" / "Copy Subject").
+  const extractImagesFromAsyncClipboard = useCallback(async (): Promise<File[]> => {
+    if (typeof navigator?.clipboard?.read !== 'function') return [];
+    try {
+      const clipboardItems = await navigator.clipboard.read();
+      const files: File[] = [];
+      for (const clipboardItem of clipboardItems) {
+        for (const type of clipboardItem.types) {
+          if (type.startsWith('image/')) {
+            const blob = await clipboardItem.getType(type);
+            const ext = type.split('/')[1] || 'png';
+            files.push(new File([blob], `pasted-image.${ext}`, { type }));
+          }
+        }
+      }
+      return files;
+    } catch {
+      return [];
+    }
+  }, []);
+
+  // Shared paste processing logic used by both the React onPaste and the
+  // document-level native listener.
+  const processPaste = useCallback(
+    async (items: DataTransferItemList | undefined): Promise<boolean> => {
+      if (disabled || !canAddMore) return false;
 
       // Desktop browsers (Chrome, Firefox): images available synchronously
-      const items = e.clipboardData?.items;
-      if (items) {
-        const files: File[] = [];
-        for (let i = 0; i < items.length; i++) {
-          if (items[i].type.startsWith('image/')) {
-            const file = items[i].getAsFile();
-            if (file) files.push(file);
-          }
-        }
-        if (files.length > 0) {
-          e.preventDefault();
-          const dt = new DataTransfer();
-          files.forEach((f) => dt.items.add(f));
-          handleFiles(dt.files);
-          return;
-        }
+      const syncFiles = extractImagesFromClipboard(items);
+      if (syncFiles.length > 0) {
+        const dt = new DataTransfer();
+        syncFiles.forEach((f) => dt.items.add(f));
+        handleFiles(dt.files);
+        return true;
       }
 
-      // iOS Safari: images not in clipboardData, must use async Clipboard API.
-      // "Copy Photo" and "Copy Subject" both deliver image/png through this path.
-      if (typeof navigator?.clipboard?.read === 'function') {
-        e.preventDefault();
-        try {
-          const clipboardItems = await navigator.clipboard.read();
-          const files: File[] = [];
-          for (const clipboardItem of clipboardItems) {
-            for (const type of clipboardItem.types) {
-              if (type.startsWith('image/')) {
-                const blob = await clipboardItem.getType(type);
-                const ext = type.split('/')[1] || 'png';
-                files.push(new File([blob], `pasted-image.${ext}`, { type }));
-              }
-            }
-          }
-          if (files.length > 0) {
-            const dt = new DataTransfer();
-            files.forEach((f) => dt.items.add(f));
-            handleFiles(dt.files);
-          }
-        } catch {
-          // Clipboard permission denied or no image data available
-        }
+      // iOS Safari fallback via async Clipboard API
+      const asyncFiles = await extractImagesFromAsyncClipboard();
+      if (asyncFiles.length > 0) {
+        const dt = new DataTransfer();
+        asyncFiles.forEach((f) => dt.items.add(f));
+        handleFiles(dt.files);
+        return true;
       }
+
+      return false;
     },
-    [disabled, canAddMore, handleFiles]
+    [disabled, canAddMore, extractImagesFromClipboard, extractImagesFromAsyncClipboard, handleFiles]
   );
+
+  // React synthetic paste handler (fires when the component's div has focus)
+  const handlePaste = useCallback(
+    async (e: React.ClipboardEvent) => {
+      const handled = await processPaste(e.clipboardData?.items);
+      if (handled) e.preventDefault();
+    },
+    [processPaste]
+  );
+
+  // Document-level paste listener so paste works from anywhere on the page,
+  // matching the behavior of Discord/Slack/etc. Users don't need to click
+  // the upload area first.
+  useEffect(() => {
+    const handler = async (e: ClipboardEvent) => {
+      // Don't intercept paste when user is typing in an input/textarea
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target as HTMLElement)?.isContentEditable) {
+        return;
+      }
+
+      const handled = await processPaste(e.clipboardData?.items);
+      if (handled) e.preventDefault();
+    };
+
+    document.addEventListener('paste', handler);
+    return () => document.removeEventListener('paste', handler);
+  }, [processPaste]);
 
   const removeImage = (index: number) => {
     const newImages = images.filter((_, i) => i !== index);
