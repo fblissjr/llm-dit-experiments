@@ -244,17 +244,17 @@ async def flux2_generate(request: Flux2GenerateRequest, config: ConfigDep, manag
         # Run in executor to not block event loop
         loop = asyncio.get_event_loop()
 
+        @torch.inference_mode()
         def _run_generate():
-            with torch.no_grad():
-                return generate_image(
-                    gen_config,
-                    model_name=request.model_name,
-                    encoder=persistent_encoder,
-                    transformer=persistent_transformer,
-                    vae=persistent_vae,
-                    model_path=model_path,
-                    vae_path=vae_path,
-                )
+            return generate_image(
+                gen_config,
+                model_name=request.model_name,
+                encoder=persistent_encoder,
+                transformer=persistent_transformer,
+                vae=persistent_vae,
+                model_path=model_path,
+                vae_path=vae_path,
+            )
 
         image = await loop.run_in_executor(None, _run_generate)
 
@@ -416,6 +416,7 @@ async def flux2_generate_stream(request: Flux2GenerateRequest, config: ConfigDep
             loop = asyncio.get_event_loop()
             progress_queue: asyncio.Queue = asyncio.Queue()
 
+            @torch.inference_mode()
             def run_generation():
                 """Run generation and put progress events in queue."""
                 def callback(step: int, total: int, stage: str = ""):
@@ -439,17 +440,16 @@ async def flux2_generate_stream(request: Flux2GenerateRequest, config: ConfigDep
                     p_transformer = srv.flux2_pipeline.get("transformer")
                     p_vae = srv.flux2_pipeline.get("vae")
 
-                with torch.no_grad():
-                    return generate_image_with_progress(
-                        gen_config,
-                        model_name=request.model_name,
-                        encoder=p_encoder,
-                        transformer=p_transformer,
-                        vae=p_vae,
-                        model_path=model_path,
-                        vae_path=vae_path,
-                        progress_callback=callback,
-                    )
+                return generate_image_with_progress(
+                    gen_config,
+                    model_name=request.model_name,
+                    encoder=p_encoder,
+                    transformer=p_transformer,
+                    vae=p_vae,
+                    model_path=model_path,
+                    vae_path=vae_path,
+                    progress_callback=callback,
+                )
 
             # Start generation in background
             gen_future = loop.run_in_executor(None, run_generation)

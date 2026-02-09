@@ -209,6 +209,7 @@ async def ltx2_generate_stream(request: LTX2GenerateRequest, config: ConfigDep):
             start_time = time.time()
 
             # Run generation in thread pool to not block event loop
+            @torch.inference_mode()
             def do_generate():
                 from llm_dit.pipelines import generate_video_with_offloading, GenerationConfig
 
@@ -223,16 +224,15 @@ async def ltx2_generate_stream(request: LTX2GenerateRequest, config: ConfigDep):
                 )
 
                 # Generate video with component offloading
-                with torch.no_grad():
-                    return generate_video_with_offloading(
-                        prompt=request.prompt,
-                        config=gen_config,
-                        model_path=model_path,
-                        callback=progress_callback,
-                        use_progress=False,  # Disable tqdm, use callback instead
-                        lora_path=request.lora_path,
-                        lora_scale=request.lora_scale,
-                    )
+                return generate_video_with_offloading(
+                    prompt=request.prompt,
+                    config=gen_config,
+                    model_path=model_path,
+                    callback=progress_callback,
+                    use_progress=False,  # Disable tqdm, use callback instead
+                    lora_path=request.lora_path,
+                    lora_scale=request.lora_scale,
+                )
 
             # Start generation in background
             loop = asyncio.get_event_loop()
