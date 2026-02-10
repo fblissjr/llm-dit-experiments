@@ -28,7 +28,7 @@ dependencies = [
     "einops",  # Tensor reshaping for Qwen-Image models
     "torchao>=0.15.0",
     "tomli-w>=1.2.0",
-    "imageio>=2.37.2",
+    "imageio[pyav]>=2.37.2",
     "imageio-ffmpeg>=0.6.0",
     "tqdm>=4.65.0",  # Progress bars in pipeline generation loops
     "orjson>=3.11.7",
