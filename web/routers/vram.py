@@ -247,20 +247,51 @@ async def vram_unload_qwen_image_t2i(manager: ManagerDep):
 
 
 async def vram_load_ltx2(config: ConfigDep, manager: ManagerDep):
-    """Validate LTX-2 configuration.
+    """Validate LTX-2 two-stage pipeline configuration.
 
-    Note: The pure PyTorch pipeline loads components per-request with
-    automatic memory offloading. This endpoint validates that the model
-    path is configured correctly.
+    Checks that all required files exist: transformer, text encoder,
+    VAE, spatial upsampler, and (optionally) distilled LoRA.
     """
     from web.routers.ltx2 import get_ltx2_model_path
 
     try:
         model_path = get_ltx2_model_path(config)
+        missing = []
+        ltx2_cfg = config.ltx2
+
+        # Check required directories
+        if not (model_path / "transformer").exists():
+            missing.append(f"transformer/ directory")
+
+        # Check text encoder
+        if not (model_path / "text_encoder").exists():
+            missing.append("text_encoder/ directory")
+
+        # Check VAE
+        if not (model_path / "vae").exists():
+            missing.append("vae/ directory")
+
+        # Check spatial upsampler (two-stage)
+        upsampler_file = ltx2_cfg.spatial_upsampler_file if ltx2_cfg else "ltx-2-spatial-upscaler-x2-1.0.safetensors"
+        if not (model_path / upsampler_file).exists():
+            missing.append(f"spatial upsampler: {upsampler_file}")
+
+        # Check distilled LoRA (optional, only if configured)
+        distilled_lora = ltx2_cfg.distilled_lora_path if ltx2_cfg else ""
+        if distilled_lora:
+            lora_path = Path(distilled_lora)
+            if not lora_path.is_absolute():
+                lora_path = model_path / lora_path
+            if not lora_path.exists():
+                missing.append(f"distilled LoRA: {distilled_lora}")
+
+        if missing:
+            raise ValueError(f"Missing LTX-2 files: {', '.join(missing)}")
+
         status = manager.get_vram_status()
         return {
             "success": True,
-            "message": f"LTX-2 model path validated: {model_path}",
+            "message": f"LTX-2 two-stage pipeline validated: {model_path}",
             "vram": status.get("vram"),
         }
     except Exception as e:

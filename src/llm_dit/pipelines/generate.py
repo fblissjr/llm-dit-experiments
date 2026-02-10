@@ -898,3 +898,703 @@ def generate_video_with_offloading(
         f"(encode={stage1_elapsed:.1f}s, denoise={stage2_elapsed:.1f}s, decode={stage3_elapsed:.1f}s)"
     )
     return video
+
+
+# =============================================================================
+# Two-Stage Generation (reference: TI2VidTwoStagesPipeline)
+# =============================================================================
+
+
+@dataclass
+class StepContext:
+    """Per-step parameters for the denoising loop.
+
+    All denoising parameters that can vary per step live here.
+    When guidance_scale <= 1.0, the loop runs a single forward pass.
+    When > 1.0 and neg_embeds is provided, it runs CFG (double forward pass).
+    """
+    guidance_scale: float = 1.0
+    neg_embeds: Optional[torch.Tensor] = None
+    rescale_scale: float = 0.0
+    ge_gamma: float = 0.0
+
+
+# A callable that returns StepContext for a given (step_index, sigma_value)
+StepSchedule = Callable[[int, float], StepContext]
+
+
+def constant_schedule(
+    guidance_scale: float = 1.0,
+    neg_embeds: Optional[torch.Tensor] = None,
+    rescale_scale: float = 0.0,
+    ge_gamma: float = 0.0,
+) -> StepSchedule:
+    """Static parameters for all steps (default behavior)."""
+    ctx = StepContext(
+        guidance_scale=guidance_scale,
+        neg_embeds=neg_embeds,
+        rescale_scale=rescale_scale,
+        ge_gamma=ge_gamma,
+    )
+    return lambda step, sigma: ctx
+
+
+@dataclass
+class TwoStageConfig:
+    """Configuration for two-stage video generation.
+
+    Stage 1: Denoise at half resolution (height/2, width/2) with full CFG.
+    Stage 1.5: Spatial upsample latents 2x via learned upsampler.
+    Stage 2: Refine at full resolution with distilled LoRA, no CFG, 3 steps.
+
+    The base GenerationConfig specifies the FULL output resolution.
+    Stage 1 resolution is computed automatically as (height/2, width/2).
+    """
+
+    # Stage 1 (low-res denoising)
+    stage1_steps: int = 40
+    guidance_scale: float = 3.5
+
+    # Guidance options (stage 1 only)
+    stg_scale: float = 0.0  # Spatio-temporal guidance (0=disabled)
+    stg_blocks: list[int] = None  # type: ignore[assignment]
+    rescale_scale: float = 0.7  # CFG rescaling
+
+    # Negative prompt
+    negative_prompt: str = "worst quality, blurry, distorted"
+
+    # Gradient estimation
+    ge_gamma: float = 0.0  # 0=disabled, 2.0=reference default
+
+    # Stage 2 (high-res refinement)
+    stage2_steps: int = 3
+    distilled_lora_path: str = ""
+    distilled_lora_scale: float = 0.8
+
+    # Spatial upsampler
+    spatial_upsampler_file: str = "ltx-2-spatial-upscaler-x2-1.0.safetensors"
+
+    def __post_init__(self):
+        if self.stg_blocks is None:
+            self.stg_blocks = [29]
+
+
+def _compute_velocity(
+    model: LTX2Transformer,
+    latents: torch.Tensor,
+    timestep: torch.Tensor,
+    positions: torch.Tensor,
+    prompt_embeds: torch.Tensor,
+    ctx: StepContext,
+) -> torch.Tensor:
+    """Compute velocity prediction with optional CFG.
+
+    When ctx.guidance_scale > 1.0 and ctx.neg_embeds is provided, runs a
+    double forward pass (unconditional + conditional) with CFG blending.
+    Otherwise runs a single forward pass.
+
+    Args:
+        model: LTX2Transformer on GPU.
+        latents: [B, T, D] noisy latent tokens.
+        timestep: [B, T] per-token timestep values.
+        positions: [B, 3, T, 2] RoPE position indices.
+        prompt_embeds: [B, seq_len, dim] positive text embeddings.
+        ctx: Per-step denoising parameters.
+
+    Returns:
+        Velocity prediction tensor [B, T, D].
+    """
+    if ctx.guidance_scale > 1.0 and ctx.neg_embeds is not None:
+        # Unconditional pass (negative prompt)
+        uncond_modality = create_video_modality(latents, timestep, positions, ctx.neg_embeds)
+        velocity_uncond, _ = model(video=uncond_modality)
+        del uncond_modality
+        torch.cuda.synchronize()
+        torch.cuda.empty_cache()
+
+        # Conditional pass (positive prompt)
+        cond_modality = create_video_modality(latents, timestep, positions, prompt_embeds)
+        velocity_cond, _ = model(video=cond_modality)
+        del cond_modality
+
+        # CFG blend
+        velocity = velocity_cond + (ctx.guidance_scale - 1.0) * (velocity_cond - velocity_uncond)
+
+        # CFG rescaling (CFG* variant) to prevent over-saturation
+        if ctx.rescale_scale > 0:
+            factor = velocity_cond.std() / velocity.std()
+            factor = ctx.rescale_scale * factor + (1.0 - ctx.rescale_scale)
+            velocity = velocity * factor
+
+        del velocity_uncond, velocity_cond
+    else:
+        # Simple denoising (no guidance)
+        modality = create_video_modality(latents, timestep, positions, prompt_embeds)
+        velocity, _ = model(video=modality)
+        del modality
+
+    return velocity
+
+
+def _denoise_stage(
+    model: LTX2Transformer,
+    latents: torch.Tensor,
+    prompt_embeds: torch.Tensor,
+    sigmas: torch.Tensor,
+    positions: torch.Tensor,
+    stage_name: str,
+    step_schedule: Optional[StepSchedule] = None,
+    callback: Optional[Callable[[str, int, int], None]] = None,
+    denoise_mask: Optional[torch.Tensor] = None,
+    clean_latent: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
+    """Run a single denoising stage (Euler method with per-step parameters).
+
+    The step_schedule callable controls all per-step parameters (guidance,
+    rescaling, GE gamma). Pass constant_schedule() for static parameters,
+    or a custom callable for dynamic schedules.
+
+    Args:
+        model: LTX2Transformer on GPU.
+        latents: [B, T, D] noisy latent tokens.
+        prompt_embeds: [B, seq_len, dim] positive text embeddings.
+        sigmas: [N+1] sigma schedule.
+        positions: [B, 3, T, 2] RoPE position indices.
+        stage_name: Name for logging (e.g., "stage1_denoise").
+        step_schedule: Callable(step_index, sigma) -> StepContext. Defaults
+            to constant_schedule() (guidance_scale=1.0, no CFG).
+        callback: Optional progress callback(stage_name, step, total).
+        denoise_mask: Optional per-token denoise mask for conditioning.
+        clean_latent: Optional clean latent for conditioned regions.
+
+    Returns:
+        Denoised latent tensor [B, T, D].
+    """
+    if step_schedule is None:
+        step_schedule = constant_schedule()
+
+    dtype = latents.dtype
+    num_tokens = latents.shape[1]
+    num_steps = len(sigmas) - 1
+
+    model.train(False)
+
+    prev_velocity: Optional[torch.Tensor] = None
+
+    with torch.no_grad():
+        denoise_start = time.perf_counter()
+        step_times: list[float] = []
+
+        for i in range(num_steps):
+            step_start = time.perf_counter()
+            sigma = sigmas[i]
+            sigma_next = sigmas[i + 1]
+
+            ctx = step_schedule(i, sigma.item())
+
+            # Per-token or uniform timesteps
+            if denoise_mask is not None:
+                timestep = timesteps_from_mask(denoise_mask, sigma).squeeze(-1)
+            else:
+                timestep = sigma.expand(1, num_tokens)
+
+            velocity = _compute_velocity(
+                model, latents, timestep, positions, prompt_embeds, ctx,
+            )
+
+            # Gradient estimation correction
+            if ctx.ge_gamma > 0 and prev_velocity is not None:
+                delta_v = velocity - prev_velocity
+                velocity = ctx.ge_gamma * delta_v + prev_velocity
+
+            # Save velocity for GE (before Euler step modifies it)
+            if ctx.ge_gamma > 0:
+                prev_velocity = velocity.clone()
+
+            # Euler step: x_{t-1} = x_t + v * dt
+            dt = sigma_next - sigma
+            denoised = (latents.float() + velocity.float() * dt).to(dtype)
+
+            # Post-process conditioned regions
+            if denoise_mask is not None and clean_latent is not None:
+                latents = post_process_latent(denoised, denoise_mask, clean_latent)
+            else:
+                latents = denoised
+
+            del velocity
+            if (i + 1) % 5 == 0:
+                torch.cuda.synchronize()
+                torch.cuda.empty_cache()
+
+            step_elapsed = time.perf_counter() - step_start
+            step_times.append(step_elapsed)
+            if i == 0 or (i + 1) % 10 == 0 or i == num_steps - 1:
+                logger.info(f"[{stage_name}:Step {i}] {step_elapsed:.2f}s")
+
+            if callback:
+                callback(stage_name, i + 1, num_steps)
+
+        denoise_elapsed = time.perf_counter() - denoise_start
+        logger.info(f"[{stage_name}] {num_steps} steps in {denoise_elapsed:.1f}s")
+
+    return latents
+
+
+def generate_video_two_stage(
+    prompt: str,
+    config: GenerationConfig,
+    two_stage: TwoStageConfig,
+    model_path: Union[str, Path] = "models/LTX-2",
+    text_encoder_path: Optional[Union[str, Path]] = None,
+    quantize: bool = True,
+    precision: str = "fp8-weight-only",
+    dtype: torch.dtype = torch.bfloat16,
+    callback: Optional[Callable[[str, int, int], None]] = None,
+    optimization: Optional[LTX2OptimizationConfig] = None,
+    gemma_variant: str = "bf16",
+    lora_path: Optional[Union[str, Path, List[Union[str, Path]]]] = None,
+    lora_scale: Optional[Union[float, List[float]]] = None,
+) -> torch.Tensor:
+    """Generate video using two-stage pipeline with spatial upsampling.
+
+    Reference: TI2VidTwoStagesPipeline from official LTX-2 repo.
+
+    Flow:
+      Stage 0: Encode text (positive + negative prompts)
+      Stage 1: Denoise at half resolution with CFG guidance
+      Stage 1.5: Spatial upsample latents 2x
+      Stage 2: Refine at full resolution with distilled LoRA (no CFG, 3 steps)
+      Stage 3: VAE decode to pixels
+
+    Only one major component is on GPU at a time (sequential offloading).
+
+    Args:
+        prompt: Text prompt for generation.
+        config: GenerationConfig with FULL output resolution (height, width).
+            Stage 1 runs at (height/2, width/2) automatically.
+        two_stage: TwoStageConfig with stage-specific parameters.
+        model_path: Path to LTX-2 model directory.
+        text_encoder_path: Optional separate path for text encoder.
+        quantize: Whether to FP8 quantize the transformer.
+        precision: Quantization method.
+        dtype: Base computation dtype.
+        callback: Optional progress callback(stage_name, step, total).
+        optimization: LTX2OptimizationConfig for device placement.
+        gemma_variant: Gemma3 variant (bf16, 8bit, q4-qat).
+        lora_path: Optional base LoRA(s) for stage 1.
+        lora_scale: LoRA scale(s) for base LoRA.
+
+    Returns:
+        Video tensor [F, H, W, C] in uint8 format.
+    """
+    if optimization is None:
+        optimization = LTX2OptimizationConfig.for_24gb_gpu()
+
+    effective_quantize = optimization.quantize_transformer
+    effective_precision = optimization.precision
+    model_path = Path(model_path)
+    if text_encoder_path is None:
+        text_encoder_path = model_path / "text_encoder"
+
+    gen_start = time.perf_counter()
+
+    # =========================================================================
+    # Stage 0: Text Encoding (positive + negative prompts)
+    # =========================================================================
+    stage0_start = time.perf_counter()
+    if callback:
+        callback("encoding", 0, 2)
+
+    logger.info("Stage 0: Loading text encoder...")
+
+    if gemma_variant != "bf16":
+        from llm_dit.encoders.gemma3_variants import create_gemma3_encoder
+        text_encoder = create_gemma3_encoder(
+            variant=gemma_variant,
+            model_path=str(model_path),
+            text_encoder_path=str(text_encoder_path),
+            device=optimization.text_encoder_device,
+            dtype=dtype,
+        )
+    else:
+        from llm_dit.encoders.gemma3 import Gemma3Encoder
+        text_encoder = Gemma3Encoder(
+            model_id=str(text_encoder_path),
+            device=optimization.text_encoder_device,
+            dtype=dtype,
+        )
+
+    # Encode positive prompt
+    logger.info("Encoding positive prompt...")
+    pos_output = text_encoder.encode([prompt])
+    pos_embeds = pos_output.embeddings[0].unsqueeze(0)
+    pos_mask = pos_output.attention_masks[0].unsqueeze(0)
+
+    if callback:
+        callback("encoding", 1, 2)
+
+    # Encode negative prompt
+    logger.info("Encoding negative prompt...")
+    neg_output = text_encoder.encode([two_stage.negative_prompt])
+    neg_embeds = neg_output.embeddings[0].unsqueeze(0)
+
+    if callback:
+        callback("encoding", 2, 2)
+
+    # Move to transformer device, unload encoder
+    transformer_device = optimization.transformer_device
+    pos_embeds = pos_embeds.to(transformer_device, dtype)
+    pos_mask = pos_mask.to(transformer_device)
+    neg_embeds = neg_embeds.to(transformer_device, dtype)
+
+    del text_encoder
+    if optimization.cleanup_between_stages:
+        cleanup_memory()
+    logger.info("Text encoder unloaded")
+
+    stage0_elapsed = time.perf_counter() - stage0_start
+    logger.info(f"Stage 0 complete: {stage0_elapsed:.1f}s")
+
+    # =========================================================================
+    # Stage 1: Low-Resolution Denoising (height/2, width/2)
+    # =========================================================================
+    stage1_start = time.perf_counter()
+    if callback:
+        callback("stage1_denoise", 0, two_stage.stage1_steps)
+
+    logger.info("Stage 1: Loading transformer for low-res denoising...")
+
+    # Stage 1 config: half resolution
+    stage1_config = GenerationConfig(
+        num_frames=config.num_frames,
+        height=config.height // 2,
+        width=config.width // 2,
+        num_inference_steps=two_stage.stage1_steps,
+        guidance_scale=two_stage.guidance_scale,
+        seed=config.seed,
+        base_shift=config.base_shift,
+        max_shift=config.max_shift,
+        stretch=config.stretch,
+        terminal=config.terminal,
+    )
+
+    from llm_dit.models.ltx2 import load_ltx2_transformer
+
+    load_device = "cpu" if effective_quantize else transformer_device
+    model = load_ltx2_transformer(
+        model_path / "transformer",
+        dtype=dtype,
+        device=load_device,
+        video_only=True,
+    )
+
+    if effective_quantize and effective_precision != "none":
+        from llm_dit.quantization import quantize_component
+        model, stats = quantize_component(
+            model,
+            method=effective_precision,
+            component_type="transformer",
+        )
+        logger.info(
+            f"Transformer quantized: {stats['quantized_layers']}/{stats['total_layers']} layers "
+            f"({effective_precision})"
+        )
+
+    if load_device == "cpu":
+        model = model.to(transformer_device)
+
+    # Apply base LoRA(s) if provided
+    if lora_path is not None:
+        from llm_dit.utils.lora import load_lora as _load_lora
+
+        if isinstance(lora_path, (str, Path)):
+            lora_paths = [lora_path]
+        else:
+            lora_paths = list(lora_path)
+
+        if lora_scale is None:
+            lora_scales = [0.8] * len(lora_paths)
+        elif isinstance(lora_scale, (int, float)):
+            lora_scales = [float(lora_scale)] * len(lora_paths)
+        else:
+            lora_scales = list(lora_scale)
+
+        for path, scale in zip(lora_paths, lora_scales):
+            logger.info(f"Loading base LoRA: {path} (scale={scale})")
+            _load_lora(model, path, scale=scale, device=transformer_device, dtype=dtype)
+
+    # Initialize latent noise at half resolution
+    t_latent, h_latent, w_latent = stage1_config.latent_dims
+    num_tokens = stage1_config.num_tokens
+
+    generator = None
+    if config.seed is not None:
+        generator = torch.Generator(device=transformer_device).manual_seed(config.seed)
+
+    latents = torch.randn(
+        (1, num_tokens, 128),
+        generator=generator,
+        device=transformer_device,
+        dtype=dtype,
+    )
+
+    positions = create_position_indices(
+        batch_size=1,
+        num_frames=config.num_frames,
+        height=stage1_config.height,
+        width=stage1_config.width,
+        device=torch.device(transformer_device),
+        fps=24.0,
+        scale_factors=(8, 32, 32),
+        causal_fix=True,
+    )
+
+    # Sigma schedule for stage 1
+    scheduler = LTX2Scheduler()
+    mock_latent = torch.empty(1, 128, t_latent, h_latent, w_latent)
+    sigmas = scheduler.execute(
+        steps=two_stage.stage1_steps,
+        latent=mock_latent,
+        max_shift=config.max_shift,
+        base_shift=config.base_shift,
+        stretch=config.stretch,
+        terminal=config.terminal,
+    ).to(transformer_device, dtype)
+
+    # Denoise stage 1
+    schedule = constant_schedule(
+        guidance_scale=two_stage.guidance_scale,
+        neg_embeds=neg_embeds,
+        rescale_scale=two_stage.rescale_scale,
+        ge_gamma=two_stage.ge_gamma,
+    )
+    latents = _denoise_stage(
+        model=model,
+        latents=latents,
+        prompt_embeds=pos_embeds,
+        sigmas=sigmas,
+        positions=positions,
+        stage_name="stage1_denoise",
+        step_schedule=schedule,
+        callback=callback,
+    )
+
+    # Reshape to spatial format for upsampler: [B, T, D] -> [B, D, T_lat, H_lat, W_lat]
+    latents = latents.transpose(1, 2).reshape(1, 128, t_latent, h_latent, w_latent)
+
+    del model, sigmas
+    if optimization.cleanup_between_stages:
+        cleanup_memory()
+    logger.info("Stage 1 transformer unloaded")
+
+    stage1_elapsed = time.perf_counter() - stage1_start
+    logger.info(f"Stage 1 complete: {stage1_elapsed:.1f}s")
+
+    # =========================================================================
+    # Stage 1.5: Spatial Upsampling (2x)
+    # =========================================================================
+    stage15_start = time.perf_counter()
+    if callback:
+        callback("upsample", 0, 1)
+
+    logger.info("Stage 1.5: Loading spatial upsampler...")
+
+    from llm_dit.models.ltx2.upsampler import load_spatial_upsampler
+
+    upsampler_path = model_path / two_stage.spatial_upsampler_file
+    upsampler = load_spatial_upsampler(upsampler_path, dtype=dtype, device="cpu")
+    upsampler = upsampler.to(transformer_device)
+
+    # We need per_channel_statistics for normalization during upsampling.
+    # Load the VAE decoder briefly just for its statistics, then discard.
+    from llm_dit.models.ltx2.vae import load_ltx2_vae_decoder
+
+    vae_for_stats = load_ltx2_vae_decoder(
+        model_path / "vae", dtype=dtype, device="cpu"
+    )
+    per_channel_stats = vae_for_stats.per_channel_statistics
+    per_channel_stats = per_channel_stats.to(transformer_device)
+
+    # Un-normalize, upsample, re-normalize
+    latents = latents.to(transformer_device)
+    latents = per_channel_stats.un_normalize(latents)
+    latents = upsampler(latents)
+    latents = per_channel_stats.normalize(latents)
+
+    del upsampler, vae_for_stats, per_channel_stats
+    if optimization.cleanup_between_stages:
+        cleanup_memory()
+
+    if callback:
+        callback("upsample", 1, 1)
+
+    stage15_elapsed = time.perf_counter() - stage15_start
+    logger.info(
+        f"Stage 1.5 complete: {stage15_elapsed:.1f}s "
+        f"(latent upsampled from {h_latent}x{w_latent} to {latents.shape[3]}x{latents.shape[4]})"
+    )
+
+    # =========================================================================
+    # Stage 2: High-Resolution Refinement (full resolution, distilled LoRA)
+    # =========================================================================
+    stage2_start = time.perf_counter()
+    if callback:
+        callback("stage2_denoise", 0, two_stage.stage2_steps)
+
+    logger.info("Stage 2: Loading transformer for high-res refinement...")
+
+    # Load fresh transformer for stage 2
+    model = load_ltx2_transformer(
+        model_path / "transformer",
+        dtype=dtype,
+        device=load_device,
+        video_only=True,
+    )
+
+    if effective_quantize and effective_precision != "none":
+        from llm_dit.quantization import quantize_component
+        model, stats = quantize_component(
+            model,
+            method=effective_precision,
+            component_type="transformer",
+        )
+
+    if load_device == "cpu":
+        model = model.to(transformer_device)
+
+    # Apply base LoRA(s) + distilled LoRA for stage 2
+    from llm_dit.utils.lora import load_lora as _load_lora
+
+    if lora_path is not None:
+        if isinstance(lora_path, (str, Path)):
+            lora_paths = [lora_path]
+        else:
+            lora_paths = list(lora_path)
+
+        if lora_scale is None:
+            lora_scales = [0.8] * len(lora_paths)
+        elif isinstance(lora_scale, (int, float)):
+            lora_scales = [float(lora_scale)] * len(lora_paths)
+        else:
+            lora_scales = list(lora_scale)
+
+        for path, scale in zip(lora_paths, lora_scales):
+            _load_lora(model, path, scale=scale, device=transformer_device, dtype=dtype)
+
+    # Apply distilled LoRA
+    if two_stage.distilled_lora_path:
+        distilled_path = Path(two_stage.distilled_lora_path)
+        if not distilled_path.is_absolute():
+            distilled_path = model_path / distilled_path
+        logger.info(f"Loading distilled LoRA: {distilled_path} (scale={two_stage.distilled_lora_scale})")
+        _load_lora(
+            model,
+            distilled_path,
+            scale=two_stage.distilled_lora_scale,
+            device=transformer_device,
+            dtype=dtype,
+        )
+
+    # Stage 2 uses distilled sigma schedule (pre-computed, not from scheduler)
+    from llm_dit.models.ltx2.constants import STAGE_2_DISTILLED_SIGMA_VALUES
+
+    distilled_sigmas = torch.tensor(
+        STAGE_2_DISTILLED_SIGMA_VALUES, device=transformer_device, dtype=dtype
+    )
+
+    # Full-resolution latent dimensions
+    t_lat_full = (config.num_frames - 1) // 8 + 1
+    h_lat_full = config.height // 32
+    w_lat_full = config.width // 32
+    num_tokens_full = t_lat_full * h_lat_full * w_lat_full
+
+    # Reshape upsampled latents to [B, T, D] for denoising
+    latents_flat = latents.reshape(1, 128, -1).transpose(1, 2)  # [B, T, D]
+
+    # Add noise at the first distilled sigma level (0.909375)
+    noise_scale = distilled_sigmas[0].item()
+    if config.seed is not None:
+        generator = torch.Generator(device=transformer_device).manual_seed(config.seed + 1)
+    noise = torch.randn_like(latents_flat, generator=generator if config.seed is not None else None)
+    latents_noisy = latents_flat + noise_scale * noise
+    del noise, latents_flat
+
+    # Full-resolution positions
+    positions_full = create_position_indices(
+        batch_size=1,
+        num_frames=config.num_frames,
+        height=config.height,
+        width=config.width,
+        device=torch.device(transformer_device),
+        fps=24.0,
+        scale_factors=(8, 32, 32),
+        causal_fix=True,
+    )
+
+    # Denoise stage 2 (no CFG, simple denoising -- defaults to constant_schedule())
+    latents_refined = _denoise_stage(
+        model=model,
+        latents=latents_noisy,
+        prompt_embeds=pos_embeds,
+        sigmas=distilled_sigmas,
+        positions=positions_full,
+        stage_name="stage2_denoise",
+        callback=callback,
+    )
+
+    # Reshape back to spatial: [B, T, D] -> [B, D, T_lat, H_lat, W_lat]
+    latents = latents_refined.transpose(1, 2).reshape(1, 128, t_lat_full, h_lat_full, w_lat_full)
+
+    del model, latents_noisy, latents_refined, pos_embeds, neg_embeds, pos_mask
+    if optimization.cleanup_between_stages:
+        cleanup_memory()
+    logger.info("Stage 2 transformer unloaded")
+
+    stage2_elapsed = time.perf_counter() - stage2_start
+    logger.info(f"Stage 2 complete: {stage2_elapsed:.1f}s")
+
+    # =========================================================================
+    # Stage 3: VAE Decoding
+    # =========================================================================
+    stage3_start = time.perf_counter()
+    if callback:
+        callback("decode", 0, 1)
+
+    logger.info("Stage 3: Loading VAE decoder...")
+
+    from llm_dit.models.ltx2.vae import load_ltx2_vae_decoder
+
+    vae = load_ltx2_vae_decoder(
+        model_path / "vae", dtype=dtype, device="cpu"
+    ).to(optimization.vae_device)
+
+    logger.info("Decoding latents to video...")
+
+    decode_start = time.perf_counter()
+    with torch.no_grad():
+        video = vae(latents.to(optimization.vae_device))
+    decode_elapsed = time.perf_counter() - decode_start
+    logger.info(f"[Decode] VAE decode {decode_elapsed:.1f}s")
+
+    # Convert to [F, H, W, C] uint8
+    video = video.squeeze(0).permute(1, 2, 3, 0)
+    video = ((video + 1) / 2 * 255).clamp(0, 255).to(torch.uint8)
+
+    del vae, latents
+    if optimization.cleanup_between_stages:
+        cleanup_memory()
+
+    if callback:
+        callback("decode", 1, 1)
+
+    stage3_elapsed = time.perf_counter() - stage3_start
+    logger.info(f"Stage 3 complete: {stage3_elapsed:.1f}s")
+
+    gen_elapsed = time.perf_counter() - gen_start
+    logger.info(
+        f"Two-stage generation complete: {gen_elapsed:.1f}s total "
+        f"(encode={stage0_elapsed:.1f}s, stage1={stage1_elapsed:.1f}s, "
+        f"upsample={stage15_elapsed:.1f}s, stage2={stage2_elapsed:.1f}s, "
+        f"decode={stage3_elapsed:.1f}s)"
+    )
+    return video

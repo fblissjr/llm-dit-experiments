@@ -1,9 +1,33 @@
-last updated: 2026-02-09
+last updated: 2026-02-10
 
 # changelog
 
 All notable changes to this project will be documented in this file.
 Uses [Semantic Versioning](https://semver.org/).
+
+## 0.9.1
+
+### added
+- LTX-2 two-stage video generation pipeline (`generate_video_two_stage()`) matching reference `TI2VidTwoStagesPipeline` architecture
+- `TwoStageConfig` dataclass for two-stage pipeline parameters (guidance, STG, rescaling, gradient estimation, distilled LoRA)
+- `_denoise_stage()` shared denoising kernel with CFG, CFG rescaling, and gradient estimation support
+- `load_spatial_upsampler()` loader for spatial upsampler model from safetensors checkpoints
+- Distilled sigma schedule constants: `DISTILLED_SIGMA_VALUES`, `STAGE_2_DISTILLED_SIGMA_VALUES`
+- Two-stage config fields in `LTX2Config`: `use_two_stage`, `stage1_num_inference_steps`, `stage2_num_inference_steps`, `spatial_upsampler_file`, `distilled_lora_path`, `distilled_lora_scale`, `stg_scale`, `stg_blocks`, `rescale_scale`, `ge_gamma`, `negative_prompt`
+- Two-stage request fields in `LTX2GenerateRequest`: `use_two_stage`, `stage1_steps`, `stage2_steps`, `stg_scale`, `rescale_scale`, `distilled_lora_path`, `distilled_lora_scale`, `ge_gamma`
+- Enhanced `vram_load_ltx2()` file validation: checks transformer, encoder, VAE, spatial upsampler, and distilled LoRA existence
+- 17 new unit tests for two-stage config, distilled sigma schedules, half-resolution latents, and position indices
+
+### changed
+- LTX-2 default encoder quantization from `"none"` to `"fp8-weight-only"` (RTX 4090 has native FP8 tensor cores; INT4 is emulated)
+- LTX-2 default transformer from distilled (`ltx-2-19b-distilled-fp8.safetensors`) to dev (`ltx-2-19b-dev-fp8.safetensors`)
+- LTX-2 resolution snapping from 32-divisible to 64-divisible (two-stage requires half-res dimensions divisible by 32)
+- `config.toml` `[ltx2]` section: full 1:1 alignment with `LTX2Config` dataclass fields
+- `get_ltx2_model_path()` and `ltx2_status()`: removed TOML re-parsing, now use injected RuntimeConfig directly
+- `ModelManager._load_ltx2()`: removed TOML re-parsing, uses injected config, validates all required files
+
+### fixed
+- `Config.load()` bug in ltx2 router (method is `Config.from_toml()`, but now bypassed entirely via injected config)
 
 ## 0.9.0
 

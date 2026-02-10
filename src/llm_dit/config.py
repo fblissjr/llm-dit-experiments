@@ -310,43 +310,39 @@ class PyTorchConfig:
 
 @dataclass
 class LTX2Config:
-    """Configuration for LTX-2 video generation model.
+    """Configuration for LTX-2 two-stage video generation.
 
-    LTX-2 is a 19B parameter video+audio generation model from Lightricks:
-    - 14B video transformer + 5B audio transformer (asymmetric dual-stream DiT)
-    - Text encoder: Gemma 3-12B (NOT Qwen3)
-    - Output: Video (512x768 typical) + optional audio
-    - Memory: FP8 model (25GB) + CPU offload for RTX 4090
+    Two-stage pipeline (reference: TI2VidTwoStagesPipeline):
+      Stage 0: Encode text with Gemma 3-12B (FP8 on CUDA)
+      Stage 1: Denoise at half resolution (40 steps, CFG-guided)
+      Stage 1.5: Spatial upsample latents 2x
+      Stage 2: Refine at full resolution (3 steps, distilled LoRA, no CFG)
+      Stage 3: VAE decode to pixels
 
-    Key differences from Z-Image:
-    - Uses Gemma 3-12B text encoder (4096 dim) vs Qwen3-4B (2560 dim)
-    - Outputs video+audio vs image only
-    - 19B params vs ~2B params
-    - Requires model-level CPU offloading for 24GB VRAM
+    Sequential offloading: only one major component on GPU at a time.
+    VRAM budget (RTX 4090, 24GB):
+      - Encoder (Gemma 3-12B FP8): ~12 GB
+      - Transformer FP8 + half-res latents: ~12-13 GB
+      - Spatial upsampler (BF16): ~2-3 GB
+      - Transformer FP8 + LoRA + full-res latents: ~15-16 GB (peak)
+      - VAE decoder: ~2-3 GB
 
-    IMPORTANT: RTX 4090 (SM89) has NATIVE FP8 tensor core support but FP4 is EMULATED.
-    FP8 is faster than FP4 on RTX 4090 despite larger size. Use FP4 only on Hopper+.
-
-    Offload modes:
-    - none: No offloading (requires >48GB VRAM)
-    - model: Model-level offload (~20-50% slower, enables 24GB inference)
-    - sequential: Layer-by-layer streaming (~3-5x slower)
-    - group: Stream DiT blocks in groups (configurable VRAM vs speed)
-
-    Memory budget (24GB):
-    - Encoder (Gemma 3-12B Q4): ~6GB → offload after encoding
-    - Transformer (FP8): ~19GB peak during generation
-    - VAE: ~2GB for tiled decode
-    - Peak: ~23-24GB with proper offloading
+    IMPORTANT: RTX 4090 (SM89) has NATIVE FP8 tensor core support but INT4 is EMULATED.
+    FP8 is faster than INT4 on RTX 4090 despite larger size. Use INT4 only on Hopper+.
     """
 
     # Model paths
     model_path: str = ""  # Directory containing LTX-2 model files
-    transformer_file: str = "ltx-2-19b-distilled-fp8.safetensors"  # Native FP8 recommended
+    transformer_file: str = "ltx-2-19b-dev-fp8.safetensors"  # Base model for stage 1
+
+    # Two-stage pipeline files (reference: TI2VidTwoStagesPipeline)
+    spatial_upsampler_file: str = "ltx-2-spatial-upscaler-x2-1.0.safetensors"
+    distilled_lora_path: str = ""  # Distilled LoRA for stage 2 refinement
+    distilled_lora_scale: float = 0.8  # Distilled LoRA blend strength
 
     # Text encoder (Gemma 3-12B)
     encoder_model_id: str = "models/LTX-2/text_encoder"
-    encoder_quantization: str = "none"  # Gemma 3 already ships with Q4 QAT
+    encoder_quantization: str = "fp8-weight-only"  # FP8 on RTX 4090 (native SM89)
     encoder_cpu_offload: bool = True  # Offload after encoding (REQUIRED for 24GB)
 
     # LoRA configuration
@@ -362,15 +358,29 @@ class LTX2Config:
     width: int = 512  # Video width (multiple of 32)
     num_frames: int = 33  # Number of frames (33-65 typical for 24GB)
     fps: int = 24  # Output FPS
-    num_inference_steps: int = 12  # Diffusion steps (8+4 for distilled, 40 for full)
+    num_inference_steps: int = 40  # Stage 1 steps (full denoising, 40 for dev model)
     guidance_scale: float = 3.5  # CFG scale (3.0-4.0 recommended)
 
     # Audio generation
     audio_enabled: bool = False  # Enable audio stream generation
     audio_negative_prompt: str = ""  # Negative prompt for audio CFG
 
-    # Distillation settings
-    use_distilled: bool = True  # Use distilled model (8+4 step)
+    # Two-stage pipeline settings (matching reference TI2VidTwoStagesPipeline)
+    use_two_stage: bool = True  # Enable two-stage generation
+    stage1_num_inference_steps: int = 40  # Full denoising for stage 1
+    stage2_num_inference_steps: int = 3  # Distilled refinement for stage 2
+    negative_prompt: str = "worst quality, blurry, distorted"
+
+    # Guidance (stage 1 only; stage 2 uses simple denoising)
+    stg_scale: float = 0.0  # Spatio-temporal guidance (0=disabled)
+    stg_blocks: str = "29"  # Comma-separated block indices for STG
+    rescale_scale: float = 0.7  # CFG rescaling to prevent over-saturation
+
+    # Optimization
+    ge_gamma: float = 0.0  # Gradient estimation gamma (0=disabled, 2.0=reference)
+
+    # Legacy distillation settings (single-stage distilled model)
+    use_distilled: bool = False  # Use single-stage distilled model (legacy)
     distilled_steps_stage1: int = 8  # First stage steps (distilled)
     distilled_steps_stage2: int = 4  # Second stage steps (distilled)
 

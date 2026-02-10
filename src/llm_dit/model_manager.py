@@ -635,35 +635,37 @@ class ModelManager:
             raise
 
     def _load_ltx2(self) -> LoadResult:
-        """Validate LTX-2 configuration.
+        """Validate LTX-2 two-stage pipeline configuration.
 
-        LTX-2 uses per-request component loading with automatic memory
-        offloading. This 'load' just validates the config is correct.
+        Checks model_path exists and required files are present. Does NOT
+        persist a pipeline -- components are loaded/unloaded per request.
+        Uses the composed RuntimeConfig (no TOML re-parsing).
         """
-        config = self.config
-        config_path = getattr(config, "config_path", None)
-        profile = getattr(config, "current_profile", "default")
+        ltx2_cfg = self.config.ltx2 if self.config else None
+        model_path_str = ltx2_cfg.model_path if ltx2_cfg else ""
+        if not model_path_str:
+            raise ValueError("LTX-2 not configured. Set ltx2.model_path in config.toml")
 
-        if config_path:
-            from llm_dit.config import Config
+        model_path = Path(model_path_str).expanduser()
+        if not model_path.exists():
+            raise ValueError(f"LTX-2 model path not found: {model_path}")
 
-            toml_config = Config.from_toml(config_path, profile=profile)
-            if toml_config.ltx2 and toml_config.ltx2.model_path:
-                model_path = Path(toml_config.ltx2.model_path).expanduser()
-                if not model_path.exists():
-                    raise ValueError(f"LTX-2 model path not found: {model_path}")
-            else:
-                raise ValueError(
-                    "LTX-2 not configured. Set ltx2.model_path in config.toml "
-                    f"under [{profile}.ltx2] section."
-                )
-        else:
-            raise ValueError("No config file loaded for LTX-2")
+        # Validate required directories/files for two-stage pipeline
+        missing = []
+        for subdir in ["transformer", "text_encoder", "vae"]:
+            if not (model_path / subdir).exists():
+                missing.append(f"{subdir}/")
 
-        # LTX-2 doesn't persist a pipeline -- it loads/unloads per request.
-        # We store a sentinel to indicate it's "configured and ready".
-        self._pipelines["ltx2"] = None
-        logger.info(f"[LTX-2] Configuration validated: {model_path}")
+        upsampler_file = ltx2_cfg.spatial_upsampler_file if ltx2_cfg else ""
+        if upsampler_file and not (model_path / upsampler_file).exists():
+            missing.append(f"upsampler: {upsampler_file}")
+
+        if missing:
+            logger.warning(f"[LTX-2] Missing files (may cause errors): {', '.join(missing)}")
+
+        # Store config dict as sentinel (not None) so is_loaded() returns True
+        self._pipelines["ltx2"] = {"model_path": str(model_path)}
+        logger.info(f"[LTX-2] Two-stage pipeline validated: {model_path}")
         return LoadResult(mode="ltx2_validated")
 
     def _load_qwen_image(self) -> LoadResult:

@@ -64,7 +64,10 @@ async def startup_video_cleanup():
 
 
 def get_ltx2_model_path(config: RuntimeConfig) -> Path:
-    """Get validated LTX-2 model path from config or default location.
+    """Get validated LTX-2 model path from the injected RuntimeConfig.
+
+    Uses config.ltx2.model_path directly -- no need to re-parse TOML since
+    the RuntimeConfig already has the composed sub-configs.
 
     Returns:
         Path to LTX-2 model directory
@@ -72,34 +75,13 @@ def get_ltx2_model_path(config: RuntimeConfig) -> Path:
     Raises:
         ValueError if model path not found or not configured
     """
-    # Try to load from config if available
-    config_path = getattr(config, "config_path", None)
-    profile = getattr(config, "current_profile", "default")
-
-    if config_path:
-        from llm_dit.config import Config
-
-        loaded_config = Config.load(config_path, profile=profile)
-        if loaded_config.ltx2 and loaded_config.ltx2.model_path:
-            model_path = Path(loaded_config.ltx2.model_path).expanduser()
-            if model_path.exists():
-                return model_path
-            raise ValueError(f"LTX-2 model path not found: {model_path}")
-        else:
-            raise ValueError(
-                "LTX-2 not configured. Set ltx2.model_path in config.toml "
-                f"under [{profile}.ltx2] section."
-            )
-
-    # Fallback: Try default path
-    default_path = Path.home() / "Storage" / "LTX-2"
-    if default_path.exists():
-        return default_path
-
-    raise ValueError(
-        f"LTX-2 model not found at {default_path}. "
-        "Configure ltx2.model_path in config.toml."
-    )
+    model_path = getattr(config.ltx2, "model_path", "") if config.ltx2 else ""
+    if not model_path:
+        raise ValueError("LTX-2 not configured. Set ltx2.model_path in config.toml")
+    path = Path(model_path).expanduser()
+    if not path.exists():
+        raise ValueError(f"LTX-2 model path not found: {path}")
+    return path
 
 
 def save_ltx2_video(video: torch.Tensor, path: str, fps: float = 24.0) -> str:
@@ -137,35 +119,15 @@ def save_ltx2_video(video: torch.Tensor, path: str, fps: float = 24.0) -> str:
 async def ltx2_status(config: ConfigDep) -> LTX2StatusResponse:
     """Get LTX-2 pipeline status.
 
-    Returns availability, loaded state, and VRAM usage.
+    Returns availability based on the injected RuntimeConfig -- no TOML re-parsing.
     """
-    # Check if LTX-2 config exists in the loaded config file
     ltx2_configured = False
-
-    config_path = getattr(config, "config_path", None)
-    profile = getattr(config, "current_profile", "default")
-
-    if config_path:
-        try:
-            from llm_dit.config import Config
-
-            loaded_config = Config.load(config_path, profile=profile)
-            if loaded_config.ltx2 and loaded_config.ltx2.model_path:
-                # Check if path actually exists
-                model_dir = Path(loaded_config.ltx2.model_path).expanduser()
-                ltx2_configured = model_dir.exists()
-        except Exception:
-            pass
-
-    # Check default path if not configured
-    if not ltx2_configured:
-        default_path = Path.home() / "Storage" / "LTX-2"
-        ltx2_configured = default_path.exists()
+    model_path = getattr(config.ltx2, "model_path", "") if config.ltx2 else ""
+    if model_path:
+        ltx2_configured = Path(model_path).expanduser().exists()
 
     return LTX2StatusResponse(
         available=ltx2_configured,
-        # Note: Pure PyTorch pipeline loads/unloads components per request
-        # so "loaded" always returns False (no persistent state)
         loaded=False,
         vram_used_gb=None,
     )
@@ -175,66 +137,91 @@ async def ltx2_status(config: ConfigDep) -> LTX2StatusResponse:
 async def ltx2_generate_stream(request: LTX2GenerateRequest, config: ConfigDep):
     """Generate video with SSE progress streaming.
 
-    Returns Server-Sent Events with progress updates during generation,
-    then final result with video URL.
-
-    Uses pure PyTorch generation via generate_video_with_offloading().
+    Supports two-stage generation (default) or single-stage fallback.
+    Returns Server-Sent Events with multi-stage progress updates.
     """
 
     async def generate() -> AsyncIterator[str]:
         """Async generator for SSE events."""
         try:
-            # Yield initial status
             yield f"data: {json.dumps({'type': 'status', 'message': 'Validating LTX-2 configuration...'})}\n\n"
 
-            # Validate model path exists
             model_path = await asyncio.get_event_loop().run_in_executor(
                 None, lambda: get_ltx2_model_path(config)
             )
 
-            yield f"data: {json.dumps({'type': 'status', 'message': 'Starting generation...'})}\n\n"
+            mode = "two-stage" if request.use_two_stage else "single-stage"
+            yield f"data: {json.dumps({'type': 'status', 'message': f'Starting {mode} generation...'})}\n\n"
 
-            # Progress tracking
-            progress_state = {"stage": "", "step": 0, "total": request.num_inference_steps}
+            # Progress tracking -- shared dict updated by generation thread
+            progress_state = {"stage": "", "step": 0, "total": 0}
 
             def progress_callback(stage: str, step: int, total: int) -> None:
-                """Callback to track progress (can't yield directly from here)."""
                 progress_state["stage"] = stage
                 progress_state["step"] = step
                 progress_state["total"] = total
 
-            # Generate video (blocking)
             seed = request.seed if request.seed is not None else int(time.time()) % (2**32)
-
             start_time = time.time()
 
-            # Run generation in thread pool to not block event loop
+            # Merge request params with config defaults
+            ltx2_cfg = config.ltx2
+
             @torch.no_grad()
             def do_generate():
-                from llm_dit.pipelines import generate_video_with_offloading, GenerationConfig
+                from llm_dit.pipelines import (
+                    GenerationConfig,
+                    TwoStageConfig,
+                    generate_video_two_stage,
+                    generate_video_with_offloading,
+                )
 
-                # Create generation config from request
                 gen_config = GenerationConfig(
                     num_frames=request.num_frames,
                     height=request.height,
                     width=request.width,
-                    num_inference_steps=request.num_inference_steps,
                     guidance_scale=request.guidance_scale,
                     seed=seed,
                 )
 
-                # Generate video with component offloading
-                return generate_video_with_offloading(
-                    prompt=request.prompt,
-                    config=gen_config,
-                    model_path=model_path,
-                    callback=progress_callback,
-                    use_progress=False,  # Disable tqdm, use callback instead
-                    lora_path=request.lora_path,
-                    lora_scale=request.lora_scale,
-                )
+                if request.use_two_stage:
+                    two_stage_cfg = TwoStageConfig(
+                        stage1_steps=request.stage1_steps or (ltx2_cfg.stage1_num_inference_steps if ltx2_cfg else 40),
+                        stage2_steps=request.stage2_steps or (ltx2_cfg.stage2_num_inference_steps if ltx2_cfg else 3),
+                        guidance_scale=request.guidance_scale,
+                        stg_scale=request.stg_scale,
+                        rescale_scale=request.rescale_scale,
+                        negative_prompt=request.negative_prompt,
+                        ge_gamma=request.ge_gamma,
+                        distilled_lora_path=request.distilled_lora_path or (ltx2_cfg.distilled_lora_path if ltx2_cfg else ""),
+                        distilled_lora_scale=request.distilled_lora_scale,
+                        spatial_upsampler_file=ltx2_cfg.spatial_upsampler_file if ltx2_cfg else "ltx-2-spatial-upscaler-x2-1.0.safetensors",
+                    )
 
-            # Start generation in background
+                    return generate_video_two_stage(
+                        prompt=request.prompt,
+                        config=gen_config,
+                        two_stage=two_stage_cfg,
+                        model_path=model_path,
+                        callback=progress_callback,
+                        gemma_variant=ltx2_cfg.gemma_variant if ltx2_cfg else "bf16",
+                        lora_path=request.lora_path,
+                        lora_scale=request.lora_scale,
+                    )
+                else:
+                    # Single-stage fallback
+                    gen_config.num_inference_steps = request.stage1_steps or (ltx2_cfg.num_inference_steps if ltx2_cfg else 40)
+                    return generate_video_with_offloading(
+                        prompt=request.prompt,
+                        config=gen_config,
+                        model_path=model_path,
+                        callback=progress_callback,
+                        use_progress=False,
+                        lora_path=request.lora_path,
+                        lora_scale=request.lora_scale,
+                        gemma_variant=ltx2_cfg.gemma_variant if ltx2_cfg else "bf16",
+                    )
+
             loop = asyncio.get_event_loop()
             gen_task = loop.run_in_executor(None, do_generate)
 
@@ -246,24 +233,21 @@ async def ltx2_generate_stream(request: LTX2GenerateRequest, config: ConfigDep):
                 total = progress_state["total"]
                 elapsed = time.time() - start_time
 
-                if stage and step > 0:
-                    eta = (elapsed / step) * (total - step) if total > 0 else 0
+                if stage and step > 0 and total > 0:
+                    eta = (elapsed / step) * (total - step)
                     its = step / elapsed if elapsed > 0 else 0
                     yield f"data: {json.dumps({'type': 'progress', 'stage': stage, 'step': step, 'total': total, 'elapsed': round(elapsed, 1), 'eta': round(eta, 1), 'its': round(its, 2)})}\n\n"
 
-            # Get result (video tensor [F, H, W, C] uint8)
             video = await gen_task
             generation_time = time.time() - start_time
 
             yield f"data: {json.dumps({'type': 'status', 'message': 'Saving video...'})}\n\n"
 
-            # Generate unique filename
             timestamp = time.strftime("%Y%m%d_%H%M%S")
             hash_suffix = hashlib.md5(f"{request.prompt}{seed}".encode()).hexdigest()[:8]
             video_filename = f"video_{timestamp}_{hash_suffix}.mp4"
             video_path = VIDEO_OUTPUT_DIR / video_filename
 
-            # Save video
             await asyncio.get_event_loop().run_in_executor(
                 None, lambda: save_ltx2_video(video, str(video_path), fps=request.fps)
             )
@@ -271,17 +255,13 @@ async def ltx2_generate_stream(request: LTX2GenerateRequest, config: ConfigDep):
             # Generate thumbnail (first frame)
             thumb_filename = f"thumb_{timestamp}_{hash_suffix}.png"
             thumb_path = VIDEO_OUTPUT_DIR / thumb_filename
-
             try:
-                # video is [F, H, W, C] uint8 tensor
                 first_frame = video[0].cpu().numpy()
                 Image.fromarray(first_frame).save(str(thumb_path))
             except Exception as e:
                 logger.warning(f"Failed to save thumbnail: {e}")
                 thumb_filename = None
 
-            # Return final result
-            # Note: Audio generation not yet implemented in pure PyTorch pipeline
             result = {
                 "type": "complete",
                 "video_url": f"/outputs/videos/{video_filename}",
@@ -290,7 +270,8 @@ async def ltx2_generate_stream(request: LTX2GenerateRequest, config: ConfigDep):
                 "generation_time": round(generation_time, 1),
                 "num_frames": request.num_frames,
                 "fps": request.fps,
-                "has_audio": False,  # Audio not yet implemented in pure PyTorch pipeline
+                "has_audio": False,
+                "two_stage": request.use_two_stage,
             }
             yield f"data: {json.dumps(result)}\n\n"
 
@@ -309,6 +290,6 @@ async def ltx2_generate_stream(request: LTX2GenerateRequest, config: ConfigDep):
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",  # Disable nginx buffering
+            "X-Accel-Buffering": "no",
         },
     )

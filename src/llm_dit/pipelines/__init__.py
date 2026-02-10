@@ -32,8 +32,13 @@ VideoOutput = None  # Deprecated - use WanVideoOutput or generate directly
 # Pure PyTorch generation utilities (no diffusers dependency)
 from llm_dit.pipelines.generate import (
     GenerationConfig,
+    StepContext,
+    StepSchedule,
+    TwoStageConfig,
+    constant_schedule,
     generate_video,
     generate_video_with_offloading,
+    generate_video_two_stage,
     create_position_indices,
     create_video_modality,
     cleanup_memory,
@@ -62,8 +67,13 @@ __all__ = [
     "MAX_TEXT_SEQ_LEN",
     # Pure PyTorch generation utilities
     "GenerationConfig",
+    "StepContext",
+    "StepSchedule",
+    "TwoStageConfig",
+    "constant_schedule",
     "generate_video",
     "generate_video_with_offloading",
+    "generate_video_two_stage",
     "create_position_indices",
     "create_video_modality",
     "cleanup_memory",

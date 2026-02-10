@@ -620,27 +620,43 @@ class QwenImage2512GenerateRequest(BaseModel):
 
 
 class LTX2GenerateRequest(BaseModel):
-    """Request for LTX-2 video generation."""
+    """Request for LTX-2 two-stage video generation."""
 
     prompt: str
-    negative_prompt: str = "worst quality, blurry, distorted, inconsistent motion"
-    width: int = Field(768, ge=256, le=1280)
-    height: int = Field(512, ge=256, le=1280)
+    negative_prompt: str = "worst quality, blurry, distorted"
+    width: int = Field(768, ge=256, le=1536)
+    height: int = Field(512, ge=256, le=1024)
 
     @field_validator("width", "height")
     @classmethod
-    def snap_to_32(cls, v: int) -> int:
-        """Snap to nearest multiple of 32 (LTX-2 VAE requirement)."""
-        snapped = round(v / 32) * 32
-        return max(256, min(1280, snapped))
+    def snap_to_64(cls, v: int) -> int:
+        """Snap to nearest multiple of 64 (two-stage requires 64-divisible)."""
+        snapped = round(v / 64) * 64
+        return max(256, min(1536, snapped))
+
     num_frames: int = 33
     fps: float = 24.0
-    num_inference_steps: int = 12
-    guidance_scale: float = 3.5
     seed: Optional[int] = None
     enable_audio: bool = False
     lora_path: Optional[str] = None
     lora_scale: Optional[float] = None
+
+    # Two-stage settings
+    use_two_stage: bool = True
+    stage1_steps: Optional[int] = None  # Override stage 1 steps (default: from config)
+    stage2_steps: Optional[int] = None  # Override stage 2 steps (default: from config)
+    guidance_scale: float = 3.5
+
+    # Guidance (stage 1 only)
+    stg_scale: float = 0.0
+    rescale_scale: float = 0.7
+
+    # LoRA
+    distilled_lora_path: Optional[str] = None
+    distilled_lora_scale: float = 0.8
+
+    # Optimization
+    ge_gamma: float = 0.0
 
 
 class Flux2GenerateRequest(BaseModel):
