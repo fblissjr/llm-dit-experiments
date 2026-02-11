@@ -125,6 +125,79 @@ def _ensure_zimage_loaded(manager) -> None:
     manager.load("zimage")
 
 
+def _ensure_zimage_lora(
+    manager,
+    requested_loras: list[str] | None = None,
+) -> None:
+    """Check LoRA mismatch on Z-Image transformer; reload if needed.
+
+    When the requested LoRAs differ from what's already fused into the
+    transformer, we must reload the entire pipeline (LoRA fusion is
+    irreversible -- weights are permanently added to the model parameters).
+    """
+    if not manager.is_loaded("zimage"):
+        return
+
+    zimage = manager.get_pipeline("zimage")
+    if zimage is None:
+        return
+
+    # Filter empty-path specs from UI (e.g., ":0.80" from unselected slots)
+    if requested_loras:
+        requested_loras = [s for s in requested_loras if not s.startswith(":")]
+    if not requested_loras:
+        return
+
+    from llm_dit.utils.lora import get_fused_state, parse_lora_spec
+
+    transformer = zimage.transformer
+    if transformer is None:
+        return
+
+    fused_state = get_fused_state(transformer)
+    requested_specs = [parse_lora_spec(s) for s in requested_loras]
+
+    if not fused_state.is_empty and not fused_state.matches(requested_specs):
+        logger.info(
+            f"[Z-Image] LoRA mismatch: fused=[{fused_state.summary()}], "
+            f"requested={requested_loras}. Reloading..."
+        )
+        # Drop local ref so _unload_zimage() can free GPU memory
+        del transformer
+        result = manager.reload_zimage()
+        logger.info(f"[Z-Image] Reload complete ({result.load_time:.1f}s)")
+
+
+def _apply_zimage_loras(
+    zimage,
+    requested_loras: list[str] | None,
+) -> None:
+    """Fuse requested LoRAs into the Z-Image transformer if not already fused."""
+    if not requested_loras:
+        return
+
+    clean_loras = [s for s in requested_loras if not s.startswith(":")]
+    if not clean_loras:
+        return
+
+    transformer = zimage.transformer
+    if transformer is None:
+        return
+
+    from llm_dit.utils.lora import get_fused_state, load_lora, parse_lora_spec
+
+    fused_state = get_fused_state(transformer)
+    requested_specs = [parse_lora_spec(s) for s in clean_loras]
+
+    if fused_state.matches(requested_specs):
+        return  # Already fused with exactly these LoRAs
+
+    for path, scale in requested_specs:
+        if not fused_state.is_fused(path, scale):
+            logger.info(f"[Z-Image] Fusing LoRA: {path} (scale={scale})")
+            load_lora(transformer, path, scale=scale)
+
+
 # =============================================================================
 # DyPE Endpoints
 # =============================================================================
@@ -254,6 +327,11 @@ async def generate(request: GenerateRequest, config: ConfigDep, manager: Manager
                 status_code=503,
                 detail=f"Z-Image pipeline failed to load: {str(e)}",
             )
+
+    # LoRA: check mismatch and reload if needed, then fuse
+    _ensure_zimage_lora(manager, request.loras)
+    zimage = manager.get_pipeline("zimage")  # Re-fetch after potential reload
+    _apply_zimage_loras(zimage, request.loras)
 
     # Apply variant-aware defaults (Base vs Turbo)
     apply_zimage_variant_defaults(request, config)
@@ -591,6 +669,11 @@ async def generate_stream(request: GenerateRequest, config: ConfigDep, manager: 
                 detail=f"Z-Image pipeline failed to load: {str(e)}",
             )
 
+    # LoRA: check mismatch and reload if needed, then fuse
+    _ensure_zimage_lora(manager, request.loras)
+    zimage = manager.get_pipeline("zimage")  # Re-fetch after potential reload
+    _apply_zimage_loras(zimage, request.loras)
+
     async def generate_with_progress() -> AsyncIterator[str]:
         """Async generator for SSE events."""
         try:
@@ -816,6 +899,11 @@ async def img2img(request: Img2ImgRequest, config: ConfigDep, manager: ManagerDe
     zimage = manager.get_pipeline("zimage")
     if zimage is None:
         raise HTTPException(status_code=503, detail="Pipeline not loaded")
+
+    # LoRA: check mismatch and reload if needed, then fuse
+    _ensure_zimage_lora(manager, request.loras)
+    zimage = manager.get_pipeline("zimage")  # Re-fetch after potential reload
+    _apply_zimage_loras(zimage, request.loras)
 
     try:
         from PIL import UnidentifiedImageError

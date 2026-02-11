@@ -497,6 +497,30 @@ class ModelManager:
             finally:
                 self._loading_in_progress["flux2"] = False
 
+    def reload_zimage(self) -> LoadResult:
+        """Unload Z-Image pipeline and reload fresh (clears fused LoRAs).
+
+        Thread-safe: acquires the zimage lock.
+        """
+        with self._locks["zimage"]:
+            self._unload_zimage()
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+            self._loading_in_progress["zimage"] = True
+            try:
+                result = self._load_zimage()
+                return result
+            except Exception:
+                self._pipelines.pop("zimage", None)
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                raise
+            finally:
+                self._loading_in_progress["zimage"] = False
+
     def _load_flux2(self, model_name_override: Optional[str] = None) -> LoadResult:
         """Load FLUX.2 Klein pipeline with 3-stage loading.
 

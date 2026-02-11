@@ -526,6 +526,7 @@ class GenerateRequest(BaseModel):
     fbcache: bool = False
     fbcache_threshold: Optional[float] = None
     fbcache_log: bool = False
+    loras: Optional[List[str]] = None
 
 
 class Img2ImgRequest(BaseModel):
@@ -560,6 +561,7 @@ class Img2ImgRequest(BaseModel):
     fbcache: bool = False
     fbcache_threshold: Optional[float] = None
     fbcache_log: bool = False
+    loras: Optional[List[str]] = None
 
 
 class EncodeRequest(BaseModel):
