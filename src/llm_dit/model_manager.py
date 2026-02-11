@@ -143,9 +143,6 @@ REQUIRES_RESTART = {
     # Compilation
     "compile",
     "compile_mode",
-    # LoRA (requires pipeline reload)
-    "lora_paths",
-    "lora_scales",
 }
 
 
@@ -442,16 +439,6 @@ class ModelManager:
                 logger.info("  Transformer compiled")
             except Exception as e:
                 logger.warning(f"  Failed to compile: {e}")
-
-        # Load LoRAs
-        if config.lora_paths:
-            logger.info(f"  Loading {len(config.lora_paths)} LoRA(s)...")
-            scales = config.lora_scales or [1.0] * len(config.lora_paths)
-            try:
-                updated = zimage_pipeline.load_lora(config.lora_paths, scale=scales)
-                logger.info(f"  {updated} layers updated by LoRA")
-            except Exception as e:
-                logger.error(f"  Failed to load LoRA: {e}")
 
         self._pipelines["zimage"] = zimage_pipeline
         self._encoder = getattr(zimage_pipeline, "encoder", None)
@@ -1143,7 +1130,6 @@ class ModelManager:
         logger.info(f"Pipeline loaded in {load_time:.1f}s")
 
         self._apply_optimizations(zimage_pipeline)
-        self._load_loras(zimage_pipeline)
 
         self._pipelines["zimage"] = zimage_pipeline
         self._encoder = zimage_pipeline.encoder
@@ -1293,7 +1279,6 @@ class ModelManager:
         self._apply_optimizations(zimage_pipeline)
         zimage_pipeline.encoder = api_encoder
         self._encoder = api_encoder
-        self._load_loras(zimage_pipeline)
         self._pipelines["zimage"] = zimage_pipeline
 
         load_time = time.time() - start
@@ -1313,18 +1298,10 @@ class ModelManager:
         )
 
     def _load_loras(self, pipeline: Any) -> None:
-        """Load LoRA weights into pipeline."""
-        config = self.config
-        if not config.lora_paths:
-            return
+        """No-op. LoRAs are loaded per-request, not at startup.
 
-        logger.info(f"Loading {len(config.lora_paths)} LoRA(s)...")
-        scales = config.lora_scales or [1.0] * len(config.lora_paths)
-        try:
-            updated = pipeline.load_lora(config.lora_paths, scale=scales)
-            logger.info(f"  {updated} layers updated by LoRA")
-        except Exception as e:
-            logger.error(f"  Failed to load LoRA: {e}")
+        Kept for PipelineLoader backward compatibility.
+        """
 
     def _resolve_templates_dir(self) -> Optional[str]:
         """Find templates directory."""
