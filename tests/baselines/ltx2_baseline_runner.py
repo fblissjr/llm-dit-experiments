@@ -18,7 +18,7 @@ Usage:
     comparison = compare_baselines(new_path, reference_path)
 
 Run with:
-    uv run pytest tests/e2e/test_ltx2_baselines.py -v -s
+    uv run pytest tests/integration/pipeline/test_ltx2_baselines.py -v -s
 """
 
 import gc

@@ -22,10 +22,10 @@ Requirements:
 
 Usage:
     # Run all reference tests
-    uv run pytest tests/e2e/test_ltx2_reference.py -v
+    uv run pytest tests/integration/pipeline/test_ltx2_reference.py -v
 
     # Run quick smoke test only
-    uv run pytest tests/e2e/test_ltx2_reference.py -v -k smoke
+    uv run pytest tests/integration/pipeline/test_ltx2_reference.py -v -k smoke
 """
 
 import gc

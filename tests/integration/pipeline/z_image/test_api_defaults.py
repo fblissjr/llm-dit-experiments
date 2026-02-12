@@ -5,11 +5,11 @@ Tests that the server API returns correct defaults from config.toml
 for the BASE model (shift=6.0, guidance_scale=4.0, steps=30).
 
 Run with server already running:
-    pytest tests/e2e/z_image/test_api_defaults.py -v -s
+    pytest tests/integration/pipeline/z_image/test_api_defaults.py -v -s
 
 Or start server first:
     uv run python -m web.server --config config.toml &
-    pytest tests/e2e/z_image/test_api_defaults.py -v -s
+    pytest tests/integration/pipeline/z_image/test_api_defaults.py -v -s
 
 Last updated: 2026-01-30
 """

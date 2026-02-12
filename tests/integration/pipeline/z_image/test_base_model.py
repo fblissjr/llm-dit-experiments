@@ -10,10 +10,10 @@ These tests verify the scheduler fix for the "pure noise" bug where the double
 linear shift formula caused images to remain as noise.
 
 Run with model path:
-    Z_IMAGE_MODEL_PATH=/path/to/Z-Image pytest tests/e2e/z_image/test_base_model.py -v -s
+    Z_IMAGE_MODEL_PATH=/path/to/Z-Image pytest tests/integration/pipeline/z_image/test_base_model.py -v -s
 
 Or with a running server:
-    pytest tests/e2e/z_image/test_base_model.py -v -s
+    pytest tests/integration/pipeline/z_image/test_base_model.py -v -s
 
 Last updated: 2026-01-30
 """

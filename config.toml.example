@@ -148,12 +148,12 @@ lora_scale = 1.0                # blend scale (0.0-1.0)
 offload_mode = "model"
 num_blocks_per_group = 2        # group mode only: DiT blocks to keep on GPU
 
-height = 768
-width = 512
+height = 512
+width = 768
 num_frames = 33
 fps = 24
 num_inference_steps = 12
-guidance_scale = 3.5
+guidance_scale = 3.0
 
 audio_enabled = false
 audio_negative_prompt = ""

@@ -1,0 +1,16 @@
+# FLUX.2 smoke test overlay -- merged over config.toml.example
+# Fastest possible generation that still exercises the full pipeline
+# 256x256, 2 steps, fp8-weight-only, seed=42
+
+default_pipeline = "none"
+
+[flux2]
+default_model = "klein-9b-fp8"
+default_steps = 2
+default_guidance = 1.0
+quantization = "fp8-weight-only"
+compile = false
+
+[server]
+host = "127.0.0.1"
+port = 7860

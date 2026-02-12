@@ -354,12 +354,12 @@ class LTX2Config:
     num_blocks_per_group: int = 2  # For group offload: DiT blocks to keep on GPU
 
     # Video generation defaults
-    height: int = 768  # Video height (multiple of 32)
-    width: int = 512  # Video width (multiple of 32)
+    height: int = 512  # Video height (multiple of 32, ref: DEFAULT_1_STAGE_HEIGHT)
+    width: int = 768  # Video width (multiple of 32, ref: DEFAULT_1_STAGE_WIDTH)
     num_frames: int = 33  # Number of frames (33-65 typical for 24GB)
     fps: int = 24  # Output FPS
     num_inference_steps: int = 40  # Stage 1 steps (full denoising, 40 for dev model)
-    guidance_scale: float = 3.5  # CFG scale (3.0-4.0 recommended)
+    guidance_scale: float = 3.0  # CFG scale (ref: DEFAULT_VIDEO_GUIDER_PARAMS.cfg_scale)
 
     # Audio generation
     audio_enabled: bool = False  # Enable audio stream generation

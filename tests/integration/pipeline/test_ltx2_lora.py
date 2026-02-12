@@ -11,10 +11,10 @@ These tests validate that:
 
 Usage:
     # Run LoRA loading test (requires GPU + model + LoRA file)
-    uv run pytest tests/e2e/test_ltx2_lora.py::TestLTX2LoRA::test_lora_loading -v -s
+    uv run pytest tests/integration/pipeline/test_ltx2_lora.py::TestLTX2LoRA::test_lora_loading -v -s
 
     # Run all LoRA tests
-    uv run pytest tests/e2e/test_ltx2_lora.py -v -s
+    uv run pytest tests/integration/pipeline/test_ltx2_lora.py -v -s
 
 Requirements:
     - CUDA GPU with 16GB+ VRAM

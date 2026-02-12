@@ -1,8 +1,44 @@
 # testing guide for agents
 
-*last updated: 2026-02-03*
+*last updated: 2026-02-12*
 
 Quick reference for LLM agents running tests in this codebase.
+
+## e2e testing standard (API-first)
+
+**Non-negotiable: all E2E tests go through the API** via `TestClient` (in-process HTTP).
+
+This validates the full stack: Pydantic validation, router logic, dependency injection, ModelManager, and pipeline execution. Tests that call pipelines directly are classified as integration tests, not E2E.
+
+### quick start
+```bash
+# Run FLUX.2 API smoke tests
+uv run pytest tests/e2e/api/test_flux2_smoke.py -v -s
+
+# Run all API E2E tests
+uv run pytest tests/e2e/api/ -v -s
+
+# Collect only (no GPU, verify imports)
+uv run pytest tests/e2e/api/ --collect-only
+```
+
+### how it works
+- Config overlays in `tests/configs/*.toml` are deep-merged over `config.toml.example`
+- Model paths come from the real `config.toml`
+- Each test module declares its overlay via `config_overlay` fixture
+- `run_recorder` captures all metadata to `outputs/tests/runs/`
+
+### every e2e test must
+- [ ] Use `run_recorder` fixture (not direct pipeline calls)
+- [ ] Send HTTP requests to real API endpoints
+- [ ] Config loaded from TOML overlay in `tests/configs/`
+- [ ] Assert on response status code
+- [ ] Save output via `save_output()`
+- [ ] Run validation via `validate()`
+- [ ] Assert `validation.passed`
+
+### full reference
+See [tests/e2e/api/README.md](e2e/api/README.md) for architecture, config factory, validation thresholds, and step-by-step guide for adding new tests.
 
 ## core principle
 
@@ -22,9 +58,10 @@ ls presets/testing/   # Use existing preset configs
 
 | Infrastructure | Location | Purpose |
 |----------------|----------|---------|
+| **Constants** | `tests/constants/<pipeline>.py` | Canonical parameter values (single source of truth) |
 | **Presets** | `presets/testing/<pipeline>_*.md` | Test configs (YAML frontmatter) |
 | **Baselines** | `tests/baselines/` | Generation and comparison utilities |
-| **Backends** | `tests/backends/` | Portable test protocol |
+| **Backends** | `tests/backends/` | Portable test protocol (derives from constants) |
 
 ### generating baselines
 ```python
@@ -140,11 +177,16 @@ uv run pytest tests/unit/test_ltx2_video_vae.py -v
 ## quick commands
 
 ```bash
-# Run ALL tests (~1030 tests, ~5 min)
+# Run ALL tests (~1200 tests, ~5 min)
 uv run pytest tests/ -v
 
-# Quick smoke test (30s, requires GPU)
-uv run pytest tests/e2e/test_baseline_portable.py::TestBaselineSmoke -v -s
+# API E2E smoke tests (GPU + models required)
+uv run pytest tests/e2e/api/test_flux2_smoke.py -v -s
+uv run pytest tests/e2e/api/test_ltx2_smoke.py -v -s
+uv run pytest tests/e2e/api/ -v -s  # all pipelines
+
+# Pipeline integration smoke test (GPU required)
+uv run pytest tests/integration/pipeline/test_baseline_portable.py::TestBaselineSmoke -v -s
 
 # Unit tests only (no GPU, fast)
 uv run pytest tests/unit/ -v
@@ -161,32 +203,49 @@ uv run pytest tests/ -v --runslow
 | Priority | What to Run | When |
 |----------|-------------|------|
 | **1. Unit** | `tests/unit/` | After any code change |
-| **2. Integration** | `tests/integration/` | After component changes |
-| **3. E2E** | `tests/e2e/` | Before commits, after major changes |
+| **2. Integration** | `tests/integration/` (incl. `pipeline/`) | After component changes |
+| **3. E2E (API)** | `tests/e2e/api/` | Before commits, after major changes |
 
 ## test structure
 
 ```
 tests/
-├── unit/                  # Fast, no GPU required
-│   ├── test_ltx2_*.py     # LTX-2 transformer, VAE, components
-│   ├── test_gemma3_*.py   # Gemma3 encoder
+├── unit/                          # Fast, no GPU required
+│   ├── test_ltx2_*.py             # LTX-2 transformer, VAE, components
+│   ├── test_gemma3_*.py           # Gemma3 encoder
 │   ├── test_conditioning.py
 │   ├── test_scheduler.py
 │   └── ...
-├── integration/           # May require GPU
-│   ├── test_ltx2_*.py     # Cross-component tests
-│   ├── test_performance.py # Memory/timing regression tests
+├── integration/                   # May require GPU
+│   ├── test_ltx2_*.py             # Cross-component tests
+│   ├── test_performance.py        # Memory/timing regression tests
+│   ├── pipeline/                  # Former E2E tests (direct pipeline calls)
+│   │   ├── test_baseline_portable.py
+│   │   ├── test_flux2_generation.py
+│   │   ├── test_ltx2_baselines.py
+│   │   └── ...
 │   └── ...
-├── e2e/                   # Require GPU + models
-│   ├── test_baseline_portable.py  # Main e2e test
-│   ├── test_ltx2_reference.py
+├── e2e/                           # API-first E2E tests (require GPU + models)
+│   └── api/                       # TestClient-based API tests
+│       ├── conftest.py            # TestClient + RunRecorder fixtures
+│       ├── config_factory.py      # TOML overlay merging
+│       ├── run_recorder.py        # Metadata capture
+│       ├── validation.py          # Automated checks
+│       ├── test_flux2_smoke.py    # FLUX.2 API tests
+│       ├── test_ltx2_smoke.py     # LTX-2 API tests
+│       └── test_zimage_smoke.py   # Z-Image API tests
+├── constants/                     # Canonical parameter constants (single source of truth)
+│   ├── ltx2.py                    # LTX-2 reference-aligned values
+│   ├── flux2.py                   # FLUX.2 values
+│   └── zimage.py                  # Z-Image values (turbo + base)
+├── configs/                       # TOML overlays for E2E tests (derived from constants)
+│   ├── flux2_smoke.toml
+│   ├── ltx2_smoke.toml
 │   └── ...
-├── backends/              # Portable test infrastructure
-│   ├── protocol.py        # GenerationConfig, Backend interface
-│   ├── llm_dit_backend.py # Our implementation
-│   └── ltx2_backend.py    # Official LTX-2 reference
-└── fixtures/              # Test data
+├── backends/                      # Portable test infrastructure
+│   ├── protocol.py
+│   └── ...
+└── fixtures/                      # Test data
 ```
 
 ## when to run which tests
@@ -222,7 +281,7 @@ uv run pytest tests/unit/test_scheduler.py -v
 ```bash
 # Quick validation (~2 min with GPU)
 uv run pytest tests/unit/test_ltx2_*.py tests/unit/test_conditioning.py -v
-uv run pytest tests/e2e/test_baseline_portable.py::TestBaselineSmoke -v -s
+uv run pytest tests/integration/pipeline/test_baseline_portable.py::TestBaselineSmoke -v -s
 ```
 
 ### full validation (before PR)
@@ -270,7 +329,7 @@ Read the assertion error, check the actual vs expected values.
 ### if out of memory
 ```bash
 # Run smoke config only (14GB)
-uv run pytest tests/e2e/test_baseline_portable.py::TestBaselineSmoke -v -s
+uv run pytest tests/integration/pipeline/test_baseline_portable.py::TestBaselineSmoke -v -s
 
 # Skip model-loading tests
 uv run pytest tests/integration/ -v -k "not gpu"
@@ -278,11 +337,15 @@ uv run pytest tests/integration/ -v -k "not gpu"
 
 ## test configs (e2e)
 
-| Config | Frames | Resolution | Steps | CFG | Est. Time |
-|--------|--------|------------|-------|-----|-----------|
-| `get_smoke_config()` | 9 | 256x384 | 2 | 1.0 | ~30s |
-| `get_short_config()` | 33 | 384x512 | 10 | 3.0 | ~2min |
-| `get_reference_config()` | 121 | 512x768 | 40 | 4.0 | ~10min |
+| Config | Frames | Resolution | Steps | CFG | Notes |
+|--------|--------|------------|-------|-----|-------|
+| `ltx2_smoke.toml` (distilled) | 9 | 256x384 | 4 | 3.0 | Fastest validation |
+| `ltx2_standard.toml` (distilled) | 33 | 512x768 | 12 | 3.0 | Standard quality |
+| `ltx2_reference.toml` (full) | 121 | 512x768 | 40 | 3.0 | 1:1 reference repo match |
+| SMOKE_CONFIG (protocol.py, full) | 33 | 512x768 | 30 | 3.0 | Backend comparison |
+| REFERENCE_CONFIG (protocol.py, full) | 121 | 512x768 | 40 | 3.0 | Backend comparison |
+
+All values derive from `tests/constants/ltx2.py`. See `tests/unit/test_config_consistency.py` for drift detection.
 
 ## debugging test failures
 
@@ -364,10 +427,10 @@ For 1:1 comparison with official LTX-2 implementation, see [backends/README.md](
 
 ```bash
 # Run with our implementation
-uv run pytest tests/e2e/test_baseline_portable.py -v -s
+uv run pytest tests/integration/pipeline/test_baseline_portable.py -v -s
 
 # Run with official LTX-2 (if available)
-LLM_DIT_TEST_BACKEND=ltx2 uv run pytest tests/e2e/test_baseline_portable.py -v -s
+LLM_DIT_TEST_BACKEND=ltx2 uv run pytest tests/integration/pipeline/test_baseline_portable.py -v -s
 ```
 
 ## test coverage summary
@@ -408,7 +471,7 @@ LLM_DIT_TEST_BACKEND=ltx2 uv run pytest tests/e2e/test_baseline_portable.py -v -
 ### before implementing features that affect generation
 ```bash
 # Generate baseline with existing infrastructure
-uv run pytest tests/e2e/test_<pipeline>_baselines.py::Test<Pipeline>Baselines::test_smoke_baseline_generation -v -s
+uv run pytest tests/integration/pipeline/test_<pipeline>_baselines.py::Test<Pipeline>Baselines::test_smoke_baseline_generation -v -s
 ```
 
 ### after e2e tests
@@ -431,7 +494,7 @@ Only update when:
 
 ```bash
 # Generate new baseline
-uv run pytest tests/e2e/test_<pipeline>_baselines.py -v -s
+uv run pytest tests/integration/pipeline/test_<pipeline>_baselines.py -v -s
 
 # Compare with previous (visual inspection required)
 # There is no automated threshold - you must look at the output

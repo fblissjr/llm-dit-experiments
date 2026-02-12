@@ -13,7 +13,7 @@ Pipeline stages:
 4. Feature extractor: projected embeddings
 5. Embeddings connector: final output
 
-Run with: uv run pytest tests/e2e/test_pipeline_shapes.py -v
+Run with: uv run pytest tests/integration/pipeline/test_pipeline_shapes.py -v
 """
 
 import pytest

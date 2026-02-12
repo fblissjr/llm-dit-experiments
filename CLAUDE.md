@@ -1,6 +1,6 @@
 # agent context (v0.9.0)
 
-*last updated: 2026-02-09*
+*last updated: 2026-02-12*
 
 Quick reference for LLM agents. Read only what you need.
 
@@ -28,6 +28,7 @@ Never assume you know where code is or what exists. Always verify by reading.
 | 1 | This file | Critical rules, quick reference |
 | 2 | [internal/state/current.md](internal/state/current.md) | What's happening now, active pipelines, versions |
 | 3 | Domain docs (see navigation below) | Based on your task |
+| -- | [internal/log/](internal/log/) | Recent session logs (most recent `log_YYYY-MM-DD.md`) |
 
 **Optional:** [VISION.md](VISION.md) for architecture philosophy (L1-L6 composability hierarchy).
 
@@ -78,6 +79,11 @@ When adding a new parameter, only 2 files need changes: the dataclass in `config
 | **Agent workflows** | [claude_workflow.md](internal/principles/claude_workflow.md) |
 | **Quantization** | [quantization.md](docs/reference/quantization.md) |
 | **HTTPS setup** | [README.md](README.md#https-setup) |
+| **Codebase map** | [codebase_map.md](internal/docs/architecture/codebase_map.md) |
+| **Logging standards** | [logging_standards.md](internal/principles/logging_standards.md) |
+| **Modular architecture (L1-L6)** | [modular_architecture.md](internal/principles/modular_architecture.md) |
+| **API endpoints / OpenAPI** | `scripts/export_openapi.py` or `npm run export-openapi && npm run gen-api` from `web/frontend-v2/` |
+| **E2E testing standard** | [tests/e2e/api/README.md](tests/e2e/api/README.md) |
 | **Model-specific docs** | See quickstarts below |
 
 ## feature implementation workflow
@@ -122,7 +128,7 @@ ls src/llm_dit/utils/  # Check existing utilities
 For any code that affects generation output:
 ```bash
 # Generate baseline BEFORE making changes
-uv run pytest tests/e2e/test_<pipeline>_baselines.py -v -s
+uv run pytest tests/integration/pipeline/test_<pipeline>_baselines.py -v -s
 ```
 
 ## multi-model platform
@@ -149,6 +155,7 @@ This is a **multi-workstream project**. Work happens in parallel across layers:
 | Model lifecycle | `src/llm_dit/model_manager.py` | `ModelManager` -- load/unload/reload any pipeline |
 | API layer | `web/routers/`, `web/schemas.py` | 7 domain routers + Pydantic models |
 | Pipelines | `src/llm_dit/pipelines/` | Each pipeline has its own file |
+| Frontend | `web/frontend-v2/` | React 18 + Zustand 5 + Vite 6. Schema-driven forms from OpenAPI. See [web CLAUDE.md](internal/web/CLAUDE.md) |
 
 ## architecture patterns (post-refactor)
 
@@ -239,14 +246,21 @@ For full debugging patterns, see [lessons_learned.md](internal/state/lessons_lea
 # Unit tests (no GPU, fast)
 uv run pytest tests/unit/ -v
 
-# Smoke test (GPU required)
-uv run pytest tests/e2e/test_baseline_portable.py::TestBaselineSmoke -v -s
+# E2E API tests (requires GPU + models)
+uv run pytest tests/e2e/api/test_flux2_smoke.py -v -s
+uv run pytest tests/e2e/api/test_ltx2_smoke.py -v -s
+
+# Pipeline integration smoke test (GPU required)
+uv run pytest tests/integration/pipeline/test_baseline_portable.py::TestBaselineSmoke -v -s
 
 # LoRA tests
 uv run pytest tests/unit/ -v -k lora
 
 # Config DRY validation
 uv run pytest tests/unit/test_dry_config.py -v
+
+# Regenerate frontend types from API (from web/frontend-v2/)
+npm run export-openapi && npm run gen-api
 ```
 
 Full testing guide: [tests/CLAUDE.md](tests/CLAUDE.md)

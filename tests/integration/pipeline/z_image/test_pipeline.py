@@ -6,7 +6,7 @@ These tests require:
 - CUDA GPU with sufficient VRAM (RTX 4090 recommended)
 
 Run on Linux server only:
-    Z_IMAGE_MODEL_PATH=/path/to/model pytest tests/e2e/ -v
+    Z_IMAGE_MODEL_PATH=/path/to/model pytest tests/integration/pipeline/z_image/ -v
 """
 
 import pytest

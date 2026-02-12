@@ -13,7 +13,7 @@ Key Checks:
 4. Per-stage per-dim range tracking
 
 Usage:
-    pytest tests/e2e/test_connector_diagnostics.py -v --runslow
+    pytest tests/integration/pipeline/test_connector_diagnostics.py -v --runslow
 
 Output:
     outputs/tests/runs/{backend}_test_connector_diagnostics_{timestamp}/

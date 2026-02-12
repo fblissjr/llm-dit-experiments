@@ -14,10 +14,10 @@ Requirements:
 
 Usage:
     # Run FP8 + offload tests
-    uv run pytest tests/e2e/test_flux2_fp8_offload.py -v -s
+    uv run pytest tests/integration/pipeline/test_flux2_fp8_offload.py -v -s
 
     # Run with memory tracking
-    uv run pytest tests/e2e/test_flux2_fp8_offload.py -v -s --log-cli-level=DEBUG
+    uv run pytest tests/integration/pipeline/test_flux2_fp8_offload.py -v -s --log-cli-level=DEBUG
 """
 
 import gc

@@ -168,7 +168,7 @@ LTX-2 requires frame counts in the form `(8 * k) + 1`:
 Use the smoke test preset to quickly validate prompt quality:
 
 ```bash
-uv run pytest tests/e2e/test_ltx2_baselines.py::TestLTX2Baselines::test_smoke_baseline_generation -v -s
+uv run pytest tests/integration/pipeline/test_ltx2_baselines.py::TestLTX2Baselines::test_smoke_baseline_generation -v -s
 ```
 
 For custom prompts:

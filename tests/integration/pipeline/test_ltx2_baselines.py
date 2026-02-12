@@ -18,13 +18,13 @@ Output Structure:
 
 Usage:
     # Run smoke baseline (fastest, ~2min)
-    uv run pytest tests/e2e/test_ltx2_baselines.py::TestLTX2Baselines::test_smoke_baseline_generation -v -s
+    uv run pytest tests/integration/pipeline/test_ltx2_baselines.py::TestLTX2Baselines::test_smoke_baseline_generation -v -s
 
     # Run reproducibility test
-    uv run pytest tests/e2e/test_ltx2_baselines.py::TestLTX2Baselines::test_baseline_reproducibility -v -s
+    uv run pytest tests/integration/pipeline/test_ltx2_baselines.py::TestLTX2Baselines::test_baseline_reproducibility -v -s
 
     # Run all baseline tests (slow)
-    uv run pytest tests/e2e/test_ltx2_baselines.py -v -s --runslow
+    uv run pytest tests/integration/pipeline/test_ltx2_baselines.py -v -s --runslow
 
 Requirements:
     - CUDA GPU with 16GB+ VRAM

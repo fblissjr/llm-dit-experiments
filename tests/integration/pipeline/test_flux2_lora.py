@@ -13,10 +13,10 @@ These tests validate that:
 
 Usage:
     # Run LoRA generation test
-    uv run pytest tests/e2e/test_flux2_lora.py::TestFlux2LoRA::test_generation_with_lora -v -s
+    uv run pytest tests/integration/pipeline/test_flux2_lora.py::TestFlux2LoRA::test_generation_with_lora -v -s
 
     # Run all LoRA tests
-    uv run pytest tests/e2e/test_flux2_lora.py -v -s
+    uv run pytest tests/integration/pipeline/test_flux2_lora.py -v -s
 
 Requirements:
     - CUDA GPU with 16GB+ VRAM

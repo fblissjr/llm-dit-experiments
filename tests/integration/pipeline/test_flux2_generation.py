@@ -17,10 +17,10 @@ Requirements:
 
 Usage:
     # Run E2E generation tests
-    uv run pytest tests/e2e/test_flux2_generation.py -v
+    uv run pytest tests/integration/pipeline/test_flux2_generation.py -v
 
     # Run specific test
-    uv run pytest tests/e2e/test_flux2_generation.py::TestFlux2BasicGeneration::test_klein_4b_smoke -v -s
+    uv run pytest tests/integration/pipeline/test_flux2_generation.py::TestFlux2BasicGeneration::test_klein_4b_smoke -v -s
 """
 
 import gc

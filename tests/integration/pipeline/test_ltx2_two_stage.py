@@ -14,10 +14,10 @@ sampled frames as PNGs, and a consolidated run_manifest.json.
 
 Run with:
     # Smoke test (~3-5 min, server must be running)
-    uv run pytest tests/e2e/test_ltx2_two_stage_e2e.py -v -s -k smoke
+    uv run pytest tests/integration/pipeline/test_ltx2_two_stage.py -v -s -k smoke
 
     # Full suite including reference (~10 min)
-    uv run pytest tests/e2e/test_ltx2_two_stage_e2e.py -v -s --runslow
+    uv run pytest tests/integration/pipeline/test_ltx2_two_stage.py -v -s --runslow
 
 Environment variables:
     TEST_SERVER_URL: Server URL (default: http://localhost:7860)

@@ -19,13 +19,13 @@ Output Structure:
 
 Usage:
     # Run in llm-dit-experiments repo (uses our implementation)
-    uv run pytest tests/e2e/test_baseline_portable.py -v -s
+    uv run pytest tests/integration/pipeline/test_baseline_portable.py -v -s
 
     # Run in LTX-2 repo (uses official implementation)
-    pytest tests/e2e/test_baseline_portable.py -v -s
+    pytest tests/integration/pipeline/test_baseline_portable.py -v -s
 
     # Force specific backend
-    LLM_DIT_TEST_BACKEND=ltx2 pytest tests/e2e/test_baseline_portable.py -v -s
+    LLM_DIT_TEST_BACKEND=ltx2 pytest tests/integration/pipeline/test_baseline_portable.py -v -s
 
 Requirements:
     - CUDA GPU with 24GB+ VRAM

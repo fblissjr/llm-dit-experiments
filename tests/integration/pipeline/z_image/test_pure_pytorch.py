@@ -12,7 +12,7 @@ Requires:
 - CUDA GPU with sufficient VRAM
 
 Run:
-    Z_IMAGE_MODEL_PATH=/path/to/model pytest tests/e2e/z_image/test_pure_pytorch.py -v -s
+    Z_IMAGE_MODEL_PATH=/path/to/model pytest tests/integration/pipeline/z_image/test_pure_pytorch.py -v -s
 
 Last updated: 2026-02-01
 """
