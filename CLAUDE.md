@@ -86,6 +86,29 @@ When adding a new parameter, only 2 files need changes: the dataclass in `config
 | **E2E testing standard** | [tests/e2e/api/README.md](tests/e2e/api/README.md) |
 | **Model-specific docs** | See quickstarts below |
 
+## skills (slash commands)
+
+Use `/skill-name` for instant context loading. Skills inject live file listings and coderef mappings.
+
+| Skill | Invoked as | Scope |
+|-------|-----------|-------|
+| **Pipeline skills** | | |
+| LTX-2 pipeline | `/pipeline-ltx2` | Full LTX-2 pipeline context + sub-skill references |
+| FLUX.2 pipeline | `/pipeline-flux2` | FLUX.2 pipeline, persistent model pattern, LoRA |
+| Z-Image pipeline | `/pipeline-zimage` | Z-Image turbo/base variants |
+| Qwen-Image pipeline | `/pipeline-qwenimage` | Qwen-Image 2511 (edit) and 2512 (t2i) |
+| **LTX-2 sub-skills** | | |
+| LTX-2 encoder | `/ltx2-encoder` | Gemma3 49-layer extraction, connector, thinking tokens |
+| LTX-2 transformer | `/ltx2-transformer` | 48-block DiT, AdaLN-Zero, RoPE |
+| LTX-2 VAE | `/ltx2-vae` | Causal 3D VAE, tiling, upsampler |
+| LTX-2 conditioning | `/ltx2-conditioning` | LatentState, keyframes, I2V, two-stage |
+| LTX-2 research | `/ltx2-research` | Experiments, traces, analysis docs |
+| **Area skills** | | |
+| Architecture | `/architecture` | Config, ModelManager, quantization, LoRA, encoders |
+| Frontend | `/frontend` | React UI, FastAPI routers, OpenAPI codegen |
+| Testing | `/testing` | Unit/integration/E2E tests, constants, infrastructure |
+| Experiments | `/experiment` | Experiment framework, metrics, research protocols |
+
 ## feature implementation workflow
 
 **Before implementing ANY feature, trace the full data flow using search:**
