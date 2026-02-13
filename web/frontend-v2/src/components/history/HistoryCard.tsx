@@ -4,7 +4,7 @@
  * Individual history item showing thumbnail, prompt preview, and key params.
  */
 
-import { useCallback, useState } from 'react';
+import { memo, useCallback, useState } from 'react';
 import { cn } from '@/utils';
 import { useSessionStore } from '@/stores';
 import type { HistoryItem } from '@/api/types';
@@ -15,7 +15,7 @@ interface HistoryCardProps {
   item: HistoryItem;
 }
 
-export function HistoryCard({ item }: HistoryCardProps) {
+export const HistoryCard = memo(function HistoryCard({ item }: HistoryCardProps) {
   const loadHistoryParams = useSessionStore((s) => s.loadHistoryParams);
   const removeHistoryItem = useSessionStore((s) => s.removeHistoryItem);
   const [showViewer, setShowViewer] = useState(false);
@@ -154,7 +154,7 @@ export function HistoryCard({ item }: HistoryCardProps) {
       )}
     </>
   );
-}
+}, (prev, next) => prev.item.id === next.item.id);
 
 /**
  * Format timestamp to relative time string

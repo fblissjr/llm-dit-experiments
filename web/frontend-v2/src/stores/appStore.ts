@@ -23,6 +23,7 @@ import type {
   GenerationContext,
 } from '@/api/types';
 import { PIPELINE_COLOR_MAP } from '@/constants/colors';
+import { useFormStore } from './formStore';
 import {
   fetchPipelines,
   fetchPresets,
@@ -316,17 +317,10 @@ export const useAppStore = create<AppState>()(
         });
 
         // Apply default preset if one is configured
-        // Use setTimeout to break circular dependency (formStore imports appStore)
         if (defaultPreset && presets.length > 0) {
           const preset = presets.find((p) => p.name === defaultPreset);
           if (preset && preset.params) {
-            setTimeout(async () => {
-              const { useFormStore } = await import('./formStore');
-              const formStore = useFormStore.getState();
-
-              // Apply preset params (includes negative_prompt, steps, guidance_scale, etc.)
-              formStore.applyPreset(pipelineId, defaultPreset, preset.params);
-            }, 0);
+            useFormStore.getState().applyPreset(pipelineId, defaultPreset, preset.params);
           }
         }
       } catch {

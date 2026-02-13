@@ -15,6 +15,8 @@ Uses [Semantic Versioning](https://semver.org/).
 - Frontend: `getResolvedValues()` module-level reference-equality cache (avoids recomputing on every selector call)
 - Frontend: shared `PIPELINE_COLOR_MAP` constant (deduplicates appStore + HistoryCard)
 - Frontend: lazy-loading on history thumbnails (`loading="lazy"`)
+- Frontend: `React.memo` on `HistoryCard` with `item.id` comparator (prevents 500 cards re-rendering)
+- Frontend: smoke render test (`App.smoke.test.tsx`) with route-based fetch mock and jsdom setup
 - Backend: `GZipMiddleware` (Starlette built-in, minimum_size=1000, SSE auto-excluded)
 - Backend: `Cache-Control` headers on `/api/pipelines` (5min), `/api/presets/preset/{name}` (5min), `/api/context` (5s)
 
@@ -30,8 +32,11 @@ Uses [Semantic Versioning](https://semver.org/).
 - Upgraded `react` 18 -> 19, `react-dom` 18 -> 19, `@types/react` 18 -> 19, `@types/react-dom` 18 -> 19
 - Migrated Tailwind CSS 3 -> 4: `@tailwind` directives -> `@import "tailwindcss"`, config.js -> CSS `@theme`, `@layer components` -> `@utility`, PostCSS -> `@tailwindcss/vite` plugin
 - Tailwind 4 class name updates: `rounded` -> `rounded-sm`, `outline-none` -> `outline-hidden`, `flex-shrink-0` -> `shrink-0`, `min-w-[3.5rem]` -> `min-w-14`
+- Frontend: replaced dynamic `import('./formStore')` in appStore with static import (eliminates Vite build warning)
+- Frontend: removed Tailwind 4 border-color compat shim (all usages already have explicit colors)
 
 ### fixed
+- Frontend: `StatusBar.tsx` crash when `ctx.pendingRestartFields` is undefined (added optional chaining)
 - FLUX.2 prompt upsampling now reads `api_model` from `config.toml [rewriter].api_model` instead of using hardcoded default (both sync and streaming endpoints)
 
 ## 0.9.2
