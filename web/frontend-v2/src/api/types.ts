@@ -215,6 +215,7 @@ export interface GenerationResult {
   seed: number;
   durationMs: number;
   timestamp: number;
+  warnings?: string[];
 }
 
 /**

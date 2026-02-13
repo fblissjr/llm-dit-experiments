@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Simple web server for Z-Image generation.
+Multi-pipeline generation server (LTX-2, FLUX.2, Z-Image, Qwen-Image).
 
 Usage:
     uv run web/server.py
@@ -25,10 +25,11 @@ if _project_root not in sys.path:
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from starlette.middleware.gzip import GZipMiddleware
 
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Z-Image Generator")
+app = FastAPI(title="LLM-DiT Studio")
 
 # CORS for local development
 app.add_middleware(
@@ -38,6 +39,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Compress responses >= 1KB. SSE streams (text/event-stream) are
+# automatically excluded because they're sent as chunked, unbuffered.
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 
 def _register_routers():
@@ -113,7 +118,7 @@ def main():
     from llm_dit.model_manager import ModelManager
 
     parser = create_base_parser(
-        description="Z-Image web server",
+        description="LLM-DiT generation server",
         include_server_args=True,
         include_generation_args=True,
     )

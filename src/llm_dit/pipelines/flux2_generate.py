@@ -680,6 +680,144 @@ def denoise(
     return img
 
 
+def denoise_cfg(
+    model,
+    img: torch.Tensor,
+    img_ids: torch.Tensor,
+    txt: torch.Tensor,
+    txt_ids: torch.Tensor,
+    timesteps: list[float],
+    guidance: float,
+    img_cond_seq: torch.Tensor | None = None,
+    img_cond_seq_ids: torch.Tensor | None = None,
+    progress_callback: Callable | None = None,
+) -> torch.Tensor:
+    """
+    FLUX.2 denoising loop with explicit Classifier-Free Guidance (CFG).
+
+    Used for base (non-distilled) models. Unlike denoise(), which passes a
+    guidance embedding vector to the model, this function:
+    1. Doubles the batch (uncond + cond) for a single forward pass
+    2. Passes guidance=None to the model (no guidance embedding)
+    3. Applies the CFG formula: pred = pred_uncond + scale * (pred_cond - pred_uncond)
+
+    The txt tensor must already be cat([txt_empty, txt_prompt]) along dim=0,
+    where txt_empty is the encoder output for an empty string "".
+
+    Ported from: coderef/flux2/src/flux2/sampling.py:316-362
+
+    Args:
+        model: FLUX.2 transformer
+        img: Initial noise [1, seq_len, channels]
+        img_ids: Image position IDs [1, seq_len, 4]
+        txt: Text embeddings [2, txt_len, context_dim] -- cat([empty, prompt])
+        txt_ids: Text position IDs [2, txt_len, 4]
+        timesteps: List of timesteps from ~1 to ~0
+        guidance: CFG scale (e.g., 4.0 for base models)
+        img_cond_seq: Reference image tokens [1, ref_tokens, channels] (optional)
+        img_cond_seq_ids: Reference image position IDs [1, ref_tokens, 4] (optional)
+        progress_callback: Optional callback(step, total, stage) for progress updates
+
+    Returns:
+        Denoised latents [1, seq_len, channels]
+    """
+    num_steps = len(timesteps) - 1
+    num_img_tokens = img.shape[1]
+
+    logger.debug("=" * 60)
+    logger.debug("[DenoiseCFG] Starting CFG denoising loop")
+    logger.debug(f"[DenoiseCFG] num_steps={num_steps}, guidance={guidance}")
+    logger.debug(f"[DenoiseCFG] img shape={img.shape}, txt shape={txt.shape}")
+
+    # Double img and img_ids along batch dimension for uncond+cond
+    img = torch.cat([img, img], dim=0)  # [2, seq_len, C]
+    img_ids = torch.cat([img_ids, img_ids], dim=0)  # [2, seq_len, 4]
+
+    if img_cond_seq is not None:
+        assert img_cond_seq_ids is not None
+        img_cond_seq = torch.cat([img_cond_seq, img_cond_seq], dim=0)
+        img_cond_seq_ids = torch.cat([img_cond_seq_ids, img_cond_seq_ids], dim=0)
+
+    logger.debug(f"[DenoiseCFG] Doubled batch: img={img.shape}, txt={txt.shape}")
+
+    if torch.cuda.is_available():
+        torch.cuda.reset_peak_memory_stats()
+
+    denoise_start = time.perf_counter()
+    step_times: list[float] = []
+
+    for step_idx, (t_curr, t_prev) in enumerate(
+        tqdm(zip(timesteps[:-1], timesteps[1:]), total=num_steps, desc="Denoising (CFG)")
+    ):
+        step_start = time.perf_counter()
+
+        if progress_callback is not None:
+            progress_callback(step_idx + 1, num_steps, "Denoising (CFG)")
+
+        t_vec = torch.full(
+            (img.shape[0],), t_curr, dtype=img.dtype, device=img.device
+        )
+
+        # Prepare input -- concatenate reference tokens if provided
+        img_input = img
+        img_input_ids = img_ids
+        if img_cond_seq is not None:
+            img_input = torch.cat([img, img_cond_seq], dim=1)
+            img_input_ids = torch.cat([img_ids, img_cond_seq_ids], dim=1)
+
+        # Model forward -- guidance=None for CFG (no guidance embedding)
+        with torch.no_grad():
+            pred = model(
+                x=img_input,
+                x_ids=img_input_ids,
+                timesteps=t_vec,
+                ctx=txt,
+                ctx_ids=txt_ids,
+                guidance=None,
+            )
+
+        # Only take prediction for noise tokens (not reference tokens)
+        if img_cond_seq is not None:
+            pred = pred[:, :num_img_tokens]
+
+        # CFG formula: split into uncond/cond halves, combine
+        pred_uncond, pred_cond = pred.chunk(2)
+        pred = pred_uncond + guidance * (pred_cond - pred_uncond)
+
+        # Re-duplicate for next step (both halves get the same update)
+        pred = torch.cat([pred, pred], dim=0)
+
+        # Euler step
+        img = img + (t_prev - t_curr) * pred
+
+        step_elapsed = time.perf_counter() - step_start
+        step_times.append(step_elapsed)
+
+        if step_idx == 0 and step_elapsed > 5.0:
+            logger.info(
+                f"[DenoiseCFG:Step 0] {step_elapsed:.1f}s "
+                "(torch.compile warmup -- subsequent steps will be fast)"
+            )
+        else:
+            logger.info(f"[DenoiseCFG:Step {step_idx}] {step_elapsed:.2f}s")
+
+    # Return first half (both halves are identical)
+    denoise_elapsed = time.perf_counter() - denoise_start
+    logger.info(
+        f"[DenoiseCFG] {num_steps} steps in {denoise_elapsed:.1f}s "
+        f"({', '.join(f'{t:.2f}s' for t in step_times)})"
+    )
+
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+        pytorch_peak = torch.cuda.max_memory_allocated()
+        logger.debug(f"[DenoiseCFG] Peak (PyTorch): {_format_gb(pytorch_peak)} allocated")
+        if pytorch_peak > 20e9:
+            logger.warning(f"[DenoiseCFG] HIGH PEAK MEMORY: {_format_gb(pytorch_peak)} - may cause OOM")
+
+    return img.chunk(2)[0]
+
+
 def latents_to_image(
     latents: torch.Tensor,
     vae,
@@ -850,13 +988,31 @@ def generate_image(
 
     # Encode text
     log_gpu_memory("after encoder load")
-    txt_embeddings = encoder.encode([config.prompt])  # [1, seq_len, context_dim]
-    txt_embeddings = txt_embeddings.to(dtype)
+
+    # Determine if we need unconditional embeddings for CFG (base models)
+    model_info = FLUX2_MODEL_INFO[model_name.lower()]
+    distilled = model_info["distilled"]
+
+    if distilled:
+        # Distilled: single prompt encoding, guidance baked into model weights
+        txt_embeddings = encoder.encode([config.prompt])  # [1, seq_len, context_dim]
+        txt_embeddings = txt_embeddings.to(dtype)
+    else:
+        # Base model: encode empty string + prompt for CFG
+        # txt = cat([txt_empty, txt_prompt]) along batch dim -> [2, seq_len, context_dim]
+        logger.info("[TextEnc] Base model: encoding empty + prompt for CFG")
+        txt_empty = encoder.encode([""])  # [1, seq_len, context_dim]
+        txt_prompt = encoder.encode([config.prompt])  # [1, seq_len, context_dim]
+        txt_empty = txt_empty.to(dtype)
+        txt_prompt = txt_prompt.to(dtype)
+        txt_embeddings = torch.cat([txt_empty, txt_prompt], dim=0)  # [2, seq_len, context_dim]
+        logger.debug(f"[TextEnc] CFG embeddings shape: {txt_embeddings.shape}")
+
     log_gpu_memory("after text encoding")
 
-    # Create text position IDs
+    # Create text position IDs (batch size matches txt_embeddings)
     txt_ids = create_text_ids(
-        batch_size=1,
+        batch_size=txt_embeddings.shape[0],
         seq_len=txt_embeddings.shape[1],
         device=device,
         dtype=torch.float32,
@@ -998,25 +1154,39 @@ def generate_image(
     # Get timestep schedule
     timesteps = get_schedule(config.num_steps, config.num_tokens)
 
-    # Determine guidance (None for distilled models)
-    guidance = None if FLUX2_MODEL_INFO[model_name.lower()]["distilled"] else config.guidance
-
     log_gpu_memory("before denoising loop")
     log_memory_snapshot("Pre-denoise")
 
-    # Denoise with optional reference image conditioning
-    latents = denoise(
-        model=transformer,
-        img=img,
-        img_ids=img_ids,
-        txt=txt_embeddings,
-        txt_ids=txt_ids,
-        timesteps=timesteps,
-        guidance=guidance,
-        img_cond_seq=ref_tokens,
-        img_cond_seq_ids=ref_ids,
-        progress_callback=progress_callback,
-    )
+    # Dispatch to appropriate denoising function based on model type
+    if distilled:
+        # Distilled models: pass guidance as embedding vector, single forward pass
+        latents = denoise(
+            model=transformer,
+            img=img,
+            img_ids=img_ids,
+            txt=txt_embeddings,
+            txt_ids=txt_ids,
+            timesteps=timesteps,
+            guidance=config.guidance,
+            img_cond_seq=ref_tokens,
+            img_cond_seq_ids=ref_ids,
+            progress_callback=progress_callback,
+        )
+    else:
+        # Base models: explicit CFG with doubled batch (uncond+cond)
+        logger.info(f"[Denoise] Using CFG denoising (guidance={config.guidance})")
+        latents = denoise_cfg(
+            model=transformer,
+            img=img,
+            img_ids=img_ids,
+            txt=txt_embeddings,
+            txt_ids=txt_ids,
+            timesteps=timesteps,
+            guidance=config.guidance,
+            img_cond_seq=ref_tokens,
+            img_cond_seq_ids=ref_ids,
+            progress_callback=progress_callback,
+        )
 
     # Move latents to CPU and offload transformer
     latents = latents.cpu()

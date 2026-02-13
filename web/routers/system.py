@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 
 import torch
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Response
 
 from web.dependencies import ConfigDep, ManagerDep
 from web.schemas import (
@@ -120,7 +120,7 @@ from web.utils import get_lora_info as _get_lora_info  # noqa: E402
 
 
 @router.get("/api/context", response_model=GenerationContextResponse)
-async def get_generation_context(config: ConfigDep, manager: ManagerDep):
+async def get_generation_context(config: ConfigDep, manager: ManagerDep, response: Response):
     """Get composite generation context for the frontend status bar.
 
     Aggregates model variant, LoRA state, VRAM, quantization, compile,
@@ -201,6 +201,9 @@ async def get_generation_context(config: ConfigDep, manager: ManagerDep):
     zimage = manager.get_pipeline("zimage")
     if zimage is not None and hasattr(zimage, "_fmtt_reward_fn"):
         fmtt_cached = zimage._fmtt_reward_fn is not None
+
+    # Polled at ~15s intervals; short cache to avoid stale data
+    response.headers["Cache-Control"] = "public, max-age=5"
 
     return GenerationContextResponse(
         uptime_seconds=uptime_seconds,

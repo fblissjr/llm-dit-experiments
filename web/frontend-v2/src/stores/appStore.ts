@@ -11,7 +11,9 @@
  */
 
 import { create } from 'zustand';
+import { persist, createJSONStorage } from 'zustand/middleware';
 import { immer } from 'zustand/middleware/immer';
+import { idbStorage } from '@/utils/idbStorage';
 import type {
   PipelineSchema,
   GenerationPreset,
@@ -20,6 +22,7 @@ import type {
   ModelStatusResponse,
   GenerationContext,
 } from '@/api/types';
+import { PIPELINE_COLOR_MAP } from '@/constants/colors';
 import {
   fetchPipelines,
   fetchPresets,
@@ -88,24 +91,17 @@ interface AppState {
   getPipelineColor: (pipelineId: string) => string;
 }
 
-// Map pipeline color names to CSS values
-const colorMap: Record<string, string> = {
-  blue: '#3b82f6',
-  purple: '#a855f7',
-  orange: '#f97316',
-  teal: '#14b8a6',
-  green: '#22c55e',
-  pink: '#ec4899',
-};
+const colorMap = PIPELINE_COLOR_MAP;
 
 export const useAppStore = create<AppState>()(
-  immer((set, get) => ({
+  persist(
+    immer((set, get) => ({
     // Initial state
     pipelines: {},
     serverDefaults: {},
     presets: {},
     modelStatus: {},
-    activeTab: 'image',
+    activeTab: 'image' as const,
     selectedPipelineId: null,
     isMobile: false,
     isHistoryOpen: false,
@@ -151,21 +147,40 @@ export const useAppStore = create<AppState>()(
         );
         const serverDefaults = Object.fromEntries(defaultsEntries);
 
-        // Determine first pipeline to select
-        const imagePipelines = Object.values(pipelines).filter(
-          (p) => p.category === 'image'
-        );
-        const firstPipeline = imagePipelines[0]?.id ?? Object.keys(pipelines)[0];
+        // Pipeline selection priority:
+        // 1. Server-loaded pipeline (authoritative -- server knows what's in VRAM)
+        // 2. Persisted selection from previous session (if pipeline ID still valid)
+        // 3. Fall back to first image pipeline
+        const loadedId = response.loaded_pipeline;
+        const persistedId = get().selectedPipelineId;
+        let firstPipeline: string | undefined;
+        if (loadedId && pipelines[loadedId]) {
+          firstPipeline = loadedId;
+        } else if (persistedId && pipelines[persistedId]) {
+          firstPipeline = persistedId;
+        } else {
+          const imagePipelines = Object.values(pipelines).filter(
+            (p) => p.category === 'image'
+          );
+          firstPipeline = imagePipelines[0]?.id ?? Object.keys(pipelines)[0];
+        }
+
+        // Set the active tab to match the selected pipeline's category
+        const selectedCategory = firstPipeline
+          ? pipelines[firstPipeline]?.category ?? 'image'
+          : 'image';
 
         set((state) => {
           state.pipelines = pipelines;
           state.serverDefaults = serverDefaults;
           state.selectedPipelineId = firstPipeline ?? null;
+          state.activeTab = selectedCategory as 'image' | 'video';
           state.isLoading = false;
         });
 
-        // Fetch VRAM status (non-blocking)
+        // Fetch VRAM + model status (non-blocking, run in parallel)
         get().refreshVRAM();
+        get().refreshAllModelStatus();
 
         // Load presets for first pipeline
         if (firstPipeline) {
@@ -427,5 +442,16 @@ export const useAppStore = create<AppState>()(
       if (!pipeline) return colorMap.blue;
       return colorMap[pipeline.color] ?? colorMap.blue;
     },
-  }))
+    })),
+    {
+      name: 'llm-dit-app',
+      storage: createJSONStorage(() => idbStorage),
+      partialize: (state) => ({
+        selectedPipelineId: state.selectedPipelineId,
+        activeTab: state.activeTab,
+        isHistoryOpen: state.isHistoryOpen,
+        isLeftNavOpen: state.isLeftNavOpen,
+      }),
+    }
+  )
 );

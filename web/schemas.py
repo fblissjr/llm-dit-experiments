@@ -146,6 +146,7 @@ class ImageGenerationResult(CamelModel):
     thumbnail_url: str
     seed: int = -1
     generation_time: float = 0.0
+    warnings: List[str] = Field(default_factory=list)
 
 
 class ClearCacheResponse(CamelModel):
@@ -666,8 +667,8 @@ class Flux2GenerateRequest(BaseModel):
 
     prompt: str
     model_name: str = "klein-9b-fp8"
-    width: int = Field(1024, ge=256, le=2048)
-    height: int = Field(1024, ge=256, le=2048)
+    width: int = Field(1360, ge=256, le=2048)
+    height: int = Field(768, ge=256, le=2048)
 
     @field_validator("width", "height")
     @classmethod
@@ -684,6 +685,7 @@ class Flux2GenerateRequest(BaseModel):
     reference_images: Optional[List[str]] = None
     match_image_size: Optional[str] = "none"
     loras: Optional[List[str]] = None
+    upsample_prompt: bool = False
     max_text_length: int = 512
     pad_to_max: bool = True
     output_layers: Optional[List[int]] = None

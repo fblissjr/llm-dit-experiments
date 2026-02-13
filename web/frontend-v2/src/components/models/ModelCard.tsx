@@ -74,7 +74,7 @@ export function ModelCard({ pipeline, status, color, onLoad, onUnload }: ModelCa
                 <span
                   key={tag.key}
                   className={cn(
-                    'px-1.5 py-0.5 text-[10px] font-medium rounded border',
+                    'px-1.5 py-0.5 text-[10px] font-medium rounded-sm border',
                     tagColors[tag.color] ?? tagColors.blue
                   )}
                 >
@@ -111,7 +111,7 @@ export function ModelCard({ pipeline, status, color, onLoad, onUnload }: ModelCa
           onClick={isLoaded ? onUnload : onLoad}
           disabled={isLoading}
           className={cn(
-            'px-2.5 py-1 text-xs font-medium rounded transition-colors',
+            'px-2.5 py-1 text-xs font-medium rounded-sm transition-colors',
             'disabled:opacity-50 disabled:cursor-not-allowed',
             isLoaded
               ? 'bg-red-500/10 text-red-400 hover:bg-red-500/20 border border-red-500/30'

@@ -5,8 +5,8 @@
  * On mobile, tapping the value opens an input field for precise entry.
  */
 
-import { useId, useState, useRef, useEffect } from 'react';
-import { cn, snapToStep } from '@/utils';
+import { useId, useState, useRef, useEffect, useMemo } from 'react';
+import { cn, snapToStep, debounce } from '@/utils';
 
 interface SliderProps {
   label: string;
@@ -55,8 +55,28 @@ export function Slider({
     }
   }, [isEditing]);
 
+  // Debounce store writes so rapid slider drags don't flood Immer.
+  // The visual fill tracks `value` prop (controlled), so the 50ms delay
+  // is imperceptible. Flush on pointer-up to commit the final value.
+  const debouncedOnChange = useMemo(
+    () => debounce((v: number) => onChange(v), 50),
+    [onChange]
+  );
+
+  // Local display value for immediate visual feedback during drag
+  const [localValue, setLocalValue] = useState(value);
+  useEffect(() => {
+    if (!isEditing) setLocalValue(value);
+  }, [value, isEditing]);
+
   const handleSliderChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    onChange(parseFloat(e.target.value));
+    const v = parseFloat(e.target.value);
+    setLocalValue(v);
+    debouncedOnChange(v);
+  };
+
+  const handlePointerUp = () => {
+    debouncedOnChange.flush();
   };
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -90,8 +110,8 @@ export function Slider({
     }
   };
 
-  // Calculate fill percentage for visual feedback
-  const fillPercent = ((value - min) / (max - min)) * 100;
+  // Calculate fill percentage for visual feedback (use localValue for smooth drag)
+  const fillPercent = ((localValue - min) / (max - min)) * 100;
 
   return (
     <div className={cn('form-control', className)}>
@@ -116,7 +136,7 @@ export function Slider({
                 className={cn(
                   'w-20 px-3 py-2 text-sm text-right',
                   'bg-gray-800 border border-blue-500 rounded-lg',
-                  'text-gray-200 focus:outline-none',
+                  'text-gray-200 focus:outline-hidden',
                   'tabular-nums min-h-[36px]'
                 )}
               />
@@ -128,7 +148,7 @@ export function Slider({
                 className={cn(
                   'slider-value px-3 py-1.5 -mr-2 rounded-lg',
                   'hover:bg-gray-700 active:bg-gray-600 transition-colors',
-                  'cursor-pointer min-w-[3.5rem] min-h-[36px] text-right',
+                  'cursor-pointer min-w-14 min-h-[36px] text-right',
                   'flex items-center justify-end',
                   disabled && 'cursor-not-allowed opacity-50'
                 )}
@@ -144,8 +164,9 @@ export function Slider({
         <input
           type="range"
           id={id}
-          value={value}
+          value={localValue}
           onChange={handleSliderChange}
+          onPointerUp={handlePointerUp}
           min={min}
           max={max}
           step={step}

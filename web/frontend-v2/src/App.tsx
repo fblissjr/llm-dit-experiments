@@ -11,6 +11,7 @@ import { useAppShortcuts, useIsDesktop, useIsMobile } from '@/hooks';
 import { AppShell } from '@/components/layout';
 import { PipelineForm } from '@/components/pipeline';
 import { GenerateButton, ProgressDisplay, ResultDisplay } from '@/components/generation';
+import { ErrorBoundary } from '@/components/common/ErrorBoundary';
 
 function PipelineView() {
   const selectedPipelineId = useAppStore((s) => s.selectedPipelineId);
@@ -75,14 +76,14 @@ function PipelineView() {
         {/* Keyboard hints */}
         <div className="text-xs text-gray-500 text-center space-x-2">
           <span>
-            <kbd className="px-1.5 py-0.5 bg-gray-800 rounded">Ctrl+Enter</kbd> generate
+            <kbd className="px-1.5 py-0.5 bg-gray-800 rounded-sm">Ctrl+Enter</kbd> generate
           </span>
           <span>
-            <kbd className="px-1.5 py-0.5 bg-gray-800 rounded">Ctrl+H</kbd> history
+            <kbd className="px-1.5 py-0.5 bg-gray-800 rounded-sm">Ctrl+H</kbd> history
           </span>
           {isDesktop && (
             <span>
-              <kbd className="px-1.5 py-0.5 bg-gray-800 rounded">Ctrl+B</kbd> nav
+              <kbd className="px-1.5 py-0.5 bg-gray-800 rounded-sm">Ctrl+B</kbd> nav
             </span>
           )}
         </div>
@@ -186,7 +187,9 @@ export default function App() {
       ) : error ? (
         <ErrorState error={error} />
       ) : (
-        <PipelineView />
+        <ErrorBoundary>
+          <PipelineView />
+        </ErrorBoundary>
       )}
     </AppShell>
   );

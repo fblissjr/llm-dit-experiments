@@ -1,9 +1,58 @@
-last updated: 2026-02-10
+last updated: 2026-02-13
 
 # changelog
 
 All notable changes to this project will be documented in this file.
 Uses [Semantic Versioning](https://semver.org/).
+
+## 0.9.3
+
+### added
+- Frontend: `React.memo` on `ParamControl` with custom comparator (prevents 20+ controls re-rendering on single value change)
+- Frontend: slider debounce (50ms) with pointer-up commit pattern for smooth dragging
+- Frontend: per-param memoized `onChange` callbacks in `PipelineForm` (stable refs for memo comparator)
+- Frontend: `ErrorBoundary` wrapping `PipelineView` with retry button
+- Frontend: `getResolvedValues()` module-level reference-equality cache (avoids recomputing on every selector call)
+- Frontend: shared `PIPELINE_COLOR_MAP` constant (deduplicates appStore + HistoryCard)
+- Frontend: lazy-loading on history thumbnails (`loading="lazy"`)
+- Backend: `GZipMiddleware` (Starlette built-in, minimum_size=1000, SSE auto-excluded)
+- Backend: `Cache-Control` headers on `/api/pipelines` (5min), `/api/presets/preset/{name}` (5min), `/api/context` (5s)
+
+### changed
+- Frontend: unified duplicate `validateParam` (merged formStore + utils/validation.ts into single source of truth)
+- Frontend: `PipelineForm.handleChange` no longer depends on `pipeline` reactive selector (uses `getState()` instead)
+- Frontend: production sourcemaps disabled (saves ~744KB from dist)
+- Upgraded `@hey-api/openapi-ts` 0.92.3 -> 0.92.4
+- Upgraded `immer` 10 -> 11 (enableMapSet still required and functional)
+- Upgraded `jsdom` 27 -> 28 (devDependency only)
+- Upgraded `vite` 6 -> 7 (baseline-widely-available default target)
+- Upgraded `@vitejs/plugin-react` 4 -> 5
+- Upgraded `react` 18 -> 19, `react-dom` 18 -> 19, `@types/react` 18 -> 19, `@types/react-dom` 18 -> 19
+- Migrated Tailwind CSS 3 -> 4: `@tailwind` directives -> `@import "tailwindcss"`, config.js -> CSS `@theme`, `@layer components` -> `@utility`, PostCSS -> `@tailwindcss/vite` plugin
+- Tailwind 4 class name updates: `rounded` -> `rounded-sm`, `outline-none` -> `outline-hidden`, `flex-shrink-0` -> `shrink-0`, `min-w-[3.5rem]` -> `min-w-14`
+
+### fixed
+- FLUX.2 prompt upsampling now reads `api_model` from `config.toml [rewriter].api_model` instead of using hardcoded default (both sync and streaming endpoints)
+
+## 0.9.2
+
+### added
+- `fixed_params` field in FLUX.2 model registry (`constants.py`) -- distilled models declare which params are baked into weights
+- `get_fixed_params()` and `is_distilled()` helper functions for FLUX.2 model introspection
+- Fixed params validation in FLUX.2 generation endpoints -- overrides invalid params to model defaults with user-facing warnings
+- `GET /api/flux2/models/{model_name}` endpoint returning model metadata (distilled, fixed_params, defaults, fp8)
+- `warnings` field on `ImageGenerationResult` response model -- propagated through both POST and SSE endpoints
+- `denoise_cfg()` function for FLUX.2 base models implementing true classifier-free guidance (doubled batch, uncond+cond forward passes, CFG formula)
+- Unconditional text embedding preparation for base model CFG (encodes empty string, concatenates with prompt embeddings)
+- `Flux2PromptUpsampler` class using BFL's official T2I and I2I system prompts for prompt enrichment via heylookitsanllm API
+- `upsample_prompt` request field and pipeline schema checkbox for optional prompt upsampling before generation
+- Frontend: distilled model controls (steps, guidance) disabled with "Fixed for distilled models" label when non-base model selected
+- Frontend: generation warnings displayed in amber banner above result metadata
+
+### changed
+- FLUX.2 default resolution from 1024x1024 to 1360x768 (matches BFL's official default)
+- FLUX.2 dimension preset list reordered with 1360x768 as first option
+- FLUX.2 base model denoising now uses `denoise_cfg()` (explicit CFG) instead of `denoise()` (guidance embedding)
 
 ## 0.9.1
 

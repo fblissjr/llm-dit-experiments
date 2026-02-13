@@ -1,6 +1,6 @@
-# agent context (v0.9.0)
+# agent context (v0.9.3)
 
-*last updated: 2026-02-12*
+*last updated: 2026-02-13*
 
 Quick reference for LLM agents. Read only what you need.
 
@@ -175,10 +175,11 @@ This is a **multi-workstream project**. Work happens in parallel across layers:
 | Attention | `src/llm_dit/utils/attention.py` | All pipelines use this |
 | Quantization | `src/llm_dit/quantization/` | All pipelines use `quantize_component()` (sole entry point) |
 | LoRA | `src/llm_dit/utils/lora.py` | Pipeline-agnostic: `load_lora()`, `FusedLoRAState` tracking |
+| Prompt rewriting | `src/llm_dit/utils/prompt_rewriter.py` | `PromptRewriter` (Qwen-Image), `Flux2PromptUpsampler` (FLUX.2) |
 | Model lifecycle | `src/llm_dit/model_manager.py` | `ModelManager` -- load/unload/reload any pipeline |
 | API layer | `web/routers/`, `web/schemas.py` | 7 domain routers + Pydantic models |
 | Pipelines | `src/llm_dit/pipelines/` | Each pipeline has its own file |
-| Frontend | `web/frontend-v2/` | React 18 + Zustand 5 + Vite 6. Schema-driven forms from OpenAPI. See [web CLAUDE.md](internal/web/CLAUDE.md) |
+| Frontend | `web/frontend-v2/` | React 18 + Zustand 5 + Vite 7. Schema-driven forms from OpenAPI. See [web CLAUDE.md](internal/web/CLAUDE.md) |
 
 ## architecture patterns (post-refactor)
 
@@ -189,6 +190,8 @@ This is a **multi-workstream project**. Work happens in parallel across layers:
 **LoRA fusion tracking:** `model._fused_lora_state` (FusedLoRAState) tracks what's fused on persistent models. Prevents re-fusion OOM where fp8 (9GB) dequantizes to bf16 (18GB). Pipeline detects mismatch (raises RuntimeError), router handles recovery (reload).
 
 **Unified quantization:** All pipelines use `quantize_component()` as the sole entry point. torchao is the only backend. See `docs/reference/quantization.md`.
+
+**Prompt upsampling (FLUX.2):** `_upsample_prompt()` factory in `web/routers/flux2.py` reads URL + model from `RuntimeConfig.rewriter_api_url`/`rewriter_api_model` (sourced from `config.toml [rewriter]`). Creates `Flux2PromptUpsampler` which calls heylookitsanllm at `192.168.1.123:8080`. Two modes: T2I (creative expansion) and I2I (instruction compilation). Graceful fallback to original prompt on error. Used by both sync and streaming endpoints.
 
 For full post-refactor details: [post_refactor_guide.md](internal/docs/architecture/post_refactor_guide.md)
 
@@ -262,6 +265,8 @@ For full debugging patterns, see [lessons_learned.md](internal/state/lessons_lea
 | Tests pass, bad output | Visual verification skipped | Always verify baselines visually |
 | API returns error | Pydantic validation | Check request schema in `web/schemas.py` |
 | Circular import | Router imports server at module level | See architecture patterns above |
+| Prompt upsampling skipped | Empty `api_url` in config | Check `config.toml [rewriter].api_url` is set |
+| Prompt upsampling silent fail | heylookitsanllm unreachable | Verify `192.168.1.123:8080` is live; check logs for `[FLUX2:Upsample] Failed` |
 
 ## quick test commands
 

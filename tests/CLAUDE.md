@@ -1,6 +1,6 @@
 # testing guide for agents
 
-*last updated: 2026-02-12*
+*last updated: 2026-02-13*
 
 Quick reference for LLM agents running tests in this codebase.
 
@@ -36,6 +36,29 @@ uv run pytest tests/e2e/api/ --collect-only
 - [ ] Save output via `save_output()`
 - [ ] Run validation via `validate()`
 - [ ] Assert `validation.passed`
+
+### anti-patterns (NEVER do these)
+
+- **NEVER use `requests.post()`/`requests.get()` to an external server in tests.** This requires a running server, breaks CI, and doesn't validate the full FastAPI stack. Always use `TestClient` (in-process HTTP).
+- **NEVER call pipeline functions directly in E2E tests.** `generate_video_with_offloading()`, `generate_video_two_stage()`, etc. are for integration tests only. E2E tests must go through the API.
+- **NEVER bypass `run_recorder`.** It captures metadata, outputs, and logs. Without it, test artifacts are lost.
+
+If a test needs to hit a real HTTP endpoint, it goes through `TestClient` which runs the full FastAPI app in-process -- same routers, same middleware, same DI, no external server needed.
+
+**Gold standard pattern** (from `test_flux2_smoke.py`):
+```python
+@pytest.fixture(scope="module")
+def config_overlay():
+    return "flux2_smoke"
+
+class TestFlux2APISmoke:
+    def test_basic_generation(self, run_recorder):
+        response = run_recorder.post("/api/flux2/generate", json={...})
+        assert response.status_code == 200
+        output_path = run_recorder.save_output(response.json())
+        result = run_recorder.validate(output_path, expected_w=256, expected_h=256)
+        assert result.passed
+```
 
 ### full reference
 See [tests/e2e/api/README.md](e2e/api/README.md) for architecture, config factory, validation thresholds, and step-by-step guide for adding new tests.
@@ -200,11 +223,13 @@ uv run pytest tests/ -v --runslow
 
 ## test hierarchy
 
-| Priority | What to Run | When |
-|----------|-------------|------|
-| **1. Unit** | `tests/unit/` | After any code change |
-| **2. Integration** | `tests/integration/` (incl. `pipeline/`) | After component changes |
-| **3. E2E (API)** | `tests/e2e/api/` | Before commits, after major changes |
+| Priority | What to Run | When | Can call pipelines directly? |
+|----------|-------------|------|-----------------------------|
+| **1. Unit** | `tests/unit/` | After any code change | Yes (component-level) |
+| **2. Integration** | `tests/integration/` (incl. `pipeline/`) | After component changes | Yes (cross-component) |
+| **3. E2E (API)** | `tests/e2e/api/` | Before commits, after major changes | **NO -- TestClient only** |
+
+**Rule:** Only unit and integration tests may call pipeline functions directly. E2E tests MUST go through the API via `TestClient`. This ensures the full request lifecycle (Pydantic validation, router logic, DI, ModelManager) is exercised.
 
 ## test structure
 

@@ -28,6 +28,7 @@ FLUX2_MODELS = [
 
 # Dimension presets (all multiples of 16)
 DIMENSION_PRESETS = [
+    "1360x768",
     "1024x1024",
     "1152x896",
     "1216x832",
@@ -103,7 +104,7 @@ register_pipeline(PipelineSchema(
             id="width",
             type="number",
             label="Width",
-            default=1024,
+            default=1360,
             min=256,
             max=2048,
             step=16,
@@ -114,7 +115,7 @@ register_pipeline(PipelineSchema(
             id="height",
             type="number",
             label="Height",
-            default=1024,
+            default=768,
             min=256,
             max=2048,
             step=16,
@@ -125,7 +126,7 @@ register_pipeline(PipelineSchema(
             id="dimension_preset",
             type="select",
             label="Preset",
-            default="1024x1024",
+            default="1360x768",
             options=DIMENSION_PRESETS,
             group="basic",
             tooltip="Quick dimension presets.",
@@ -188,6 +189,16 @@ register_pipeline(PipelineSchema(
             step=1,
             group="basic",
             tooltip="Random seed for reproducibility. -1 for random.",
+        ),
+
+        # === Enhancement ===
+        ParamSchema(
+            id="upsample_prompt",
+            type="checkbox",
+            label="Upsample Prompt",
+            default=False,
+            group="enhancement",
+            tooltip="Enrich prompt with visual details using BFL's official upsampling (requires heylookitsanllm API).",
         ),
 
         # === Memory & Performance ===

@@ -132,7 +132,7 @@ export function BottomSheet({ className }: BottomSheetProps) {
           <h2 className="font-medium">History</h2>
           <button
             onClick={toggleHistory}
-            className="p-1 hover:bg-gray-800 rounded"
+            className="p-1 hover:bg-gray-800 rounded-sm"
           >
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path

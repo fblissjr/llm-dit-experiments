@@ -1,7 +1,7 @@
 """
 LTX-2 baseline video generation and comparison runner.
 
-Last Updated: 2026-02-02
+Last Updated: 2026-02-13
 
 Generates videos with fixed seeds and compares against known-good outputs.
 This module provides the infrastructure for establishing quality baselines
@@ -43,6 +43,7 @@ from tests.fixtures.prompts.ltx2 import (
     REFERENCE_PROMPTS,
     SMOKE_TEST_PROMPT,
 )
+from tests.utils.frame_sampler import sample_frames, save_frames
 
 logger = logging.getLogger(__name__)
 
@@ -278,6 +279,11 @@ def generate_baseline(
     with open(output_dir / "baseline_result.json", "w") as f:
         json.dump(baseline_result.to_dict(), f, indent=2)
 
+    # Save sampled frames for visual inspection
+    indices, frames = sample_frames(video, num_samples=8)
+    frame_paths = save_frames(frames, indices, output_dir / "frames")
+    logger.info(f"Saved {len(frame_paths)} sample frames to {output_dir / 'frames'}")
+
     logger.info(f"Generation complete in {generation_time:.1f}s")
     logger.info(f"Peak VRAM: {peak_vram:.1f} GB")
     logger.info(f"Video stats: mean={baseline_result.mean_pixel_value:.4f}, std={baseline_result.std_pixel_value:.4f}")
@@ -414,6 +420,11 @@ def generate_baseline_from_preset(
 
     with open(output_dir / "baseline_result.json", "w") as f:
         json.dump(metadata, f, indent=2)
+
+    # Save sampled frames for visual inspection
+    indices, frames = sample_frames(video, num_samples=8)
+    frame_paths = save_frames(frames, indices, output_dir / "frames")
+    logger.info(f"Saved {len(frame_paths)} sample frames to {output_dir / 'frames'}")
 
     # Also save video_metadata.json for Z-Image test pattern compatibility
     with open(output_dir / "video_metadata.json", "w") as f:

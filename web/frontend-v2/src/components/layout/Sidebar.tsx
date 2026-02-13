@@ -60,7 +60,7 @@ export function Sidebar({ className }: SidebarProps) {
         <h2 className="font-medium">History</h2>
         <button
           onClick={toggleHistory}
-          className="p-1 hover:bg-gray-800 rounded"
+          className="p-1 hover:bg-gray-800 rounded-sm"
           title="Close history"
         >
           <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">

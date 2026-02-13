@@ -124,7 +124,7 @@ export function ImageViewer({ url, alt = 'Viewing image', onClose }: ImageViewer
         <div className="flex items-center gap-1 bg-gray-900/80 rounded-lg p-1">
           <button
             onClick={handleZoomOut}
-            className="p-2 hover:bg-gray-700 rounded transition-colors"
+            className="p-2 hover:bg-gray-700 rounded-sm transition-colors"
             title="Zoom out (-)"
             disabled={zoom <= MIN_ZOOM}
           >
@@ -138,13 +138,13 @@ export function ImageViewer({ url, alt = 'Viewing image', onClose }: ImageViewer
             </svg>
           </button>
 
-          <span className="text-sm font-mono px-2 min-w-[4rem] text-center">
+          <span className="text-sm font-mono px-2 min-w-16 text-center">
             {Math.round(zoom * 100)}%
           </span>
 
           <button
             onClick={handleZoomIn}
-            className="p-2 hover:bg-gray-700 rounded transition-colors"
+            className="p-2 hover:bg-gray-700 rounded-sm transition-colors"
             title="Zoom in (+)"
             disabled={zoom >= MAX_ZOOM}
           >
@@ -160,7 +160,7 @@ export function ImageViewer({ url, alt = 'Viewing image', onClose }: ImageViewer
 
           <button
             onClick={handleResetZoom}
-            className="p-2 hover:bg-gray-700 rounded transition-colors"
+            className="p-2 hover:bg-gray-700 rounded-sm transition-colors"
             title="Reset zoom (0)"
           >
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">

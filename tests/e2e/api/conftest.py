@@ -138,7 +138,8 @@ def api_client(pipeline_config):
     from web.server import app, _register_routers
 
     # Register routers (guard: only if not already registered)
-    if len(app.routes) <= 2:  # Only default routes (root + openapi)
+    _known_paths = {getattr(r, "path", None) for r in app.routes}
+    if "/api/ltx2/status" not in _known_paths:
         _register_routers()
 
     # Initialize ModelManager (same as server.py main())

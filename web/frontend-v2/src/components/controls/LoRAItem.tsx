@@ -144,7 +144,7 @@ export function LoRAItem({
       {/* Top row: Index, LoRA selector, Remove button */}
       <div className="flex items-center gap-2">
         {/* Index badge */}
-        <span className="text-xs text-gray-500 w-5 text-center flex-shrink-0">{index + 1}</span>
+        <span className="text-xs text-gray-500 w-5 text-center shrink-0">{index + 1}</span>
 
         {/* LoRA selector dropdown */}
         <div className="flex-1 min-w-0">
@@ -156,7 +156,7 @@ export function LoRAItem({
             className={cn(
               'w-full px-3 py-2 text-sm bg-gray-900 border border-gray-600 rounded-lg',
               'text-gray-200 cursor-pointer',
-              'focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500',
+              'focus:outline-hidden focus:ring-1 focus:ring-blue-500 focus:border-blue-500',
               disabled && 'opacity-50 cursor-not-allowed',
               !path && 'text-gray-500'
             )}
@@ -190,8 +190,8 @@ export function LoRAItem({
           onClick={onRemove}
           disabled={disabled}
           className={cn(
-            'p-2.5 text-gray-400 hover:text-red-400 hover:bg-red-500/10 active:bg-red-500/20 rounded-lg transition-colors flex-shrink-0',
-            'min-w-[44px] min-h-[44px] flex items-center justify-center',
+            'p-2.5 text-gray-400 hover:text-red-400 hover:bg-red-500/10 active:bg-red-500/20 rounded-lg transition-colors shrink-0',
+            'min-w-touch min-h-touch flex items-center justify-center',
             disabled && 'opacity-50 cursor-not-allowed'
           )}
           title="Remove LoRA"
@@ -207,7 +207,7 @@ export function LoRAItem({
         <div className="space-y-2 pl-5">
           {/* Row 1: Stepper [-] value [+] */}
           <div className="flex items-center gap-2">
-            <label htmlFor={scaleId} className="text-xs text-gray-400 flex-shrink-0 w-14">
+            <label htmlFor={scaleId} className="text-xs text-gray-400 shrink-0 w-14">
               Strength
             </label>
 
@@ -221,7 +221,7 @@ export function LoRAItem({
               onTouchStart={() => startLongPress(-0.05)}
               onTouchEnd={stopLongPress}
               className={cn(
-                'min-w-[44px] min-h-[44px] flex items-center justify-center',
+                'min-w-touch min-h-touch flex items-center justify-center',
                 'bg-gray-700 hover:bg-gray-600 active:bg-gray-500 rounded-lg transition-colors',
                 'text-gray-200 text-lg font-medium select-none',
                 (disabled || scale <= scaleMin) && 'opacity-30 cursor-not-allowed'
@@ -246,7 +246,7 @@ export function LoRAItem({
                 className={cn(
                   'w-18 px-3 py-2 text-sm text-center',
                   'bg-gray-800 border border-blue-500 rounded-lg',
-                  'text-gray-200 focus:outline-none',
+                  'text-gray-200 focus:outline-hidden',
                   'tabular-nums min-h-[40px]'
                 )}
               />
@@ -278,7 +278,7 @@ export function LoRAItem({
               onTouchStart={() => startLongPress(0.05)}
               onTouchEnd={stopLongPress}
               className={cn(
-                'min-w-[44px] min-h-[44px] flex items-center justify-center',
+                'min-w-touch min-h-touch flex items-center justify-center',
                 'bg-gray-700 hover:bg-gray-600 active:bg-gray-500 rounded-lg transition-colors',
                 'text-gray-200 text-lg font-medium select-none',
                 (disabled || scale >= scaleMax) && 'opacity-30 cursor-not-allowed'
@@ -290,7 +290,7 @@ export function LoRAItem({
 
           {/* Row 2: Quick-set preset pills */}
           <div className="flex items-center gap-1.5">
-            <span className="text-xs text-gray-500 w-14 flex-shrink-0">Presets</span>
+            <span className="text-xs text-gray-500 w-14 shrink-0">Presets</span>
             {STRENGTH_PRESETS.filter((p) => p >= scaleMin && p <= scaleMax).map((preset) => {
               const isActive = Math.abs(scale - preset) < 0.001;
               return (
@@ -316,7 +316,7 @@ export function LoRAItem({
 
           {/* Row 3: Slider (secondary control, visual feedback) */}
           <div className="hidden md:flex items-center gap-2">
-            <span className="text-xs text-gray-500 w-14 flex-shrink-0" />
+            <span className="text-xs text-gray-500 w-14 shrink-0" />
             <input
               id={scaleId}
               type="range"

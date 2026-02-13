@@ -74,7 +74,7 @@ export function ResultDisplay() {
           onClick={clearResult}
           className="absolute top-2 right-2 p-3 bg-gray-900/80 rounded-lg
                      hover:bg-gray-800 active:bg-gray-700 transition-colors
-                     min-w-[44px] min-h-[44px] flex items-center justify-center"
+                     min-w-touch min-h-touch flex items-center justify-center"
           title="Clear result"
         >
           <svg
@@ -93,6 +93,15 @@ export function ResultDisplay() {
         </button>
       </div>
 
+      {/* Warnings */}
+      {result.warnings && result.warnings.length > 0 && (
+        <div className="px-3 py-2 border-t border-amber-900/50 bg-amber-950/30">
+          {result.warnings.map((w, i) => (
+            <p key={i} className="text-xs text-amber-400">{w}</p>
+          ))}
+        </div>
+      )}
+
       {/* Metadata footer */}
       <div className="p-3 border-t border-gray-700 flex items-center justify-between text-sm text-gray-400">
         <div className="flex items-center gap-4">
@@ -104,7 +113,7 @@ export function ResultDisplay() {
         <a
           href={url}
           download
-          className="btn-ghost px-4 py-2 text-sm flex items-center gap-2 min-h-[44px]"
+          className="btn-ghost px-4 py-2 text-sm flex items-center gap-2 min-h-touch"
         >
           <svg
             className="w-4 h-4"

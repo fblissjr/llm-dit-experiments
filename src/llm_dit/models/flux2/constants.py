@@ -96,9 +96,9 @@ class Klein4BParams:
 # Generation Defaults
 # =============================================================================
 
-# Default image dimensions (16x compression: 1024 -> 64 latent)
-DEFAULT_WIDTH = 1024
-DEFAULT_HEIGHT = 1024
+# Default image dimensions (BFL official: 1360x768)
+DEFAULT_WIDTH = 1360
+DEFAULT_HEIGHT = 768
 
 # Guidance-distilled defaults (Klein models)
 DEFAULT_NUM_STEPS_DISTILLED = 4
@@ -148,6 +148,7 @@ FLUX2_MODEL_INFO = {
         "text_encoder": "Qwen/Qwen3-4B-FP8",
         "distilled": True,
         "defaults": {"guidance": 1.0, "num_steps": 4},
+        "fixed_params": {"guidance", "num_steps"},
     },
     "klein-9b": {
         "repo_id": "black-forest-labs/FLUX.2-klein-9B",
@@ -157,6 +158,7 @@ FLUX2_MODEL_INFO = {
         "text_encoder": "Qwen/Qwen3-8B-FP8",
         "distilled": True,
         "defaults": {"guidance": 1.0, "num_steps": 4},
+        "fixed_params": {"guidance", "num_steps"},
     },
     # BF16 base models (non-distilled)
     "klein-base-4b": {
@@ -167,6 +169,7 @@ FLUX2_MODEL_INFO = {
         "text_encoder": "Qwen/Qwen3-4B-FP8",
         "distilled": False,
         "defaults": {"guidance": 4.0, "num_steps": 50},
+        "fixed_params": set(),
     },
     "klein-base-9b": {
         "repo_id": "black-forest-labs/FLUX.2-klein-base-9B",
@@ -176,6 +179,7 @@ FLUX2_MODEL_INFO = {
         "text_encoder": "Qwen/Qwen3-8B-FP8",
         "distilled": False,
         "defaults": {"guidance": 4.0, "num_steps": 50},
+        "fixed_params": set(),
     },
     # FP8 distilled models
     "klein-4b-fp8": {
@@ -186,6 +190,7 @@ FLUX2_MODEL_INFO = {
         "text_encoder": "Qwen/Qwen3-4B-FP8",
         "distilled": True,
         "defaults": {"guidance": 1.0, "num_steps": 4},
+        "fixed_params": {"guidance", "num_steps"},
         "fp8": True,
     },
     "klein-9b-fp8": {
@@ -196,6 +201,7 @@ FLUX2_MODEL_INFO = {
         "text_encoder": "Qwen/Qwen3-8B-FP8",
         "distilled": True,
         "defaults": {"guidance": 1.0, "num_steps": 4},
+        "fixed_params": {"guidance", "num_steps"},
         "fp8": True,
     },
     # FP8 base models
@@ -207,6 +213,7 @@ FLUX2_MODEL_INFO = {
         "text_encoder": "Qwen/Qwen3-4B-FP8",
         "distilled": False,
         "defaults": {"guidance": 4.0, "num_steps": 50},
+        "fixed_params": set(),
         "fp8": True,
     },
     "klein-base-9b-fp8": {
@@ -217,6 +224,7 @@ FLUX2_MODEL_INFO = {
         "text_encoder": "Qwen/Qwen3-8B-FP8",
         "distilled": False,
         "defaults": {"guidance": 4.0, "num_steps": 50},
+        "fixed_params": set(),
         "fp8": True,
     },
 }
@@ -272,6 +280,34 @@ def get_generation_defaults(model_name: str) -> dict:
     if model_name not in FLUX2_MODEL_INFO:
         raise ValueError(f"Unknown model: {model_name}")
     return FLUX2_MODEL_INFO[model_name]["defaults"].copy()
+
+
+def get_fixed_params(model_name: str) -> set[str]:
+    """
+    Get the set of fixed (non-overridable) parameters for a model.
+
+    Distilled models have fixed guidance and num_steps that are baked
+    into the model weights during distillation. Overriding them produces
+    incorrect results.
+
+    Args:
+        model_name: Model variant name
+
+    Returns:
+        Set of fixed parameter names (e.g., {"guidance", "num_steps"})
+    """
+    model_name = model_name.lower()
+    if model_name not in FLUX2_MODEL_INFO:
+        raise ValueError(f"Unknown model: {model_name}")
+    return FLUX2_MODEL_INFO[model_name].get("fixed_params", set())
+
+
+def is_distilled(model_name: str) -> bool:
+    """Check if a model is guidance-distilled."""
+    model_name = model_name.lower()
+    if model_name not in FLUX2_MODEL_INFO:
+        raise ValueError(f"Unknown model: {model_name}")
+    return FLUX2_MODEL_INFO[model_name]["distilled"]
 
 
 def calculate_latent_shape(height: int, width: int) -> tuple[int, int, int]:

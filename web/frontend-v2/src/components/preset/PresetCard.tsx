@@ -51,11 +51,11 @@ export function PresetCard({ preset, isActive, onClick }: PresetCardProps) {
       {/* Bottom badges */}
       <div className="flex items-center gap-2 mt-2">
         {preset.variant && (
-          <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-700 text-gray-300 truncate">
+          <span className="text-[10px] px-1.5 py-0.5 rounded-sm bg-gray-700 text-gray-300 truncate">
             {preset.variant}
           </span>
         )}
-        <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-700/50 text-gray-400 ml-auto whitespace-nowrap">
+        <span className="text-[10px] px-1.5 py-0.5 rounded-sm bg-gray-700/50 text-gray-400 ml-auto whitespace-nowrap">
           {paramCount} param{paramCount !== 1 ? 's' : ''}
         </span>
       </div>

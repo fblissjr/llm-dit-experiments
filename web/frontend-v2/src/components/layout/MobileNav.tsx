@@ -137,7 +137,7 @@ export function MobileNav() {
               </h2>
               <button
                 onClick={() => setIsPipelineSheetOpen(false)}
-                className="p-1 hover:bg-gray-800 rounded transition-colors"
+                className="p-1 hover:bg-gray-800 rounded-sm transition-colors"
               >
                 <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path
@@ -170,7 +170,7 @@ export function MobileNav() {
                   >
                     {/* Color indicator */}
                     <div
-                      className="w-1.5 h-10 rounded-full flex-shrink-0"
+                      className="w-1.5 h-10 rounded-full shrink-0"
                       style={{ backgroundColor: isSelected ? color : '#6b7280' }}
                     />
 
@@ -190,7 +190,7 @@ export function MobileNav() {
                     {/* Selected checkmark */}
                     {isSelected && (
                       <svg
-                        className="w-5 h-5 flex-shrink-0"
+                        className="w-5 h-5 shrink-0"
                         style={{ color }}
                         fill="currentColor"
                         viewBox="0 0 20 20"
@@ -231,7 +231,7 @@ export function MobileNav() {
               <h2 className="font-semibold">Model Manager</h2>
               <button
                 onClick={() => setIsModelSheetOpen(false)}
-                className="p-1 hover:bg-gray-800 rounded transition-colors"
+                className="p-1 hover:bg-gray-800 rounded-sm transition-colors"
               >
                 <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path

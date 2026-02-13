@@ -73,7 +73,7 @@ export function LeftNav() {
             <button
               onClick={() => setIsSettingsOpen(!isSettingsOpen)}
               className={cn(
-                'p-1 rounded transition-colors',
+                'p-1 rounded-sm transition-colors',
                 isSettingsOpen ? 'bg-gray-700 text-gray-200' : 'hover:bg-gray-800 text-gray-400 hover:text-gray-300'
               )}
               title="Settings"
@@ -93,7 +93,7 @@ export function LeftNav() {
           {/* Close nav */}
           <button
             onClick={toggleLeftNav}
-            className="p-1 hover:bg-gray-800 rounded transition-colors"
+            className="p-1 hover:bg-gray-800 rounded-sm transition-colors"
             title="Close navigation"
           >
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -265,7 +265,7 @@ export function LeftNav() {
                   {/* Selected indicator */}
                   {isSelected && (
                     <svg
-                      className="w-4 h-4 flex-shrink-0"
+                      className="w-4 h-4 shrink-0"
                       style={{ color }}
                       fill="currentColor"
                       viewBox="0 0 20 20"

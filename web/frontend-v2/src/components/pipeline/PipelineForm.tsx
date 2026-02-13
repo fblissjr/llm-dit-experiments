@@ -13,6 +13,18 @@ import { ParamGroup } from './ParamGroup';
 import { ParamControl } from './ParamControl';
 import { PresetBrowser } from '@/components/preset';
 
+// FLUX.2 distilled models have fixed num_steps and guidance.
+// Distilled = all variants without "base" in the name.
+const FLUX2_FIXED_PARAMS = new Set(['num_steps', 'guidance']);
+
+function isFixedParam(pipelineId: string, paramId: string, formValues: FormValues): boolean {
+  if (pipelineId !== 'flux2') return false;
+  if (!FLUX2_FIXED_PARAMS.has(paramId)) return false;
+  const modelName = String(formValues.model_name ?? '');
+  // Base models allow overriding; distilled models do not
+  return !modelName.includes('base');
+}
+
 // Define group order for consistent rendering
 const groupOrder: GroupType[] = [
   'basic',
@@ -54,11 +66,11 @@ export function PipelineForm() {
   const applyDependentDefaults = useFormStore((s) => s.applyDependentDefaults);
 
   // Handle value change with dimension_preset <-> width/height sync.
-  // Reads formValues from store directly (getState) to avoid closing over
-  // the reactive selector -- this prevents handleChange from being recreated
-  // whenever any unrelated form value changes.
+  // Reads both formValues and pipeline from store directly (getState) to
+  // avoid closing over reactive selectors -- keeps deps minimal so this
+  // callback reference stays stable across renders.
   const handleChange = useCallback(
-    (paramId: string) => (value: unknown) => {
+    (paramId: string, value: unknown) => {
       if (!selectedPipelineId) return;
 
       // When dimension_preset changes, parse "WIDTHxHEIGHT" and update width/height
@@ -94,9 +106,12 @@ export function PipelineForm() {
 
       setValue(selectedPipelineId, paramId, value);
 
-      // Check if this param triggers dependent defaults on other params
-      if (pipeline) {
-        const hasDependents = pipeline.params.some(
+      // Check if this param triggers dependent defaults on other params.
+      // Read pipeline from store (getState) instead of closing over the
+      // reactive selector, so this callback doesn't depend on `pipeline`.
+      const currentPipeline = useAppStore.getState().pipelines[selectedPipelineId];
+      if (currentPipeline) {
+        const hasDependents = currentPipeline.params.some(
           (p) => p.dependent_defaults?.[paramId]
         );
         if (hasDependents) {
@@ -104,8 +119,20 @@ export function PipelineForm() {
         }
       }
     },
-    [selectedPipelineId, setValue, applyDependentDefaults, pipeline]
+    [selectedPipelineId, setValue, applyDependentDefaults]
   );
+
+  // Memoize per-param onChange callbacks so each ParamControl gets a stable
+  // reference. Recomputed only when pipeline params change or handleChange
+  // changes (which only depends on selectedPipelineId + action refs).
+  const paramCallbacks = useMemo(() => {
+    if (!pipeline) return new Map<string, (value: unknown) => void>();
+    const map = new Map<string, (value: unknown) => void>();
+    for (const param of pipeline.params) {
+      map.set(param.id, (value: unknown) => handleChange(param.id, value));
+    }
+    return map;
+  }, [pipeline, handleChange]);
 
   // Group parameters by their group field
   const groupedParams = useMemo(() => {
@@ -154,16 +181,27 @@ export function PipelineForm() {
 
         return (
           <ParamGroup key={groupId} groupId={groupId}>
-            {params.map((param) => (
-              <ParamControl
-                key={param.id}
-                param={param}
-                value={formValues[param.id]}
-                onChange={handleChange(param.id)}
-                formValues={formValues}
-                errors={errors}
-              />
-            ))}
+            {params.map((param) => {
+              // Disable fixed params for distilled FLUX.2 models
+              const isFixed = isFixedParam(selectedPipelineId, param.id, formValues);
+              return (
+                <div key={param.id} className="relative">
+                  <ParamControl
+                    param={isFixed ? { ...param, tooltip: `Fixed for distilled models (${param.tooltip ?? ''})` } : param}
+                    value={formValues[param.id]}
+                    onChange={paramCallbacks.get(param.id) ?? (() => {})}
+                    formValues={formValues}
+                    errors={errors}
+                    disabled={isFixed}
+                  />
+                  {isFixed && (
+                    <div className="text-xs text-amber-500/70 mt-1 ml-1">
+                      Fixed for distilled models
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </ParamGroup>
         );
       })}

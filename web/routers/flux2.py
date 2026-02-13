@@ -24,6 +24,36 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _upsample_prompt(
+    config,
+    prompt: str,
+    has_reference_images: bool,
+) -> tuple[str, str | None]:
+    """Upsample a prompt via heylookitsanllm, reading URL/model from config.
+
+    Returns (upsampled_prompt, warning_message_or_none).
+    Falls back to original prompt on API error or missing config.
+    """
+    from llm_dit.utils.prompt_rewriter import Flux2PromptUpsampler
+
+    api_url = getattr(config, "rewriter_api_url", "") or getattr(config, "api_url", None)
+    if not api_url:
+        return prompt, "Prompt upsampling requested but no API URL configured."
+
+    api_model: str = getattr(config, "rewriter_api_model", "")
+    if api_model:
+        upsampler = Flux2PromptUpsampler(api_url=api_url, api_model=api_model)
+    else:
+        upsampler = Flux2PromptUpsampler(api_url=api_url)
+
+    original = prompt
+    prompt = upsampler.upsample(prompt, has_reference_images=has_reference_images)
+    if prompt != original:
+        logger.info(f"[FLUX.2] Prompt upsampled: {len(original)} -> {len(prompt)} chars")
+        return prompt, f"Prompt upsampled from: {original[:100]}"
+    return prompt, None
+
+
 def _ensure_correct_model(
     requested_model: str,
     manager,
@@ -113,6 +143,33 @@ async def flux2_status(config: ConfigDep, manager: ManagerDep) -> Flux2StatusRes
 
 
 # =============================================================================
+# Model Info
+# =============================================================================
+
+
+@router.get("/api/flux2/models/{model_name}")
+async def flux2_model_info(model_name: str):
+    """Get model metadata including distilled status and fixed params.
+
+    Used by frontend to conditionally disable controls for distilled models.
+    """
+    from llm_dit.models.flux2.constants import FLUX2_MODEL_INFO
+
+    model_name_lower = model_name.lower()
+    if model_name_lower not in FLUX2_MODEL_INFO:
+        raise HTTPException(status_code=404, detail=f"Unknown model: {model_name}")
+
+    info = FLUX2_MODEL_INFO[model_name_lower]
+    return {
+        "model_name": model_name_lower,
+        "distilled": info["distilled"],
+        "fixed_params": sorted(info.get("fixed_params", set())),
+        "defaults": info["defaults"],
+        "fp8": info.get("fp8", False),
+    }
+
+
+# =============================================================================
 # Generation
 # =============================================================================
 
@@ -130,14 +187,42 @@ async def flux2_generate(request: Flux2GenerateRequest, config: ConfigDep, manag
             Flux2GenerationConfig,
             generate_image,
         )
-        from llm_dit.models.flux2.constants import FLUX2_MODEL_INFO
+        from llm_dit.models.flux2.constants import FLUX2_MODEL_INFO, get_fixed_params
 
-        # Get model defaults if steps/guidance not specified
+        # Get model defaults and fixed params
         model_info = FLUX2_MODEL_INFO.get(request.model_name.lower(), {})
         defaults = model_info.get("defaults", {"guidance": 1.0, "num_steps": 4})
+        fixed = get_fixed_params(request.model_name)
 
         num_steps = request.num_steps if request.num_steps is not None else defaults["num_steps"]
         guidance = request.guidance if request.guidance is not None else defaults["guidance"]
+
+        # Validate fixed params -- override to defaults and warn
+        warnings: list[str] = []
+        if "num_steps" in fixed and request.num_steps is not None and request.num_steps != defaults["num_steps"]:
+            warnings.append(
+                f"Distilled model '{request.model_name}' requires num_steps={defaults['num_steps']}. "
+                f"Overriding requested num_steps={request.num_steps}."
+            )
+            num_steps = defaults["num_steps"]
+            logger.warning(f"[FLUX.2] {warnings[-1]}")
+
+        if "guidance" in fixed and request.guidance is not None and request.guidance != defaults["guidance"]:
+            warnings.append(
+                f"Distilled model '{request.model_name}' requires guidance={defaults['guidance']}. "
+                f"Overriding requested guidance={request.guidance}."
+            )
+            guidance = defaults["guidance"]
+            logger.warning(f"[FLUX.2] {warnings[-1]}")
+
+        # Prompt upsampling (optional, requires heylookitsanllm API)
+        prompt = request.prompt
+        if request.upsample_prompt:
+            prompt, upsample_warning = _upsample_prompt(
+                config, prompt, has_reference_images=bool(request.reference_images),
+            )
+            if upsample_warning:
+                warnings.append(upsample_warning)
 
         # Process reference images if provided
         ref_images = []
@@ -170,7 +255,7 @@ async def flux2_generate(request: Flux2GenerateRequest, config: ConfigDep, manag
 
         # Create generation config
         gen_config = Flux2GenerationConfig(
-            prompt=request.prompt,
+            prompt=prompt,
             height=request.height,
             width=request.width,
             num_steps=num_steps,
@@ -263,6 +348,7 @@ async def flux2_generate(request: Flux2GenerateRequest, config: ConfigDep, manag
             pipeline_id="flux2",
             seed=gen_config.seed,
             generation_time=gen_time,
+            warnings=warnings,
         )
 
     except RuntimeError as e:
@@ -331,16 +417,49 @@ async def flux2_generate_stream(request: Flux2GenerateRequest, config: ConfigDep
                 Flux2GenerationConfig,
                 generate_image_with_progress,
             )
-            from llm_dit.models.flux2.constants import FLUX2_MODEL_INFO
+            from llm_dit.models.flux2.constants import FLUX2_MODEL_INFO, get_fixed_params
 
-            # Get model defaults if steps/guidance not specified
+            # Get model defaults and fixed params
             model_info = FLUX2_MODEL_INFO.get(request.model_name.lower(), {})
             defaults = model_info.get("defaults", {"guidance": 1.0, "num_steps": 4})
+            fixed = get_fixed_params(request.model_name)
 
             num_steps = request.num_steps if request.num_steps is not None else defaults["num_steps"]
             guidance = request.guidance if request.guidance is not None else defaults["guidance"]
 
+            # Validate fixed params -- override to defaults and warn
+            stream_warnings: list[str] = []
+            if "num_steps" in fixed and request.num_steps is not None and request.num_steps != defaults["num_steps"]:
+                stream_warnings.append(
+                    f"Distilled model '{request.model_name}' requires num_steps={defaults['num_steps']}. "
+                    f"Overriding requested num_steps={request.num_steps}."
+                )
+                num_steps = defaults["num_steps"]
+                logger.warning(f"[FLUX.2] {stream_warnings[-1]}")
+
+            if "guidance" in fixed and request.guidance is not None and request.guidance != defaults["guidance"]:
+                stream_warnings.append(
+                    f"Distilled model '{request.model_name}' requires guidance={defaults['guidance']}. "
+                    f"Overriding requested guidance={request.guidance}."
+                )
+                guidance = defaults["guidance"]
+                logger.warning(f"[FLUX.2] {stream_warnings[-1]}")
+
+            # Prompt upsampling (optional, requires heylookitsanllm API)
+            prompt = request.prompt
+            if request.upsample_prompt:
+                yield f"data: {json.dumps({'type': 'status', 'message': 'Upsampling prompt...'})}\n\n"
+                prompt, upsample_warning = _upsample_prompt(
+                    config, prompt, has_reference_images=bool(request.reference_images),
+                )
+                if upsample_warning:
+                    stream_warnings.append(upsample_warning)
+
             yield f"data: {json.dumps({'type': 'status', 'message': 'Processing request...'})}\n\n"
+
+            # Emit warnings as SSE events
+            for w in stream_warnings:
+                yield f"data: {json.dumps({'type': 'warning', 'message': w})}\n\n"
 
             # Process reference images if provided
             ref_images = []
@@ -372,7 +491,7 @@ async def flux2_generate_stream(request: Flux2GenerateRequest, config: ConfigDep
 
             # Create generation config
             gen_config = Flux2GenerationConfig(
-                prompt=request.prompt,
+                prompt=prompt,
                 height=request.height,
                 width=request.width,
                 num_steps=num_steps,
@@ -481,8 +600,17 @@ async def flux2_generate_stream(request: Flux2GenerateRequest, config: ConfigDep
             img_b64 = base64.b64encode(img_bytes.getvalue()).decode("ascii")
             data_url = f"data:image/png;base64,{img_b64}"
 
-            # Yield final result
-            yield f"data: {json.dumps({'type': 'complete', 'urls': [data_url], 'url': data_url, 'seed': gen_config.seed, 'generation_time': gen_time})}\n\n"
+            # Yield final result (include warnings if any)
+            complete_data = {
+                'type': 'complete',
+                'urls': [data_url],
+                'url': data_url,
+                'seed': gen_config.seed,
+                'generation_time': gen_time,
+            }
+            if stream_warnings:
+                complete_data['warnings'] = stream_warnings
+            yield f"data: {json.dumps(complete_data)}\n\n"
 
         except RuntimeError as e:
             if "LoRA mismatch" in str(e):

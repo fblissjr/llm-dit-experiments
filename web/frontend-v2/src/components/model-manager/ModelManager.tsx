@@ -59,7 +59,7 @@ function ModelCard({
       <div className="flex items-center justify-between gap-2 mb-2">
         <div className="flex items-center gap-2 min-w-0">
           <div
-            className="w-2 h-2 rounded-full flex-shrink-0"
+            className="w-2 h-2 rounded-full shrink-0"
             style={{
               backgroundColor: isLoaded ? color : '#6b7280',
             }}
@@ -70,7 +70,7 @@ function ModelCard({
         {/* Status badge */}
         <span
           className={cn(
-            'text-xs px-2 py-0.5 rounded-full flex-shrink-0',
+            'text-xs px-2 py-0.5 rounded-full shrink-0',
             isLoaded && 'bg-green-500/20 text-green-400',
             isLoading && 'bg-blue-500/20 text-blue-400',
             hasError && 'bg-red-500/20 text-red-400',
@@ -92,7 +92,7 @@ function ModelCard({
           {loras.map((lora) => (
             <span
               key={lora.name}
-              className="inline-flex items-center gap-0.5 px-1.5 py-0.5 text-xs bg-purple-500/20 text-purple-300 rounded"
+              className="inline-flex items-center gap-0.5 px-1.5 py-0.5 text-xs bg-purple-500/20 text-purple-300 rounded-sm"
             >
               {lora.name}
               <span className="text-purple-400/70">@{lora.scale.toFixed(2)}</span>
@@ -115,7 +115,7 @@ function ModelCard({
               <span
                 key={tag.key}
                 className={cn(
-                  'inline-flex items-center px-1.5 py-0.5 text-xs rounded',
+                  'inline-flex items-center px-1.5 py-0.5 text-xs rounded-sm',
                   colorMap[tag.color] ?? 'bg-gray-500/20 text-gray-300'
                 )}
               >

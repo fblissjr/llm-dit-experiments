@@ -36,7 +36,7 @@ function VRAMBar({ usedGb, totalGb }: { usedGb: number; totalGb: number }) {
 
 function LoRABadge({ name, scale }: { name: string; scale: number }) {
   return (
-    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 text-xs bg-purple-500/20 text-purple-300 rounded">
+    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 text-xs bg-purple-500/20 text-purple-300 rounded-sm">
       {name}
       <span className="text-purple-400/70">@{scale.toFixed(2)}</span>
     </span>
@@ -46,7 +46,7 @@ function LoRABadge({ name, scale }: { name: string; scale: number }) {
 function QuantBadge({ method }: { method: string }) {
   if (method === 'none') return null;
   return (
-    <span className="inline-flex items-center px-1.5 py-0.5 text-xs bg-orange-500/15 text-orange-300 rounded">
+    <span className="inline-flex items-center px-1.5 py-0.5 text-xs bg-orange-500/15 text-orange-300 rounded-sm">
       {method.toUpperCase()}
     </span>
   );
@@ -147,7 +147,7 @@ export function StatusBar() {
         )}>
           {/* Status dot */}
           <div
-            className="w-2 h-2 rounded-full flex-shrink-0"
+            className="w-2 h-2 rounded-full shrink-0"
             style={{ backgroundColor: dotColor }}
           />
 
@@ -197,13 +197,13 @@ export function StatusBar() {
 
           {/* Pending restart indicator */}
           {ctx && ctx.pendingRestartFields.length > 0 && (
-            <div className="w-2 h-2 rounded-full bg-yellow-400 flex-shrink-0" title="Restart required" />
+            <div className="w-2 h-2 rounded-full bg-yellow-400 shrink-0" title="Restart required" />
           )}
 
           {/* Expand chevron */}
           <svg
             className={cn(
-              'w-4 h-4 text-gray-500 transition-transform flex-shrink-0',
+              'w-4 h-4 text-gray-500 transition-transform shrink-0',
               isExpanded && 'rotate-180'
             )}
             fill="none"
@@ -231,7 +231,7 @@ export function StatusBar() {
                 <h2 className="font-semibold">Status Details</h2>
                 <button
                   onClick={() => setIsExpanded(false)}
-                  className="p-1 hover:bg-gray-800 rounded transition-colors"
+                  className="p-1 hover:bg-gray-800 rounded-sm transition-colors"
                 >
                   <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />

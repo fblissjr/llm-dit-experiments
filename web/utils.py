@@ -22,6 +22,7 @@ def create_image_response(
     generation_time: float = 0.0,
     history_id: int | None = None,
     img_b64: str | None = None,  # Pre-computed base64 (avoids double-encoding)
+    warnings: list[str] | None = None,
 ) -> ImageGenerationResult:
     """Create standardized JSON response for image generation endpoints.
 
@@ -35,6 +36,7 @@ def create_image_response(
         generation_time: Time taken in seconds
         history_id: Optional history entry ID
         img_b64: Pre-computed base64 string (skips encoding if provided)
+        warnings: Optional list of warning messages about param overrides
 
     Returns:
         ImageGenerationResult with: id, output_type, url, urls, thumbnail_url, seed, generation_time
@@ -58,6 +60,7 @@ def create_image_response(
         thumbnail_url=data_url,
         seed=seed if seed is not None else -1,
         generation_time=generation_time,
+        warnings=warnings or [],
     )
 
 

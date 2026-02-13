@@ -9,16 +9,7 @@ import { cn } from '@/utils';
 import { useSessionStore } from '@/stores';
 import type { HistoryItem } from '@/api/types';
 import { ImageViewer } from '@/components/viewer/ImageViewer';
-
-// Map color names to CSS values
-const colorMap: Record<string, string> = {
-  blue: '#3b82f6',
-  purple: '#a855f7',
-  orange: '#f97316',
-  teal: '#14b8a6',
-  green: '#22c55e',
-  pink: '#ec4899',
-};
+import { PIPELINE_COLOR_MAP } from '@/constants/colors';
 
 interface HistoryCardProps {
   item: HistoryItem;
@@ -55,7 +46,7 @@ export function HistoryCard({ item }: HistoryCardProps) {
 
   // Format relative time
   const relativeTime = formatRelativeTime(item.timestamp);
-  const pipelineColor = colorMap[item.pipelineColor] ?? colorMap.blue;
+  const pipelineColor = PIPELINE_COLOR_MAP[item.pipelineColor] ?? PIPELINE_COLOR_MAP.blue;
 
   // Determine which URL to show in viewer (prefer full, fallback to thumbnail)
   const viewerUrl = item.fullImageUrl || item.thumbnailUrl;
@@ -73,7 +64,7 @@ export function HistoryCard({ item }: HistoryCardProps) {
         <div className="flex gap-3">
           {/* Thumbnail */}
           <div
-            className="relative w-16 h-16 flex-shrink-0 rounded overflow-hidden bg-gray-700 cursor-pointer"
+            className="relative w-16 h-16 shrink-0 rounded-sm overflow-hidden bg-gray-700 cursor-pointer"
             onClick={handleThumbnailClick}
             title="Click to view full image"
           >
@@ -81,6 +72,7 @@ export function HistoryCard({ item }: HistoryCardProps) {
               <img
                 src={item.thumbnailUrl}
                 alt=""
+                loading="lazy"
                 className="w-full h-full object-cover hover:opacity-80 transition-opacity"
               />
             ) : (
@@ -131,7 +123,7 @@ export function HistoryCard({ item }: HistoryCardProps) {
             {/* Pipeline badge and time */}
             <div className="flex items-center justify-between mb-1">
               <span
-                className="text-xs font-medium px-1.5 py-0.5 rounded"
+                className="text-xs font-medium px-1.5 py-0.5 rounded-sm"
                 style={{ backgroundColor: `${pipelineColor}20`, color: pipelineColor }}
               >
                 {item.pipelineName}

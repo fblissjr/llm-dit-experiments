@@ -29,7 +29,7 @@ export function ActivePresetIndicator({
     return (
       <div className="flex items-center gap-2 text-xs py-1 flex-wrap">
         <span
-          className="w-4 h-4 inline-flex items-center justify-center rounded-full text-white text-[10px] flex-shrink-0"
+          className="w-4 h-4 inline-flex items-center justify-center rounded-full text-white text-[10px] shrink-0"
           style={{ backgroundColor: '#d97706' }}
         >
           <svg width="8" height="8" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -63,7 +63,7 @@ export function ActivePresetIndicator({
   return (
     <div className="flex items-center gap-2 text-xs py-1">
       <span
-        className="w-4 h-4 inline-flex items-center justify-center rounded-full text-white text-[10px] flex-shrink-0"
+        className="w-4 h-4 inline-flex items-center justify-center rounded-full text-white text-[10px] shrink-0"
         style={{ backgroundColor: pipelineColor }}
       >
         <svg width="8" height="8" viewBox="0 0 16 16" fill="none" aria-hidden="true">

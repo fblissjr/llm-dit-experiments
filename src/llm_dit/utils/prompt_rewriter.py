@@ -16,7 +16,7 @@ last updated: 2026-01-03
 
 import logging
 import re
-from typing import Optional, Protocol, Union
+from typing import Optional, Protocol
 
 logger = logging.getLogger(__name__)
 
@@ -350,6 +350,9 @@ class PromptRewriter:
         import urllib.request
         import urllib.error
 
+        if not self.api_url:
+            raise RuntimeError("No API URL configured for PromptRewriter")
+
         # Construct chat completion request
         url = f"{self.api_url.rstrip('/')}/chat/completions"
         data = {
@@ -467,6 +470,136 @@ class PromptRewriter:
         if language == "en":
             return DEFAULT_NEGATIVE_PROMPT_EN
         return DEFAULT_NEGATIVE_PROMPT
+
+
+# =============================================================================
+# FLUX.2 Prompt Upsampling (BFL official system prompts)
+# =============================================================================
+
+# From coderef/flux2/src/flux2/system_messages.py
+FLUX2_SYSTEM_MESSAGE_T2I = (
+    "You are an expert prompt engineer for FLUX.2 by Black Forest Labs. "
+    "Rewrite user prompts to be more descriptive while strictly preserving "
+    "their core subject and intent.\n\n"
+    "Guidelines:\n"
+    "1. Structure: Keep structured inputs structured (enhance within fields). "
+    "Convert natural language to detailed paragraphs.\n"
+    "2. Details: Add concrete visual specifics - form, scale, textures, materials, "
+    "lighting (quality, direction, color), shadows, spatial relationships, "
+    "and environmental context.\n"
+    "3. Text in Images: Put ALL text in quotation marks, matching the prompt's "
+    "language. Always provide explicit quoted text for objects that would contain "
+    "text in reality (signs, labels, screens, etc.) - without it, the model "
+    "generates gibberish.\n\n"
+    "Output only the revised prompt and nothing else."
+)
+
+FLUX2_SYSTEM_MESSAGE_I2I = (
+    "You are FLUX.2 by Black Forest Labs, an image-editing expert. You convert "
+    "editing requests into one concise instruction (50-80 words, ~30 for brief "
+    "requests).\n\n"
+    "Rules:\n"
+    "- Single instruction only, no commentary\n"
+    "- Use clear, analytical language (avoid \"whimsical,\" \"cascading,\" etc.)\n"
+    "- Specify what changes AND what stays the same (face, lighting, composition)\n"
+    "- Reference actual image elements\n"
+    "- Turn negatives into positives (\"don't change X\" -> \"keep X\")\n"
+    "- Make abstractions concrete (\"futuristic\" -> \"glowing cyan neon, metallic panels\")\n"
+    "- Keep content PG-13\n\n"
+    "Output only the final instruction in plain text and nothing else."
+)
+
+# BFL sampling params for upsampling
+FLUX2_UPSAMPLE_TEMPERATURE = 0.15
+FLUX2_UPSAMPLE_MAX_TOKENS = 512
+
+
+class Flux2PromptUpsampler:
+    """
+    Prompt upsampler for FLUX.2 using BFL's official system prompts.
+
+    Uses heylookitsanllm (or any OpenAI-compatible API) to expand prompts
+    with visual details optimized for FLUX.2 generation quality.
+
+    T2I mode: Expands prompts with visual details, textures, lighting.
+    I2I mode: Condenses editing requests into clear 50-80 word instructions.
+    """
+
+    def __init__(
+        self,
+        api_url: str,
+        api_model: str = "Mistral-Small-3.2-24B-Instruct-2506-bf16-mlx",
+        timeout: float = 60.0,
+    ):
+        self.api_url = api_url
+        self.api_model = api_model
+        self.timeout = timeout
+
+    def upsample(
+        self,
+        prompt: str,
+        has_reference_images: bool = False,
+    ) -> str:
+        """
+        Upsample a prompt using BFL's official system prompts.
+
+        Selects T2I or I2I mode based on whether reference images are present.
+
+        Args:
+            prompt: User's original prompt
+            has_reference_images: Whether the request includes reference images
+
+        Returns:
+            Upsampled prompt text (falls back to original on error)
+        """
+        if not prompt or not prompt.strip():
+            return prompt
+
+        system_prompt = (
+            FLUX2_SYSTEM_MESSAGE_I2I if has_reference_images
+            else FLUX2_SYSTEM_MESSAGE_T2I
+        )
+        mode = "I2I" if has_reference_images else "T2I"
+
+        try:
+            import json
+            import urllib.request
+
+            url = f"{self.api_url.rstrip('/')}/v1/chat/completions"
+            data = {
+                "model": self.api_model,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": prompt},
+                ],
+                "max_tokens": FLUX2_UPSAMPLE_MAX_TOKENS,
+                "temperature": FLUX2_UPSAMPLE_TEMPERATURE,
+                "enable_thinking": False,
+            }
+
+            headers = {"Content-Type": "application/json"}
+            req = urllib.request.Request(
+                url,
+                data=json.dumps(data).encode("utf-8"),
+                headers=headers,
+                method="POST",
+            )
+
+            logger.info(f"[FLUX2:Upsample] {mode} upsampling via {self.api_model}")
+            with urllib.request.urlopen(req, timeout=self.timeout) as response:
+                result = json.loads(response.read().decode("utf-8"))
+                upsampled = result["choices"][0]["message"]["content"].strip()
+
+            logger.info(
+                f"[FLUX2:Upsample] {mode}: {len(prompt)} -> {len(upsampled)} chars"
+            )
+            return upsampled
+
+        except Exception as e:
+            logger.warning(
+                f"[FLUX2:Upsample] Failed ({mode}), using original prompt: {e}"
+            )
+            return prompt
 
 
 def create_rewriter_from_config(

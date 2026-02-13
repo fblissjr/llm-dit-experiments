@@ -172,6 +172,7 @@ export const useSessionStore = create<SessionState>()(
                   url?: string;
                   output_path?: string;
                   seed?: number;
+                  warnings?: string[];
                 };
                 const urls = eventData.urls
                   ?? (eventData.url ? [eventData.url] : null)
@@ -186,6 +187,7 @@ export const useSessionStore = create<SessionState>()(
                   params,
                   durationMs: Date.now() - startTime,
                   timestamp: Date.now(),
+                  warnings: eventData.warnings,
                 };
 
                 set((state) => {

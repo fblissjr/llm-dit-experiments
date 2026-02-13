@@ -9,9 +9,23 @@
  */
 
 import { create } from 'zustand';
+import { persist, createJSONStorage } from 'zustand/middleware';
 import { immer } from 'zustand/middleware/immer';
-import type { FormValues, ValidationError, ParamSchema } from '@/api/types';
+import { idbStorage } from '@/utils/idbStorage';
+import type { FormValues, ValidationError, PipelineSchema } from '@/api/types';
+import { validateParam } from '@/utils/validation';
 import { useAppStore } from './appStore';
+
+// Module-level reference-equality cache for getResolvedValues.
+// Lives outside Immer state to avoid Object.freeze() overhead.
+// Invalidates when any input reference changes (Immer produces new refs on mutation).
+interface ResolvedCache {
+  result: FormValues;
+  userRef: FormValues;
+  serverRef: FormValues;
+  pipelineRef: PipelineSchema | undefined;
+}
+const _resolvedCache = new Map<string, ResolvedCache>();
 
 interface ActivePresetState {
   name: string;
@@ -51,62 +65,13 @@ interface FormState {
   getActivePresetName: (pipelineId: string) => string | null;
 }
 
-/**
- * Validate a single parameter against its schema
- */
-function validateParam(
-  param: ParamSchema,
-  value: unknown
-): ValidationError | null {
-  // Required check
-  if (param.required && (value === undefined || value === null || value === '')) {
-    return { paramId: param.id, message: `${param.label} is required` };
-  }
-
-  // Skip further validation if no value
-  if (value === undefined || value === null) return null;
-
-  // Number range validation
-  if (param.type === 'slider' || param.type === 'number') {
-    const num = Number(value);
-    if (isNaN(num)) {
-      return { paramId: param.id, message: `${param.label} must be a number` };
-    }
-    if (param.min !== undefined && num < param.min) {
-      return { paramId: param.id, message: `${param.label} must be at least ${param.min}` };
-    }
-    if (param.max !== undefined && num > param.max) {
-      return { paramId: param.id, message: `${param.label} must be at most ${param.max}` };
-    }
-    // Step alignment warning (e.g., width/height must be multiples of 16/32)
-    if (param.step && param.step > 1) {
-      const rounded = Math.round(num / param.step) * param.step;
-      if (rounded !== num) {
-        return {
-          paramId: param.id,
-          message: `${param.label} should be a multiple of ${param.step} (nearest: ${rounded})`,
-        };
-      }
-    }
-  }
-
-  // Select validation - skip for dynamic options (options_endpoint)
-  // Dynamic options are loaded from API and not in param.options
-  if (param.type === 'select' && param.options && !param.options_endpoint) {
-    if (!param.options.includes(String(value))) {
-      return { paramId: param.id, message: `${param.label} has an invalid value` };
-    }
-  }
-
-  return null;
-}
-
 export const useFormStore = create<FormState>()(
-  immer((set, get) => ({
-    values: {},
-    errors: {},
-    userModified: {},
-    activePreset: {},
+  persist(
+    immer((set, get) => ({
+      values: {},
+      errors: {},
+      userModified: {},
+      activePreset: {},
 
     /**
      * Set a single form value and mark it as user-modified
@@ -266,15 +231,7 @@ export const useFormStore = create<FormState>()(
       const errors: ValidationError[] = [];
 
       for (const param of pipeline.params) {
-        // Skip conditionally hidden params
-        if (param.conditional) {
-          const isVisible = Object.entries(param.conditional).every(
-            ([key, expectedValue]) => resolvedValues[key] === expectedValue
-          );
-          if (!isVisible) continue;
-        }
-
-        const error = validateParam(param, resolvedValues[param.id]);
+        const error = validateParam(param, resolvedValues[param.id], resolvedValues);
         if (error) {
           errors.push(error);
         }
@@ -294,7 +251,11 @@ export const useFormStore = create<FormState>()(
     },
 
     /**
-     * Get resolved values: schema defaults < dependent defaults < server defaults < user values
+     * Get resolved values: schema defaults < dependent defaults < server defaults < user values.
+     *
+     * Uses a module-level reference-equality cache. Immer produces new
+     * references on any mutation, so a triple-reference check (pipeline,
+     * serverDefaults, userValues) is sufficient for cache invalidation.
      */
     getResolvedValues: (pipelineId) => {
       const appStore = useAppStore.getState();
@@ -302,7 +263,24 @@ export const useFormStore = create<FormState>()(
       const serverDefaults = appStore.serverDefaults[pipelineId] ?? {};
       const userValues = get().values[pipelineId] ?? {};
 
-      if (!pipeline) return { ...serverDefaults, ...userValues };
+      // Check cache: return immediately if all input references match
+      const cached = _resolvedCache.get(pipelineId);
+      if (
+        cached &&
+        cached.userRef === userValues &&
+        cached.serverRef === serverDefaults &&
+        cached.pipelineRef === pipeline
+      ) {
+        return cached.result;
+      }
+
+      if (!pipeline) {
+        const result = { ...serverDefaults, ...userValues };
+        _resolvedCache.set(pipelineId, {
+          result, userRef: userValues, serverRef: serverDefaults, pipelineRef: undefined,
+        });
+        return result;
+      }
 
       // Start with schema defaults
       const result: FormValues = {};
@@ -338,6 +316,10 @@ export const useFormStore = create<FormState>()(
       // Layer user values
       Object.assign(result, userValues);
 
+      _resolvedCache.set(pipelineId, {
+        result, userRef: userValues, serverRef: serverDefaults, pipelineRef: pipeline,
+      });
+
       return result;
     },
 
@@ -370,5 +352,14 @@ export const useFormStore = create<FormState>()(
     getActivePresetName: (pipelineId) => {
       return get().activePreset[pipelineId]?.name ?? null;
     },
-  }))
+  })),
+    {
+      name: 'llm-dit-form',
+      storage: createJSONStorage(() => idbStorage),
+      partialize: (state) => ({
+        values: state.values,
+        activePreset: state.activePreset,
+      }),
+    }
+  )
 );

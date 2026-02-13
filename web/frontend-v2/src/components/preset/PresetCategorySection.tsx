@@ -77,7 +77,7 @@ export function PresetCategorySection({
             type="button"
             onClick={() => scroll('left')}
             className="absolute left-0 top-0 bottom-2 z-10 w-8 flex items-center justify-center
-                       bg-gradient-to-r from-gray-900/90 to-transparent text-gray-300
+                       bg-linear-to-r from-gray-900/90 to-transparent text-gray-300
                        hover:text-white transition-colors"
             aria-label="Scroll left"
           >
@@ -111,7 +111,7 @@ export function PresetCategorySection({
             type="button"
             onClick={() => scroll('right')}
             className="absolute right-0 top-0 bottom-2 z-10 w-8 flex items-center justify-center
-                       bg-gradient-to-l from-gray-900/90 to-transparent text-gray-300
+                       bg-linear-to-l from-gray-900/90 to-transparent text-gray-300
                        hover:text-white transition-colors"
             aria-label="Scroll right"
           >

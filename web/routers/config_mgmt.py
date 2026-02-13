@@ -8,7 +8,7 @@ resolution constraints, preset management, and live config editing.
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Response
 
 from web.dependencies import ConfigDep, ManagerDep
 from web.schemas import (
@@ -48,7 +48,7 @@ _LOADED_PIPELINE_NAMES = {
 
 
 @router.get("/api/pipelines", response_model=PipelinesResponse)
-async def get_pipeline_schemas(config: ConfigDep, manager: ManagerDep):
+async def get_pipeline_schemas(config: ConfigDep, manager: ManagerDep, response: Response):
     """Return all pipeline schemas for frontend form generation.
 
     The frontend uses these schemas to dynamically render forms without
@@ -82,6 +82,9 @@ async def get_pipeline_schemas(config: ConfigDep, manager: ManagerDep):
         if manager.is_loaded(canonical_id):
             loaded_pipeline = api_name
             break
+
+    # Pipeline schemas are static after server start; cache for 5 minutes
+    response.headers["Cache-Control"] = "public, max-age=300"
 
     return {
         "pipelines": pipeline_dicts,
@@ -237,7 +240,7 @@ async def get_presets_for_pipeline(pipeline_id: str, config: ConfigDep, variant:
 
 
 @router.get("/api/presets/preset/{name}", response_model=PresetDetailResponse)
-async def get_preset_by_name(name: str, config: ConfigDep):
+async def get_preset_by_name(name: str, config: ConfigDep, response: Response):
     """Get full details for a specific preset.
 
     Args:
@@ -257,6 +260,9 @@ async def get_preset_by_name(name: str, config: ConfigDep):
             status_code=404,
             detail=f"Preset '{name}' not found. Available: {registry.list_names()}",
         )
+
+    # Presets are static from YAML files; cache for 5 minutes
+    response.headers["Cache-Control"] = "public, max-age=300"
 
     return preset.to_api_response()
 

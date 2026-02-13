@@ -1,5 +1,6 @@
 import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
+import tailwindcss from "@tailwindcss/vite";
 import { resolve } from "path";
 import fs from "fs";
 import { homedir } from "os";
@@ -32,7 +33,7 @@ export default defineConfig(({ mode }) => {
     }
 
     return {
-        plugins: [react()],
+        plugins: [tailwindcss(), react()],
         resolve: {
             alias: {
                 "@": resolve(__dirname, "./src"),
@@ -48,8 +49,8 @@ export default defineConfig(({ mode }) => {
                     changeOrigin: true,
                     secure: false,
                     // Required for SSE streaming - don't buffer the response
-                    configure: (proxy) => {
-                        proxy.on("proxyRes", (proxyRes) => {
+                    configure: (proxy, _options) => {
+                        (proxy as any).on("proxyRes", (proxyRes: any) => {
                             // Check if this is an SSE response
                             if (
                                 proxyRes.headers["content-type"]?.includes(
@@ -72,7 +73,7 @@ export default defineConfig(({ mode }) => {
         },
         build: {
             outDir: "dist",
-            sourcemap: true,
+            sourcemap: mode !== 'production',
         },
     };
 });
