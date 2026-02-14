@@ -1,14 +1,16 @@
 # cli flags reference
 
-*last updated: 2026-01-06*
+*last updated: 2026-02-14*
 
-Shared between `web/server.py` and `scripts/generate.py`.
+CLI flags for `scripts/generate.py` and `web/server.py`. Both use the same base parser from `cli.py`. Use `--model-type` to select which pipeline to run.
+
+> **Note:** `scripts/generate.py` is planned for deprecation. See [entry_points.md](entry_points.md) for the strategic direction.
 
 ## model and config
 
 | Flag | Description |
 |------|-------------|
-| `--model-type` | Model type: zimage (default), qwenimage-layered, qwenimage-t2i, qwenimage-edit |
+| `--model-type` | Model type: zimage (default), flux2, ltx2, qwenimage-layered, qwenimage-t2i, qwenimage-edit |
 | `--model-path` | Path to Z-Image model |
 | `--qwen-image-model-path` | Path to Qwen-Image-Layered model |
 | `--config` | Path to TOML config file |
@@ -144,6 +146,70 @@ uv run scripts/generate.py --config config.toml --profile rtx4090 "A cat"
 | `--vl-hidden-layer` | Hidden layer to extract from VL model (default: -2) |
 | `--vl-no-auto-unload` | Keep VL model loaded after extraction (uses more VRAM) |
 | `--vl-blend-mode` | Blend strategy: interpolate/adain_per_dim/adain/linear/style_only/graduated/attention_weighted |
+
+## FLUX.2 Klein
+
+Use `--model-type flux2` to select.
+
+| Flag | Description |
+|------|-------------|
+| `--flux2-model-name` | Model variant name (e.g., klein-4b, klein-9b) |
+| `--flux2-model-path` | Path to FLUX.2 model directory |
+| `--flux2-encoder-path` | Path to Qwen3 encoder |
+| `--flux2-vae-path` | Path to VAE decoder |
+| `--flux2-num-steps` | Number of inference steps |
+| `--flux2-guidance` | Guidance scale |
+| `--flux2-seed` | Random seed |
+| `--flux2-output` | Output file path |
+| `--flux2-input-image` | Input image path(s) for image editing (multiple allowed) |
+| `--flux2-offload` | Enable CPU offload |
+| `--flux2-no-offload` | Disable CPU offload |
+| `--flux2-block-offload` | Enable block-level offload (incompatible with torch.compile and torchao) |
+
+```bash
+uv run scripts/generate.py --model-type flux2 \
+  --flux2-model-name klein-4b \
+  --flux2-model-path /path/to/flux2-klein \
+  "A cat sitting on a windowsill"
+```
+
+## LTX-2
+
+Use `--model-type ltx2` to select.
+
+| Flag | Description |
+|------|-------------|
+| `--ltx2-model-path` | Path to LTX-2 model directory |
+| `--ltx2-encoder-model-id` | Gemma3 encoder model ID or path |
+| `--ltx2-num-frames` | Number of frames to generate (must be 8n+1) |
+| `--ltx2-fps` | Frames per second for output video |
+| `--ltx2-guidance-scale` | Guidance scale |
+| `--ltx2-steps` | Number of inference steps |
+| `--ltx2-lora-path` | Path to LoRA weights |
+| `--ltx2-lora-scale` | LoRA scale factor |
+| `--ltx2-audio` | Enable audio generation |
+| `--ltx2-output` | Output file path |
+| `--ltx2-save-embeddings` | Save precomputed embeddings to file |
+| `--ltx2-load-embeddings` | Load precomputed embeddings from file |
+
+### LTX-2 optimization flags
+
+| Flag | Description |
+|------|-------------|
+| `--ltx2-text-encoder-device` | Device for Gemma3 encoder: cpu/cuda |
+| `--ltx2-transformer-device` | Device for DiT: cpu/cuda |
+| `--ltx2-vae-device` | Device for VAE: cpu/cuda |
+| `--ltx2-quantize` | Transformer quantization: none/fp8 |
+| `--ltx2-skip-cleanup` | Skip model cleanup after generation (keep in memory) |
+| `--ltx2-gemma-variant` | Gemma3 encoder variant: bf16/8bit/q4-qat |
+
+```bash
+uv run scripts/generate.py --model-type ltx2 \
+  --ltx2-model-path /path/to/ltx-video-2 \
+  --ltx2-num-frames 41 --ltx2-fps 24 \
+  --ltx2-gemma-variant q4-qat \
+  "A golden retriever playing fetch in a park"
+```
 
 ## qwen-image (all variants)
 

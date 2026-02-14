@@ -1,6 +1,6 @@
 # documentation checklist
 
-*last updated: 2026-01-06*
+*last updated: 2026-02-14*
 
 ## documentation structure
 
@@ -36,7 +36,7 @@ How-to docs - load when working on features:
 | File | Content |
 |------|---------|
 | `config_management.md` | Edit config from UI, profiles, server control |
-| `vl_conditioning.md` | Vision conditioning (single source of truth) |
+| `flux2_klein.md` | FLUX.2 Klein generation guide |
 | `prompt_rewriting.md` | Qwen3 prompt expansion |
 | `lora.md` | LoRA loading and fusion |
 | `distributed.md` | Mac encode, CUDA generate |
@@ -48,8 +48,8 @@ Research and development - load for context on past decisions:
 | Path | Content |
 |------|---------|
 | `index.md` | Map of all internal docs |
-| `SESSION_CONTINUITY.md` | Current state, blockers, next steps |
-| `GUIDING_PRINCIPLES.md` | Architectural north star |
+| `state/current.md` | Current state, blockers, next steps |
+| `principles/architectural_decisions.md` | Architectural north star |
 | `research/` | Hypotheses, experiments, findings |
 | `log/` | Session logs (log_YYYY-MM-DD.md) |
 
@@ -69,7 +69,7 @@ Research and development - load for context on past decisions:
 - Each topic should have ONE source of truth
 - Use pointers (links) instead of copying content
 - When consolidating, update all references to point to the canonical location
-- VL conditioning example: consolidated from 4 places into `docs/guides/vl_conditioning.md`
+- Each topic should have a single canonical location, with links from other docs
 
 ---
 
@@ -93,7 +93,7 @@ Research and development - load for context on past decisions:
 3. Update `CLAUDE.md` Directory Structure if new files/directories
 4. Update relevant `docs/*.md` or `experiments/README.md`
 5. Create/update `internal/log/log_YYYY-MM-DD.md` with session details
-6. Update `internal/SESSION_CONTINUITY.md` with current state
+6. Update `internal/state/current.md` with current state
 
 ## checklist for new experiments
 
@@ -107,22 +107,22 @@ Research and development - load for context on past decisions:
 
 ## for new configurable parameters
 
-Follow DRY Configuration Principles (see `docs/reference/configuration.md`):
+Follow DRY Configuration Principles (see `docs/reference/configuration.md`). Only **2 touchpoints** required:
 
-1. Add to `config.toml.example` with descriptive comment
-2. Add to Config dataclass in `src/llm_dit/config.py`
-3. Add CLI argument in `src/llm_dit/cli.py` (`create_argument_parser()`)
-4. Add to `RuntimeConfig` in `src/llm_dit/cli.py`
-5. Wire in `load_runtime_config()` (TOML -> RuntimeConfig)
-6. Wire in `src/llm_dit/startup.py` (RuntimeConfig -> Backend configs)
-7. Expose in `web/server.py` and `web/index.html` if user-facing
-8. Run DRY config test: `uv run pytest tests/unit/test_dry_config.py -v`
-9. Update `docs/reference/cli_flags.md` with new flag
+1. Add field to the Config dataclass in `src/llm_dit/config.py` (e.g., `Flux2Config`, `LTX2Config`)
+2. Add TOML section in `config.toml`
+
+`RuntimeConfig.from_toml_config()` picks it up automatically.
+
+Optional additional steps:
+3. Add CLI flag in `src/llm_dit/cli.py` if command-line override is needed
+4. Run DRY config test: `uv run pytest tests/unit/test_dry_config.py -v`
+5. Update `docs/reference/cli_flags.md` with new flag if added
 
 ## end of session
 
 1. Create/update `internal/log/log_YYYY-MM-DD.md` with session summary
-2. Update `internal/SESSION_CONTINUITY.md` with:
+2. Update `internal/state/current.md` with:
    - Current focus
    - Recent decisions
    - Known blockers

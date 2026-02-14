@@ -32,6 +32,7 @@ dependencies = [
     "imageio-ffmpeg>=0.6.0",
     "tqdm>=4.65.0",  # Progress bars in pipeline generation loops
     "orjson>=3.11.7",
+    "pyright>=1.1.408",
 ]
 
 [project.optional-dependencies]
