@@ -1,9 +1,23 @@
-last updated: 2026-02-13
+last updated: 2026-02-15
 
 # changelog
 
 All notable changes to this project will be documented in this file.
 Uses [Semantic Versioning](https://semver.org/).
+
+## 0.9.4
+
+### fixed
+- LTX-2 text encoder now runs on CUDA (was stuck on CPU due to config not reaching generation functions)
+
+### removed
+- `LTX2OptimizationConfig` eliminated -- dual-state config gap replaced with explicit parameters matching FLUX.2 pattern
+- Dead config.toml fields: `encoder_quantization`, `encoder_cpu_offload` (never used)
+
+### changed
+- `generate_video_with_offloading()` and `generate_video_two_stage()` now take explicit `text_encoder_device`, `transformer_device`, `vae_device`, `quantize` (str), `skip_cleanup` parameters instead of `optimization: LTX2OptimizationConfig`
+- Web router (`ltx2.py`) now passes `config.ltx2.*` optimization settings to generation functions
+- Added `[LTX2]` and `[LTX2:TwoStage]` entry logging with device placement and quantization
 
 ## 0.9.3
 

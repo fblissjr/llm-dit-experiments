@@ -207,6 +207,11 @@ async def ltx2_generate_stream(request: LTX2GenerateRequest, config: ConfigDep):
                         gemma_variant=ltx2_cfg.gemma_variant if ltx2_cfg else "bf16",
                         lora_path=request.lora_path,
                         lora_scale=request.lora_scale,
+                        text_encoder_device=ltx2_cfg.text_encoder_device if ltx2_cfg else "cpu",
+                        transformer_device=ltx2_cfg.transformer_device if ltx2_cfg else "cuda",
+                        vae_device=ltx2_cfg.vae_device if ltx2_cfg else "cuda",
+                        quantize=ltx2_cfg.quantize if ltx2_cfg else "fp8",
+                        skip_cleanup=ltx2_cfg.skip_cleanup if ltx2_cfg else False,
                     )
                 else:
                     # Single-stage fallback
@@ -220,6 +225,11 @@ async def ltx2_generate_stream(request: LTX2GenerateRequest, config: ConfigDep):
                         lora_path=request.lora_path,
                         lora_scale=request.lora_scale,
                         gemma_variant=ltx2_cfg.gemma_variant if ltx2_cfg else "bf16",
+                        text_encoder_device=ltx2_cfg.text_encoder_device if ltx2_cfg else "cpu",
+                        transformer_device=ltx2_cfg.transformer_device if ltx2_cfg else "cuda",
+                        vae_device=ltx2_cfg.vae_device if ltx2_cfg else "cuda",
+                        quantize=ltx2_cfg.quantize if ltx2_cfg else "fp8",
+                        skip_cleanup=ltx2_cfg.skip_cleanup if ltx2_cfg else False,
                     )
 
             loop = asyncio.get_event_loop()
@@ -264,7 +274,8 @@ async def ltx2_generate_stream(request: LTX2GenerateRequest, config: ConfigDep):
 
             result = {
                 "type": "complete",
-                "video_url": f"/outputs/videos/{video_filename}",
+                "urls": [f"/outputs/videos/{video_filename}"],
+                "url": f"/outputs/videos/{video_filename}",
                 "thumbnail_url": f"/outputs/videos/{thumb_filename}" if thumb_filename else None,
                 "seed": seed,
                 "generation_time": round(generation_time, 1),

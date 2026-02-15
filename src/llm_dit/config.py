@@ -342,8 +342,8 @@ class LTX2Config:
 
     # Text encoder (Gemma 3-12B)
     encoder_model_id: str = "models/LTX-2/text_encoder"
-    encoder_quantization: str = "fp8-weight-only"  # FP8 on RTX 4090 (native SM89)
-    encoder_cpu_offload: bool = True  # Offload after encoding (REQUIRED for 24GB)
+    encoder_quantization: str = "fp8-weight-only"  # Deprecated: use gemma_variant instead
+    encoder_cpu_offload: bool = True  # Deprecated: encoder always deleted after encoding
 
     # LoRA configuration
     lora_path: str = ""  # Path to LoRA safetensors

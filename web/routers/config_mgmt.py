@@ -142,6 +142,10 @@ async def get_pipeline_defaults(pipeline_id: str, config: ConfigDep):
     # Overlay RuntimeConfig values if available
     config_dict = config.to_dict()
 
+    # Get pipeline-specific config sub-dict if it exists
+    # RuntimeConfig.to_dict() nests sub-configs: {"ltx2": {...}, "flux2": {...}}
+    pipeline_config = config_dict.get(pipeline_id, {})
+
     # Map schema param IDs to RuntimeConfig field names
     # Schema uses clean names, config uses prefixed names for clarity
     param_to_config_map = {
@@ -159,10 +163,13 @@ async def get_pipeline_defaults(pipeline_id: str, config: ConfigDep):
     }
 
     for param in schema.params:
-        # First check direct match (param.id == config field name)
-        if param.id in config_dict:
+        # First check pipeline-specific sub-config (e.g., ltx2.num_frames)
+        if param.id in pipeline_config:
+            defaults[param.id] = pipeline_config[param.id]
+        # Then check direct match in root config dict
+        elif param.id in config_dict:
             defaults[param.id] = config_dict[param.id]
-        # Then check mapped name
+        # Finally check mapped name
         elif param.id in param_to_config_map:
             config_key = param_to_config_map[param.id]
             if config_key in config_dict:

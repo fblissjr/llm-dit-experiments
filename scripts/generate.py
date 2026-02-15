@@ -207,7 +207,6 @@ def run_ltx2_generation(args, config, logger) -> int:
         GenerationConfig as LTXConfig,
         generate_video_with_offloading,
     )
-    from llm_dit.pipelines.ltx2_config import LTX2OptimizationConfig
 
     # Validate model path - prefer --ltx2-model-path, fall back to --model-path
     model_path = config.ltx2_model_path or config.model_path
@@ -323,16 +322,6 @@ def run_ltx2_generation(args, config, logger) -> int:
         logger.info(f"  Original prompt: {emb_file.metadata.prompt[:50]}...")
         logger.info(f"  Encoded with: {emb_file.metadata.model_path}")
 
-    # Build optimization config from CLI settings
-    optimization = LTX2OptimizationConfig(
-        text_encoder_device=config.ltx2_text_encoder_device,
-        transformer_device=config.ltx2_transformer_device,
-        vae_device=config.ltx2_vae_device,
-        quantize_transformer=(config.ltx2_quantize not in (None, "none", "")),
-        precision=config.ltx2_quantize if config.ltx2_quantize not in (None, "none", "") else "none",
-        cleanup_between_stages=not config.ltx2_skip_cleanup,
-    )
-
     logger.info("=" * 60)
     logger.info("LTX-2 VIDEO GENERATION (Pure PyTorch)")
     logger.info("=" * 60)
@@ -349,13 +338,13 @@ def run_ltx2_generation(args, config, logger) -> int:
     if seed is not None:
         logger.info(f"  Seed: {seed}")
     if precomputed_embeds is None:
-        logger.info(f"  Text encoder device: {optimization.text_encoder_device}")
+        logger.info(f"  Text encoder device: {config.ltx2_text_encoder_device}")
         logger.info(f"  Gemma variant: {config.ltx2_gemma_variant}")
-    logger.info(f"  Transformer device: {optimization.transformer_device}")
-    logger.info(f"  VAE device: {optimization.vae_device}")
+    logger.info(f"  Transformer device: {config.ltx2_transformer_device}")
+    logger.info(f"  VAE device: {config.ltx2_vae_device}")
     logger.info(f"  Dtype: {config.get_dtype()}")
-    logger.info(f"  Quantization: {optimization.precision}")
-    logger.info(f"  Cleanup between stages: {optimization.cleanup_between_stages}")
+    logger.info(f"  Quantization: {config.ltx2_quantize}")
+    logger.info(f"  Skip cleanup: {config.ltx2_skip_cleanup}")
     logger.info("-" * 60)
 
     # Create config for pure PyTorch pipeline
@@ -379,16 +368,20 @@ def run_ltx2_generation(args, config, logger) -> int:
     start = time.time()
     try:
         video = generate_video_with_offloading(
-            prompt=args.prompt or "",  # Can be empty if using precomputed embeddings
+            prompt=args.prompt or "",
             config=ltx_config,
             model_path=model_path,
             text_encoder_path=text_encoder_path,
             precomputed_embeddings=precomputed_embeds,
             dtype=config.get_dtype(),
             callback=progress_callback,
-            optimization=optimization,
-            gemma_variant=config.ltx2_gemma_variant,  # bf16, 8bit, q4-qat
-            use_progress=True,  # Use rich SamplingProgress
+            gemma_variant=config.ltx2_gemma_variant,
+            use_progress=True,
+            text_encoder_device=config.ltx2_text_encoder_device,
+            transformer_device=config.ltx2_transformer_device,
+            vae_device=config.ltx2_vae_device,
+            quantize=config.ltx2_quantize,
+            skip_cleanup=config.ltx2_skip_cleanup,
         )
     except Exception as e:
         logger.error(f"Generation failed: {e}")

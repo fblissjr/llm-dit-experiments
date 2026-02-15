@@ -25,6 +25,7 @@ if _project_root not in sys.path:
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from starlette.middleware.gzip import GZipMiddleware
 
 logger = logging.getLogger(__name__)
@@ -78,8 +79,11 @@ def create_app() -> FastAPI:
     return app
 
 
-# Static file mount removed -- v1 frontend (web/static/) was deleted.
-# The active frontend is frontend-v2, served by Vite in dev or as a built SPA.
+# Serve generated outputs (videos, thumbnails) at /outputs/*
+# LTX-2 returns file paths (not base64) since video files are too large to embed.
+_outputs_dir = Path(__file__).resolve().parent.parent / "outputs"
+if _outputs_dir.is_dir():
+    app.mount("/outputs", StaticFiles(directory=str(_outputs_dir)), name="outputs")
 
 # Global server state (non-pipeline lifecycle).
 # Routers access these via `import web.server as srv; srv.rewriter_backend` etc.

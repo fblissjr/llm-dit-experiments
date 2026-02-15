@@ -48,10 +48,30 @@ from llm_dit.models.ltx2 import (
     Modality,
     VideoDecoder,
 )
-from llm_dit.pipelines.ltx2_config import LTX2OptimizationConfig
 from llm_dit.schedulers import LTX2Scheduler
 
 logger = logging.getLogger(__name__)
+
+# Shorthand aliases for quantization method strings
+_QUANT_ALIASES = {"fp8": "fp8-weight-only"}
+
+
+def _resolve_quantize(quantize: str) -> tuple[bool, str]:
+    """Normalize quantize string shorthand to (should_quantize, precision) tuple.
+
+    Handles aliases like "fp8" -> "fp8-weight-only" and falsy values.
+
+    Args:
+        quantize: Quantization method string. "none", "", or None disables
+            quantization. "fp8" is aliased to "fp8-weight-only".
+
+    Returns:
+        (should_quantize, precision): Whether to quantize and the resolved method.
+    """
+    if quantize in (None, "", "none"):
+        return False, "none"
+    precision = _QUANT_ALIASES.get(quantize, quantize)
+    return True, precision
 
 
 def cleanup_memory() -> None:
@@ -564,16 +584,18 @@ def generate_video_with_offloading(
     model_path: Union[str, Path] = "models/LTX-2",
     text_encoder_path: Optional[Union[str, Path]] = None,
     precomputed_embeddings: Optional[torch.Tensor] = None,
-    quantize: bool = True,
-    precision: str = "fp8-weight-only",  # Unified torchao method
     dtype: torch.dtype = torch.bfloat16,
     callback: Optional[Callable[[str, int, int], None]] = None,
-    optimization: Optional[LTX2OptimizationConfig] = None,
-    gemma_variant: str = "bf16",  # Gemma3 variant: bf16, 8bit, q4-qat
-    use_progress: bool = True,  # Use rich progress display for denoising
+    gemma_variant: str = "bf16",
+    use_progress: bool = True,
     debug_latents: bool = False,
     lora_path: Optional[Union[str, Path, List[Union[str, Path]]]] = None,
     lora_scale: Optional[Union[float, List[float]]] = None,
+    text_encoder_device: str = "cpu",
+    transformer_device: str = "cuda",
+    vae_device: str = "cuda",
+    quantize: str = "fp8",
+    skip_cleanup: bool = False,
 ) -> torch.Tensor:
     """
     Generate video with sequential component offloading for 24GB GPUs.
@@ -592,51 +614,24 @@ def generate_video_with_offloading(
         model_path: Path to LTX-2 model directory (contains transformer/, text_encoder/, vae/)
         text_encoder_path: Optional separate path for text encoder
         precomputed_embeddings: Optional pre-computed text embeddings [seq_len, 3840].
-            If provided, skips text encoding entirely. Useful for:
-            - Running same prompt with different seeds
-            - Using a different Gemma3 quantization variant for encoding
-            - Distributed inference (encode on one machine, generate on another)
-        quantize: If True, quantize transformer for memory efficiency.
-            DEPRECATED: Use optimization.quantize_transformer instead.
-        precision: Quantization method (torchao unified).
-            DEPRECATED: Use optimization.precision instead.
-            - "fp8-weight-only" (default): FP8 weights, BF16 activations
-            - "fp8-dynamic": FP8 weights + FP8 activations
-            - "int8": INT8 weight-only
-            - "int4": INT4 weight-only (max compression)
+            If provided, skips text encoding entirely.
         dtype: Base dtype for loading (bf16 recommended)
         callback: Optional callback(stage, step, total) for progress
-        optimization: LTX2OptimizationConfig with device placement and memory settings.
-            If None, uses LTX2OptimizationConfig.for_24gb_gpu() defaults.
-        debug_latents: If True, log detailed latent/velocity statistics at key denoising steps.
-            Useful for debugging generation quality issues without changing global log level.
-        lora_path: Optional path to LoRA weights (.safetensors). Can be:
-            - Single path (str or Path)
-            - List of paths for stacking multiple LoRAs
-        lora_scale: LoRA scale factor(s). Can be:
-            - Single float (applied to all LoRAs if multiple paths)
-            - List of floats (one per LoRA path)
-            - None: defaults to 0.8 for each LoRA
+        gemma_variant: Gemma3 variant: bf16, 8bit, q4-qat
+        use_progress: Use rich progress display for denoising
+        debug_latents: Log detailed latent/velocity statistics at key denoising steps.
+        lora_path: Optional path to LoRA weights (.safetensors). Can be a single
+            path or list of paths for stacking multiple LoRAs.
+        lora_scale: LoRA scale factor(s). None defaults to 0.8 per LoRA.
+        text_encoder_device: Device for Gemma3 text encoder.
+        transformer_device: Device for DiT transformer.
+        vae_device: Device for VAE decoder.
+        quantize: Transformer quantization method: none, fp8, fp8-weight-only,
+            fp8-dynamic, int8, int4.
+        skip_cleanup: Skip memory cleanup between stages.
 
     Returns:
         Video tensor [F, H, W, C] in uint8 format
-
-    Example:
-        video = generate_video_with_offloading(
-            "A cat walking",
-            GenerationConfig(num_frames=33, height=512, width=768),
-            model_path="models/LTX-2",
-            quantize=True,
-        )
-
-        # With optimization config:
-        opt = LTX2OptimizationConfig.for_24gb_gpu()
-        video = generate_video_with_offloading(
-            "A cat walking",
-            GenerationConfig(num_frames=33, height=512, width=768),
-            model_path="models/LTX-2",
-            optimization=opt,
-        )
 
     Memory usage (RTX 4090, 24GB):
         - Text encoder (Gemma3): ~8GB peak
@@ -644,17 +639,15 @@ def generate_video_with_offloading(
         - VAE: ~2GB
         - Total per stage: <24GB
     """
-    # Initialize optimization config with defaults if not provided
-    if optimization is None:
-        optimization = LTX2OptimizationConfig.for_24gb_gpu()
-
-    # Override deprecated parameters with optimization config if provided explicitly
-    # This maintains backward compatibility while preferring optimization config
-    effective_quantize = optimization.quantize_transformer if optimization else quantize
-    effective_precision = optimization.precision if optimization else precision
+    effective_quantize, effective_precision = _resolve_quantize(quantize)
     model_path = Path(model_path)
     if text_encoder_path is None:
         text_encoder_path = model_path / "text_encoder"
+
+    logger.info(
+        f"[LTX2] text_encoder={text_encoder_device}, transformer={transformer_device}, "
+        f"vae={vae_device}, quantize={quantize}, variant={gemma_variant}"
+    )
 
     # Stage 1: Text Encoding (skipped if precomputed_embeddings provided)
     gen_start = time.perf_counter()
@@ -667,7 +660,6 @@ def generate_video_with_offloading(
         else:
             prompt_embeds = precomputed_embeddings
         # Move to transformer device with requested dtype
-        transformer_device = optimization.transformer_device
         prompt_embeds = prompt_embeds.to(transformer_device, dtype)
         # Create attention mask (all ones for precomputed embeddings)
         attention_mask = torch.ones(
@@ -682,7 +674,7 @@ def generate_video_with_offloading(
         if callback:
             callback("text_encoder", 0, 1)
 
-        logger.info("Stage 1: Loading text encoder...")
+        logger.info(f"Stage 1: Loading text encoder on {text_encoder_device}...")
         logger.debug(f"  Gemma variant: {gemma_variant}")
 
         # Use variant factory for flexible Gemma3 loading
@@ -692,7 +684,7 @@ def generate_video_with_offloading(
                 variant=gemma_variant,
                 model_path=str(model_path),
                 text_encoder_path=str(text_encoder_path) if text_encoder_path else None,
-                device=optimization.text_encoder_device,
+                device=text_encoder_device,
                 dtype=dtype,
             )
         else:
@@ -700,7 +692,7 @@ def generate_video_with_offloading(
             from llm_dit.encoders.gemma3 import Gemma3Encoder
             text_encoder = Gemma3Encoder(
                 model_id=str(text_encoder_path),
-                device=optimization.text_encoder_device,
+                device=text_encoder_device,
                 dtype=dtype,
             )
 
@@ -712,12 +704,11 @@ def generate_video_with_offloading(
         logger.debug(f"Prompt embeddings: {prompt_embeds.shape}")
 
         # Move embeddings to transformer device, unload encoder
-        transformer_device = optimization.transformer_device
         prompt_embeds = prompt_embeds.to(transformer_device, dtype)
         attention_mask = attention_mask.to(transformer_device)
 
         del text_encoder
-        if optimization.cleanup_between_stages:
+        if not skip_cleanup:
             cleanup_memory()
         logger.info("Text encoder unloaded")
 
@@ -732,13 +723,13 @@ def generate_video_with_offloading(
     if callback:
         callback("transformer", 0, config.num_inference_steps)
 
-    logger.info("Stage 2: Loading transformer...")
+    logger.info(f"Stage 2: Loading transformer on {transformer_device}...")
 
     # Always load in BF16 first, then apply quantization via unified system
     from llm_dit.models.ltx2 import load_ltx2_transformer
 
     # Load to CPU first if quantizing (reduces peak GPU memory)
-    load_device = "cpu" if effective_quantize else optimization.transformer_device
+    load_device = "cpu" if effective_quantize else transformer_device
     model = load_ltx2_transformer(
         model_path / "transformer",
         dtype=dtype,
@@ -761,7 +752,7 @@ def generate_video_with_offloading(
         )
 
     if load_device == "cpu":
-        model = model.to(optimization.transformer_device)
+        model = model.to(transformer_device)
 
     # Only load connectors if embeddings need processing (188160 -> 3840 projection)
     # Our Gemma3Encoder already outputs 3840-dim via internal Embeddings1DConnector
@@ -812,7 +803,7 @@ def generate_video_with_offloading(
                 model,
                 path,
                 scale=scale,
-                device=optimization.transformer_device,
+                device=transformer_device,
                 dtype=dtype,
             )
             total_updated += updated
@@ -837,7 +828,7 @@ def generate_video_with_offloading(
 
     # Unload transformer and connectors
     del model, connectors, prompt_embeds, attention_mask
-    if optimization.cleanup_between_stages:
+    if not skip_cleanup:
         cleanup_memory()
     logger.info("Transformer unloaded")
 
@@ -852,7 +843,7 @@ def generate_video_with_offloading(
     if callback:
         callback("vae", 0, 1)
 
-    logger.info("Stage 3: Loading VAE decoder...")
+    logger.info(f"Stage 3: Loading VAE decoder on {vae_device}...")
 
     # Pure PyTorch VAE decoder (no diffusers dependency)
     from llm_dit.models.ltx2.vae import load_ltx2_vae_decoder
@@ -861,7 +852,7 @@ def generate_video_with_offloading(
         model_path / "vae",
         dtype=dtype,
         device="cpu",
-    ).to(optimization.vae_device)
+    ).to(vae_device)
 
     logger.info("Decoding latents to video...")
 
@@ -882,7 +873,7 @@ def generate_video_with_offloading(
 
     # Unload VAE
     del vae, latents
-    if optimization.cleanup_between_stages:
+    if not skip_cleanup:
         cleanup_memory()
     logger.info("VAE unloaded")
 
@@ -1146,14 +1137,16 @@ def generate_video_two_stage(
     two_stage: TwoStageConfig,
     model_path: Union[str, Path] = "models/LTX-2",
     text_encoder_path: Optional[Union[str, Path]] = None,
-    quantize: bool = True,
-    precision: str = "fp8-weight-only",
     dtype: torch.dtype = torch.bfloat16,
     callback: Optional[Callable[[str, int, int], None]] = None,
-    optimization: Optional[LTX2OptimizationConfig] = None,
     gemma_variant: str = "bf16",
     lora_path: Optional[Union[str, Path, List[Union[str, Path]]]] = None,
     lora_scale: Optional[Union[float, List[float]]] = None,
+    text_encoder_device: str = "cpu",
+    transformer_device: str = "cuda",
+    vae_device: str = "cuda",
+    quantize: str = "fp8",
+    skip_cleanup: bool = False,
 ) -> torch.Tensor:
     """Generate video using two-stage pipeline with spatial upsampling.
 
@@ -1175,26 +1168,30 @@ def generate_video_two_stage(
         two_stage: TwoStageConfig with stage-specific parameters.
         model_path: Path to LTX-2 model directory.
         text_encoder_path: Optional separate path for text encoder.
-        quantize: Whether to FP8 quantize the transformer.
-        precision: Quantization method.
         dtype: Base computation dtype.
         callback: Optional progress callback(stage_name, step, total).
-        optimization: LTX2OptimizationConfig for device placement.
         gemma_variant: Gemma3 variant (bf16, 8bit, q4-qat).
         lora_path: Optional base LoRA(s) for stage 1.
         lora_scale: LoRA scale(s) for base LoRA.
+        text_encoder_device: Device for Gemma3 text encoder.
+        transformer_device: Device for DiT transformer.
+        vae_device: Device for VAE decoder.
+        quantize: Transformer quantization method: none, fp8, fp8-weight-only,
+            fp8-dynamic, int8, int4.
+        skip_cleanup: Skip memory cleanup between stages.
 
     Returns:
         Video tensor [F, H, W, C] in uint8 format.
     """
-    if optimization is None:
-        optimization = LTX2OptimizationConfig.for_24gb_gpu()
-
-    effective_quantize = optimization.quantize_transformer
-    effective_precision = optimization.precision
+    effective_quantize, effective_precision = _resolve_quantize(quantize)
     model_path = Path(model_path)
     if text_encoder_path is None:
         text_encoder_path = model_path / "text_encoder"
+
+    logger.info(
+        f"[LTX2:TwoStage] text_encoder={text_encoder_device}, transformer={transformer_device}, "
+        f"vae={vae_device}, quantize={quantize}, variant={gemma_variant}"
+    )
 
     gen_start = time.perf_counter()
 
@@ -1205,7 +1202,7 @@ def generate_video_two_stage(
     if callback:
         callback("encoding", 0, 2)
 
-    logger.info("Stage 0: Loading text encoder...")
+    logger.info(f"Stage 0: Loading text encoder on {text_encoder_device}...")
 
     if gemma_variant != "bf16":
         from llm_dit.encoders.gemma3_variants import create_gemma3_encoder
@@ -1213,14 +1210,14 @@ def generate_video_two_stage(
             variant=gemma_variant,
             model_path=str(model_path),
             text_encoder_path=str(text_encoder_path),
-            device=optimization.text_encoder_device,
+            device=text_encoder_device,
             dtype=dtype,
         )
     else:
         from llm_dit.encoders.gemma3 import Gemma3Encoder
         text_encoder = Gemma3Encoder(
             model_id=str(text_encoder_path),
-            device=optimization.text_encoder_device,
+            device=text_encoder_device,
             dtype=dtype,
         )
 
@@ -1242,13 +1239,12 @@ def generate_video_two_stage(
         callback("encoding", 2, 2)
 
     # Move to transformer device, unload encoder
-    transformer_device = optimization.transformer_device
     pos_embeds = pos_embeds.to(transformer_device, dtype)
     pos_mask = pos_mask.to(transformer_device)
     neg_embeds = neg_embeds.to(transformer_device, dtype)
 
     del text_encoder
-    if optimization.cleanup_between_stages:
+    if not skip_cleanup:
         cleanup_memory()
     logger.info("Text encoder unloaded")
 
@@ -1262,7 +1258,7 @@ def generate_video_two_stage(
     if callback:
         callback("stage1_denoise", 0, two_stage.stage1_steps)
 
-    logger.info("Stage 1: Loading transformer for low-res denoising...")
+    logger.info(f"Stage 1: Loading transformer on {transformer_device} for low-res denoising...")
 
     # Stage 1 config: half resolution
     stage1_config = GenerationConfig(
@@ -1383,7 +1379,7 @@ def generate_video_two_stage(
     latents = latents.transpose(1, 2).reshape(1, 128, t_latent, h_latent, w_latent)
 
     del model, sigmas
-    if optimization.cleanup_between_stages:
+    if not skip_cleanup:
         cleanup_memory()
     logger.info("Stage 1 transformer unloaded")
 
@@ -1422,7 +1418,7 @@ def generate_video_two_stage(
     latents = per_channel_stats.normalize(latents)
 
     del upsampler, vae_for_stats, per_channel_stats
-    if optimization.cleanup_between_stages:
+    if not skip_cleanup:
         cleanup_memory()
 
     if callback:
@@ -1441,7 +1437,7 @@ def generate_video_two_stage(
     if callback:
         callback("stage2_denoise", 0, two_stage.stage2_steps)
 
-    logger.info("Stage 2: Loading transformer for high-res refinement...")
+    logger.info(f"Stage 2: Loading transformer on {transformer_device} for high-res refinement...")
 
     # Load fresh transformer for stage 2
     model = load_ltx2_transformer(
@@ -1546,7 +1542,7 @@ def generate_video_two_stage(
     latents = latents_refined.transpose(1, 2).reshape(1, 128, t_lat_full, h_lat_full, w_lat_full)
 
     del model, latents_noisy, latents_refined, pos_embeds, neg_embeds, pos_mask
-    if optimization.cleanup_between_stages:
+    if not skip_cleanup:
         cleanup_memory()
     logger.info("Stage 2 transformer unloaded")
 
@@ -1560,19 +1556,19 @@ def generate_video_two_stage(
     if callback:
         callback("decode", 0, 1)
 
-    logger.info("Stage 3: Loading VAE decoder...")
+    logger.info(f"Stage 3: Loading VAE decoder on {vae_device}...")
 
     from llm_dit.models.ltx2.vae import load_ltx2_vae_decoder
 
     vae = load_ltx2_vae_decoder(
         model_path / "vae", dtype=dtype, device="cpu"
-    ).to(optimization.vae_device)
+    ).to(vae_device)
 
     logger.info("Decoding latents to video...")
 
     decode_start = time.perf_counter()
     with torch.no_grad():
-        video = vae(latents.to(optimization.vae_device))
+        video = vae(latents.to(vae_device))
     decode_elapsed = time.perf_counter() - decode_start
     logger.info(f"[Decode] VAE decode {decode_elapsed:.1f}s")
 
@@ -1581,7 +1577,7 @@ def generate_video_two_stage(
     video = ((video + 1) / 2 * 255).clamp(0, 255).to(torch.uint8)
 
     del vae, latents
-    if optimization.cleanup_between_stages:
+    if not skip_cleanup:
         cleanup_memory()
 
     if callback:
