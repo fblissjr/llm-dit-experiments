@@ -1,7 +1,7 @@
 """
 LTX-2 Pipeline Schema
 
-last updated: 2026-01-25
+last updated: 2026-02-15
 
 LTX-2 is a video generation pipeline with:
 - Pure PyTorch implementation (recommended) or diffusers wrapper
@@ -116,15 +116,35 @@ register_pipeline(PipelineSchema(
             tooltip="Frames per second for output video.",
         ),
         ParamSchema(
-            id="num_inference_steps",
+            id="use_two_stage",
+            type="checkbox",
+            label="Two-Stage",
+            default=True,
+            group="basic",
+            tooltip="Two-stage generation: coarse pass + refinement. Higher quality, slightly slower.",
+        ),
+        ParamSchema(
+            id="stage1_steps",
             type="slider",
-            label="Steps",
-            default=12,
+            label="Stage 1 Steps",
+            default=40,
             min=4,
-            max=50,
+            max=80,
             step=1,
             group="basic",
-            tooltip="Number of denoising steps. 12 recommended for distilled model.",
+            tooltip="Denoising steps for stage 1 (coarse generation). 40 recommended for two-stage, 12 for single-stage distilled.",
+        ),
+        ParamSchema(
+            id="stage2_steps",
+            type="slider",
+            label="Stage 2 Steps",
+            default=3,
+            min=1,
+            max=10,
+            step=1,
+            group="basic",
+            conditional={"use_two_stage": True},
+            tooltip="Refinement steps for stage 2. 3 recommended.",
         ),
         ParamSchema(
             id="guidance_scale",
@@ -290,6 +310,30 @@ register_pipeline(PipelineSchema(
             group="advanced",
             conditional={"stg_enabled": True},
             tooltip="When to end STG (fraction of steps).",
+        ),
+        ParamSchema(
+            id="rescale_scale",
+            type="slider",
+            label="CFG Rescale",
+            default=0.7,
+            min=0.0,
+            max=1.0,
+            step=0.05,
+            group="advanced",
+            conditional={"use_two_stage": True},
+            tooltip="CFG rescaling factor for two-stage generation. 0.7 recommended.",
+        ),
+        ParamSchema(
+            id="ge_gamma",
+            type="slider",
+            label="GE Gamma",
+            default=0.0,
+            min=0.0,
+            max=1.0,
+            step=0.05,
+            group="advanced",
+            conditional={"use_two_stage": True},
+            tooltip="Gradient estimation gamma. 0.0 disables. Used for quality refinement in two-stage.",
         ),
     ],
 ))

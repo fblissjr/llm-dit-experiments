@@ -5,6 +5,19 @@ last updated: 2026-02-15
 All notable changes to this project will be documented in this file.
 Uses [Semantic Versioning](https://semver.org/).
 
+## 0.9.5
+
+### fixed
+- LTX-2 video rendering in frontend: backend SSE response now uses standard `urls` array format (was `video_url` string)
+- Config defaults endpoint: extracts nested pipeline sub-dicts from `RuntimeConfig.to_dict()` (LTX-2 config.toml values now reach frontend form defaults)
+- Static file serving: added `/outputs` mount for LTX-2 video files (was returning 404)
+
+### added
+- Two-stage generation controls in LTX-2 pipeline schema: `use_two_stage`, `stage1_steps`, `stage2_steps`, `rescale_scale`, `ge_gamma`
+
+### changed
+- LTX-2 pipeline schema: replaced non-functional `num_inference_steps` param (no matching Pydantic field) with `stage1_steps` and `stage2_steps`
+
 ## 0.9.4
 
 ### fixed
