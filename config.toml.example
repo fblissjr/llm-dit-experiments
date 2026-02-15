@@ -1,5 +1,5 @@
 # llm-dit-experiments configuration template
-# last updated: 2026-02-07
+# last updated: 2026-02-15
 #
 # Copy to config.toml and edit paths for your setup:
 #   cp config.toml.example config.toml
@@ -136,11 +136,15 @@ compile_mode = "default"
 # model_path = "/path/to/LTX-2"
 transformer_file = "ltx-2-19b-distilled-fp8.safetensors"
 
-encoder_model_id = "google/gemma-3-12b-it-qat-q4_0-unquantized"
-# Encoder quantization: none, fp8-weight-only, fp8-dynamic, int8, int4
-encoder_quantization = "none"   # Q4 QAT ships pre-quantized
-encoder_cpu_offload = true      # offload encoder after encoding (REQUIRED for 24GB)
+# Two-stage pipeline files
+spatial_upsampler_file = "ltx-2-spatial-upscaler-x2-1.0.safetensors"
+distilled_lora_path = ""        # distilled LoRA for stage 2 refinement
+distilled_lora_scale = 0.8
 
+# Gemma 3-12B encoder
+encoder_model_id = "google/gemma-3-12b-it-qat-q4_0-unquantized"
+
+# LoRA
 lora_path = ""
 lora_scale = 1.0                # blend scale (0.0-1.0)
 
@@ -148,6 +152,7 @@ lora_scale = 1.0                # blend scale (0.0-1.0)
 offload_mode = "model"
 num_blocks_per_group = 2        # group mode only: DiT blocks to keep on GPU
 
+# Video defaults
 height = 512
 width = 768
 num_frames = 33
@@ -155,21 +160,52 @@ fps = 24
 num_inference_steps = 12
 guidance_scale = 3.0
 
+# Audio
 audio_enabled = false
 audio_negative_prompt = ""
 
+# Two-stage pipeline (reference: TI2VidTwoStagesPipeline)
+use_two_stage = true
+stage1_num_inference_steps = 40
+stage2_num_inference_steps = 3
+negative_prompt = "worst quality, blurry, distorted"
+
+# Guidance (stage 1 only)
+stg_scale = 0.0                 # spatio-temporal guidance (0=disabled)
+stg_blocks = "29"               # comma-separated block indices for STG
+rescale_scale = 0.7             # CFG rescaling to prevent over-saturation
+
+# Optimization
+ge_gamma = 0.0                  # gradient estimation gamma (0=disabled, 2.0=reference)
+
+# Legacy single-stage distilled mode
 use_distilled = true
 distilled_steps_stage1 = 8
 distilled_steps_stage2 = 4
 
+# Image-to-video
 input_image = ""
 image_weight = 0.7
 
+# Tiled VAE (required for video decode on 24GB)
 tiled_vae = true
 tile_size_temporal = 8
 tile_size_spatial = 256
 tile_overlap_temporal = 4
 tile_overlap_spatial = 32
+
+# Output
+output_path = "output.mp4"
+
+# Device placement
+text_encoder_device = "cuda"    # cuda recommended (encoder loads to CUDA for encoding)
+transformer_device = "cuda"
+vae_device = "cuda"
+
+# Transformer quantization: none, fp8 (alias for fp8-weight-only), fp8-dynamic, int8, int4
+quantize = "fp8"
+skip_cleanup = false
+gemma_variant = "8bit"          # gemma3 backbone: bf16, 8bit, q4-qat
 
 
 # ==========================================================================
