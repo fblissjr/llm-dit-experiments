@@ -895,11 +895,14 @@ class StepContext:
     All denoising parameters that can vary per step live here.
     When guidance_scale <= 1.0, the loop runs a single forward pass.
     When > 1.0 and neg_embeds is provided, it runs CFG (double forward pass).
+    When stg_scale > 0 and stg_blocks is set, adds a 3rd perturbed pass (STG).
     """
     guidance_scale: float = 1.0
     neg_embeds: Optional[torch.Tensor] = None
     rescale_scale: float = 0.0
     ge_gamma: float = 0.0
+    stg_scale: float = 0.0
+    stg_blocks: Optional[List[int]] = None
 
 
 # A callable that returns StepContext for a given (step_index, sigma_value)
@@ -911,6 +914,8 @@ def constant_schedule(
     neg_embeds: Optional[torch.Tensor] = None,
     rescale_scale: float = 0.0,
     ge_gamma: float = 0.0,
+    stg_scale: float = 0.0,
+    stg_blocks: Optional[List[int]] = None,
 ) -> StepSchedule:
     """Static parameters for all steps (default behavior)."""
     ctx = StepContext(
@@ -918,6 +923,8 @@ def constant_schedule(
         neg_embeds=neg_embeds,
         rescale_scale=rescale_scale,
         ge_gamma=ge_gamma,
+        stg_scale=stg_scale,
+        stg_blocks=stg_blocks,
     )
     return lambda step, sigma: ctx
 
@@ -936,15 +943,27 @@ class TwoStageConfig:
 
     # Stage 1 (low-res denoising)
     stage1_steps: int = 40
-    guidance_scale: float = 3.5
+    guidance_scale: float = 3.0
 
     # Guidance options (stage 1 only)
-    stg_scale: float = 0.0  # Spatio-temporal guidance (0=disabled)
+    stg_scale: float = 1.0  # Spatio-temporal guidance scale (0=disabled, 1.0=reference)
     stg_blocks: list[int] = None  # type: ignore[assignment]
     rescale_scale: float = 0.7  # CFG rescaling
 
-    # Negative prompt
-    negative_prompt: str = "worst quality, blurry, distorted"
+    # Negative prompt (reference DEFAULT_NEGATIVE_PROMPT from constants.py)
+    negative_prompt: str = (
+        "blurry, out of focus, overexposed, underexposed, low contrast, washed out colors, excessive noise, "
+        "grainy texture, poor lighting, flickering, motion blur, distorted proportions, unnatural skin tones, "
+        "deformed facial features, asymmetrical face, missing facial features, extra limbs, disfigured hands, "
+        "wrong hand count, artifacts around text, inconsistent perspective, camera shake, incorrect depth of "
+        "field, background too sharp, background clutter, distracting reflections, harsh shadows, inconsistent "
+        "lighting direction, color banding, cartoonish rendering, 3D CGI look, unrealistic materials, uncanny "
+        "valley effect, incorrect ethnicity, wrong gender, exaggerated expressions, wrong gaze direction, "
+        "mismatched lip sync, silent or muted audio, distorted voice, robotic voice, echo, background noise, "
+        "off-sync audio, incorrect dialogue, added dialogue, repetitive speech, jittery movement, awkward "
+        "pauses, incorrect timing, unnatural transitions, inconsistent framing, tilted camera, flat lighting, "
+        "inconsistent tone, cinematic oversaturation, stylized filters, or AI artifacts."
+    )
 
     # Gradient estimation
     ge_gamma: float = 0.0  # 0=disabled, 2.0=reference default
@@ -952,7 +971,7 @@ class TwoStageConfig:
     # Stage 2 (high-res refinement)
     stage2_steps: int = 3
     distilled_lora_path: str = ""
-    distilled_lora_scale: float = 0.8
+    distilled_lora_scale: float = 1.0
 
     # Spatial upsampler
     spatial_upsampler_file: str = "ltx-2-spatial-upscaler-x2-1.0.safetensors"
@@ -970,11 +989,20 @@ def _compute_velocity(
     prompt_embeds: torch.Tensor,
     ctx: StepContext,
 ) -> torch.Tensor:
-    """Compute velocity prediction with optional CFG.
+    """Compute velocity prediction with optional CFG and STG.
 
-    When ctx.guidance_scale > 1.0 and ctx.neg_embeds is provided, runs a
-    double forward pass (unconditional + conditional) with CFG blending.
-    Otherwise runs a single forward pass.
+    Pass structure depends on guidance parameters:
+    - guidance_scale <= 1.0: single forward pass (no guidance)
+    - guidance_scale > 1.0 with neg_embeds: 2-pass CFG
+    - stg_scale > 0 with stg_blocks: adds 3rd perturbed pass (STG)
+
+    The combined formula (reference MultiModalGuider):
+      v = v_cond + (cfg-1)*(v_cond - v_uncond) + stg*(v_cond - v_perturbed)
+
+    The perturbed pass uses the positive prompt but skips self-attention at
+    specified blocks, producing a spatially/temporally degraded prediction.
+    The delta between conditioned and perturbed predictions drives a guidance
+    term that improves spatial coherence and temporal consistency.
 
     Args:
         model: LTX2Transformer on GPU.
@@ -988,20 +1016,36 @@ def _compute_velocity(
         Velocity prediction tensor [B, T, D].
     """
     if ctx.guidance_scale > 1.0 and ctx.neg_embeds is not None:
-        # Unconditional pass (negative prompt)
+        # Pass 1: Unconditional (negative prompt)
         uncond_modality = create_video_modality(latents, timestep, positions, ctx.neg_embeds)
         velocity_uncond, _ = model(video=uncond_modality)
         del uncond_modality
         torch.cuda.synchronize()
         torch.cuda.empty_cache()
 
-        # Conditional pass (positive prompt)
+        # Pass 2: Conditional (positive prompt)
         cond_modality = create_video_modality(latents, timestep, positions, prompt_embeds)
         velocity_cond, _ = model(video=cond_modality)
-        del cond_modality
 
         # CFG blend
         velocity = velocity_cond + (ctx.guidance_scale - 1.0) * (velocity_cond - velocity_uncond)
+        del velocity_uncond
+
+        # Pass 3: Perturbed (STG) -- self-attention skipped at stg_blocks
+        if ctx.stg_scale > 0 and ctx.stg_blocks:
+            del cond_modality
+            torch.cuda.synchronize()
+            torch.cuda.empty_cache()
+
+            stg_modality = create_video_modality(latents, timestep, positions, prompt_embeds)
+            stg_blocks_set = set(ctx.stg_blocks)
+            velocity_perturbed, _ = model(video=stg_modality, stg_blocks=stg_blocks_set)
+            del stg_modality
+
+            velocity = velocity + ctx.stg_scale * (velocity_cond - velocity_perturbed)
+            del velocity_perturbed
+        else:
+            del cond_modality
 
         # CFG rescaling (CFG* variant) to prevent over-saturation
         if ctx.rescale_scale > 0:
@@ -1009,7 +1053,7 @@ def _compute_velocity(
             factor = ctx.rescale_scale * factor + (1.0 - ctx.rescale_scale)
             velocity = velocity * factor
 
-        del velocity_uncond, velocity_cond
+        del velocity_cond
     else:
         # Simple denoising (no guidance)
         modality = create_video_modality(latents, timestep, positions, prompt_embeds)
@@ -1362,6 +1406,8 @@ def generate_video_two_stage(
         neg_embeds=neg_embeds,
         rescale_scale=two_stage.rescale_scale,
         ge_gamma=two_stage.ge_gamma,
+        stg_scale=two_stage.stg_scale,
+        stg_blocks=two_stage.stg_blocks,
     )
     latents = _denoise_stage(
         model=model,

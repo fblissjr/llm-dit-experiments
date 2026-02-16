@@ -43,8 +43,8 @@ STAGE_2_DISTILLED_SIGMA_VALUES = [0.909375, 0.725, 0.421875, 0.0]
 # =============================================================================
 
 SMOKE = {
-    "height": 384,                     # Scaled down for speed
-    "width": 256,
+    "height": 256,                     # Scaled down for speed (landscape like reference)
+    "width": 384,
     "num_frames": 9,                   # Minimum valid (8k+1)
     "guidance_scale": REFERENCE_CFG,   # 3.0
     "seed": REFERENCE_SEED,            # 10

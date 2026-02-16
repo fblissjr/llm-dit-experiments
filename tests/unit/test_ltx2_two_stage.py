@@ -29,11 +29,11 @@ class TestTwoStageConfig:
         cfg = TwoStageConfig()
         assert cfg.stage1_steps == 40
         assert cfg.stage2_steps == 3
-        assert cfg.guidance_scale == 3.5
-        assert cfg.stg_scale == 0.0
+        assert cfg.guidance_scale == 3.0  # ref: DEFAULT_VIDEO_GUIDER_PARAMS.cfg_scale
+        assert cfg.stg_scale == 1.0  # ref: DEFAULT_VIDEO_GUIDER_PARAMS.stg_scale
         assert cfg.rescale_scale == 0.7
         assert cfg.ge_gamma == 0.0
-        assert cfg.distilled_lora_scale == 0.8
+        assert cfg.distilled_lora_scale == 1.0  # ref: distilled_lora_scale default
 
     def test_stg_blocks_default(self):
         """STG blocks should default to [29] via __post_init__."""
@@ -46,7 +46,8 @@ class TestTwoStageConfig:
 
     def test_negative_prompt_default(self):
         cfg = TwoStageConfig()
-        assert "worst quality" in cfg.negative_prompt
+        assert "blurry" in cfg.negative_prompt
+        assert "AI artifacts" in cfg.negative_prompt
 
 
 class TestDistilledSigmaSchedules:
@@ -170,6 +171,8 @@ class TestStepContext:
         assert ctx.neg_embeds is None
         assert ctx.rescale_scale == 0.0
         assert ctx.ge_gamma == 0.0
+        assert ctx.stg_scale == 0.0
+        assert ctx.stg_blocks is None
 
     def test_custom_values(self):
         neg = torch.zeros(1, 10, 64)
@@ -178,16 +181,25 @@ class TestStepContext:
             neg_embeds=neg,
             rescale_scale=0.7,
             ge_gamma=2.0,
+            stg_scale=1.0,
+            stg_blocks=[29],
         )
         assert ctx.guidance_scale == 3.5
         assert ctx.neg_embeds is neg
         assert ctx.rescale_scale == 0.7
         assert ctx.ge_gamma == 2.0
+        assert ctx.stg_scale == 1.0
+        assert ctx.stg_blocks == [29]
 
     def test_no_cfg_when_scale_one(self):
         """guidance_scale=1.0 means no CFG regardless of neg_embeds."""
         ctx = StepContext(guidance_scale=1.0, neg_embeds=torch.zeros(1, 10, 64))
         assert ctx.guidance_scale <= 1.0
+
+    def test_stg_disabled_when_scale_zero(self):
+        """stg_scale=0.0 means no STG even with stg_blocks set."""
+        ctx = StepContext(stg_scale=0.0, stg_blocks=[29])
+        assert ctx.stg_scale == 0.0
 
 
 class TestStepSchedule:
@@ -230,6 +242,17 @@ class TestStepSchedule:
         assert high.rescale_scale == 0.7
         assert low.rescale_scale == 0.3
 
+    def test_constant_schedule_with_stg(self):
+        """constant_schedule should pass STG fields through."""
+        schedule = constant_schedule(
+            guidance_scale=3.0,
+            stg_scale=1.0,
+            stg_blocks=[29],
+        )
+        ctx = schedule(0, 1.0)
+        assert ctx.stg_scale == 1.0
+        assert ctx.stg_blocks == [29]
+
     def test_schedule_from_two_stage_config(self):
         """constant_schedule should correctly capture TwoStageConfig values."""
         cfg = TwoStageConfig(guidance_scale=3.5, rescale_scale=0.7, ge_gamma=2.0)
@@ -237,8 +260,12 @@ class TestStepSchedule:
             guidance_scale=cfg.guidance_scale,
             rescale_scale=cfg.rescale_scale,
             ge_gamma=cfg.ge_gamma,
+            stg_scale=cfg.stg_scale,
+            stg_blocks=cfg.stg_blocks,
         )
         ctx = schedule(0, 1.0)
         assert ctx.guidance_scale == 3.5
         assert ctx.rescale_scale == 0.7
         assert ctx.ge_gamma == 2.0
+        assert ctx.stg_scale == 1.0  # TwoStageConfig default
+        assert ctx.stg_blocks == [29]  # TwoStageConfig default

@@ -1,13 +1,13 @@
 # LTX-2 smoke test overlay -- merged over config.toml.example
-# Minimal two-stage video generation: 256x384, 9 frames
+# Minimal two-stage video generation: 384x256 (landscape), 9 frames
 # Model paths, gemma_variant, quantize, device placement, and distilled_lora_path
 # are extracted from config.toml by config_factory.py
 
 default_pipeline = "none"
 
 [ltx2]
-height = 384
-width = 256
+height = 256
+width = 384
 num_frames = 9
 guidance_scale = 3.0
 use_two_stage = true

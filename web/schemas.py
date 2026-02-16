@@ -660,15 +660,16 @@ class LTX2GenerateRequest(BaseModel):
     use_two_stage: bool = True
     stage1_steps: Optional[int] = None  # Override stage 1 steps (default: from config)
     stage2_steps: Optional[int] = None  # Override stage 2 steps (default: from config)
-    guidance_scale: float = 3.5
+    guidance_scale: float = 3.0
 
     # Guidance (stage 1 only)
-    stg_scale: float = 0.0
+    stg_scale: float = 1.0
+    stg_blocks: Optional[List[int]] = None
     rescale_scale: float = 0.7
 
     # LoRA
     distilled_lora_path: Optional[str] = None
-    distilled_lora_scale: float = 0.8
+    distilled_lora_scale: float = 1.0
 
     # Optimization
     ge_gamma: float = 0.0

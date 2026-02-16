@@ -14,6 +14,7 @@ from PIL import Image
 
 import web.server as srv
 from web.dependencies import ConfigDep, ManagerDep
+from web.param_resolver import resolve_param
 from web.schemas import (
     QwenImage2512GenerateRequest,
     QwenImageEditLayerRequest,
@@ -122,14 +123,19 @@ async def qwen_image_edit_layer(
         logger.info(f"  Steps: {request.steps}")
         logger.info(f"  Seed: {request.seed}")
 
+        # Resolve generation params: client > config.toml > schema default
+        qwen_cfg = config.qwen_image if hasattr(config, "qwen_image") and config.qwen_image else None
+        resolved_steps = resolve_param(request, "steps", qwen_cfg.num_inference_steps if qwen_cfg else 40)
+        resolved_cfg = resolve_param(request, "cfg_scale", qwen_cfg.cfg_scale if qwen_cfg else 4.0)
+
         start = time.time()
 
         # Run layer edit
         edited_layer = qwen_pipeline.edit_layer(
             layer_image=layer_image,
             instruction=request.instruction,
-            num_inference_steps=request.steps,
-            cfg_scale=request.cfg_scale,
+            num_inference_steps=resolved_steps,
+            cfg_scale=resolved_cfg,
             seed=request.seed,
         )
 
@@ -233,14 +239,19 @@ async def qwen_image_edit_multi(
         logger.info(f"  Seed: {request.seed}")
         logger.info("=" * 60)
 
+        # Resolve generation params: client > config.toml > schema default
+        qwen_cfg = config.qwen_image if hasattr(config, "qwen_image") and config.qwen_image else None
+        resolved_steps = resolve_param(request, "steps", qwen_cfg.num_inference_steps if qwen_cfg else 40)
+        resolved_cfg = resolve_param(request, "cfg_scale", qwen_cfg.cfg_scale if qwen_cfg else 4.0)
+
         start = time.time()
 
         # Run multi-image edit
         combined_image = qwen_pipeline.edit_multi(
             images=pil_images,
             instruction=request.instruction,
-            num_inference_steps=request.steps,
-            cfg_scale=request.cfg_scale,
+            num_inference_steps=resolved_steps,
+            cfg_scale=resolved_cfg,
             seed=request.seed,
         )
 
@@ -336,6 +347,11 @@ async def qwen_image_2512_generate(
     _ensure_qwen_image_t2i_loaded(manager, config)
     t2i_pipeline = manager.get_pipeline("qwen_image_t2i")
 
+    # Resolve generation params: client > config.toml > schema default
+    qwen_cfg = config.qwen_image if hasattr(config, "qwen_image") and config.qwen_image else None
+    resolved_steps = resolve_param(request, "steps", qwen_cfg.num_inference_steps if qwen_cfg else 40)
+    resolved_cfg = resolve_param(request, "cfg_scale", qwen_cfg.cfg_scale if qwen_cfg else 4.0)
+
     try:
         logger.info("=" * 60)
         logger.info("QWEN-IMAGE T2I GENERATION REQUEST")
@@ -344,8 +360,8 @@ async def qwen_image_2512_generate(
             logger.info(f"  Prompt: {request.prompt[:80]}...")
         if config.logging.log_generation_params:
             logger.info(f"  Size: {request.width}x{request.height}")
-            logger.info(f"  Steps: {request.steps}")
-            logger.info(f"  CFG Scale: {request.cfg_scale}")
+            logger.info(f"  Steps: {resolved_steps}")
+            logger.info(f"  CFG Scale: {resolved_cfg}")
             logger.info(f"  Seed: {request.seed}")
         logger.info("=" * 60)
 
@@ -357,8 +373,8 @@ async def qwen_image_2512_generate(
             negative_prompt=request.negative_prompt or " ",
             height=request.height,
             width=request.width,
-            num_inference_steps=request.steps,
-            cfg_scale=request.cfg_scale,
+            num_inference_steps=resolved_steps,
+            cfg_scale=resolved_cfg,
             seed=request.seed,
             max_sequence_length=request.max_sequence_length,
         )
@@ -381,8 +397,8 @@ async def qwen_image_2512_generate(
             "prompt": request.prompt,
             "width": request.width,
             "height": request.height,
-            "steps": request.steps,
-            "cfg_scale": request.cfg_scale,
+            "steps": resolved_steps,
+            "cfg_scale": resolved_cfg,
             "seed": request.seed,
             "generation_time": gen_time,
         }

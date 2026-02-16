@@ -338,7 +338,7 @@ class LTX2Config:
     # Two-stage pipeline files (reference: TI2VidTwoStagesPipeline)
     spatial_upsampler_file: str = "ltx-2-spatial-upscaler-x2-1.0.safetensors"
     distilled_lora_path: str = ""  # Distilled LoRA for stage 2 refinement
-    distilled_lora_scale: float = 0.8  # Distilled LoRA blend strength
+    distilled_lora_scale: float = 1.0  # Distilled LoRA blend strength (ref: 1.0)
 
     # Text encoder (Gemma 3-12B)
     encoder_model_id: str = "models/LTX-2/text_encoder"
@@ -384,7 +384,7 @@ class LTX2Config:
     )
 
     # Guidance (stage 1 only; stage 2 uses simple denoising)
-    stg_scale: float = 0.0  # Spatio-temporal guidance (0=disabled)
+    stg_scale: float = 1.0  # Spatio-temporal guidance scale (0=disabled, 1.0=reference)
     stg_blocks: str = "29"  # Comma-separated block indices for STG
     rescale_scale: float = 0.7  # CFG rescaling to prevent over-saturation
 

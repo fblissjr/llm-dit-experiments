@@ -342,12 +342,15 @@ class BasicTransformerBlock(nn.Module):
     def forward(
         self,
         args: TransformerArgs,
+        skip_self_attn: bool = False,
     ) -> TransformerArgs:
         """
         Forward pass through transformer block.
 
         Args:
             args: TransformerArgs containing hidden states and conditioning
+            skip_self_attn: If True, skip self-attention (used for STG
+                perturbed pass). Cross-attention and FFN still run.
 
         Returns:
             Updated TransformerArgs with transformed hidden states
@@ -367,25 +370,26 @@ class BasicTransformerBlock(nn.Module):
             print(f"[VARIANCE TRACE] Block 0, Step {self._debug_step}:")
             print(f"  1. x input inter-token std: {x_in_inter:.4f}")
 
-        # Self-attention with RoPE
-        norm_x = rms_norm(x, eps=self.norm_eps) * (1 + scale_msa) + shift_msa
+        # Self-attention with RoPE (skipped during STG perturbed pass)
+        if not skip_self_attn:
+            norm_x = rms_norm(x, eps=self.norm_eps) * (1 + scale_msa) + shift_msa
 
-        if _debug_block0:
-            norm_x_inter = norm_x.std(dim=1).mean().item()
-            print(f"  2. after RMSNorm+AdaLN inter-token std: {norm_x_inter:.4f}")
+            if _debug_block0:
+                norm_x_inter = norm_x.std(dim=1).mean().item()
+                print(f"  2. after RMSNorm+AdaLN inter-token std: {norm_x_inter:.4f}")
 
-        self_attn_out = self.attn1(norm_x, pe=args.positional_embeddings) * gate_msa
+            self_attn_out = self.attn1(norm_x, pe=args.positional_embeddings) * gate_msa
 
-        if _debug_block0:
-            self_attn_inter = self_attn_out.std(dim=1).mean().item()
-            gate_mean = gate_msa.mean().item()
-            print(f"  3. self_attn_out*gate inter-token std: {self_attn_inter:.4f} (gate_mean={gate_mean:.4f})")
+            if _debug_block0:
+                self_attn_inter = self_attn_out.std(dim=1).mean().item()
+                gate_mean = gate_msa.mean().item()
+                print(f"  3. self_attn_out*gate inter-token std: {self_attn_inter:.4f} (gate_mean={gate_mean:.4f})")
 
-        x = x + self_attn_out
+            x = x + self_attn_out
 
-        if _debug_block0:
-            x_post_self_inter = x.std(dim=1).mean().item()
-            print(f"  4. x after self-attn residual inter-token std: {x_post_self_inter:.4f}")
+            if _debug_block0:
+                x_post_self_inter = x.std(dim=1).mean().item()
+                print(f"  4. x after self-attn residual inter-token std: {x_post_self_inter:.4f}")
 
         # Cross-attention with text conditioning
         norm_x_cross = rms_norm(x, eps=self.norm_eps)
@@ -402,7 +406,7 @@ class BasicTransformerBlock(nn.Module):
         x = x + cross_attn_out
 
         # DEBUG: Log attention magnitudes for diagnostic blocks
-        if self.idx in [0, 23, 47] and hasattr(self, '_debug_step'):
+        if not skip_self_attn and self.idx in [0, 23, 47] and hasattr(self, '_debug_step'):
             if self._debug_step in [0, 20, 39]:
                 x_inter_token = x.std(dim=1).mean()  # Variation across tokens
                 self_attn_inter = self_attn_out.std(dim=1).mean()
@@ -609,6 +613,7 @@ class LTX2Transformer(nn.Module):
         video: Optional[Modality],
         audio: Optional[Modality] = None,
         layer_mask: Optional[torch.Tensor] = None,
+        stg_blocks: Optional[set[int]] = None,
     ) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor]]:
         """
         Forward pass of LTX-2 transformer.
@@ -617,6 +622,8 @@ class LTX2Transformer(nn.Module):
             video: Video modality input (required for VideoOnly model)
             audio: Audio modality input (not used in VideoOnly)
             layer_mask: Optional mask for layer ablation [num_layers] with 0/1
+            stg_blocks: Optional set of block indices where self-attention is
+                skipped (for Spatio-Temporal Guidance perturbed pass)
 
         Returns:
             Tuple of (video_output, audio_output) velocity predictions
@@ -636,14 +643,17 @@ class LTX2Transformer(nn.Module):
             if layer_mask is not None and not layer_mask[idx]:
                 continue
 
+            skip_self_attn = stg_blocks is not None and idx in stg_blocks
+
             if self._enable_gradient_checkpointing and self.training:
                 args = torch.utils.checkpoint.checkpoint(
                     block,
                     args,
+                    skip_self_attn,
                     use_reentrant=False,
                 )
             else:
-                args = block(args)
+                args = block(args, skip_self_attn=skip_self_attn)
 
         # Final output projection
         video_out = self._process_output(args.x, args.embedded_timestep)

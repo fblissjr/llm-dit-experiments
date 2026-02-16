@@ -17,6 +17,7 @@ from PIL import Image
 
 from llm_dit.config import RuntimeConfig
 from web.dependencies import ConfigDep
+from web.param_resolver import csv_to_int_list, resolve_param
 from web.schemas import LTX2GenerateRequest, LTX2StatusResponse
 
 logger = logging.getLogger(__name__)
@@ -177,10 +178,10 @@ async def ltx2_generate_stream(request: LTX2GenerateRequest, config: ConfigDep):
                 )
 
                 gen_config = GenerationConfig(
-                    num_frames=request.num_frames,
-                    height=request.height,
-                    width=request.width,
-                    guidance_scale=request.guidance_scale,
+                    num_frames=resolve_param(request, "num_frames", ltx2_cfg.num_frames),
+                    height=resolve_param(request, "height", ltx2_cfg.height),
+                    width=resolve_param(request, "width", ltx2_cfg.width),
+                    guidance_scale=resolve_param(request, "guidance_scale", ltx2_cfg.guidance_scale),
                     seed=seed,
                 )
 
@@ -189,18 +190,24 @@ async def ltx2_generate_stream(request: LTX2GenerateRequest, config: ConfigDep):
                 text_encoder_path = encoder_model_id if encoder_model_id else None
 
                 if request.use_two_stage:
+                    # Resolve stg_blocks: client list > config CSV string > default
+                    stg_blocks_from_config = csv_to_int_list(ltx2_cfg.stg_blocks) if ltx2_cfg else [29]
+                    stg_blocks = resolve_param(request, "stg_blocks", stg_blocks_from_config, skip_none=True)
+
                     two_stage_cfg = TwoStageConfig(
-                        stage1_steps=request.stage1_steps or (ltx2_cfg.stage1_num_inference_steps if ltx2_cfg else 40),
-                        stage2_steps=request.stage2_steps or (ltx2_cfg.stage2_num_inference_steps if ltx2_cfg else 3),
-                        guidance_scale=request.guidance_scale,
-                        stg_scale=request.stg_scale,
-                        rescale_scale=request.rescale_scale,
-                        negative_prompt=request.negative_prompt,
-                        ge_gamma=request.ge_gamma,
-                        distilled_lora_path=request.distilled_lora_path or (ltx2_cfg.distilled_lora_path if ltx2_cfg else ""),
-                        distilled_lora_scale=request.distilled_lora_scale,
+                        stage1_steps=resolve_param(request, "stage1_steps", ltx2_cfg.stage1_num_inference_steps, skip_none=True),
+                        stage2_steps=resolve_param(request, "stage2_steps", ltx2_cfg.stage2_num_inference_steps, skip_none=True),
+                        guidance_scale=resolve_param(request, "guidance_scale", ltx2_cfg.guidance_scale),
+                        stg_scale=resolve_param(request, "stg_scale", ltx2_cfg.stg_scale),
+                        rescale_scale=resolve_param(request, "rescale_scale", ltx2_cfg.rescale_scale),
+                        negative_prompt=resolve_param(request, "negative_prompt", ltx2_cfg.negative_prompt),
+                        ge_gamma=resolve_param(request, "ge_gamma", ltx2_cfg.ge_gamma),
+                        distilled_lora_path=resolve_param(request, "distilled_lora_path", ltx2_cfg.distilled_lora_path, skip_none=True),
+                        distilled_lora_scale=resolve_param(request, "distilled_lora_scale", ltx2_cfg.distilled_lora_scale),
                         spatial_upsampler_file=ltx2_cfg.spatial_upsampler_file if ltx2_cfg else "ltx-2-spatial-upscaler-x2-1.0.safetensors",
                     )
+                    if stg_blocks is not None:
+                        two_stage_cfg.stg_blocks = stg_blocks
 
                     # Validate distilled LoRA exists before expensive generation
                     distilled_path = two_stage_cfg.distilled_lora_path
@@ -229,7 +236,7 @@ async def ltx2_generate_stream(request: LTX2GenerateRequest, config: ConfigDep):
                     )
                 else:
                     # Single-stage fallback
-                    gen_config.num_inference_steps = request.stage1_steps or (ltx2_cfg.num_inference_steps if ltx2_cfg else 40)
+                    gen_config.num_inference_steps = resolve_param(request, "stage1_steps", ltx2_cfg.num_inference_steps if ltx2_cfg else 40, skip_none=True)
                     return generate_video_with_offloading(
                         prompt=request.prompt,
                         config=gen_config,
@@ -273,8 +280,9 @@ async def ltx2_generate_stream(request: LTX2GenerateRequest, config: ConfigDep):
             video_filename = f"video_{timestamp}_{hash_suffix}.mp4"
             video_path = VIDEO_OUTPUT_DIR / video_filename
 
+            resolved_fps = resolve_param(request, "fps", ltx2_cfg.fps if ltx2_cfg else 24.0)
             await asyncio.get_event_loop().run_in_executor(
-                None, lambda: save_ltx2_video(video, str(video_path), fps=request.fps)
+                None, lambda: save_ltx2_video(video, str(video_path), fps=resolved_fps)
             )
 
             # Generate thumbnail (first frame)
@@ -294,8 +302,8 @@ async def ltx2_generate_stream(request: LTX2GenerateRequest, config: ConfigDep):
                 "thumbnail_url": f"/outputs/videos/{thumb_filename}" if thumb_filename else None,
                 "seed": seed,
                 "generation_time": round(generation_time, 1),
-                "num_frames": request.num_frames,
-                "fps": request.fps,
+                "num_frames": resolve_param(request, "num_frames", ltx2_cfg.num_frames if ltx2_cfg else 33),
+                "fps": resolved_fps,
                 "has_audio": False,
                 "two_stage": request.use_two_stage,
             }

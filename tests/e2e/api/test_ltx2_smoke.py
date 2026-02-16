@@ -54,6 +54,9 @@ class TestLTX2APISmoke:
             "use_two_stage": True,
             "stage1_steps": 4,
             "stage2_steps": 2,
+            # STG disabled: 4 distilled steps is too few for STG guidance
+            # to develop temporal variation. STG validated at standard tier (40 steps).
+            "stg_scale": 0.0,
         })
         assert response.status_code == 200, (
             f"Expected 200, got {response.status_code}: {response.text[:500]}"

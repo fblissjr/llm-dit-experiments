@@ -5,6 +5,43 @@ last updated: 2026-02-16
 All notable changes to this project will be documented in this file.
 Uses [Semantic Versioning](https://semver.org/).
 
+## 0.9.9
+
+### added
+- Unified parameter resolution: `resolve_param()` helper in `web/param_resolver.py`. Establishes `client-sent > config.toml > schema default` precedence across all 4 pipelines using Pydantic v2's `model_fields_set`. Foundation for composable workflow orchestration (L1 vision).
+- `csv_to_int_list()` helper for parsing comma-separated config strings (e.g., `stg_blocks = "29,30"`)
+- 18 unit tests for `resolve_param()` covering: falsy value preservation (0, 0.0, ""), `skip_none` behavior, list fields, config-None graceful handling
+
+### fixed
+- **LTX-2**: config.toml generation defaults (`guidance_scale`, `stg_scale`, `stg_blocks`, `rescale_scale`, `ge_gamma`, `negative_prompt`, `num_frames`, `width`, `height`, `fps`, `distilled_lora_path`, `distilled_lora_scale`, `stage1_steps`, `stage2_steps`) now respected for API requests when client omits them. Previously, schema defaults always won.
+- **LTX-2**: `stg_scale=0` (disable STG) via API was silently ignored due to `or`-operator fallback treating 0 as falsy
+- **Z-Image**: variant defaults (`steps`, `guidance_scale`, `shift`) now use `model_fields_set` instead of equality comparison against hardcoded Pydantic defaults. Fixes bug where client explicitly sending `steps=9` for the base variant would get it silently overwritten.
+- **FLUX.2**: `num_steps` and `guidance` resolution now consults `config.toml` (`flux2.default_steps`, `flux2.default_guidance`) as intermediate layer between client and model-specific defaults. Fixed-param validation for distilled models now uses `model_fields_set` instead of `is not None`.
+- **Qwen-Image**: `steps` and `cfg_scale` on all 3 endpoints (edit-layer, edit-multi, T2I generate) now respect `config.toml` values (`qwen_image.num_inference_steps`, `qwen_image.cfg_scale`). Previously, schema default (40 steps, 4.0 CFG) always won.
+
+### removed
+- `_ZIMAGE_PYDANTIC_DEFAULTS` dict in `web/routers/core.py` (replaced by `model_fields_set` detection)
+
+## 0.9.8
+
+### added
+- Spatio-Temporal Guidance (STG): 3rd forward pass in denoising loop where self-attention is skipped at specified transformer blocks. The delta between conditioned and perturbed predictions drives spatial coherence and temporal consistency guidance. Reference formula: `v = v_cond + (cfg-1)*(v_cond-v_uncond) + stg*(v_cond-v_perturbed)`. Default: `stg_scale=1.0`, `stg_blocks=[29]` (matches reference).
+- `skip_self_attn` parameter on `BasicTransformerBlock.forward()` for STG perturbed pass
+- `stg_blocks` parameter on `LTX2Transformer.forward()` -- set of block indices where self-attention is skipped
+- `stg_scale` and `stg_blocks` fields on `StepContext` and `constant_schedule()`
+- `stg_blocks` field on `LTX2GenerateRequest` schema (API parameter)
+- STG unit tests: transformer perturbation tests (4 tests) and pipeline config tests (3 tests)
+- Reference doc sections: STG (4.8), Gradient Estimation (4.9), MultiModalGuider architecture (4.10), implementation gaps (4.11)
+
+### fixed
+- Reference doc: global `scale_shift_table` shape was `[6, 4096]` (per-block), corrected to `[2, 4096]` (output projection shift+scale)
+- Reference doc: Stage 2 distilled schedule was "Fixed 8-step", corrected to "Fixed 3-step" (4 sigma values = 3 steps)
+
+### changed
+- `stg_scale` default changed from `0.0` to `1.0` across all layers (config.py, generate.py TwoStageConfig, schemas.py, config.toml, config.toml.example) to match reference `DEFAULT_VIDEO_GUIDER_PARAMS.stg_scale`
+- STG wired through `constant_schedule()` call in Stage 1 of two-stage pipeline (was dead code)
+- `stg_blocks` parsed from config string to list in ltx2 router (config uses comma-separated string, pipeline uses `list[int]`)
+
 ## 0.9.7
 
 ### fixed
@@ -14,6 +51,10 @@ Uses [Semantic Versioning](https://semver.org/).
 - torchao availability check: updated `is_torchao_available()` to import current API (`quantize_`) instead of removed `int8_weight_only` function. Fixes "torchao not available" false negative with torchao 0.16+.
 - Negative prompt: replaced 3-word placeholder with full reference DEFAULT_NEGATIVE_PROMPT (~1,300 chars) tuned for suppressing common diffusion failure modes
 - Gemma config: cleared mismatched `encoder_model_id` in config.toml.example (Q4 QAT path doesn't apply to 8bit variant)
+- Default `guidance_scale` 3.5 -> 3.0 to match reference `DEFAULT_VIDEO_GUIDER_PARAMS.cfg_scale` (was 17% over reference)
+- Default `distilled_lora_scale` 0.8 -> 1.0 to match reference (Stage 2 was under-weighted)
+- Default `height x width` 768x512 -> 512x768 to match reference landscape orientation (`DEFAULT_1_STAGE_HEIGHT=512, DEFAULT_1_STAGE_WIDTH=768`)
+- Smoke test dimensions 384x256 -> 256x384 (landscape, consistent with reference orientation)
 
 ### changed
 - Test constants: renamed legacy distilled field names to two-stage (`use_two_stage`, `stage1_num_inference_steps`, `stage2_num_inference_steps`) in SMOKE/STANDARD/FULL dicts and TOML overlays

@@ -47,13 +47,6 @@ router = APIRouter()
 # Z-Image Variant-Aware Defaults Helper
 # =============================================================================
 
-# Pydantic class defaults (Turbo values) - used to detect if client sent explicit values
-_ZIMAGE_PYDANTIC_DEFAULTS = {
-    "steps": 9,
-    "guidance_scale": 0.0,
-    "shift": 3.0,
-}
-
 
 def apply_zimage_variant_defaults(request: Union[GenerateRequest, Img2ImgRequest], config) -> None:
     """Apply Z-Image variant-aware defaults to request in-place.
@@ -62,8 +55,9 @@ def apply_zimage_variant_defaults(request: Union[GenerateRequest, Img2ImgRequest
     guidance_scale=0.0). When the server is running with the Base variant, we need
     to apply the correct defaults if the client didn't explicitly set them.
 
-    This function checks if request values match Pydantic defaults (indicating the
-    client didn't override them) and replaces them with variant-appropriate values.
+    Uses model_fields_set to detect whether the client sent a value explicitly.
+    This fixes the old equality-comparison approach where a client intentionally
+    sending steps=9 for the base variant would get it overwritten.
 
     Args:
         request: GenerateRequest or Img2ImgRequest to modify in-place
@@ -71,7 +65,7 @@ def apply_zimage_variant_defaults(request: Union[GenerateRequest, Img2ImgRequest
 
     Note:
         - Only applies when config is available and variant is "base"
-        - Only modifies values that match Pydantic defaults (client didn't override)
+        - Only modifies values NOT in model_fields_set (client didn't send them)
         - Turbo variant needs no changes (Pydantic defaults are already Turbo values)
     """
     # Skip if no config or not base variant
@@ -85,17 +79,16 @@ def apply_zimage_variant_defaults(request: Union[GenerateRequest, Img2ImgRequest
 
     variant_defaults = get_variant_defaults("base")
 
-    # Apply variant defaults only if request has Pydantic defaults
-    # (indicating client didn't explicitly set the value)
-    if hasattr(request, "steps") and request.steps == _ZIMAGE_PYDANTIC_DEFAULTS["steps"]:
+    # Apply variant defaults only for fields the client did NOT explicitly send
+    if hasattr(request, "steps") and "steps" not in request.model_fields_set:
         request.steps = variant_defaults["num_inference_steps"]
         logger.debug(f"Applied variant default: steps={request.steps}")
 
-    if hasattr(request, "guidance_scale") and request.guidance_scale == _ZIMAGE_PYDANTIC_DEFAULTS["guidance_scale"]:
+    if hasattr(request, "guidance_scale") and "guidance_scale" not in request.model_fields_set:
         request.guidance_scale = variant_defaults["guidance_scale"]
         logger.debug(f"Applied variant default: guidance_scale={request.guidance_scale}")
 
-    if hasattr(request, "shift") and request.shift == _ZIMAGE_PYDANTIC_DEFAULTS["shift"]:
+    if hasattr(request, "shift") and "shift" not in request.model_fields_set:
         request.shift = variant_defaults["shift"]
         logger.debug(f"Applied variant default: shift={request.shift}")
 

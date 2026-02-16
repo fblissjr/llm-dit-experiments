@@ -466,5 +466,192 @@ def run_consistency_check():
         sys.exit(0)
 
 
+class TestResolveParamFieldConsistency:
+    """Ensure all resolve_param() calls reference real fields on Pydantic schemas and config dataclasses.
+
+    This test parses router source files to extract resolve_param() calls and verifies:
+    1. The field name exists on the corresponding Pydantic request model
+    2. The config dataclass has a corresponding field (with known name mappings)
+
+    Prevents typos in resolve_param() calls from silently failing at runtime.
+    """
+
+    # Router -> Pydantic schema class mapping
+    ROUTER_SCHEMAS = {
+        "ltx2.py": [("LTX2GenerateRequest", "LTX2Config")],
+        "flux2.py": [("Flux2GenerateRequest", "Flux2Config")],
+        "qwen_image.py": [
+            ("QwenImageEditLayerRequest", "QwenImageConfig"),
+            ("QwenImageEditMultiRequest", "QwenImageConfig"),
+            ("QwenImage2512GenerateRequest", "QwenImageConfig"),
+        ],
+    }
+
+    # Known schema field -> config field name differences
+    # Format: (schema_field, config_field)
+    KNOWN_NAME_MAPPINGS = {
+        # LTX-2 mappings
+        ("stage1_steps", "LTX2Config"): "stage1_num_inference_steps",
+        ("stage2_steps", "LTX2Config"): "stage2_num_inference_steps",
+        # FLUX.2 mappings
+        ("num_steps", "Flux2Config"): "default_steps",
+        ("guidance", "Flux2Config"): "default_guidance",
+        # Qwen-Image mappings
+        ("steps", "QwenImageConfig"): "num_inference_steps",
+    }
+
+    def _extract_resolve_param_calls(self, router_file: Path) -> list[tuple[str, str]]:
+        """Extract all resolve_param() calls from a router file.
+
+        Returns list of (field_name, line_number) tuples.
+        """
+        with open(router_file) as f:
+            tree = ast.parse(f.read(), filename=str(router_file))
+
+        calls = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                # Check if it's a resolve_param() call
+                if isinstance(node.func, ast.Name) and node.func.id == "resolve_param":
+                    # Second positional arg is the field name (as a string literal)
+                    if len(node.args) >= 2 and isinstance(node.args[1], ast.Constant):
+                        field_name = node.args[1].value
+                        if isinstance(field_name, str):
+                            calls.append((field_name, node.lineno))
+
+        return calls
+
+    def test_ltx2_resolve_param_fields(self):
+        """All resolve_param() calls in ltx2.py reference real LTX2GenerateRequest and LTX2Config fields."""
+        from llm_dit.config import LTX2Config
+        from web.schemas import LTX2GenerateRequest
+
+        router_file = PROJECT_ROOT / "web" / "routers" / "ltx2.py"
+        calls = self._extract_resolve_param_calls(router_file)
+
+        assert len(calls) > 0, "Expected to find resolve_param() calls in ltx2.py"
+
+        # Get schema fields
+        schema_fields = set(LTX2GenerateRequest.model_fields.keys())
+        # Get config fields
+        config_fields = get_dataclass_fields(LTX2Config)
+
+        errors = []
+        for field_name, line_no in calls:
+            # Check schema has the field
+            if field_name not in schema_fields:
+                errors.append(
+                    f"Line {line_no}: resolve_param(request, '{field_name}', ...) "
+                    f"but '{field_name}' not in LTX2GenerateRequest.model_fields. "
+                    f"Available fields: {sorted(schema_fields)}"
+                )
+
+            # Check config has the field (exact match or known mapping)
+            mapped_name = self.KNOWN_NAME_MAPPINGS.get((field_name, "LTX2Config"))
+            if mapped_name:
+                # Use the mapped name
+                if mapped_name not in config_fields:
+                    errors.append(
+                        f"Line {line_no}: resolve_param uses '{field_name}' which maps to "
+                        f"'{mapped_name}', but '{mapped_name}' not in LTX2Config. "
+                        f"Update the mapping or add the field to LTX2Config."
+                    )
+            elif field_name not in config_fields:
+                errors.append(
+                    f"Line {line_no}: resolve_param(request, '{field_name}', ...) "
+                    f"but '{field_name}' not in LTX2Config and no known mapping exists. "
+                    f"Add field to LTX2Config or update KNOWN_NAME_MAPPINGS."
+                )
+
+        assert not errors, "\n".join(errors)
+
+    def test_flux2_resolve_param_fields(self):
+        """All resolve_param() calls in flux2.py reference real Flux2GenerateRequest and Flux2Config fields."""
+        from llm_dit.config import Flux2Config
+        from web.schemas import Flux2GenerateRequest
+
+        router_file = PROJECT_ROOT / "web" / "routers" / "flux2.py"
+        calls = self._extract_resolve_param_calls(router_file)
+
+        assert len(calls) > 0, "Expected to find resolve_param() calls in flux2.py"
+
+        schema_fields = set(Flux2GenerateRequest.model_fields.keys())
+        config_fields = get_dataclass_fields(Flux2Config)
+
+        errors = []
+        for field_name, line_no in calls:
+            if field_name not in schema_fields:
+                errors.append(
+                    f"Line {line_no}: resolve_param(request, '{field_name}', ...) "
+                    f"but '{field_name}' not in Flux2GenerateRequest.model_fields. "
+                    f"Available fields: {sorted(schema_fields)}"
+                )
+
+            mapped_name = self.KNOWN_NAME_MAPPINGS.get((field_name, "Flux2Config"))
+            if mapped_name:
+                if mapped_name not in config_fields:
+                    errors.append(
+                        f"Line {line_no}: resolve_param uses '{field_name}' which maps to "
+                        f"'{mapped_name}', but '{mapped_name}' not in Flux2Config. "
+                        f"Update the mapping or add the field to Flux2Config."
+                    )
+            elif field_name not in config_fields:
+                errors.append(
+                    f"Line {line_no}: resolve_param(request, '{field_name}', ...) "
+                    f"but '{field_name}' not in Flux2Config and no known mapping exists. "
+                    f"Add field to Flux2Config or update KNOWN_NAME_MAPPINGS."
+                )
+
+        assert not errors, "\n".join(errors)
+
+    def test_qwen_image_resolve_param_fields(self):
+        """All resolve_param() calls in qwen_image.py reference real schema and QwenImageConfig fields."""
+        from llm_dit.config import QwenImageConfig
+        from web.schemas import (
+            QwenImage2512GenerateRequest,
+            QwenImageEditLayerRequest,
+            QwenImageEditMultiRequest,
+        )
+
+        router_file = PROJECT_ROOT / "web" / "routers" / "qwen_image.py"
+        calls = self._extract_resolve_param_calls(router_file)
+
+        assert len(calls) > 0, "Expected to find resolve_param() calls in qwen_image.py"
+
+        # Aggregate schema fields from all Qwen-Image request types
+        all_schema_fields = set()
+        all_schema_fields.update(QwenImageEditLayerRequest.model_fields.keys())
+        all_schema_fields.update(QwenImageEditMultiRequest.model_fields.keys())
+        all_schema_fields.update(QwenImage2512GenerateRequest.model_fields.keys())
+
+        config_fields = get_dataclass_fields(QwenImageConfig)
+
+        errors = []
+        for field_name, line_no in calls:
+            if field_name not in all_schema_fields:
+                errors.append(
+                    f"Line {line_no}: resolve_param(request, '{field_name}', ...) "
+                    f"but '{field_name}' not in any Qwen-Image request schema. "
+                    f"Available fields: {sorted(all_schema_fields)}"
+                )
+
+            mapped_name = self.KNOWN_NAME_MAPPINGS.get((field_name, "QwenImageConfig"))
+            if mapped_name:
+                if mapped_name not in config_fields:
+                    errors.append(
+                        f"Line {line_no}: resolve_param uses '{field_name}' which maps to "
+                        f"'{mapped_name}', but '{mapped_name}' not in QwenImageConfig. "
+                        f"Update the mapping or add the field to QwenImageConfig."
+                    )
+            elif field_name not in config_fields:
+                errors.append(
+                    f"Line {line_no}: resolve_param(request, '{field_name}', ...) "
+                    f"but '{field_name}' not in QwenImageConfig and no known mapping exists. "
+                    f"Add field to QwenImageConfig or update KNOWN_NAME_MAPPINGS."
+                )
+
+        assert not errors, "\n".join(errors)
+
+
 if __name__ == "__main__":
     run_consistency_check()

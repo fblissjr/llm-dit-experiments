@@ -142,6 +142,7 @@ def validate_video(
     expected_frames: int | None = None,
     expected_w: int | None = None,
     expected_h: int | None = None,
+    frozen_threshold: float = 0.1,
 ) -> ValidationResult:
     """Run all video validation checks.
 
@@ -222,17 +223,17 @@ def validate_video(
             value=round(std_val, 2), threshold="std in [5, 100]",
         ))
 
-    # not_frozen: adjacent frame SSIM < threshold
-    # Use simple MSE-based similarity instead of full SSIM for speed
+    # not_frozen: adjacent frames must differ (MSE above threshold).
+    # Default 0.1 catches truly frozen (identical) frames while allowing
+    # naturally low inter-frame variation in short clips (9 frames = 0.37s).
     for i in range(min(3, num_frames - 1)):
         f1 = frames[i].astype(np.float32)
         f2 = frames[i + 1].astype(np.float32)
         mse = float(np.mean((f1 - f2) ** 2))
-        # Low MSE = frozen. For 8-bit images, MSE > 10 means visible change
-        not_frozen = mse > 10.0
+        not_frozen = mse > frozen_threshold
         result.add(CheckResult(
             passed=not_frozen, name=f"not_frozen_{i}_{i+1}",
-            value=round(mse, 2), threshold="MSE > 10",
+            value=round(mse, 2), threshold=f"MSE > {frozen_threshold}",
         ))
 
     return result

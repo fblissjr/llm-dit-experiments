@@ -1,6 +1,6 @@
-# agent context (v0.9.4)
+# agent context (v0.9.9)
 
-*last updated: 2026-02-15*
+*last updated: 2026-02-16*
 
 Quick reference for LLM agents. Read only what you need.
 
@@ -62,6 +62,16 @@ Every parameter should have exactly one source of truth. The chain is:
 `config.toml` -> `Config` dataclasses -> `RuntimeConfig` (composed) -> backend configs
 
 When adding a new parameter, only 2 files need changes: the dataclass in `config.py` + `config.toml`. The DRY consistency test (`test_dry_config.py`) validates that all layers stay in sync.
+
+### parameter resolution (routers)
+
+All routers use `resolve_param()` from `web/param_resolver.py` for generation parameters:
+- **Precedence:** client-sent > config.toml > schema default
+- Uses Pydantic v2 `model_fields_set` to detect explicit client values (NOT `or`, NOT `is not None`, NOT equality comparison)
+- `skip_none=True` for Optional fields where None means "no override" (e.g., `stage1_steps`, `distilled_lora_path`)
+- Falsy values (0, 0.0, "") are preserved when client sends them explicitly
+- **Infrastructure params** (model paths, devices, quantization) always come from config -- do NOT use `resolve_param` for them
+- Schema-config field name mismatches exist (e.g., `stage1_steps` vs `stage1_num_inference_steps`). `test_dry_config.py::TestResolveParamFieldConsistency` validates these.
 
 ## navigation by task
 
@@ -176,6 +186,7 @@ This is a **multi-workstream project**. Work happens in parallel across layers:
 | Quantization | `src/llm_dit/quantization/` | All pipelines use `quantize_component()` (sole entry point) |
 | LoRA | `src/llm_dit/utils/lora.py` | Pipeline-agnostic: `load_lora()`, `FusedLoRAState` tracking |
 | Prompt rewriting | `src/llm_dit/utils/prompt_rewriter.py` | `PromptRewriter` (Qwen-Image), `Flux2PromptUpsampler` (FLUX.2) |
+| Param resolution | `web/param_resolver.py` | `resolve_param()` -- all routers use for generation param defaults |
 | Model lifecycle | `src/llm_dit/model_manager.py` | `ModelManager` -- load/unload/reload any pipeline |
 | API layer | `web/routers/`, `web/schemas.py` | 7 domain routers + Pydantic models |
 | Pipelines | `src/llm_dit/pipelines/` | Each pipeline has its own file |
@@ -237,7 +248,7 @@ HTTP Request (JSON body)
 web/schemas.py: Pydantic model validates request (Flux2GenerateRequest, etc.)
     |
     v
-web/routers/<pipeline>.py: domain router endpoint merges request + runtime_config
+web/routers/<pipeline>.py: resolve_param() merges request + config.toml defaults
     |
     v
 pipelines/*.py: pipeline(prompt, **merged_params)
@@ -262,6 +273,7 @@ For full debugging patterns, see [lessons_learned.md](internal/state/lessons_lea
 | OOM on generation | Component not offloaded | Check device placement in model_manager.py |
 | OOM on LoRA re-fusion | LoRA dequantizing fp8->bf16 | Check `FusedLoRAState` in lora.py |
 | Config not applied | Hot-reload vs restart | See `HOT_RELOAD_SAFE` in model_manager.py |
+| config.toml generation defaults ignored | Missing `resolve_param()` | Verify router uses `resolve_param()` from `web/param_resolver.py` |
 | Tests pass, bad output | Visual verification skipped | Always verify baselines visually |
 | API returns error | Pydantic validation | Check request schema in `web/schemas.py` |
 | Circular import | Router imports server at module level | See architecture patterns above |
@@ -286,6 +298,9 @@ uv run pytest tests/unit/ -v -k lora
 
 # Config DRY validation
 uv run pytest tests/unit/test_dry_config.py -v
+
+# Parameter resolution logic
+uv run pytest tests/unit/test_param_resolver.py -v
 
 # Regenerate frontend types from API (from web/frontend-v2/)
 npm run export-openapi && npm run gen-api
