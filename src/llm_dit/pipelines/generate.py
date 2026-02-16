@@ -26,7 +26,6 @@ Memory Optimization (2026-01-19):
 import os
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
-import gc
 import logging
 import time
 from dataclasses import dataclass
@@ -49,6 +48,7 @@ from llm_dit.models.ltx2 import (
     VideoDecoder,
 )
 from llm_dit.schedulers import LTX2Scheduler
+from llm_dit.utils.memory import cleanup_memory
 
 logger = logging.getLogger(__name__)
 
@@ -72,27 +72,6 @@ def _resolve_quantize(quantize: str) -> tuple[bool, str]:
         return False, "none"
     precision = _QUANT_ALIASES.get(quantize, quantize)
     return True, precision
-
-
-def cleanup_memory() -> None:
-    """Free GPU memory between stages."""
-    gc.collect()
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-        torch.cuda.synchronize()
-
-
-def _log_vram(label: str) -> None:
-    """Log current VRAM state for diagnostics."""
-    if not torch.cuda.is_available():
-        return
-    allocated = torch.cuda.memory_allocated() / 1024**3
-    reserved = torch.cuda.memory_reserved() / 1024**3
-    free_cuda = torch.cuda.mem_get_info()[0] / 1024**3
-    logger.info(
-        f"[VRAM:{label}] allocated={allocated:.1f}GB, "
-        f"reserved={reserved:.1f}GB, cuda_free={free_cuda:.1f}GB"
-    )
 
 
 @dataclass
@@ -1265,8 +1244,7 @@ def generate_video_two_stage(
 
     del text_encoder
     if not skip_cleanup:
-        cleanup_memory()
-    _log_vram("post_encoder_unload")
+        cleanup_memory("post_encoder_unload")
     logger.info("Text encoder unloaded")
 
     stage0_elapsed = time.perf_counter() - stage0_start
@@ -1407,8 +1385,7 @@ def generate_video_two_stage(
     # Stage 1 attention/FFN buffers can reserve 5-8 GB in the CUDA cache;
     # without this cleanup, Stage 1.5 + Stage 2 may not have enough headroom.
     if not skip_cleanup:
-        cleanup_memory()
-    _log_vram("post_stage1")
+        cleanup_memory("post_stage1")
 
     # =========================================================================
     # Stage 1.5: Spatial Upsampling (2x)
@@ -1443,8 +1420,7 @@ def generate_video_two_stage(
 
     del upsampler, vae_for_stats, per_channel_stats
     if not skip_cleanup:
-        cleanup_memory()
-    _log_vram("post_stage1.5")
+        cleanup_memory("post_stage1.5")
 
     if callback:
         callback("upsample", 1, 1)
@@ -1465,7 +1441,6 @@ def generate_video_two_stage(
         callback("stage2_denoise", 0, two_stage.stage2_steps)
 
     logger.info("Stage 2: Applying distilled LoRA for high-res refinement (reusing Stage 1 model)...")
-    _log_vram("pre_stage2_lora")
 
     # Apply distilled LoRA to the existing model (base LoRA already fused from Stage 1)
     from llm_dit.utils.lora import load_lora as _load_lora
@@ -1499,12 +1474,13 @@ def generate_video_two_stage(
     # Reshape upsampled latents to [B, T, D] for denoising
     latents_flat = latents.reshape(1, 128, -1).transpose(1, 2)  # [B, T, D]
 
-    # Add noise at the first distilled sigma level (0.909375)
+    # Flow-matching interpolation at the first distilled sigma (0.909375).
+    # x_t = (1 - t) * x_0 + t * eps  -- NOT additive noise.
     noise_scale = distilled_sigmas[0].item()
     if config.seed is not None:
         generator = torch.Generator(device=transformer_device).manual_seed(config.seed + 1)
     noise = torch.randn_like(latents_flat, generator=generator if config.seed is not None else None)
-    latents_noisy = latents_flat + noise_scale * noise
+    latents_noisy = (1 - noise_scale) * latents_flat + noise_scale * noise
     del noise, latents_flat
 
     # Full-resolution positions

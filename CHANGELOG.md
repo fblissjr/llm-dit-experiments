@@ -8,6 +8,7 @@ Uses [Semantic Versioning](https://semver.org/).
 ## 0.9.7
 
 ### fixed
+- Two-stage noise formula: fixed flow-matching interpolation in Stage 2 noise addition. Was `x_0 + sigma * eps` (additive), now `(1-sigma) * x_0 + sigma * eps` (correct flow-matching interpolation). The wrong formula put the clean signal 11x too strong at sigma=0.909, causing green garbage output.
 - LoRA fusion OOM: re-quantize each layer to fp8 immediately after fusion instead of batching at end. Prevents VRAM ballooning from ~13GB (fp8) toward ~26GB (bf16) when fusing large LoRAs (e.g., rank-384 distilled LoRA). Also updated from deprecated `float8_weight_only()` function API to `Float8WeightOnlyConfig`.
 - CUDA fragmentation OOM during two-stage LoRA fusion: added `cleanup_memory()` between Stage 1 and Stage 1.5 to release denoising intermediate buffers (5-8 GB reserved). Added periodic `empty_cache()` every 100 layers during 487-layer fusion loop to prevent CUDA pool fragmentation.
 - torchao availability check: updated `is_torchao_available()` to import current API (`quantize_`) instead of removed `int8_weight_only` function. Fixes "torchao not available" false negative with torchao 0.16+.
