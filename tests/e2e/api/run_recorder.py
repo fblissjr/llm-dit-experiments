@@ -120,7 +120,13 @@ class RunRecorder:
         try:
             response_record["body"] = response.json()
         except Exception:
-            response_record["body"] = response.text[:1000]
+            # For SSE streams, store the last 5000 chars (includes completion event)
+            # plus the first 500 chars (includes initial status)
+            text = response.text
+            if len(text) > 6000:
+                response_record["body"] = text[:500] + "\n...\n" + text[-5000:]
+            else:
+                response_record["body"] = text
         self._responses.append(response_record)
 
         # Write per-request files (numbered if multiple)

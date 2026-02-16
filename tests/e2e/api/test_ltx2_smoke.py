@@ -1,6 +1,6 @@
 """LTX-2 API smoke tests -- minimal video generation through real HTTP API.
 
-last updated: 2026-02-12
+last updated: 2026-02-16
 
 Run with:
     uv run pytest tests/e2e/api/test_ltx2_smoke.py -v -s
@@ -9,7 +9,7 @@ Requires: CUDA GPU, LTX-2 model paths in config.toml
 Output: outputs/tests/runs/api_ltx2_*/ (full metadata for reproducibility)
 
 Note: LTX-2 uses SSE streaming. The test POSTs to /api/ltx2/generate/stream
-and collects the final SSE event.
+and collects the final SSE event containing the video URL.
 """
 
 import json
@@ -65,26 +65,32 @@ class TestLTX2APISmoke:
         error_events = [e for e in events if e.get("type") == "error"]
 
         assert not error_events, f"Generation errors: {error_events}"
-        assert complete_events, f"No completion event. Events: {[e.get('type') for e in events]}"
+        assert complete_events, (
+            f"No completion event in {len(events)} SSE events. "
+            f"Types: {[e.get('type') for e in events]}"
+        )
 
         complete = complete_events[-1]
-        assert "videoUrl" in complete or "video_url" in complete, (
+        # Router sends "url" and "urls" keys (not "videoUrl" or "video_url")
+        assert "url" in complete or "urls" in complete, (
             f"No video URL in completion event: {complete}"
         )
 
-        # Download and validate the video
-        video_url = complete.get("videoUrl") or complete.get("video_url")
+        # Download and save the video to the test run directory
+        video_url = complete.get("url") or (complete.get("urls") or [None])[0]
         if video_url:
             video_resp = run_recorder.get(video_url)
-            if video_resp.status_code == 200:
-                video_path = run_recorder.output_dir / "output.mp4"
-                video_path.write_bytes(video_resp.content)
-                run_recorder._outputs.append(video_path)
+            assert video_resp.status_code == 200, (
+                f"Failed to download video from {video_url}: {video_resp.status_code}"
+            )
+            video_path = run_recorder.output_dir / "output.mp4"
+            video_path.write_bytes(video_resp.content)
+            run_recorder._outputs.append(video_path)
 
-                result = run_recorder.validate(
-                    video_path, expected_w=256, expected_h=384,
-                )
-                assert result.passed, f"Validation failed:\n{result.summary()}"
+            result = run_recorder.validate(
+                video_path, expected_w=256, expected_h=384,
+            )
+            assert result.passed, f"Validation failed:\n{result.summary()}"
 
     def test_status_endpoint(self, run_recorder):
         """GET /api/ltx2/status returns expected fields."""
