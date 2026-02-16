@@ -1,6 +1,7 @@
 # LTX-2 smoke test overlay -- merged over config.toml.example
-# Minimal video generation: 256x384, 9 frames, 4 steps
-# Uses distilled model with model-level offloading
+# Minimal two-stage video generation: 256x384, 9 frames
+# Model paths, gemma_variant, quantize, device placement, and distilled_lora_path
+# are extracted from config.toml by config_factory.py
 
 default_pipeline = "none"
 
@@ -8,12 +9,11 @@ default_pipeline = "none"
 height = 384
 width = 256
 num_frames = 9
-num_inference_steps = 4
 guidance_scale = 3.0
-offload_mode = "model"
-use_distilled = true
-distilled_steps_stage1 = 4
-distilled_steps_stage2 = 2
+use_two_stage = true
+stage1_num_inference_steps = 4
+stage2_num_inference_steps = 2
+negative_prompt = "blurry, out of focus, overexposed, underexposed, low contrast, washed out colors, excessive noise, grainy texture, poor lighting, flickering, motion blur, distorted proportions, unnatural skin tones, deformed facial features, asymmetrical face, missing facial features, extra limbs, disfigured hands, wrong hand count, artifacts around text, inconsistent perspective, camera shake, incorrect depth of field, background too sharp, background clutter, distracting reflections, harsh shadows, inconsistent lighting direction, color banding, cartoonish rendering, 3D CGI look, unrealistic materials, uncanny valley effect, incorrect ethnicity, wrong gender, exaggerated expressions, wrong gaze direction, mismatched lip sync, silent or muted audio, distorted voice, robotic voice, echo, background noise, off-sync audio, incorrect dialogue, added dialogue, repetitive speech, jittery movement, awkward pauses, incorrect timing, unnatural transitions, inconsistent framing, tilted camera, flat lighting, inconsistent tone, cinematic oversaturation, stylized filters, or AI artifacts."
 
 [server]
 host = "127.0.0.1"

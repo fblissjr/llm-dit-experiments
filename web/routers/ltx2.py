@@ -184,6 +184,10 @@ async def ltx2_generate_stream(request: LTX2GenerateRequest, config: ConfigDep):
                     seed=seed,
                 )
 
+                # Resolve text encoder path from config (default: model_path/text_encoder)
+                encoder_model_id = ltx2_cfg.encoder_model_id if ltx2_cfg else None
+                text_encoder_path = encoder_model_id if encoder_model_id else None
+
                 if request.use_two_stage:
                     two_stage_cfg = TwoStageConfig(
                         stage1_steps=request.stage1_steps or (ltx2_cfg.stage1_num_inference_steps if ltx2_cfg else 40),
@@ -198,11 +202,21 @@ async def ltx2_generate_stream(request: LTX2GenerateRequest, config: ConfigDep):
                         spatial_upsampler_file=ltx2_cfg.spatial_upsampler_file if ltx2_cfg else "ltx-2-spatial-upscaler-x2-1.0.safetensors",
                     )
 
+                    # Validate distilled LoRA exists before expensive generation
+                    distilled_path = two_stage_cfg.distilled_lora_path
+                    if distilled_path:
+                        resolved = Path(distilled_path)
+                        if not resolved.is_absolute():
+                            resolved = model_path / resolved
+                        if not resolved.exists():
+                            raise ValueError(f"Distilled LoRA not found: {resolved}")
+
                     return generate_video_two_stage(
                         prompt=request.prompt,
                         config=gen_config,
                         two_stage=two_stage_cfg,
                         model_path=model_path,
+                        text_encoder_path=text_encoder_path,
                         callback=progress_callback,
                         gemma_variant=ltx2_cfg.gemma_variant if ltx2_cfg else "bf16",
                         lora_path=request.lora_path,
@@ -220,6 +234,7 @@ async def ltx2_generate_stream(request: LTX2GenerateRequest, config: ConfigDep):
                         prompt=request.prompt,
                         config=gen_config,
                         model_path=model_path,
+                        text_encoder_path=text_encoder_path,
                         callback=progress_callback,
                         use_progress=False,
                         lora_path=request.lora_path,

@@ -1,0 +1,18 @@
+# Qwen-Image T2I smoke test overlay -- merged over config.toml.example
+# Minimal text-to-image generation: 512x512, 20 steps
+# Model paths extracted from config.toml by config_factory.py
+
+default_pipeline = "none"
+
+# Force model_type to qwenimage-t2i so _is_t2i_configured() returns True
+model_type = "qwenimage-t2i"
+
+[qwen_image]
+cpu_offload = true
+cfg_scale = 4.0
+quantize_text_encoder = "none"
+quantize_transformer = "none"
+
+[server]
+host = "127.0.0.1"
+port = 7860

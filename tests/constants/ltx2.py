@@ -1,13 +1,13 @@
 """LTX-2 canonical test parameters.
 
-last updated: 2026-02-12
+last updated: 2026-02-16
 
 All values traced from the official LTX-2 reference implementation:
   coderef/LTX-2/packages/ltx-pipelines/src/ltx_pipelines/utils/constants.py
 
 Two tier families:
-  - Distilled tiers (SMOKE, STANDARD): Used by TOML overlays / E2E API tests.
-    These run the distilled model with fewer steps.
+  - Two-stage tiers (SMOKE, STANDARD): Used by TOML overlays / E2E API tests.
+    These run the two-stage pipeline with distilled LoRA refinement.
   - Full model tiers (FULL_SMOKE, FULL_REFERENCE): Used by protocol.py / backend
     comparison tests. These run the full (non-distilled) model for 1:1 cross-
     implementation comparison.
@@ -39,35 +39,33 @@ STAGE_2_DISTILLED_SIGMA_VALUES = [0.909375, 0.725, 0.421875, 0.0]
 
 
 # =============================================================================
-# Distilled model tiers (TOML overlays / E2E API tests)
+# Two-stage tiers (TOML overlays / E2E API tests)
 # =============================================================================
 
 SMOKE = {
     "height": 384,                     # Scaled down for speed
     "width": 256,
     "num_frames": 9,                   # Minimum valid (8k+1)
-    "num_inference_steps": 4,
     "guidance_scale": REFERENCE_CFG,   # 3.0
     "seed": REFERENCE_SEED,            # 10
     "fps": REFERENCE_FPS,              # 24.0
     "fp8": True,
-    "use_distilled": True,
-    "distilled_steps_stage1": 4,
-    "distilled_steps_stage2": 2,
+    "use_two_stage": True,
+    "stage1_num_inference_steps": 4,
+    "stage2_num_inference_steps": 2,
 }
 
 STANDARD = {
     "height": REFERENCE_HEIGHT,        # 512
     "width": REFERENCE_WIDTH,          # 768
     "num_frames": 33,
-    "num_inference_steps": 12,
     "guidance_scale": REFERENCE_CFG,   # 3.0
     "seed": REFERENCE_SEED,            # 10
     "fps": REFERENCE_FPS,              # 24.0
     "fp8": True,
-    "use_distilled": True,
-    "distilled_steps_stage1": 8,
-    "distilled_steps_stage2": 4,
+    "use_two_stage": True,
+    "stage1_num_inference_steps": 8,
+    "stage2_num_inference_steps": 4,
 }
 
 
@@ -86,7 +84,7 @@ FULL_SMOKE = {
     "seed": REFERENCE_SEED,            # 10
     "fps": REFERENCE_FPS,              # 24.0
     "fp8": True,
-    "use_distilled": False,
+    "use_two_stage": False,
 }
 
 FULL_REFERENCE = {
@@ -98,7 +96,7 @@ FULL_REFERENCE = {
     "seed": REFERENCE_SEED,            # 10
     "fps": REFERENCE_FPS,              # 24.0
     "fp8": False,
-    "use_distilled": False,
+    "use_two_stage": False,
 }
 
 

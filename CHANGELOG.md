@@ -1,9 +1,42 @@
-last updated: 2026-02-15
+last updated: 2026-02-16
 
 # changelog
 
 All notable changes to this project will be documented in this file.
 Uses [Semantic Versioning](https://semver.org/).
+
+## 0.9.7
+
+### fixed
+- LoRA fusion OOM: re-quantize each layer to fp8 immediately after fusion instead of batching at end. Prevents VRAM ballooning from ~13GB (fp8) toward ~26GB (bf16) when fusing large LoRAs (e.g., rank-384 distilled LoRA). Also updated from deprecated `float8_weight_only()` function API to `Float8WeightOnlyConfig`.
+- torchao availability check: updated `is_torchao_available()` to import current API (`quantize_`) instead of removed `int8_weight_only` function. Fixes "torchao not available" false negative with torchao 0.16+.
+- Negative prompt: replaced 3-word placeholder with full reference DEFAULT_NEGATIVE_PROMPT (~1,300 chars) tuned for suppressing common diffusion failure modes
+- Gemma config: cleared mismatched `encoder_model_id` in config.toml.example (Q4 QAT path doesn't apply to 8bit variant)
+
+### changed
+- Test constants: renamed legacy distilled field names to two-stage (`use_two_stage`, `stage1_num_inference_steps`, `stage2_num_inference_steps`) in SMOKE/STANDARD/FULL dicts and TOML overlays
+- Test infrastructure: deleted duplicate `tests/e2e/conftest.py` (556-line copy of integration/pipeline/conftest.py)
+- Test infrastructure: moved orphan test files to proper locations (`test_web_server.py` -> integration, `test_rewriter_parsing.py` -> unit, `test_qwen3_think_tokens.py` -> scripts)
+- Z-Image API tests: rewrote from external `requests.get()` to in-process TestClient pattern; removed obsolete tests against dead endpoints (`/api/generation-config`, `/api/status`)
+
+### added
+- Qwen-Image E2E smoke test: `tests/e2e/api/test_qwenimage_smoke.py` with T2I generation, status/config endpoints, and validation
+- Qwen-Image test config overlay: `tests/configs/qwenimage_smoke.toml`
+- Z-Image API test: `tests/e2e/api/test_zimage_api.py` (config defaults, variant checks, generation, seed reproducibility)
+- Config factory: expanded `qwen_image` model path extraction to include `cpu_offload`, `quantize_text_encoder`, `quantize_transformer`
+
+## 0.9.6
+
+### fixed
+- Two-stage pipeline: set `distilled_lora_path` in config.toml (was empty, causing neon blob artifacts from base model doing 3-step distilled denoising without the distilled LoRA)
+- Two-stage pipeline: wired `encoder_model_id` config through router to pipeline (was dead config, never passed as `text_encoder_path`)
+
+### added
+- Distilled LoRA guard in pipeline: raises clear `ValueError` when `distilled_lora_path` is empty instead of silently producing garbage
+- Distilled LoRA guard in router: validates file exists before starting expensive generation
+
+### changed
+- Two-stage pipeline: eliminated second transformer load by reusing Stage 1 model for Stage 2 (~15-25s savings per generation). Distilled LoRA is fused into the existing model instead of reloading from disk.
 
 ## 0.9.5
 

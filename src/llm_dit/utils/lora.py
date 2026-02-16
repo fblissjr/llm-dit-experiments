@@ -230,8 +230,12 @@ class LoRALoader:
             Number of layers updated
         """
         updated_num = 0
-        dequantized_modules: list[nn.Module] = []
+        requant_num = 0
         state_dict = self.convert_state_dict(state_dict)
+
+        # Lazy-init: re-quantization config loaded on first quantized layer
+        _requant_config = None
+        _quantize_fn = None
 
         # Get unique layer names
         lora_layer_names = set(
@@ -282,27 +286,24 @@ class LoRALoader:
                         merged_weight,
                         requires_grad=module.weight.requires_grad,
                     )
-                    dequantized_modules.append(module)
+                    # Re-quantize immediately to prevent VRAM accumulation.
+                    # Without per-layer re-quant, fused layers stay at bf16 (2x
+                    # memory each), and a large LoRA (e.g., rank-384 distilled)
+                    # can balloon the model from ~13GB fp8 to ~26GB bf16 mid-loop.
+                    if _requant_config is None:
+                        from torchao.quantization import Float8WeightOnlyConfig, quantize_
+                        _requant_config = Float8WeightOnlyConfig()
+                        _quantize_fn = quantize_
+                    _quantize_fn(module, _requant_config)
+                    requant_num += 1
                 else:
                     state_dict_base["weight"] = merged_weight
                     module.load_state_dict(state_dict_base)
 
                 updated_num += 1
 
-        # Re-quantize dequantized layers to reclaim VRAM.
-        # Without this, fused layers stay at bf16 (~17GB for the whole
-        # transformer) instead of fp8 (~9GB), causing OOM on the next
-        # request when the encoder shuttle needs GPU space.
-        if dequantized_modules:
-            from torchao.quantization import float8_weight_only, quantize_
-
-            logger.info(
-                f"Re-quantizing {len(dequantized_modules)} LoRA-affected "
-                f"layers to restore fp8..."
-            )
-            for mod in dequantized_modules:
-                quantize_(mod, float8_weight_only())
-            logger.info("Re-quantization complete, VRAM reclaimed")
+        if requant_num:
+            logger.info(f"Re-quantized {requant_num} layers to fp8 during fusion")
 
         logger.info(f"Fused {updated_num} LoRA layers (alpha={alpha})")
         return updated_num

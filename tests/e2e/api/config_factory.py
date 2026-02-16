@@ -33,9 +33,17 @@ _REAL_CONFIG = _PROJECT_ROOT / "config.toml"
 # TOML sections that contain model paths to extract from config.toml
 _MODEL_PATH_KEYS = {
     "flux2": ("model_path", "vae_path", "encoder_path"),
-    "ltx2": ("model_path", "transformer_file", "encoder_model_id"),
+    "ltx2": (
+        "model_path", "transformer_file", "encoder_model_id",
+        "distilled_lora_path", "spatial_upsampler_file",
+        "gemma_variant", "text_encoder_device", "transformer_device",
+        "vae_device", "quantize",
+    ),
     "zimage": ("model_path",),
-    "qwen_image": ("model_path",),
+    "qwen_image": (
+        "model_path", "cpu_offload",
+        "quantize_text_encoder", "quantize_transformer",
+    ),
     "encoder": ("model_path",),
 }
 

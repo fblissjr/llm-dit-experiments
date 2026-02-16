@@ -1,5 +1,5 @@
 """
-Z-Image Base Model E2E Tests.
+Z-Image Base Model tests.
 
 Tests the BASE model variant (shift=6.0, steps=30-40, CFG=4.0) to verify:
 1. Scheduler sigma schedule matches DiffSynth reference (FLUX-style exponential shift)
@@ -12,15 +12,13 @@ linear shift formula caused images to remain as noise.
 Run with model path:
     Z_IMAGE_MODEL_PATH=/path/to/Z-Image pytest tests/integration/pipeline/z_image/test_base_model.py -v -s
 
-Or with a running server:
-    pytest tests/integration/pipeline/z_image/test_base_model.py -v -s
+API-level tests have been moved to tests/e2e/api/test_zimage_api.py.
 
-Last updated: 2026-01-30
+Last updated: 2026-02-16
 """
 
 import math
 import os
-from typing import Optional
 
 import numpy as np
 import pytest
@@ -283,95 +281,3 @@ class TestBaseModelGeneration:
         )
 
 
-class TestAPIDefaultsWithGeneration:
-    """Test that API correctly applies variant defaults."""
-
-    @pytest.fixture
-    def api_url(self):
-        """Get API server URL."""
-        return os.environ.get("TEST_SERVER_URL", "http://localhost:7860")
-
-    def test_api_returns_zimage_variant(self, api_url):
-        """Verify API returns zimage_variant in generation-config."""
-        import requests
-
-        try:
-            resp = requests.get(f"{api_url}/api/generation-config", timeout=5)
-            resp.raise_for_status()
-            data = resp.json()
-
-            variant = data.get("zimage_variant")
-            print(f"\n=== API Generation Config ===")
-            print(f"zimage_variant: {variant}")
-            print(f"steps: {data.get('steps')}")
-            print(f"guidance_scale: {data.get('guidance_scale')}")
-            print(f"shift: {data.get('shift')}")
-
-            assert variant is not None, "API should return zimage_variant"
-            assert variant in ("turbo", "base"), f"Invalid variant: {variant}"
-
-        except requests.exceptions.ConnectionError:
-            pytest.skip(f"Server not running at {api_url}")
-
-    def test_api_base_defaults_match_variant(self, api_url):
-        """Verify API returns correct defaults for Base variant."""
-        import requests
-
-        try:
-            resp = requests.get(f"{api_url}/api/generation-config", timeout=5)
-            resp.raise_for_status()
-            data = resp.json()
-
-            variant = data.get("zimage_variant")
-
-            if variant == "base":
-                # Base variant should have these defaults
-                assert data.get("shift") == 6.0, f"Base shift should be 6.0, got {data.get('shift')}"
-                assert data.get("guidance_scale") == 4.0, (
-                    f"Base guidance_scale should be 4.0, got {data.get('guidance_scale')}"
-                )
-                # Steps might be configured differently in config.toml, but should be > 20
-                assert data.get("steps", 0) >= 20, (
-                    f"Base steps should be >= 20, got {data.get('steps')}"
-                )
-                print(f"\n✓ API returns correct Base variant defaults")
-            elif variant == "turbo":
-                # Turbo variant defaults
-                assert data.get("shift") == 3.0, f"Turbo shift should be 3.0, got {data.get('shift')}"
-                assert data.get("guidance_scale") == 0.0, (
-                    f"Turbo guidance_scale should be 0.0, got {data.get('guidance_scale')}"
-                )
-                print(f"\n✓ API returns correct Turbo variant defaults")
-            else:
-                pytest.fail(f"Unknown variant: {variant}")
-
-        except requests.exceptions.ConnectionError:
-            pytest.skip(f"Server not running at {api_url}")
-
-
-if __name__ == "__main__":
-    """Quick standalone test of scheduler."""
-    from llm_dit.schedulers import FlowMatchScheduler
-
-    print("Testing FlowMatchScheduler with FLUX-style exponential shift...")
-
-    scheduler = FlowMatchScheduler(
-        shift=6.0,
-        use_dynamic_shifting=True,
-    )
-    scheduler.set_timesteps(30, device="cpu")
-
-    sigmas = scheduler.sigmas.tolist()
-
-    print(f"\nSigma schedule (shift=6.0, 30 steps):")
-    for i, sigma in enumerate(sigmas):
-        print(f"  Step {i:2d}: {sigma:.6f}")
-
-    print(f"\nFirst sigma: {sigmas[0]:.6f} (should be ~1.0)")
-    print(f"Last before 0: {sigmas[-2]:.6f} (should be ~0.02)")
-    print(f"Final: {sigmas[-1]:.6f} (should be 0.0)")
-
-    if sigmas[-2] < 0.1:
-        print("\n✅ Scheduler appears to be working correctly!")
-    else:
-        print("\n❌ WARNING: Last sigma before 0 is too high - denoising may not complete!")

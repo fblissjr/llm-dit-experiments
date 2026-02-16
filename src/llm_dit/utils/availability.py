@@ -1,7 +1,7 @@
 """
 Centralized dependency availability checks.
 
-Last Updated: 2026-01-29
+Last Updated: 2026-02-16
 
 Provides cached availability checks for optional dependencies to avoid
 duplicated try/except blocks scattered throughout the codebase.
@@ -15,8 +15,8 @@ Usage:
     )
 
     if is_torchao_available():
-        from torchao.quantization import int8_weight_only, quantize_
-        quantize_(model, int8_weight_only())
+        from torchao.quantization import Int8WeightOnlyConfig, quantize_
+        quantize_(model, Int8WeightOnlyConfig())
     else:
         logger.warning("torchao not available, using bf16")
 """
@@ -33,16 +33,15 @@ def is_torchao_available() -> bool:
     """
     Check if torchao is available for quantization.
 
-    torchao provides:
-    - int4_weight_only() for ~4-bit quantization
-    - int8_weight_only() for ~8-bit quantization
+    torchao provides (v0.16+ config-based API):
+    - Int8WeightOnlyConfig / Int4WeightOnlyConfig for quantization configs
     - quantize_() for in-place model quantization
 
     Returns:
         True if torchao is importable, False otherwise.
     """
     try:
-        from torchao.quantization import int8_weight_only, quantize_
+        from torchao.quantization import quantize_  # noqa: F401
 
         return True
     except ImportError:

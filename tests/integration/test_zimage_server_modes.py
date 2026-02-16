@@ -19,7 +19,7 @@ Coverage (29 tests):
 All tests use mocked models - no actual LLM weights are loaded.
 
 Run tests:
-    uv run pytest tests/test_web_server.py -v
+    uv run pytest tests/integration/test_zimage_server_modes.py -v
 """
 
 import pytest

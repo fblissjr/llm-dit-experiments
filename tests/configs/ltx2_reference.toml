@@ -12,7 +12,7 @@ num_frames = 121
 num_inference_steps = 40
 guidance_scale = 3.0
 offload_mode = "model"
-use_distilled = false
+use_two_stage = false
 
 [server]
 host = "127.0.0.1"

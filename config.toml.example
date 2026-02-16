@@ -142,7 +142,8 @@ distilled_lora_path = ""        # distilled LoRA for stage 2 refinement
 distilled_lora_scale = 0.8
 
 # Gemma 3-12B encoder
-encoder_model_id = "google/gemma-3-12b-it-qat-q4_0-unquantized"
+# Leave empty for bf16/8bit (uses model_path/text_encoder). Set to HF model ID for q4-qat variant.
+encoder_model_id = ""
 
 # LoRA
 lora_path = ""
@@ -168,7 +169,7 @@ audio_negative_prompt = ""
 use_two_stage = true
 stage1_num_inference_steps = 40
 stage2_num_inference_steps = 3
-negative_prompt = "worst quality, blurry, distorted"
+negative_prompt = "blurry, out of focus, overexposed, underexposed, low contrast, washed out colors, excessive noise, grainy texture, poor lighting, flickering, motion blur, distorted proportions, unnatural skin tones, deformed facial features, asymmetrical face, missing facial features, extra limbs, disfigured hands, wrong hand count, artifacts around text, inconsistent perspective, camera shake, incorrect depth of field, background too sharp, background clutter, distracting reflections, harsh shadows, inconsistent lighting direction, color banding, cartoonish rendering, 3D CGI look, unrealistic materials, uncanny valley effect, incorrect ethnicity, wrong gender, exaggerated expressions, wrong gaze direction, mismatched lip sync, silent or muted audio, distorted voice, robotic voice, echo, background noise, off-sync audio, incorrect dialogue, added dialogue, repetitive speech, jittery movement, awkward pauses, incorrect timing, unnatural transitions, inconsistent framing, tilted camera, flat lighting, inconsistent tone, cinematic oversaturation, stylized filters, or AI artifacts."
 
 # Guidance (stage 1 only)
 stg_scale = 0.0                 # spatio-temporal guidance (0=disabled)

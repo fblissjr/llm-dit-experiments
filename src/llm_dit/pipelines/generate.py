@@ -1183,6 +1183,13 @@ def generate_video_two_stage(
     Returns:
         Video tensor [F, H, W, C] in uint8 format.
     """
+    if not two_stage.distilled_lora_path:
+        raise ValueError(
+            "Two-stage generation requires a distilled LoRA for stage 2 refinement. "
+            "Set distilled_lora_path in TwoStageConfig (e.g., 'ltx-2-19b-distilled-lora-384.safetensors'). "
+            "Without it, the base model cannot denoise in 3 steps and will produce garbage output."
+        )
+
     effective_quantize, effective_precision = _resolve_quantize(quantize)
     model_path = Path(model_path)
     if text_encoder_path is None:
@@ -1378,17 +1385,14 @@ def generate_video_two_stage(
     # Reshape to spatial format for upsampler: [B, T, D] -> [B, D, T_lat, H_lat, W_lat]
     latents = latents.transpose(1, 2).reshape(1, 128, t_latent, h_latent, w_latent)
 
-    del model, sigmas
-    if not skip_cleanup:
-        cleanup_memory()
-    logger.info("Stage 1 transformer unloaded")
-
+    del sigmas
     stage1_elapsed = time.perf_counter() - stage1_start
     logger.info(f"Stage 1 complete: {stage1_elapsed:.1f}s")
 
     # =========================================================================
     # Stage 1.5: Spatial Upsampling (2x)
     # =========================================================================
+    # Transformer stays on GPU -- upsampler (~950MB) fits alongside it in 24GB.
     stage15_start = time.perf_counter()
     if callback:
         callback("upsample", 0, 1)
@@ -1401,8 +1405,7 @@ def generate_video_two_stage(
     upsampler = load_spatial_upsampler(upsampler_path, dtype=dtype, device="cpu")
     upsampler = upsampler.to(transformer_device)
 
-    # We need per_channel_statistics for normalization during upsampling.
-    # Load the VAE decoder briefly just for its statistics, then discard.
+    # Load VAE briefly just for per_channel_statistics, then discard.
     from llm_dit.models.ltx2.vae import load_ltx2_vae_decoder
 
     vae_for_stats = load_ltx2_vae_decoder(
@@ -1433,51 +1436,17 @@ def generate_video_two_stage(
     # =========================================================================
     # Stage 2: High-Resolution Refinement (full resolution, distilled LoRA)
     # =========================================================================
+    # Reuse the Stage 1 transformer -- base LoRA(s) are already fused.
+    # Only the distilled LoRA needs to be applied for Stage 2's 3-step schedule.
     stage2_start = time.perf_counter()
     if callback:
         callback("stage2_denoise", 0, two_stage.stage2_steps)
 
-    logger.info(f"Stage 2: Loading transformer on {transformer_device} for high-res refinement...")
+    logger.info("Stage 2: Applying distilled LoRA for high-res refinement (reusing Stage 1 model)...")
 
-    # Load fresh transformer for stage 2
-    model = load_ltx2_transformer(
-        model_path / "transformer",
-        dtype=dtype,
-        device=load_device,
-        video_only=True,
-    )
-
-    if effective_quantize and effective_precision != "none":
-        from llm_dit.quantization import quantize_component
-        model, stats = quantize_component(
-            model,
-            method=effective_precision,
-            component_type="transformer",
-        )
-
-    if load_device == "cpu":
-        model = model.to(transformer_device)
-
-    # Apply base LoRA(s) + distilled LoRA for stage 2
+    # Apply distilled LoRA to the existing model (base LoRA already fused from Stage 1)
     from llm_dit.utils.lora import load_lora as _load_lora
 
-    if lora_path is not None:
-        if isinstance(lora_path, (str, Path)):
-            lora_paths = [lora_path]
-        else:
-            lora_paths = list(lora_path)
-
-        if lora_scale is None:
-            lora_scales = [0.8] * len(lora_paths)
-        elif isinstance(lora_scale, (int, float)):
-            lora_scales = [float(lora_scale)] * len(lora_paths)
-        else:
-            lora_scales = list(lora_scale)
-
-        for path, scale in zip(lora_paths, lora_scales):
-            _load_lora(model, path, scale=scale, device=transformer_device, dtype=dtype)
-
-    # Apply distilled LoRA
     if two_stage.distilled_lora_path:
         distilled_path = Path(two_stage.distilled_lora_path)
         if not distilled_path.is_absolute():
