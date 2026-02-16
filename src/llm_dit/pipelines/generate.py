@@ -82,6 +82,19 @@ def cleanup_memory() -> None:
         torch.cuda.synchronize()
 
 
+def _log_vram(label: str) -> None:
+    """Log current VRAM state for diagnostics."""
+    if not torch.cuda.is_available():
+        return
+    allocated = torch.cuda.memory_allocated() / 1024**3
+    reserved = torch.cuda.memory_reserved() / 1024**3
+    free_cuda = torch.cuda.mem_get_info()[0] / 1024**3
+    logger.info(
+        f"[VRAM:{label}] allocated={allocated:.1f}GB, "
+        f"reserved={reserved:.1f}GB, cuda_free={free_cuda:.1f}GB"
+    )
+
+
 @dataclass
 class GenerationConfig:
     """Configuration for pure PyTorch video generation."""
@@ -1253,6 +1266,7 @@ def generate_video_two_stage(
     del text_encoder
     if not skip_cleanup:
         cleanup_memory()
+    _log_vram("post_encoder_unload")
     logger.info("Text encoder unloaded")
 
     stage0_elapsed = time.perf_counter() - stage0_start
@@ -1389,6 +1403,13 @@ def generate_video_two_stage(
     stage1_elapsed = time.perf_counter() - stage1_start
     logger.info(f"Stage 1 complete: {stage1_elapsed:.1f}s")
 
+    # Release denoising intermediates before loading upsampler.
+    # Stage 1 attention/FFN buffers can reserve 5-8 GB in the CUDA cache;
+    # without this cleanup, Stage 1.5 + Stage 2 may not have enough headroom.
+    if not skip_cleanup:
+        cleanup_memory()
+    _log_vram("post_stage1")
+
     # =========================================================================
     # Stage 1.5: Spatial Upsampling (2x)
     # =========================================================================
@@ -1423,6 +1444,7 @@ def generate_video_two_stage(
     del upsampler, vae_for_stats, per_channel_stats
     if not skip_cleanup:
         cleanup_memory()
+    _log_vram("post_stage1.5")
 
     if callback:
         callback("upsample", 1, 1)
@@ -1443,6 +1465,7 @@ def generate_video_two_stage(
         callback("stage2_denoise", 0, two_stage.stage2_steps)
 
     logger.info("Stage 2: Applying distilled LoRA for high-res refinement (reusing Stage 1 model)...")
+    _log_vram("pre_stage2_lora")
 
     # Apply distilled LoRA to the existing model (base LoRA already fused from Stage 1)
     from llm_dit.utils.lora import load_lora as _load_lora

@@ -9,6 +9,7 @@ Uses [Semantic Versioning](https://semver.org/).
 
 ### fixed
 - LoRA fusion OOM: re-quantize each layer to fp8 immediately after fusion instead of batching at end. Prevents VRAM ballooning from ~13GB (fp8) toward ~26GB (bf16) when fusing large LoRAs (e.g., rank-384 distilled LoRA). Also updated from deprecated `float8_weight_only()` function API to `Float8WeightOnlyConfig`.
+- CUDA fragmentation OOM during two-stage LoRA fusion: added `cleanup_memory()` between Stage 1 and Stage 1.5 to release denoising intermediate buffers (5-8 GB reserved). Added periodic `empty_cache()` every 100 layers during 487-layer fusion loop to prevent CUDA pool fragmentation.
 - torchao availability check: updated `is_torchao_available()` to import current API (`quantize_`) instead of removed `int8_weight_only` function. Fixes "torchao not available" false negative with torchao 0.16+.
 - Negative prompt: replaced 3-word placeholder with full reference DEFAULT_NEGATIVE_PROMPT (~1,300 chars) tuned for suppressing common diffusion failure modes
 - Gemma config: cleared mismatched `encoder_model_id` in config.toml.example (Q4 QAT path doesn't apply to 8bit variant)
@@ -20,6 +21,7 @@ Uses [Semantic Versioning](https://semver.org/).
 - Z-Image API tests: rewrote from external `requests.get()` to in-process TestClient pattern; removed obsolete tests against dead endpoints (`/api/generation-config`, `/api/status`)
 
 ### added
+- VRAM diagnostic logging at stage transitions in two-stage pipeline (post-encoder, post-stage1, post-stage1.5, pre-stage2). Logs allocated/reserved/free GPU memory for debugging OOM failures from logs alone.
 - Qwen-Image E2E smoke test: `tests/e2e/api/test_qwenimage_smoke.py` with T2I generation, status/config endpoints, and validation
 - Qwen-Image test config overlay: `tests/configs/qwenimage_smoke.toml`
 - Z-Image API test: `tests/e2e/api/test_zimage_api.py` (config defaults, variant checks, generation, seed reproducibility)

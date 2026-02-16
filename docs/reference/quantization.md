@@ -4,6 +4,9 @@ last updated: 2026-02-06
 
 Reference for the unified quantization system in llm-dit-experiments. All pipelines (FLUX.2, LTX-2, Z-Image, Qwen-Image) use a single torchao-based `quantize_component()` function with consistent config.
 
+## Important implementation note:
+Any operation that temporarily dequantizes quantized weights should do so in a streaming fashion (one layer at a time, re-quantize immediately) rather than accumulating dequantized state. This is especially critical on 24GB cards where the full bf16 model doesn't fit.
+
 ## Quick Start
 
 Configure quantization globally in `config.toml`:

@@ -296,6 +296,14 @@ class LoRALoader:
                         _quantize_fn = quantize_
                     _quantize_fn(module, _requant_config)
                     requant_num += 1
+
+                    # Periodically release CUDA cached blocks to prevent
+                    # fragmentation. Each layer's dequant/requant cycle creates
+                    # temporary bf16 tensors that fragment the CUDA pool. Without
+                    # periodic cleanup, 487 layers can exhaust free CUDA memory
+                    # even though PyTorch's allocated total stays constant.
+                    if requant_num % 100 == 0 and torch.cuda.is_available():
+                        torch.cuda.empty_cache()
                 else:
                     state_dict_base["weight"] = merged_weight
                     module.load_state_dict(state_dict_base)
