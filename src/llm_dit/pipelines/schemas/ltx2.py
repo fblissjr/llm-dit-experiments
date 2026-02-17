@@ -7,15 +7,12 @@ LTX-2 is a video generation pipeline with:
 - Pure PyTorch implementation (recommended) or diffusers wrapper
 - SSE streaming for real-time progress updates
 - Native FP8 support on RTX 4090
-- Frame formula: 8n+1 (33, 41, 49, 57, 65 frames)
+- Frame formula: 8n+1 (9, 17, 25, 33, ..., 121, ...)
 - Enhancement features: NAG, FETA, TeaCache, Latent Norm
 """
 
 from . import register_pipeline, PipelineSchema, ParamSchema
 
-
-# Common frame count options (8n+1 formula)
-FRAME_PRESETS = ["33", "41", "49", "57", "65"]
 
 # Video dimension presets (width x height)
 VIDEO_DIMENSION_PRESETS = [
@@ -97,12 +94,13 @@ register_pipeline(PipelineSchema(
         ),
         ParamSchema(
             id="num_frames",
-            type="select",
+            type="number",
             label="Frames",
-            default="33",
-            options=FRAME_PRESETS,
+            default=33,
+            min=9,
+            step=8,
             group="basic",
-            tooltip="Number of frames (8n+1 formula). 33 frames = ~1.3s at 24fps.",
+            tooltip="Number of frames. Must follow 8n+1 formula (9, 17, 25, 33, ..., 121, ...). Values are snapped to nearest valid count. 33 = ~1.3s, 65 = ~2.7s, 121 = ~5s at 24fps.",
         ),
         ParamSchema(
             id="fps",

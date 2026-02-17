@@ -649,7 +649,14 @@ class LTX2GenerateRequest(BaseModel):
         snapped = round(v / 64) * 64
         return max(256, min(1536, snapped))
 
-    num_frames: int = 33
+    num_frames: int = Field(33, ge=9)
+
+    @field_validator("num_frames")
+    @classmethod
+    def snap_to_8n1(cls, v: int) -> int:
+        """Snap to nearest valid frame count (8n+1 for causal 3D VAE)."""
+        n = round((v - 1) / 8)
+        return max(1, n) * 8 + 1
     fps: float = 24.0
     seed: Optional[int] = None
     enable_audio: bool = False

@@ -79,7 +79,6 @@ All routers use `resolve_param()` from `web/param_resolver.py` for generation pa
 |------|------|
 | **Adding feature to existing pipeline** | Feature workflow (below) + [post_refactor_guide.md](internal/docs/architecture/post_refactor_guide.md) |
 | **Adding new pipeline** | [pipeline_integration.md](internal/checklists/pipeline_integration.md) |
-| **Web/UI development** | [internal/web/CLAUDE.md](internal/web/CLAUDE.md) |
 | **Writing/running tests** | [tests/CLAUDE.md](tests/CLAUDE.md) |
 | **Research/experiments** | [experiments/CLAUDE.md](experiments/CLAUDE.md) |
 | **Post-refactor architecture** | [post_refactor_guide.md](internal/docs/architecture/post_refactor_guide.md) |

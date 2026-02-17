@@ -1,6 +1,6 @@
 # Quantization Reference
 
-last updated: 2026-02-06
+last updated: 2026-02-17
 
 Reference for the unified quantization system in llm-dit-experiments. All pipelines (FLUX.2, LTX-2, Z-Image, Qwen-Image) use a single torchao-based `quantize_component()` function with consistent config.
 
@@ -290,6 +290,44 @@ Solution: Disable compilation or use `compile_mode = "default"`:
 compile = true
 compile_mode = "default"  # NOT "reduce-overhead" with offloading
 ```
+
+## Alternatives to Runtime Quantization
+
+Runtime torchao quantization (applying `quantize_component()` at load time) is the current approach for all pipelines. A 2026-02-17 research survey identified two alternatives worth evaluating:
+
+### Official pre-quantized fp8 checkpoints
+
+Both LTX-2 and FLUX.2 Klein have official fp8 safetensors published by the model authors:
+
+| Model | Repository | File |
+|-------|-----------|------|
+| LTX-2 dev fp8 | `Lightricks/LTX-2` | `ltx-2-19b-dev-fp8.safetensors` (~27.1 GB) |
+| LTX-2 distilled fp8 | `Lightricks/LTX-2` | `ltx-2-19b-distilled-fp8.safetensors` (~27.1 GB) |
+| FLUX.2 Klein 9B fp8 | `black-forest-labs/FLUX.2-klein-9b-fp8` | HF repo |
+| FLUX.2 Klein 4B fp8 | `black-forest-labs/FLUX.2-klein-4b-fp8` | HF repo |
+
+These weights load as standard `float8_e4m3fn` tensors -- no torchao required. Quantization was done by the model authors with architecture knowledge, which is strictly better quality than generic runtime quantization.
+
+**Status:** Pending evaluation (see `internal/state/backlog.md` -- "evaluate official fp8 checkpoints + layerwise casting").
+
+### Diffusers `enable_layerwise_casting`
+
+Stores weights as `float8_e4m3fn` (standard PyTorch dtype, not a torchao tensor subclass). Hooks cast each layer to bf16 before its forward pass. Provides the same VRAM savings as `fp8-weight-only` without any torchao dependency.
+
+```python
+transformer.enable_layerwise_casting(
+    storage_dtype=torch.float8_e4m3fn,
+    compute_dtype=torch.bfloat16
+)
+```
+
+Eliminates the `torch.inference_mode()` incompatibility, the `isinstance()` vs `type()` gotcha, the torchao API churn risk, and CUDA fragmentation during the LoRA requantization loop.
+
+**When to prefer over torchao:** For any new pipeline where fp8 tensor core compute speedup (W8A8) is not required.
+
+**When to keep torchao:** The fp8-dynamic (W8A8) path (`Float8DynamicActivationFloat8WeightConfig`) provides genuine compute speedup from FP8 tensor cores on sm89. This cannot be replicated by layerwise casting.
+
+Full analysis: `internal/docs/research/quantization_alternatives_survey.md`
 
 ## Migration from Old API
 
