@@ -1,6 +1,6 @@
 # vision
 
-*last updated: 2026-02-01*
+*last updated: 2026-02-17*
 
 > The strategic north star for `llm-dit-experiments`. This document changes rarely (1-2x/year). For day-to-day work, see [CLAUDE.md](CLAUDE.md).
 
@@ -43,7 +43,7 @@ We organize code into six levels of granularity. **Reusability increases as you 
 
 | Level | Role | Key Components | Reusability | Why |
 |:------|:-----|:---------------|:------------|:----|
-| **L1: Orchestration** | The Conductor | `Orchestrator`, `ModelPool`, `PipelineSteps` | **Total (100%)** | Model-agnostic. Coordinates pipelines and manages VRAM. |
+| **L1: Orchestration** | The Conductor | `Orchestrator`, `ModelPool`, `PipelineSteps`, `DAG Engine` | **Total (100%)** | Model-agnostic. Coordinates pipelines, manages VRAM, resolves parameters. |
 | **L2: Pipelines** | The Workflow | `ZImagePipeline`, `LTX2Pipeline`, `WanVideoPipeline` | **Paradigm-Based** | Reusable for any model sharing the same math (e.g., Flow Matching). |
 | **L3: Backbones** | The Models | `DiT Transformer`, `Gemma3/Qwen3 LLMs`, `VideoVAE` | **Zero (Atomic)** | Tied to specific weights. These are the fixed blocks. |
 | **L4: Behaviors** | The Logic | `Schedulers`, `Guidance (SLG/FMTT)`, `Conditioning` | **High (Structural)** | Pluggable into any backbone with standard structure. |
@@ -99,6 +99,59 @@ We organize code into six levels of granularity. **Reusability increases as you 
 - **Not a Hugging Face wrapper** - Pure PyTorch `nn.Module`s for full control
 - **Not a production service** - Hobbyist exploration platform
 - **Not a diffusers fork** - We build from scratch to understand and experiment
+
+---
+
+## toward composable orchestration (L1 vision)
+
+The gap between our current L2 (siloed pipelines) and full L1 Orchestration is now concrete, informed by analysis of real-world ComfyUI workflows: a 175-node LTX-2 video generation pipeline and a 72-node FLUX.2 inpainting pipeline. See `internal/research/comfyui_workflows/` for detailed analyses.
+
+### what "composable" means in practice
+
+Complex generation is not one pipeline -- it is a DAG of composable operations where each node has its own parameters, model configuration, and guidance strategy:
+
+```
+                      Prompt
+                     /      \
+              Video Branch   Audio Branch
+              /    |    \         |
+       LoRA-A  LoRA-B  LoRA-C   Audio Model
+          |      |       |         |
+       Stage 1  ...    Stage 2   Audio Denoise
+          |              |         |
+      Upsample     Refine        Decode
+          \          /             |
+           Composite              |
+               \                 /
+                Mux -> Final Output
+```
+
+Key patterns observed in real workflows:
+- **Multi-LoRA branching:** One model load, three LoRA configs applied per-branch (not per-call)
+- **Chained sampling:** unsample -> resample -> resample, each with separate scheduler/guidance configs
+- **Conditional routing:** Input properties determine which branch executes (I2V vs T2V, photo vs illustration)
+- **Cross-model chaining:** Output of one model feeds into a different model (generate -> upscale)
+- **Parallel execution:** Audio and video denoise simultaneously with separate guidance
+
+### three prerequisites
+
+| Prerequisite | Level | Status |
+|-------------|-------|--------|
+| **Parameter resolution layers** | Cross-cutting | DONE (v0.9.9) -- `resolve_param()` establishes the precedence pattern |
+| **DiTProtocol** | L3 | Not started -- standardized `forward(x, t, context, **kwargs)` across all DiT models |
+| **UniversalFlowMatchLoop** | L2 | Not started -- generation loop decoupled from model-specific inputs |
+
+### the parameter resolution foundation
+
+In a composable DAG, each node needs a consistent way to receive its parameters. The three-layer model established in v0.9.9 generalizes directly:
+
+| Current (API) | Future (DAG Node) |
+|--------------|-------------------|
+| Client-sent value | Node-specific override |
+| config.toml default | Workflow-level default |
+| Schema default | Pipeline default |
+
+The `resolve_param()` function is the resolution primitive. Any future orchestration layer will reuse this pattern -- the only change is what provides each layer's values.
 
 ---
 

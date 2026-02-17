@@ -286,6 +286,12 @@ class LoRALoader:
                         merged_weight,
                         requires_grad=module.weight.requires_grad,
                     )
+
+                    # Free transient tensors before re-quantization to reduce
+                    # peak memory. merged_weight is still referenced by
+                    # module.weight so deleting the local name is safe.
+                    del weight_up, weight_down, weight_lora, base_weight, state_dict_base
+
                     # Re-quantize immediately to prevent VRAM accumulation.
                     # Without per-layer re-quant, fused layers stay at bf16 (2x
                     # memory each), and a large LoRA (e.g., rank-384 distilled)
@@ -297,12 +303,14 @@ class LoRALoader:
                     _quantize_fn(module, _requant_config)
                     requant_num += 1
 
-                    # Periodically release CUDA cached blocks to prevent
+                    # Release CUDA cached blocks every layer to prevent
                     # fragmentation. Each layer's dequant/requant cycle creates
-                    # temporary bf16 tensors that fragment the CUDA pool. Without
-                    # periodic cleanup, 487 layers can exhaust free CUDA memory
-                    # even though PyTorch's allocated total stays constant.
-                    if requant_num % 100 == 0 and torch.cuda.is_available():
+                    # ~70-134 MiB of transient bf16 tensors that fragment the
+                    # CUDA pool. Without per-layer cleanup, ~20 layers can
+                    # exhaust contiguous free memory even though total allocated
+                    # has barely grown. The ~1ms overhead per call is negligible
+                    # compared to the fusion loop's total runtime.
+                    if torch.cuda.is_available():
                         torch.cuda.empty_cache()
                 else:
                     state_dict_base["weight"] = merged_weight

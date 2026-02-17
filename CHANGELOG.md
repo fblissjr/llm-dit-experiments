@@ -1,4 +1,4 @@
-last updated: 2026-02-16
+last updated: 2026-02-17
 
 # changelog
 
@@ -11,16 +11,24 @@ Uses [Semantic Versioning](https://semver.org/).
 - Unified parameter resolution: `resolve_param()` helper in `web/param_resolver.py`. Establishes `client-sent > config.toml > schema default` precedence across all 4 pipelines using Pydantic v2's `model_fields_set`. Foundation for composable workflow orchestration (L1 vision).
 - `csv_to_int_list()` helper for parsing comma-separated config strings (e.g., `stg_blocks = "29,30"`)
 - 18 unit tests for `resolve_param()` covering: falsy value preservation (0, 0.0, ""), `skip_none` behavior, list fields, config-None graceful handling
+- DRY tests for defaults endpoint: `TestDefaultsEndpointNameMappings` validates `_PARAM_NAME_MAPS` and `_PIPELINE_CONFIG_KEYS` against real schema/config fields (4 tests)
+- ComfyUI workflow analysis docs: `internal/research/comfyui_workflows/` with LTX-2 SharksSampling (175-node) and FLUX.2 Klein Inpaint (72-node) analyses
+- Architectural decision #14: three-layer parameter model (v0.9.9) with full rationale
 
 ### fixed
+- **LTX-2**: Two-stage pipeline OOM during Stage 2 distilled LoRA fusion. The rank-384 LoRA's dequant/merge/requant cycle fragmented CUDA memory within ~20 layers. Fixed by eagerly deleting transient tensors before re-quantization and calling `empty_cache()` every layer instead of every 100.
 - **LTX-2**: config.toml generation defaults (`guidance_scale`, `stg_scale`, `stg_blocks`, `rescale_scale`, `ge_gamma`, `negative_prompt`, `num_frames`, `width`, `height`, `fps`, `distilled_lora_path`, `distilled_lora_scale`, `stage1_steps`, `stage2_steps`) now respected for API requests when client omits them. Previously, schema defaults always won.
 - **LTX-2**: `stg_scale=0` (disable STG) via API was silently ignored due to `or`-operator fallback treating 0 as falsy
 - **Z-Image**: variant defaults (`steps`, `guidance_scale`, `shift`) now use `model_fields_set` instead of equality comparison against hardcoded Pydantic defaults. Fixes bug where client explicitly sending `steps=9` for the base variant would get it silently overwritten.
 - **FLUX.2**: `num_steps` and `guidance` resolution now consults `config.toml` (`flux2.default_steps`, `flux2.default_guidance`) as intermediate layer between client and model-specific defaults. Fixed-param validation for distilled models now uses `model_fields_set` instead of `is not None`.
 - **Qwen-Image**: `steps` and `cfg_scale` on all 3 endpoints (edit-layer, edit-multi, T2I generate) now respect `config.toml` values (`qwen_image.num_inference_steps`, `qwen_image.cfg_scale`). Previously, schema default (40 steps, 4.0 CFG) always won.
 
+### fixed (defaults endpoint)
+- **Defaults endpoint**: `GET /api/pipelines/{id}/defaults` now correctly resolves config.toml values for all pipelines. Fixed two bugs: (1) schema/config name mismatches (e.g., `stage1_steps` vs `stage1_num_inference_steps`, `num_steps` vs `default_steps`) via per-pipeline `_PARAM_NAME_MAPS`; (2) Qwen-Image pipeline IDs (`qwenimage-t2i`, `qwenimage-edit`) now correctly resolve to the `qwen_image` sub-config via `_PIPELINE_CONFIG_KEYS`.
+
 ### removed
 - `_ZIMAGE_PYDANTIC_DEFAULTS` dict in `web/routers/core.py` (replaced by `model_fields_set` detection)
+- `param_to_config_map` dict in `web/routers/config_mgmt.py` (replaced by per-pipeline `_PARAM_NAME_MAPS`)
 
 ## 0.9.8
 

@@ -1495,6 +1495,11 @@ def generate_video_two_stage(
         distilled_path = Path(two_stage.distilled_lora_path)
         if not distilled_path.is_absolute():
             distilled_path = model_path / distilled_path
+        # Flush CUDA cache before LoRA fusion to ensure the allocator starts
+        # with defragmented free memory. Stage 1 denoising + Stage 1.5 upsampling
+        # leave fragmented cached blocks that can cause OOM during fusion.
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
         logger.info(f"Loading distilled LoRA: {distilled_path} (scale={two_stage.distilled_lora_scale})")
         _load_lora(
             model,

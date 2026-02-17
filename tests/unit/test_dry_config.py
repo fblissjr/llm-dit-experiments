@@ -653,5 +653,161 @@ class TestResolveParamFieldConsistency:
         assert not errors, "\n".join(errors)
 
 
+class TestDefaultsEndpointNameMappings:
+    """Ensure _PARAM_NAME_MAPS and _PIPELINE_CONFIG_KEYS in config_mgmt.py
+    reference real schema param IDs and config dataclass fields.
+
+    Prevents name drift between the defaults endpoint mapping tables and
+    the actual pipeline schemas / config dataclasses.
+    """
+
+    def test_pipeline_config_keys_point_to_real_sub_configs(self):
+        """Every _PIPELINE_CONFIG_KEYS value must be a field on RuntimeConfig."""
+        from llm_dit.config import RuntimeConfig
+        from web.routers.config_mgmt import _PIPELINE_CONFIG_KEYS
+
+        rc = RuntimeConfig()
+        config_dict = rc.to_dict()
+
+        errors = []
+        for schema_id, config_key in _PIPELINE_CONFIG_KEYS.items():
+            if config_key not in config_dict:
+                errors.append(
+                    f"_PIPELINE_CONFIG_KEYS['{schema_id}'] = '{config_key}', "
+                    f"but '{config_key}' not in RuntimeConfig.to_dict(). "
+                    f"Available keys: {sorted(config_dict.keys())}"
+                )
+
+        assert not errors, "\n".join(errors)
+
+    def test_param_name_maps_reference_real_schema_params(self):
+        """Every key in _PARAM_NAME_MAPS[pipeline] must be a real schema param ID."""
+        from llm_dit.pipelines.schemas import get_pipeline
+        from web.routers.config_mgmt import _PARAM_NAME_MAPS
+
+        errors = []
+        for pipeline_id, param_map in _PARAM_NAME_MAPS.items():
+            schema = get_pipeline(pipeline_id)
+            assert schema is not None, f"Pipeline '{pipeline_id}' not found in schema registry"
+
+            schema_param_ids = {p.id for p in schema.params}
+            for schema_name in param_map:
+                if schema_name not in schema_param_ids:
+                    errors.append(
+                        f"_PARAM_NAME_MAPS['{pipeline_id}']['{schema_name}'] "
+                        f"but '{schema_name}' not in schema params. "
+                        f"Available: {sorted(schema_param_ids)}"
+                    )
+
+        assert not errors, "\n".join(errors)
+
+    def test_param_name_maps_reference_real_config_fields(self):
+        """Every value in _PARAM_NAME_MAPS[pipeline] must be a real config dataclass field."""
+        from dataclasses import fields as dc_fields
+
+        from llm_dit.config import Flux2Config, LTX2Config, QwenImageConfig, ZImageConfig
+        from web.routers.config_mgmt import _PARAM_NAME_MAPS, _PIPELINE_CONFIG_KEYS
+
+        # Map pipeline schema IDs to their config dataclass
+        config_classes = {
+            "ltx2": LTX2Config,
+            "flux2": Flux2Config,
+            "zimage": ZImageConfig,
+            "qwenimage-t2i": QwenImageConfig,
+            "qwenimage-edit": QwenImageConfig,
+        }
+
+        errors = []
+        for pipeline_id, param_map in _PARAM_NAME_MAPS.items():
+            config_cls = config_classes.get(pipeline_id)
+            if config_cls is None:
+                errors.append(f"No config class registered for pipeline '{pipeline_id}'")
+                continue
+
+            config_field_names = {f.name for f in dc_fields(config_cls)}
+            for schema_name, config_name in param_map.items():
+                if config_name not in config_field_names:
+                    errors.append(
+                        f"_PARAM_NAME_MAPS['{pipeline_id}']['{schema_name}'] = '{config_name}', "
+                        f"but '{config_name}' not in {config_cls.__name__}. "
+                        f"Available: {sorted(config_field_names)}"
+                    )
+
+        assert not errors, "\n".join(errors)
+
+    def test_mismatched_params_are_all_mapped(self):
+        """Schema params that don't match config field names must be in _PARAM_NAME_MAPS.
+
+        This catches cases where a new schema param is added with a name that
+        differs from the config field, but no mapping entry is created.
+        """
+        from dataclasses import fields as dc_fields
+
+        from llm_dit.config import Flux2Config, LTX2Config, QwenImageConfig, ZImageConfig
+        from llm_dit.pipelines.schemas import get_pipeline
+        from web.routers.config_mgmt import _PARAM_NAME_MAPS, _PIPELINE_CONFIG_KEYS
+
+        config_classes = {
+            "ltx2": LTX2Config,
+            "flux2": Flux2Config,
+            "zimage": ZImageConfig,
+            "qwenimage-t2i": QwenImageConfig,
+            "qwenimage-edit": QwenImageConfig,
+        }
+
+        # Schema params that are intentionally NOT in config (per-request only,
+        # infrastructure handled separately, or non-config concepts)
+        EXCLUDED_PARAMS = {
+            # Per-request params (no config.toml equivalent)
+            "prompt", "negative_prompt", "seed", "image", "instruction",
+            "reference_images", "match_image_size", "upsample_prompt",
+            "dimension_preset", "preset", "loras",
+            # Infrastructure params (handled separately, not generation defaults)
+            "quantization", "cpu_offload", "compile", "block_offload",
+            "offload_type", "use_fp8", "hidden_layer", "resolution",
+            # Feature flags (boolean toggles, not generation params)
+            "use_two_stage",
+            "latent_norm_enabled", "nag_enabled", "feta_enabled",
+            "teacache_enabled", "stg_enabled",
+            "dype_enabled", "dynamic_shift", "d_noise", "fbcache_enabled",
+            # Fine-grained optimization knobs (UI-only, not in config dataclasses)
+            "nag_scale", "feta_scale", "teacache_threshold",
+            "stg_start_step", "stg_end_step",
+            "dype_base_resolution", "dype_ntk_factor",
+            "fbcache_start_step", "fbcache_threshold",
+            # Resolution params not in pipeline-specific configs
+            # (handled by resolution-config endpoint or presets instead)
+            "width", "height",
+            # Z-Image generation params come from presets, not ZImageConfig
+            "steps", "guidance_scale", "shift",
+        }
+
+        warnings = []
+        for pipeline_id, config_cls in config_classes.items():
+            schema = get_pipeline(pipeline_id)
+            if schema is None:
+                continue
+
+            config_field_names = {f.name for f in dc_fields(config_cls)}
+            param_map = _PARAM_NAME_MAPS.get(pipeline_id, {})
+
+            for param in schema.params:
+                if param.id in EXCLUDED_PARAMS:
+                    continue
+                if param.id in param_map:
+                    continue  # Already mapped
+                if param.id in config_field_names:
+                    continue  # Direct match, no mapping needed
+
+                warnings.append(
+                    f"Pipeline '{pipeline_id}': schema param '{param.id}' has no direct "
+                    f"match in {config_cls.__name__} and no entry in _PARAM_NAME_MAPS. "
+                    f"Either add a mapping or add '{param.id}' to EXCLUDED_PARAMS if "
+                    f"it's intentionally not in config."
+                )
+
+        assert not warnings, "\n".join(warnings)
+
+
 if __name__ == "__main__":
     run_consistency_check()

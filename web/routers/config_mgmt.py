@@ -46,6 +46,37 @@ _LOADED_PIPELINE_NAMES = {
     "flux2": "flux2",
 }
 
+# Pipeline schema IDs that don't match RuntimeConfig sub-config field names.
+# Schema IDs come from the URL path (e.g., /api/pipelines/qwenimage-t2i/defaults).
+# RuntimeConfig stores sub-configs as: config.qwen_image, config.ltx2, etc.
+_PIPELINE_CONFIG_KEYS: dict[str, str] = {
+    "qwenimage-t2i": "qwen_image",
+    "qwenimage-edit": "qwen_image",
+}
+
+# Schema param ID -> config field name (only where names differ).
+# When a schema param ID matches the config field name exactly (e.g., guidance_scale,
+# stg_scale, num_frames), no entry is needed here. Only mismatches are listed.
+_PARAM_NAME_MAPS: dict[str, dict[str, str]] = {
+    "ltx2": {
+        "stage1_steps": "stage1_num_inference_steps",
+        "stage2_steps": "stage2_num_inference_steps",
+        "offload_type": "offload_mode",
+        "use_fp8": "quantize",
+    },
+    "flux2": {
+        "num_steps": "default_steps",
+        "guidance": "default_guidance",
+        "model_name": "default_model",
+    },
+    "qwenimage-t2i": {
+        "steps": "num_inference_steps",
+    },
+    "qwenimage-edit": {
+        "steps": "num_inference_steps",
+    },
+}
+
 
 @router.get("/api/pipelines", response_model=PipelinesResponse)
 async def get_pipeline_schemas(config: ConfigDep, manager: ManagerDep, response: Response):
@@ -142,38 +173,17 @@ async def get_pipeline_defaults(pipeline_id: str, config: ConfigDep):
     # Overlay RuntimeConfig values if available
     config_dict = config.to_dict()
 
-    # Get pipeline-specific config sub-dict if it exists
-    # RuntimeConfig.to_dict() nests sub-configs: {"ltx2": {...}, "flux2": {...}}
-    pipeline_config = config_dict.get(pipeline_id, {})
-
-    # Map schema param IDs to RuntimeConfig field names
-    # Schema uses clean names, config uses prefixed names for clarity
-    param_to_config_map = {
-        # FLUX.2 mappings
-        "block_offload": "flux2_block_offload",
-        "compile": "compile",
-        # LTX-2 mappings
-        "cpu_offload": "cpu_offload",
-        # Z-Image mappings
-        "shift": "shift",
-        "guidance_scale": "guidance_scale",
-        "steps": "steps",
-        "width": "width",
-        "height": "height",
-    }
+    # Resolve pipeline config sub-dict. Schema IDs like "qwenimage-t2i" don't
+    # match RuntimeConfig field names ("qwen_image"), so we use the alias map.
+    config_key = _PIPELINE_CONFIG_KEYS.get(pipeline_id, pipeline_id)
+    pipeline_config = config_dict.get(config_key, {})
+    param_map = _PARAM_NAME_MAPS.get(pipeline_id, {})
 
     for param in schema.params:
-        # First check pipeline-specific sub-config (e.g., ltx2.num_frames)
-        if param.id in pipeline_config:
-            defaults[param.id] = pipeline_config[param.id]
-        # Then check direct match in root config dict
-        elif param.id in config_dict:
-            defaults[param.id] = config_dict[param.id]
-        # Finally check mapped name
-        elif param.id in param_to_config_map:
-            config_key = param_to_config_map[param.id]
-            if config_key in config_dict:
-                defaults[param.id] = config_dict[config_key]
+        # Resolve the config field name (may differ from schema param ID)
+        config_field = param_map.get(param.id, param.id)
+        if config_field in pipeline_config:
+            defaults[param.id] = pipeline_config[config_field]
 
     # Add special _variant field for conditional visibility
     # This tells the UI which variant is configured (base/turbo)
