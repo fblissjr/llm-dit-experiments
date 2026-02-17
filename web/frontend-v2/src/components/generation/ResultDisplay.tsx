@@ -6,7 +6,7 @@
 
 import { useState } from 'react';
 import { useSessionStore } from '@/stores';
-import { ImageViewer } from '@/components/viewer/ImageViewer';
+import { MediaViewer } from '@/components/viewer';
 
 export function ResultDisplay() {
   const result = useSessionStore((s) => s.result);
@@ -37,14 +37,8 @@ export function ResultDisplay() {
   }
 
   const url = result.urls[0];
-  // Check outputType first, then file extension (data URLs don't have extensions)
   const isVideo = result.outputType === 'video' || (url && (url.endsWith('.mp4') || url.endsWith('.webm')));
-
-  const handleImageClick = () => {
-    if (!isVideo) {
-      setShowViewer(true);
-    }
-  };
+  const mediaType = isVideo ? 'video' as const : 'image' as const;
 
   return (
     <>
@@ -52,19 +46,37 @@ export function ResultDisplay() {
         {/* Media display */}
         <div className="relative bg-gray-950">
           {isVideo ? (
-            <video
-              src={url}
-              controls
-              autoPlay
-              loop
-              className="w-full max-h-[600px] object-contain"
-            />
+            <>
+              <video
+                src={url}
+                controls
+                autoPlay
+                loop
+                className="w-full max-h-[600px] object-contain"
+              />
+              {/* Expand button for video (click on video itself is play/pause) */}
+              <button
+                onClick={() => setShowViewer(true)}
+                className="absolute top-2 left-2 p-2 bg-gray-900/80 rounded-lg
+                           hover:bg-gray-800 active:bg-gray-700 transition-colors"
+                title="View fullscreen"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"
+                  />
+                </svg>
+              </button>
+            </>
           ) : (
             <img
               src={url}
               alt="Generated content"
               className="w-full max-h-[600px] object-contain cursor-pointer hover:opacity-90 transition-opacity"
-              onClick={handleImageClick}
+              onClick={() => setShowViewer(true)}
               title="Click to view full screen"
             />
           )}
@@ -133,11 +145,12 @@ export function ResultDisplay() {
       </div>
       </div>
 
-      {/* Image viewer modal */}
-      {showViewer && !isVideo && (
-        <ImageViewer
+      {/* Media viewer modal */}
+      {showViewer && (
+        <MediaViewer
           url={url}
           alt="Generated content"
+          mediaType={mediaType}
           onClose={() => setShowViewer(false)}
         />
       )}

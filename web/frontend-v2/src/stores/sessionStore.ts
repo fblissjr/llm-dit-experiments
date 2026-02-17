@@ -171,6 +171,7 @@ export const useSessionStore = create<SessionState>()(
                   urls?: string[];
                   url?: string;
                   output_path?: string;
+                  thumbnail_url?: string;
                   seed?: number;
                   warnings?: string[];
                 };
@@ -183,6 +184,7 @@ export const useSessionStore = create<SessionState>()(
                   pipelineId,
                   outputType: pipeline.output_type,
                   urls,
+                  thumbnailUrl: eventData.thumbnail_url ?? undefined,
                   seed: (eventData.seed ?? params.seed ?? -1) as number,
                   params,
                   durationMs: Date.now() - startTime,
@@ -321,22 +323,25 @@ export const useSessionStore = create<SessionState>()(
         params: FormValues
       ) => {
         const url = result.urls[0] ?? '';
-        let thumbnailUrl = url;
+        let thumbnailUrl: string;
         let fullImageUrl: string | undefined = undefined;
 
-        // If it's a base64 data URL, create a small thumbnail for storage
-        // and keep the full image URL in memory (not persisted)
-        if (isBase64DataUrl(url)) {
+        if (result.thumbnailUrl) {
+          // Server-provided thumbnail (e.g. video first-frame PNG from LTX-2)
+          thumbnailUrl = result.thumbnailUrl;
+          fullImageUrl = url;
+        } else if (isBase64DataUrl(url)) {
+          // Base64 images: compress for storage, keep full in memory
           try {
             thumbnailUrl = await createThumbnail(url);
-            // Keep full URL in memory for current session viewing
             fullImageUrl = url;
           } catch (error) {
             console.error('Failed to create thumbnail:', error);
-            thumbnailUrl = ''; // Fallback to empty if thumbnail creation fails
+            thumbnailUrl = '';
           }
         } else {
-          // For file paths, use the same URL for both thumbnail and full view
+          // File path URLs: use directly for both
+          thumbnailUrl = url;
           fullImageUrl = url;
         }
 
@@ -370,6 +375,22 @@ export const useSessionStore = create<SessionState>()(
     {
       name: 'llm-dit-history',
       storage: createJSONStorage(() => idbStorage),
+      onRehydrateStorage: () => (state) => {
+        if (!state) return;
+        // Migrate legacy history items where thumbnailUrl points to a video
+        // file (.mp4/.webm) which cannot render as an <img> src
+        let migrated = false;
+        for (const item of state.history) {
+          if (item.thumbnailUrl &&
+              (item.thumbnailUrl.endsWith('.mp4') || item.thumbnailUrl.endsWith('.webm'))) {
+            item.thumbnailUrl = '';
+            migrated = true;
+          }
+        }
+        if (migrated) {
+          console.info('[History] Migrated legacy video thumbnails to placeholder');
+        }
+      },
       partialize: (state) => ({
         // Strip fullImageUrl from history items - it's only for current session
         // and contains full base64 data that would blow up localStorage

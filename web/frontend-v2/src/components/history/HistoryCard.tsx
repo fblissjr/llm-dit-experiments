@@ -8,7 +8,7 @@ import { memo, useCallback, useState } from 'react';
 import { cn } from '@/utils';
 import { useSessionStore } from '@/stores';
 import type { HistoryItem } from '@/api/types';
-import { ImageViewer } from '@/components/viewer/ImageViewer';
+import { MediaViewer } from '@/components/viewer';
 import { PIPELINE_COLOR_MAP } from '@/constants/colors';
 
 interface HistoryCardProps {
@@ -19,6 +19,8 @@ export const HistoryCard = memo(function HistoryCard({ item }: HistoryCardProps)
   const loadHistoryParams = useSessionStore((s) => s.loadHistoryParams);
   const removeHistoryItem = useSessionStore((s) => s.removeHistoryItem);
   const [showViewer, setShowViewer] = useState(false);
+
+  const isVideo = item.result.outputType === 'video';
 
   const handleClick = useCallback(() => {
     loadHistoryParams(item);
@@ -35,7 +37,6 @@ export const HistoryCard = memo(function HistoryCard({ item }: HistoryCardProps)
   const handleThumbnailClick = useCallback(
     (e: React.MouseEvent) => {
       e.stopPropagation();
-      // Only show viewer if we have a valid image URL
       const imageUrl = item.fullImageUrl || item.thumbnailUrl;
       if (imageUrl && imageUrl !== '') {
         setShowViewer(true);
@@ -44,11 +45,10 @@ export const HistoryCard = memo(function HistoryCard({ item }: HistoryCardProps)
     [item.fullImageUrl, item.thumbnailUrl]
   );
 
-  // Format relative time
   const relativeTime = formatRelativeTime(item.timestamp);
   const pipelineColor = PIPELINE_COLOR_MAP[item.pipelineColor] ?? PIPELINE_COLOR_MAP.blue;
 
-  // Determine which URL to show in viewer (prefer full, fallback to thumbnail)
+  // Viewer shows the full-resolution media (video file or full image)
   const viewerUrl = item.fullImageUrl || item.thumbnailUrl;
 
   return (
@@ -66,15 +66,29 @@ export const HistoryCard = memo(function HistoryCard({ item }: HistoryCardProps)
           <div
             className="relative w-16 h-16 shrink-0 rounded-sm overflow-hidden bg-gray-700 cursor-pointer"
             onClick={handleThumbnailClick}
-            title="Click to view full image"
+            title={isVideo ? 'Click to view video' : 'Click to view full image'}
           >
             {item.thumbnailUrl ? (
-              <img
-                src={item.thumbnailUrl}
-                alt=""
-                loading="lazy"
-                className="w-full h-full object-cover hover:opacity-80 transition-opacity"
-              />
+              <>
+                <img
+                  src={item.thumbnailUrl}
+                  alt=""
+                  loading="lazy"
+                  className="w-full h-full object-cover hover:opacity-80 transition-opacity"
+                />
+                {/* Play triangle overlay for video thumbnails */}
+                {isVideo && (
+                  <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                    <svg
+                      className="w-6 h-6 text-white/80 drop-shadow-lg"
+                      viewBox="0 0 24 24"
+                      fill="currentColor"
+                    >
+                      <path d="M8 5v14l11-7z" />
+                    </svg>
+                  </div>
+                )}
+              </>
             ) : (
               <div className="w-full h-full flex items-center justify-center">
                 <svg
@@ -144,11 +158,12 @@ export const HistoryCard = memo(function HistoryCard({ item }: HistoryCardProps)
         </div>
       </div>
 
-      {/* Image viewer modal */}
+      {/* Media viewer modal */}
       {showViewer && viewerUrl && (
-        <ImageViewer
+        <MediaViewer
           url={viewerUrl}
           alt={item.shortPrompt}
+          mediaType={isVideo ? 'video' : 'image'}
           onClose={() => setShowViewer(false)}
         />
       )}

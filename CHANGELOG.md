@@ -5,6 +5,17 @@ last updated: 2026-02-17
 All notable changes to this project will be documented in this file.
 Uses [Semantic Versioning](https://semver.org/).
 
+## 0.9.10
+
+### added
+- **Frontend**: `MediaViewer` component -- thin dispatcher that routes images to `ImageViewer` (zoom/pan/keyboard) and videos to a fullscreen `<video>` modal with native controls, Escape-to-close, and backdrop dismiss
+- **Frontend**: Video expand button in `ResultDisplay` -- overlaid fullscreen icon (top-left) since native `<video>` click is play/pause
+- **Frontend**: Play triangle overlay on video history thumbnails in `HistoryCard`
+
+### fixed
+- **Frontend**: LTX-2 video thumbnails broken in history. SSE parser now extracts `thumbnail_url` from backend "complete" event and maps to `GenerationResult.thumbnailUrl`. History cards show server-provided first-frame PNG instead of broken `<img src="video.mp4">`
+- **Frontend**: Legacy IndexedDB history items with `.mp4`/`.webm` in `thumbnailUrl` migrated to empty string on hydration (shows placeholder icon instead of broken image)
+
 ## 0.9.9
 
 ### added
