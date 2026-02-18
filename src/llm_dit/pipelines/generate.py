@@ -570,6 +570,39 @@ def generate_video(
     return video
 
 
+def _maybe_enhance_prompt(
+    text_encoder,
+    prompt: str,
+    callback: Optional[Callable],
+    enhance: bool,
+) -> str:
+    """Optionally enhance a prompt via Gemma3 text generation.
+
+    When enabled, uses the encoder's .generate() to expand a terse prompt into
+    a detailed video description before encoding. Returns the original prompt
+    unchanged when disabled.
+    """
+    if not enhance:
+        return prompt
+
+    from llm_dit.encoders.gemma3 import LTX2_T2V_SYSTEM_PROMPT, clean_enhanced_prompt
+
+    logger.info("Enhancing prompt via Gemma3...")
+    if callback:
+        callback("enhancing", 0, 1)
+    enhanced = text_encoder.generate(
+        prompt=f"user prompt: {prompt}",
+        system_prompt=LTX2_T2V_SYSTEM_PROMPT,
+        max_new_tokens=512,
+        temperature=0.7,
+    )
+    result = clean_enhanced_prompt(enhanced)
+    logger.info(f"Enhanced prompt ({len(result)} chars): {result[:200]}...")
+    if callback:
+        callback("enhancing", 1, 1, enhanced_prompt=result)
+    return result
+
+
 def generate_video_with_offloading(
     prompt: str,
     config: GenerationConfig,
@@ -588,6 +621,7 @@ def generate_video_with_offloading(
     vae_device: str = "cuda",
     quantize: str = "fp8",
     skip_cleanup: bool = False,
+    enhance_prompt: bool = False,
 ) -> torch.Tensor:
     """
     Generate video with sequential component offloading for 24GB GPUs.
@@ -687,6 +721,8 @@ def generate_video_with_offloading(
                 device=text_encoder_device,
                 dtype=dtype,
             )
+
+        prompt = _maybe_enhance_prompt(text_encoder, prompt, callback, enhance_prompt)
 
         logger.info("Encoding prompt...")
         encoding_output = text_encoder.encode([prompt])
@@ -1183,6 +1219,7 @@ def generate_video_two_stage(
     vae_device: str = "cuda",
     quantize: str = "fp8",
     skip_cleanup: bool = False,
+    enhance_prompt: bool = False,
 ) -> torch.Tensor:
     """Generate video using two-stage pipeline with spatial upsampling.
 
@@ -1263,6 +1300,8 @@ def generate_video_two_stage(
             device=text_encoder_device,
             dtype=dtype,
         )
+
+    prompt = _maybe_enhance_prompt(text_encoder, prompt, callback, enhance_prompt)
 
     # Encode positive prompt
     logger.info("Encoding positive prompt...")

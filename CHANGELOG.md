@@ -8,6 +8,7 @@ Uses [Semantic Versioning](https://semver.org/).
 ## 0.9.10
 
 ### added
+- **LTX-2**: Local prompt enhancement via Gemma3. When `enhance_prompt` is enabled, the Gemma3 encoder uses its `.generate()` capability to expand terse user prompts into detailed video descriptions with motion, lighting, and audio cues before encoding -- no external API needed. Uses the official LTX-2 T2V system prompt and `apply_chat_template` for proper Gemma3 chat formatting. Available as config toggle, API field, and UI checkbox.
 - **Frontend**: `MediaViewer` component -- thin dispatcher that routes images to `ImageViewer` (zoom/pan/keyboard) and videos to a fullscreen `<video>` modal with native controls, Escape-to-close, and backdrop dismiss
 - **Frontend**: Video expand button in `ResultDisplay` -- overlaid fullscreen icon (top-left) since native `<video>` click is play/pause
 - **Frontend**: Play triangle overlay on video history thumbnails in `HistoryCard`

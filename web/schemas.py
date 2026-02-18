@@ -626,6 +626,7 @@ class LTX2GenerateRequest(BaseModel):
     """Request for LTX-2 two-stage video generation."""
 
     prompt: str
+    enhance_prompt: bool = False
     negative_prompt: str = (
         "blurry, out of focus, overexposed, underexposed, low contrast, washed out colors, excessive noise, "
         "grainy texture, poor lighting, flickering, motion blur, distorted proportions, unnatural skin tones, "

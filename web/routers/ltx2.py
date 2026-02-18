@@ -156,11 +156,14 @@ async def ltx2_generate_stream(request: LTX2GenerateRequest, config: ConfigDep):
 
             # Progress tracking -- shared dict updated by generation thread
             progress_state = {"stage": "", "step": 0, "total": 0}
+            enhanced_prompt_ref = [None]
 
-            def progress_callback(stage: str, step: int, total: int) -> None:
+            def progress_callback(stage: str, step: int, total: int, **kwargs) -> None:
                 progress_state["stage"] = stage
                 progress_state["step"] = step
                 progress_state["total"] = total
+                if "enhanced_prompt" in kwargs:
+                    enhanced_prompt_ref[0] = kwargs["enhanced_prompt"]
 
             seed = request.seed if request.seed is not None else int(time.time()) % (2**32)
             start_time = time.time()
@@ -233,6 +236,7 @@ async def ltx2_generate_stream(request: LTX2GenerateRequest, config: ConfigDep):
                         vae_device=ltx2_cfg.vae_device if ltx2_cfg else "cuda",
                         quantize=ltx2_cfg.quantize if ltx2_cfg else "fp8",
                         skip_cleanup=ltx2_cfg.skip_cleanup if ltx2_cfg else False,
+                        enhance_prompt=resolve_param(request, "enhance_prompt", ltx2_cfg.enhance_prompt),
                     )
                 else:
                     # Single-stage fallback
@@ -252,12 +256,14 @@ async def ltx2_generate_stream(request: LTX2GenerateRequest, config: ConfigDep):
                         vae_device=ltx2_cfg.vae_device if ltx2_cfg else "cuda",
                         quantize=ltx2_cfg.quantize if ltx2_cfg else "fp8",
                         skip_cleanup=ltx2_cfg.skip_cleanup if ltx2_cfg else False,
+                        enhance_prompt=resolve_param(request, "enhance_prompt", ltx2_cfg.enhance_prompt),
                     )
 
             loop = asyncio.get_event_loop()
             gen_task = loop.run_in_executor(None, do_generate)
 
             # Poll progress while generating
+            enhancing_status_sent = False
             while not gen_task.done():
                 await asyncio.sleep(0.5)
                 stage = progress_state["stage"]
@@ -265,7 +271,10 @@ async def ltx2_generate_stream(request: LTX2GenerateRequest, config: ConfigDep):
                 total = progress_state["total"]
                 elapsed = time.time() - start_time
 
-                if stage and step > 0 and total > 0:
+                if stage == "enhancing" and not enhancing_status_sent:
+                    yield f"data: {json.dumps({'type': 'status', 'message': 'Enhancing prompt via Gemma3...'})}\n\n"
+                    enhancing_status_sent = True
+                elif stage and step > 0 and total > 0:
                     eta = (elapsed / step) * (total - step)
                     its = step / elapsed if elapsed > 0 else 0
                     yield f"data: {json.dumps({'type': 'progress', 'stage': stage, 'step': step, 'total': total, 'elapsed': round(elapsed, 1), 'eta': round(eta, 1), 'its': round(its, 2)})}\n\n"
@@ -306,6 +315,7 @@ async def ltx2_generate_stream(request: LTX2GenerateRequest, config: ConfigDep):
                 "fps": resolved_fps,
                 "has_audio": False,
                 "two_stage": request.use_two_stage,
+                "enhanced_prompt": enhanced_prompt_ref[0],
             }
             yield f"data: {json.dumps(result)}\n\n"
 

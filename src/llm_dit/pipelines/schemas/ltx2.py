@@ -62,6 +62,14 @@ register_pipeline(PipelineSchema(
             tooltip="What to avoid in the generation.",
         ),
         ParamSchema(
+            id="enhance_prompt",
+            type="checkbox",
+            label="Enhance Prompt",
+            default=False,
+            group="basic",
+            tooltip="Use Gemma3 to expand your prompt into a detailed video description with motion, lighting, and audio cues.",
+        ),
+        ParamSchema(
             id="width",
             type="number",
             label="Width",

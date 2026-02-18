@@ -345,6 +345,9 @@ class LTX2Config:
     encoder_quantization: str = "fp8-weight-only"  # Deprecated: use gemma_variant instead
     encoder_cpu_offload: bool = True  # Deprecated: encoder always deleted after encoding
 
+    # Prompt enhancement
+    enhance_prompt: bool = False  # Use Gemma3 to expand prompt before encoding
+
     # LoRA configuration
     lora_path: str = ""  # Path to LoRA safetensors
     lora_scale: float = 1.0  # LoRA blend scale (0.0-1.0)
