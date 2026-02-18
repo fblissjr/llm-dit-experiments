@@ -128,6 +128,34 @@ class TestQuantizeComponent:
         assert expected_keys.issubset(set(stats.keys()))
 
 
+class TestAlreadyQuantizedDetection:
+    """Test early-exit when model weights are already quantized."""
+
+    def test_native_fp8_skips_quantization(self):
+        """quantize_component skips models with native float8 weights."""
+        from llm_dit.quantization import quantize_component
+
+        model = nn.Sequential(nn.Linear(64, 32))
+        # Manually set weight dtype to fp8
+        with torch.no_grad():
+            model[0].weight = nn.Parameter(
+                model[0].weight.to(torch.float8_e4m3fn)
+            )
+        result_model, stats = quantize_component(model, "fp8-weight-only", "transformer")
+        assert stats["method"] == "already_quantized"
+        assert stats["quantized_layers"] == 0
+        assert result_model is model
+
+    def test_bf16_does_not_skip(self):
+        """quantize_component proceeds normally for bf16 weights."""
+        from llm_dit.quantization import quantize_component
+
+        model = nn.Sequential(nn.Linear(64, 32))
+        _, stats = quantize_component(model, "int8", "transformer", verbose=False)
+        assert stats["method"] == "int8"
+        assert stats["quantized_layers"] > 0
+
+
 class TestQuantCompileWarnings:
     """Test get_quant_compile_warnings()."""
 
@@ -235,7 +263,7 @@ class TestGetRecommendedMethod:
 
         with patch('torch.cuda.is_available', return_value=True):
             with patch('llm_dit.quantization.torchao_utils.check_fp8_support', return_value=True):
-                assert get_recommended_method() == "fp8-weight-only"
+                assert get_recommended_method() == "fp8-dynamic"
 
     def test_get_recommended_method_without_fp8_support(self):
         """Test recommendation without FP8 support."""

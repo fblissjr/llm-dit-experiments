@@ -1,5 +1,5 @@
 # llm-dit-experiments configuration template
-# last updated: 2026-02-15
+# last updated: 2026-02-17
 #
 # Copy to config.toml and edit paths for your setup:
 #   cp config.toml.example config.toml

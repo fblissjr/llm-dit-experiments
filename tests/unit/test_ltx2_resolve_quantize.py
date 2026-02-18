@@ -25,11 +25,11 @@ class TestResolveQuantize:
         assert should_quantize is False
         assert precision == "none"
 
-    def test_fp8_alias_expands_to_weight_only(self):
-        """'fp8' shorthand expands to 'fp8-weight-only'."""
+    def test_fp8_alias_expands_to_dynamic(self):
+        """'fp8' shorthand expands to 'fp8-dynamic'."""
         should_quantize, precision = _resolve_quantize("fp8")
         assert should_quantize is True
-        assert precision == "fp8-weight-only"
+        assert precision == "fp8-dynamic"
 
     @pytest.mark.parametrize("method", ["fp8-dynamic", "fp8-weight-only", "int8", "int4"])
     def test_known_methods_pass_through(self, method):
@@ -45,6 +45,6 @@ class TestResolveQuantize:
         assert precision == "future-method-v3"
 
     def test_quant_aliases_contains_fp8(self):
-        """_QUANT_ALIASES maps 'fp8' to 'fp8-weight-only'."""
+        """_QUANT_ALIASES maps 'fp8' to 'fp8-dynamic'."""
         assert "fp8" in _QUANT_ALIASES
-        assert _QUANT_ALIASES["fp8"] == "fp8-weight-only"
+        assert _QUANT_ALIASES["fp8"] == "fp8-dynamic"
