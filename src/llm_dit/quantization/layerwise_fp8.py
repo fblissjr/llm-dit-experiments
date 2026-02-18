@@ -34,7 +34,7 @@ def _post_forward_hook(module: nn.Linear, _args: tuple, output: torch.Tensor) ->
 
 def apply_fp8_layerwise_casting(
     model: nn.Module,
-    skip_patterns: tuple[str, ...] = ("norm", "embed"),
+    skip_patterns: tuple[str, ...] = ("norm", "embed", "lm_head"),
 ) -> int:
     """Apply fp8 layerwise casting to all nn.Linear modules in-place.
 

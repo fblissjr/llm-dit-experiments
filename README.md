@@ -79,8 +79,8 @@ See [docs/reference/cli_flags.md](docs/reference/cli_flags.md) for full CLI refe
 
 **Backends**:
 - Attention: Flash Attention 2/3, SageAttention, xFormers, SDPA (auto-detect)
-- Text Encoder: local (transformers), remote API, vLLM
-- Distributed: encode on Mac, generate on CUDA
+- Text Encoder: local (transformers), (heylookitsanllm local inference API)[http://github.com/fblissjr/heylookitsanllm]
+- Distributed: example: encode on mac, generate on cuda
 
 **Configuration**:
 - TOML-based with hardware profiles
@@ -148,26 +148,3 @@ See [docs/reference/api_endpoints.md](docs/reference/api_endpoints.md) for full 
 Ablation sweeps and comparison tools in `experiments/`. Interactive viewer on port 7861.
 
 See [experiments/README.md](experiments/README.md).
-
-## Documentation
-
-**Models**:
-- [Z-Image](docs/models/z_image.md) - performance tuning, device placement
-- [LTX-2](docs/models/ltx2.md) - video generation with pure PyTorch pipeline
-
-**Guides**:
-- [Config Management](docs/guides/config_management.md) - web UI config editing
-- [VL Conditioning](docs/guides/vl_conditioning.md) - vision-based style transfer
-- [LoRA](docs/guides/lora.md) - loading and fusing
-- [Distributed](docs/guides/distributed.md) - multi-machine setup
-- [Profiler](docs/guides/profiler.md) - performance testing
-
-**Reference**:
-- [CLI Flags](docs/reference/cli_flags.md) - all command-line options
-- [API Endpoints](docs/reference/api_endpoints.md) - REST API
-- [Configuration](docs/reference/configuration.md) - TOML structure
-- [Quantization](docs/reference/quantization.md) - torchao backend details
-- [DyPE](docs/reference/dype.md) - high-resolution generation
-- [Long Prompts](docs/reference/long_prompts.md) - token compression
-
-**Internal**: [CLAUDE.md](CLAUDE.md) for development reference.

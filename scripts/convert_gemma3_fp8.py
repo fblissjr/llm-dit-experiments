@@ -41,7 +41,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Patterns that should stay in bf16 for numerical stability
-SKIP_PATTERNS = ("norm", "embed")
+SKIP_PATTERNS = ("norm", "embed", "lm_head")
 
 
 def convert_gemma3_to_fp8(
