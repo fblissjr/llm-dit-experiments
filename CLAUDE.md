@@ -1,6 +1,6 @@
-# agent context (v0.9.9)
+# agent context (v0.9.10)
 
-*last updated: 2026-02-16*
+*last updated: 2026-02-17*
 
 Quick reference for LLM agents. Read only what you need.
 
@@ -189,7 +189,7 @@ This is a **multi-workstream project**. Work happens in parallel across layers:
 | Model lifecycle | `src/llm_dit/model_manager.py` | `ModelManager` -- load/unload/reload any pipeline |
 | API layer | `web/routers/`, `web/schemas.py` | 7 domain routers + Pydantic models |
 | Pipelines | `src/llm_dit/pipelines/` | Each pipeline has its own file |
-| Frontend | `web/frontend-v2/` | React 18 + Zustand 5 + Vite 7. Schema-driven forms from OpenAPI. See [web CLAUDE.md](internal/web/CLAUDE.md) |
+| Frontend | `web/frontend-v2/` | React 19 + Zustand 5 + Vite 7 + Tailwind 4. Schema-driven forms from OpenAPI. See [web CLAUDE.md](internal/web/CLAUDE.md) |
 
 ## architecture patterns (post-refactor)
 
@@ -278,6 +278,7 @@ For full debugging patterns, see [lessons_learned.md](internal/state/lessons_lea
 | Circular import | Router imports server at module level | See architecture patterns above |
 | Prompt upsampling skipped | Empty `api_url` in config | Check `config.toml [rewriter].api_url` is set |
 | Prompt upsampling silent fail | heylookitsanllm unreachable | Verify `192.168.1.123:8080` is live; check logs for `[FLUX2:Upsample] Failed` |
+| Video thumbnails broken in history | SSE type assertion missing field | Check `eventData` type in `sessionStore.ts` (~line 170) -- uses `as unknown as` cast |
 
 ## quick test commands
 
@@ -300,6 +301,9 @@ uv run pytest tests/unit/test_dry_config.py -v
 
 # Parameter resolution logic
 uv run pytest tests/unit/test_param_resolver.py -v
+
+# Frontend TypeScript check (from web/frontend-v2/)
+cd web/frontend-v2 && npx tsc --noEmit
 
 # Regenerate frontend types from API (from web/frontend-v2/)
 npm run export-openapi && npm run gen-api
