@@ -9,6 +9,18 @@ Uses [Semantic Versioning](https://semver.org/).
 
 ### added
 - **LTX-2**: Local prompt enhancement via Gemma3. When `enhance_prompt` is enabled, the Gemma3 encoder uses its `.generate()` capability to expand terse user prompts into detailed video descriptions with motion, lighting, and audio cues before encoding -- no external API needed. Uses the official LTX-2 T2V system prompt and `apply_chat_template` for proper Gemma3 chat formatting. Available as config toggle, API field, and UI checkbox.
+- **Quantization**: `fp8` alias now maps to `fp8-dynamic` (FP8 weights + FP8 activations) instead of `fp8-weight-only`. Utilizes RTX 4090's FP8 tensor cores for ~1.2-1.5x compute throughput. `fp8-weight-only` remains available as explicit override.
+- **Quantization**: `granularity` parameter threaded from config through router to `quantize_component()`. Default changed from `per-tensor` to `per-row` for better numerical accuracy with fp8-dynamic.
+- **Quantization**: `quantize_component()` now detects already-quantized weights (Float8Tensor, AffineQuantizedTensor, native FP8 dtypes) and skips redundant re-quantization.
+- **LTX-2**: `transformer_file` config now wired to the loading path. When set to an FP8 safetensors file (e.g., `ltx-2-19b-dev-fp8.safetensors`), loads and dequantizes FP8 weights with scale factors. Falls back to `transformer/` directory if file not found.
+- **LTX-2**: New `load_ltx2_transformer_from_fp8()` function for loading pre-quantized FP8 checkpoints with proper scale-factor dequantization. Modeled after FLUX.2's FP8 loading pattern.
+
+### fixed
+- **LTX-2**: Existing `load_ltx2_transformer()` now safely handles FP8 tensors -- preserves FP8 dtype instead of silently casting to BF16 without scale dequantization.
+- **Quantization**: `get_recommended_method()` now returns `fp8-dynamic` (was `fp8-weight-only`) for FP8-capable hardware.
+
+### removed
+- **LTX-2**: Dead `load_ltx2_transformer_fp8_native()` function that imported from non-existent `fp8_native.py` module. Replaced by `load_ltx2_transformer_from_fp8()`.
 - **Frontend**: `MediaViewer` component -- thin dispatcher that routes images to `ImageViewer` (zoom/pan/keyboard) and videos to a fullscreen `<video>` modal with native controls, Escape-to-close, and backdrop dismiss
 - **Frontend**: Video expand button in `ResultDisplay` -- overlaid fullscreen icon (top-left) since native `<video>` click is play/pause
 - **Frontend**: Play triangle overlay on video history thumbnails in `HistoryCard`

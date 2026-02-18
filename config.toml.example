@@ -8,8 +8,8 @@
 #
 # Quantization methods (used across all pipelines):
 #   none             BF16 weights, no compression
-#   fp8-weight-only  FP8 weights, BF16 compute (compile-safe, recommended)
-#   fp8-dynamic      FP8 weights + activations (fastest, NOT compile-safe)
+#   fp8-dynamic      FP8 weights + FP8 activations (fastest on SM89+, recommended)
+#   fp8-weight-only  FP8 weights, BF16 compute (compile-safe fallback)
 #   int8             INT8 weight-only (any GPU)
 #   int4             INT4 weight-only (max compression)
 
@@ -26,9 +26,9 @@ templates_dir = "templates/z_image"
 
 [quantization]
 encoder = "none"
-transformer = "fp8-weight-only"
+transformer = "fp8-dynamic"
 vae = "none"
-granularity = "per-tensor"      # per-tensor, per-row (FP8 only)
+granularity = "per-row"         # per-tensor, per-row (FP8 only; per-row recommended for fp8-dynamic)
 
 
 # -- Shared text encoder (Z-Image / Qwen-Image) ----------------------------
@@ -117,8 +117,8 @@ encoder_device = "cuda"         # cuda (recommended), cpu
 offload_between_stages = true   # three-stage offload: encoder -> transformer -> VAE (saves ~5GB)
 block_offload = false           # INCOMPATIBLE with quantization + compile
 
-# Quantization: none, fp8-weight-only, fp8-dynamic, int8, int4
-quantization = "fp8-weight-only"
+# Quantization: none, fp8 (alias for fp8-dynamic), fp8-dynamic, fp8-weight-only, int8, int4
+quantization = "none"           # Klein-9b fits in BF16 with offloading; quantize for Klein-9b persistent mode
 
 compile = false                 # marginal ROI for 4-step distilled (see docs/guides/compile_and_resolution.md)
 compile_vae = false             # marginal ROI (89s warmup, ~0.5s savings/decode)
@@ -203,7 +203,7 @@ text_encoder_device = "cuda"    # cuda recommended (encoder loads to CUDA for en
 transformer_device = "cuda"
 vae_device = "cuda"
 
-# Transformer quantization: none, fp8 (alias for fp8-weight-only), fp8-dynamic, int8, int4
+# Transformer quantization: none, fp8 (alias for fp8-dynamic), fp8-dynamic, fp8-weight-only, int8, int4
 quantize = "fp8"
 skip_cleanup = false
 gemma_variant = "8bit"          # gemma3 backbone: bf16, 8bit, q4-qat
@@ -220,8 +220,8 @@ gemma_variant = "8bit"          # gemma3 backbone: bf16, 8bit, q4-qat
 # model_path = "/path/to/Qwen-Image-2512"
 cpu_offload = true
 cfg_scale = 4.0
-quantize_text_encoder = "none"
-quantize_transformer = "none"
+quantize_text_encoder = "int8"  # Qwen2.5-VL-7B: int8 saves ~4GB, minimal quality loss
+quantize_transformer = "none"   # offloaded to CPU between forward passes; quantize if persistent
 
 
 # ==========================================================================

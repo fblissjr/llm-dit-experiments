@@ -16,9 +16,9 @@ Configure quantization globally in `config.toml`:
 # Global defaults for all pipelines
 # Methods: none, fp8-dynamic, fp8-weight-only, int8, int4
 encoder = "none"
-transformer = "fp8-weight-only"
+transformer = "fp8-dynamic"
 vae = "none"
-granularity = "per-tensor"
+granularity = "per-row"
 ```
 
 Override per-pipeline:
@@ -45,33 +45,36 @@ All methods use [torchao](https://github.com/pytorch/ao) as the sole quantizatio
 
 ### Method Details
 
-#### `fp8-weight-only` (recommended default)
+#### `fp8-dynamic` (recommended default)
 
-**Best for:** RTX 4090+ with `torch.compile` enabled
-
-- Stores weights in FP8, computes in BF16
-- Requires compute capability 8.9+ (Ada Lovelace or newer)
-- Requires Linear layer dimensions divisible by 16 (auto-filtered)
-- Fully compatible with `torch.compile` (no autotune graph breaks)
-- Good balance of VRAM savings and quality
-
-```toml
-[quantization]
-transformer = "fp8-weight-only"
-```
-
-#### `fp8-dynamic`
-
-**Best for:** Maximum throughput when `torch.compile` is disabled
+**Best for:** RTX 4090+ (SM89) -- maximum throughput with FP8 tensor cores
 
 - FP8 weights AND FP8 activations at runtime
 - Uses `scaled_mm` GEMM ops for native FP8 tensor core acceleration
+- ~1.2-1.5x compute throughput over BF16 matmuls
+- `per-row` granularity recommended (one scale per matrix row, better numerical accuracy)
 - NOT compatible with `torch.compile` `reduce-overhead` mode (autotune causes graph breaks)
-- ~2x inference speedup on Ada Lovelace / Hopper GPUs
+- `"fp8"` is an alias for `"fp8-dynamic"`
 
 ```toml
 [quantization]
 transformer = "fp8-dynamic"
+granularity = "per-row"
+```
+
+#### `fp8-weight-only`
+
+**Best for:** RTX 4090+ with `torch.compile` enabled, or as a fallback from fp8-dynamic
+
+- Stores weights in FP8, computes in BF16 (tensor cores idle)
+- Requires compute capability 8.9+ (Ada Lovelace or newer)
+- Requires Linear layer dimensions divisible by 16 (auto-filtered)
+- Fully compatible with `torch.compile` (no autotune graph breaks)
+- Same VRAM savings as fp8-dynamic but without compute speedup
+
+```toml
+[quantization]
+transformer = "fp8-weight-only"
 ```
 
 #### `int8`
@@ -208,9 +211,9 @@ from llm_dit.quantization import quantize_component
 model = load_model()
 model, stats = quantize_component(
     model,
-    method="fp8-weight-only",        # any VALID_METHODS value
+    method="fp8-dynamic",            # any VALID_METHODS value
     component_type="transformer",    # "encoder", "transformer", or "vae"
-    granularity="per-tensor",        # "per-tensor" or "per-row" (FP8 only)
+    granularity="per-row",           # "per-tensor" or "per-row" (FP8 only)
     verbose=True,
 )
 
@@ -258,8 +261,17 @@ Auto-detect best quantization method for current hardware:
 from llm_dit.quantization import get_recommended_method
 
 method = get_recommended_method()
-# Returns "fp8-weight-only" on RTX 4090, "int8" on older GPUs
+# Returns "fp8-dynamic" on RTX 4090, "int8" on older GPUs
 ```
+
+## Already-Quantized Detection
+
+`quantize_component()` automatically detects if a model's weights are already quantized and skips redundant re-quantization. This handles:
+
+- **torchao tensor subclasses:** `Float8Tensor`, `AffineQuantizedTensor`
+- **Native FP8 dtypes:** `torch.float8_e4m3fn`, `torch.float8_e5m2`
+
+When detected, returns `stats["method"] = "already_quantized"` with zero layers quantized. This is useful when loading pre-quantized FP8 checkpoints via `transformer_file` config -- the weights arrive already dequantized to BF16, but if they were kept in FP8, the guard prevents double-quantization.
 
 ## Troubleshooting
 

@@ -53,17 +53,17 @@ from llm_dit.utils.memory import cleanup_memory
 logger = logging.getLogger(__name__)
 
 # Shorthand aliases for quantization method strings
-_QUANT_ALIASES = {"fp8": "fp8-weight-only"}
+_QUANT_ALIASES = {"fp8": "fp8-dynamic"}
 
 
 def _resolve_quantize(quantize: str) -> tuple[bool, str]:
     """Normalize quantize string shorthand to (should_quantize, precision) tuple.
 
-    Handles aliases like "fp8" -> "fp8-weight-only" and falsy values.
+    Handles aliases like "fp8" -> "fp8-dynamic" and falsy values.
 
     Args:
         quantize: Quantization method string. "none", "", or None disables
-            quantization. "fp8" is aliased to "fp8-weight-only".
+            quantization. "fp8" is aliased to "fp8-dynamic".
 
     Returns:
         (should_quantize, precision): Whether to quantize and the resolved method.
@@ -620,6 +620,8 @@ def generate_video_with_offloading(
     transformer_device: str = "cuda",
     vae_device: str = "cuda",
     quantize: str = "fp8",
+    granularity: str = "per-row",
+    transformer_file: str = "",
     skip_cleanup: bool = False,
     enhance_prompt: bool = False,
 ) -> torch.Tensor:
@@ -758,12 +760,28 @@ def generate_video_with_offloading(
 
     # Load to CPU first if quantizing (reduces peak GPU memory)
     load_device = "cpu" if effective_quantize else transformer_device
-    model = load_ltx2_transformer(
-        model_path / "transformer",
-        dtype=dtype,
-        device=load_device,
-        video_only=True,
-    )
+
+    # Resolve transformer path: transformer_file (single FP8 safetensors) or transformer/ directory
+    if transformer_file:
+        tf_path = model_path / transformer_file
+        if not tf_path.exists():
+            logger.warning(f"transformer_file '{transformer_file}' not found at {tf_path}, "
+                           "falling back to transformer/ directory")
+            tf_path = model_path / "transformer"
+    else:
+        tf_path = model_path / "transformer"
+
+    is_fp8_file = tf_path.is_file() and "fp8" in tf_path.name.lower()
+    if is_fp8_file:
+        from llm_dit.models.ltx2 import load_ltx2_transformer_from_fp8
+        model = load_ltx2_transformer_from_fp8(tf_path, dtype=dtype, device=load_device, video_only=True)
+    else:
+        model = load_ltx2_transformer(
+            tf_path,
+            dtype=dtype,
+            device=load_device,
+            video_only=True,
+        )
 
     if effective_quantize and effective_precision != "none":
         from llm_dit.quantization import quantize_component
@@ -773,10 +791,11 @@ def generate_video_with_offloading(
             model,
             method=effective_precision,
             component_type="transformer",
+            granularity=granularity,
         )
         logger.info(
             f"Transformer quantized: {stats['quantized_layers']}/{stats['total_layers']} layers "
-            f"({effective_precision})"
+            f"({effective_precision}, granularity={granularity})"
         )
 
     if load_device == "cpu":
@@ -1218,6 +1237,8 @@ def generate_video_two_stage(
     transformer_device: str = "cuda",
     vae_device: str = "cuda",
     quantize: str = "fp8",
+    granularity: str = "per-row",
+    transformer_file: str = "",
     skip_cleanup: bool = False,
     enhance_prompt: bool = False,
 ) -> torch.Tensor:
@@ -1359,12 +1380,28 @@ def generate_video_two_stage(
     from llm_dit.models.ltx2 import load_ltx2_transformer
 
     load_device = "cpu" if effective_quantize else transformer_device
-    model = load_ltx2_transformer(
-        model_path / "transformer",
-        dtype=dtype,
-        device=load_device,
-        video_only=True,
-    )
+
+    # Resolve transformer path: transformer_file (single FP8 safetensors) or transformer/ directory
+    if transformer_file:
+        tf_path = model_path / transformer_file
+        if not tf_path.exists():
+            logger.warning(f"transformer_file '{transformer_file}' not found at {tf_path}, "
+                           "falling back to transformer/ directory")
+            tf_path = model_path / "transformer"
+    else:
+        tf_path = model_path / "transformer"
+
+    is_fp8_file = tf_path.is_file() and "fp8" in tf_path.name.lower()
+    if is_fp8_file:
+        from llm_dit.models.ltx2 import load_ltx2_transformer_from_fp8
+        model = load_ltx2_transformer_from_fp8(tf_path, dtype=dtype, device=load_device, video_only=True)
+    else:
+        model = load_ltx2_transformer(
+            tf_path,
+            dtype=dtype,
+            device=load_device,
+            video_only=True,
+        )
 
     if effective_quantize and effective_precision != "none":
         from llm_dit.quantization import quantize_component
@@ -1372,10 +1409,11 @@ def generate_video_two_stage(
             model,
             method=effective_precision,
             component_type="transformer",
+            granularity=granularity,
         )
         logger.info(
             f"Transformer quantized: {stats['quantized_layers']}/{stats['total_layers']} layers "
-            f"({effective_precision})"
+            f"({effective_precision}, granularity={granularity})"
         )
 
     if load_device == "cpu":

@@ -74,7 +74,7 @@ def get_recommended_method() -> str:
         return "int8"
 
     if check_fp8_support():
-        return "fp8-weight-only"
+        return "fp8-dynamic"
 
     return "int8"
 
@@ -208,6 +208,33 @@ def quantize_component(
             "method": "none",
             "component_type": component_type,
         }
+
+    # Check if model already has quantized weights (avoid redundant re-quantization)
+    for p in model.parameters():
+        ptype = type(p).__name__
+        if ptype in ("Float8Tensor", "AffineQuantizedTensor"):
+            logger.info(
+                f"Model already has {ptype} weights, skipping {method} quantization"
+            )
+            return model, {
+                "quantized_layers": 0,
+                "skipped_layers": 0,
+                "total_layers": 0,
+                "method": "already_quantized",
+                "component_type": component_type,
+            }
+        if hasattr(p, "dtype") and p.dtype in (torch.float8_e4m3fn, torch.float8_e5m2):
+            logger.info(
+                f"Model already has native {p.dtype} weights, skipping {method} quantization"
+            )
+            return model, {
+                "quantized_layers": 0,
+                "skipped_layers": 0,
+                "total_layers": 0,
+                "method": "already_quantized",
+                "component_type": component_type,
+            }
+        break  # Only check first parameter
 
     if method not in VALID_METHODS:
         raise ValueError(

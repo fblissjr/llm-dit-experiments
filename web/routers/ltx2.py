@@ -235,6 +235,8 @@ async def ltx2_generate_stream(request: LTX2GenerateRequest, config: ConfigDep):
                         transformer_device=ltx2_cfg.transformer_device if ltx2_cfg else "cuda",
                         vae_device=ltx2_cfg.vae_device if ltx2_cfg else "cuda",
                         quantize=ltx2_cfg.quantize if ltx2_cfg else "fp8",
+                        granularity=config.quant.transformer.granularity if config.quant else "per-row",
+                        transformer_file=ltx2_cfg.transformer_file if ltx2_cfg else "",
                         skip_cleanup=ltx2_cfg.skip_cleanup if ltx2_cfg else False,
                         enhance_prompt=resolve_param(request, "enhance_prompt", ltx2_cfg.enhance_prompt),
                     )
@@ -255,6 +257,8 @@ async def ltx2_generate_stream(request: LTX2GenerateRequest, config: ConfigDep):
                         transformer_device=ltx2_cfg.transformer_device if ltx2_cfg else "cuda",
                         vae_device=ltx2_cfg.vae_device if ltx2_cfg else "cuda",
                         quantize=ltx2_cfg.quantize if ltx2_cfg else "fp8",
+                        granularity=config.quant.transformer.granularity if config.quant else "per-row",
+                        transformer_file=ltx2_cfg.transformer_file if ltx2_cfg else "",
                         skip_cleanup=ltx2_cfg.skip_cleanup if ltx2_cfg else False,
                         enhance_prompt=resolve_param(request, "enhance_prompt", ltx2_cfg.enhance_prompt),
                     )
