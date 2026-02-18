@@ -4,14 +4,22 @@
  * Shows the generated image or video result.
  */
 
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import { useSessionStore } from '@/stores';
 import { MediaViewer } from '@/components/viewer';
+import { useFormStore } from '@/stores';
 
 export function ResultDisplay() {
   const result = useSessionStore((s) => s.result);
   const clearResult = useSessionStore((s) => s.clearResult);
   const [showViewer, setShowViewer] = useState(false);
+  const [promptExpanded, setPromptExpanded] = useState(false);
+  const setFormValue = useFormStore((s) => s.setValue);
+
+  const useEnhancedPrompt = useCallback(() => {
+    if (!result?.enhancedPrompt || !result.pipelineId) return;
+    setFormValue(result.pipelineId, 'prompt', result.enhancedPrompt);
+  }, [result?.enhancedPrompt, result?.pipelineId, setFormValue]);
 
   if (!result || result.urls.length === 0) {
     return (
@@ -111,6 +119,38 @@ export function ResultDisplay() {
           {result.warnings.map((w, i) => (
             <p key={i} className="text-xs text-amber-400">{w}</p>
           ))}
+        </div>
+      )}
+
+      {/* Enhanced prompt */}
+      {result.enhancedPrompt && (
+        <div className="border-t border-gray-700">
+          <button
+            onClick={() => setPromptExpanded(!promptExpanded)}
+            className="w-full px-3 py-2 flex items-center justify-between text-xs text-gray-400
+                       hover:bg-gray-800/50 transition-colors"
+          >
+            <span className="font-medium text-gray-300">Enhanced Prompt</span>
+            <svg
+              className={`w-3.5 h-3.5 transition-transform ${promptExpanded ? 'rotate-180' : ''}`}
+              fill="none" viewBox="0 0 24 24" stroke="currentColor"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+          {promptExpanded && (
+            <div className="px-3 pb-3">
+              <p className="text-xs text-gray-300 leading-relaxed whitespace-pre-wrap">
+                {result.enhancedPrompt}
+              </p>
+              <button
+                onClick={useEnhancedPrompt}
+                className="mt-2 text-xs text-blue-400 hover:text-blue-300 transition-colors"
+              >
+                Copy to prompt field
+              </button>
+            </div>
+          )}
         </div>
       )}
 

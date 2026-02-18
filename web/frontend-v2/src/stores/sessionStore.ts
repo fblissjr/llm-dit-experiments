@@ -172,6 +172,7 @@ export const useSessionStore = create<SessionState>()(
                   url?: string;
                   output_path?: string;
                   thumbnail_url?: string;
+                  enhanced_prompt?: string;
                   seed?: number;
                   warnings?: string[];
                 };
@@ -185,6 +186,7 @@ export const useSessionStore = create<SessionState>()(
                   outputType: pipeline.output_type,
                   urls,
                   thumbnailUrl: eventData.thumbnail_url ?? undefined,
+                  enhancedPrompt: eventData.enhanced_prompt ?? undefined,
                   seed: (eventData.seed ?? params.seed ?? -1) as number,
                   params,
                   durationMs: Date.now() - startTime,

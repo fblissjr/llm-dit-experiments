@@ -211,6 +211,7 @@ export interface GenerationResult {
   outputType: OutputType;
   urls: string[];
   thumbnailUrl?: string;
+  enhancedPrompt?: string;
   params: Record<string, unknown>;
   seed: number;
   durationMs: number;
