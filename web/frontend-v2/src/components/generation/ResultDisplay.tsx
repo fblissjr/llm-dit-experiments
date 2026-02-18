@@ -5,9 +5,8 @@
  */
 
 import { useState, useCallback } from 'react';
-import { useSessionStore } from '@/stores';
+import { useSessionStore, useFormStore } from '@/stores';
 import { MediaViewer } from '@/components/viewer';
-import { useFormStore } from '@/stores';
 
 export function ResultDisplay() {
   const result = useSessionStore((s) => s.result);
