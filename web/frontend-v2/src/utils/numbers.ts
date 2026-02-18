@@ -18,7 +18,10 @@ export function snapToStep(
   max?: number
 ): number {
   const precision = step < 1 ? Math.ceil(-Math.log10(step)) : 0;
-  const rounded = Math.round(value / step) * step;
+  // Offset by min so sequences like 8n+1 (min=9, step=8) snap correctly:
+  // e.g. 33 -> round((33-9)/8)*8 + 9 = 33, not round(33/8)*8 = 32
+  const offset = min ?? 0;
+  const rounded = Math.round((value - offset) / step) * step + offset;
   let snapped = Number(rounded.toFixed(precision));
   if (min !== undefined && snapped < min) snapped = min;
   if (max !== undefined && snapped > max) snapped = max;

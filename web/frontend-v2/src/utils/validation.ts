@@ -66,17 +66,8 @@ export function validateParam(
           message: `${param.label} must be at most ${param.max}`,
         };
       }
-      // Step alignment (e.g., width/height multiples of 64, frames 8n+1)
-      if (param.step && param.step > 1) {
-        const offset = param.min ?? 0;
-        const rounded = Math.round((num - offset) / param.step) * param.step + offset;
-        if (rounded !== num) {
-          return {
-            paramId: param.id,
-            message: `${param.label} should be a multiple of ${param.step} (nearest: ${rounded})`,
-          };
-        }
-      }
+      // Step alignment is handled silently by snapToStep on blur (NumberInput)
+      // and server-side validators (e.g. snap_to_8n1). No error shown to user.
       break;
     }
 
