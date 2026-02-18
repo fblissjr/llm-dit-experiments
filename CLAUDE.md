@@ -199,7 +199,7 @@ This is a **multi-workstream project**. Work happens in parallel across layers:
 
 **LoRA fusion tracking:** `model._fused_lora_state` (FusedLoRAState) tracks what's fused on persistent models. Prevents re-fusion OOM where fp8 (9GB) dequantizes to bf16 (18GB). Pipeline detects mismatch (raises RuntimeError), router handles recovery (reload).
 
-**Unified quantization:** All pipelines use `quantize_component()` as the sole entry point. torchao is the only backend. See `docs/reference/quantization.md`.
+**Unified quantization:** All pipelines use `quantize_component()` as the sole entry point. torchao is the only backend. `"fp8"` alias maps to `"fp8-dynamic"` (W8A8, FP8 tensor cores). Default granularity is `"per-row"`. Already-quantized weights (torchao subclasses or native FP8 dtypes) are auto-detected and skipped. See `docs/reference/quantization.md`.
 
 **Prompt upsampling (FLUX.2):** `_upsample_prompt()` factory in `web/routers/flux2.py` reads URL + model from `RuntimeConfig.rewriter_api_url`/`rewriter_api_model` (sourced from `config.toml [rewriter]`). Creates `Flux2PromptUpsampler` which calls heylookitsanllm at `192.168.1.123:8080`. Two modes: T2I (creative expansion) and I2I (instruction compilation). Graceful fallback to original prompt on error. Used by both sync and streaming endpoints.
 
@@ -279,6 +279,7 @@ For full debugging patterns, see [lessons_learned.md](internal/state/lessons_lea
 | Prompt upsampling skipped | Empty `api_url` in config | Check `config.toml [rewriter].api_url` is set |
 | Prompt upsampling silent fail | heylookitsanllm unreachable | Verify `192.168.1.123:8080` is live; check logs for `[FLUX2:Upsample] Failed` |
 | Video thumbnails broken in history | SSE type assertion missing field | Check `eventData` type in `sessionStore.ts` (~line 170) -- uses `as unknown as` cast |
+| Wrong transformer weights loaded | `transformer_file` config mismatch | Verify `[ltx2].transformer_file` points to correct safetensors; FP8 files use `load_ltx2_transformer_from_fp8()` |
 
 ## quick test commands
 
@@ -301,6 +302,9 @@ uv run pytest tests/unit/test_dry_config.py -v
 
 # Parameter resolution logic
 uv run pytest tests/unit/test_param_resolver.py -v
+
+# Quantization tests (alias, detection, recommended method)
+uv run pytest tests/unit/test_ltx2_resolve_quantize.py tests/unit/test_quantization.py -v
 
 # Frontend TypeScript check (from web/frontend-v2/)
 cd web/frontend-v2 && npx tsc --noEmit

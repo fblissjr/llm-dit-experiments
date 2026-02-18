@@ -66,9 +66,10 @@ export function validateParam(
           message: `${param.label} must be at most ${param.max}`,
         };
       }
-      // Step alignment (e.g., width/height must be multiples of 16/32)
+      // Step alignment (e.g., width/height multiples of 64, frames 8n+1)
       if (param.step && param.step > 1) {
-        const rounded = Math.round(num / param.step) * param.step;
+        const offset = param.min ?? 0;
+        const rounded = Math.round((num - offset) / param.step) * param.step + offset;
         if (rounded !== num) {
           return {
             paramId: param.id,
