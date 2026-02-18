@@ -8,7 +8,7 @@ PyTorch and Diffusers-based experimentation platform for LLM-DiT image and video
 |----------|------|---------|-------|
 | FLUX.2 Klein | text-to-image, image editing | Qwen3-8B/4B | Distilled, multi-layer extraction, LoRA support |
 | Z-Image | text-to-image, img2img | Qwen3-4B | CFG=0 baked, 1504 token limit |
-| LTX-2 | text-to-video | Gemma3-12B | Pure PyTorch, FP8 quantization |
+| LTX-2 | text-to-video | Gemma3-12B | Pure PyTorch, FP8 quantization, persistent component caching |
 | Qwen-Image-2512 | text-to-image | Qwen2.5-VL-7B | 39GB transformer, requires fp8 on 24GB |
 | Qwen-Image-Edit-2511 | image editing, multi-image | Qwen2.5-VL-7B | Multi-image composition, instruction editing |
 
@@ -66,7 +66,7 @@ See [docs/reference/cli_flags.md](docs/reference/cli_flags.md) for full CLI refe
 
 ## Features
 
-**Quantization** (unified torchao, VRAM reduction):
+**Quantization** (torchao for transformers, native fp8 layerwise casting for encoders):
 - `fp8-dynamic`: FP8 weights + activations (~50%, RTX 4090+)
 - `fp8-weight-only`: FP8 weights, BF16 compute (~50%, compile-safe)
 - `int8`: INT8 weight-only (~50%, any GPU)

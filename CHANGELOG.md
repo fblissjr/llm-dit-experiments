@@ -2,8 +2,25 @@ last updated: 2026-02-17
 
 # changelog
 
+
 All notable changes to this project will be documented in this file.
 Uses [Semantic Versioning](https://semver.org/).
+
+## 0.9.11
+
+### added
+- **LTX-2**: Encoder persistence between generations. Gemma3 encoder now loads once at server startup (via ModelManager), caches on CPU with pinned memory, and shuttles to GPU per-request (~2s) instead of reloading from disk (~117s). Uses the same pinned memory DMA pattern as FLUX.2's Qwen3 encoder.
+- **LTX-2**: Native fp8 layerwise casting for Gemma3 encoder (`src/llm_dit/quantization/layerwise_fp8.py`). Pure PyTorch forward hooks store `nn.Linear` weights as `float8_e4m3fn` (~50% memory savings) and cast to `bfloat16` on-the-fly during forward pass. No torchao or diffusers dependency. Norms and embeddings stay in bf16 for numerical stability.
+- **LTX-2**: New `"fp8"` Gemma3 variant in `gemma3_variants.py`. Loads encoder in bf16, applies fp8 layerwise casting hooks, moves to target device. Replaces `"8bit"` (torchao int8) as the default variant. Same ~12GB VRAM footprint, but no torchao dependency and compatible with `torch.inference_mode()`.
+- **LTX-2**: Transformer state_dict caching with pinned memory. ModelManager pre-loads transformer weights from disk at startup and caches as pinned bf16 tensors. Each generation reconstructs from cache (~2s `load_state_dict` + quantize) instead of reading from NVMe (~10-15s). Handles both regular and FP8 checkpoint formats.
+- **LTX-2**: VAE decoder caching with pinned memory shuttle. ModelManager pre-loads VAE at startup (~2GB). Shuttles to GPU for decode, returns to CPU after. Eliminates two separate disk loads in two-stage pipeline (Stage 1.5 for `per_channel_statistics`, Stage 3 for full decode).
+- **LTX-2**: `offload_to_pinned()` method on `Gemma3Encoder`. Pins all parameter and buffer memory for fast CPU-to-GPU DMA transfers. Models the same pattern as `Qwen3UnifiedEncoder.offload_to_pinned()`.
+- **LTX-2**: Pre-converted fp8 safetensors script (`scripts/convert_gemma3_fp8.py`). One-time conversion of Gemma3 encoder weights from bf16 to `float8_e4m3fn` as a single safetensors file. Eliminates bf16 load + fp8 conversion overhead at runtime.
+
+### changed
+- **LTX-2**: Default `gemma_variant` changed from `"8bit"` (torchao int8) to `"fp8"` (native layerwise casting) in config.py and config.toml. Removes torchao dependency for encoder quantization.
+- **LTX-2**: STG (Spatio-Temporal Guidance) now enabled by default in pipeline schema. The `stg_enabled` checkbox defaults to `True` (was `False`), aligning frontend with backend defaults.
+- **LTX-2**: Added `distilled_lora_scale` slider to pipeline schema (advanced group). Controls blend strength for Stage 2 refinement LoRA. Sliding to 0 effectively disables the LoRA.
 
 ## 0.9.10
 

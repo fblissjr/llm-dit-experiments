@@ -425,7 +425,7 @@ class LTX2Config:
     # Quantization
     quantize: str = "fp8"  # Transformer quantization (none, fp8)
     skip_cleanup: bool = False  # Skip memory cleanup between stages
-    gemma_variant: str = "bf16"  # Gemma3 backbone: bf16, 8bit, q4-qat
+    gemma_variant: str = "fp8"  # Gemma3 backbone: bf16, fp8, 8bit, q4-qat
 
     # Preset configuration
     default_preset: str = ""  # Default preset to load (e.g., "cinematic")

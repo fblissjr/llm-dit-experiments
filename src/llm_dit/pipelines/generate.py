@@ -30,7 +30,7 @@ import logging
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, List, Optional, Tuple, Union
+from typing import Any, Callable, List, Optional, Tuple, Union
 
 import torch
 from tqdm import tqdm
@@ -624,6 +624,9 @@ def generate_video_with_offloading(
     transformer_file: str = "",
     skip_cleanup: bool = False,
     enhance_prompt: bool = False,
+    text_encoder: Optional[Any] = None,
+    cached_transformer: Optional[dict] = None,
+    cached_vae: Optional[Any] = None,
 ) -> torch.Tensor:
     """
     Generate video with sequential component offloading for 24GB GPUs.
@@ -657,6 +660,11 @@ def generate_video_with_offloading(
         quantize: Transformer quantization method: none, fp8, fp8-weight-only,
             fp8-dynamic, int8, int4.
         skip_cleanup: Skip memory cleanup between stages.
+        cached_transformer: Pre-loaded transformer data from ModelManager. Dict with
+            "config" (model config) and "state_dict" (pinned bf16 tensors). Skips
+            disk I/O when provided.
+        cached_vae: Pre-loaded VAE decoder from ModelManager. Shuttled to GPU for
+            decoding, then returned to CPU.
 
     Returns:
         Video tensor [F, H, W, C] in uint8 format
@@ -705,42 +713,51 @@ def generate_video_with_offloading(
         logger.info(f"Stage 1: Loading text encoder on {text_encoder_device}...")
         logger.debug(f"  Gemma variant: {gemma_variant}")
 
-        # Use variant factory for flexible Gemma3 loading
-        if gemma_variant != "bf16":
-            from llm_dit.encoders.gemma3_variants import create_gemma3_encoder
-            text_encoder = create_gemma3_encoder(
-                variant=gemma_variant,
-                model_path=str(model_path),
-                text_encoder_path=str(text_encoder_path) if text_encoder_path else None,
-                device=text_encoder_device,
-                dtype=dtype,
-            )
+        # Use pre-loaded encoder if provided, otherwise create fresh
+        encoder_is_borrowed = text_encoder is not None
+
+        if not encoder_is_borrowed:
+            if gemma_variant != "bf16":
+                from llm_dit.encoders.gemma3_variants import create_gemma3_encoder
+                text_encoder = create_gemma3_encoder(
+                    variant=gemma_variant,
+                    model_path=str(model_path),
+                    text_encoder_path=str(text_encoder_path) if text_encoder_path else None,
+                    device=text_encoder_device,
+                    dtype=dtype,
+                )
+            else:
+                from llm_dit.encoders.gemma3 import Gemma3Encoder
+                text_encoder = Gemma3Encoder(
+                    model_id=str(text_encoder_path),
+                    device=text_encoder_device,
+                    dtype=dtype,
+                )
         else:
-            # Default bf16 path - use original Gemma3Encoder for compatibility
-            from llm_dit.encoders.gemma3 import Gemma3Encoder
-            text_encoder = Gemma3Encoder(
-                model_id=str(text_encoder_path),
-                device=text_encoder_device,
-                dtype=dtype,
-            )
+            # Shuttle borrowed encoder to GPU
+            logger.info("Using cached encoder, shuttling to GPU...")
+            text_encoder.to(torch.device(text_encoder_device))
 
         prompt = _maybe_enhance_prompt(text_encoder, prompt, callback, enhance_prompt)
 
         logger.info("Encoding prompt...")
         encoding_output = text_encoder.encode([prompt])
-        # EncodingOutput has embeddings list and attention_masks list
         prompt_embeds = encoding_output.embeddings[0].unsqueeze(0)  # [1, seq_len, dim]
         attention_mask = encoding_output.attention_masks[0].unsqueeze(0)  # [1, seq_len]
         logger.debug(f"Prompt embeddings: {prompt_embeds.shape}")
 
-        # Move embeddings to transformer device, unload encoder
+        # Move embeddings to transformer device, handle encoder lifecycle
         prompt_embeds = prompt_embeds.to(transformer_device, dtype)
         attention_mask = attention_mask.to(transformer_device)
 
-        del text_encoder
-        if not skip_cleanup:
-            cleanup_memory()
-        logger.info("Text encoder unloaded")
+        if encoder_is_borrowed:
+            text_encoder.offload()  # Return to CPU pinned memory
+            logger.info("Cached encoder returned to CPU")
+        else:
+            del text_encoder
+            if not skip_cleanup:
+                cleanup_memory()
+            logger.info("Text encoder unloaded")
 
         if callback:
             callback("text_encoder", 1, 1)
@@ -755,51 +772,62 @@ def generate_video_with_offloading(
 
     logger.info(f"Stage 2: Loading transformer on {transformer_device}...")
 
-    # Always load in BF16 first, then apply quantization via unified system
-    from llm_dit.models.ltx2 import load_ltx2_transformer
+    if cached_transformer is not None:
+        # Reconstruct from cached bf16 state dict (skips disk I/O)
+        logger.info("Using cached transformer weights, reconstructing model...")
+        from llm_dit.models.ltx2.loader import create_model_from_config
+        model = create_model_from_config(cached_transformer["config"], dtype)
+        model.load_state_dict(cached_transformer["state_dict"])
 
-    # Load to CPU first if quantizing (reduces peak GPU memory)
-    load_device = "cpu" if effective_quantize else transformer_device
+        if effective_quantize and effective_precision != "none":
+            from llm_dit.quantization import quantize_component
+            model, stats = quantize_component(  # type: ignore[assignment]
+                model, method=effective_precision, component_type="transformer",
+                granularity=granularity,
+            )
+            logger.info(
+                f"Transformer quantized: {stats['quantized_layers']}/{stats['total_layers']} layers "
+                f"({effective_precision}, granularity={granularity})"
+            )
 
-    # Resolve transformer path: transformer_file (single FP8 safetensors) or transformer/ directory
-    if transformer_file:
-        tf_path = model_path / transformer_file
-        if not tf_path.exists():
-            logger.warning(f"transformer_file '{transformer_file}' not found at {tf_path}, "
-                           "falling back to transformer/ directory")
-            tf_path = model_path / "transformer"
-    else:
-        tf_path = model_path / "transformer"
-
-    is_fp8_file = tf_path.is_file() and "fp8" in tf_path.name.lower()
-    if is_fp8_file:
-        from llm_dit.models.ltx2 import load_ltx2_transformer_from_fp8
-        model = load_ltx2_transformer_from_fp8(tf_path, dtype=dtype, device=load_device, video_only=True)
-    else:
-        model = load_ltx2_transformer(
-            tf_path,
-            dtype=dtype,
-            device=load_device,
-            video_only=True,
-        )
-
-    if effective_quantize and effective_precision != "none":
-        from llm_dit.quantization import quantize_component
-
-        # Apply quantization on CPU, then move to GPU (smaller transfer)
-        model, stats = quantize_component(  # type: ignore[assignment]
-            model,
-            method=effective_precision,
-            component_type="transformer",
-            granularity=granularity,
-        )
-        logger.info(
-            f"Transformer quantized: {stats['quantized_layers']}/{stats['total_layers']} layers "
-            f"({effective_precision}, granularity={granularity})"
-        )
-
-    if load_device == "cpu":
         model = model.to(transformer_device)
+    else:
+        # Load from disk (fallback when no cache)
+        from llm_dit.models.ltx2 import load_ltx2_transformer
+
+        load_device = "cpu" if effective_quantize else transformer_device
+
+        if transformer_file:
+            tf_path = model_path / transformer_file
+            if not tf_path.exists():
+                logger.warning(f"transformer_file '{transformer_file}' not found at {tf_path}, "
+                               "falling back to transformer/ directory")
+                tf_path = model_path / "transformer"
+        else:
+            tf_path = model_path / "transformer"
+
+        is_fp8_file = tf_path.is_file() and "fp8" in tf_path.name.lower()
+        if is_fp8_file:
+            from llm_dit.models.ltx2 import load_ltx2_transformer_from_fp8
+            model = load_ltx2_transformer_from_fp8(tf_path, dtype=dtype, device=load_device, video_only=True)
+        else:
+            model = load_ltx2_transformer(
+                tf_path, dtype=dtype, device=load_device, video_only=True,
+            )
+
+        if effective_quantize and effective_precision != "none":
+            from llm_dit.quantization import quantize_component
+            model, stats = quantize_component(  # type: ignore[assignment]
+                model, method=effective_precision, component_type="transformer",
+                granularity=granularity,
+            )
+            logger.info(
+                f"Transformer quantized: {stats['quantized_layers']}/{stats['total_layers']} layers "
+                f"({effective_precision}, granularity={granularity})"
+            )
+
+        if load_device == "cpu":
+            model = model.to(transformer_device)
 
     # Only load connectors if embeddings need processing (188160 -> 3840 projection)
     # Our Gemma3Encoder already outputs 3840-dim via internal Embeddings1DConnector
@@ -892,14 +920,15 @@ def generate_video_with_offloading(
 
     logger.info(f"Stage 3: Loading VAE decoder on {vae_device}...")
 
-    # Pure PyTorch VAE decoder (no diffusers dependency)
-    from llm_dit.models.ltx2.vae import load_ltx2_vae_decoder
-
-    vae = load_ltx2_vae_decoder(
-        model_path / "vae",
-        dtype=dtype,
-        device="cpu",
-    ).to(vae_device)
+    vae_is_borrowed = cached_vae is not None
+    if vae_is_borrowed:
+        logger.info("Using cached VAE, shuttling to GPU...")
+        vae = cached_vae.to(vae_device)
+    else:
+        from llm_dit.models.ltx2.vae import load_ltx2_vae_decoder
+        vae = load_ltx2_vae_decoder(
+            model_path / "vae", dtype=dtype, device="cpu",
+        ).to(vae_device)
 
     logger.info("Decoding latents to video...")
 
@@ -918,11 +947,17 @@ def generate_video_with_offloading(
     video = video.squeeze(0).permute(1, 2, 3, 0)
     video = ((video + 1) / 2 * 255).clamp(0, 255).to(torch.uint8)
 
-    # Unload VAE
-    del vae, latents
+    # Return or unload VAE
+    if vae_is_borrowed:
+        vae.to("cpu")  # Return to CPU pinned memory
+        logger.info("Cached VAE returned to CPU")
+    else:
+        del vae
+    del latents
     if not skip_cleanup:
         cleanup_memory()
-    logger.info("VAE unloaded")
+    if not vae_is_borrowed:
+        logger.info("VAE unloaded")
 
     stage3_elapsed = time.perf_counter() - stage3_start
     logger.info(f"Stage 3 complete: {stage3_elapsed:.1f}s")
@@ -1241,6 +1276,9 @@ def generate_video_two_stage(
     transformer_file: str = "",
     skip_cleanup: bool = False,
     enhance_prompt: bool = False,
+    text_encoder: Optional[Any] = None,
+    cached_transformer: Optional[dict] = None,
+    cached_vae: Optional[Any] = None,
 ) -> torch.Tensor:
     """Generate video using two-stage pipeline with spatial upsampling.
 
@@ -1273,15 +1311,20 @@ def generate_video_two_stage(
         quantize: Transformer quantization method: none, fp8, fp8-weight-only,
             fp8-dynamic, int8, int4.
         skip_cleanup: Skip memory cleanup between stages.
+        cached_transformer: Pre-loaded transformer data from ModelManager. Dict with
+            "config" (model config) and "state_dict" (pinned bf16 tensors).
+        cached_vae: Pre-loaded VAE decoder from ModelManager. Used for
+            per_channel_statistics in Stage 1.5 and decoding in Stage 3.
 
     Returns:
         Video tensor [F, H, W, C] in uint8 format.
     """
-    if not two_stage.distilled_lora_path:
+    if two_stage.distilled_lora_scale > 0 and not two_stage.distilled_lora_path:
         raise ValueError(
             "Two-stage generation requires a distilled LoRA for stage 2 refinement. "
             "Set distilled_lora_path in TwoStageConfig (e.g., 'ltx-2-19b-distilled-lora-384.safetensors'). "
-            "Without it, the base model cannot denoise in 3 steps and will produce garbage output."
+            "Without it, the base model cannot denoise in 3 steps and will produce garbage output. "
+            "Set distilled_lora_scale=0 to skip the distilled LoRA entirely."
         )
 
     effective_quantize, effective_precision = _resolve_quantize(quantize)
@@ -1305,22 +1348,30 @@ def generate_video_two_stage(
 
     logger.info(f"Stage 0: Loading text encoder on {text_encoder_device}...")
 
-    if gemma_variant != "bf16":
-        from llm_dit.encoders.gemma3_variants import create_gemma3_encoder
-        text_encoder = create_gemma3_encoder(
-            variant=gemma_variant,
-            model_path=str(model_path),
-            text_encoder_path=str(text_encoder_path),
-            device=text_encoder_device,
-            dtype=dtype,
-        )
+    # Use pre-loaded encoder if provided, otherwise create fresh
+    encoder_is_borrowed = text_encoder is not None
+
+    if not encoder_is_borrowed:
+        if gemma_variant != "bf16":
+            from llm_dit.encoders.gemma3_variants import create_gemma3_encoder
+            text_encoder = create_gemma3_encoder(
+                variant=gemma_variant,
+                model_path=str(model_path),
+                text_encoder_path=str(text_encoder_path),
+                device=text_encoder_device,
+                dtype=dtype,
+            )
+        else:
+            from llm_dit.encoders.gemma3 import Gemma3Encoder
+            text_encoder = Gemma3Encoder(
+                model_id=str(text_encoder_path),
+                device=text_encoder_device,
+                dtype=dtype,
+            )
     else:
-        from llm_dit.encoders.gemma3 import Gemma3Encoder
-        text_encoder = Gemma3Encoder(
-            model_id=str(text_encoder_path),
-            device=text_encoder_device,
-            dtype=dtype,
-        )
+        # Shuttle borrowed encoder to GPU
+        logger.info("Using cached encoder, shuttling to GPU...")
+        text_encoder.to(torch.device(text_encoder_device))
 
     prompt = _maybe_enhance_prompt(text_encoder, prompt, callback, enhance_prompt)
 
@@ -1341,15 +1392,19 @@ def generate_video_two_stage(
     if callback:
         callback("encoding", 2, 2)
 
-    # Move to transformer device, unload encoder
+    # Move to transformer device, handle encoder lifecycle
     pos_embeds = pos_embeds.to(transformer_device, dtype)
     pos_mask = pos_mask.to(transformer_device)
     neg_embeds = neg_embeds.to(transformer_device, dtype)
 
-    del text_encoder
-    if not skip_cleanup:
-        cleanup_memory("post_encoder_unload")
-    logger.info("Text encoder unloaded")
+    if encoder_is_borrowed:
+        text_encoder.offload()  # Return to CPU pinned memory
+        logger.info("Cached encoder returned to CPU")
+    else:
+        del text_encoder
+        if not skip_cleanup:
+            cleanup_memory("post_encoder_unload")
+        logger.info("Text encoder unloaded")
 
     stage0_elapsed = time.perf_counter() - stage0_start
     logger.info(f"Stage 0 complete: {stage0_elapsed:.1f}s")
@@ -1377,47 +1432,62 @@ def generate_video_two_stage(
         terminal=config.terminal,
     )
 
-    from llm_dit.models.ltx2 import load_ltx2_transformer
+    if cached_transformer is not None:
+        # Reconstruct from cached bf16 state dict (skips disk I/O)
+        logger.info("Using cached transformer weights, reconstructing model...")
+        from llm_dit.models.ltx2.loader import create_model_from_config
+        model = create_model_from_config(cached_transformer["config"], dtype)
+        model.load_state_dict(cached_transformer["state_dict"])
 
-    load_device = "cpu" if effective_quantize else transformer_device
+        if effective_quantize and effective_precision != "none":
+            from llm_dit.quantization import quantize_component
+            model, stats = quantize_component(
+                model, method=effective_precision, component_type="transformer",
+                granularity=granularity,
+            )
+            logger.info(
+                f"Transformer quantized: {stats['quantized_layers']}/{stats['total_layers']} layers "
+                f"({effective_precision}, granularity={granularity})"
+            )
 
-    # Resolve transformer path: transformer_file (single FP8 safetensors) or transformer/ directory
-    if transformer_file:
-        tf_path = model_path / transformer_file
-        if not tf_path.exists():
-            logger.warning(f"transformer_file '{transformer_file}' not found at {tf_path}, "
-                           "falling back to transformer/ directory")
-            tf_path = model_path / "transformer"
-    else:
-        tf_path = model_path / "transformer"
-
-    is_fp8_file = tf_path.is_file() and "fp8" in tf_path.name.lower()
-    if is_fp8_file:
-        from llm_dit.models.ltx2 import load_ltx2_transformer_from_fp8
-        model = load_ltx2_transformer_from_fp8(tf_path, dtype=dtype, device=load_device, video_only=True)
-    else:
-        model = load_ltx2_transformer(
-            tf_path,
-            dtype=dtype,
-            device=load_device,
-            video_only=True,
-        )
-
-    if effective_quantize and effective_precision != "none":
-        from llm_dit.quantization import quantize_component
-        model, stats = quantize_component(
-            model,
-            method=effective_precision,
-            component_type="transformer",
-            granularity=granularity,
-        )
-        logger.info(
-            f"Transformer quantized: {stats['quantized_layers']}/{stats['total_layers']} layers "
-            f"({effective_precision}, granularity={granularity})"
-        )
-
-    if load_device == "cpu":
         model = model.to(transformer_device)
+    else:
+        # Load from disk (fallback when no cache)
+        from llm_dit.models.ltx2 import load_ltx2_transformer
+
+        load_device = "cpu" if effective_quantize else transformer_device
+
+        if transformer_file:
+            tf_path = model_path / transformer_file
+            if not tf_path.exists():
+                logger.warning(f"transformer_file '{transformer_file}' not found at {tf_path}, "
+                               "falling back to transformer/ directory")
+                tf_path = model_path / "transformer"
+        else:
+            tf_path = model_path / "transformer"
+
+        is_fp8_file = tf_path.is_file() and "fp8" in tf_path.name.lower()
+        if is_fp8_file:
+            from llm_dit.models.ltx2 import load_ltx2_transformer_from_fp8
+            model = load_ltx2_transformer_from_fp8(tf_path, dtype=dtype, device=load_device, video_only=True)
+        else:
+            model = load_ltx2_transformer(
+                tf_path, dtype=dtype, device=load_device, video_only=True,
+            )
+
+        if effective_quantize and effective_precision != "none":
+            from llm_dit.quantization import quantize_component
+            model, stats = quantize_component(
+                model, method=effective_precision, component_type="transformer",
+                granularity=granularity,
+            )
+            logger.info(
+                f"Transformer quantized: {stats['quantized_layers']}/{stats['total_layers']} layers "
+                f"({effective_precision}, granularity={granularity})"
+            )
+
+        if load_device == "cpu":
+            model = model.to(transformer_device)
 
     # Apply base LoRA(s) if provided
     if lora_path is not None:
@@ -1526,14 +1596,16 @@ def generate_video_two_stage(
     upsampler = load_spatial_upsampler(upsampler_path, dtype=dtype, device="cpu")
     upsampler = upsampler.to(transformer_device)
 
-    # Load VAE briefly just for per_channel_statistics, then discard.
-    from llm_dit.models.ltx2.vae import load_ltx2_vae_decoder
-
-    vae_for_stats = load_ltx2_vae_decoder(
-        model_path / "vae", dtype=dtype, device="cpu"
-    )
-    per_channel_stats = vae_for_stats.per_channel_statistics
-    per_channel_stats = per_channel_stats.to(transformer_device)
+    # Get per_channel_statistics from cached VAE or load briefly from disk.
+    if cached_vae is not None:
+        per_channel_stats = cached_vae.per_channel_statistics.to(transformer_device)
+    else:
+        from llm_dit.models.ltx2.vae import load_ltx2_vae_decoder
+        vae_for_stats = load_ltx2_vae_decoder(
+            model_path / "vae", dtype=dtype, device="cpu"
+        )
+        per_channel_stats = vae_for_stats.per_channel_statistics
+        per_channel_stats = per_channel_stats.to(transformer_device)
 
     # Un-normalize, upsample, re-normalize
     latents = latents.to(transformer_device)
@@ -1541,7 +1613,12 @@ def generate_video_two_stage(
     latents = upsampler(latents)
     latents = per_channel_stats.normalize(latents)
 
-    del upsampler, vae_for_stats, per_channel_stats
+    del upsampler
+    if cached_vae is None:
+        del vae_for_stats  # Only exists when loaded from disk
+    # per_channel_stats is either a detached copy or the cached VAE's sub-module
+    # moved to GPU; the reference is no longer needed either way.
+    del per_channel_stats
     if not skip_cleanup:
         cleanup_memory("post_stage1.5")
 
@@ -1566,9 +1643,9 @@ def generate_video_two_stage(
     logger.info("Stage 2: Applying distilled LoRA for high-res refinement (reusing Stage 1 model)...")
 
     # Apply distilled LoRA to the existing model (base LoRA already fused from Stage 1)
-    from llm_dit.utils.lora import load_lora as _load_lora
+    if two_stage.distilled_lora_path and two_stage.distilled_lora_scale > 0:
+        from llm_dit.utils.lora import load_lora as _load_lora
 
-    if two_stage.distilled_lora_path:
         distilled_path = Path(two_stage.distilled_lora_path)
         if not distilled_path.is_absolute():
             distilled_path = model_path / distilled_path
@@ -1585,6 +1662,8 @@ def generate_video_two_stage(
             device=transformer_device,
             dtype=dtype,
         )
+    else:
+        logger.info("Stage 2: Skipping distilled LoRA (scale=0 or no path)")
 
     # Stage 2 uses distilled sigma schedule (pre-computed, not from scheduler)
     from llm_dit.models.ltx2.constants import STAGE_2_DISTILLED_SIGMA_VALUES
@@ -1654,11 +1733,15 @@ def generate_video_two_stage(
 
     logger.info(f"Stage 3: Loading VAE decoder on {vae_device}...")
 
-    from llm_dit.models.ltx2.vae import load_ltx2_vae_decoder
-
-    vae = load_ltx2_vae_decoder(
-        model_path / "vae", dtype=dtype, device="cpu"
-    ).to(vae_device)
+    vae_is_borrowed = cached_vae is not None
+    if vae_is_borrowed:
+        logger.info("Using cached VAE, shuttling to GPU...")
+        vae = cached_vae.to(vae_device)
+    else:
+        from llm_dit.models.ltx2.vae import load_ltx2_vae_decoder
+        vae = load_ltx2_vae_decoder(
+            model_path / "vae", dtype=dtype, device="cpu"
+        ).to(vae_device)
 
     logger.info("Decoding latents to video...")
 
@@ -1672,7 +1755,13 @@ def generate_video_two_stage(
     video = video.squeeze(0).permute(1, 2, 3, 0)
     video = ((video + 1) / 2 * 255).clamp(0, 255).to(torch.uint8)
 
-    del vae, latents
+    # Return or unload VAE
+    if vae_is_borrowed:
+        vae.to("cpu")  # Return to CPU pinned memory
+        logger.info("Cached VAE returned to CPU")
+    else:
+        del vae
+    del latents
     if not skip_cleanup:
         cleanup_memory()
 

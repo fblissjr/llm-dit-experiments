@@ -183,6 +183,8 @@ This is a **multi-workstream project**. Work happens in parallel across layers:
 | Encoders | `src/llm_dit/encoders/` | One encoder may serve multiple pipelines |
 | Attention | `src/llm_dit/utils/attention.py` | All pipelines use this |
 | Quantization | `src/llm_dit/quantization/` | All pipelines use `quantize_component()` (sole entry point) |
+| Layerwise fp8 | `src/llm_dit/quantization/layerwise_fp8.py` | Pure PyTorch fp8 hooks (no torchao); used by Gemma3 encoder |
+| Encoder variants | `src/llm_dit/encoders/gemma3_variants.py` | Gemma3 variant factory: bf16, fp8, 8bit, q4-qat |
 | LoRA | `src/llm_dit/utils/lora.py` | Pipeline-agnostic: `load_lora()`, `FusedLoRAState` tracking |
 | Prompt rewriting | `src/llm_dit/utils/prompt_rewriter.py` | `PromptRewriter` (Qwen-Image), `Flux2PromptUpsampler` (FLUX.2) |
 | Param resolution | `web/param_resolver.py` | `resolve_param()` -- all routers use for generation param defaults |

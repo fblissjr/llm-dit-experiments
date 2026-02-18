@@ -223,6 +223,12 @@ class ModelManager:
         # Z-Image stores encoder separately for encoder-only mode
         self._encoder: Any = None
         self._encoder_only_mode: bool = False
+        # LTX-2 cached Gemma3 encoder (persists between generations)
+        self._ltx2_encoder: Any = None
+        # LTX-2 cached transformer state dict + config (bf16 pinned, for fast reconstruction)
+        self._ltx2_transformer_cache: Optional[dict] = None
+        # LTX-2 cached VAE decoder (pinned memory, shuttled to GPU per generation)
+        self._ltx2_vae: Any = None
 
     # -- public API --
 
@@ -353,6 +359,25 @@ class ModelManager:
     @encoder_only_mode.setter
     def encoder_only_mode(self, value: bool) -> None:
         self._encoder_only_mode = value
+
+    @property
+    def ltx2_encoder(self) -> Any:
+        """Get cached LTX-2 Gemma3 encoder (None if not loaded)."""
+        return self._ltx2_encoder
+
+    @property
+    def ltx2_transformer_cache(self) -> Optional[dict]:
+        """Get cached LTX-2 transformer data (None if not loaded).
+
+        Returns dict with "config" (model config dict) and "state_dict"
+        (bf16 pinned tensors) ready for fast model reconstruction.
+        """
+        return self._ltx2_transformer_cache
+
+    @property
+    def ltx2_vae(self) -> Any:
+        """Get cached LTX-2 VAE decoder (None if not loaded)."""
+        return self._ltx2_vae
 
     def get_vram_status(self) -> dict:
         """Get current VRAM usage and loaded models status."""
@@ -645,12 +670,97 @@ class ModelManager:
                 torch.cuda.empty_cache()
             raise
 
-    def _load_ltx2(self) -> LoadResult:
-        """Validate LTX-2 two-stage pipeline configuration.
+    def _preload_ltx2_transformer(self, model_path: Path, ltx2_cfg: Any) -> dict:
+        """Load transformer weights from disk and cache as pinned bf16 tensors.
 
-        Checks model_path exists and required files are present. Does NOT
-        persist a pipeline -- components are loaded/unloaded per request.
-        Uses the composed RuntimeConfig (no TOML re-parsing).
+        Loads the full transformer once (handling both regular and FP8 checkpoint
+        formats), extracts the bf16 state dict, pins all tensors for fast DMA
+        transfer, then discards the model object.
+
+        Returns:
+            Dict with "config" (model config dict for create_model_from_config)
+            and "state_dict" (pinned bf16 tensors ready for load_state_dict).
+        """
+        transformer_file = ltx2_cfg.transformer_file if ltx2_cfg else ""
+
+        # Resolve transformer path
+        if transformer_file:
+            tf_path = model_path / transformer_file
+            if not tf_path.exists():
+                logger.warning(
+                    f"transformer_file '{transformer_file}' not found at {tf_path}, "
+                    "falling back to transformer/ directory"
+                )
+                tf_path = model_path / "transformer"
+        else:
+            tf_path = model_path / "transformer"
+
+        # Load model to CPU in bf16 (handles key mapping, FP8 dequantization, etc.)
+        is_fp8_file = tf_path.is_file() and "fp8" in tf_path.name.lower()
+        if is_fp8_file:
+            from llm_dit.models.ltx2 import load_ltx2_transformer_from_fp8
+            model = load_ltx2_transformer_from_fp8(
+                tf_path, dtype=torch.bfloat16, device="cpu", video_only=True
+            )
+        else:
+            from llm_dit.models.ltx2 import load_ltx2_transformer
+            model = load_ltx2_transformer(
+                tf_path, dtype=torch.bfloat16, device="cpu", video_only=True
+            )
+
+        # Load config for model reconstruction
+        from llm_dit.models.ltx2.loader import load_config
+        config = load_config(tf_path)
+
+        # Extract state dict and pin memory for fast DMA transfers
+        sd = {}
+        for k, v in model.state_dict().items():
+            sd[k] = v.pin_memory()
+
+        param_count = sum(v.numel() for v in sd.values())
+        mem_gb = sum(v.nbytes for v in sd.values()) / 1e9
+        logger.info(
+            f"  Cached {len(sd)} tensors "
+            f"({param_count / 1e9:.2f}B params, {mem_gb:.1f}GB pinned)"
+        )
+
+        del model
+        return {"config": config, "state_dict": sd}
+
+    def _preload_ltx2_vae(self, model_path: Path) -> Any:
+        """Load VAE decoder and cache on CPU with pinned memory.
+
+        The VAE is small (~2GB) with no quantization or LoRA mutation,
+        so we cache the full model object and shuttle it to GPU per generation.
+        """
+        from llm_dit.models.ltx2.vae import load_ltx2_vae_decoder
+
+        vae = load_ltx2_vae_decoder(
+            model_path / "vae", dtype=torch.bfloat16, device="cpu"
+        )
+
+        # Pin all parameter and buffer memory for fast DMA shuttle
+        pinned = 0
+        for param in vae.parameters():
+            if not param.data.is_pinned():
+                param.data = param.data.pin_memory()
+                pinned += 1
+        for _name, buf in vae.named_buffers():
+            if not buf.data.is_pinned():
+                buf.data = buf.data.pin_memory()
+                pinned += 1
+
+        num_params = sum(p.numel() for p in vae.parameters())
+        logger.info(f"  VAE cached: {num_params / 1e6:.1f}M params, {pinned} tensors pinned")
+
+        return vae
+
+    def _load_ltx2(self) -> LoadResult:
+        """Validate LTX-2 configuration and pre-load Gemma3 encoder.
+
+        Checks model_path exists and required files are present, then
+        pre-loads the Gemma3 encoder and offloads to pinned CPU memory
+        for fast GPU shuttle on each generation.
         """
         ltx2_cfg = self.config.ltx2 if self.config else None
         model_path_str = ltx2_cfg.model_path if ltx2_cfg else ""
@@ -673,6 +783,59 @@ class ModelManager:
 
         if missing:
             logger.warning(f"[LTX-2] Missing files (may cause errors): {', '.join(missing)}")
+
+        # Pre-load and cache Gemma3 encoder for persistence between generations
+        start = time.time()
+        gemma_variant = ltx2_cfg.gemma_variant if ltx2_cfg else "bf16"
+        text_encoder_path = str(model_path / "text_encoder")
+        encoder_model_id = ltx2_cfg.encoder_model_id if ltx2_cfg else None
+        if encoder_model_id:
+            text_encoder_path = encoder_model_id
+
+        logger.info(f"[LTX-2] Pre-loading Gemma3 encoder (variant={gemma_variant})...")
+
+        if gemma_variant != "bf16":
+            from llm_dit.encoders.gemma3_variants import create_gemma3_encoder
+            self._ltx2_encoder = create_gemma3_encoder(
+                variant=gemma_variant,
+                model_path=str(model_path),
+                text_encoder_path=text_encoder_path,
+                device="cpu",  # Load to CPU, shuttle to GPU per-request
+                dtype=torch.bfloat16,
+            )
+        else:
+            from llm_dit.encoders.gemma3 import Gemma3Encoder
+            self._ltx2_encoder = Gemma3Encoder(
+                model_id=text_encoder_path,
+                device="cpu",
+                dtype=torch.bfloat16,
+            )
+            self._ltx2_encoder._load_model()
+
+        # Offload to pinned memory for fast GPU shuttle
+        self._ltx2_encoder.offload_to_pinned()
+        encoder_time = time.time() - start
+        logger.info(f"[LTX-2] Encoder pre-loaded and pinned in {encoder_time:.1f}s")
+
+        # Pre-load transformer weights (bf16, cached for fast reconstruction)
+        logger.info("[LTX-2] Pre-loading transformer weights for caching...")
+        tf_start = time.time()
+        self._ltx2_transformer_cache = self._preload_ltx2_transformer(model_path, ltx2_cfg)
+        tf_time = time.time() - tf_start
+        logger.info(f"[LTX-2] Transformer weights cached in {tf_time:.1f}s")
+
+        # Pre-load VAE decoder (small, pinned for shuttle)
+        logger.info("[LTX-2] Pre-loading VAE decoder for caching...")
+        vae_start = time.time()
+        self._ltx2_vae = self._preload_ltx2_vae(model_path)
+        vae_time = time.time() - vae_start
+        logger.info(f"[LTX-2] VAE cached in {vae_time:.1f}s")
+
+        total_time = time.time() - start
+        logger.info(
+            f"[LTX-2] All components pre-loaded in {total_time:.1f}s "
+            f"(encoder={encoder_time:.1f}s, transformer={tf_time:.1f}s, vae={vae_time:.1f}s)"
+        )
 
         # Store config dict as sentinel (not None) so is_loaded() returns True
         self._pipelines["ltx2"] = {"model_path": str(model_path)}
@@ -977,15 +1140,40 @@ class ModelManager:
         return True
 
     def _unload_ltx2(self) -> bool:
-        """Clean up VRAM after LTX-2 operations."""
-        if "ltx2" not in self._pipelines:
+        """Clean up VRAM and cached components after LTX-2 operations."""
+        has_anything = (
+            "ltx2" in self._pipelines
+            or self._ltx2_encoder is not None
+            or self._ltx2_transformer_cache is not None
+            or self._ltx2_vae is not None
+        )
+        if not has_anything:
             return False
 
         logger.info("[VRAM] Running LTX-2 memory cleanup...")
+
+        # Release cached encoder
+        if self._ltx2_encoder is not None:
+            del self._ltx2_encoder
+            self._ltx2_encoder = None
+            logger.info("[VRAM] LTX-2 encoder cache released")
+
+        # Release cached transformer state dict
+        if self._ltx2_transformer_cache is not None:
+            del self._ltx2_transformer_cache
+            self._ltx2_transformer_cache = None
+            logger.info("[VRAM] LTX-2 transformer cache released")
+
+        # Release cached VAE
+        if self._ltx2_vae is not None:
+            del self._ltx2_vae
+            self._ltx2_vae = None
+            logger.info("[VRAM] LTX-2 VAE cache released")
+
         self._pipelines.pop("ltx2", None)
         gc.collect()
-        torch.cuda.empty_cache()
         if torch.cuda.is_available():
+            torch.cuda.empty_cache()
             allocated = torch.cuda.memory_allocated() / 1024**3
             logger.info(f"[VRAM] Cleanup complete. CUDA allocated: {allocated:.2f} GB")
         return True

@@ -32,6 +32,7 @@ from .vae_utils import (
     estimate_vae_vram,
     get_vae_quant_info,
 )
+from .layerwise_fp8 import apply_fp8_layerwise_casting
 
 __all__ = [
     # Unified API
@@ -47,4 +48,6 @@ __all__ = [
     "quantize_vae",
     "estimate_vae_vram",
     "get_vae_quant_info",
+    # Layerwise fp8 casting (no torchao dependency)
+    "apply_fp8_layerwise_casting",
 ]

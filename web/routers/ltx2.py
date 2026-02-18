@@ -16,7 +16,7 @@ from fastapi.responses import StreamingResponse
 from PIL import Image
 
 from llm_dit.config import RuntimeConfig
-from web.dependencies import ConfigDep
+from web.dependencies import ConfigDep, ManagerDep
 from web.param_resolver import csv_to_int_list, resolve_param
 from web.schemas import LTX2GenerateRequest, LTX2StatusResponse
 
@@ -135,7 +135,7 @@ async def ltx2_status(config: ConfigDep) -> LTX2StatusResponse:
 
 
 @router.post("/api/ltx2/generate/stream")
-async def ltx2_generate_stream(request: LTX2GenerateRequest, config: ConfigDep):
+async def ltx2_generate_stream(request: LTX2GenerateRequest, config: ConfigDep, manager: ManagerDep):
     """Generate video with SSE progress streaming.
 
     Supports two-stage generation (default) or single-stage fallback.
@@ -239,6 +239,9 @@ async def ltx2_generate_stream(request: LTX2GenerateRequest, config: ConfigDep):
                         transformer_file=ltx2_cfg.transformer_file if ltx2_cfg else "",
                         skip_cleanup=ltx2_cfg.skip_cleanup if ltx2_cfg else False,
                         enhance_prompt=resolve_param(request, "enhance_prompt", ltx2_cfg.enhance_prompt),
+                        text_encoder=manager.ltx2_encoder,
+                        cached_transformer=manager.ltx2_transformer_cache,
+                        cached_vae=manager.ltx2_vae,
                     )
                 else:
                     # Single-stage fallback
@@ -261,6 +264,9 @@ async def ltx2_generate_stream(request: LTX2GenerateRequest, config: ConfigDep):
                         transformer_file=ltx2_cfg.transformer_file if ltx2_cfg else "",
                         skip_cleanup=ltx2_cfg.skip_cleanup if ltx2_cfg else False,
                         enhance_prompt=resolve_param(request, "enhance_prompt", ltx2_cfg.enhance_prompt),
+                        text_encoder=manager.ltx2_encoder,
+                        cached_transformer=manager.ltx2_transformer_cache,
+                        cached_vae=manager.ltx2_vae,
                     )
 
             loop = asyncio.get_event_loop()
