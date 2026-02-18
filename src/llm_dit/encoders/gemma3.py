@@ -1487,12 +1487,15 @@ class Gemma3Encoder:
             messages, tokenize=False, add_generation_prompt=True
         )
 
+        # Use model's actual context window for generation truncation, not
+        # _max_sequence_length (which is the DiT embedding output size, e.g. 256).
+        model_ctx = getattr(self._model.config, "max_position_embeddings", 8192)
         encoded = self._tokenizer(
             full_prompt,
             return_tensors="pt",
             padding=True,
             truncation=True,
-            max_length=self._max_sequence_length - max_new_tokens,
+            max_length=model_ctx - max_new_tokens,
         )
         input_ids = encoded.input_ids.to(self.device)
         attention_mask = encoded.attention_mask.to(self.device)
