@@ -176,8 +176,13 @@ def convert_gemma3_to_fp8(
     start = time.time()
 
     # Get full state dict (weights are already fp8 where converted)
+    # Exclude lm_head.weight -- it's tied to embed_tokens.weight (same tensor).
+    # safetensors rejects shared memory. The loader detects the missing key
+    # and calls model.tie_weights() to restore the tie.
     state_dict = {}
     for name, param in model.state_dict().items():
+        if name == "lm_head.weight":
+            continue
         # safetensors requires contiguous tensors
         state_dict[name] = param.contiguous()
 
