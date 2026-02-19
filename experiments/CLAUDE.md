@@ -1,15 +1,15 @@
 # experiments agent context
 
-*last updated: 2026-01-20*
+*last updated: 2026-02-19*
 
 ---
 
 ## research status legend
 
-- ✅ **Validated** - Confirmed through experiments or architecture analysis
-- 🔬 **Open** - Hypothesis needs testing or re-testing
-- ⚠️ **Needs Verification** - Previous results may have bugs
-- 🚫 **Dead-End** - Tested, doesn't work
+- `[VALIDATED]` - Confirmed through experiments or architecture analysis
+- `[OPEN]` - Hypothesis needs testing or re-testing
+- `[NEEDS_CHECK]` - Previous results may have bugs
+- `[DEAD_END]` - Tested, doesn't work
 
 ---
 
@@ -26,56 +26,56 @@
 
 ## ltx-2 research status
 
-### validated findings ✅
+### validated findings
 
 | Finding | Status | Notes |
 |---------|--------|-------|
-| 49 layers extracted from Gemma-3 | ✅ | Architecture confirmed |
-| 8-frame VAE temporal unit | ✅ | Architecture (valid frames: 9, 17, 25...) |
-| Bidirectional connector (not causal) | ✅ | 2 transformer layers + 128 thinking tokens |
-| Prompt ordering doesn't matter for semantics | ✅ | Bidirectional attention handles all orders |
-| SigLIP appropriate for spatial evaluation | ✅ | Apollo paper validates this |
-| Scaling consistency enables small-scale experiments | ✅ | Apollo paper (R² > 0.8) |
-| Text encoder matches reference output | ✅ | mean=0.003, std=1.0, per-dim range [-8.5, 12.2] (Jan 20) |
-| FP8 transformer forward pass works | ✅ | mean=0.06, std=1.05, 0.09% zeros (Jan 20) |
-| -9.5 GELU bias is architecturally intentional | ✅ | DiT produces valid output despite 98% sparsity (Jan 20) |
-| Context dimension must be 3840 | ✅ | Gemma hidden size, caption_projection maps to 4096 (Jan 20) |
+| 49 layers extracted from Gemma-3 | `[VALIDATED]` | Architecture confirmed |
+| 8-frame VAE temporal unit | `[VALIDATED]` | Architecture (valid frames: 9, 17, 25...) |
+| Bidirectional connector (not causal) | `[VALIDATED]` | 2 transformer layers + 128 thinking tokens |
+| Prompt ordering doesn't matter for semantics | `[VALIDATED]` | Bidirectional attention handles all orders |
+| SigLIP appropriate for spatial evaluation | `[VALIDATED]` | Apollo paper validates this |
+| Scaling consistency enables small-scale experiments | `[VALIDATED]` | Apollo paper (R^2 > 0.8) |
+| Text encoder matches reference output | `[VALIDATED]` | mean=0.003, std=1.0, per-dim range [-8.5, 12.2] (Jan 20) |
+| FP8 transformer forward pass works | `[VALIDATED]` | mean=0.06, std=1.05, 0.09% zeros (Jan 20) |
+| -9.5 GELU bias is architecturally intentional | `[VALIDATED]` | DiT produces valid output despite 98% sparsity (Jan 20) |
+| Context dimension must be 3840 | `[VALIDATED]` | Gemma hidden size, caption_projection maps to 4096 (Jan 20) |
 
-### open hypotheses 🔬
+### open hypotheses
 
 | Hypothesis | Status | Notes |
 |------------|--------|-------|
-| Per-token layer routing improves quality | 🔬 | **READY** - layer masking fixed Jan 17; run `train_router.py` |
-| Chunk-aligned prompting improves transitions | 🔬 | Not yet tested |
-| Activation steering can improve quality | 🔬 | Zero-training approach |
-| Thinking tokens capture global context | 🔬 | Connector internals unexplored |
-| Temporal tokens benefit from different layers | 🔬 | Derived from Apollo findings |
+| Per-token layer routing improves quality | `[OPEN]` | **READY** - layer masking fixed Jan 17; run `train_router.py` |
+| Chunk-aligned prompting improves transitions | `[OPEN]` | Not yet tested |
+| Activation steering can improve quality | `[OPEN]` | Zero-training approach |
+| Thinking tokens capture global context | `[OPEN]` | Connector internals unexplored |
+| Temporal tokens benefit from different layers | `[OPEN]` | Derived from Apollo findings |
 
-### needs verification ⚠️
+### needs verification
 
 | Finding | Status | Notes |
 |---------|--------|-------|
-| Late layers (43-47) contribute ~25% | ✅ | **REFUTED** - Layer 48 contributes ~0% when isolated (Jan 17) |
-| Layer 47 anomaly (near-zero norm) | ⚠️ | Needs re-verification with full 49-layer run |
-| Projection weights uniform | ⚠️ | Depends on correct layer extraction |
+| Late layers (43-47) contribute ~25% | `[VALIDATED]` | **REFUTED** - Layer 48 contributes ~0% when isolated (Jan 17) |
+| Layer 47 anomaly (near-zero norm) | `[NEEDS_CHECK]` | Needs re-verification with full 49-layer run |
+| Projection weights uniform | `[NEEDS_CHECK]` | Depends on correct layer extraction |
 
 ### new findings (jan 20)
 
 | Finding | Status | Notes |
 |---------|--------|-------|
-| Text encoder output validated | ✅ | Matches reference exactly (mean=0.003, std=1.0) |
-| FP8 transformer validated | ✅ | Forward pass produces healthy output (mean=0.06, std=1.05) |
-| "Blurry blob" is downstream | ✅ | Core components work, issue in pipeline integration |
-| ModelLedger architecture documented | ✅ | Full analysis in `internal/analysis/model_ledger_*.md` |
+| Text encoder output validated | `[VALIDATED]` | Matches reference exactly (mean=0.003, std=1.0) |
+| FP8 transformer validated | `[VALIDATED]` | Forward pass produces healthy output (mean=0.06, std=1.05) |
+| "Blurry blob" is downstream | `[VALIDATED]` | Core components work, issue in pipeline integration |
+| ModelLedger architecture documented | `[VALIDATED]` | Full analysis in `internal/analysis/model_ledger_*.md` |
 
 ### new findings (jan 17)
 
 | Finding | Status | Notes |
 |---------|--------|-------|
-| Layer 0 (embedding) contributes 51% isolated | ✅ | Highest contribution when only layer active |
-| Layer 24 contributes 49% isolated | ✅ | Mid-layers carry semantic content |
-| Layer 48 contributes ~0% isolated | ✅ | Final layer alone contributes nothing |
-| L2 normalization destroys masking info | ✅ | Must use min-max normalization `8*(x-mean)/(max-min)` |
+| Layer 0 (embedding) contributes 51% isolated | `[VALIDATED]` | Highest contribution when only layer active |
+| Layer 24 contributes 49% isolated | `[VALIDATED]` | Mid-layers carry semantic content |
+| Layer 48 contributes ~0% isolated | `[VALIDATED]` | Final layer alone contributes nothing |
+| L2 normalization destroys masking info | `[VALIDATED]` | Must use min-max normalization `8*(x-mean)/(max-min)` |
 
 ## output organization
 
@@ -185,17 +185,17 @@ Historical dated reports: [archive/dated_reports/](archive/dated_reports/)
 
 | Task | Status | Purpose |
 |------|--------|---------|
-| ~~Re-verify layer contribution patterns~~ | ✅ Done | Validated with corrected extraction (Jan 17) |
-| Layer 47 anomaly verification | 🔬 Open | Confirm near-zero norm (needs full 49-layer run) |
-| GPU numerical equivalence test | 🔬 Open | Compare pure PyTorch vs diffusers output |
+| ~~Re-verify layer contribution patterns~~ | `[VALIDATED]` | Validated with corrected extraction (Jan 17) |
+| Layer 47 anomaly verification | `[OPEN]` | Confirm near-zero norm (needs full 49-layer run) |
+| GPU numerical equivalence test | `[OPEN]` | Compare pure PyTorch vs diffusers output |
 
 ### tier 2: high-value experiments (NOW UNBLOCKED)
 
 | Task | Status | Expected Impact |
 |------|--------|-----------------|
-| Train per-token layer router | 🔬 Ready | 3-10% on complex prompts |
-| Activation steering | 🔬 Open | Zero-training quality boost |
-| Chunk-aligned prompting | 🔬 Open | Improved transitions |
+| Train per-token layer router | `[OPEN]` Ready | 3-10% on complex prompts |
+| Activation steering | `[OPEN]` | Zero-training quality boost |
+| Chunk-aligned prompting | `[OPEN]` | Improved transitions |
 
 ---
 

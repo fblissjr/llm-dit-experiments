@@ -1,6 +1,6 @@
-# agent context (v0.9.10)
+# agent context (v0.9.11)
 
-*last updated: 2026-02-17*
+*last updated: 2026-02-19*
 
 Quick reference for LLM agents. Read only what you need.
 
@@ -189,7 +189,7 @@ This is a **multi-workstream project**. Work happens in parallel across layers:
 | Prompt rewriting | `src/llm_dit/utils/prompt_rewriter.py` | `PromptRewriter` (Qwen-Image), `Flux2PromptUpsampler` (FLUX.2) |
 | Param resolution | `web/param_resolver.py` | `resolve_param()` -- all routers use for generation param defaults |
 | Model lifecycle | `src/llm_dit/model_manager.py` | `ModelManager` -- load/unload/reload any pipeline |
-| API layer | `web/routers/`, `web/schemas.py` | 7 domain routers + Pydantic models |
+| API layer | `web/routers/`, `web/schemas.py` | 7 domain routers + Pydantic models (~730 lines) |
 | Pipelines | `src/llm_dit/pipelines/` | Each pipeline has its own file |
 | Frontend | `web/frontend-v2/` | React 19 + Zustand 5 + Vite 7 + Tailwind 4. Schema-driven forms from OpenAPI. See [web CLAUDE.md](internal/web/CLAUDE.md) |
 
@@ -197,7 +197,7 @@ This is a **multi-workstream project**. Work happens in parallel across layers:
 
 **Circular import prevention:** Routers that need server state (generation_history, encoder_only_mode, rewriter_backend) do `import web.server as srv` at module level. Server imports routers in `_register_routers()` called from `main()`, NOT at module level. Never move router imports to top of server.py. Note: flux2.py and config_mgmt.py no longer import srv at all.
 
-**Router decomposition:** server.py (~296 lines) holds only server state globals and startup. All 68 API endpoints live in 7 domain routers under `web/routers/`. All routers use `ConfigDep`/`ManagerDep` dependency injection for pipeline access. No pipeline globals remain in server.py -- ModelManager is the sole source of truth.
+**Router decomposition:** server.py (~304 lines) holds only server state globals and startup. All ~49 API route handlers live in 7 domain routers under `web/routers/`. All routers use `ConfigDep`/`ManagerDep` dependency injection for pipeline access. No pipeline globals remain in server.py -- ModelManager is the sole source of truth.
 
 **LoRA fusion tracking:** `model._fused_lora_state` (FusedLoRAState) tracks what's fused on persistent models. Prevents re-fusion OOM where fp8 (9GB) dequantizes to bf16 (18GB). Pipeline detects mismatch (raises RuntimeError), router handles recovery (reload).
 
