@@ -142,7 +142,8 @@ distilled_lora_path = ""        # distilled LoRA for stage 2 refinement
 distilled_lora_scale = 1.0
 
 # Gemma 3-12B encoder
-# Leave empty for bf16/8bit (uses model_path/text_encoder). Set to HF model ID for q4-qat variant.
+# Leave empty to use model_path/text_encoder (works for bf16, fp8, fp8-safetensors, 8bit).
+# Set to HF model ID only for q4-qat variant (separate pre-quantized model).
 encoder_model_id = ""
 
 # LoRA
@@ -206,7 +207,14 @@ vae_device = "cuda"
 # Transformer quantization: none, fp8 (alias for fp8-dynamic), fp8-dynamic, fp8-weight-only, int8, int4
 quantize = "fp8"
 skip_cleanup = false
-gemma_variant = "8bit"          # gemma3 backbone: bf16, 8bit, q4-qat
+
+# Gemma3 encoder variant (separate from transformer quantization above):
+#   fp8-safetensors  -- loads pre-converted fp8 checkpoint (fastest, requires convert_gemma3_fp8.py first)
+#   fp8              -- loads bf16 then applies fp8 layerwise casting at startup (~40s slower than fp8-safetensors)
+#   bf16             -- full precision (~24GB, may OOM during generation)
+#   8bit             -- torchao int8 quantization (~12GB)
+#   q4-qat           -- pre-quantized Q4 model (~3GB, requires separate model via encoder_model_id)
+gemma_variant = "fp8"
 
 
 # ==========================================================================

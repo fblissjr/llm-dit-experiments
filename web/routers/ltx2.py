@@ -151,6 +151,13 @@ async def ltx2_generate_stream(request: LTX2GenerateRequest, config: ConfigDep, 
                 None, lambda: get_ltx2_model_path(config)
             )
 
+            # Lazy-load and cache LTX-2 components on first request
+            if manager.ltx2_encoder is None:
+                yield f"data: {json.dumps({'type': 'status', 'message': 'Loading LTX-2 models (first request, will be cached)...'})}\n\n"
+                await asyncio.get_event_loop().run_in_executor(
+                    None, lambda: manager.load("ltx2")
+                )
+
             mode = "two-stage" if request.use_two_stage else "single-stage"
             yield f"data: {json.dumps({'type': 'status', 'message': f'Starting {mode} generation...'})}\n\n"
 

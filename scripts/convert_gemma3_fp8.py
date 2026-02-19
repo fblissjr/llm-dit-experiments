@@ -32,6 +32,7 @@ from pathlib import Path
 
 import torch
 from safetensors.torch import save_file as save_safetensors
+from tqdm import tqdm
 
 logging.basicConfig(
     level=logging.INFO,
@@ -96,6 +97,8 @@ def convert_gemma3_to_fp8(
         logger.error("Delete it first or use -o to specify a different path.")
         sys.exit(1)
 
+    overall_start = time.time()
+
     # Step 1: Load the encoder on CPU in bf16
     logger.info("Loading Gemma3 encoder on CPU in bf16...")
     logger.info(f"  Encoder path: {enc_path}")
@@ -122,33 +125,48 @@ def convert_gemma3_to_fp8(
         sys.exit(1)
 
     # Step 2: Convert linear weights to fp8
-    logger.info("Converting linear weights to float8_e4m3fn...")
-    converted = 0
-    skipped = 0
-    total_params = 0
-    fp8_params = 0
-
     model = encoder._model
     state_dict: dict[str, torch.Tensor] = {}
 
+    # Pre-scan: count total params and linear layers for progress bar
+    total_params = 0
     for name, param in model.named_parameters():
         total_params += param.numel()
 
+    linear_modules = []
+    skip_modules = []
     for name, module in model.named_modules():
         if not isinstance(module, torch.nn.Linear):
             continue
-
         if any(pat in name.lower() for pat in SKIP_PATTERNS):
-            skipped += 1
-            continue
+            skip_modules.append(name)
+        else:
+            linear_modules.append((name, module))
 
-        # Convert weight to fp8 in-place
+    logger.info(
+        f"Converting {len(linear_modules)} linear layers to float8_e4m3fn "
+        f"(skipping {len(skip_modules)} norm/embed layers)..."
+    )
+
+    converted = 0
+    fp8_params = 0
+    convert_start = time.time()
+
+    for name, module in tqdm(
+        linear_modules,
+        desc="  bf16 -> fp8",
+        unit="layer",
+        bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]",
+    ):
         module.weight.data = module.weight.data.to(torch.float8_e4m3fn)
         converted += 1
         fp8_params += module.weight.numel()
 
+    convert_time = time.time() - convert_start
+    skipped = len(skip_modules)
+
     bf16_params = total_params - fp8_params
-    logger.info(f"  Converted: {converted} linear layers")
+    logger.info(f"  Converted: {converted} linear layers in {convert_time:.1f}s")
     logger.info(f"  Skipped:   {skipped} layers (norms/embeddings)")
     logger.info(
         f"  Params:    {total_params / 1e9:.2f}B total "
@@ -172,15 +190,23 @@ def convert_gemma3_to_fp8(
         return None
 
     # Step 3: Build state dict and save
-    logger.info(f"Saving fp8 safetensors to {out_path}...")
-    start = time.time()
-
     # Get full state dict (weights are already fp8 where converted)
     # Exclude lm_head.weight -- it's tied to embed_tokens.weight (same tensor).
     # safetensors rejects shared memory. The loader detects the missing key
     # and calls model.tie_weights() to restore the tie.
+    logger.info("Building state dict...")
+    build_start = time.time()
+
+    raw_state = model.state_dict()
+    total_keys = len(raw_state)
     state_dict = {}
-    for name, param in model.state_dict().items():
+    for name, param in tqdm(
+        raw_state.items(),
+        desc="  model",
+        unit="key",
+        total=total_keys,
+        bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]",
+    ):
         if name == "lm_head.weight":
             continue
         # safetensors requires contiguous tensors
@@ -188,21 +214,34 @@ def convert_gemma3_to_fp8(
 
     # Also save feature extractor and connector weights
     if encoder._feature_extractor is not None:
-        for name, param in encoder._feature_extractor.state_dict().items():
+        fe_state = encoder._feature_extractor.state_dict()
+        logger.info(f"  Adding {len(fe_state)} feature extractor keys")
+        for name, param in fe_state.items():
             state_dict[f"feature_extractor.{name}"] = param.contiguous()
 
     if encoder._embeddings_connector is not None:
-        for name, param in encoder._embeddings_connector.state_dict().items():
+        conn_state = encoder._embeddings_connector.state_dict()
+        logger.info(f"  Adding {len(conn_state)} embeddings connector keys")
+        for name, param in conn_state.items():
             state_dict[f"embeddings_connector.{name}"] = param.contiguous()
 
+    build_time = time.time() - build_start
+    logger.info(f"  {len(state_dict)} total keys assembled in {build_time:.1f}s")
+
+    logger.info(f"Writing {out_path}...")
+    write_start = time.time()
     save_safetensors(state_dict, str(out_path))
-    save_time = time.time() - start
+    write_time = time.time() - write_start
 
     file_size = out_path.stat().st_size / 1e9
-    logger.info(f"  Saved in {save_time:.1f}s ({file_size:.2f}GB)")
+    logger.info(f"  Written in {write_time:.1f}s ({file_size:.2f}GB)")
     logger.info(f"Output: {out_path}")
 
     # Summary
+    overall_time = time.time() - overall_start
+    logger.info("")
+    logger.info(f"Done in {overall_time:.1f}s (load: {load_time:.1f}s, "
+                f"convert: {convert_time:.1f}s, save: {build_time + write_time:.1f}s)")
     logger.info("")
     logger.info("To use this checkpoint, set in config.toml:")
     logger.info(f'  gemma_variant = "fp8-safetensors"')

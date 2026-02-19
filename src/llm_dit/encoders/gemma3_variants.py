@@ -356,7 +356,9 @@ def _load_fp8_safetensors_encoder(
             model = Gemma3ForCausalLM(text_config)
 
     # Load pre-converted weights (fp8 linears + bf16 norms)
-    missing, unexpected = model.load_state_dict(model_sd, strict=False)
+    # assign=True replaces parameters in-place instead of copying, which
+    # preserves the fp8 dtype. Without it, fp8 tensors get cast to bf16.
+    missing, unexpected = model.load_state_dict(model_sd, strict=False, assign=True)
     if missing:
         expected_missing = {"lm_head.weight"}
         real_missing = [k for k in missing if k not in expected_missing]
