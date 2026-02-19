@@ -201,6 +201,10 @@ This is a **multi-workstream project**. Work happens in parallel across layers:
 
 **LoRA fusion tracking:** `model._fused_lora_state` (FusedLoRAState) tracks what's fused on persistent models. Prevents re-fusion OOM where fp8 (9GB) dequantizes to bf16 (18GB). Pipeline detects mismatch (raises RuntimeError), router handles recovery (reload).
 
+**On-demand lazy loading:** When `default_pipeline = "none"`, routers trigger `manager.load("pipeline_id")` on first request. Method is `manager.load()` (NOT `load_pipeline()`). Idempotent -- double-check inside lock, returns early if already loaded. Unloads other pipelines to free VRAM.
+
+**`gemma_variant` vs `quantize` are independent:** `quantize` controls transformer quantization (torchao fp8-dynamic at runtime). `gemma_variant` controls encoder loading strategy (pure PyTorch for fp8/fp8-safetensors, torchao for 8bit). The fp8-safetensors path has zero torchao dependency; torchao debug logs during load are transitive from transformers import.
+
 **Unified quantization:** All pipelines use `quantize_component()` as the sole entry point. torchao is the only backend. `"fp8"` alias maps to `"fp8-dynamic"` (W8A8, FP8 tensor cores). Default granularity is `"per-row"`. Already-quantized weights (torchao subclasses or native FP8 dtypes) are auto-detected and skipped. See `docs/reference/quantization.md`.
 
 **Prompt upsampling (FLUX.2):** `_upsample_prompt()` factory in `web/routers/flux2.py` reads URL + model from `RuntimeConfig.rewriter_api_url`/`rewriter_api_model` (sourced from `config.toml [rewriter]`). Creates `Flux2PromptUpsampler` which calls heylookitsanllm at `192.168.1.123:8080`. Two modes: T2I (creative expansion) and I2I (instruction compilation). Graceful fallback to original prompt on error. Used by both sync and streaming endpoints.
@@ -282,6 +286,8 @@ For full debugging patterns, see [lessons_learned.md](internal/state/lessons_lea
 | Prompt upsampling silent fail | heylookitsanllm unreachable | Verify `192.168.1.123:8080` is live; check logs for `[FLUX2:Upsample] Failed` |
 | Video thumbnails broken in history | SSE type assertion missing field | Check `eventData` type in `sessionStore.ts` (~line 170) -- uses `as unknown as` cast |
 | Wrong transformer weights loaded | `transformer_file` config mismatch | Verify `[ltx2].transformer_file` points to correct safetensors; FP8 files use `load_ltx2_transformer_from_fp8()` |
+| fp8 weights silently become bf16 | `load_state_dict` missing `assign=True` | Mixed-dtype models MUST use `assign=True` to preserve fp8 dtype; without it, tensors are copied into existing bf16 params |
+| LTX-2 encoder None in on-demand mode | `default_pipeline = "none"` skips preload | Router lazy-loads via `manager.load("ltx2")` on first request; check `manager.ltx2_encoder is None` guard |
 
 ## quick test commands
 
