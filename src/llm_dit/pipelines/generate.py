@@ -774,10 +774,13 @@ def generate_video_with_offloading(
 
     if cached_transformer is not None:
         # Reconstruct from cached bf16 state dict (skips disk I/O)
+        # meta_init eliminates 2x memory spike during construction
         logger.info("Using cached transformer weights, reconstructing model...")
         from llm_dit.models.ltx2.loader import create_model_from_config
-        model = create_model_from_config(cached_transformer["config"], dtype)
-        model.load_state_dict(cached_transformer["state_dict"])
+        from llm_dit.utils.meta_init import meta_init
+        with meta_init():
+            model = create_model_from_config(cached_transformer["config"], dtype)
+        model.load_state_dict(cached_transformer["state_dict"], assign=True)
 
         if effective_quantize and effective_precision != "none":
             from llm_dit.quantization import quantize_component
@@ -1066,6 +1069,12 @@ class TwoStageConfig:
     # Spatial upsampler
     spatial_upsampler_file: str = "ltx-2-spatial-upscaler-x2-1.0.safetensors"
 
+    # FBCache
+    fbcache_threshold: float = 0.0  # Block-skip threshold (0=disabled, 0.05=recommended)
+
+    # Distilled pipeline mode
+    use_distilled_sigmas: bool = False  # Use predefined sigma schedule (8 stage1 + 4 stage2 steps)
+
     def __post_init__(self):
         if self.stg_blocks is None:
             self.stg_blocks = [29]
@@ -1078,6 +1087,9 @@ def _compute_velocity(
     positions: torch.Tensor,
     prompt_embeds: torch.Tensor,
     ctx: StepContext,
+    fbcache_threshold: float = 0.0,
+    step_index: int = 0,
+    num_steps: int = 1,
 ) -> torch.Tensor:
     """Compute velocity prediction with optional CFG and STG.
 
@@ -1101,21 +1113,33 @@ def _compute_velocity(
         positions: [B, 3, T, 2] RoPE position indices.
         prompt_embeds: [B, seq_len, dim] positive text embeddings.
         ctx: Per-step denoising parameters.
+        fbcache_threshold: FBCache block-skip threshold (0=disabled).
+        step_index: Current denoising step (0-based).
+        num_steps: Total denoising steps.
 
     Returns:
         Velocity prediction tensor [B, T, D].
     """
+    # FBCache kwargs -- passed to all model() calls within this step
+    fb_kwargs = {}
+    if fbcache_threshold > 0.0:
+        fb_kwargs = dict(
+            fbcache_threshold=fbcache_threshold,
+            step_index=step_index,
+            num_steps=num_steps,
+        )
+
     if ctx.guidance_scale > 1.0 and ctx.neg_embeds is not None:
         # Pass 1: Unconditional (negative prompt)
         uncond_modality = create_video_modality(latents, timestep, positions, ctx.neg_embeds)
-        velocity_uncond, _ = model(video=uncond_modality)
+        velocity_uncond, _ = model(video=uncond_modality, **fb_kwargs)
         del uncond_modality
         torch.cuda.synchronize()
         torch.cuda.empty_cache()
 
         # Pass 2: Conditional (positive prompt)
         cond_modality = create_video_modality(latents, timestep, positions, prompt_embeds)
-        velocity_cond, _ = model(video=cond_modality)
+        velocity_cond, _ = model(video=cond_modality, **fb_kwargs)
 
         # CFG blend
         velocity = velocity_cond + (ctx.guidance_scale - 1.0) * (velocity_cond - velocity_uncond)
@@ -1129,7 +1153,7 @@ def _compute_velocity(
 
             stg_modality = create_video_modality(latents, timestep, positions, prompt_embeds)
             stg_blocks_set = set(ctx.stg_blocks)
-            velocity_perturbed, _ = model(video=stg_modality, stg_blocks=stg_blocks_set)
+            velocity_perturbed, _ = model(video=stg_modality, stg_blocks=stg_blocks_set, **fb_kwargs)
             del stg_modality
 
             velocity = velocity + ctx.stg_scale * (velocity_cond - velocity_perturbed)
@@ -1147,7 +1171,7 @@ def _compute_velocity(
     else:
         # Simple denoising (no guidance)
         modality = create_video_modality(latents, timestep, positions, prompt_embeds)
-        velocity, _ = model(video=modality)
+        velocity, _ = model(video=modality, **fb_kwargs)
         del modality
 
     return velocity
@@ -1164,6 +1188,7 @@ def _denoise_stage(
     callback: Optional[Callable[[str, int, int], None]] = None,
     denoise_mask: Optional[torch.Tensor] = None,
     clean_latent: Optional[torch.Tensor] = None,
+    fbcache_threshold: float = 0.0,
 ) -> torch.Tensor:
     """Run a single denoising stage (Euler method with per-step parameters).
 
@@ -1183,6 +1208,7 @@ def _denoise_stage(
         callback: Optional progress callback(stage_name, step, total).
         denoise_mask: Optional per-token denoise mask for conditioning.
         clean_latent: Optional clean latent for conditioned regions.
+        fbcache_threshold: FBCache block-skip threshold (0=disabled, 0.05=recommended).
 
     Returns:
         Denoised latent tensor [B, T, D].
@@ -1195,6 +1221,11 @@ def _denoise_stage(
     num_steps = len(sigmas) - 1
 
     model.train(False)
+
+    # Reset FBCache state for this stage
+    if fbcache_threshold > 0.0:
+        model.reset_fbcache()
+        logger.info(f"[{stage_name}] FBCache enabled (threshold={fbcache_threshold})")
 
     prev_velocity: Optional[torch.Tensor] = None
 
@@ -1217,6 +1248,9 @@ def _denoise_stage(
 
             velocity = _compute_velocity(
                 model, latents, timestep, positions, prompt_embeds, ctx,
+                fbcache_threshold=fbcache_threshold,
+                step_index=i,
+                num_steps=num_steps,
             )
 
             # Gradient estimation correction
@@ -1434,10 +1468,13 @@ def generate_video_two_stage(
 
     if cached_transformer is not None:
         # Reconstruct from cached bf16 state dict (skips disk I/O)
+        # meta_init eliminates 2x memory spike during construction
         logger.info("Using cached transformer weights, reconstructing model...")
         from llm_dit.models.ltx2.loader import create_model_from_config
-        model = create_model_from_config(cached_transformer["config"], dtype)
-        model.load_state_dict(cached_transformer["state_dict"])
+        from llm_dit.utils.meta_init import meta_init
+        with meta_init():
+            model = create_model_from_config(cached_transformer["config"], dtype)
+        model.load_state_dict(cached_transformer["state_dict"], assign=True)
 
         if effective_quantize and effective_precision != "none":
             from llm_dit.quantization import quantize_component
@@ -1536,26 +1573,35 @@ def generate_video_two_stage(
     )
 
     # Sigma schedule for stage 1
-    scheduler = LTX2Scheduler()
-    mock_latent = torch.empty(1, 128, t_latent, h_latent, w_latent)
-    sigmas = scheduler.execute(
-        steps=two_stage.stage1_steps,
-        latent=mock_latent,
-        max_shift=config.max_shift,
-        base_shift=config.base_shift,
-        stretch=config.stretch,
-        terminal=config.terminal,
-    ).to(transformer_device, dtype)
+    if two_stage.use_distilled_sigmas:
+        from llm_dit.models.ltx2.constants import DISTILLED_SIGMA_VALUES
+        sigmas = torch.tensor(DISTILLED_SIGMA_VALUES, device=transformer_device, dtype=dtype)
+        logger.info(f"Stage 1: Using distilled sigma schedule ({len(sigmas) - 1} steps, no CFG)")
+    else:
+        scheduler = LTX2Scheduler()
+        mock_latent = torch.empty(1, 128, t_latent, h_latent, w_latent)
+        sigmas = scheduler.execute(
+            steps=two_stage.stage1_steps,
+            latent=mock_latent,
+            max_shift=config.max_shift,
+            base_shift=config.base_shift,
+            stretch=config.stretch,
+            terminal=config.terminal,
+        ).to(transformer_device, dtype)
 
     # Denoise stage 1
-    schedule = constant_schedule(
-        guidance_scale=two_stage.guidance_scale,
-        neg_embeds=neg_embeds,
-        rescale_scale=two_stage.rescale_scale,
-        ge_gamma=two_stage.ge_gamma,
-        stg_scale=two_stage.stg_scale,
-        stg_blocks=two_stage.stg_blocks,
-    )
+    # Distilled mode: no CFG (guidance baked into model), no STG
+    if two_stage.use_distilled_sigmas:
+        schedule = constant_schedule(guidance_scale=1.0)
+    else:
+        schedule = constant_schedule(
+            guidance_scale=two_stage.guidance_scale,
+            neg_embeds=neg_embeds,
+            rescale_scale=two_stage.rescale_scale,
+            ge_gamma=two_stage.ge_gamma,
+            stg_scale=two_stage.stg_scale,
+            stg_blocks=two_stage.stg_blocks,
+        )
     latents = _denoise_stage(
         model=model,
         latents=latents,
@@ -1565,6 +1611,7 @@ def generate_video_two_stage(
         stage_name="stage1_denoise",
         step_schedule=schedule,
         callback=callback,
+        fbcache_threshold=two_stage.fbcache_threshold,
     )
 
     # Reshape to spatial format for upsampler: [B, T, D] -> [B, D, T_lat, H_lat, W_lat]
@@ -1711,6 +1758,7 @@ def generate_video_two_stage(
         positions=positions_full,
         stage_name="stage2_denoise",
         callback=callback,
+        fbcache_threshold=two_stage.fbcache_threshold,
     )
 
     # Reshape back to spatial: [B, T, D] -> [B, D, T_lat, H_lat, W_lat]

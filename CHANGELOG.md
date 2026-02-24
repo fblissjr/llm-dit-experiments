@@ -1,10 +1,21 @@
-last updated: 2026-02-17
+last updated: 2026-02-24
 
 # changelog
 
 
 All notable changes to this project will be documented in this file.
 Uses [Semantic Versioning](https://semver.org/).
+
+## 0.9.12
+
+### added
+- **LTX-2**: FBCache (Forward-Backward Cache) for transformer block skipping during denoising. Tracks L1 norm of residual changes between steps; blocks below threshold are skipped. First/last steps always compute fully. Config: `fbcache_threshold` (0.0 = disabled, 0.05 = recommended). Expected 10-30% speedup on denoising loop.
+- **LTX-2**: Distilled sigma schedule mode. When `use_distilled_sigmas` is enabled, Stage 1 uses predefined sigma values from official LTX-2 constants instead of dynamic scheduler computation. Forces guidance_scale=1.0 (no CFG, no STG) -- guidance is baked into the distilled model.
+- **LTX-2**: Meta-device skip init utility (`src/llm_dit/utils/meta_init.py`). Context manager that allocates model parameters on meta device (0 bytes) during construction. Combined with `load_state_dict(assign=True)`, eliminates 2x peak memory spike when reconstructing transformer from cached state dict.
+- Optimization research document (`internal/docs/research/coderef_optimization_analysis.md`) -- cross-repo survey of 16 techniques across 5 codebases with RTX 4090-specific assessment
+
+### fixed
+- FA3 documentation (`docs/guides/compile_and_resolution.md`) incorrectly claimed Flash Attention 3 is "Ada Lovelace native". FA3 requires Hopper (SM90+). FA2 is the fastest available on RTX 4090.
 
 ## 0.9.11
 

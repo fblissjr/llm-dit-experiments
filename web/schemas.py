@@ -681,6 +681,8 @@ class LTX2GenerateRequest(BaseModel):
 
     # Optimization
     ge_gamma: float = 0.0
+    fbcache_threshold: float = 0.0  # FBCache block-skip threshold (0=disabled, 0.05=recommended)
+    use_distilled_sigmas: bool = False  # Use predefined sigma schedule (8+4 steps, no CFG)
 
 
 class Flux2GenerateRequest(BaseModel):

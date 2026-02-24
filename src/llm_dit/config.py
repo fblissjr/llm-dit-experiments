@@ -393,6 +393,10 @@ class LTX2Config:
 
     # Optimization
     ge_gamma: float = 0.0  # Gradient estimation gamma (0=disabled, 2.0=reference)
+    fbcache_threshold: float = 0.0  # FBCache block-skip threshold (0=disabled, 0.05=recommended)
+
+    # Distilled pipeline mode
+    use_distilled_sigmas: bool = False  # Use predefined sigma schedule (8+4 steps, no CFG)
 
     # Legacy distillation settings (single-stage distilled model)
     use_distilled: bool = False  # Use single-stage distilled model (legacy)

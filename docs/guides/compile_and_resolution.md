@@ -166,11 +166,10 @@ With three-stage offloading, peak VRAM = max(any single stage), not the sum.
 
 On RTX 4090 (SM89), the `auto` backend selects in this order:
 
-1. **flash_attn_3** -- fastest if installed (Ada Lovelace native)
-2. **flash_attn_2** -- fast, widely available
-3. **sage_int8_fp16** -- SM80+, best memory efficiency
-4. **xformers** -- good fallback
-5. **sdpa** -- PyTorch built-in, always available
+1. **flash_attn_2** -- fastest available on Ada Lovelace (FA3 requires Hopper SM90+)
+2. **sage_int8_fp16** -- SM80+, best memory efficiency
+3. **xformers** -- good fallback
+4. **sdpa** -- PyTorch built-in, always available
 
 No configuration needed if `attention_backend = "auto"` (default).
 

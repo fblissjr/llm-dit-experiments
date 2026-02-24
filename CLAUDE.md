@@ -187,6 +187,7 @@ This is a **multi-workstream project**. Work happens in parallel across layers:
 | Encoder variants | `src/llm_dit/encoders/gemma3_variants.py` | Gemma3 variant factory: bf16, fp8, 8bit, q4-qat |
 | LoRA | `src/llm_dit/utils/lora.py` | Pipeline-agnostic: `load_lora()`, `FusedLoRAState` tracking |
 | Prompt rewriting | `src/llm_dit/utils/prompt_rewriter.py` | `PromptRewriter` (Qwen-Image), `Flux2PromptUpsampler` (FLUX.2) |
+| Meta init | `src/llm_dit/utils/meta_init.py` | Zero-memory model construction; use with `load_state_dict(assign=True)` |
 | Param resolution | `web/param_resolver.py` | `resolve_param()` -- all routers use for generation param defaults |
 | Model lifecycle | `src/llm_dit/model_manager.py` | `ModelManager` -- load/unload/reload any pipeline |
 | API layer | `web/routers/`, `web/schemas.py` | 7 domain routers + Pydantic models (~730 lines) |
@@ -208,6 +209,10 @@ This is a **multi-workstream project**. Work happens in parallel across layers:
 **Unified quantization:** All pipelines use `quantize_component()` as the sole entry point. torchao is the only backend. `"fp8"` alias maps to `"fp8-dynamic"` (W8A8, FP8 tensor cores). Default granularity is `"per-row"`. Already-quantized weights (torchao subclasses or native FP8 dtypes) are auto-detected and skipped. See `docs/reference/quantization.md`.
 
 **Prompt upsampling (FLUX.2):** `_upsample_prompt()` factory in `web/routers/flux2.py` reads URL + model from `RuntimeConfig.rewriter_api_url`/`rewriter_api_model` (sourced from `config.toml [rewriter]`). Creates `Flux2PromptUpsampler` which calls heylookitsanllm at `192.168.1.123:8080`. Two modes: T2I (creative expansion) and I2I (instruction compilation). Graceful fallback to original prompt on error. Used by both sync and streaming endpoints.
+
+**FBCache (block skipping):** `LTX2Transformer` tracks residual norms between denoising steps. When `fbcache_threshold > 0`, blocks with small residual changes are skipped. Must call `model.reset_fbcache()` at the start of each generation. First/last steps always compute fully.
+
+**Distilled sigma mode:** When `use_distilled_sigmas=True`, Stage 1 uses predefined `DISTILLED_SIGMA_VALUES` from `constants.py`. Forces `guidance_scale=1.0` (no CFG, no STG) -- guidance is baked into the distilled model weights.
 
 For full post-refactor details: [post_refactor_guide.md](internal/docs/architecture/post_refactor_guide.md)
 
@@ -288,6 +293,8 @@ For full debugging patterns, see [lessons_learned.md](internal/state/lessons_lea
 | Wrong transformer weights loaded | `transformer_file` config mismatch | Verify `[ltx2].transformer_file` points to correct safetensors; FP8 files use `load_ltx2_transformer_from_fp8()` |
 | fp8 weights silently become bf16 | `load_state_dict` missing `assign=True` | Mixed-dtype models MUST use `assign=True` to preserve fp8 dtype; without it, tensors are copied into existing bf16 params |
 | LTX-2 encoder None in on-demand mode | `default_pipeline = "none"` skips preload | Router lazy-loads via `manager.load("ltx2")` on first request; check `manager.ltx2_encoder is None` guard |
+| Model construction OOM spike | Missing `meta_init()` wrapper | Wrap `create_model_from_config()` in `meta_init()` context manager + use `assign=True` in `load_state_dict` |
+| 3 pre-existing unit test failures | Not caused by recent changes | `test_resolution_validators.py` (2): snap_to_32 vs snap_to_64 mismatch. `test_pipeline.py` (1): unrelated. Verify with `git stash && uv run pytest tests/unit/ -v` |
 
 ## quick test commands
 

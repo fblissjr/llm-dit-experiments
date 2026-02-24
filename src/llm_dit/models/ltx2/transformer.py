@@ -608,12 +608,20 @@ class LTX2Transformer(nn.Module):
 
         return x
 
+    def reset_fbcache(self) -> None:
+        """Reset FBCache state. Call between generations."""
+        self._fbcache_prev_residuals: dict[int, torch.Tensor] = {}
+        self._fbcache_skip_mask: list[bool] = [False] * self.num_layers
+
     def forward(
         self,
         video: Optional[Modality],
         audio: Optional[Modality] = None,
         layer_mask: Optional[torch.Tensor] = None,
         stg_blocks: Optional[set[int]] = None,
+        fbcache_threshold: float = 0.0,
+        step_index: int = 0,
+        num_steps: int = 1,
     ) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor]]:
         """
         Forward pass of LTX-2 transformer.
@@ -624,6 +632,12 @@ class LTX2Transformer(nn.Module):
             layer_mask: Optional mask for layer ablation [num_layers] with 0/1
             stg_blocks: Optional set of block indices where self-attention is
                 skipped (for Spatio-Temporal Guidance perturbed pass)
+            fbcache_threshold: L1 residual norm threshold for block skipping.
+                0.0 = disabled (default). Values around 0.05 recommended.
+                Blocks whose residual change is below this threshold between
+                consecutive steps are skipped.
+            step_index: Current denoising step index (0-based).
+            num_steps: Total number of denoising steps.
 
         Returns:
             Tuple of (video_output, audio_output) velocity predictions
@@ -637,13 +651,36 @@ class LTX2Transformer(nn.Module):
         # Preprocess inputs
         args = self.args_preprocessor.prepare(video)
 
+        use_fbcache = fbcache_threshold > 0.0
+        is_first_step = step_index == 0
+        is_last_step = step_index == num_steps - 1
+
+        # First/last steps always compute all blocks
+        if use_fbcache and not is_first_step and not is_last_step:
+            if not hasattr(self, '_fbcache_prev_residuals'):
+                self.reset_fbcache()
+        else:
+            # Ensure state dict exists for residual tracking
+            if use_fbcache and not hasattr(self, '_fbcache_prev_residuals'):
+                self.reset_fbcache()
+
+        blocks_skipped = 0
+
         # Process through transformer blocks
         for idx, block in enumerate(self.transformer_blocks):
             # Optional layer masking for ablation
             if layer_mask is not None and not layer_mask[idx]:
                 continue
 
+            # FBCache: skip blocks with low residual change (not on first/last step)
+            if (use_fbcache and not is_first_step and not is_last_step
+                    and self._fbcache_skip_mask[idx]):
+                blocks_skipped += 1
+                continue
+
             skip_self_attn = stg_blocks is not None and idx in stg_blocks
+
+            x_before = args.x
 
             if self._enable_gradient_checkpointing and self.training:
                 args = torch.utils.checkpoint.checkpoint(
@@ -654,6 +691,25 @@ class LTX2Transformer(nn.Module):
                 )
             else:
                 args = block(args, skip_self_attn=skip_self_attn)
+
+            # FBCache: track residual change for next step's skip decision
+            if use_fbcache:
+                residual = args.x - x_before
+                residual_norm = residual.abs().mean().item()
+
+                prev_norm = self._fbcache_prev_residuals.get(idx)
+                if prev_norm is not None:
+                    delta = abs(residual_norm - prev_norm)
+                    self._fbcache_skip_mask[idx] = delta < fbcache_threshold
+                else:
+                    self._fbcache_skip_mask[idx] = False
+
+                self._fbcache_prev_residuals[idx] = residual_norm
+
+        if use_fbcache and blocks_skipped > 0:
+            logger.debug(
+                f"[FBCache] Step {step_index}: skipped {blocks_skipped}/{self.num_layers} blocks"
+            )
 
         # Final output projection
         video_out = self._process_output(args.x, args.embedded_timestep)
