@@ -9,6 +9,7 @@ Uses [Semantic Versioning](https://semver.org/).
 ## 0.9.12
 
 ### added
+- **LTX-2**: Audio VAE decode pipeline (Phase 1). Pure PyTorch port of AudioDecoder (latents to stereo mel) and HiFiGAN Vocoder (mel to 24kHz waveform). Includes AudioPatchifier for 1D temporal patchify/unpatchify, PerChannelStatistics for latent denormalization, CausalConv2d blocks, and weight loaders for both models. 31 unit tests covering shapes, round-trips, weight loading, and full pipeline validation. New package: `src/llm_dit/models/ltx2/audio_vae/`.
 - **LTX-2**: FBCache (Forward-Backward Cache) for transformer block skipping during denoising. Tracks L1 norm of residual changes between steps; blocks below threshold are skipped. First/last steps always compute fully. Config: `fbcache_threshold` (0.0 = disabled, 0.05 = recommended). Expected 10-30% speedup on denoising loop.
 - **LTX-2**: Distilled sigma schedule mode. When `use_distilled_sigmas` is enabled, Stage 1 uses predefined sigma values from official LTX-2 constants instead of dynamic scheduler computation. Forces guidance_scale=1.0 (no CFG, no STG) -- guidance is baked into the distilled model.
 - **LTX-2**: Meta-device skip init utility (`src/llm_dit/utils/meta_init.py`). Context manager that allocates model parameters on meta device (0 bytes) during construction. Combined with `load_state_dict(assign=True)`, eliminates 2x peak memory spike when reconstructing transformer from cached state dict.
