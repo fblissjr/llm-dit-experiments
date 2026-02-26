@@ -1,6 +1,6 @@
 # agent context (v0.9.11)
 
-*last updated: 2026-02-19*
+*last updated: 2026-02-26*
 
 Quick reference for LLM agents. Read only what you need.
 
@@ -193,6 +193,7 @@ This is a **multi-workstream project**. Work happens in parallel across layers:
 | API layer | `web/routers/`, `web/schemas.py` | 7 domain routers + Pydantic models (~730 lines) |
 | Pipelines | `src/llm_dit/pipelines/` | Each pipeline has its own file |
 | Frontend | `web/frontend-v2/` | React 19 + Zustand 5 + Vite 7 + Tailwind 4. Schema-driven forms from OpenAPI. See [web CLAUDE.md](internal/web/CLAUDE.md) |
+| Frontend logger | `web/frontend-v2/src/utils/logger.ts` | Namespaced logging factory; `VITE_LOG_LEVEL` env var; zero raw console calls |
 
 ## architecture patterns (post-refactor)
 
@@ -213,6 +214,8 @@ This is a **multi-workstream project**. Work happens in parallel across layers:
 **FBCache (block skipping):** `LTX2Transformer` tracks residual norms between denoising steps. When `fbcache_threshold > 0`, blocks with small residual changes are skipped. Must call `model.reset_fbcache()` at the start of each generation. First/last steps always compute fully.
 
 **Distilled sigma mode:** When `use_distilled_sigmas=True`, Stage 1 uses predefined `DISTILLED_SIGMA_VALUES` from `constants.py`. Forces `guidance_scale=1.0` (no CFG, no STG) -- guidance is baked into the distilled model weights.
+
+**Frontend logging:** `web/frontend-v2/src/utils/logger.ts` provides namespaced console logging. Factory: `logger('API')` returns `{ debug, info, warn, error }` with `[API]` prefix. Log level controlled by `VITE_LOG_LEVEL` env var (defaults: `debug` in dev, `warn` in prod). All 22 console calls across 8 files migrated -- zero raw `console.*` calls remain outside logger.ts. Filter in DevTools by namespace (e.g., `[Generate]`, `[Model]`, `[Session]`).
 
 For full post-refactor details: [post_refactor_guide.md](internal/docs/architecture/post_refactor_guide.md)
 
@@ -295,6 +298,9 @@ For full debugging patterns, see [lessons_learned.md](internal/state/lessons_lea
 | LTX-2 encoder None in on-demand mode | `default_pipeline = "none"` skips preload | Router lazy-loads via `manager.load("ltx2")` on first request; check `manager.ltx2_encoder is None` guard |
 | Model construction OOM spike | Missing `meta_init()` wrapper | Wrap `create_model_from_config()` in `meta_init()` context manager + use `assign=True` in `load_state_dict` |
 | 3 pre-existing unit test failures | Not caused by recent changes | `test_resolution_validators.py` (2): snap_to_32 vs snap_to_64 mismatch. `test_pipeline.py` (1): unrelated. Verify with `git stash && uv run pytest tests/unit/ -v` |
+| Generate button disabled silently | Validation error not displayed to user | Check DevTools for `[Generate]` namespace logs; likely stale IndexedDB value exceeds schema min/max |
+| Noisy/garbage LTX-2 output | Compounding optimizations | Disable `ge_gamma`, `fbcache_threshold`, `use_distilled_sigmas` in config.toml; test one at a time. All three together = no CFG + stale cached blocks + amplified velocity = runaway noise |
+| Stale form values from IndexedDB | Schema range changed after values persisted | `getResolvedValues()` clamps automatically; clear IndexedDB via DevTools Application tab to hard-reset |
 
 ## quick test commands
 

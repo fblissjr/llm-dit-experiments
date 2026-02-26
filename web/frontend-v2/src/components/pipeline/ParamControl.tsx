@@ -12,6 +12,7 @@
 
 import { memo } from 'react';
 import type { ParamSchema, FormValues, ValidationError } from '@/api/types';
+import { logger } from '@/utils/logger';
 import {
   Textarea,
   Slider,
@@ -193,7 +194,7 @@ export const ParamControl = memo(function ParamControl({
 
     default:
       // Fallback for unknown types
-      console.warn(`Unknown param type: ${param.type}`);
+      logger('ParamControl').warn(`Unknown param type: ${param.type}`);
       return (
         <div className="form-control">
           <label className="form-label">{param.label}</label>

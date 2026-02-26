@@ -36,6 +36,9 @@ import {
   restartServer as restartServerApi,
   clearCache as clearCacheApi,
 } from '@/api/client';
+import { logger } from '@/utils/logger';
+
+const log = logger('Model');
 
 interface AppState {
   // Pipeline data
@@ -366,6 +369,7 @@ export const useAppStore = create<AppState>()(
      * Load a pipeline model
      */
     loadPipelineModel: async (pipelineId) => {
+      log.info(`Loading ${pipelineId}...`);
       // Set to loading state
       set((state) => {
         state.modelStatus[pipelineId] = { status: 'loading' };
@@ -376,11 +380,13 @@ export const useAppStore = create<AppState>()(
         set((state) => {
           state.modelStatus[pipelineId] = result;
         });
+        log.info(`${pipelineId} status:`, result.status);
 
         // Refresh VRAM and context after loading
         get().refreshVRAM();
         get().refreshContext();
       } catch (error) {
+        log.error(`${pipelineId} load failed:`, error);
         set((state) => {
           state.modelStatus[pipelineId] = {
             status: 'error',
@@ -394,6 +400,7 @@ export const useAppStore = create<AppState>()(
      * Unload a pipeline model
      */
     unloadPipelineModel: async (pipelineId) => {
+      log.info(`Unloading ${pipelineId}...`);
       // Set to loading state (unloading)
       set((state) => {
         state.modelStatus[pipelineId] = { status: 'loading' };
@@ -404,11 +411,13 @@ export const useAppStore = create<AppState>()(
         set((state) => {
           state.modelStatus[pipelineId] = result;
         });
+        log.info(`${pipelineId} status:`, result.status);
 
         // Refresh VRAM and context after unloading
         get().refreshVRAM();
         get().refreshContext();
       } catch (error) {
+        log.error(`${pipelineId} unload failed:`, error);
         set((state) => {
           state.modelStatus[pipelineId] = {
             status: 'error',

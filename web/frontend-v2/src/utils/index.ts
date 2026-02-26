@@ -6,3 +6,5 @@ export { snapToStep } from './numbers';
 export { formatUptime } from './format';
 export { debounce } from './debounce';
 export { idbStorage, migrateFromLocalStorage } from './idbStorage';
+export { logger } from './logger';
+export type { NamespacedLogger } from './logger';

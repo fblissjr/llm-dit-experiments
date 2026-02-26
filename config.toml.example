@@ -26,7 +26,7 @@ templates_dir = "templates/z_image"
 
 [quantization]
 encoder = "none"
-transformer = "fp8-dynamic"
+transformer = "none"
 vae = "none"
 granularity = "per-row"         # per-tensor, per-row (FP8 only; per-row recommended for fp8-dynamic)
 
@@ -63,7 +63,7 @@ dynamic_shift = true
 # -- Optimization -----------------------------------------------------------
 
 [optimization]
-compile = true                  # ~10% speedup after warmup; INCOMPATIBLE with CPU offload
+compile = false
 # Compile mode: default, max-autotune-no-cudagraphs, reduce-overhead
 compile_mode = "default"
 
@@ -124,6 +124,7 @@ compile = false                 # marginal ROI for 4-step distilled (see docs/gu
 compile_vae = false             # marginal ROI (89s warmup, ~0.5s savings/decode)
 # Compile mode: default, max-autotune-no-cudagraphs, reduce-overhead
 compile_mode = "default"
+compile_dynamic = false         # dynamic shapes: avoid recompilation per resolution (experimental)
 
 
 # ==========================================================================
@@ -134,17 +135,20 @@ compile_mode = "default"
 
 [ltx2]
 # model_path = "/path/to/LTX-2"
-transformer_file = "ltx-2-19b-distilled-fp8.safetensors"
+transformer_file = "ltx-2-19b-dev-fp8.safetensors"
 
 # Two-stage pipeline files
 spatial_upsampler_file = "ltx-2-spatial-upscaler-x2-1.0.safetensors"
-distilled_lora_path = ""        # distilled LoRA for stage 2 refinement
+distilled_lora_path = "ltx-2-19b-distilled-lora-384.safetensors"  # distilled LoRA for stage 2 refinement
 distilled_lora_scale = 1.0
 
 # Gemma 3-12B encoder
 # Leave empty to use model_path/text_encoder (works for bf16, fp8, fp8-safetensors, 8bit).
 # Set to HF model ID only for q4-qat variant (separate pre-quantized model).
 encoder_model_id = ""
+
+# Prompt enhancement -- expand terse prompts via Gemma3 before encoding
+enhance_prompt = false
 
 # LoRA
 lora_path = ""
@@ -159,8 +163,8 @@ height = 512
 width = 768
 num_frames = 33
 fps = 24
-num_inference_steps = 12
-guidance_scale = 3.0
+num_inference_steps = 40        # stage 1 steps (full denoising)
+guidance_scale = 3.5
 
 # Audio
 audio_enabled = false
@@ -178,10 +182,14 @@ stg_blocks = "29"               # comma-separated block indices for STG
 rescale_scale = 0.7             # CFG rescaling to prevent over-saturation
 
 # Optimization
-ge_gamma = 0.0                  # gradient estimation gamma (0=disabled, 2.0=reference)
+ge_gamma = 0.0                  # gradient estimation gamma (0=disabled, values up to 2.0)
+fbcache_threshold = 0.0         # FBCache block-skip threshold (0=disabled, 0.05=recommended)
+
+# Distilled pipeline mode (predefined sigma schedule: 8+4 steps, no CFG)
+use_distilled_sigmas = false
 
 # Legacy single-stage distilled mode
-use_distilled = true
+use_distilled = false
 distilled_steps_stage1 = 8
 distilled_steps_stage2 = 4
 
@@ -214,7 +222,10 @@ skip_cleanup = false
 #   bf16             -- full precision (~24GB, may OOM during generation)
 #   8bit             -- torchao int8 quantization (~12GB)
 #   q4-qat           -- pre-quantized Q4 model (~3GB, requires separate model via encoder_model_id)
-gemma_variant = "fp8"
+gemma_variant = "fp8-safetensors"
+
+# Preset configuration
+default_preset = ""
 
 
 # ==========================================================================
@@ -240,14 +251,14 @@ quantize_transformer = "none"   # offloaded to CPU between forward passes; quant
 # Dynamic Position Extrapolation for 2K-4K+ resolution
 enabled = false
 method = "vision_yarn"
-dype_scale = 2.0
+dype_scale = 3.0
 dype_exponent = 2.0
 dype_start_sigma = 1.0
 base_shift = 0.5
 max_shift = 1.15
 base_resolution = 1024
 anisotropic = false
-multipass = "single"
+multipass = "twopass"
 pass2_strength = 0.5
 pass3_strength = 0.4
 frequency_modulation = false
@@ -309,3 +320,4 @@ max_bytes = 10485760
 backup_count = 5
 log_requests = true
 log_generation_params = true
+log_prompts = false

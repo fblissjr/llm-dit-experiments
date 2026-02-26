@@ -316,6 +316,22 @@ export const useFormStore = create<FormState>()(
       // Layer user values
       Object.assign(result, userValues);
 
+      // Clamp number/slider values to schema min/max.
+      // Handles stale persisted values from previous schema versions where
+      // ranges may have been different.
+      for (const param of pipeline.params) {
+        if ((param.type === 'slider' || param.type === 'number') && result[param.id] !== undefined) {
+          let val = Number(result[param.id]);
+          if (!isNaN(val)) {
+            if (param.min !== undefined && val < param.min) val = param.min;
+            if (param.max !== undefined && val > param.max) val = param.max;
+            if (val !== Number(result[param.id])) {
+              result[param.id] = val;
+            }
+          }
+        }
+      }
+
       _resolvedCache.set(pipelineId, {
         result, userRef: userValues, serverRef: serverDefaults, pipelineRef: pipeline,
       });

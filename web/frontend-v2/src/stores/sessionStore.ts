@@ -19,6 +19,10 @@ import type {
 import { generate, generateStream } from '@/api/client';
 import { generateUUID, createThumbnail, isBase64DataUrl } from '@/utils';
 import { idbStorage, migrateFromLocalStorage } from '@/utils/idbStorage';
+import { logger } from '@/utils/logger';
+
+const log = logger('Session');
+const historyLog = logger('History');
 import { useAppStore } from './appStore';
 import { useFormStore } from './formStore';
 
@@ -106,6 +110,7 @@ export const useSessionStore = create<SessionState>()(
        * Start a generation for the given pipeline
        */
       startGeneration: async (pipelineId) => {
+        log.info(`Starting ${pipelineId}...`);
         const appStore = useAppStore.getState();
         const formStore = useFormStore.getState();
 
@@ -240,6 +245,7 @@ export const useSessionStore = create<SessionState>()(
               state.progress = null;
             });
           } else {
+            log.error(`${pipelineId} generation failed:`, error);
             set((state) => {
               state.status = 'error';
               state.error = error instanceof Error ? error.message : 'Generation failed';
@@ -338,7 +344,7 @@ export const useSessionStore = create<SessionState>()(
             thumbnailUrl = await createThumbnail(url);
             fullImageUrl = url;
           } catch (error) {
-            console.error('Failed to create thumbnail:', error);
+            log.error('Failed to create thumbnail:', error);
             thumbnailUrl = '';
           }
         } else {
@@ -390,7 +396,7 @@ export const useSessionStore = create<SessionState>()(
           }
         }
         if (migrated) {
-          console.info('[History] Migrated legacy video thumbnails to placeholder');
+          historyLog.info('Migrated legacy video thumbnails to placeholder');
         }
       },
       partialize: (state) => ({

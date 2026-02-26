@@ -9,6 +9,9 @@
  */
 
 import type { StateStorage } from 'zustand/middleware';
+import { logger } from './logger';
+
+const log = logger('IDB');
 
 const DB_NAME = 'llm-dit-studio';
 const STORE_NAME = 'zustand';
@@ -67,7 +70,7 @@ export const idbStorage: StateStorage = {
         request.onerror = () => reject(request.error);
       });
     } catch (error) {
-      console.warn('[idbStorage] getItem failed, falling back to localStorage:', error);
+      log.warn(' getItem failed, falling back to localStorage:', error);
       return localStorage.getItem(name);
     }
   },
@@ -84,7 +87,7 @@ export const idbStorage: StateStorage = {
         request.onerror = () => reject(request.error);
       });
     } catch (error) {
-      console.warn('[idbStorage] setItem failed, falling back to localStorage:', error);
+      log.warn(' setItem failed, falling back to localStorage:', error);
       try {
         localStorage.setItem(name, value);
       } catch {
@@ -105,7 +108,7 @@ export const idbStorage: StateStorage = {
         request.onerror = () => reject(request.error);
       });
     } catch (error) {
-      console.warn('[idbStorage] removeItem failed:', error);
+      log.warn(' removeItem failed:', error);
     }
   },
 };
@@ -127,10 +130,10 @@ export async function migrateFromLocalStorage(key: string): Promise<void> {
 
     await idbStorage.setItem(key, existing);
     localStorage.removeItem(key);
-    console.log(`[idbStorage] Migrated '${key}' from localStorage to IndexedDB`);
+    log.info(`Migrated '${key}' from localStorage to IndexedDB`);
   } catch (error) {
     // Migration failed -- localStorage data stays put, will be read by
     // the fallback path in getItem on next load
-    console.warn('[idbStorage] Migration failed (data preserved in localStorage):', error);
+    log.warn(' Migration failed (data preserved in localStorage):', error);
   }
 }

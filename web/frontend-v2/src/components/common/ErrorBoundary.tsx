@@ -8,6 +8,9 @@
 
 import { Component } from 'react';
 import type { ReactNode, ErrorInfo } from 'react';
+import { logger } from '@/utils/logger';
+
+const log = logger('ErrorBoundary');
 
 interface Props {
   children: ReactNode;
@@ -27,7 +30,7 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
-    console.error('[ErrorBoundary] Caught error:', error, info.componentStack);
+    log.error('Caught error:', error, info.componentStack);
   }
 
   handleRetry = () => {

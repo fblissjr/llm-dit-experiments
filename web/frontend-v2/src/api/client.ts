@@ -18,6 +18,9 @@ import type {
   LoRAListResponse,
   ClearCacheResponse,
 } from './types';
+import { logger } from '@/utils/logger';
+
+const log = logger('API');
 
 class APIError extends Error {
   constructor(
@@ -54,6 +57,7 @@ async function request<T>(
       // Response wasn't JSON
     }
 
+    log.error(`${options.method ?? 'GET'} ${endpoint} -> ${response.status}:`, message);
     throw new APIError(message, response.status, details);
   }
 
@@ -150,7 +154,9 @@ export async function* generateStream(
   });
 
   if (!response.ok) {
-    yield { type: 'error', error: `Request failed: ${response.statusText}` };
+    const errMsg = `Request failed: ${response.statusText}`;
+    log.error(`SSE POST ${endpoint} -> ${response.status}:`, errMsg);
+    yield { type: 'error', error: errMsg };
     return;
   }
 
@@ -192,6 +198,7 @@ export async function* generateStream(
             } else if (parsed.output_path || parsed.urls || parsed.type === 'complete') {
               yield { type: 'result', data: parsed as GenerationResult };
             } else if (parsed.error || parsed.type === 'error') {
+              log.error('SSE server error:', parsed.error || parsed.message);
               yield { type: 'error', error: parsed.error || parsed.message };
             }
           } catch {

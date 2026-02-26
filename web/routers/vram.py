@@ -8,13 +8,11 @@ LoRA discovery endpoints are also included here since they relate to
 model configuration.
 """
 
-import gc
 import logging
 import traceback
 from pathlib import Path
 from typing import Callable
 
-import torch
 from fastapi import APIRouter, HTTPException
 
 from web.dependencies import ConfigDep, ManagerDep
@@ -247,36 +245,37 @@ async def vram_unload_qwen_image_t2i(manager: ManagerDep):
 
 
 async def vram_load_ltx2(config: ConfigDep, manager: ManagerDep):
-    """Validate LTX-2 two-stage pipeline configuration.
-
-    Checks that all required files exist: transformer, text encoder,
-    VAE, spatial upsampler, and (optionally) distilled LoRA.
-    """
+    """Load LTX-2 pipeline (validates config then loads models)."""
     from web.routers.ltx2 import get_ltx2_model_path
 
+    # Early return if already loaded
+    if manager.is_loaded("ltx2"):
+        status = manager.get_vram_status()
+        return {
+            "success": True,
+            "message": "LTX-2 pipeline already loaded",
+            "vram": status.get("vram"),
+        }
+
+    # Validate required files before attempting load
     try:
         model_path = get_ltx2_model_path(config)
         missing = []
         ltx2_cfg = config.ltx2
 
-        # Check required directories
         if not (model_path / "transformer").exists():
-            missing.append(f"transformer/ directory")
+            missing.append("transformer/ directory")
 
-        # Check text encoder
         if not (model_path / "text_encoder").exists():
             missing.append("text_encoder/ directory")
 
-        # Check VAE
         if not (model_path / "vae").exists():
             missing.append("vae/ directory")
 
-        # Check spatial upsampler (two-stage)
         upsampler_file = ltx2_cfg.spatial_upsampler_file if ltx2_cfg else "ltx-2-spatial-upscaler-x2-1.0.safetensors"
         if not (model_path / upsampler_file).exists():
             missing.append(f"spatial upsampler: {upsampler_file}")
 
-        # Check distilled LoRA (optional, only if configured)
         distilled_lora = ltx2_cfg.distilled_lora_path if ltx2_cfg else ""
         if distilled_lora:
             lora_path = Path(distilled_lora)
@@ -286,33 +285,38 @@ async def vram_load_ltx2(config: ConfigDep, manager: ManagerDep):
                 missing.append(f"distilled LoRA: {distilled_lora}")
 
         if missing:
-            raise ValueError(f"Missing LTX-2 files: {', '.join(missing)}")
-
-        status = manager.get_vram_status()
-        return {
-            "success": True,
-            "message": f"LTX-2 two-stage pipeline validated: {model_path}",
-            "vram": status.get("vram"),
-        }
+            raise HTTPException(
+                status_code=400,
+                detail=f"Missing LTX-2 files: {', '.join(missing)}",
+            )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"[LTX-2] Configuration validation failed: {e}")
         raise HTTPException(status_code=503, detail=f"LTX-2 configuration error: {e}")
 
+    # Actually load models (encoder, transformer cache, VAE)
+    try:
+        result = manager.load("ltx2")
+        status = manager.get_vram_status()
+        return {
+            "success": True,
+            "message": f"LTX-2 pipeline loaded ({result.mode})",
+            "vram": status.get("vram"),
+        }
+    except Exception as e:
+        logger.error(f"[LTX-2] Failed to load pipeline: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=503, detail=f"Failed to load LTX-2 pipeline: {e}")
+
 
 async def vram_unload_ltx2(manager: ManagerDep):
-    """Clean up VRAM after LTX-2 operations.
-
-    Note: The pure PyTorch pipeline automatically unloads components after
-    each generation. This endpoint performs a manual memory cleanup.
-    """
-    gc.collect()
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-
+    """Unload LTX-2 pipeline to free VRAM."""
+    unloaded = manager.unload("ltx2")
     status = manager.get_vram_status()
     return {
-        "success": True,
-        "message": "LTX-2 memory cleanup complete",
+        "success": unloaded,
+        "message": "LTX-2 pipeline unloaded" if unloaded else "LTX-2 pipeline was not loaded",
         "vram": status.get("vram"),
     }
 

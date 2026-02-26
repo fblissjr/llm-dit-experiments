@@ -6,7 +6,10 @@
 
 import { useCallback } from 'react';
 import { cn } from '@/utils';
+import { logger } from '@/utils/logger';
 import { useAppStore, useFormStore, useSessionStore } from '@/stores';
+
+const log = logger('Generate');
 
 export function GenerateButton() {
   const selectedPipelineId = useAppStore((s) => s.selectedPipelineId);
@@ -31,7 +34,9 @@ export function GenerateButton() {
     } else {
       // Validate first
       const errors = validate(selectedPipelineId);
-      if (errors.length === 0) {
+      if (errors.length > 0) {
+        log.error(`Validation failed for ${selectedPipelineId}:`, errors);
+      } else {
         startGeneration(selectedPipelineId);
       }
     }

@@ -4,6 +4,10 @@
  * Creates compressed thumbnails from base64 images for storage efficiency.
  */
 
+import { logger } from './logger';
+
+const log = logger('Thumbnail');
+
 const THUMBNAIL_SIZE = 80;
 const THUMBNAIL_QUALITY = 0.6;
 
@@ -64,13 +68,13 @@ export async function createThumbnail(
         const thumbnailUrl = canvas.toDataURL('image/jpeg', quality);
         resolve(thumbnailUrl);
       } catch (error) {
-        console.error('Error creating thumbnail:', error);
+        log.error('Error creating thumbnail:', error);
         resolve('');
       }
     };
 
     img.onerror = () => {
-      console.error('Error loading image for thumbnail');
+      log.error('Error loading image for thumbnail');
       resolve('');
     };
 

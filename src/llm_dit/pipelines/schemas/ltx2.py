@@ -21,6 +21,7 @@ VIDEO_DIMENSION_PRESETS = [
     "768x768",    # Square
     "1024x576",   # Widescreen 16:9
     "576x1024",   # Vertical video
+    "Custom",     # Set when width/height are modified directly
 ]
 
 # Offload strategies
@@ -335,11 +336,11 @@ register_pipeline(PipelineSchema(
             label="GE Gamma",
             default=0.0,
             min=0.0,
-            max=1.0,
+            max=2.0,
             step=0.05,
             group="advanced",
             conditional={"use_two_stage": True},
-            tooltip="Gradient estimation gamma. 0.0 disables. Used for quality refinement in two-stage.",
+            tooltip="Gradient estimation gamma. 0=disabled, 2.0=reference. Extrapolates velocity between denoising steps.",
         ),
         ParamSchema(
             id="distilled_lora_scale",
