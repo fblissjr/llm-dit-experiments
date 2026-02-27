@@ -48,6 +48,89 @@ from llm_dit.encoders.protocol import (
 
 logger = logging.getLogger(__name__)
 
+
+# ---------------------------------------------------------------------------
+# Prompt enhancement utilities
+# ---------------------------------------------------------------------------
+
+# Unicode smart-quote replacements that Gemma tends to insert.
+# Matches the official LTX-2 clean_response() in ltx_pipelines/utils/helpers.py.
+_UNICODE_REPLACEMENTS = str.maketrans(
+    "\u2018\u2019\u201c\u201d\u2014\u2013\u00a0\u2032\u2212",
+    "''\"\"-- '-",
+)
+
+# System prompt for T2V prompt enhancement.
+# Source: official LTX-2 gemma_t2v_system_prompt.txt
+LTX2_T2V_SYSTEM_PROMPT = """\
+You are a Creative Assistant. Given a user's raw input prompt describing a scene or concept, \
+expand it into a detailed video generation prompt with specific visuals and integrated audio \
+to guide a text-to-video model.
+
+#### Guidelines
+- Strictly follow all aspects of the user's raw input: include every element requested \
+(style, visuals, motions, actions, camera movement, audio).
+    - If the input is vague, invent concrete details: lighting, textures, materials, scene \
+settings, etc.
+        - For characters: describe gender, clothing, hair, expressions. DO NOT invent \
+unrequested characters.
+- Use active language: present-progressive verbs ("is walking," "speaking"). If no action \
+specified, describe natural movements.
+- Maintain chronological flow: use temporal connectors ("as," "then," "while").
+- Audio layer: Describe complete soundscape (background audio, ambient sounds, SFX, \
+speech/music when requested). Integrate sounds chronologically alongside actions. Be specific \
+(e.g., "soft footsteps on tile"), not vague (e.g., "ambient sound is present").
+- Speech (only when requested):
+    - For ANY speech-related input (talking, conversation, singing, etc.), ALWAYS include \
+exact words in quotes with voice characteristics (e.g., "The man says in an excited voice: \
+'You won't believe what I just saw!'").
+    - Specify language if not English and accent if relevant.
+- Style: Include visual style at the beginning: "Style: <style>, <rest of prompt>." \
+Default to cinematic-realistic if unspecified. Omit if unclear.
+- Visual and audio only: NO non-visual/auditory senses (smell, taste, touch).
+- Restrained language: Avoid dramatic/exaggerated terms. Use mild, natural phrasing.
+    - Colors: Use plain terms ("red dress"), not intensified ("vibrant blue," "bright red").
+    - Lighting: Use neutral descriptions ("soft overhead light"), not harsh ("blinding light").
+    - Facial features: Use delicate modifiers for subtle features (i.e., "subtle freckles").
+
+#### Important notes:
+- Analyze the user's raw input carefully. In cases of FPV or POV, exclude the description \
+of the subject whose POV is requested.
+- Camera motion: DO NOT invent camera motion unless requested by the user.
+- Speech: DO NOT modify user-provided character dialogue unless it's a typo.
+- No timestamps or cuts: DO NOT use timestamps or describe scene cuts unless explicitly requested.
+- Format: DO NOT use phrases like "The scene opens with...". Start directly with Style \
+(optional) and chronological scene description.
+- Format: DO NOT start your response with special characters.
+- DO NOT invent dialogue unless the user mentions speech/talking/singing/conversation.
+- If the user's raw input prompt is highly detailed, chronological and in the requested \
+format: DO NOT make major edits or introduce new elements. Add/enhance audio descriptions \
+if missing.
+
+#### Output Format (Strict):
+- Single continuous paragraph in natural language (English).
+- NO titles, headings, prefaces, code fences, or Markdown.
+- If unsafe/invalid, return original user prompt. Never ask questions or clarifications.
+
+Your output quality is CRITICAL. Generate visually rich, dynamic prompts with integrated \
+audio for high-quality video generation."""
+
+
+def clean_enhanced_prompt(text: str) -> str:
+    """Clean Gemma's enhanced prompt output.
+
+    Strips Unicode smart quotes and leading non-letter characters that Gemma
+    tends to insert. Matches official LTX-2 ``clean_response()`` behavior.
+    """
+    text = text.translate(_UNICODE_REPLACEMENTS)
+
+    # Remove leading non-letter characters
+    for i, char in enumerate(text):
+        if char.isalpha():
+            return text[i:]
+    return text
+
+
 # Default paths to LTX-2 model components
 # CRITICAL: Tokenizer is in tokenizer/ folder, model weights are in text_encoder/
 # Using wrong tokenizer causes completely wrong token IDs -> garbage output
@@ -402,8 +485,7 @@ class Gemma3Encoder:
         device: str = "cuda",
         dtype: torch.dtype = torch.bfloat16,
         max_sequence_length: int = 256,
-        load_in_4bit: bool = False,
-        load_in_8bit: bool = False,
+        quantization_variant: str = "bf16",
         max_memory: Optional[dict] = None,
         connectors_path: Optional[str] = None,
         tokenizer_path: Optional[str] = None,
@@ -417,8 +499,8 @@ class Gemma3Encoder:
             device: Device to load on ("cuda", "cpu", "auto").
             dtype: Model dtype (typically bfloat16).
             max_sequence_length: Maximum sequence length for encoding.
-            load_in_4bit: Apply additional 4-bit quantization (on top of QAT).
-            load_in_8bit: Apply additional 8-bit quantization.
+            quantization_variant: Variant metadata: "bf16", "int8", "q4_0". Used for
+                                  encoder_info reporting, not for model loading.
             max_memory: Memory limits per device for CPU offloading.
                        Example: {0: "18GiB", "cpu": "32GiB"} limits GPU 0 to 18GB.
             connectors_path: Path to connector weights (safetensors).
@@ -434,8 +516,7 @@ class Gemma3Encoder:
         self._device_str = device
         self._dtype = dtype
         self._max_sequence_length = max_sequence_length
-        self._load_in_4bit = load_in_4bit
-        self._load_in_8bit = load_in_8bit
+        self._quantization_variant = quantization_variant
         self._max_memory = max_memory
         self._connectors_path = connectors_path or DEFAULT_CONNECTOR_WEIGHTS_SHARD
         # CRITICAL: Text encoder model/config and tokenizer are in DIFFERENT directories!
@@ -452,6 +533,8 @@ class Gemma3Encoder:
         self._embeddings_connector: Optional[Embeddings1DConnector] = None
         self._is_loaded = False
         self._is_offloaded = False
+        self._is_pinned = False
+        self._pinned_shadows: dict[str, torch.Tensor] = {}
 
     @classmethod
     def from_pretrained(
@@ -475,7 +558,7 @@ class Gemma3Encoder:
             device: Device to load on.
             dtype: Model dtype as string.
             max_sequence_length: Max sequence length.
-            quantization: Additional quantization ("4bit", "8bit", or None).
+            quantization: Quantization method (torchao unified) or None for no quantization.
             max_memory: Memory limits for CPU offloading. Example: {0: "18GiB", "cpu": "32GiB"}.
             connectors_path: Path to connector weights shard.
                             Defaults to text_encoder/ jointly-trained weights.
@@ -499,8 +582,7 @@ class Gemma3Encoder:
             device=device,
             dtype=dtype_torch,
             max_sequence_length=max_sequence_length,
-            load_in_4bit=(quantization == "4bit"),
-            load_in_8bit=(quantization == "8bit"),
+            quantization_variant="q4_0" if quantization in ("4bit", "q4_0") else ("int8" if quantization in ("8bit", "int8") else "bf16"),
             max_memory=max_memory,
             connectors_path=connectors_path,
             tokenizer_path=tokenizer_path,
@@ -539,16 +621,9 @@ class Gemma3Encoder:
 
         logger.info(f"Loading Gemma 3 text encoder (no vision) from: {self._text_encoder_path}")
 
-        # Build quantization config if needed
-        quantization_config = None
-        if self._load_in_4bit or self._load_in_8bit:
-            from transformers import BitsAndBytesConfig
-
-            quantization_config = BitsAndBytesConfig(
-                load_in_4bit=self._load_in_4bit,
-                load_in_8bit=self._load_in_8bit,
-                bnb_4bit_compute_dtype=self._dtype,
-            )
+        # Quantization is applied post-load by the variant loaders
+        # (gemma3_variants.py) via quantize_component(). The _quantization_variant
+        # flag is only used for metadata tracking, not model loading.
 
         # Determine device map
         device_map = None
@@ -646,13 +721,6 @@ class Gemma3Encoder:
             logger.info(f"Moving model to {device_name}...")
             self._model = self._model.to(device=device_name)
         # else: keep on CPU
-
-        # Apply quantization if requested
-        if quantization_config is not None:
-            logger.warning(
-                "Quantization requested but not applied during manual loading. "
-                "Model loaded in full precision."
-            )
 
         # Load tokenizer from LOCAL LTX-2 files (AUTHORITATIVE SOURCE)
         # Vocab size analysis (2026-01-20):
@@ -878,7 +946,7 @@ class Gemma3Encoder:
             hidden_dim=self.embedding_dim,
             max_sequence_length=self._max_sequence_length,
             capabilities=capabilities,
-            quantization="q4_0" if not self._load_in_4bit else "q4_bnb",
+            quantization=self._quantization_variant if self._quantization_variant != "bf16" else "none",
             device=self.device,
             dtype=self._dtype,
         )
@@ -1409,19 +1477,27 @@ class Gemma3Encoder:
             self._model.to(self.device)
             self._is_offloaded = False
 
-        # Build full prompt
+        # Build structured messages for proper Gemma3 chat formatting.
+        # The tokenizer ships chat_template.jinja with <start_of_turn>/<end_of_turn>
+        # tokens -- naive string concatenation produces worse results.
+        messages = []
         if system_prompt:
-            full_prompt = f"{system_prompt}\n\n{prompt}"
-        else:
-            full_prompt = prompt
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
 
-        # Tokenize
+        full_prompt = self._tokenizer.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True
+        )
+
+        # Use model's actual context window for generation truncation, not
+        # _max_sequence_length (which is the DiT embedding output size, e.g. 256).
+        model_ctx = getattr(self._model.config, "max_position_embeddings", 8192)
         encoded = self._tokenizer(
             full_prompt,
             return_tensors="pt",
             padding=True,
             truncation=True,
-            max_length=self._max_sequence_length - max_new_tokens,
+            max_length=model_ctx - max_new_tokens,
         )
         input_ids = encoded.input_ids.to(self.device)
         attention_mask = encoded.attention_mask.to(self.device)
@@ -1446,9 +1522,32 @@ class Gemma3Encoder:
         return generated_text.strip()
 
     def offload(self) -> None:
-        """Offload model to CPU and free GPU memory."""
+        """Offload model to CPU and free GPU memory.
+
+        When pinned shadow buffers exist (from offload_to_pinned), copies CUDA
+        tensors directly into the pre-allocated pinned buffers. This avoids
+        the 2N allocation + 2N copy overhead of model.to("cpu") + re-pin
+        on every cycle, replacing it with 0 allocations + N copies.
+        """
         if self._model is not None:
-            self._model.to("cpu")
+            if self._is_pinned and self._pinned_shadows:
+                # Fast path: copy CUDA -> pre-allocated pinned buffers
+                for name, param in self._model.named_parameters():
+                    pinned = self._pinned_shadows.get(name)
+                    if pinned is not None:
+                        pinned.copy_(param.data)
+                        param.data = pinned
+                    else:
+                        param.data = param.data.cpu().pin_memory()
+                for name, buf in self._model.named_buffers():
+                    pinned = self._pinned_shadows.get(name)
+                    if pinned is not None:
+                        pinned.copy_(buf.data)
+                        buf.data = pinned
+                    else:
+                        buf.data = buf.data.cpu().pin_memory()
+            else:
+                self._model.to("cpu")
         if self._feature_extractor is not None:
             self._feature_extractor.to("cpu")
         if self._embeddings_connector is not None:
@@ -1460,6 +1559,45 @@ class Gemma3Encoder:
             torch.cuda.empty_cache()
 
         logger.info("Gemma3 encoder offloaded to CPU")
+
+    def offload_to_pinned(self) -> None:
+        """Offload model to CPU with pinned memory for fast GPU shuttle via DMA.
+
+        Pinned (page-locked) memory enables direct DMA transfers between CPU
+        and GPU, making subsequent .to("cuda") calls ~2-3x faster (~1-2s for
+        the full 12GB encoder instead of ~4-5s).
+
+        Also stores references to the pinned tensors as shadow buffers so that
+        subsequent offload() calls can copy CUDA->pinned directly without
+        re-allocating pinned memory on every cycle.
+        """
+        if self._model is None:
+            return
+
+        logger.info("Offloading Gemma3 encoder to CPU with pinned memory...")
+        self._model.to("cpu")
+
+        pinned_count = 0
+        self._pinned_shadows = {}
+        for name, param in self._model.named_parameters():
+            if not param.data.is_pinned():
+                param.data = param.data.pin_memory()
+                pinned_count += 1
+            self._pinned_shadows[name] = param.data
+        for name, buf in self._model.named_buffers():
+            if not buf.data.is_pinned():
+                buf.data = buf.data.pin_memory()
+            self._pinned_shadows[name] = buf.data
+
+        # Also offload feature extractor and connector
+        if self._feature_extractor is not None:
+            self._feature_extractor.to("cpu")
+        if self._embeddings_connector is not None:
+            self._embeddings_connector.to("cpu")
+
+        self._is_offloaded = True
+        self._is_pinned = True
+        logger.info(f"Gemma3 encoder offloaded with {pinned_count} pinned tensors")
 
     def to(self, device: torch.device) -> "Gemma3Encoder":
         """Move model to device."""

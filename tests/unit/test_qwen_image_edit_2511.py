@@ -53,11 +53,9 @@ class TestEditMultiInputValidation:
         from llm_dit.pipelines.qwen_image_diffusers import QwenImageDiffusersPipeline
 
         # Create a mock pipeline instance
-        mock_decompose_pipe = MagicMock()
         mock_edit_pipe = MagicMock()
 
         pipe = QwenImageDiffusersPipeline(
-            decompose_pipe=mock_decompose_pipe,
             edit_pipe=mock_edit_pipe,
         )
 
@@ -78,11 +76,9 @@ class TestEditMultiInputValidation:
         """Test edit_multi raises ValueError for empty list."""
         from llm_dit.pipelines.qwen_image_diffusers import QwenImageDiffusersPipeline
 
-        mock_decompose_pipe = MagicMock()
         mock_edit_pipe = MagicMock()
 
         pipe = QwenImageDiffusersPipeline(
-            decompose_pipe=mock_decompose_pipe,
             edit_pipe=mock_edit_pipe,
         )
 
@@ -99,7 +95,6 @@ class TestEditMultiInputValidation:
         """Test edit_multi accepts 2 images (minimum)."""
         from llm_dit.pipelines.qwen_image_diffusers import QwenImageDiffusersPipeline
 
-        mock_decompose_pipe = MagicMock()
         mock_edit_pipe = MagicMock()
 
         # Set up mock to return proper result
@@ -108,7 +103,6 @@ class TestEditMultiInputValidation:
         mock_edit_pipe.return_value = mock_result
 
         pipe = QwenImageDiffusersPipeline(
-            decompose_pipe=mock_decompose_pipe,
             edit_pipe=mock_edit_pipe,
         )
 
@@ -128,7 +122,6 @@ class TestEditMultiInputValidation:
         """Test edit_multi accepts 4 images."""
         from llm_dit.pipelines.qwen_image_diffusers import QwenImageDiffusersPipeline
 
-        mock_decompose_pipe = MagicMock()
         mock_edit_pipe = MagicMock()
 
         mock_result = MagicMock()
@@ -136,7 +129,6 @@ class TestEditMultiInputValidation:
         mock_edit_pipe.return_value = mock_result
 
         pipe = QwenImageDiffusersPipeline(
-            decompose_pipe=mock_decompose_pipe,
             edit_pipe=mock_edit_pipe,
         )
 
@@ -158,7 +150,6 @@ class TestEditMultiImageConversion:
         """Test RGBA images are converted to RGB."""
         from llm_dit.pipelines.qwen_image_diffusers import QwenImageDiffusersPipeline
 
-        mock_decompose_pipe = MagicMock()
         mock_edit_pipe = MagicMock()
 
         mock_result = MagicMock()
@@ -166,7 +157,6 @@ class TestEditMultiImageConversion:
         mock_edit_pipe.return_value = mock_result
 
         pipe = QwenImageDiffusersPipeline(
-            decompose_pipe=mock_decompose_pipe,
             edit_pipe=mock_edit_pipe,
         )
 
@@ -189,7 +179,6 @@ class TestEditMultiImageConversion:
         """Test handles mixed RGB and RGBA images."""
         from llm_dit.pipelines.qwen_image_diffusers import QwenImageDiffusersPipeline
 
-        mock_decompose_pipe = MagicMock()
         mock_edit_pipe = MagicMock()
 
         mock_result = MagicMock()
@@ -197,7 +186,6 @@ class TestEditMultiImageConversion:
         mock_edit_pipe.return_value = mock_result
 
         pipe = QwenImageDiffusersPipeline(
-            decompose_pipe=mock_decompose_pipe,
             edit_pipe=mock_edit_pipe,
         )
 
@@ -221,7 +209,6 @@ class TestEditMultiParameters:
         """Test default num_inference_steps is 40."""
         from llm_dit.pipelines.qwen_image_diffusers import QwenImageDiffusersPipeline
 
-        mock_decompose_pipe = MagicMock()
         mock_edit_pipe = MagicMock()
 
         mock_result = MagicMock()
@@ -229,7 +216,6 @@ class TestEditMultiParameters:
         mock_edit_pipe.return_value = mock_result
 
         pipe = QwenImageDiffusersPipeline(
-            decompose_pipe=mock_decompose_pipe,
             edit_pipe=mock_edit_pipe,
         )
 
@@ -248,7 +234,6 @@ class TestEditMultiParameters:
         """Test custom num_inference_steps is respected."""
         from llm_dit.pipelines.qwen_image_diffusers import QwenImageDiffusersPipeline
 
-        mock_decompose_pipe = MagicMock()
         mock_edit_pipe = MagicMock()
 
         mock_result = MagicMock()
@@ -256,7 +241,6 @@ class TestEditMultiParameters:
         mock_edit_pipe.return_value = mock_result
 
         pipe = QwenImageDiffusersPipeline(
-            decompose_pipe=mock_decompose_pipe,
             edit_pipe=mock_edit_pipe,
         )
 
@@ -275,7 +259,6 @@ class TestEditMultiParameters:
         """Test default cfg_scale is 4.0."""
         from llm_dit.pipelines.qwen_image_diffusers import QwenImageDiffusersPipeline
 
-        mock_decompose_pipe = MagicMock()
         mock_edit_pipe = MagicMock()
 
         mock_result = MagicMock()
@@ -283,7 +266,6 @@ class TestEditMultiParameters:
         mock_edit_pipe.return_value = mock_result
 
         pipe = QwenImageDiffusersPipeline(
-            decompose_pipe=mock_decompose_pipe,
             edit_pipe=mock_edit_pipe,
         )
 
@@ -301,7 +283,6 @@ class TestEditMultiParameters:
         """Test custom cfg_scale is respected."""
         from llm_dit.pipelines.qwen_image_diffusers import QwenImageDiffusersPipeline
 
-        mock_decompose_pipe = MagicMock()
         mock_edit_pipe = MagicMock()
 
         mock_result = MagicMock()
@@ -309,7 +290,6 @@ class TestEditMultiParameters:
         mock_edit_pipe.return_value = mock_result
 
         pipe = QwenImageDiffusersPipeline(
-            decompose_pipe=mock_decompose_pipe,
             edit_pipe=mock_edit_pipe,
         )
 
@@ -328,7 +308,6 @@ class TestEditMultiParameters:
         """Test instruction is passed as prompt parameter."""
         from llm_dit.pipelines.qwen_image_diffusers import QwenImageDiffusersPipeline
 
-        mock_decompose_pipe = MagicMock()
         mock_edit_pipe = MagicMock()
 
         mock_result = MagicMock()
@@ -336,7 +315,6 @@ class TestEditMultiParameters:
         mock_edit_pipe.return_value = mock_result
 
         pipe = QwenImageDiffusersPipeline(
-            decompose_pipe=mock_decompose_pipe,
             edit_pipe=mock_edit_pipe,
         )
 
@@ -355,7 +333,6 @@ class TestEditMultiParameters:
         """Test images are passed as a list to the pipeline."""
         from llm_dit.pipelines.qwen_image_diffusers import QwenImageDiffusersPipeline
 
-        mock_decompose_pipe = MagicMock()
         mock_edit_pipe = MagicMock()
 
         mock_result = MagicMock()
@@ -363,7 +340,6 @@ class TestEditMultiParameters:
         mock_edit_pipe.return_value = mock_result
 
         pipe = QwenImageDiffusersPipeline(
-            decompose_pipe=mock_decompose_pipe,
             edit_pipe=mock_edit_pipe,
         )
 
@@ -386,10 +362,7 @@ class TestEditMultiLazyLoading:
         """Test edit model is loaded if not already loaded."""
         from llm_dit.pipelines.qwen_image_diffusers import QwenImageDiffusersPipeline
 
-        mock_decompose_pipe = MagicMock()
-
         pipe = QwenImageDiffusersPipeline(
-            decompose_pipe=mock_decompose_pipe,
             edit_pipe=None,  # Not loaded
         )
         pipe._edit_model_path = "Qwen/Qwen-Image-Edit-2511"
@@ -443,7 +416,6 @@ class TestEditMultiMethodSignature:
         """Test method returns a PIL Image."""
         from llm_dit.pipelines.qwen_image_diffusers import QwenImageDiffusersPipeline
 
-        mock_decompose_pipe = MagicMock()
         mock_edit_pipe = MagicMock()
 
         output_image = Image.new("RGB", (1024, 1024), (0, 255, 0))
@@ -452,7 +424,6 @@ class TestEditMultiMethodSignature:
         mock_edit_pipe.return_value = mock_result
 
         pipe = QwenImageDiffusersPipeline(
-            decompose_pipe=mock_decompose_pipe,
             edit_pipe=mock_edit_pipe,
         )
 

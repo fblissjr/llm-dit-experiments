@@ -1,7 +1,7 @@
 """
 Z-Image Pipeline Schema
 
-last updated: 2026-01-27
+last updated: 2026-02-11
 
 Z-Image (S3-DiT 6B) is the primary image generation pipeline with two variants:
 - Turbo: Fast 9-step distilled generation (CFG baked in)
@@ -9,10 +9,12 @@ Z-Image (S3-DiT 6B) is the primary image generation pipeline with two variants:
 
 Advanced features include:
 - DyPE (Dynamic Position Extrapolation) for high-resolution generation
-- SLG (Skip Layer Guidance) for improved anatomy
-- FMTT (Flow Map Trajectory Tilting) with SigLIP for prompt adherence
+- LoRA weight loading with per-request selection
 - VL conditioning via Qwen3-VL vision-language model
 - Image-to-image editing with mask support
+
+Note: SLG and FMTT are supported at the API level but not exposed in the
+frontend schema. Pass slg_* and fmtt_* parameters directly via API requests.
 """
 
 from . import register_pipeline, PipelineSchema, ParamSchema
@@ -28,12 +30,6 @@ DIMENSION_PRESETS = [
     "832x1216",   # Portrait 2:3
     "896x1152",   # Portrait 3:4
 ]
-
-# Default negative prompt for Z-Image base variant (when user input is empty)
-DEFAULT_NEGATIVE_PROMPT = (
-    "low quality, worst quality, blurry, pixelated, noisy, artifacts, watermark, text, logo, "
-    "bad anatomy, bad hands, extra limbs"
-)
 
 
 register_pipeline(PipelineSchema(
@@ -51,6 +47,16 @@ register_pipeline(PipelineSchema(
     params=[
         # === Basic Parameters ===
         ParamSchema(
+            id="preset",
+            type="select",
+            label="Preset",
+            default="photorealistic",
+            options=[],  # Populated dynamically from API
+            options_endpoint="/api/presets/zimage",
+            group="basic",
+            tooltip="Load a generation preset with pre-configured settings. Presets provide negative prompts, CFG, and steps optimized for different use cases.",
+        ),
+        ParamSchema(
             id="prompt",
             type="textarea",
             label="Prompt",
@@ -64,12 +70,12 @@ register_pipeline(PipelineSchema(
             id="negative_prompt",
             type="textarea",
             label="Negative Prompt",
-            default=DEFAULT_NEGATIVE_PROMPT,
+            default="",  # Populated when preset is selected
             placeholder="Elements to avoid (blur, artifacts, etc.)...",
             rows=2,
             group="basic",
             conditional={"_variant": "base"},  # Only show for base variant
-            tooltip="What to avoid in the image. Uses CFG to steer away from unwanted elements.",
+            tooltip="What to avoid. Preset populates this - edit to customize.",
         ),
         ParamSchema(
             id="width",
@@ -202,108 +208,6 @@ register_pipeline(PipelineSchema(
             tooltip="NTK-aware scaling factor. 0 = auto-calculate from resolution.",
         ),
 
-        # === SLG (Skip Layer Guidance) ===
-        ParamSchema(
-            id="slg_enabled",
-            type="checkbox",
-            label="Enable SLG",
-            default=False,
-            group="advanced",
-            tooltip="Skip Layer Guidance for improved anatomy and composition.",
-        ),
-        ParamSchema(
-            id="slg_scale",
-            type="slider",
-            label="SLG Scale",
-            default=2.5,
-            min=0.0,
-            max=10.0,
-            step=0.1,
-            group="advanced",
-            conditional={"slg_enabled": True},
-            tooltip="Skip layer guidance strength. Higher = stronger effect.",
-        ),
-        ParamSchema(
-            id="slg_start_step",
-            type="slider",
-            label="SLG Start Step",
-            default=0.15,
-            min=0.0,
-            max=1.0,
-            step=0.01,
-            group="advanced",
-            conditional={"slg_enabled": True},
-            tooltip="When to start SLG (fraction of total steps).",
-        ),
-        ParamSchema(
-            id="slg_end_step",
-            type="slider",
-            label="SLG End Step",
-            default=0.7,
-            min=0.0,
-            max=1.0,
-            step=0.01,
-            group="advanced",
-            conditional={"slg_enabled": True},
-            tooltip="When to end SLG (fraction of total steps).",
-        ),
-        ParamSchema(
-            id="slg_skip_layers",
-            type="select",
-            label="SLG Skip Layers",
-            default="7,8,9",
-            options=["5,6,7", "7,8,9", "8,9,10", "10,11,12", "all_middle"],
-            group="advanced",
-            conditional={"slg_enabled": True},
-            tooltip="Which DiT layers to skip. Middle layers (7-10) work best.",
-        ),
-
-        # === FMTT (Flow Map Trajectory Tilting) ===
-        ParamSchema(
-            id="fmtt_enabled",
-            type="checkbox",
-            label="Enable FMTT",
-            default=False,
-            group="expert",
-            tooltip="Flow Map Trajectory Tilting with SigLIP for better prompt adherence.",
-        ),
-        ParamSchema(
-            id="fmtt_scale",
-            type="slider",
-            label="FMTT Scale",
-            default=1.0,
-            min=0.0,
-            max=5.0,
-            step=0.1,
-            group="expert",
-            conditional={"fmtt_enabled": True},
-            tooltip="FMTT guidance strength.",
-        ),
-        ParamSchema(
-            id="fmtt_start_step",
-            type="slider",
-            label="FMTT Start Step",
-            default=0.0,
-            min=0.0,
-            max=1.0,
-            step=0.01,
-            group="expert",
-            conditional={"fmtt_enabled": True},
-            tooltip="When to start FMTT (fraction of total steps).",
-        ),
-        ParamSchema(
-            id="fmtt_end_step",
-            type="slider",
-            label="FMTT End Step",
-            default=0.5,
-            min=0.0,
-            max=1.0,
-            step=0.01,
-            group="expert",
-            conditional={"fmtt_enabled": True},
-            tooltip="When to end FMTT (fraction of total steps).",
-        ),
-
         # === FBCache (Forward Block Cache) ===
         ParamSchema(
             id="fbcache_enabled",
@@ -371,34 +275,18 @@ register_pipeline(PipelineSchema(
                     "deeper negative numbers = earlier layers (more syntactic).",
         ),
 
-        # === VL Conditioning ===
+        # === LoRA Enhancement ===
         ParamSchema(
-            id="vl_enabled",
-            type="checkbox",
-            label="Enable VL Conditioning",
-            default=False,
-            group="advanced",
-            tooltip="Use Qwen3-VL vision-language model for image-guided generation.",
+            id="loras",
+            type="lora_list",
+            label="LoRA Weights",
+            default=[],
+            group="enhancement",
+            tooltip="LoRA files with strength (path:scale format, e.g. style.safetensors:0.8).",
+            scale_min=-2.0,
+            scale_max=2.0,
+            max_count=5,
         ),
-        ParamSchema(
-            id="vl_image",
-            type="image",
-            label="Reference Image",
-            group="advanced",
-            conditional={"vl_enabled": True},
-            tooltip="Upload an image to use as visual reference.",
-        ),
-        ParamSchema(
-            id="vl_strength",
-            type="slider",
-            label="VL Strength",
-            default=0.8,
-            min=0.0,
-            max=1.0,
-            step=0.05,
-            group="advanced",
-            conditional={"vl_enabled": True},
-            tooltip="How strongly to use the reference image.",
-        ),
+
     ],
 ))

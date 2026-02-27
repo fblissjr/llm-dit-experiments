@@ -1,27 +1,54 @@
-# agent context
+# agent context (v0.9.12)
 
-*last updated: 2026-02-01*
+*last updated: 2026-02-27*
 
 Quick reference for LLM agents. Read only what you need.
 
 **This is a hobbyist exploration platform** - not a product with a finish line. New models, experiments, and features are continuously added. The codebase evolves to support whatever we're curious about next.
+
+## hardware
+
+This machine has an **RTX 4090 with 24GB VRAM**. Tests requiring GPU should always work.
+
+## core principle
+
+**ALWAYS rely on retrieval and search over assumptions.**
+
+Before implementing anything, take a retrieval based approach rather than making assumptions.
+1. Check if config fields and values are exist and/or are accurate
+2. Check the schema for a given module
+3. Trace the full data flow from entry point to execution
+4. Find similar implementations in other pipelines
+
+Never assume you know where code is or what exists. Always verify by retrieval and search.
 
 ## onboarding (3 steps)
 
 | Step | File | Purpose |
 |------|------|---------|
 | 1 | This file | Critical rules, quick reference |
-| 2 | [internal/state/current.md](internal/state/current.md) | What's happening now |
-| 3 | Domain docs (see below) | Based on your task |
+| 2 | [internal/state/current.md](internal/state/current.md) | What's happening now, active pipelines, versions |
+| 3 | Domain docs (see navigation below) | Based on your task |
+| -- | [internal/log/](internal/log/) | Recent session logs (most recent `log_YYYY-MM-DD.md`) |
 
-**Optional:** [VISION.md](VISION.md) for architecture philosophy, [spec.md](spec.md) for backlog.
+**Optional:** [VISION.md](VISION.md) for architecture philosophy (L1-L6 composability hierarchy).
 
 ## critical rules
 
 - **no emojis** in code, docs, or output
 - **use `uv`** for all Python ops (`uv add`, `uv run`, `uv sync`)
 - **never commit** without explicit user approval
-- **always update state** after significant work
+- **use `ModelManager`** for all model load/unload/reload -- never manipulate model globals directly
+- **always update state** after significant work (see state management below)
+- **use `bun`** for all frontend ops (`bun install`, `bun run`, `bunx`) -- never `npm` or `yarn`
+
+### IndexedDB conventions (frontend)
+
+The frontend uses IndexedDB for persistence (3 stores: `llm-dit-history`, `llm-dit-app`, `llm-dit-form`). Rules:
+- **Never write migration scripts.** IndexedDB is a cache, not a database. Always provide a nuke path.
+- **Strip base64 data URLs** from persisted history params and form values in Zustand `partialize`. Large data URLs exhaust IndexedDB quota.
+- **"Reset Storage" button** in SettingsMenu wipes all IndexedDB stores and reloads. Use `ConfirmDialog` for destructive actions (clear history, reset storage).
+- **New persisted fields must be optional** with sensible defaults so existing stores hydrate without errors.
 
 ### configuration hierarchy
 
@@ -29,6 +56,98 @@ Config values ALWAYS win. Code should:
 1. Read from config.toml as source of truth
 2. Allow explicit parameter overrides when needed
 3. Never auto-detect when a config value exists
+
+**Config architecture:** Composed sub-configs in `src/llm_dit/config.py`:
+- Pipeline configs: `LTX2Config`, `Flux2Config`, `ZImageConfig`, `QwenImageConfig`
+- Shared configs: `EncoderConfig`, `OptimizationConfig`, `PipelineQuantConfig`
+- `RuntimeConfig` composes these: access via `config.flux2.model_path` (not flat `config.flux2_model_path`)
+- **RuntimeConfig is in config.py** (cli.py re-exports it)
+- **Check these BEFORE adding new fields** - they may already exist!
+- Adding a new config parameter: only **2 touchpoints** (dataclass field + config.toml). Validate with `tests/unit/test_dry_config.py`.
+- Key CLI flags: `--hidden-layer` (encoder hidden state extraction, default -2), `--model-type`, `--config`
+
+### DRY Configuration Principles
+
+Every parameter should have exactly one source of truth. The chain is:
+`config.toml` -> `Config` dataclasses -> `RuntimeConfig` (composed) -> backend configs
+
+When adding a new parameter, only 2 files need changes: the dataclass in `config.py` + `config.toml`. The DRY consistency test (`test_dry_config.py`) validates that all layers stay in sync.
+
+### parameter resolution (routers)
+
+All routers use `resolve_param()` from `web/param_resolver.py` for generation parameters:
+- **Precedence:** client-sent > config.toml > schema default
+- Uses Pydantic v2 `model_fields_set` to detect explicit client values (NOT `or`, NOT `is not None`, NOT equality comparison)
+- `skip_none=True` for Optional fields where None means "no override" (e.g., `stage1_steps`, `distilled_lora_path`)
+- Falsy values (0, 0.0, "") are preserved when client sends them explicitly
+- **Infrastructure params** (model paths, devices, quantization) always come from config -- do NOT use `resolve_param` for them
+- Schema-config field name mismatches exist (e.g., `stage1_steps` vs `stage1_num_inference_steps`). `test_dry_config.py::TestResolveParamFieldConsistency` validates these.
+
+## navigation by task
+
+| Task | Read |
+|------|------|
+| **Adding feature to existing pipeline** | Feature workflow (below) + [post_refactor_guide.md](internal/docs/architecture/post_refactor_guide.md) |
+| **Adding new pipeline** | [pipeline_integration.md](internal/checklists/pipeline_integration.md) |
+| **Writing/running tests** | [tests/CLAUDE.md](tests/CLAUDE.md) |
+| **Research/experiments** | [experiments/CLAUDE.md](experiments/CLAUDE.md) |
+| **Post-refactor architecture** | [post_refactor_guide.md](internal/docs/architecture/post_refactor_guide.md) |
+| **Composability analysis** | [composability_analysis.md](internal/docs/architecture/composability_analysis.md) |
+| **Architecture decisions** | [architectural_decisions.md](internal/principles/architectural_decisions.md) |
+| **Planned improvements / tech debt** | [backlog.md](internal/state/backlog.md) |
+| **Debugging** | [lessons_learned.md](internal/state/lessons_learned.md) |
+| **Agent workflows** | [claude_workflow.md](internal/principles/claude_workflow.md) |
+| **Quantization** | [quantization.md](docs/reference/quantization.md) |
+| **Codebase map** | [codebase_map.md](internal/docs/architecture/codebase_map.md) |
+| **Logging standards** | [logging_standards.md](internal/principles/logging_standards.md) |
+| **Modular architecture (L1-L6)** | [modular_architecture.md](internal/principles/modular_architecture.md) |
+| **API endpoints / OpenAPI** | `scripts/export_openapi.py` or `bun run export-openapi && bun run gen-api` from `web/frontend-v2/` |
+| **E2E testing standard** | [tests/e2e/api/README.md](tests/e2e/api/README.md) |
+
+## feature implementation workflow
+
+**Before implementing ANY feature, trace the full data flow using search:**
+
+### 1. identify all touchpoints
+```bash
+# Find where the feature name appears (it may already exist!)
+grep -rn "<feature>" src/llm_dit/
+grep -rn "<feature>" web/routers/ web/schemas.py
+
+# Check config dataclass for existing fields
+grep -A 50 "class <Pipeline>Config" src/llm_dit/config.py
+```
+
+### 2. trace entry point to execution
+Every feature has a data flow chain. Trace it BEFORE coding:
+
+| Layer | Location | What to grep |
+|-------|----------|--------------|
+| **API Request Model** | `web/schemas.py` | `class <Pipeline>GenerateRequest` (Pydantic) |
+| **API Endpoint** | `web/routers/<pipeline>.py` | `@router.post("/api/<pipeline>/")` |
+| **Config Defaults** | `src/llm_dit/config.py` | `class <Pipeline>Config` (dataclass) |
+| **RuntimeConfig** | `src/llm_dit/config.py` | `class RuntimeConfig` (composed sub-configs) |
+| **CLI** | `src/llm_dit/cli.py` | `<pipeline>` subcommand |
+| **Model lifecycle** | `src/llm_dit/model_manager.py` | `ModelManager`, load/unload/reload |
+| **Pipeline Function** | `src/llm_dit/pipelines/` | Main generation function |
+| **Shared Utils** | `src/llm_dit/utils/` | LoRA, quantization, attention, memory |
+
+**All layers that accept the parameter must be updated.** Don't just add to the pipeline function - check if the schema, router, and config also need the field.
+
+### 3. find similar implementations
+```bash
+# Check if another pipeline already has this feature
+grep -rn "<feature>" src/llm_dit/pipelines/
+grep -rn "<feature>" web/routers/
+ls src/llm_dit/utils/  # Check existing utilities
+```
+
+### 4. verify visual baseline before changes
+For any code that affects generation output:
+```bash
+# Generate baseline BEFORE making changes
+uv run pytest tests/integration/pipeline/test_<pipeline>_baselines.py -v -s
+```
 
 ## multi-model platform
 
@@ -41,18 +160,7 @@ This is a **multi-workstream project**. Work happens in parallel across layers:
 | **Core Infra** | Attention, quantization, memory, VAE ops | Universal - changes affect all pipelines |
 | **UI/Server** | React frontend, FastAPI backend | Universal - serves all pipelines dynamically |
 
-**Key insight:** Encoders and core infra are shared. Check which pipelines use a component before modifying it. See `current.md` for active parallel work.
-
-### current pipelines
-
-| Pipeline | Task | Encoder | Status |
-|----------|------|---------|--------|
-| FLUX.2 Klein | text-to-image, editing | Qwen3-8B/4B | Production |
-| LTX-2 | text-to-video | Gemma3-12B | Production |
-| Z-Image | text-to-image | Qwen3-4B | Production |
-| Wan Video | text-to-video | UMT5-XXL | Phase 1 |
-
-*This list grows as new models become interesting. Check `spec.md` for what's coming next.*
+**Key insight:** Encoders and core infra are shared. Check which pipelines use a component before modifying it. See [current.md](internal/state/current.md) for active pipelines and parallel work.
 
 ### shared code locations
 
@@ -60,10 +168,170 @@ This is a **multi-workstream project**. Work happens in parallel across layers:
 |------|----------|-------|
 | Encoders | `src/llm_dit/encoders/` | One encoder may serve multiple pipelines |
 | Attention | `src/llm_dit/utils/attention.py` | All pipelines use this |
-| Quantization | `src/llm_dit/quantization/` | All pipelines use this |
+| Quantization | `src/llm_dit/quantization/` | All pipelines use `quantize_component()` (sole entry point) |
+| Layerwise fp8 | `src/llm_dit/quantization/layerwise_fp8.py` | Pure PyTorch fp8 hooks (no torchao); used by Gemma3 encoder |
+| Encoder variants | `src/llm_dit/encoders/gemma3_variants.py` | Gemma3 variant factory: bf16, fp8, 8bit, q4-qat |
+| LoRA | `src/llm_dit/utils/lora.py` | Pipeline-agnostic: `load_lora()`, `FusedLoRAState` tracking |
+| Prompt rewriting | `src/llm_dit/utils/prompt_rewriter.py` | `PromptRewriter` (Qwen-Image), `Flux2PromptUpsampler` (FLUX.2) |
+| Meta init | `src/llm_dit/utils/meta_init.py` | Zero-memory model construction; use with `load_state_dict(assign=True)` |
+| Audio VAE | `src/llm_dit/models/ltx2/audio_vae/` | AudioDecoder (latents to mel), HiFiGAN Vocoder (mel to 24kHz waveform), AudioPatchifier |
+| AV Blocks | `src/llm_dit/models/ltx2/av_block.py` | `BasicAVTransformerBlock` -- video-only, audio-only, or dual-stream with cross-modal attention |
+| Param resolution | `web/param_resolver.py` | `resolve_param()` -- all routers use for generation param defaults |
+| Model lifecycle | `src/llm_dit/model_manager.py` | `ModelManager` -- load/unload/reload any pipeline |
+| API layer | `web/routers/`, `web/schemas.py` | 7 domain routers + Pydantic models (~730 lines) |
 | Pipelines | `src/llm_dit/pipelines/` | Each pipeline has its own file |
+| Frontend | `web/frontend-v2/` | React 19 + Zustand 5 + Vite 7 + Tailwind 4 + Bun. Schema-driven forms from OpenAPI. See [web CLAUDE.md](internal/web/CLAUDE.md) |
+| Frontend logger | `web/frontend-v2/src/utils/logger.ts` | Namespaced logging factory; `VITE_LOG_LEVEL` env var; zero raw console calls |
+| Media utilities | `web/frontend-v2/src/utils/media.ts` | `detectKind()`, `mediaItemFromResult()`, `mediaItemFromHistory()` -- unified `MediaItem` type |
+| VRAM bar | `web/frontend-v2/src/components/common/VRAMBar.tsx` | Shared VRAM usage bar component used by StatusBar and SettingsMenu |
 
-**Architecture:** See [VISION.md](VISION.md) for L1-L6 composability hierarchy.
+## architecture patterns (post-refactor)
+
+**Circular import prevention:** Routers that need server state (generation_history, encoder_only_mode, rewriter_backend) do `import web.server as srv` at module level. Server imports routers in `_register_routers()` called from `main()`, NOT at module level. Never move router imports to top of server.py. Note: flux2.py and config_mgmt.py no longer import srv at all.
+
+**Router decomposition:** server.py (~304 lines) holds only server state globals and startup. All ~49 API route handlers live in 7 domain routers under `web/routers/`. All routers use `ConfigDep`/`ManagerDep` dependency injection for pipeline access. No pipeline globals remain in server.py -- ModelManager is the sole source of truth.
+
+**LoRA fusion tracking:** `model._fused_lora_state` (FusedLoRAState) tracks what's fused on persistent models. Prevents re-fusion OOM where fp8 (9GB) dequantizes to bf16 (18GB). Pipeline detects mismatch (raises RuntimeError), router handles recovery (reload).
+
+**On-demand lazy loading:** When `default_pipeline = "none"`, routers trigger `manager.load("pipeline_id")` on first request. Method is `manager.load()` (NOT `load_pipeline()`). Idempotent -- double-check inside lock, returns early if already loaded. Unloads other pipelines to free VRAM.
+
+**`gemma_variant` vs `quantize` are independent:** `quantize` controls transformer quantization (torchao fp8-dynamic at runtime). `gemma_variant` controls encoder loading strategy (pure PyTorch for fp8/fp8-safetensors, torchao for 8bit). The fp8-safetensors path has zero torchao dependency; torchao debug logs during load are transitive from transformers import.
+
+**Unified quantization:** All pipelines use `quantize_component()` as the sole entry point. torchao is the only backend. `"fp8"` alias maps to `"fp8-dynamic"` (W8A8, FP8 tensor cores). Default granularity is `"per-row"`. Already-quantized weights (torchao subclasses or native FP8 dtypes) are auto-detected and skipped. See `docs/reference/quantization.md`.
+
+**Prompt upsampling (FLUX.2):** `_upsample_prompt()` factory in `web/routers/flux2.py` reads URL + model from `RuntimeConfig.rewriter_api_url`/`rewriter_api_model` (sourced from `config.toml [rewriter]`). Creates `Flux2PromptUpsampler` which calls heylookitsanllm at `192.168.1.123:8080`. Two modes: T2I (creative expansion) and I2I (instruction compilation). Graceful fallback to original prompt on error. Used by both sync and streaming endpoints.
+
+**FBCache (block skipping):** `LTX2Transformer` tracks residual norms between denoising steps. When `fbcache_threshold > 0`, blocks with small residual changes are skipped. Must call `model.reset_fbcache()` at the start of each generation. First/last steps always compute fully.
+
+**Distilled sigma mode:** When `use_distilled_sigmas=True`, Stage 1 uses predefined `DISTILLED_SIGMA_VALUES` from `constants.py`. Forces `guidance_scale=1.0` (no CFG, no STG) -- guidance is baked into the distilled model weights.
+
+**STG perturbation model:** `PerturbationType`, `PerturbationConfig`, and `BatchedPerturbationConfig` in `av_block.py` define per-sample attention skipping for Spatio-Temporal Guidance. `BasicAVTransformerBlock` uses these to selectively skip cross-modal attention (A2V/V2A) during denoising, enabling separate guidance scales for audio and video streams.
+
+**Audio-video dual-stream:** `BasicAVTransformerBlock` extends `BasicTransformerBlock` with bidirectional cross-modal attention. Three modes: video-only (no audio latents), audio-only (no video latents), dual-stream (both with A2V + V2A cross-attention). Each modality has independent FBCache tracking. Audio connector uses 2048 dim vs video's 4096 dim.
+
+**Frontend logging:** `web/frontend-v2/src/utils/logger.ts` provides namespaced console logging. Factory: `logger('API')` returns `{ debug, info, warn, error }` with `[API]` prefix. Log level controlled by `VITE_LOG_LEVEL` env var (defaults: `debug` in dev, `warn` in prod). All 22 console calls across 8 files migrated -- zero raw `console.*` calls remain outside logger.ts. Filter in DevTools by namespace (e.g., `[Generate]`, `[Model]`, `[Session]`).
+
+For full post-refactor details: [post_refactor_guide.md](internal/docs/architecture/post_refactor_guide.md)
+
+## request lifecycle (reference)
+
+### startup flow
+
+When you run `uv run web/server.py --config config.toml`:
+
+```
+server.py main()
+    |
+    v
+cli.py: create_base_parser() - defines CLI args
+    |
+    v
+cli.py: load_runtime_config(args)
+    |
+    v
+config.py: Config.from_toml() - parses TOML into composed sub-configs
+    |
+    v
+config.py: RuntimeConfig.from_toml_config(config) - composes sub-configs
+    |
+    v
+server.py: stores as global `runtime_config`
+    |
+    v
+model_manager.py: ModelManager(runtime_config) - manages model lifecycle
+    |
+    v
+pipelines/*.py: ZImagePipeline, LTX2Pipeline, etc.
+```
+
+### api request flow
+
+When client sends POST /api/flux2/generate:
+
+```
+HTTP Request (JSON body)
+    |
+    v
+web/schemas.py: Pydantic model validates request (Flux2GenerateRequest, etc.)
+    |
+    v
+web/routers/<pipeline>.py: resolve_param() merges request + config.toml defaults
+    |
+    v
+pipelines/*.py: pipeline(prompt, **merged_params)
+    |
+    v
+Model execution -> Response
+```
+
+### hot-reload vs restart
+
+Some config changes apply immediately; others require server restart. See `HOT_RELOAD_SAFE` and `REQUIRES_RESTART` constants in `src/llm_dit/model_manager.py`. Config update API: `web/routers/config_mgmt.py` (PUT `/api/config/session`).
+
+## debugging quick reference
+
+For full debugging patterns, see [lessons_learned.md](internal/state/lessons_learned.md).
+
+**Common failure modes:**
+
+| Symptom | Likely Cause | Check |
+|---------|--------------|-------|
+| Silent wrong output | Tokenizer mismatch | Verify chat template matches training |
+| OOM on generation | Component not offloaded | Check device placement in model_manager.py |
+| OOM on LoRA re-fusion | LoRA dequantizing fp8->bf16 | Check `FusedLoRAState` in lora.py |
+| Config not applied | Hot-reload vs restart | See `HOT_RELOAD_SAFE` in model_manager.py |
+| config.toml generation defaults ignored | Missing `resolve_param()` | Verify router uses `resolve_param()` from `web/param_resolver.py` |
+| Tests pass, bad output | Visual verification skipped | Always verify baselines visually |
+| API returns error | Pydantic validation | Check request schema in `web/schemas.py` |
+| Circular import | Router imports server at module level | See architecture patterns above |
+| Prompt upsampling skipped | Empty `api_url` in config | Check `config.toml [rewriter].api_url` is set |
+| Prompt upsampling silent fail | heylookitsanllm unreachable | Verify `192.168.1.123:8080` is live; check logs for `[FLUX2:Upsample] Failed` |
+| Video thumbnails broken in history | SSE type assertion missing field | Check `eventData` type in `sessionStore.ts` (~line 170) -- uses `as unknown as` cast |
+| Wrong transformer weights loaded | `transformer_file` config mismatch | Verify `[ltx2].transformer_file` points to correct safetensors; FP8 files use `load_ltx2_transformer_from_fp8()` |
+| fp8 weights silently become bf16 | `load_state_dict` missing `assign=True` | Mixed-dtype models MUST use `assign=True` to preserve fp8 dtype; without it, tensors are copied into existing bf16 params |
+| LTX-2 encoder None in on-demand mode | `default_pipeline = "none"` skips preload | Router lazy-loads via `manager.load("ltx2")` on first request; check `manager.ltx2_encoder is None` guard |
+| Model construction OOM spike | Missing `meta_init()` wrapper | Wrap `create_model_from_config()` in `meta_init()` context manager + use `assign=True` in `load_state_dict` |
+| 3 pre-existing unit test failures | Not caused by recent changes | `test_resolution_validators.py` (2): snap_to_32 vs snap_to_64 mismatch. `test_pipeline.py` (1): unrelated. Verify with `git stash && uv run pytest tests/unit/ -v` |
+| Generate button disabled silently | Validation error not displayed to user | Check DevTools for `[Generate]` namespace logs; likely stale IndexedDB value exceeds schema min/max |
+| Noisy/garbage LTX-2 output | Compounding optimizations | Disable `ge_gamma`, `fbcache_threshold`, `use_distilled_sigmas` in config.toml; test one at a time. All three together = no CFG + stale cached blocks + amplified velocity = runaway noise |
+| Stale form values from IndexedDB | Schema range changed after values persisted | `getResolvedValues()` clamps automatically; use "Reset Storage" in Settings or clear IndexedDB via DevTools Application tab |
+
+## quick test commands
+
+```bash
+# Unit tests (no GPU, fast)
+uv run pytest tests/unit/ -v
+
+# E2E API tests (requires GPU + models)
+uv run pytest tests/e2e/api/test_flux2_smoke.py -v -s
+uv run pytest tests/e2e/api/test_ltx2_smoke.py -v -s
+
+# Pipeline integration smoke test (GPU required)
+uv run pytest tests/integration/pipeline/test_baseline_portable.py::TestBaselineSmoke -v -s
+
+# LoRA tests
+uv run pytest tests/unit/ -v -k lora
+
+# Config DRY validation
+uv run pytest tests/unit/test_dry_config.py -v
+
+# Parameter resolution logic
+uv run pytest tests/unit/test_param_resolver.py -v
+
+# Audio/AV tests (audio VAE + AV transformer blocks)
+uv run pytest tests/unit/test_ltx2_audio_vae.py tests/unit/test_ltx2_av_transformer.py -v
+
+# Quantization tests (alias, detection, recommended method)
+uv run pytest tests/unit/test_ltx2_resolve_quantize.py tests/unit/test_quantization.py -v
+
+# Frontend TypeScript check (from web/frontend-v2/)
+cd web/frontend-v2 && bunx tsc --noEmit
+
+# Regenerate frontend types from API (from web/frontend-v2/)
+cd web/frontend-v2 && bun run export-openapi && bun run gen-api
+```
+
+Full testing guide: [tests/CLAUDE.md](tests/CLAUDE.md)
 
 ## model quickstarts
 
@@ -77,44 +345,7 @@ This is a **multi-workstream project**. Work happens in parallel across layers:
 
 | File | When to Update |
 |------|----------------|
-| `current.md` | Major milestone or blocker |
-| `todos.md` | Session start/end |
-| `spec.md` | Backlog item complete |
-| `lessons_learned.md` | After debugging |
-| `log_YYYY-MM-DD.md` | Every session |
-
-## navigation by task
-
-| Task | Read |
-|------|------|
-| Web/UI development | [internal/web/CLAUDE.md](internal/web/CLAUDE.md) |
-| Writing/running tests | [tests/CLAUDE.md](tests/CLAUDE.md) |
-| Research/experiments | [experiments/CLAUDE.md](experiments/CLAUDE.md) |
-| Architecture decisions | [internal/principles/architectural_decisions.md](internal/principles/architectural_decisions.md) |
-| Agent workflows | [internal/principles/claude_workflow.md](internal/principles/claude_workflow.md) |
-| Debugging | [internal/state/lessons_learned.md](internal/state/lessons_learned.md) |
-| Adding new pipeline | [internal/checklists/pipeline_integration.md](internal/checklists/pipeline_integration.md) |
-
-## quick test commands
-
-```bash
-# Smoke test (GPU required)
-uv run pytest tests/e2e/test_baseline_portable.py::TestBaselineSmoke -v -s
-
-# Unit tests (no GPU)
-uv run pytest tests/unit/ -v
-
-# All LTX-2 tests
-uv run pytest tests/ -v -k ltx2
-```
-
-Full testing guide: [tests/CLAUDE.md](tests/CLAUDE.md)
-
-## research status symbols
-
-| Symbol | Meaning |
-|--------|---------|
-| VALIDATED | Confirmed through experiments |
-| OPEN | Needs testing |
-| NEEDS-VERIFICATION | Previous results may have bugs |
-| DEAD-END | Tested, doesn't work |
+| `internal/state/current.md` | Major milestone or blocker |
+| `internal/state/backlog.md` | New improvement identified, or item completed/deprioritized |
+| `internal/state/lessons_learned.md` | After debugging |
+| `internal/log/log_YYYY-MM-DD.md` | Every session |

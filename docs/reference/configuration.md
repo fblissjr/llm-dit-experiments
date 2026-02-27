@@ -1,6 +1,6 @@
 # configuration reference
 
-*last updated: 2026-01-06*
+*last updated: 2026-02-14*
 
 ## config format
 
@@ -18,13 +18,10 @@ All configurable parameters must flow through a single chain to prevent disconne
 config.toml (TOML)     CLI flags (argparse)
         \                    /
          v                  v
-     Config dataclass  →  RuntimeConfig
+     Config dataclass  →  RuntimeConfig.from_toml_config()
               \              /
                v            v
-            PipelineLoader / startup.py
-                    |
-                    v
-            Backend configs (APIBackendConfig, etc.)
+          RuntimeConfig (composed sub-configs)
                     |
                     v
             Actual usage (API requests, model loading)
@@ -32,33 +29,28 @@ config.toml (TOML)     CLI flags (argparse)
 
 ## adding a new parameter
 
-1. **Add to TOML config** (`config.toml.example`) in appropriate section
-2. **Add to Config dataclass** (`src/llm_dit/config.py`) - e.g., `EncoderConfig`, `RewriterConfig`
-3. **Add CLI argument** (`src/llm_dit/cli.py`) in `create_argument_parser()`
-4. **Add to RuntimeConfig** (`src/llm_dit/cli.py`) with same name
-5. **Wire in load_runtime_config()** - load from TOML config, allow CLI override
-6. **Wire in startup.py** - pass to backend configs (`APIBackendConfig`, etc.)
-7. **Expose in web UI** if user-facing (web/index.html, server endpoints)
-8. **Document in docs/reference/cli_flags.md** - add to appropriate table
+Only **2 touchpoints** required (was 6+ pre-refactor):
+
+1. **Add to Config dataclass** (`src/llm_dit/config.py`) -- e.g., `Flux2Config`, `LTX2Config`, `EncoderConfig`
+2. **Add to TOML config** (`config.toml`) in the appropriate section
+
+`RuntimeConfig.from_toml_config()` picks up the new field automatically. CLI override is optional (add to `cli.py` if needed).
+
+Validate with: `uv run pytest tests/unit/test_dry_config.py -v`
 
 ## files to check when adding parameters
 
 | Layer | File | What to update |
 |-------|------|----------------|
-| TOML schema | `config.toml.example` | Add parameter with comment |
-| Config classes | `src/llm_dit/config.py` | Add to dataclass, `to_dict()` |
-| CLI parser | `src/llm_dit/cli.py` | `create_argument_parser()` |
-| Runtime config | `src/llm_dit/cli.py` | `RuntimeConfig`, `load_runtime_config()` |
-| Pipeline loading | `src/llm_dit/startup.py` | Pass to backend configs |
-| API backend | `src/llm_dit/backends/api.py` | `APIBackendConfig` if API-relevant |
-| Web server | `web/server.py` | Endpoint parameters |
-| Web UI | `web/index.html` | Form fields if user-facing |
-| Documentation | `docs/reference/cli_flags.md` | CLI flags table |
+| Config classes | `src/llm_dit/config.py` | Add to pipeline dataclass |
+| TOML config | `config.toml` | Add parameter in appropriate section |
+| CLI parser (optional) | `src/llm_dit/cli.py` | Add CLI flag if command-line override is needed |
+| Documentation (optional) | `docs/reference/cli_flags.md` | Document the CLI flag if added |
 
 ## anti-patterns to avoid
 
-- Adding a parameter to CLI but not wiring it through `startup.py` to the actual backend that uses it (e.g., `hidden_layer` must reach `APIBackendConfig`)
-- Hardcoding defaults in multiple places instead of using RuntimeConfig defaults
+- Hardcoding defaults in multiple places instead of using Config dataclass defaults
+- Adding a CLI flag without a corresponding Config dataclass field
 - Exposing config in web UI without wiring through the pipeline
 
 ## automated verification

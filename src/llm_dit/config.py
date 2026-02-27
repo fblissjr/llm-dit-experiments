@@ -1,46 +1,31 @@
 """
 TOML-based configuration for llm-dit-experiments.
 
-Supports profiles for different hardware configurations, including:
-- Quantization via BitsAndBytesConfig (4-bit or 8-bit)
-- CPU offloading for memory-constrained systems
-- Device selection (cuda, mps, cpu)
-
-Transformers v5 Migration:
-- load_in_8bit/load_in_4bit are DEPRECATED in transformers v5
-- Use quantization="8bit" or quantization="4bit" instead
-- The config automatically builds BitsAndBytesConfig internally
+Flat config format with per-pipeline sections. Quantization uses unified
+torchao methods: none, fp8-dynamic, fp8-weight-only, int8, int4.
 
 Example config (config.toml):
 
-    [default]
+    default_pipeline = "none"
     model_path = "/path/to/model"
-    templates_dir = "templates/z_image"
-    dtype = "bfloat16"
 
-    [default.encoder]
+    [quantization]
+    encoder = "none"
+    transformer = "fp8-weight-only"
+    vae = "none"
+
+    [encoder]
     device = "cuda"
     quantization = "none"
-    cpu_offload = false
 
-    [default.pipeline]
-    device = "cuda"
-
-    [low_vram]
-    model_path = "/path/to/model"
-
-    [low_vram.encoder]
-    device = "cpu"
-    quantization = "8bit"
-    cpu_offload = true
-
-    [low_vram.pipeline]
-    device = "cuda"
+    [flux2]
+    model_path = "/path/to/FLUX.2-klein"
+    quantization = "fp8-weight-only"
+    compile = true
 """
 
 import logging
 import os
-import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, ClassVar, List, Literal
@@ -59,29 +44,93 @@ except ImportError:
         tomllib = None
 
 
+# ---------------------------------------------------------------------------
+# Unified quantization config (shared across all pipelines)
+# ---------------------------------------------------------------------------
+
+# Canonical method strings accepted by quantize_component()
+VALID_QUANT_METHODS = ("none", "fp8-dynamic", "fp8-weight-only", "int8", "int4")
+
+
+@dataclass
+class ComponentQuantConfig:
+    """Quantization config for a single model component (encoder, transformer, VAE)."""
+
+    method: str = "none"  # none, fp8-dynamic, fp8-weight-only, int8, int4
+    granularity: str = "per-tensor"  # per-tensor, per-row (FP8 only)
+
+    def __post_init__(self) -> None:
+        if self.method not in VALID_QUANT_METHODS:
+            raise ValueError(
+                f"Invalid quantization method: '{self.method}'. "
+                f"Valid options: {', '.join(VALID_QUANT_METHODS)}"
+            )
+        if self.granularity not in ("per-tensor", "per-row"):
+            raise ValueError(
+                f"Invalid granularity: '{self.granularity}'. "
+                f"Valid options: per-tensor, per-row"
+            )
+
+    @property
+    def is_none(self) -> bool:
+        return self.method == "none"
+
+    @property
+    def is_fp8(self) -> bool:
+        return self.method in ("fp8-dynamic", "fp8-weight-only")
+
+
+@dataclass
+class PipelineQuantConfig:
+    """Resolved quantization config for all components of a pipeline."""
+
+    encoder: ComponentQuantConfig = field(default_factory=ComponentQuantConfig)
+    transformer: ComponentQuantConfig = field(default_factory=ComponentQuantConfig)
+    vae: ComponentQuantConfig = field(default_factory=ComponentQuantConfig)
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "PipelineQuantConfig":
+        """Parse from dict like {encoder: "fp8-weight-only", transformer: "int8", vae: "none"}."""
+        granularity = data.get("granularity", "per-tensor")
+        return cls(
+            encoder=ComponentQuantConfig(
+                method=data.get("encoder", "none"), granularity=granularity,
+            ),
+            transformer=ComponentQuantConfig(
+                method=data.get("transformer", "none"), granularity=granularity,
+            ),
+            vae=ComponentQuantConfig(
+                method=data.get("vae", "none"), granularity=granularity,
+            ),
+        )
+
+    def to_dict(self) -> dict:
+        return {
+            "encoder": self.encoder.method,
+            "transformer": self.transformer.method,
+            "vae": self.vae.method,
+            "granularity": self.encoder.granularity,
+        }
+
+
 # Qwen-Image optimization presets for different hardware/memory configurations
 QWEN_IMAGE_PRESETS = {
     "balanced": {
-        # Good defaults for most systems
-        "quantize_text_encoder": "8bit",
+        "quantize_text_encoder": "int8",
         "quantize_transformer": "none",
         "quantize_vae": "none",
         "offload_type": "model",
         "cpu_offload": True,
     },
     "rtx4090_fp8": {
-        # Maximum performance on RTX 4090 (FP8 + torch.compile)
-        # ~13GB VRAM: 7GB text encoder + 4GB DiT + 0.25GB VAE
-        "quantize_text_encoder": "fp8",
-        "quantize_transformer": "fp8",
+        "quantize_text_encoder": "fp8-weight-only",
+        "quantize_transformer": "fp8-weight-only",
         "quantize_vae": "int8",
         "offload_type": "none",
         "cpu_offload": False,
     },
     "rtx4090_group": {
-        # RTX 4090 with group offloading for larger batches
-        # ~16-18GB VRAM with streaming DiT blocks
-        "quantize_text_encoder": "8bit",
+        "quantize_text_encoder": "int8",
         "quantize_transformer": "none",
         "quantize_vae": "int8",
         "offload_type": "group",
@@ -89,18 +138,16 @@ QWEN_IMAGE_PRESETS = {
         "cpu_offload": True,
     },
     "max_vram_savings": {
-        # Minimum VRAM (~8-10GB), quality trade-off
-        "quantize_text_encoder": "4bit",
-        "quantize_transformer": "4bit",
+        "quantize_text_encoder": "int4",
+        "quantize_transformer": "int4",
         "quantize_vae": "int8",
         "offload_type": "group",
         "num_blocks_per_group": 1,
         "cpu_offload": True,
     },
     "amd_mi300": {
-        # AMD ROCm support with DiffSynth FP8
-        "quantize_text_encoder": "8bit",
-        "quantize_transformer": "diffsynth-fp8",
+        "quantize_text_encoder": "int8",
+        "quantize_transformer": "fp8-dynamic",
         "quantize_vae": "int8",
         "offload_type": "model",
         "cpu_offload": True,
@@ -112,51 +159,22 @@ QWEN_IMAGE_PRESETS = {
 class EncoderConfig:
     """Configuration for the text encoder (LLM).
 
-    Transformers v5 Migration Notes:
-    - load_in_8bit/load_in_4bit are DEPRECATED
-    - Use quantization="8bit" or quantization="4bit" instead
-    - Config will auto-migrate legacy fields with a deprecation warning
-
-    Quantization Options:
+    Quantization Options (torchao unified):
     - "none": No quantization (full precision)
-    - "4bit": BitsAndBytes 4-bit quantization (NF4)
-    - "8bit": BitsAndBytes 8-bit quantization (INT8)
-    - "int8_dynamic": PyTorch native int8 dynamic quantization (torchao)
-        - Uses torch.ao.quantization.quantize_dynamic()
-        - ~50% VRAM reduction, well-validated for LLMs
-        - Applied post-load, no BitsAndBytes dependency
+    - "fp8-dynamic": FP8 weights + FP8 activations (RTX 4090+)
+    - "fp8-weight-only": FP8 weights, BF16 activations
+    - "int8": INT8 weight-only
+    - "int4": INT4 weight-only (max compression)
     """
 
     device: str = "auto"  # auto, cuda, mps, cpu
     dtype: str = "bfloat16"  # bfloat16, float16, float32
-    quantization: str = "none"  # none, 4bit, 8bit, int8_dynamic
+    quantization: str = "none"  # none, fp8-dynamic, fp8-weight-only, int8, int4
     cpu_offload: bool = False  # Offload to CPU after encoding
     trust_remote_code: bool = True
     max_length: int = 512
     hidden_layer: int = -2  # Which layer to extract embeddings from (-1=last, -2=penultimate)
-
-    # DEPRECATED: These fields are kept for backwards compatibility only
-    # They will be removed in a future version
-    load_in_8bit: bool = False
-    load_in_4bit: bool = False
-
-    def __post_init__(self):
-        """Handle deprecation migration from load_in_8bit/load_in_4bit to quantization."""
-        # Migrate legacy fields if used
-        if self.load_in_8bit and self.quantization == "none":
-            warnings.warn(
-                "load_in_8bit is deprecated in transformers v5. Use quantization='8bit' instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            self.quantization = "8bit"
-        elif self.load_in_4bit and self.quantization == "none":
-            warnings.warn(
-                "load_in_4bit is deprecated in transformers v5. Use quantization='4bit' instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            self.quantization = "4bit"
+    layer_weights: dict[int, float] | None = None  # Multi-layer blending weights (overrides hidden_layer)
 
     def get_dtype(self) -> torch.dtype:
         """Convert string dtype to torch.dtype."""
@@ -177,94 +195,6 @@ class EncoderConfig:
             else:
                 return "cpu"
         return self.device
-
-    def get_quantization_config(self) -> "BitsAndBytesConfig | None":
-        """Get BitsAndBytesConfig for transformers v5.
-
-        Returns:
-            BitsAndBytesConfig if BitsAndBytes quantization is enabled, None otherwise.
-            Returns None for int8_dynamic (handled separately via post-load quantization).
-
-        Note:
-            This is the v5-compliant way to configure quantization.
-            The config should be passed to from_pretrained() as:
-
-                model = AutoModel.from_pretrained(
-                    model_path,
-                    quantization_config=config.encoder.get_quantization_config(),
-                )
-
-            For int8_dynamic, use needs_post_load_quantization() and
-            apply_post_load_quantization() instead.
-        """
-        if self.quantization in ("none", "int8_dynamic"):
-            return None
-
-        try:
-            from transformers import BitsAndBytesConfig
-        except ImportError:
-            raise ImportError(
-                "BitsAndBytesConfig requires transformers>=4.30.0. "
-                "Install with: pip install transformers>=4.30.0"
-            )
-
-        if self.quantization == "8bit":
-            return BitsAndBytesConfig(load_in_8bit=True)
-        elif self.quantization == "4bit":
-            return BitsAndBytesConfig(
-                load_in_4bit=True,
-                bnb_4bit_compute_dtype=self.get_dtype(),
-            )
-        else:
-            raise ValueError(
-                f"Unknown quantization: {self.quantization}. "
-                f"Valid options: none, 4bit, 8bit, int8_dynamic"
-            )
-
-    def needs_post_load_quantization(self) -> bool:
-        """Check if post-load quantization is needed.
-
-        Returns:
-            True if int8_dynamic quantization should be applied after model loading.
-        """
-        return self.quantization == "int8_dynamic"
-
-    def apply_post_load_quantization(self, model: "torch.nn.Module") -> "torch.nn.Module":
-        """Apply post-load quantization (int8_dynamic) to the model.
-
-        Uses torch.ao.quantization.quantize_dynamic() to apply int8 dynamic
-        quantization to all Linear layers. This provides ~50% VRAM reduction
-        with minimal quality impact for LLMs.
-
-        Args:
-            model: The loaded model to quantize
-
-        Returns:
-            Quantized model (in-place modification)
-
-        Raises:
-            ValueError: If quantization mode is not int8_dynamic
-        """
-        if self.quantization != "int8_dynamic":
-            raise ValueError(
-                f"apply_post_load_quantization() only valid for int8_dynamic, "
-                f"got {self.quantization}"
-            )
-
-        import torch.ao.quantization as tq
-
-        logger.info("Applying int8 dynamic quantization (torchao)...")
-
-        # Quantize all Linear layers to int8
-        model = tq.quantize_dynamic(
-            model,
-            {torch.nn.Linear},
-            dtype=torch.qint8,
-        )
-
-        logger.info("  int8 dynamic quantization applied successfully")
-        return model
-
 
 @dataclass
 class PipelineConfig:
@@ -309,6 +239,11 @@ class GenerationConfig:
     cfg_norm_mode: str = "clamp"  # CFG norm mode: "clamp" or "match" (DiffSynth-style)
     enable_thinking: bool = True
     default_template: str | None = None
+    seed: int | None = None  # Random seed for reproducibility
+    negative_prompt: str | None = None  # Negative prompt for CFG
+    system_prompt: str | None = None  # System prompt override
+    thinking_content: str | None = None  # Thinking content override
+    assistant_content: str | None = None  # Assistant content override
 
 
 @dataclass
@@ -319,6 +254,8 @@ class OptimizationConfig:
     compile: bool = False  # Enable torch.compile
     compile_mode: str = "default"  # torch.compile mode (default is CPU-offload safe)
     cpu_offload: bool = False  # Enable CPU offload for transformer
+    dit_device: str = "auto"  # DiT device placement
+    vae_device: str = "auto"  # VAE device placement
 
 
 @dataclass
@@ -342,6 +279,7 @@ class APIConfig:
 
     url: str = ""  # API URL, e.g., "http://mac-host:8080" (empty = use local encoder)
     model: str = "Qwen3-4B"  # Model ID for embedding extraction
+    local_encoder: bool = False  # Use local encoder even when API is configured
 
 
 @dataclass
@@ -371,67 +309,44 @@ class PyTorchConfig:
 
 
 @dataclass
-class VLConfig:
-    """Configuration for Qwen3-VL vision conditioning.
-
-    This enables zero-shot vision conditioning by extracting embeddings from
-    Qwen3-VL and blending them with text embeddings.
-
-    Key insight: Qwen3-VL-4B's text model shares architecture with Qwen3-4B
-    (hidden_size=2560), enabling direct embedding transfer without training.
-    """
-
-    model_path: str = ""  # Path to Qwen3-VL model (empty = disabled)
-    device: str = "cpu"  # Device for Qwen3-VL (cpu recommended to save VRAM)
-    default_alpha: float = (
-        0.3  # Default interpolation ratio (0.0=text, 1.0=VL) - research validated
-    )
-    default_hidden_layer: int = -6  # Layer -6 produces best results (research validated)
-    text_tokens_only: bool = True  # Use only text token positions (image tokens cause artifacts)
-    auto_unload: bool = True  # Unload after extraction to save VRAM
-    target_std: float = 58.75  # Target std for scaling (research validated from experiments)
-
-
-@dataclass
 class LTX2Config:
-    """Configuration for LTX-2 video generation model.
+    """Configuration for LTX-2 two-stage video generation.
 
-    LTX-2 is a 19B parameter video+audio generation model from Lightricks:
-    - 14B video transformer + 5B audio transformer (asymmetric dual-stream DiT)
-    - Text encoder: Gemma 3-12B (NOT Qwen3)
-    - Output: Video (512x768 typical) + optional audio
-    - Memory: FP8 model (25GB) + CPU offload for RTX 4090
+    Two-stage pipeline (reference: TI2VidTwoStagesPipeline):
+      Stage 0: Encode text with Gemma 3-12B (FP8 on CUDA)
+      Stage 1: Denoise at half resolution (40 steps, CFG-guided)
+      Stage 1.5: Spatial upsample latents 2x
+      Stage 2: Refine at full resolution (3 steps, distilled LoRA, no CFG)
+      Stage 3: VAE decode to pixels
 
-    Key differences from Z-Image:
-    - Uses Gemma 3-12B text encoder (4096 dim) vs Qwen3-4B (2560 dim)
-    - Outputs video+audio vs image only
-    - 19B params vs ~2B params
-    - Requires model-level CPU offloading for 24GB VRAM
+    Sequential offloading: only one major component on GPU at a time.
+    VRAM budget (RTX 4090, 24GB):
+      - Encoder (Gemma 3-12B FP8): ~12 GB
+      - Transformer FP8 + half-res latents: ~12-13 GB
+      - Spatial upsampler (BF16): ~2-3 GB
+      - Transformer FP8 + LoRA + full-res latents: ~15-16 GB (peak)
+      - VAE decoder: ~2-3 GB
 
-    IMPORTANT: RTX 4090 (SM89) has NATIVE FP8 tensor core support but FP4 is EMULATED.
-    FP8 is faster than FP4 on RTX 4090 despite larger size. Use FP4 only on Hopper+.
-
-    Offload modes:
-    - none: No offloading (requires >48GB VRAM)
-    - model: Model-level offload (~20-50% slower, enables 24GB inference)
-    - sequential: Layer-by-layer streaming (~3-5x slower)
-    - group: Stream DiT blocks in groups (configurable VRAM vs speed)
-
-    Memory budget (24GB):
-    - Encoder (Gemma 3-12B Q4): ~6GB → offload after encoding
-    - Transformer (FP8): ~19GB peak during generation
-    - VAE: ~2GB for tiled decode
-    - Peak: ~23-24GB with proper offloading
+    IMPORTANT: RTX 4090 (SM89) has NATIVE FP8 tensor core support but INT4 is EMULATED.
+    FP8 is faster than INT4 on RTX 4090 despite larger size. Use INT4 only on Hopper+.
     """
 
     # Model paths
     model_path: str = ""  # Directory containing LTX-2 model files
-    transformer_file: str = "ltx-2-19b-distilled-fp8.safetensors"  # Native FP8 recommended
+    transformer_file: str = "ltx-2-19b-dev-fp8.safetensors"  # Base model for stage 1
+
+    # Two-stage pipeline files (reference: TI2VidTwoStagesPipeline)
+    spatial_upsampler_file: str = "ltx-2-spatial-upscaler-x2-1.0.safetensors"
+    distilled_lora_path: str = ""  # Distilled LoRA for stage 2 refinement
+    distilled_lora_scale: float = 1.0  # Distilled LoRA blend strength (ref: 1.0)
 
     # Text encoder (Gemma 3-12B)
     encoder_model_id: str = "models/LTX-2/text_encoder"
-    encoder_quantization: str = "none"  # Gemma 3 already ships with Q4 QAT
-    encoder_cpu_offload: bool = True  # Offload after encoding (REQUIRED for 24GB)
+    encoder_quantization: str = "fp8-weight-only"  # Deprecated: use gemma_variant instead
+    encoder_cpu_offload: bool = True  # Deprecated: encoder always deleted after encoding
+
+    # Prompt enhancement
+    enhance_prompt: bool = False  # Use Gemma3 to expand prompt before encoding
 
     # LoRA configuration
     lora_path: str = ""  # Path to LoRA safetensors
@@ -442,19 +357,51 @@ class LTX2Config:
     num_blocks_per_group: int = 2  # For group offload: DiT blocks to keep on GPU
 
     # Video generation defaults
-    height: int = 768  # Video height (multiple of 32)
-    width: int = 512  # Video width (multiple of 32)
+    height: int = 512  # Video height (multiple of 32, ref: DEFAULT_1_STAGE_HEIGHT)
+    width: int = 768  # Video width (multiple of 32, ref: DEFAULT_1_STAGE_WIDTH)
     num_frames: int = 33  # Number of frames (33-65 typical for 24GB)
     fps: int = 24  # Output FPS
-    num_inference_steps: int = 12  # Diffusion steps (8+4 for distilled, 40 for full)
-    guidance_scale: float = 3.5  # CFG scale (3.0-4.0 recommended)
+    num_inference_steps: int = 40  # Stage 1 steps (full denoising, 40 for dev model)
+    guidance_scale: float = 3.0  # CFG scale (ref: DEFAULT_VIDEO_GUIDER_PARAMS.cfg_scale)
 
     # Audio generation
     audio_enabled: bool = False  # Enable audio stream generation
     audio_negative_prompt: str = ""  # Negative prompt for audio CFG
+    audio_vae_path: str = ""  # Path to audio decoder checkpoint (empty = model_path/audio_vae)
+    vocoder_path: str = ""  # Path to vocoder checkpoint (empty = model_path/vocoder)
 
-    # Distillation settings
-    use_distilled: bool = True  # Use distilled model (8+4 step)
+    # Two-stage pipeline settings (matching reference TI2VidTwoStagesPipeline)
+    use_two_stage: bool = True  # Enable two-stage generation
+    stage1_num_inference_steps: int = 40  # Full denoising for stage 1
+    stage2_num_inference_steps: int = 3  # Distilled refinement for stage 2
+    negative_prompt: str = (
+        "blurry, out of focus, overexposed, underexposed, low contrast, washed out colors, excessive noise, "
+        "grainy texture, poor lighting, flickering, motion blur, distorted proportions, unnatural skin tones, "
+        "deformed facial features, asymmetrical face, missing facial features, extra limbs, disfigured hands, "
+        "wrong hand count, artifacts around text, inconsistent perspective, camera shake, incorrect depth of "
+        "field, background too sharp, background clutter, distracting reflections, harsh shadows, inconsistent "
+        "lighting direction, color banding, cartoonish rendering, 3D CGI look, unrealistic materials, uncanny "
+        "valley effect, incorrect ethnicity, wrong gender, exaggerated expressions, wrong gaze direction, "
+        "mismatched lip sync, silent or muted audio, distorted voice, robotic voice, echo, background noise, "
+        "off-sync audio, incorrect dialogue, added dialogue, repetitive speech, jittery movement, awkward "
+        "pauses, incorrect timing, unnatural transitions, inconsistent framing, tilted camera, flat lighting, "
+        "inconsistent tone, cinematic oversaturation, stylized filters, or AI artifacts."
+    )
+
+    # Guidance (stage 1 only; stage 2 uses simple denoising)
+    stg_scale: float = 1.0  # Spatio-temporal guidance scale (0=disabled, 1.0=reference)
+    stg_blocks: str = "29"  # Comma-separated block indices for STG
+    rescale_scale: float = 0.7  # CFG rescaling to prevent over-saturation
+
+    # Optimization
+    ge_gamma: float = 0.0  # Gradient estimation gamma (0=disabled, 2.0=reference)
+    fbcache_threshold: float = 0.0  # FBCache block-skip threshold (0=disabled, 0.05=recommended)
+
+    # Distilled pipeline mode
+    use_distilled_sigmas: bool = False  # Use predefined sigma schedule (8+4 steps, no CFG)
+
+    # Legacy distillation settings (single-stage distilled model)
+    use_distilled: bool = False  # Use single-stage distilled model (legacy)
     distilled_steps_stage1: int = 8  # First stage steps (distilled)
     distilled_steps_stage2: int = 4  # Second stage steps (distilled)
 
@@ -468,6 +415,26 @@ class LTX2Config:
     tile_size_spatial: int = 256  # Spatial tile size (pixels)
     tile_overlap_temporal: int = 4  # Temporal overlap
     tile_overlap_spatial: int = 32  # Spatial overlap
+
+    # Embedding precomputation
+    save_embeddings: str | None = None  # Save embeddings to this path (skip generation)
+    load_embeddings: str | None = None  # Load precomputed embeddings from this path
+
+    # Output
+    output_path: str = "output.mp4"  # Output video path
+
+    # Device placement
+    text_encoder_device: str = "cpu"  # Device for Gemma3 (cpu recommended for 24GB)
+    transformer_device: str = "cuda"  # Device for DiT transformer
+    vae_device: str = "cuda"  # Device for VAE decoder
+
+    # Quantization
+    quantize: str = "fp8"  # Transformer quantization (none, fp8)
+    skip_cleanup: bool = False  # Skip memory cleanup between stages
+    gemma_variant: str = "fp8"  # Gemma3 backbone: bf16, fp8, 8bit, q4-qat
+
+    # Preset configuration
+    default_preset: str = ""  # Default preset to load (e.g., "cinematic")
 
     def get_dtype(self) -> torch.dtype:
         """Get torch dtype for computation.
@@ -642,9 +609,19 @@ class Flux2Config:
     vae_path: str = ""  # Path to VAE weights (file or directory)
     encoder_path: str = ""  # Path to Qwen3 encoder (optional, uses HuggingFace if empty)
     default_model: str = "klein-9b-fp8"  # Default model variant
-    block_offload: bool = True  # Enable block-by-block GPU offloading for low VRAM
+    block_offload: bool = False  # Enable block-by-block GPU offloading (slower but uses ~5GB less VRAM)
+    offload_between_stages: bool = True  # Three-stage offloading: encoder -> transformer -> VAE
+    encoder_device: str = "cuda"  # Device for text encoder (cuda recommended, encoder offloads after use)
     default_steps: int | None = None  # Default steps (None = model default: 4 distilled, 50 base)
     default_guidance: float | None = None  # Default CFG (None = model default: 1.0 distilled, 4.0 base)
+    default_preset: str = ""  # Default preset to load (e.g., "quality")
+
+    # Performance optimization
+    compile: bool = False  # torch.compile the transformer
+    compile_vae: bool = False  # torch.compile the VAE decoder
+    compile_mode: str = "default"  # torch.compile mode
+    compile_dynamic: bool = False  # dynamic shapes: avoid recompilation per resolution
+    quantization: str = "none"  # none, fp8-dynamic, fp8-weight-only, int8, int4
 
 
 @dataclass
@@ -665,20 +642,19 @@ class ZImageConfig:
     | Model path         | models/Z-Image  | models/Z-Image-Turbo |
 
     Both variants use the same Qwen3-4B text encoder and DiT architecture.
+
+    Generation parameters (steps, guidance_scale, shift, negative_prompt) are
+    defined in presets/ and loaded via default_preset. This config only holds
+    infrastructure settings (paths, variant selection).
     """
 
     model_path: str = ""  # Path to Z-Image model (turbo or base)
     text_encoder_path: str = ""  # Optional separate path for text encoder
     variant: str = "auto"  # auto, turbo, base (auto-detects from scheduler_config.json)
 
-    # Variant-aware defaults (None = use variant default)
-    default_steps: int | None = None  # None = 9 for turbo, 35 for base
-    default_guidance_scale: float | None = None  # None = 0.0 for turbo, 4.0 for base
-    default_shift: float | None = None  # None = 3.0 for turbo, 6.0 for base
-
-    # Base model specific
-    default_negative_prompt: str = ""  # Default negative prompt for base model
-    default_cfg_normalization: float = 0.0  # 0.0 disabled, 1.0 for realism
+    # Preset configuration - defines steps, guidance_scale, shift, negative_prompt
+    # Presets are loaded from presets/zimage/{preset_name}.md
+    default_preset: str = ""  # Default preset to load (e.g., "photorealistic")
 
 
 @dataclass
@@ -708,15 +684,15 @@ class QwenImageConfig:
     cpu_offload: bool = True  # Enable sequential CPU offload for memory efficiency
 
     # Quantization (for VRAM-constrained GPUs like RTX 4090)
-    # Valid options: none, 4bit, 8bit, fp8, fp8-filtered, int8, diffsynth-fp8
+    # Valid options: none, fp8-dynamic, fp8-weight-only, int8, int4
     # - none: Full precision (BF16)
-    # - 4bit/8bit: BitsAndBytes quantization (any GPU)
-    # - fp8/fp8-filtered: TorchAO FP8 (RTX 4090+, 2x faster)
+    # - fp8-dynamic: FP8 weights + activations (RTX 4090+, SM89+)
+    # - fp8-weight-only: FP8 weights, BF16 compute (RTX 4090+, compile-safe)
     # - int8: TorchAO INT8 weight-only (any GPU)
-    # - diffsynth-fp8: Runtime FP8 patching (RTX 4090+, AMD MI300)
-    quantize_text_encoder: str = "none"  # Qwen2.5-VL-7B: 14GB -> 7GB (fp8) or 3.5GB (4bit)
-    quantize_transformer: str = "none"  # DiT: 8GB -> 4GB (fp8) or 2GB (4bit)
-    quantize_vae: str = "none"  # VAE: 500MB -> 250MB (int8). Only int8/8bit for Conv2d
+    # - int4: TorchAO INT4 weight-only (max compression)
+    quantize_text_encoder: str = "none"  # Qwen2.5-VL-7B: 14GB -> 7GB (fp8) or 4GB (int4)
+    quantize_transformer: str = "none"  # DiT: 8GB -> 4GB (fp8) or 2GB (int4)
+    quantize_vae: str = "none"  # VAE: 500MB -> 250MB (int8). Only int8 for Conv2d
 
     # Offloading strategy
     # - model: enable_model_cpu_offload() - swap entire components
@@ -728,7 +704,6 @@ class QwenImageConfig:
     # Generation settings
     num_inference_steps: int = 25  # Denoising steps for Edit-2511
     cfg_scale: float = 4.0  # Classifier-free guidance scale
-    layer_num: int = 4  # Number of decomposition layers (outputs layer_num+1 images)
 
     # Resolution (only 640 or 1024 supported)
     resolution: int = 1024  # Base resolution (enforced to 640 or 1024)
@@ -756,19 +731,10 @@ class QwenImageConfig:
                 return "cpu"
         return self.device
 
-    def validate_resolution(self) -> None:
-        """Validate and enforce supported resolutions."""
-        if self.resolution not in (640, 1024):
-            raise ValueError(
-                f"Qwen-Image-Layered only supports resolutions 640 or 1024, "
-                f"got {self.resolution}. The model was trained on these specific "
-                f"resolutions and other values may produce poor results."
-            )
-
     def validate_quantization(self) -> None:
         """Validate quantization settings and check hardware compatibility."""
-        valid_quant = ("none", "4bit", "8bit", "fp8", "fp8-filtered", "int8", "diffsynth-fp8")
-        valid_vae_quant = ("none", "int8", "8bit")  # Only int8/8bit for Conv2d
+        valid_quant = ("none", "fp8-dynamic", "fp8-weight-only", "int8", "int4")
+        valid_vae_quant = ("none", "int8")  # Only int8 for Conv2d
         valid_offload = ("model", "group", "sequential")
 
         for field, value in [
@@ -793,7 +759,7 @@ class QwenImageConfig:
             )
 
         # Check FP8 hardware compatibility
-        fp8_options = ("fp8", "fp8-filtered", "diffsynth-fp8")
+        fp8_options = ("fp8-dynamic", "fp8-weight-only")
         uses_fp8 = (
             self.quantize_text_encoder in fp8_options or self.quantize_transformer in fp8_options
         )
@@ -804,7 +770,7 @@ class QwenImageConfig:
                 if not check_fp8_support():
                     logger.warning(
                         "FP8 quantization requires RTX 4090+ (compute 8.9+) or AMD MI300. "
-                        "FP8 may not work on this hardware. Consider 'int8' or '8bit' instead."
+                        "FP8 may not work on this hardware. Consider 'int8' instead."
                     )
             except ImportError:
                 pass  # quantization module not available
@@ -1253,12 +1219,6 @@ class RewriterConfig:
     for text generation. When use_api is True and api_url is set,
     the rewriter will use the API backend instead of the local model.
 
-    VL Rewriting:
-    - When vl_enabled is True and vl.model_path is configured, users can
-      select Qwen3-VL for vision-enabled prompt rewriting in the web UI.
-    - VL model is loaded on-demand when first selected (unless preload_vl is True).
-    - Supports image-only, text-only, or combined image+text rewriting.
-
     Qwen3 Best Practices (thinking mode):
     - temperature=0.6, top_p=0.95, top_k=20, min_p=0 (default)
     - DO NOT use greedy decoding (causes repetition)
@@ -1278,14 +1238,892 @@ class RewriterConfig:
     min_p: float = 0.0  # Qwen3: 0.0 (disabled)
     presence_penalty: float = 0.0  # 0-2, helps reduce endless repetitions
     max_tokens: int = 1024  # Maximum tokens to generate
-    # VL rewriter settings
-    vl_enabled: bool = True  # Allow VL model selection in rewriter UI
-    preload_vl: bool = False  # Load Qwen3-VL at startup for rewriter (uses vl.model_path)
-    vl_api_model: str = (
-        ""  # Model ID for VL via API (e.g., "qwen2.5-vl-72b-mlx"). Empty = use local VL
-    )
     # API timeout settings
-    timeout: float = 120.0  # API request timeout in seconds (VL models need longer)
+    timeout: float = 120.0  # API request timeout in seconds
+
+
+@dataclass
+class LoggingConfig:
+    """Logging configuration for file and console output."""
+
+    enabled: bool = False
+    log_dir: str = ""
+    log_level: str = "INFO"
+    json_format: bool = True
+    max_bytes: int = 10485760  # 10MB per log file
+    backup_count: int = 5  # Rotated log files to keep
+    log_requests: bool = True  # Log API request/response metadata
+    log_generation_params: bool = True  # Log generation parameters
+    log_prompts: bool = True  # Log prompt text in generation requests
+
+
+@dataclass
+class WanConfig:
+    """Configuration for Wan/HuMo video generation."""
+
+    humo_path: str = ""  # Path to HuMo transformer
+    base_path: str = ""  # Path to Wan2.1-T2V for VAE/text encoder
+    whisper_path: str = ""  # Path to Whisper (optional, for audio)
+    humo_variant: str = "17B"  # "17B" or "1.7B"
+    num_frames: int = 97  # Number of frames (97 = ~3.9s at 25fps)
+    fps: int = 25  # Output framerate
+    height: int = 720  # Video height (multiple of 16)
+    width: int = 1280  # Video width (multiple of 16)
+    guidance_scale: float = 5.0  # Text guidance (scale_t)
+    audio_scale: float = 0.0  # Audio guidance (scale_a), 0 = T2V mode
+    num_inference_steps: int = 50  # Diffusion steps
+    offload_mode: str = "model"  # none, model, sequential
+    output_path: str = "wan_output.mp4"  # Output video path
+
+
+@dataclass
+class RuntimeConfig:
+    """Unified runtime configuration composing all sub-configs.
+
+    This replaces the old 158-field flat RuntimeConfig. Instead of flat fields
+    like `flux2_model_path`, access via `flux2.model_path`.
+
+    Sub-configs are the canonical config.py dataclasses -- same ones used by
+    Config.from_toml(). Adding a new parameter only requires:
+    1. Add field to the sub-config dataclass
+    2. Add to config.toml
+    That's it. No manual mapping needed.
+    """
+
+    # Top-level settings (not pipeline-specific)
+    default_pipeline: str = "none"  # none, z-image, qwen-image, flux2, ltx2
+    model_type: str = "zimage"  # zimage, qwenimage-t2i, qwenimage-edit, ltx2, wan
+    model_path: str = ""  # Z-Image model path (legacy, prefer zimage.model_path)
+    text_encoder_path: str | None = None
+    templates_dir: str | None = None
+
+    # Server
+    host: str = "127.0.0.1"
+    port: int = 7860
+    ssl_certfile: str = ""  # Path to SSL certificate (.pem), empty = HTTP
+    ssl_keyfile: str = ""  # Path to SSL private key (.pem)
+    ssl_ca_certs: str = ""  # Path to CA bundle (optional, for client cert verification)
+    debug: bool = False
+
+    # Composed sub-configs (reuse config.py dataclasses directly)
+    encoder: EncoderConfig = field(default_factory=EncoderConfig)
+    generation: GenerationConfig = field(default_factory=GenerationConfig)
+    optimization: OptimizationConfig = field(default_factory=OptimizationConfig)
+    scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
+    logging: LoggingConfig = field(default_factory=LoggingConfig)
+    rewriter: RewriterConfig = field(default_factory=RewriterConfig)
+    quant: PipelineQuantConfig = field(default_factory=PipelineQuantConfig)
+    api: APIConfig = field(default_factory=APIConfig)
+    lora: LoRAConfig = field(default_factory=LoRAConfig)
+    pytorch: PyTorchConfig = field(default_factory=PyTorchConfig)
+
+    # Pipeline-specific configs
+    flux2: Flux2Config = field(default_factory=Flux2Config)
+    ltx2: LTX2Config = field(default_factory=LTX2Config)
+    zimage: ZImageConfig = field(default_factory=ZImageConfig)
+    qwen_image: QwenImageConfig = field(default_factory=QwenImageConfig)
+    wan: WanConfig = field(default_factory=WanConfig)
+
+    # Feature configs
+    dype: DyPEConfig = field(default_factory=DyPEConfig)
+    slg: SLGConfig = field(default_factory=SLGConfig)
+    fmtt: FMTTConfig = field(default_factory=FMTTConfig)
+    fbcache: FBCacheRuntimeConfig = field(default_factory=FBCacheRuntimeConfig)
+
+    # Mutable state set at runtime (not from config files)
+    config_path: str | None = None  # Path to config file used
+    current_profile: str | None = None  # Active config profile
+
+    # -----------------------------------------------------------------------
+    # Convenience properties for backward compatibility during migration.
+    # These allow code to access config via the old flat-field pattern while
+    # we migrate server.py to use sub-configs directly. Remove once Phase 3
+    # (router decomposition) is complete.
+    # -----------------------------------------------------------------------
+
+    @property
+    def encoder_device(self) -> str:
+        return self.encoder.device
+
+    @encoder_device.setter
+    def encoder_device(self, value: str) -> None:
+        self.encoder.device = value
+
+    @property
+    def dit_device(self) -> str:
+        return self.optimization.dit_device
+
+    @dit_device.setter
+    def dit_device(self, value: str) -> None:
+        self.optimization.dit_device = value
+
+    @property
+    def vae_device(self) -> str:
+        return self.optimization.vae_device
+
+    @vae_device.setter
+    def vae_device(self, value: str) -> None:
+        self.optimization.vae_device = value
+
+    @property
+    def dtype(self) -> str:
+        return self.encoder.dtype
+
+    @dtype.setter
+    def dtype(self, value: str) -> None:
+        self.encoder.dtype = value
+
+    @property
+    def hidden_layer(self) -> int:
+        return self.encoder.hidden_layer
+
+    @hidden_layer.setter
+    def hidden_layer(self, value: int) -> None:
+        self.encoder.hidden_layer = value
+
+    @property
+    def flash_attn(self) -> bool:
+        return self.optimization.flash_attn
+
+    @flash_attn.setter
+    def flash_attn(self, value: bool) -> None:
+        self.optimization.flash_attn = value
+
+    @property
+    def compile(self) -> bool:
+        return self.optimization.compile
+
+    @compile.setter
+    def compile(self, value: bool) -> None:
+        self.optimization.compile = value
+
+    @property
+    def compile_mode(self) -> str:
+        return self.optimization.compile_mode
+
+    @compile_mode.setter
+    def compile_mode(self, value: str) -> None:
+        self.optimization.compile_mode = value
+
+    @property
+    def cpu_offload(self) -> bool:
+        return self.optimization.cpu_offload
+
+    @cpu_offload.setter
+    def cpu_offload(self, value: bool) -> None:
+        self.optimization.cpu_offload = value
+
+    @property
+    def shift(self) -> float:
+        return self.scheduler.shift
+
+    @shift.setter
+    def shift(self, value: float) -> None:
+        self.scheduler.shift = value
+
+    @property
+    def shift_terminal(self) -> float | None:
+        return self.scheduler.shift_terminal
+
+    @shift_terminal.setter
+    def shift_terminal(self, value: float | None) -> None:
+        self.scheduler.shift_terminal = value
+
+    @property
+    def steps(self) -> int:
+        return self.generation.num_inference_steps
+
+    @steps.setter
+    def steps(self, value: int) -> None:
+        self.generation.num_inference_steps = value
+
+    @property
+    def guidance_scale(self) -> float:
+        return self.generation.guidance_scale
+
+    @guidance_scale.setter
+    def guidance_scale(self, value: float) -> None:
+        self.generation.guidance_scale = value
+
+    @property
+    def height(self) -> int:
+        return self.generation.height
+
+    @height.setter
+    def height(self, value: int) -> None:
+        self.generation.height = value
+
+    @property
+    def width(self) -> int:
+        return self.generation.width
+
+    @width.setter
+    def width(self, value: int) -> None:
+        self.generation.width = value
+
+    @property
+    def seed(self) -> int | None:
+        return self.generation.seed
+
+    @seed.setter
+    def seed(self, value: int | None) -> None:
+        self.generation.seed = value
+
+    @property
+    def negative_prompt(self) -> str | None:
+        return self.generation.negative_prompt
+
+    @negative_prompt.setter
+    def negative_prompt(self, value: str | None) -> None:
+        self.generation.negative_prompt = value
+
+    @property
+    def enable_thinking(self) -> bool:
+        return self.generation.enable_thinking
+
+    @property
+    def default_template(self) -> str | None:
+        return self.generation.default_template
+
+    @property
+    def cfg_normalization(self) -> float:
+        return self.generation.cfg_normalization
+
+    @property
+    def cfg_truncation(self) -> float:
+        return self.generation.cfg_truncation
+
+    @property
+    def attention_backend(self) -> str | None:
+        return self.pytorch.attention_backend
+
+    @property
+    def long_prompt_mode(self) -> str:
+        return self.pytorch.long_prompt_mode
+
+    @property
+    def tiled_vae(self) -> bool:
+        return self.pytorch.tiled_vae
+
+    @property
+    def lora_paths(self) -> list[str]:
+        return self.lora.paths
+
+    @property
+    def lora_scales(self) -> list[float]:
+        return self.lora.scales
+
+    @property
+    def api_url(self) -> str | None:
+        url = self.api.url
+        return url if url else None
+
+    @property
+    def api_model(self) -> str:
+        return self.api.model
+
+    # Qwen-Image backward-compat properties
+    @property
+    def qwen_image_model_path(self) -> str:
+        return self.qwen_image.model_path
+
+    @qwen_image_model_path.setter
+    def qwen_image_model_path(self, value: str) -> None:
+        self.qwen_image.model_path = value
+
+    @property
+    def qwen_image_edit_model_path(self) -> str:
+        return self.qwen_image.edit_model_path
+
+    @property
+    def qwen_image_cpu_offload(self) -> bool:
+        return self.qwen_image.cpu_offload
+
+    @property
+    def qwen_image_cfg_scale(self) -> float:
+        return self.qwen_image.cfg_scale
+
+    @property
+    def qwen_image_resolution(self) -> int | None:
+        return getattr(self.qwen_image, "resolution", None)
+
+    @property
+    def qwen_image_steps(self) -> int | None:
+        return getattr(self.qwen_image, "num_inference_steps", None)
+
+    @property
+    def qwen_image_quantize_text_encoder(self) -> str:
+        return getattr(self.qwen_image, "quantize_text_encoder", "none")
+
+    @property
+    def qwen_image_quantize_transformer(self) -> str | None:
+        return getattr(self.qwen_image, "quantize_transformer", None)
+
+    # FLUX.2 backward-compat properties
+    @property
+    def flux2_model_path(self) -> str | None:
+        return self.flux2.model_path or None
+
+    @property
+    def flux2_vae_path(self) -> str | None:
+        return self.flux2.vae_path
+
+    @property
+    def flux2_encoder_path(self) -> str | None:
+        return self.flux2.encoder_path
+
+    @property
+    def flux2_model_name(self) -> str:
+        return self.flux2.default_model
+
+    @property
+    def flux2_compile(self) -> bool:
+        return getattr(self.flux2, "compile", False)
+
+    @property
+    def flux2_compile_vae(self) -> bool:
+        return getattr(self.flux2, "compile_vae", False)
+
+    @property
+    def flux2_compile_mode(self) -> str:
+        return getattr(self.flux2, "compile_mode", "default")
+
+    @property
+    def flux2_compile_dynamic(self) -> bool:
+        return getattr(self.flux2, "compile_dynamic", False)
+
+    @property
+    def flux2_block_offload(self) -> bool:
+        return self.flux2.block_offload
+
+    @property
+    def flux2_offload_between_stages(self) -> bool:
+        return getattr(self.flux2, "offload_between_stages", True)
+
+    @property
+    def flux2_num_steps(self) -> int | None:
+        return self.flux2.default_steps
+
+    @property
+    def flux2_guidance(self) -> float | None:
+        return self.flux2.default_guidance
+
+    # LTX-2 backward-compat properties
+    @property
+    def ltx2_model_path(self) -> str:
+        return self.ltx2.model_path
+
+    @ltx2_model_path.setter
+    def ltx2_model_path(self, value: str) -> None:
+        self.ltx2.model_path = value
+
+    # Z-Image backward-compat properties
+    @property
+    def zimage_model_path(self) -> str | None:
+        return self.zimage.model_path or None
+
+    @zimage_model_path.setter
+    def zimage_model_path(self, value: str) -> None:
+        self.zimage.model_path = value
+
+    @property
+    def zimage_variant(self) -> str:
+        return self.zimage.variant
+
+    @zimage_variant.setter
+    def zimage_variant(self, value: str) -> None:
+        self.zimage.variant = value
+
+    # Rewriter backward-compat properties
+    @property
+    def rewriter_use_api(self) -> bool:
+        return self.rewriter.use_api
+
+    @property
+    def rewriter_api_url(self) -> str:
+        return self.rewriter.api_url
+
+    @property
+    def rewriter_api_model(self) -> str:
+        return self.rewriter.api_model
+
+    @property
+    def rewriter_temperature(self) -> float:
+        return self.rewriter.temperature
+
+    @property
+    def rewriter_top_p(self) -> float:
+        return self.rewriter.top_p
+
+    @property
+    def rewriter_top_k(self) -> int:
+        return self.rewriter.top_k
+
+    @property
+    def rewriter_min_p(self) -> float:
+        return self.rewriter.min_p
+
+    @property
+    def rewriter_presence_penalty(self) -> float:
+        return self.rewriter.presence_penalty
+
+    @property
+    def rewriter_max_tokens(self) -> int:
+        return self.rewriter.max_tokens
+
+    # DyPE backward-compat properties
+    @property
+    def dype_enabled(self) -> bool:
+        return self.dype.enabled
+
+    @dype_enabled.setter
+    def dype_enabled(self, value: bool) -> None:
+        self.dype.enabled = value
+
+    @property
+    def dype_method(self) -> str:
+        return self.dype.method
+
+    @property
+    def dype_scale(self) -> float:
+        return self.dype.dype_scale
+
+    # SLG backward-compat properties
+    @property
+    def slg_scale(self) -> float:
+        return self.slg.scale
+
+    @property
+    def slg_layers(self) -> list[int] | None:
+        return self.slg.layers
+
+    # Additional scheduler backward-compat
+    @property
+    def dynamic_shift(self) -> bool:
+        return self.scheduler.dynamic_shift
+
+    @dynamic_shift.setter
+    def dynamic_shift(self, value: bool) -> None:
+        self.scheduler.dynamic_shift = value
+
+    @property
+    def d_noise(self) -> float:
+        return self.scheduler.d_noise
+
+    @d_noise.setter
+    def d_noise(self, value: float) -> None:
+        self.scheduler.d_noise = value
+
+    # Additional generation backward-compat
+    @property
+    def cfg_norm_mode(self) -> str:
+        return self.generation.cfg_norm_mode
+
+    @cfg_norm_mode.setter
+    def cfg_norm_mode(self, value: str) -> None:
+        self.generation.cfg_norm_mode = value
+
+    @property
+    def system_prompt(self) -> str | None:
+        return self.generation.system_prompt
+
+    @system_prompt.setter
+    def system_prompt(self, value: str | None) -> None:
+        self.generation.system_prompt = value
+
+    @property
+    def thinking_content(self) -> str | None:
+        return self.generation.thinking_content
+
+    @thinking_content.setter
+    def thinking_content(self, value: str | None) -> None:
+        self.generation.thinking_content = value
+
+    @property
+    def assistant_content(self) -> str | None:
+        return self.generation.assistant_content
+
+    @assistant_content.setter
+    def assistant_content(self, value: str | None) -> None:
+        self.generation.assistant_content = value
+
+    # Additional encoder backward-compat
+    @property
+    def quantization(self) -> str:
+        return self.encoder.quantization
+
+    @quantization.setter
+    def quantization(self, value: str) -> None:
+        self.encoder.quantization = value
+
+    @property
+    def layer_weights(self) -> dict[int, float] | None:
+        return self.encoder.layer_weights
+
+    @layer_weights.setter
+    def layer_weights(self, value: dict[int, float] | None) -> None:
+        self.encoder.layer_weights = value
+
+    # Additional pytorch backward-compat
+    @property
+    def embedding_cache(self) -> bool:
+        return self.pytorch.embedding_cache
+
+    @property
+    def cache_size(self) -> int:
+        return self.pytorch.cache_size
+
+    @property
+    def tile_size(self) -> int:
+        return self.pytorch.tile_size
+
+    @property
+    def tile_overlap(self) -> int:
+        return self.pytorch.tile_overlap
+
+    @property
+    def use_custom_scheduler(self) -> bool:
+        return self.pytorch.use_custom_scheduler
+
+    # Additional api backward-compat
+    @property
+    def local_encoder(self) -> bool:
+        return self.api.local_encoder
+
+    # Additional logging backward-compat
+    @property
+    def log_dir(self) -> str | None:
+        d = self.logging.log_dir
+        return d if d else None
+
+    @log_dir.setter
+    def log_dir(self, value: str | None) -> None:
+        self.logging.log_dir = value or ""
+
+    # Additional LTX-2 backward-compat
+    @property
+    def ltx2_num_frames(self) -> int:
+        return self.ltx2.num_frames
+
+    @property
+    def ltx2_fps(self) -> int:
+        return self.ltx2.fps
+
+    @property
+    def ltx2_guidance_scale(self) -> float:
+        return self.ltx2.guidance_scale
+
+    @property
+    def ltx2_steps(self) -> int | None:
+        return getattr(self.ltx2, "num_inference_steps", None)
+
+    @property
+    def ltx2_encoder_model_id(self) -> str:
+        return getattr(self.ltx2, "encoder_model_id", "models/LTX-2/text_encoder")
+
+    @property
+    def ltx2_lora_path(self) -> str:
+        return getattr(self.ltx2, "lora_path", "")
+
+    @property
+    def ltx2_lora_scale(self) -> float:
+        return getattr(self.ltx2, "lora_scale", 1.0)
+
+    @property
+    def ltx2_audio(self) -> bool:
+        return getattr(self.ltx2, "audio_enabled", False)
+
+    @property
+    def ltx2_save_embeddings(self) -> str | None:
+        return self.ltx2.save_embeddings
+
+    @ltx2_save_embeddings.setter
+    def ltx2_save_embeddings(self, value: str | None) -> None:
+        self.ltx2.save_embeddings = value
+
+    @property
+    def ltx2_load_embeddings(self) -> str | None:
+        return self.ltx2.load_embeddings
+
+    @ltx2_load_embeddings.setter
+    def ltx2_load_embeddings(self, value: str | None) -> None:
+        self.ltx2.load_embeddings = value
+
+    @property
+    def ltx2_text_encoder_device(self) -> str:
+        return self.ltx2.text_encoder_device
+
+    @property
+    def ltx2_transformer_device(self) -> str:
+        return self.ltx2.transformer_device
+
+    @property
+    def ltx2_vae_device(self) -> str:
+        return self.ltx2.vae_device
+
+    @property
+    def ltx2_quantize(self) -> str:
+        return self.ltx2.quantize
+
+    @property
+    def ltx2_skip_cleanup(self) -> bool:
+        return self.ltx2.skip_cleanup
+
+    @property
+    def ltx2_gemma_variant(self) -> str:
+        return self.ltx2.gemma_variant
+
+    @property
+    def ltx2_output_path(self) -> str:
+        return self.ltx2.output_path
+
+    # Additional FLUX.2 backward-compat
+    @property
+    def flux2_seed(self) -> int | None:
+        return getattr(self.flux2, "seed", None)
+
+    @property
+    def flux2_output_path(self) -> str:
+        return getattr(self.flux2, "output_path", "flux2_output.png")
+
+    @property
+    def flux2_input_images(self) -> list[str] | None:
+        return getattr(self.flux2, "input_images", None)
+
+    # Additional Qwen-Image backward-compat
+    @property
+    def qwen_image_edit_only(self) -> bool:
+        return getattr(self.qwen_image, "edit_only", False)
+
+    @property
+    def qwen_image_offload_type(self) -> str:
+        return getattr(self.qwen_image, "offload_type", "pipeline")
+
+    # Additional DyPE backward-compat
+    @property
+    def dype_exponent(self) -> float:
+        return self.dype.dype_exponent
+
+    @property
+    def dype_start_sigma(self) -> float:
+        return self.dype.dype_start_sigma
+
+    @property
+    def dype_base_shift(self) -> float:
+        return getattr(self.dype, "base_shift", 0.5)
+
+    @property
+    def dype_max_shift(self) -> float:
+        return getattr(self.dype, "max_shift", 1.15)
+
+    @property
+    def dype_base_resolution(self) -> int:
+        return getattr(self.dype, "base_resolution", 1024)
+
+    @property
+    def dype_anisotropic(self) -> bool:
+        return getattr(self.dype, "anisotropic", False)
+
+    @property
+    def dype_multipass(self) -> str:
+        return getattr(self.dype, "multipass", "single")
+
+    @property
+    def dype_pass2_strength(self) -> float:
+        return getattr(self.dype, "pass2_strength", 0.5)
+
+    @property
+    def dype_pass3_strength(self) -> float:
+        return getattr(self.dype, "pass3_strength", 0.4)
+
+    @property
+    def dype_frequency_modulation(self) -> bool:
+        return getattr(self.dype, "frequency_modulation", False)
+
+    # FBCache backward-compat (note: the old field was just `fbcache`)
+    @property
+    def fbcache_enabled(self) -> bool:
+        return self.fbcache.enabled
+
+    @property
+    def fbcache_threshold(self) -> float | None:
+        return getattr(self.fbcache, "middle_threshold", None)
+
+    @property
+    def fbcache_log(self) -> bool:
+        return getattr(self.fbcache, "log_residuals", False)
+
+    # Additional rewriter backward-compat
+    @property
+    def rewriter_timeout(self) -> float:
+        return self.rewriter.timeout
+
+    # -----------------------------------------------------------------------
+    # Methods
+    # -----------------------------------------------------------------------
+
+    def get_dtype(self) -> "torch.dtype":
+        import torch
+
+        dtype_map = {
+            "bfloat16": torch.bfloat16,
+            "float16": torch.float16,
+            "float32": torch.float32,
+        }
+        return dtype_map.get(self.dtype, torch.bfloat16)
+
+    def resolve_device(self, device: str) -> str:
+        """Resolve 'auto' to actual device."""
+        import torch
+
+        if device == "auto":
+            if torch.cuda.is_available():
+                return "cuda"
+            elif torch.backends.mps.is_available():
+                return "mps"
+            else:
+                return "cpu"
+        return device
+
+    @property
+    def encoder_device_resolved(self) -> str:
+        return self.resolve_device(self.encoder_device)
+
+    @property
+    def dit_device_resolved(self) -> str:
+        return self.resolve_device(self.dit_device)
+
+    @property
+    def vae_device_resolved(self) -> str:
+        return self.resolve_device(self.vae_device)
+
+    def get_qwen_variant_defaults(self) -> dict:
+        """Return variant-specific defaults for Qwen-Image models."""
+        defaults = {
+            "qwenimage-t2i": {
+                "steps": 40,
+                "resolution": 1024,
+                "quantize_transformer": "fp8-weight-only",
+                "guidance_scale": 4.0,
+            },
+            "qwenimage-edit": {
+                "steps": 25,
+                "resolution": 640,
+                "quantize_transformer": "fp8-dynamic",
+                "guidance_scale": 4.0,
+            },
+        }
+        return defaults.get(self.model_type, {})
+
+    def get_qwen_image_steps(self) -> int:
+        """Get effective steps, using variant default if not explicitly set."""
+        if self.qwen_image_steps is not None:
+            return self.qwen_image_steps
+        return self.get_qwen_variant_defaults().get("steps", 40)
+
+    def get_qwen_image_resolution(self) -> int:
+        """Get effective resolution, using variant default if not explicitly set."""
+        if self.qwen_image_resolution is not None:
+            return self.qwen_image_resolution
+        return self.get_qwen_variant_defaults().get("resolution", 1024)
+
+    def get_qwen_image_quantize_transformer(self) -> str:
+        """Get effective transformer quantization."""
+        if self.qwen_image_quantize_transformer is not None:
+            return self.qwen_image_quantize_transformer
+        return self.get_qwen_variant_defaults().get("quantize_transformer", "none")
+
+    def get_pipeline_quant_config(self, pipeline: str) -> PipelineQuantConfig:
+        """Resolve effective quantization for a pipeline."""
+        enc_default = self.quant.encoder.method
+        tf_default = self.quant.transformer.method
+        vae_default = self.quant.vae.method
+        g = self.quant.encoder.granularity  # same for all components
+
+        def _resolve(override: str | None, default: str) -> ComponentQuantConfig:
+            method = override if override is not None else default
+            return ComponentQuantConfig(method=method, granularity=g)
+
+        if pipeline == "flux2":
+            return PipelineQuantConfig(
+                encoder=_resolve(getattr(self.flux2, "quant_encoder", None), enc_default),
+                transformer=_resolve(getattr(self.flux2, "quant_transformer", None), tf_default),
+                vae=_resolve(getattr(self.flux2, "quant_vae", None), vae_default),
+            )
+        elif pipeline == "ltx2":
+            return PipelineQuantConfig(
+                encoder=_resolve(getattr(self.ltx2, "quant_encoder", None), enc_default),
+                transformer=_resolve(getattr(self.ltx2, "quant_transformer", None), tf_default),
+                vae=_resolve(getattr(self.ltx2, "quant_vae", None), vae_default),
+            )
+        elif pipeline == "z_image":
+            return PipelineQuantConfig(
+                encoder=_resolve(getattr(self.zimage, "quant_encoder", None), enc_default),
+                transformer=_resolve(getattr(self.zimage, "quant_transformer", None), "none"),
+                vae=ComponentQuantConfig(method="none", granularity=g),
+            )
+        elif pipeline == "qwen_image":
+            return PipelineQuantConfig(
+                encoder=_resolve(getattr(self.qwen_image, "quant_encoder", None), enc_default),
+                transformer=_resolve(getattr(self.qwen_image, "quant_transformer", None), tf_default),
+                vae=_resolve(getattr(self.qwen_image, "quant_vae", None), vae_default),
+            )
+        else:
+            return PipelineQuantConfig(
+                encoder=ComponentQuantConfig(method=enc_default, granularity=g),
+                transformer=ComponentQuantConfig(method=tf_default, granularity=g),
+                vae=ComponentQuantConfig(method=vae_default, granularity=g),
+            )
+
+    def to_dict(self) -> dict:
+        """Serialize to dictionary for API responses."""
+        from dataclasses import fields as dc_fields, asdict
+
+        result: dict[str, Any] = {}
+        for f in dc_fields(self):
+            value = getattr(self, f.name)
+            if hasattr(value, "__dataclass_fields__"):
+                # Nested dataclass - flatten with prefix for backward compat
+                result[f.name] = asdict(value)
+            else:
+                result[f.name] = value
+        return result
+
+    @classmethod
+    def from_toml_config(cls, toml_config: "Config") -> "RuntimeConfig":
+        """Create RuntimeConfig directly from a parsed Config (TOML).
+
+        This is the simplified replacement for the old 280-line manual mapping.
+        Since RuntimeConfig now composes the same dataclasses as Config, we just
+        assign them directly.
+        """
+        rc = cls()
+        rc.default_pipeline = toml_config.default_pipeline or rc.default_pipeline
+        rc.model_path = toml_config.model_path or rc.model_path
+        rc.templates_dir = toml_config.templates_dir or rc.templates_dir
+
+        # Direct sub-config assignment (this is the whole point of the refactor)
+        rc.encoder = toml_config.encoder
+        rc.generation = toml_config.generation
+        rc.optimization = toml_config.optimization
+        rc.scheduler = toml_config.scheduler
+        rc.api = toml_config.api
+        rc.lora = toml_config.lora
+        rc.pytorch = toml_config.pytorch
+        rc.rewriter = toml_config.rewriter
+        rc.logging = toml_config.logging
+        rc.zimage = toml_config.zimage
+        rc.qwen_image = toml_config.qwen_image
+        rc.ltx2 = toml_config.ltx2
+        rc.flux2 = toml_config.flux2
+        rc.dype = toml_config.dype
+        rc.slg = toml_config.slg
+        rc.fmtt = toml_config.fmtt
+        rc.fbcache = toml_config.fbcache
+
+        rc.wan = toml_config.wan
+
+        return rc
 
 
 @dataclass
@@ -1297,6 +2135,7 @@ class Config:
 
     model_path: str = ""
     templates_dir: str | None = None
+    presets_dir: str = "presets"  # Directory containing generation presets
 
     encoder: EncoderConfig = field(default_factory=EncoderConfig)
     pipeline: PipelineConfig = field(default_factory=PipelineConfig)
@@ -1307,7 +2146,7 @@ class Config:
     lora: LoRAConfig = field(default_factory=LoRAConfig)
     pytorch: PyTorchConfig = field(default_factory=PyTorchConfig)
     rewriter: RewriterConfig = field(default_factory=RewriterConfig)
-    vl: VLConfig = field(default_factory=VLConfig)
+    logging: LoggingConfig = field(default_factory=LoggingConfig)
     zimage: ZImageConfig = field(default_factory=ZImageConfig)
     qwen_image: QwenImageConfig = field(default_factory=QwenImageConfig)
     ltx2: LTX2Config = field(default_factory=LTX2Config)
@@ -1316,6 +2155,7 @@ class Config:
     slg: SLGConfig = field(default_factory=SLGConfig)
     fmtt: FMTTConfig = field(default_factory=FMTTConfig)
     fbcache: FBCacheRuntimeConfig = field(default_factory=FBCacheRuntimeConfig)
+    wan: WanConfig = field(default_factory=WanConfig)
     enhancement: EnhancementConfig = field(default_factory=EnhancementConfig)
 
     @classmethod
@@ -1330,7 +2170,7 @@ class Config:
         lora_data = data.pop("lora", {})
         pytorch_data = data.pop("pytorch", {})
         rewriter_data = data.pop("rewriter", {})
-        vl_data = data.pop("vl", {})
+        logging_data = data.pop("logging", {})
         zimage_data = data.pop("zimage", {})
         qwen_image_data = data.pop("qwen_image", {})
         ltx2_data = data.pop("ltx2", {})
@@ -1339,12 +2179,14 @@ class Config:
         slg_data = data.pop("slg", {})
         fmtt_data = data.pop("fmtt", {})
         fbcache_data = data.pop("fbcache", {})
+        wan_data = data.pop("wan", {})
         enhancement_data = data.pop("enhancement", {})
 
         return cls(
             default_pipeline=data.get("default_pipeline", "none"),
             model_path=data.get("model_path", ""),
             templates_dir=data.get("templates_dir"),
+            presets_dir=data.get("presets_dir", "presets"),
             encoder=EncoderConfig(**encoder_data),
             pipeline=PipelineConfig(**pipeline_data),
             generation=GenerationConfig(**generation_data),
@@ -1354,7 +2196,7 @@ class Config:
             lora=LoRAConfig(**lora_data),
             pytorch=PyTorchConfig(**pytorch_data),
             rewriter=RewriterConfig(**rewriter_data),
-            vl=VLConfig(**vl_data),
+            logging=LoggingConfig(**logging_data),
             zimage=ZImageConfig(**zimage_data),
             qwen_image=QwenImageConfig(**qwen_image_data),
             ltx2=LTX2Config(**ltx2_data),
@@ -1363,6 +2205,7 @@ class Config:
             slg=SLGConfig(**slg_data),
             fmtt=FMTTConfig(**fmtt_data),
             fbcache=FBCacheRuntimeConfig(**fbcache_data),
+            wan=WanConfig(**wan_data),
             enhancement=EnhancementConfig(**enhancement_data),
         )
 
@@ -1388,17 +2231,10 @@ class Config:
             model_path = "/path/to/model"
 
             [encoder]
-            quantization = "8bit"
+            quantization = "int8"
 
             [pipeline]
             device = "cuda"
-
-        Example profile-based TOML (legacy):
-            [default]
-            model_path = "/path/to/model"
-
-            [default.encoder]
-            quantization = "8bit"
         """
         if tomllib is None:
             raise ImportError(
@@ -1503,19 +2339,23 @@ class Config:
                 "min_p": self.rewriter.min_p,
                 "presence_penalty": self.rewriter.presence_penalty,
                 "max_tokens": self.rewriter.max_tokens,
-                "vl_enabled": self.rewriter.vl_enabled,
-                "preload_vl": self.rewriter.preload_vl,
-                "vl_api_model": self.rewriter.vl_api_model,
                 "timeout": self.rewriter.timeout,
             },
-            "vl": {
-                "model_path": self.vl.model_path,
-                "device": self.vl.device,
-                "default_alpha": self.vl.default_alpha,
-                "default_hidden_layer": self.vl.default_hidden_layer,
-                "text_tokens_only": self.vl.text_tokens_only,
-                "auto_unload": self.vl.auto_unload,
-                "target_std": self.vl.target_std,
+            "logging": {
+                "enabled": self.logging.enabled,
+                "log_dir": self.logging.log_dir,
+                "log_level": self.logging.log_level,
+                "json_format": self.logging.json_format,
+                "max_bytes": self.logging.max_bytes,
+                "backup_count": self.logging.backup_count,
+                "log_requests": self.logging.log_requests,
+                "log_generation_params": self.logging.log_generation_params,
+            },
+            "zimage": {
+                "model_path": self.zimage.model_path,
+                "text_encoder_path": self.zimage.text_encoder_path,
+                "variant": self.zimage.variant,
+                "default_preset": self.zimage.default_preset,
             },
             "qwen_image": {
                 "model_path": self.qwen_image.model_path,
@@ -1531,7 +2371,6 @@ class Config:
                 "num_blocks_per_group": self.qwen_image.num_blocks_per_group,
                 "num_inference_steps": self.qwen_image.num_inference_steps,
                 "cfg_scale": self.qwen_image.cfg_scale,
-                "layer_num": self.qwen_image.layer_num,
                 "resolution": self.qwen_image.resolution,
                 "shift": self.qwen_image.shift,
             },
@@ -1553,7 +2392,7 @@ PRESETS = {
         encoder=EncoderConfig(
             device="cuda",
             dtype="bfloat16",
-            quantization="8bit",  # v5 API
+            quantization="int8",
             cpu_offload=True,
         ),
         pipeline=PipelineConfig(

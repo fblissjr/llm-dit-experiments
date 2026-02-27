@@ -1,6 +1,6 @@
 # rest api reference
 
-*last updated: 2026-01-06*
+*last updated: 2026-02-14*
 
 ## config management endpoints
 
@@ -9,37 +9,97 @@
 | `/api/config/session` | GET | Get current session config values |
 | `/api/config/session` | PUT | Update hot-reload safe parameters |
 | `/api/config/profiles` | GET | List available config profiles |
-| `/api/server/status` | GET | Get server status and uptime |
+| `/api/context` | GET | Get composite generation context (model, LoRA, VRAM, uptime) |
 | `/api/server/restart` | POST | Restart server (optionally with new profile) |
 
-## endpoints
+## Z-Image endpoints (core router)
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/api/generate` | POST | Generate image from prompt |
+| `/api/generate/stream` | POST | Generate image with SSE progress streaming |
+| `/api/img2img` | POST | Image-to-image generation |
 | `/api/encode` | POST | Encode prompt to embeddings |
 | `/api/format-prompt` | POST | Preview formatted prompt (no encoding) |
-| `/api/templates` | GET | List available templates |
-| `/api/resolution-config` | GET | Get resolution validation constants and presets |
-| `/api/rewriters` | GET | List available rewriter templates |
-| `/api/rewriter-models` | GET | List available rewriter models (text/VL) |
-| `/api/rewriter-config` | GET | Get rewriter default parameters |
-| `/api/rewrite` | POST | Rewrite prompt using Qwen3 model |
 | `/api/save-embeddings` | POST | Save embeddings to file |
+| `/api/templates` | GET | List available templates |
+| `/api/rewriters` | GET | List available rewriter templates |
+| `/api/rewrite` | POST | Rewrite prompt using Qwen3 model |
+| `/api/dype/config` | GET | Get DyPE configuration |
+| `/api/dype/status` | GET | Get DyPE status |
+
+## FLUX.2 endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/flux2/generate` | POST | Generate image (sync) |
+| `/api/flux2/generate/stream` | POST | Generate image with SSE progress streaming |
+| `/api/flux2/status` | GET | Get FLUX.2 pipeline status |
+| `/api/flux2/models/{model_name}` | GET | Get model metadata (fixed params, variants) |
+
+## LTX-2 endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/ltx2/generate/stream` | POST | Generate video with SSE progress streaming |
+| `/api/ltx2/status` | GET | Get LTX-2 pipeline status |
+
+## Qwen-Image endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/qwen-image/edit-layer` | POST | Edit image with text instructions (2511) |
+| `/api/qwen-image/edit-multi` | POST | Multi-image editing (2511) |
+| `/api/qwen-image/edit-status` | GET | Check if edit model is loaded |
+| `/api/qwen-image-2512/generate` | POST | Text-to-image generation (2512) |
+| `/api/qwen-image-2512/status` | GET | Get 2512 pipeline status |
+| `/api/qwen-image-2512/config` | GET | Get 2512 configuration |
+
+## pipeline management endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/pipelines` | GET | List all pipeline schemas |
+| `/api/pipelines/{id}` | GET | Get schema for a specific pipeline |
+| `/api/pipelines/{id}/defaults` | GET | Get defaults for a pipeline |
+| `/api/presets` | GET | Get all presets across pipelines |
+| `/api/presets/{id}` | GET | Get presets for a pipeline |
+| `/api/presets/preset/{name}` | GET | Get a specific preset by name |
+
+## model management endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/vram/status` | GET | Get VRAM usage breakdown |
+| `/api/models/{id}/status` | GET | Get model status for a pipeline |
+| `/api/models/{id}/load` | POST | Load a model for a pipeline |
+| `/api/models/{id}/unload` | POST | Unload a model for a pipeline |
+| `/api/models/unload-all` | POST | Unload all loaded models |
+| `/api/loras` | GET | List available LoRA files (all pipelines) |
+| `/api/loras/{id}` | GET | List LoRA files for a pipeline |
+
+## config management endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/config/session` | GET | Get current session config values |
+| `/api/config/session` | PUT | Update hot-reload safe parameters |
+| `/api/config/profiles` | GET | List available config profiles |
+| `/api/resolution-config` | GET | Get resolution validation constants and presets |
+| `/api/rewriter-config` | GET | Get rewriter config (includes available models) |
+
+## system endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/health` | GET | Health check |
+| `/api/context` | GET | Get composite generation context (model, LoRA, VRAM, uptime) |
+| `/api/server/restart` | POST | Restart server (optionally with new profile) |
 | `/api/history` | GET | Get generation history |
 | `/api/history/{index}` | DELETE | Delete specific history item |
 | `/api/history` | DELETE | Clear all history |
-| `/api/vl/status` | GET | Check VL availability and config |
-| `/api/vl/config` | GET | Get VL default parameters |
-| `/api/vl/extract` | POST | Extract VL embeddings from image |
-| `/api/vl/generate` | POST | Generate with VL conditioning |
-| `/api/vl/cache/{id}` | DELETE | Clear specific VL cache entry |
-| `/api/vl/cache` | DELETE | Clear all VL cache |
-| `/api/qwen-image/decompose` | POST | Decompose image into layers (Qwen-Image-Layered) |
-| `/api/qwen-image/edit-layer` | POST | Edit a decomposed layer with text instructions |
-| `/api/qwen-image/edit-status` | GET | Check if edit model is loaded |
-| `/api/qwen-image/config` | GET | Get Qwen-Image configuration |
-| `/health` | GET | Health check |
+| `/api/system/unload-fmtt` | POST | Unload FMTT model |
+| `/api/system/clear-cache` | POST | Clear embedding cache |
 
 ## generate request fields
 
@@ -104,23 +164,6 @@ The `dype` object enables high-resolution generation (2K+):
 
 - `strip_quotes`: Remove `"` characters from prompt (for JSON-type inputs, since Z-Image treats `"` as text to render)
 
-## vl generate request fields
-
-```json
-{
-  "prompt": "A cat in style of reference",
-  "image": "data:image/jpeg;base64,...",
-  "alpha": 0.3,
-  "hidden_layer": -6,
-  "text_tokens_only": false,
-  "blend_mode": "linear",
-  "width": 1024,
-  "height": 1024,
-  "steps": 9,
-  "seed": 42
-}
-```
-
 ## rewrite request fields
 
 ```json
@@ -137,8 +180,6 @@ The `dype` object enables high-resolution generation (2K+):
 
 Available models:
 - `qwen3-4b` - Text-only rewriting (default)
-- `qwen3-vl` - Local VL model for image-based rewriting
-- `qwen3-vl-api` - API VL model (e.g., qwen2.5-vl-72b-mlx)
 
 ## qwen-image decompose request
 
@@ -220,14 +261,30 @@ These require server restart to take effect:
 }
 ```
 
-## server status response
+## generation context response
+
+`GET /api/context` returns a composite status snapshot (camelCase JSON):
 
 ```json
 {
-  "status": "running",
-  "uptime_seconds": 3600,
+  "uptimeSeconds": 3600,
   "profile": "rtx4090",
-  "pending_restart": {}
+  "activePipeline": "zimage",
+  "pipelineDisplayName": "Z-Image",
+  "modelVariant": "mini",
+  "loras": [{"name": "my_lora", "path": "/path/to/my_lora.safetensors", "scale": 0.8, "layersUpdated": 24}],
+  "loraSummary": "my_lora @0.80 (24 layers)",
+  "quantization": {"transformer": "float8_e4m3"},
+  "compileEnabled": true,
+  "compileMode": "default",
+  "blockOffload": false,
+  "vramUsedGb": 18.2,
+  "vramTotalGb": 24.0,
+  "vramPercent": 75.8,
+  "pendingRestartFields": [],
+  "sessionModifiedFields": ["shift"],
+  "fmttCached": false,
+  "historyCount": 5
 }
 ```
 

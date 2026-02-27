@@ -26,8 +26,9 @@ FLUX2_MODELS = [
     "klein-base-9b-fp8",
 ]
 
-# Dimension presets
+# Dimension presets (all multiples of 16)
 DIMENSION_PRESETS = [
+    "1360x768",
     "1024x1024",
     "1152x896",
     "1216x832",
@@ -35,6 +36,7 @@ DIMENSION_PRESETS = [
     "768x1344",
     "832x1216",
     "896x1152",
+    "Custom",
 ]
 
 
@@ -49,7 +51,8 @@ register_pipeline(PipelineSchema(
     supports_history=True,
     supports_img2img=False,
     supports_reference_images=True,
-    endpoint="/api/flux2/generate",
+    supports_streaming=True,  # Enable SSE progress streaming
+    endpoint="/api/flux2/generate/stream",  # Stream endpoint for progress updates
     params=[
         # === Prompt ===
         ParamSchema(
@@ -73,17 +76,20 @@ register_pipeline(PipelineSchema(
             max_count=4,
         ),
         ParamSchema(
-            id="reference_strength",
-            type="slider",
-            label="Reference Strength",
-            default=0.8,
-            min=0.0,
-            max=1.0,
-            step=0.05,
+            id="match_image_size",
+            type="select",
+            label="Match Output to Reference",
+            default="0 (First Image)",
+            options=[
+                "none",
+                "0 (First Image)",
+                "1 (Second Image)",
+                "2 (Third Image)",
+                "3 (Fourth Image)",
+            ],
             group="basic",
-            tooltip="How strongly to use reference images.",
+            tooltip="Match output dimensions to a reference image. Prevents squishing when ref has different aspect ratio.",
         ),
-
         # === Model & Dimensions ===
         ParamSchema(
             id="model_name",
@@ -98,29 +104,29 @@ register_pipeline(PipelineSchema(
             id="width",
             type="number",
             label="Width",
-            default=1024,
-            min=512,
+            default=1360,
+            min=256,
             max=2048,
-            step=64,
+            step=16,
             group="basic",
-            tooltip="Image width in pixels.",
+            tooltip="Image width in pixels (multiple of 16).",
         ),
         ParamSchema(
             id="height",
             type="number",
             label="Height",
-            default=1024,
-            min=512,
+            default=768,
+            min=256,
             max=2048,
-            step=64,
+            step=16,
             group="basic",
-            tooltip="Image height in pixels.",
+            tooltip="Image height in pixels (multiple of 16).",
         ),
         ParamSchema(
             id="dimension_preset",
             type="select",
             label="Preset",
-            default="1024x1024",
+            default="1360x768",
             options=DIMENSION_PRESETS,
             group="basic",
             tooltip="Quick dimension presets.",
@@ -137,6 +143,18 @@ register_pipeline(PipelineSchema(
             step=1,
             group="basic",
             tooltip="Inference steps. 4 for distilled, 50 for base models.",
+            dependent_defaults={
+                "model_name": {
+                    "klein-9b": 4,
+                    "klein-9b-fp8": 4,
+                    "klein-4b": 4,
+                    "klein-4b-fp8": 4,
+                    "klein-base-9b": 50,
+                    "klein-base-9b-fp8": 50,
+                    "klein-base-4b": 50,
+                    "klein-base-4b-fp8": 50,
+                },
+            },
         ),
         ParamSchema(
             id="guidance",
@@ -148,6 +166,18 @@ register_pipeline(PipelineSchema(
             step=0.1,
             group="basic",
             tooltip="Guidance strength. 1.0 for distilled, 3.5-4.0 for base.",
+            dependent_defaults={
+                "model_name": {
+                    "klein-9b": 1.0,
+                    "klein-9b-fp8": 1.0,
+                    "klein-4b": 1.0,
+                    "klein-4b-fp8": 1.0,
+                    "klein-base-9b": 4.0,
+                    "klein-base-9b-fp8": 4.0,
+                    "klein-base-4b": 4.0,
+                    "klein-base-4b-fp8": 4.0,
+                },
+            },
         ),
         ParamSchema(
             id="seed",
@@ -161,12 +191,22 @@ register_pipeline(PipelineSchema(
             tooltip="Random seed for reproducibility. -1 for random.",
         ),
 
+        # === Enhancement ===
+        ParamSchema(
+            id="upsample_prompt",
+            type="checkbox",
+            label="Upsample Prompt",
+            default=False,
+            group="enhancement",
+            tooltip="Enrich prompt with visual details using BFL's official upsampling (requires heylookitsanllm API).",
+        ),
+
         # === Memory & Performance ===
         ParamSchema(
             id="block_offload",
             type="checkbox",
             label="Block Offload",
-            default=True,
+            default=False,
             group="optimization",
             tooltip="Enable block-by-block CPU offloading for low VRAM systems.",
         ),
@@ -177,6 +217,19 @@ register_pipeline(PipelineSchema(
             default=False,
             group="optimization",
             tooltip="Use torch.compile for faster inference (slow first run).",
+        ),
+
+        # === LoRA Enhancement ===
+        ParamSchema(
+            id="loras",
+            type="lora_list",
+            label="LoRA Weights",
+            default=[],
+            group="enhancement",
+            tooltip="LoRA files with strength (path:scale format, e.g. style.safetensors:0.8).",
+            scale_min=-2.0,
+            scale_max=2.0,
+            max_count=5,
         ),
     ],
 ))

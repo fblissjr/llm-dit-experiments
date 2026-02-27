@@ -1,23 +1,23 @@
 # LTX-2 Experiments Agent Context
 
-*last updated: 2026-01-17*
+*last updated: 2026-02-27*
 
 ---
 
 ## research status legend
 
-| Symbol | Status | Meaning |
-|--------|--------|---------|
-| ✅ | **Validated** | Confirmed through experiments or architecture analysis |
-| 🔬 | **Open** | Hypothesis needs testing or re-testing |
-| ⚠️ | **Needs Verification** | Previous results may have bugs |
-| 🚫 | **Dead-End** | Tested, doesn't work |
+| Tag | Status | Meaning |
+|-----|--------|---------|
+| `[VALIDATED]` | **Validated** | Confirmed through experiments or architecture analysis |
+| `[OPEN]` | **Open** | Hypothesis needs testing or re-testing |
+| `[NEEDS_CHECK]` | **Needs Verification** | Previous results may have bugs |
+| `[DEAD_END]` | **Dead-End** | Tested, doesn't work |
 
 **Consolidated findings:** [docs/findings/](docs/findings/)
 
 ---
 
-## CRITICAL: Prompt Standardization (2026-01-16)
+## CRITICAL: Prompt Standardization
 
 **All experiment prompts have been centralized.** Do NOT define inline prompts.
 
@@ -167,13 +167,13 @@ The projection W learns to combine these optimally for video generation.
 
 ## Quantized Model Considerations
 
-### ⚠️ CRITICAL: Quantization Affects Hidden State Distributions
+### CRITICAL: Quantization Affects Hidden State Distributions
 
 The learned projection W expects hidden states with specific statistical properties from the original Gemma-3. Quantized models produce different distributions.
 
 ### Unsloth Quantized Models
 
-**Compatibility**: ⚠️ **PARTIALLY COMPATIBLE** (with caveats)
+**Compatibility**: **PARTIALLY COMPATIBLE** (with caveats)
 
 Unsloth 4-bit models can still expose hidden states via `output_hidden_states=True`, but:
 
@@ -205,40 +205,18 @@ hidden_states = [h * scale_factor for h in hidden_states]
 
 ### GGUF Models
 
-**Compatibility**: ❌ **NOT COMPATIBLE** (without significant work)
-
-GGUF is a format for llama.cpp that does NOT expose intermediate hidden states by default.
-
-```python
-# This does NOT work - GGUF models via llama-cpp-python don't expose hidden states
-from llama_cpp import Llama
-model = Llama("gemma-3-2b.Q4_K_M.gguf")
-# No output_hidden_states parameter available
-```
-
-**Why GGUF Won't Work**:
-1. llama.cpp optimizes for inference speed, not intermediate extraction
-2. Hidden states are computed but immediately discarded after each layer
-3. No Python API to capture intermediate activations
-4. Would require modifying llama.cpp C++ code
-
-**Theoretical Workarounds** (all require significant development):
-```python
-# Option 1: Modify llama.cpp to expose hidden states (C++ changes required)
-# Option 2: Use a GGUF-to-PyTorch converter, then use PyTorch model
-# Option 3: Run GGUF for text generation only, use full model for hidden states
-```
+**Compatibility**: **NOT COMPATIBLE**. GGUF/llama.cpp does not expose intermediate hidden states. Would require C++ modifications. Not worth pursuing.
 
 ### Recommendation Matrix
 
 | Model Type | Hidden State Access | Distribution Match | Recommended |
 |------------|--------------------|--------------------|-------------|
-| Original Gemma-3 (BF16) | ✅ Full | ✅ Perfect | ✅ Yes |
-| Gemma-3 (FP16) | ✅ Full | ✅ Very close | ✅ Yes |
-| Unsloth 8-bit | ✅ Full | ⚠️ Minor shift | ⚠️ Test first |
-| Unsloth 4-bit | ✅ Full | ❌ Significant shift | ⚠️ May need calibration |
-| GGUF (any quant) | ❌ None | N/A | ❌ No |
-| AWQ/GPTQ | ✅ Full | ⚠️ Varies | ⚠️ Test first |
+| Original Gemma-3 (BF16) | Full | Perfect | Yes |
+| Gemma-3 (FP16) | Full | Very close | Yes |
+| Unsloth 8-bit | Full | Minor shift | Test first |
+| Unsloth 4-bit | Full | Significant shift | May need calibration |
+| GGUF (any quant) | None | N/A | No |
+| AWQ/GPTQ | Full | Varies | Test first |
 
 ### Testing Quantized Models
 
@@ -274,6 +252,9 @@ Key parameters:
 - **188160 packed dim**: 3840 × 49 flattened for projection
 - **128 thinking tokens**: Learnable registers for global context
 - **48 DiT blocks**: Transformer blocks in the diffusion model (14B video + 5B audio)
+- **Dual-stream AV**: `BasicAVTransformerBlock` extends DiT blocks with bidirectional cross-modal attention (A2V, V2A). Three modes: video-only, audio-only, dual-stream
+- **Audio connector**: 2048 dim (vs 4096 for video). Separate `LTX2ConnectorTransformer1d` instance
+- **STG perturbation**: Per-sample attention skipping via `PerturbationConfig` for spatio-temporal guidance
 
 ---
 
@@ -282,7 +263,7 @@ Key parameters:
 See **[docs/findings/](docs/findings/)** for consolidated research with status tracking:
 
 - [apollo_analysis.md](docs/findings/apollo_analysis.md) - Apollo paper transfer analysis
-- [research_synthesis.md](docs/findings/research_synthesis.md) - All findings with ✅/🔬/⚠️/🚫 status
+- [research_synthesis.md](docs/findings/research_synthesis.md) - All findings with status tracking
 
 ---
 

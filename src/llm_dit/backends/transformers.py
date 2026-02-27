@@ -13,9 +13,9 @@ Key implementation details:
 - Supports generate() for prompt rewriting using the same loaded model
 - Optional embedding cache for repeated prompts (DiffSynth optimization)
 
-Transformers v5 Migration:
-- Uses quantization_config parameter instead of deprecated load_in_8bit/load_in_4bit
-- BitsAndBytesConfig is passed directly to from_pretrained()
+Quantization:
+- Post-load quantization via quantize_component() from llm_dit.quantization
+- Supports unified methods: none, fp8-dynamic, fp8-weight-only, int8, int4
 """
 
 import logging
@@ -70,7 +70,7 @@ class TransformersBackend:
         model_subfolder: str = "text_encoder",
         tokenizer_subfolder: str = "tokenizer",
         config: BackendConfig | None = None,
-        quantization_config: "BitsAndBytesConfig | None" = None,
+        quantization_config: "object | None" = None,
         quantization: str | None = None,
         cache: Optional[EmbeddingCache] = None,
         enable_cache: bool = False,
@@ -87,10 +87,9 @@ class TransformersBackend:
                 For diffusers pipelines, tokenizer is typically in a separate folder.
                 Set to None to load from model_subfolder.
             config: Optional BackendConfig, created from defaults if not provided
-            quantization_config: Optional BitsAndBytesConfig for quantization (v5 API).
-                Use this instead of the deprecated load_in_8bit/load_in_4bit flags.
-            quantization: Quantization mode string (none, 4bit, 8bit, int8_dynamic).
-                int8_dynamic uses torch.ao for post-load quantization (~50% VRAM savings).
+            quantization_config: Optional quantization config for transformers from_pretrained().
+            quantization: Quantization mode string (torchao unified: none, fp8-dynamic,
+                fp8-weight-only, int8, int4). Applied post-load via quantize_component().
             cache: Optional pre-configured EmbeddingCache instance
             enable_cache: If True and cache is None, create a new cache (default: False)
             cache_size: Maximum number of cached embeddings (default: 100)
@@ -106,18 +105,10 @@ class TransformersBackend:
             # Load from local path
             backend = TransformersBackend.from_pretrained("/path/to/model")
 
-            # With 8-bit quantization (v5 API)
-            from transformers import BitsAndBytesConfig
-            quantization_config = BitsAndBytesConfig(load_in_8bit=True)
+            # With int8 quantization (torchao unified)
             backend = TransformersBackend.from_pretrained(
                 "/path/to/model",
-                quantization_config=quantization_config,
-            )
-
-            # With int8_dynamic quantization (torchao)
-            backend = TransformersBackend.from_pretrained(
-                "/path/to/model",
-                quantization="int8_dynamic",
+                quantization="int8",
             )
 
             # Custom subfolder layout
@@ -180,19 +171,12 @@ class TransformersBackend:
             **kwargs,
         }
 
-        # Add quantization_config if provided (v5 API)
-        # Priority: explicit quantization_config > config.get_quantization_config()
+        # Add explicit quantization_config if provided (for transformers from_pretrained)
         if quantization_config is not None:
             model_kwargs["quantization_config"] = quantization_config
             logger.info(f"Loading model with explicit quantization: {quantization_config}")
         else:
-            # Try to get quantization config from string mode (4bit, 8bit, fp8)
-            config_quant = config.get_quantization_config()
-            if config_quant is not None:
-                model_kwargs["quantization_config"] = config_quant
-                logger.info(f"Loading model with quantization={config.quantization}")
-            else:
-                logger.info(f"Loading model from {model_load_path} (dtype={dtype})")
+            logger.info(f"Loading model from {model_load_path} (dtype={dtype})")
 
         # Only add subfolder if it's not None (transformers bugs on subfolder=None)
         if hf_subfolder and not is_local:
@@ -206,9 +190,17 @@ class TransformersBackend:
             f"num_layers={model.config.num_hidden_layers}"
         )
 
-        # Apply post-load quantization if needed (int8_dynamic)
-        if config.needs_post_load_quantization():
-            model = config.apply_post_load_quantization(model)
+        # Apply post-load quantization via unified system
+        if config.quantization != "none":
+            from llm_dit.quantization import quantize_component
+
+            model, stats = quantize_component(  # type: ignore[assignment]
+                model, method=config.quantization, component_type="encoder"
+            )
+            logger.info(
+                f"Quantized encoder: {stats['quantized_layers']}/{stats['total_layers']} layers "
+                f"({config.quantization})"
+            )
 
         # Set up embedding cache
         if cache is None and enable_cache:

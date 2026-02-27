@@ -1,0 +1,18 @@
+# Z-Image smoke test overlay -- merged over config.toml.example
+# Minimal image generation: 256x256, turbo variant (9 steps)
+
+default_pipeline = "none"
+
+[zimage]
+variant = "turbo"
+
+[generation]
+height = 256
+width = 256
+
+[optimization]
+compile = false
+
+[server]
+host = "127.0.0.1"
+port = 7860

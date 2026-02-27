@@ -59,7 +59,7 @@ SCHEDULER_STRETCH = True
 # =============================================================================
 # Two-Stage (High Quality) Parameters
 # =============================================================================
-# For upsampled generation workflow
+# For upsampled generation workflow (reference: TI2VidTwoStagesPipeline)
 
 TWO_STAGE_HEIGHT_STAGE1 = 512
 TWO_STAGE_WIDTH_STAGE1 = 768
@@ -68,6 +68,13 @@ TWO_STAGE_STEPS_STAGE1 = 40
 TWO_STAGE_HEIGHT_STAGE2 = 1024  # 2x upsampled
 TWO_STAGE_WIDTH_STAGE2 = 1536   # 2x upsampled
 TWO_STAGE_STEPS_STAGE2 = 3      # Distilled model
+
+# Distilled sigma schedules (from reference constants.py)
+# These are pre-computed sigma values for distilled models that skip the
+# scheduler's dynamic computation. Used for both single-stage distilled
+# and stage 2 of the two-stage pipeline.
+DISTILLED_SIGMA_VALUES = [1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0]
+STAGE_2_DISTILLED_SIGMA_VALUES = [0.909375, 0.725, 0.421875, 0.0]
 
 
 # =============================================================================

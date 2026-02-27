@@ -2,9 +2,8 @@
 """
 End-to-end image/video generation script.
 
-Supports five model types:
+Supports four model types:
   - Z-Image (zimage): Text-to-image generation (turbo, 8-9 steps)
-  - Qwen-Image Layered (qwenimage-layered): Image-to-layers decomposition [legacy]
   - Qwen-Image T2I (qwenimage-t2i): Text-to-image generation (40 steps, FP8)
   - Qwen-Image Edit (qwenimage-edit): Image editing with instructions
   - LTX-2 (ltx2): Text-to-video generation (19B, FP8)
@@ -23,12 +22,6 @@ Usage:
         --qwen-image-edit-model-path /path/to/Qwen-Image-Edit-2511 \\
         --img2img input.jpg \\
         "Make the sky more vibrant"
-
-    # Qwen-Image Layered (legacy - image decomposition)
-    uv run scripts/generate.py --model-type qwenimage-layered \\
-        --qwen-image-model-path /path/to/Qwen_Qwen-Image-Layered \\
-        --img2img input.jpg \\
-        "A cheerful child waving under a blue sky"
 
     # LTX-2 (text-to-video) - using unified --model-path
     uv run scripts/generate.py --model-type ltx2 \\
@@ -80,271 +73,6 @@ from pathlib import Path
 import torch
 
 from llm_dit.cli import create_base_parser, load_runtime_config, setup_logging
-
-
-def run_qwen_image_generation(args, config, logger) -> int:
-    """
-    Run Qwen-Image generation (decomposition or edit-only mode).
-
-    Args:
-        args: Parsed CLI arguments
-        config: RuntimeConfig with all settings
-        logger: Logger instance
-
-    Returns:
-        Exit code (0 for success)
-    """
-    from PIL import Image
-
-    # Validate model path based on mode
-    edit_only = getattr(config, "qwen_image_edit_only", False)
-    if edit_only:
-        # Edit-only mode uses edit_model_path
-        if not config.qwen_image_edit_model_path:
-            logger.error(
-                "No Qwen-Image-Edit model path specified. "
-                "Use --qwen-image-edit-model-path or set qwen_image.edit_model_path in config."
-            )
-            return 1
-    else:
-        # Decompose mode uses model_path
-        if not config.qwen_image_model_path:
-            logger.error(
-                "No Qwen-Image model path specified. "
-                "Use --qwen-image-model-path or set qwen_image.model_path in config."
-            )
-            return 1
-
-        # Decompose mode requires an input image
-        if not args.img2img:
-            logger.error(
-                "Qwen-Image-Layered requires an input image. Use --img2img /path/to/image.jpg"
-            )
-            return 1
-
-    # Validate resolution
-    resolution = config.qwen_image_resolution
-    if resolution not in (640, 1024):
-        logger.error(f"Qwen-Image only supports 640 or 1024 resolution. Got: {resolution}")
-        return 1
-
-    # Branch: Edit-only mode vs Decompose mode
-    if edit_only:
-        return _run_qwen_image_edit_only(args, config, logger, resolution)
-    else:
-        return _run_qwen_image_decompose(args, config, logger, resolution)
-
-
-def _run_qwen_image_edit_only(args, config, logger, resolution: int) -> int:
-    """Run Qwen-Image-Edit in standalone mode (text-to-image or image editing)."""
-    from PIL import Image
-
-    logger.info("=" * 60)
-    logger.info("Qwen-Image-Edit (Standalone)")
-    logger.info("=" * 60)
-    logger.info(f"Model: {config.qwen_image_edit_model_path}")
-    logger.info(f"Prompt: {args.prompt}")
-    logger.info(f"Input: {args.img2img or 'None (text-to-image)'}")
-    logger.info(f"Resolution: {resolution}x{resolution}")
-    logger.info(f"CFG Scale: {config.qwen_image_cfg_scale}")
-    logger.info(f"Steps: {config.qwen_image_steps}")
-    logger.info(f"Transformer quant: {config.qwen_image_quantize_transformer}")
-    logger.info(f"Text encoder quant: {config.qwen_image_quantize_text_encoder}")
-    logger.info(f"CPU offload: {config.qwen_image_cpu_offload}")
-
-    # Load input image if provided
-    input_image = None
-    if args.img2img:
-        input_image = Image.open(args.img2img)
-        logger.info(f"Input image size: {input_image.size}")
-
-    # Load pipeline
-    logger.info("Loading Qwen-Image-Edit pipeline...")
-    start_load = time.time()
-
-    from llm_dit.pipelines.qwen_image_diffusers import QwenImageDiffusersPipeline
-
-    try:
-        # Map quantization strings
-        quant_transformer = config.qwen_image_quantize_transformer
-        if quant_transformer == "none":
-            quant_transformer = None
-
-        quant_text_encoder = config.qwen_image_quantize_text_encoder
-        if quant_text_encoder == "none":
-            quant_text_encoder = None
-
-        pipe = QwenImageDiffusersPipeline.from_pretrained(
-            model_path=None,  # Not needed for edit-only
-            edit_model_path=config.qwen_image_edit_model_path,
-            edit_only=True,
-            device=torch.device(config.dit_device_resolved),
-            dtype=config.get_dtype(),
-            quantize_transformer=quant_transformer,
-            quantize_text_encoder=quant_text_encoder,
-            cpu_offload=config.qwen_image_cpu_offload,
-        )
-    except Exception as e:
-        logger.error(f"Failed to load Qwen-Image-Edit pipeline: {e}")
-        import traceback
-
-        traceback.print_exc()
-        return 1
-
-    load_time = time.time() - start_load
-    logger.info(f"Pipeline loaded in {load_time:.1f}s")
-
-    # Set up seed
-    seed = getattr(args, "seed", None)
-
-    # Detect mode: text-to-image vs image editing
-    is_text_to_image = input_image is None
-    logger.info(f"Mode: {'Text-to-image' if is_text_to_image else 'Image editing'}")
-
-    # Run generation
-    logger.info("Running image generation...")
-    start_gen = time.time()
-
-    try:
-        if is_text_to_image:
-            # Pure text-to-image generation
-            result = pipe.generate(
-                prompt=args.prompt,
-                negative_prompt=getattr(config, "negative_prompt", " "),
-                height=resolution,
-                width=resolution,
-                num_inference_steps=config.qwen_image_steps,
-                cfg_scale=config.qwen_image_cfg_scale,
-                seed=seed,
-            )
-        else:
-            # Image editing mode
-            result = pipe.edit_layer(
-                layer_image=input_image,
-                instruction=args.prompt,
-                num_inference_steps=config.qwen_image_steps,
-                cfg_scale=config.qwen_image_cfg_scale,
-                seed=seed,
-                max_size=resolution,
-            )
-    except Exception as e:
-        logger.error(f"Generation failed: {e}")
-        import traceback
-
-        traceback.print_exc()
-        return 1
-
-    gen_time = time.time() - start_gen
-    logger.info(f"Generation complete in {gen_time:.1f}s")
-
-    # Save output
-    output_path = Path(args.output)
-    result.save(output_path)
-    logger.info(f"Saved: {output_path}")
-
-    logger.info("=" * 60)
-    logger.info(f"Total time: load={load_time:.1f}s + generate={gen_time:.1f}s")
-
-    return 0
-
-
-def _run_qwen_image_decompose(args, config, logger, resolution: int) -> int:
-    """Run Qwen-Image-Layered image decomposition."""
-    from PIL import Image
-
-    logger.info("=" * 60)
-    logger.info("Qwen-Image-Layered Image Decomposition")
-    logger.info("=" * 60)
-    logger.info(f"Model: {config.qwen_image_model_path}")
-    logger.info(f"Input: {args.img2img}")
-    logger.info(f"Prompt: {args.prompt}")
-    logger.info(f"Resolution: {resolution}x{resolution}")
-    logger.info(f"Layers: {config.qwen_image_layer_num}")
-    logger.info(f"CFG Scale: {config.qwen_image_cfg_scale}")
-    logger.info(f"Steps: {config.steps}")
-
-    # Load input image
-    input_image = Image.open(args.img2img)
-    logger.info(f"Input image size: {input_image.size}")
-
-    # Load pipeline
-    logger.info("Loading Qwen-Image-Layered pipeline...")
-    start_load = time.time()
-
-    from llm_dit.pipelines.qwen_image import QwenImagePipeline
-
-    try:
-        pipe = QwenImagePipeline.from_pretrained(
-            config.qwen_image_model_path,
-            device=config.dit_device_resolved,
-            text_encoder_device=config.encoder_device_resolved,
-            dtype=config.get_dtype(),
-        )
-    except Exception as e:
-        logger.error(f"Failed to load Qwen-Image pipeline: {e}")
-        return 1
-
-    load_time = time.time() - start_load
-    logger.info(f"Pipeline loaded in {load_time:.1f}s")
-
-    # Set up seed
-    seed = getattr(args, "seed", None)
-
-    # Progress callback
-    def progress_callback(step: int, total: int):
-        logger.info(f"Step {step}/{total}")
-
-    # Run decomposition
-    logger.info("Running image decomposition...")
-    start_gen = time.time()
-
-    try:
-        layers = pipe.decompose(
-            image=input_image,
-            prompt=args.prompt,
-            layer_num=config.qwen_image_layer_num,
-            height=resolution,
-            width=resolution,
-            num_inference_steps=config.steps,
-            cfg_scale=config.qwen_image_cfg_scale,
-            seed=seed,
-            shift=config.shift if config.shift != 3.0 else None,  # Use dynamic if default
-            progress_callback=progress_callback if config.verbose else None,
-        )
-    except Exception as e:
-        logger.error(f"Decomposition failed: {e}")
-        import traceback
-
-        traceback.print_exc()
-        return 1
-
-    gen_time = time.time() - start_gen
-    logger.info(f"Decomposition complete in {gen_time:.1f}s")
-    logger.info(f"Generated {len(layers)} layers")
-
-    # Save layers
-    output_base = Path(args.output)
-    output_dir = output_base.parent
-    output_stem = output_base.stem
-    output_suffix = output_base.suffix or ".png"
-
-    saved_paths = []
-    for i, layer_img in enumerate(layers):
-        if i == 0:
-            layer_name = "composite"
-        else:
-            layer_name = f"layer_{i}"
-
-        layer_path = output_dir / f"{output_stem}_{layer_name}{output_suffix}"
-        layer_img.save(layer_path)
-        saved_paths.append(layer_path)
-        logger.info(f"  Saved: {layer_path}")
-
-    logger.info("=" * 60)
-    logger.info(f"Total time: load={load_time:.1f}s + generate={gen_time:.1f}s")
-    logger.info(f"Output files: {len(saved_paths)}")
-
-    return 0
 
 
 def run_qwen_image_t2i_generation(args, config, logger) -> int:
@@ -479,7 +207,6 @@ def run_ltx2_generation(args, config, logger) -> int:
         GenerationConfig as LTXConfig,
         generate_video_with_offloading,
     )
-    from llm_dit.pipelines.ltx2_config import LTX2OptimizationConfig
 
     # Validate model path - prefer --ltx2-model-path, fall back to --model-path
     model_path = config.ltx2_model_path or config.model_path
@@ -595,16 +322,6 @@ def run_ltx2_generation(args, config, logger) -> int:
         logger.info(f"  Original prompt: {emb_file.metadata.prompt[:50]}...")
         logger.info(f"  Encoded with: {emb_file.metadata.model_path}")
 
-    # Build optimization config from CLI settings
-    optimization = LTX2OptimizationConfig(
-        text_encoder_device=config.ltx2_text_encoder_device,
-        transformer_device=config.ltx2_transformer_device,
-        vae_device=config.ltx2_vae_device,
-        quantize_transformer=(config.ltx2_quantize == "fp8"),
-        precision="fp8-native" if config.ltx2_quantize == "fp8" else "bf16",
-        cleanup_between_stages=not config.ltx2_skip_cleanup,
-    )
-
     logger.info("=" * 60)
     logger.info("LTX-2 VIDEO GENERATION (Pure PyTorch)")
     logger.info("=" * 60)
@@ -621,13 +338,13 @@ def run_ltx2_generation(args, config, logger) -> int:
     if seed is not None:
         logger.info(f"  Seed: {seed}")
     if precomputed_embeds is None:
-        logger.info(f"  Text encoder device: {optimization.text_encoder_device}")
+        logger.info(f"  Text encoder device: {config.ltx2_text_encoder_device}")
         logger.info(f"  Gemma variant: {config.ltx2_gemma_variant}")
-    logger.info(f"  Transformer device: {optimization.transformer_device}")
-    logger.info(f"  VAE device: {optimization.vae_device}")
+    logger.info(f"  Transformer device: {config.ltx2_transformer_device}")
+    logger.info(f"  VAE device: {config.ltx2_vae_device}")
     logger.info(f"  Dtype: {config.get_dtype()}")
-    logger.info(f"  Quantization: {optimization.precision}")
-    logger.info(f"  Cleanup between stages: {optimization.cleanup_between_stages}")
+    logger.info(f"  Quantization: {config.ltx2_quantize}")
+    logger.info(f"  Skip cleanup: {config.ltx2_skip_cleanup}")
     logger.info("-" * 60)
 
     # Create config for pure PyTorch pipeline
@@ -651,16 +368,20 @@ def run_ltx2_generation(args, config, logger) -> int:
     start = time.time()
     try:
         video = generate_video_with_offloading(
-            prompt=args.prompt or "",  # Can be empty if using precomputed embeddings
+            prompt=args.prompt or "",
             config=ltx_config,
             model_path=model_path,
             text_encoder_path=text_encoder_path,
             precomputed_embeddings=precomputed_embeds,
             dtype=config.get_dtype(),
             callback=progress_callback,
-            optimization=optimization,
-            gemma_variant=config.ltx2_gemma_variant,  # bf16, 8bit, q4-qat
-            use_progress=True,  # Use rich SamplingProgress
+            gemma_variant=config.ltx2_gemma_variant,
+            use_progress=True,
+            text_encoder_device=config.ltx2_text_encoder_device,
+            transformer_device=config.ltx2_transformer_device,
+            vae_device=config.ltx2_vae_device,
+            quantize=config.ltx2_quantize,
+            skip_cleanup=config.ltx2_skip_cleanup,
         )
     except Exception as e:
         logger.error(f"Generation failed: {e}")
@@ -917,9 +638,6 @@ def main():
     logger = logging.getLogger(__name__)
 
     # Handle Qwen-Image model types
-    if config.model_type == "qwenimage-layered":
-        return run_qwen_image_generation(args, config, logger)
-
     if config.model_type == "qwenimage-t2i":
         return run_qwen_image_t2i_generation(args, config, logger)
 
@@ -1089,7 +807,7 @@ def main():
             generator=generator,
             shift=None if config.dynamic_shift else config.shift,
             d_noise=config.d_noise,
-            callback=progress_callback if config.verbose else None,
+            callback=progress_callback if config.debug else None,
         )
         gen_time = time.time() - start
 
@@ -1165,7 +883,7 @@ def main():
             skip_layer_stop=config.slg_stop,
             shift=None if config.dynamic_shift else config.shift,
             d_noise=config.d_noise,
-            callback=progress_callback if config.verbose else None,
+            callback=progress_callback if config.debug else None,
         )
         gen_time = time.time() - start
 
@@ -1250,7 +968,7 @@ def main():
             layer_weights=config.layer_weights,
             shift=None if config.dynamic_shift else config.shift,
             d_noise=config.d_noise,
-            callback=progress_callback if config.verbose else None,
+            callback=progress_callback if config.debug else None,
         )
         gen_time = time.time() - start
     else:
@@ -1298,7 +1016,7 @@ def main():
                 force_think_block=config.enable_thinking,
                 long_prompt_mode=config.long_prompt_mode,
                 hidden_layer=config.hidden_layer,
-                callback=progress_callback if config.verbose else None,
+                callback=progress_callback if config.debug else None,
                 # FBCache for inference acceleration
                 fbcache=config.fbcache,
                 fbcache_threshold=config.fbcache_threshold,
@@ -1328,7 +1046,7 @@ def main():
                 skip_layer_stop=config.slg_stop,
                 shift=None if config.dynamic_shift else config.shift,
                 d_noise=config.d_noise,
-                callback=progress_callback if config.verbose else None,
+                callback=progress_callback if config.debug else None,
                 # FBCache for inference acceleration
                 fbcache=config.fbcache,
                 fbcache_threshold=config.fbcache_threshold,

@@ -118,8 +118,8 @@ curl -X PUT http://localhost:8000/api/config/session \
 # List profiles
 curl http://localhost:8000/api/config/profiles
 
-# Get server status
-curl http://localhost:8000/api/server/status
+# Get server/model status
+curl http://localhost:8000/api/context
 
 # Restart server
 curl -X POST http://localhost:8000/api/server/restart \

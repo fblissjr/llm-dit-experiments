@@ -694,11 +694,22 @@ class Flux2Transformer(nn.Module):
         Returns:
             Velocity prediction [B, img_len, in_channels]
         """
-        logger.debug(
-            f"[FLUX2:Transformer:forward] Starting forward pass - "
-            f"x: {list(x.shape)}, ctx: {list(ctx.shape)}"
-        )
-        _log_memory_state("forward:start", self._compute_device if self._block_offload_enabled else x.device)
+        # Guard all logging behind is_compiling() to prevent graph breaks during torch.compile.
+        # When torch.compile traces this function, is_compiling() returns True and all
+        # logging is skipped, allowing clean graph capture with no breaks.
+        _tracing = torch.compiler.is_compiling()
+        if _tracing and self._block_offload_enabled:
+            raise RuntimeError(
+                "torch.compile is incompatible with block_offload. "
+                "Set block_offload=false when using compile=true."
+            )
+
+        if not _tracing:
+            logger.debug(
+                f"[FLUX2:Transformer:forward] Starting forward pass - "
+                f"x: {list(x.shape)}, ctx: {list(ctx.shape)}"
+            )
+            _log_memory_state("forward:start", self._compute_device if self._block_offload_enabled else x.device)
 
         num_txt_tokens = ctx.shape[1]
 
@@ -722,21 +733,24 @@ class Flux2Transformer(nn.Module):
         img = self.img_in(x)
         txt = self.txt_in(ctx)
 
-        logger.debug(
-            f"[FLUX2:Transformer:forward] After embeddings - "
-            f"img: {list(img.shape)}, txt: {list(txt.shape)}"
-        )
-        _log_memory_state("forward:after_embeddings", img.device)
+        if not _tracing:
+            logger.debug(
+                f"[FLUX2:Transformer:forward] After embeddings - "
+                f"img: {list(img.shape)}, txt: {list(txt.shape)}"
+            )
+            _log_memory_state("forward:after_embeddings", img.device)
 
         # Compute positional embeddings
         pe_x = self.pe_embedder(x_ids)
         pe_ctx = self.pe_embedder(ctx_ids)
 
         # Double-stream blocks (joint attention)
-        logger.debug(f"[FLUX2:Transformer:forward] Processing {len(self.double_blocks)} double blocks")
+        if not _tracing:
+            logger.debug(f"[FLUX2:Transformer:forward] Processing {len(self.double_blocks)} double blocks")
         if self._block_offload_enabled and self._compute_device and self._offload_device:
-            # Block-by-block offloading mode
-            logger.debug("[FLUX2:Transformer:forward] Using block offload mode")
+            # Block-by-block offloading mode (incompatible with torch.compile)
+            if not _tracing:
+                logger.debug("[FLUX2:Transformer:forward] Using block offload mode")
             for i, block in enumerate(self.double_blocks):
                 # Track peak memory during block processing
                 peak_before = torch.cuda.max_memory_allocated(self._compute_device) if torch.cuda.is_available() else 0
@@ -745,7 +759,8 @@ class Flux2Transformer(nn.Module):
                 self._move_block_to_device(block, self._compute_device, f"double_block.{i}")
                 if self._compute_device.type == "cuda":
                     torch.cuda.synchronize()
-                _log_memory_state(f"forward:double_block.{i}:after_load", self._compute_device)
+                if not _tracing:
+                    _log_memory_state(f"forward:double_block.{i}:after_load", self._compute_device)
 
                 img, txt = block(
                     img,
@@ -757,20 +772,23 @@ class Flux2Transformer(nn.Module):
                 )
 
                 # Log peak memory during forward pass
-                peak_after = torch.cuda.max_memory_allocated(self._compute_device) if torch.cuda.is_available() else 0
-                peak_delta = peak_after - peak_before
-                if logger.isEnabledFor(logging.DEBUG) and torch.cuda.is_available():
-                    logger.debug(
-                        f"[FLUX2:Transformer:forward] double_block.{i} peak memory delta: "
-                        f"{_format_memory_gb(peak_delta)}"
-                    )
+                if not _tracing:
+                    peak_after = torch.cuda.max_memory_allocated(self._compute_device) if torch.cuda.is_available() else 0
+                    peak_delta = peak_after - peak_before
+                    if logger.isEnabledFor(logging.DEBUG) and torch.cuda.is_available():
+                        logger.debug(
+                            f"[FLUX2:Transformer:forward] double_block.{i} peak memory delta: "
+                            f"{_format_memory_gb(peak_delta)}"
+                        )
 
                 # Move block back to CPU
                 self._move_block_to_device(block, self._offload_device, f"double_block.{i}")
-                _log_memory_state(f"forward:double_block.{i}:after_unload", self._compute_device)
+                if not _tracing:
+                    _log_memory_state(f"forward:double_block.{i}:after_unload", self._compute_device)
         else:
             # Standard mode - all blocks on same device
-            logger.debug("[FLUX2:Transformer:forward] Using standard mode (all blocks on device)")
+            if not _tracing:
+                logger.debug("[FLUX2:Transformer:forward] Using standard mode (all blocks on device)")
             for i, block in enumerate(self.double_blocks):
                 img, txt = block(
                     img,
@@ -780,20 +798,23 @@ class Flux2Transformer(nn.Module):
                     double_block_mod_img,
                     double_block_mod_txt,
                 )
-                if i == 0 or i == len(self.double_blocks) - 1:  # Log first and last
+                if not _tracing and (i == 0 or i == len(self.double_blocks) - 1):
                     _log_memory_state(f"forward:double_block.{i}:after", img.device)
 
         # Concatenate for single-stream processing
-        logger.debug("[FLUX2:Transformer:forward] Concatenating for single-stream processing")
+        if not _tracing:
+            logger.debug("[FLUX2:Transformer:forward] Concatenating for single-stream processing")
         img = torch.cat((txt, img), dim=1)
         pe = torch.cat((pe_ctx, pe_x), dim=2)
-        logger.debug(f"[FLUX2:Transformer:forward] Concatenated sequence: {list(img.shape)}")
-        _log_memory_state("forward:after_concat", img.device)
+        if not _tracing:
+            logger.debug(f"[FLUX2:Transformer:forward] Concatenated sequence: {list(img.shape)}")
+            _log_memory_state("forward:after_concat", img.device)
 
         # Single-stream blocks (unified attention)
-        logger.debug(f"[FLUX2:Transformer:forward] Processing {len(self.single_blocks)} single blocks")
+        if not _tracing:
+            logger.debug(f"[FLUX2:Transformer:forward] Processing {len(self.single_blocks)} single blocks")
         if self._block_offload_enabled and self._compute_device and self._offload_device:
-            # Block-by-block offloading mode
+            # Block-by-block offloading mode (incompatible with torch.compile)
             for i, block in enumerate(self.single_blocks):
                 # Track peak memory during block processing
                 peak_before = torch.cuda.max_memory_allocated(self._compute_device) if torch.cuda.is_available() else 0
@@ -802,7 +823,8 @@ class Flux2Transformer(nn.Module):
                 self._move_block_to_device(block, self._compute_device, f"single_block.{i}")
                 if self._compute_device.type == "cuda":
                     torch.cuda.synchronize()
-                _log_memory_state(f"forward:single_block.{i}:after_load", self._compute_device)
+                if not _tracing:
+                    _log_memory_state(f"forward:single_block.{i}:after_load", self._compute_device)
 
                 img = block(
                     img,
@@ -811,17 +833,19 @@ class Flux2Transformer(nn.Module):
                 )
 
                 # Log peak memory during forward pass
-                peak_after = torch.cuda.max_memory_allocated(self._compute_device) if torch.cuda.is_available() else 0
-                peak_delta = peak_after - peak_before
-                if logger.isEnabledFor(logging.DEBUG) and torch.cuda.is_available():
-                    logger.debug(
-                        f"[FLUX2:Transformer:forward] single_block.{i} peak memory delta: "
-                        f"{_format_memory_gb(peak_delta)}"
-                    )
+                if not _tracing:
+                    peak_after = torch.cuda.max_memory_allocated(self._compute_device) if torch.cuda.is_available() else 0
+                    peak_delta = peak_after - peak_before
+                    if logger.isEnabledFor(logging.DEBUG) and torch.cuda.is_available():
+                        logger.debug(
+                            f"[FLUX2:Transformer:forward] single_block.{i} peak memory delta: "
+                            f"{_format_memory_gb(peak_delta)}"
+                        )
 
                 # Move block back to CPU
                 self._move_block_to_device(block, self._offload_device, f"single_block.{i}")
-                _log_memory_state(f"forward:single_block.{i}:after_unload", self._compute_device)
+                if not _tracing:
+                    _log_memory_state(f"forward:single_block.{i}:after_unload", self._compute_device)
         else:
             # Standard mode
             for i, block in enumerate(self.single_blocks):
@@ -830,17 +854,20 @@ class Flux2Transformer(nn.Module):
                     pe,
                     single_block_mod,
                 )
-                if i == 0 or i == len(self.single_blocks) - 1:  # Log first and last
+                if not _tracing and (i == 0 or i == len(self.single_blocks) - 1):
                     _log_memory_state(f"forward:single_block.{i}:after", img.device)
 
         # Extract image tokens (remove prepended text tokens)
-        logger.debug("[FLUX2:Transformer:forward] Extracting image tokens")
+        if not _tracing:
+            logger.debug("[FLUX2:Transformer:forward] Extracting image tokens")
         img = img[:, num_txt_tokens:, ...]
 
         # Final output projection
-        logger.debug("[FLUX2:Transformer:forward] Final output projection")
+        if not _tracing:
+            logger.debug("[FLUX2:Transformer:forward] Final output projection")
         img = self.final_layer(img, vec)
-        _log_memory_state("forward:end", img.device)
+        if not _tracing:
+            _log_memory_state("forward:end", img.device)
 
         return img
 

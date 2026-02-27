@@ -89,10 +89,9 @@ class LLMDitBackend(Backend):
             prompt=prompt,
             config=llm_dit_config,
             model_path=self.model_path,
-            quantize=config.fp8,
-            precision="fp8-native" if config.fp8 else "bf16",
             dtype=config.dtype,
             callback=progress_callback,
+            quantize="fp8" if config.fp8 else "none",
         )
 
         stats.total_time = time.time() - start_time
@@ -161,7 +160,6 @@ class LLMDitBackend(Backend):
 
         encoder = Gemma3Encoder(
             model_id=str(self.model_path / "text_encoder"),
-            load_in_8bit=True,
             device="cuda",
         )
 

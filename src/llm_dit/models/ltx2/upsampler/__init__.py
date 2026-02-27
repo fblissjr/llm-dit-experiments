@@ -17,6 +17,7 @@ Public API:
 """
 
 from llm_dit.models.ltx2.upsampler.blur_downsample import BlurDownsample
+from llm_dit.models.ltx2.upsampler.loader import load_spatial_upsampler
 from llm_dit.models.ltx2.upsampler.model import LatentUpsampler, upsample_video
 from llm_dit.models.ltx2.upsampler.model_configurator import LatentUpsamplerConfigurator
 from llm_dit.models.ltx2.upsampler.pixel_shuffle import PixelShuffleND
@@ -26,6 +27,7 @@ from llm_dit.models.ltx2.upsampler.spatial_rational_resampler import SpatialRati
 __all__ = [
     "LatentUpsampler",
     "LatentUpsamplerConfigurator",
+    "load_spatial_upsampler",
     "upsample_video",
     "PixelShuffleND",
     "ResBlock",

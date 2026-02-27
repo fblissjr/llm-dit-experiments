@@ -84,7 +84,7 @@ class GenerationConfig:
 
     # Inference parameters
     num_inference_steps: int = 40
-    guidance_scale: float = 4.0  # CFG scale
+    guidance_scale: float = 3.0  # CFG scale (ref: DEFAULT_VIDEO_GUIDER_PARAMS.cfg_scale)
     seed: int = 10  # Default LTX-2 seed
 
     # Model configuration
@@ -120,44 +120,34 @@ class GenerationConfig:
 
 
 # =============================================================================
-# Standard Configurations (Single Source of Truth)
+# Standard Configurations (derived from tests.constants.ltx2)
 # =============================================================================
-# These are the canonical configs used by all tests and backends.
-# DO NOT duplicate these elsewhere - import from here.
+# All values come from the canonical constants module. Do not hardcode here.
+# Protocol configs use FULL model tiers (non-distilled, for backend comparison).
 
-# Reference: coderef/LTX-2/packages/ltx-pipelines/src/ltx_pipelines/utils/constants.py
-
-REFERENCE_CONFIG = GenerationConfig(
-    # Official LTX-2 reference parameters for 1:1 comparison
-    num_frames=121,  # 5 seconds at 24fps (15 latent frames)
-    height=512,
-    width=768,
-    num_inference_steps=40,
-    guidance_scale=4.0,
-    seed=10,  # Official default seed
-    fp8=False,
-)
-
-SHORT_CONFIG = GenerationConfig(
-    # Reasonable quality, faster iteration (~2min on 24GB GPU)
-    num_frames=33,  # ~1.4 seconds (4 latent frames)
-    height=512,
-    width=768,
-    num_inference_steps=30,
-    guidance_scale=3.0,
-    seed=10,
-    fp8=True,
-)
+from tests.constants.ltx2 import FULL_REFERENCE, FULL_SMOKE
 
 SMOKE_CONFIG = GenerationConfig(
-    # Reasonable quality, faster iteration (~2min on 24GB GPU)
-    num_frames=33,  # ~1.4 seconds (4 latent frames)
-    height=512,
-    width=768,
-    num_inference_steps=30,
-    guidance_scale=3.0,
-    seed=10,
-    fp8=True,
+    num_frames=FULL_SMOKE["num_frames"],
+    height=FULL_SMOKE["height"],
+    width=FULL_SMOKE["width"],
+    num_inference_steps=FULL_SMOKE["num_inference_steps"],
+    guidance_scale=FULL_SMOKE["guidance_scale"],
+    seed=FULL_SMOKE["seed"],
+    fp8=FULL_SMOKE["fp8"],
+)
+
+# SHORT_CONFIG was identical to SMOKE_CONFIG -- explicit alias
+SHORT_CONFIG = SMOKE_CONFIG
+
+REFERENCE_CONFIG = GenerationConfig(
+    num_frames=FULL_REFERENCE["num_frames"],
+    height=FULL_REFERENCE["height"],
+    width=FULL_REFERENCE["width"],
+    num_inference_steps=FULL_REFERENCE["num_inference_steps"],
+    guidance_scale=FULL_REFERENCE["guidance_scale"],
+    seed=FULL_REFERENCE["seed"],
+    fp8=FULL_REFERENCE["fp8"],
 )
 
 # Memory estimates (RTX 4090 24GB with FP8 transformer)

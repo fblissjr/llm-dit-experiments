@@ -25,6 +25,7 @@ CONFIG_EXAMPLE = PROJECT_ROOT / "config.toml.example"
 CONFIG_PY = PROJECT_ROOT / "src" / "llm_dit" / "config.py"
 CLI_PY = PROJECT_ROOT / "src" / "llm_dit" / "cli.py"
 STARTUP_PY = PROJECT_ROOT / "src" / "llm_dit" / "startup.py"
+MODEL_MANAGER_PY = PROJECT_ROOT / "src" / "llm_dit" / "model_manager.py"
 API_BACKEND_PY = PROJECT_ROOT / "src" / "llm_dit" / "backends" / "api.py"
 
 
@@ -203,14 +204,13 @@ class TestTOMLToConfigDataclass:
 
 
 class TestCLIToRuntimeConfig:
-    """Ensure CLI arguments map to RuntimeConfig fields."""
+    """Ensure CLI arguments are wired through _apply_cli_overrides."""
 
     def test_cli_args_have_runtime_config_fields(self):
-        """CLI argument dests should exist in RuntimeConfig."""
+        """CLI argument dests should be reachable on RuntimeConfig (via sub-configs or properties)."""
         from llm_dit.cli import RuntimeConfig
 
         cli_dests = extract_argparse_dests(CLI_PY)
-        runtime_fields = get_dataclass_fields(RuntimeConfig)
 
         # These CLI args don't need RuntimeConfig fields (action-only or script-specific)
         excluded = {
@@ -223,31 +223,48 @@ class TestCLIToRuntimeConfig:
             "prompts",  # Script-specific positional
             "version",  # Just prints version
             "embeddings_file",  # Script-specific (generate.py)
-        }
-
-        # CLI arg names that map to different RuntimeConfig field names
-        cli_to_runtime_mapping = {
-            "text_encoder_device": "encoder_device",
-            "template": "default_template",
-            "vl_no_auto_unload": "vl_auto_unload",  # Inverted flag
-            "rewriter_no_vl": "rewriter_vl_enabled",  # Inverted flag
-            "qwen_image_layers": "qwen_image_layer_num",  # Different naming
-            "dype": "dype_enabled",  # Boolean flag maps to enabled field
+            "ltx2_output",  # CLI maps to config.ltx2.output_path
+            "flux2_output",  # CLI maps to config.flux2.output_path
+            "flux2_input_image",  # CLI maps to config.flux2.input_images
+            "flux2_offload",  # Action flag (sets offload_between_stages=true)
+            "flux2_no_offload",  # Action flag (sets offload_between_stages=false)
+            "wan_output",  # CLI maps to config.wan.output_path
+            # WAN CLI args access sub-config directly (backward-compat properties removed)
+            "wan_humo_path",
+            "wan_base_path",
+            "wan_whisper_path",
+            "wan_humo_variant",
+            "wan_num_frames",
+            "wan_fps",
+            "wan_height",
+            "wan_width",
+            "wan_guidance_scale",
+            "wan_audio_scale",
+            "wan_steps",
+            "wan_offload_mode",
+            "torch_dtype",  # Legacy dtype flag, maps to config.encoder.dtype
+            # CLI names that intentionally differ from sub-config field names
+            # (wired correctly in _apply_cli_overrides)
+            "template",  # -> config.generation.default_template
+            "text_encoder_device",  # -> config.encoder.device
         }
 
         cli_dests_filtered = cli_dests - excluded
 
-        # Check each CLI arg has a RuntimeConfig field (directly or via mapping)
+        # With composed RuntimeConfig, CLI args may exist as:
+        # 1. Direct dataclass fields (e.g., host, port, debug)
+        # 2. Backward-compat @property (e.g., attention_backend -> pytorch.attention_backend)
+        # 3. Sub-config fields wired in _apply_cli_overrides
+        # We verify by checking that each CLI arg is accessible as an attribute
+        rc = RuntimeConfig()
         missing = []
         for dest in cli_dests_filtered:
-            mapped_name = cli_to_runtime_mapping.get(dest, dest)
-            if mapped_name not in runtime_fields:
-                missing.append(f"{dest} (-> {mapped_name})" if dest != mapped_name else dest)
+            if not hasattr(rc, dest):
+                missing.append(dest)
 
         assert not missing, (
-            f"CLI args without RuntimeConfig fields: {missing}. "
-            f"Either add these fields to RuntimeConfig in cli.py, "
-            f"or add to cli_to_runtime_mapping if they map to different names."
+            f"CLI args not accessible on RuntimeConfig: {missing}. "
+            f"Either add a backward-compat @property or sub-config field."
         )
 
 
@@ -255,11 +272,11 @@ class TestKeyParameterWiring:
     """Ensure critical parameters are wired through to backend usage."""
 
     def test_hidden_layer_wired_to_api_backend_config(self):
-        """hidden_layer must be passed to APIBackendConfig in startup.py."""
-        # Check that startup.py passes hidden_layer to APIBackendConfig
-        assert check_string_in_file(STARTUP_PY, "hidden_layer=self.config.hidden_layer"), (
-            "startup.py must pass hidden_layer to APIBackendConfig. "
-            "Add: hidden_layer=self.config.hidden_layer"
+        """hidden_layer must be passed to APIBackendConfig in model_manager.py."""
+        # Check that model_manager.py passes hidden_layer to APIBackendConfig
+        assert check_string_in_file(MODEL_MANAGER_PY, "hidden_layer=config.hidden_layer"), (
+            "model_manager.py must pass hidden_layer to APIBackendConfig. "
+            "Add: hidden_layer=config.hidden_layer"
         )
 
     def test_hidden_layer_in_api_backend_config(self):
@@ -272,25 +289,26 @@ class TestKeyParameterWiring:
         )
 
     def test_rewriter_params_in_runtime_config(self):
-        """All rewriter params should be in RuntimeConfig."""
-        from llm_dit.cli import RuntimeConfig
+        """All rewriter params should be accessible on RuntimeConfig (via sub-config)."""
+        from llm_dit.config import RuntimeConfig
 
-        runtime_fields = get_dataclass_fields(RuntimeConfig)
+        rc = RuntimeConfig()
 
+        # These are accessed via config.rewriter.* sub-config
         rewriter_params = [
-            "rewriter_use_api",
-            "rewriter_api_url",
-            "rewriter_api_model",
-            "rewriter_temperature",
-            "rewriter_top_p",
-            "rewriter_min_p",
-            "rewriter_max_tokens",
+            "use_api",
+            "api_url",
+            "api_model",
+            "temperature",
+            "top_p",
+            "min_p",
+            "max_tokens",
         ]
 
-        missing = [p for p in rewriter_params if p not in runtime_fields]
+        missing = [p for p in rewriter_params if not hasattr(rc.rewriter, p)]
         assert not missing, (
-            f"Rewriter params not in RuntimeConfig: {missing}. "
-            f"Add these fields to RuntimeConfig in cli.py"
+            f"Rewriter params not accessible on config.rewriter: {missing}. "
+            f"Add these fields to RewriterConfig in config.py"
         )
 
 
@@ -382,20 +400,25 @@ def run_consistency_check():
     # Check CLI -> RuntimeConfig
     print("\n[2/4] Checking CLI -> RuntimeConfig...")
     try:
-        from llm_dit.cli import RuntimeConfig
+        from llm_dit.config import RuntimeConfig
 
         cli_dests = extract_argparse_dests(CLI_PY)
-        runtime_fields = get_dataclass_fields(RuntimeConfig)
-        excluded = {"config", "profile", "lora", "output", "prompts", "version"}
+        excluded = {
+            "config", "config_name", "profile", "lora", "loras", "output",
+            "prompts", "version", "embeddings_file", "ltx2_output",
+            "flux2_output", "flux2_input_image", "flux2_offload",
+            "flux2_no_offload", "wan_output", "torch_dtype",
+        }
 
+        rc = RuntimeConfig()
         cli_filtered = cli_dests - excluded
-        missing = [d for d in cli_filtered if d not in runtime_fields]
+        missing = [d for d in cli_filtered if not hasattr(rc, d)]
 
         if missing:
-            errors.append(f"CLI args without RuntimeConfig fields: {missing}")
-            print(f"  FAIL: Missing RuntimeConfig fields: {missing}")
+            errors.append(f"CLI args not accessible on RuntimeConfig: {missing}")
+            print(f"  FAIL: Not accessible on RuntimeConfig: {missing}")
         else:
-            print(f"  OK: All CLI args mapped ({len(cli_filtered)} args)")
+            print(f"  OK: All CLI args accessible ({len(cli_filtered)} args)")
     except Exception as e:
         errors.append(f"CLI check failed: {e}")
         print(f"  ERROR: {e}")
@@ -403,10 +426,10 @@ def run_consistency_check():
     # Check key parameter wiring
     print("\n[3/4] Checking key parameter wiring...")
     try:
-        if check_string_in_file(STARTUP_PY, "hidden_layer=self.config.hidden_layer"):
+        if check_string_in_file(MODEL_MANAGER_PY, "hidden_layer=config.hidden_layer"):
             print("  OK: hidden_layer wired to APIBackendConfig")
         else:
-            errors.append("hidden_layer not wired to APIBackendConfig in startup.py")
+            errors.append("hidden_layer not wired to APIBackendConfig in model_manager.py")
             print("  FAIL: hidden_layer not wired to APIBackendConfig")
     except Exception as e:
         errors.append(f"Wiring check failed: {e}")
@@ -441,6 +464,350 @@ def run_consistency_check():
     else:
         print("PASSED: All consistency checks passed")
         sys.exit(0)
+
+
+class TestResolveParamFieldConsistency:
+    """Ensure all resolve_param() calls reference real fields on Pydantic schemas and config dataclasses.
+
+    This test parses router source files to extract resolve_param() calls and verifies:
+    1. The field name exists on the corresponding Pydantic request model
+    2. The config dataclass has a corresponding field (with known name mappings)
+
+    Prevents typos in resolve_param() calls from silently failing at runtime.
+    """
+
+    # Router -> Pydantic schema class mapping
+    ROUTER_SCHEMAS = {
+        "ltx2.py": [("LTX2GenerateRequest", "LTX2Config")],
+        "flux2.py": [("Flux2GenerateRequest", "Flux2Config")],
+        "qwen_image.py": [
+            ("QwenImageEditLayerRequest", "QwenImageConfig"),
+            ("QwenImageEditMultiRequest", "QwenImageConfig"),
+            ("QwenImage2512GenerateRequest", "QwenImageConfig"),
+        ],
+    }
+
+    # Known schema field -> config field name differences
+    # Format: (schema_field, config_field)
+    KNOWN_NAME_MAPPINGS = {
+        # LTX-2 mappings
+        ("stage1_steps", "LTX2Config"): "stage1_num_inference_steps",
+        ("stage2_steps", "LTX2Config"): "stage2_num_inference_steps",
+        ("enable_audio", "LTX2Config"): "audio_enabled",
+        # FLUX.2 mappings
+        ("num_steps", "Flux2Config"): "default_steps",
+        ("guidance", "Flux2Config"): "default_guidance",
+        # Qwen-Image mappings
+        ("steps", "QwenImageConfig"): "num_inference_steps",
+    }
+
+    def _extract_resolve_param_calls(self, router_file: Path) -> list[tuple[str, str]]:
+        """Extract all resolve_param() calls from a router file.
+
+        Returns list of (field_name, line_number) tuples.
+        """
+        with open(router_file) as f:
+            tree = ast.parse(f.read(), filename=str(router_file))
+
+        calls = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                # Check if it's a resolve_param() call
+                if isinstance(node.func, ast.Name) and node.func.id == "resolve_param":
+                    # Second positional arg is the field name (as a string literal)
+                    if len(node.args) >= 2 and isinstance(node.args[1], ast.Constant):
+                        field_name = node.args[1].value
+                        if isinstance(field_name, str):
+                            calls.append((field_name, node.lineno))
+
+        return calls
+
+    def test_ltx2_resolve_param_fields(self):
+        """All resolve_param() calls in ltx2.py reference real LTX2GenerateRequest and LTX2Config fields."""
+        from llm_dit.config import LTX2Config
+        from web.schemas import LTX2GenerateRequest
+
+        router_file = PROJECT_ROOT / "web" / "routers" / "ltx2.py"
+        calls = self._extract_resolve_param_calls(router_file)
+
+        assert len(calls) > 0, "Expected to find resolve_param() calls in ltx2.py"
+
+        # Get schema fields
+        schema_fields = set(LTX2GenerateRequest.model_fields.keys())
+        # Get config fields
+        config_fields = get_dataclass_fields(LTX2Config)
+
+        errors = []
+        for field_name, line_no in calls:
+            # Check schema has the field
+            if field_name not in schema_fields:
+                errors.append(
+                    f"Line {line_no}: resolve_param(request, '{field_name}', ...) "
+                    f"but '{field_name}' not in LTX2GenerateRequest.model_fields. "
+                    f"Available fields: {sorted(schema_fields)}"
+                )
+
+            # Check config has the field (exact match or known mapping)
+            mapped_name = self.KNOWN_NAME_MAPPINGS.get((field_name, "LTX2Config"))
+            if mapped_name:
+                # Use the mapped name
+                if mapped_name not in config_fields:
+                    errors.append(
+                        f"Line {line_no}: resolve_param uses '{field_name}' which maps to "
+                        f"'{mapped_name}', but '{mapped_name}' not in LTX2Config. "
+                        f"Update the mapping or add the field to LTX2Config."
+                    )
+            elif field_name not in config_fields:
+                errors.append(
+                    f"Line {line_no}: resolve_param(request, '{field_name}', ...) "
+                    f"but '{field_name}' not in LTX2Config and no known mapping exists. "
+                    f"Add field to LTX2Config or update KNOWN_NAME_MAPPINGS."
+                )
+
+        assert not errors, "\n".join(errors)
+
+    def test_flux2_resolve_param_fields(self):
+        """All resolve_param() calls in flux2.py reference real Flux2GenerateRequest and Flux2Config fields."""
+        from llm_dit.config import Flux2Config
+        from web.schemas import Flux2GenerateRequest
+
+        router_file = PROJECT_ROOT / "web" / "routers" / "flux2.py"
+        calls = self._extract_resolve_param_calls(router_file)
+
+        assert len(calls) > 0, "Expected to find resolve_param() calls in flux2.py"
+
+        schema_fields = set(Flux2GenerateRequest.model_fields.keys())
+        config_fields = get_dataclass_fields(Flux2Config)
+
+        errors = []
+        for field_name, line_no in calls:
+            if field_name not in schema_fields:
+                errors.append(
+                    f"Line {line_no}: resolve_param(request, '{field_name}', ...) "
+                    f"but '{field_name}' not in Flux2GenerateRequest.model_fields. "
+                    f"Available fields: {sorted(schema_fields)}"
+                )
+
+            mapped_name = self.KNOWN_NAME_MAPPINGS.get((field_name, "Flux2Config"))
+            if mapped_name:
+                if mapped_name not in config_fields:
+                    errors.append(
+                        f"Line {line_no}: resolve_param uses '{field_name}' which maps to "
+                        f"'{mapped_name}', but '{mapped_name}' not in Flux2Config. "
+                        f"Update the mapping or add the field to Flux2Config."
+                    )
+            elif field_name not in config_fields:
+                errors.append(
+                    f"Line {line_no}: resolve_param(request, '{field_name}', ...) "
+                    f"but '{field_name}' not in Flux2Config and no known mapping exists. "
+                    f"Add field to Flux2Config or update KNOWN_NAME_MAPPINGS."
+                )
+
+        assert not errors, "\n".join(errors)
+
+    def test_qwen_image_resolve_param_fields(self):
+        """All resolve_param() calls in qwen_image.py reference real schema and QwenImageConfig fields."""
+        from llm_dit.config import QwenImageConfig
+        from web.schemas import (
+            QwenImage2512GenerateRequest,
+            QwenImageEditLayerRequest,
+            QwenImageEditMultiRequest,
+        )
+
+        router_file = PROJECT_ROOT / "web" / "routers" / "qwen_image.py"
+        calls = self._extract_resolve_param_calls(router_file)
+
+        assert len(calls) > 0, "Expected to find resolve_param() calls in qwen_image.py"
+
+        # Aggregate schema fields from all Qwen-Image request types
+        all_schema_fields = set()
+        all_schema_fields.update(QwenImageEditLayerRequest.model_fields.keys())
+        all_schema_fields.update(QwenImageEditMultiRequest.model_fields.keys())
+        all_schema_fields.update(QwenImage2512GenerateRequest.model_fields.keys())
+
+        config_fields = get_dataclass_fields(QwenImageConfig)
+
+        errors = []
+        for field_name, line_no in calls:
+            if field_name not in all_schema_fields:
+                errors.append(
+                    f"Line {line_no}: resolve_param(request, '{field_name}', ...) "
+                    f"but '{field_name}' not in any Qwen-Image request schema. "
+                    f"Available fields: {sorted(all_schema_fields)}"
+                )
+
+            mapped_name = self.KNOWN_NAME_MAPPINGS.get((field_name, "QwenImageConfig"))
+            if mapped_name:
+                if mapped_name not in config_fields:
+                    errors.append(
+                        f"Line {line_no}: resolve_param uses '{field_name}' which maps to "
+                        f"'{mapped_name}', but '{mapped_name}' not in QwenImageConfig. "
+                        f"Update the mapping or add the field to QwenImageConfig."
+                    )
+            elif field_name not in config_fields:
+                errors.append(
+                    f"Line {line_no}: resolve_param(request, '{field_name}', ...) "
+                    f"but '{field_name}' not in QwenImageConfig and no known mapping exists. "
+                    f"Add field to QwenImageConfig or update KNOWN_NAME_MAPPINGS."
+                )
+
+        assert not errors, "\n".join(errors)
+
+
+class TestDefaultsEndpointNameMappings:
+    """Ensure _PARAM_NAME_MAPS and _PIPELINE_CONFIG_KEYS in config_mgmt.py
+    reference real schema param IDs and config dataclass fields.
+
+    Prevents name drift between the defaults endpoint mapping tables and
+    the actual pipeline schemas / config dataclasses.
+    """
+
+    def test_pipeline_config_keys_point_to_real_sub_configs(self):
+        """Every _PIPELINE_CONFIG_KEYS value must be a field on RuntimeConfig."""
+        from llm_dit.config import RuntimeConfig
+        from web.routers.config_mgmt import _PIPELINE_CONFIG_KEYS
+
+        rc = RuntimeConfig()
+        config_dict = rc.to_dict()
+
+        errors = []
+        for schema_id, config_key in _PIPELINE_CONFIG_KEYS.items():
+            if config_key not in config_dict:
+                errors.append(
+                    f"_PIPELINE_CONFIG_KEYS['{schema_id}'] = '{config_key}', "
+                    f"but '{config_key}' not in RuntimeConfig.to_dict(). "
+                    f"Available keys: {sorted(config_dict.keys())}"
+                )
+
+        assert not errors, "\n".join(errors)
+
+    def test_param_name_maps_reference_real_schema_params(self):
+        """Every key in _PARAM_NAME_MAPS[pipeline] must be a real schema param ID."""
+        from llm_dit.pipelines.schemas import get_pipeline
+        from web.routers.config_mgmt import _PARAM_NAME_MAPS
+
+        errors = []
+        for pipeline_id, param_map in _PARAM_NAME_MAPS.items():
+            schema = get_pipeline(pipeline_id)
+            assert schema is not None, f"Pipeline '{pipeline_id}' not found in schema registry"
+
+            schema_param_ids = {p.id for p in schema.params}
+            for schema_name in param_map:
+                if schema_name not in schema_param_ids:
+                    errors.append(
+                        f"_PARAM_NAME_MAPS['{pipeline_id}']['{schema_name}'] "
+                        f"but '{schema_name}' not in schema params. "
+                        f"Available: {sorted(schema_param_ids)}"
+                    )
+
+        assert not errors, "\n".join(errors)
+
+    def test_param_name_maps_reference_real_config_fields(self):
+        """Every value in _PARAM_NAME_MAPS[pipeline] must be a real config dataclass field."""
+        from dataclasses import fields as dc_fields
+
+        from llm_dit.config import Flux2Config, LTX2Config, QwenImageConfig, ZImageConfig
+        from web.routers.config_mgmt import _PARAM_NAME_MAPS, _PIPELINE_CONFIG_KEYS
+
+        # Map pipeline schema IDs to their config dataclass
+        config_classes = {
+            "ltx2": LTX2Config,
+            "flux2": Flux2Config,
+            "zimage": ZImageConfig,
+            "qwenimage-t2i": QwenImageConfig,
+            "qwenimage-edit": QwenImageConfig,
+        }
+
+        errors = []
+        for pipeline_id, param_map in _PARAM_NAME_MAPS.items():
+            config_cls = config_classes.get(pipeline_id)
+            if config_cls is None:
+                errors.append(f"No config class registered for pipeline '{pipeline_id}'")
+                continue
+
+            config_field_names = {f.name for f in dc_fields(config_cls)}
+            for schema_name, config_name in param_map.items():
+                if config_name not in config_field_names:
+                    errors.append(
+                        f"_PARAM_NAME_MAPS['{pipeline_id}']['{schema_name}'] = '{config_name}', "
+                        f"but '{config_name}' not in {config_cls.__name__}. "
+                        f"Available: {sorted(config_field_names)}"
+                    )
+
+        assert not errors, "\n".join(errors)
+
+    def test_mismatched_params_are_all_mapped(self):
+        """Schema params that don't match config field names must be in _PARAM_NAME_MAPS.
+
+        This catches cases where a new schema param is added with a name that
+        differs from the config field, but no mapping entry is created.
+        """
+        from dataclasses import fields as dc_fields
+
+        from llm_dit.config import Flux2Config, LTX2Config, QwenImageConfig, ZImageConfig
+        from llm_dit.pipelines.schemas import get_pipeline
+        from web.routers.config_mgmt import _PARAM_NAME_MAPS, _PIPELINE_CONFIG_KEYS
+
+        config_classes = {
+            "ltx2": LTX2Config,
+            "flux2": Flux2Config,
+            "zimage": ZImageConfig,
+            "qwenimage-t2i": QwenImageConfig,
+            "qwenimage-edit": QwenImageConfig,
+        }
+
+        # Schema params that are intentionally NOT in config (per-request only,
+        # infrastructure handled separately, or non-config concepts)
+        EXCLUDED_PARAMS = {
+            # Per-request params (no config.toml equivalent)
+            "prompt", "negative_prompt", "seed", "image", "instruction",
+            "reference_images", "match_image_size", "upsample_prompt",
+            "dimension_preset", "preset", "loras",
+            # Infrastructure params (handled separately, not generation defaults)
+            "quantization", "cpu_offload", "compile", "block_offload",
+            "offload_type", "use_fp8", "hidden_layer", "resolution",
+            # Feature flags (boolean toggles, not generation params)
+            "use_two_stage",
+            "latent_norm_enabled", "nag_enabled", "feta_enabled",
+            "teacache_enabled", "stg_enabled",
+            "dype_enabled", "dynamic_shift", "d_noise", "fbcache_enabled",
+            # Fine-grained optimization knobs (UI-only, not in config dataclasses)
+            "nag_scale", "feta_scale", "teacache_threshold",
+            "stg_start_step", "stg_end_step",
+            "dype_base_resolution", "dype_ntk_factor",
+            "fbcache_start_step", "fbcache_threshold",
+            # Resolution params not in pipeline-specific configs
+            # (handled by resolution-config endpoint or presets instead)
+            "width", "height",
+            # Z-Image generation params come from presets, not ZImageConfig
+            "steps", "guidance_scale", "shift",
+        }
+
+        warnings = []
+        for pipeline_id, config_cls in config_classes.items():
+            schema = get_pipeline(pipeline_id)
+            if schema is None:
+                continue
+
+            config_field_names = {f.name for f in dc_fields(config_cls)}
+            param_map = _PARAM_NAME_MAPS.get(pipeline_id, {})
+
+            for param in schema.params:
+                if param.id in EXCLUDED_PARAMS:
+                    continue
+                if param.id in param_map:
+                    continue  # Already mapped
+                if param.id in config_field_names:
+                    continue  # Direct match, no mapping needed
+
+                warnings.append(
+                    f"Pipeline '{pipeline_id}': schema param '{param.id}' has no direct "
+                    f"match in {config_cls.__name__} and no entry in _PARAM_NAME_MAPS. "
+                    f"Either add a mapping or add '{param.id}' to EXCLUDED_PARAMS if "
+                    f"it's intentionally not in config."
+                )
+
+        assert not warnings, "\n".join(warnings)
 
 
 if __name__ == "__main__":

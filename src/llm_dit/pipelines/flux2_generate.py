@@ -50,7 +50,10 @@ import gc
 import math
 import logging
 from dataclasses import dataclass, field
-from typing import Optional
+from pathlib import Path
+from typing import Callable, Optional
+
+import time
 
 import torch
 import torchvision
@@ -68,6 +71,7 @@ from llm_dit.models.flux2.constants import (
     TOTAL_SPATIAL_COMPRESSION,
     LATENT_CHANNELS_AFTER_PATCHIFY,
     FLUX2_MODEL_INFO,
+    get_encoder_preset,
 )
 
 logger = logging.getLogger(__name__)
@@ -125,6 +129,15 @@ class Flux2GenerationConfig:
     # Single ref: up to 2024^2, multiple refs: up to 1024^2 each
     ref_limit_pixels: Optional[int] = None
 
+    # Match output dimensions to reference image (0-indexed)
+    # When set, width/height are overridden to match the specified reference image
+    # This is the official FLUX.2 approach - output matches reference, not vice versa
+    match_image_size: Optional[int] = None
+
+    # LoRA weights: list of "path:scale" or just "path" (default scale 1.0)
+    # Example: ["style.safetensors:0.7", "detail.safetensors:0.5"]
+    loras: Optional[list[str]] = None
+
     # Text encoding options
     max_text_length: int = 512  # Maximum text tokens (can increase for longer prompts)
     pad_to_max: bool = True  # Whether to pad all sequences to max_text_length
@@ -140,6 +153,15 @@ class Flux2GenerationConfig:
     # Offloading
     offload_between_stages: bool = True
     block_offload: bool = False  # Block-by-block GPU offloading (slower but uses less VRAM)
+
+    def __post_init__(self) -> None:
+        """Snap width/height to multiples of 16 (VAE + patchify requirement)."""
+        if self.width % 16 != 0:
+            self.width = round(self.width / 16) * 16
+            logger.warning(f"Width snapped to {self.width} (must be multiple of 16)")
+        if self.height % 16 != 0:
+            self.height = round(self.height / 16) * 16
+            logger.warning(f"Height snapped to {self.height} (must be multiple of 16)")
 
     @property
     def latent_height(self) -> int:
@@ -194,6 +216,9 @@ def preprocess_reference_image(
 ) -> torch.Tensor:
     """Preprocess a single reference image for VAE encoding.
 
+    Matches the official FLUX.2 implementation: caps pixels (preserving aspect ratio)
+    and crops to multiples of ensure_multiple. Does NOT resize to match output.
+
     Args:
         img: PIL Image
         limit_pixels: Maximum total pixels (resizes if exceeded)
@@ -210,7 +235,7 @@ def preprocess_reference_image(
     orig_w, orig_h = img.size
     logger.debug(f"[REF:Preprocess] Original dimensions: {orig_w}x{orig_h}")
 
-    # Cap pixels if needed
+    # Cap pixels if needed (preserves aspect ratio)
     if limit_pixels is not None:
         w, h = img.size
         if w * h > limit_pixels:
@@ -245,6 +270,7 @@ def encode_reference_images(
 ) -> tuple[torch.Tensor, torch.Tensor] | tuple[None, None]:
     """Encode reference images into latent tokens with position IDs.
 
+    Matches the official FLUX.2 implementation (sampling.py encode_image_refs).
     Each reference image gets a unique time coordinate (t=10, t=20, etc.)
     to distinguish it from the generated image (t=0).
 
@@ -263,7 +289,7 @@ def encode_reference_images(
     if not images:
         return None, None
 
-    # Set pixel limit based on number of images
+    # Set pixel limit based on number of images (matches official code)
     if limit_pixels is None:
         if len(images) > 1:
             limit_pixels = 1024**2  # 1MP each for multiple refs
@@ -281,7 +307,7 @@ def encode_reference_images(
     for idx, img in enumerate(images):
         logger.debug(f"[REF:Encode] Processing reference image {idx}...")
 
-        # Preprocess
+        # Preprocess (preserves aspect ratio, just caps pixels + 16px crop)
         img_tensor = preprocess_reference_image(img, limit_pixels=limit_pixels)
         img_tensor = img_tensor.unsqueeze(0).to(device).to(dtype)  # [1, 3, H, W]
         logger.debug(f"[REF:Encode] Image {idx} input tensor shape: {list(img_tensor.shape)}")
@@ -447,6 +473,7 @@ def denoise(
     guidance: float | None = None,
     img_cond_seq: torch.Tensor | None = None,
     img_cond_seq_ids: torch.Tensor | None = None,
+    progress_callback: Callable | None = None,
 ) -> torch.Tensor:
     """
     FLUX.2 denoising loop with flow matching.
@@ -463,6 +490,7 @@ def denoise(
         guidance: Guidance scale (None for distilled models)
         img_cond_seq: Reference image tokens [B, ref_tokens, channels] (optional)
         img_cond_seq_ids: Reference image position IDs [B, ref_tokens, 4] (optional)
+        progress_callback: Optional callback(step, total, stage) for progress updates
 
     Returns:
         Denoised latents [B, seq_len, channels]
@@ -519,9 +547,18 @@ def denoise(
     else:
         logger.debug("[Denoise] No guidance (distilled model)")
 
+    denoise_start = time.perf_counter()
+    step_times: list[float] = []
+
     for step_idx, (t_curr, t_prev) in enumerate(
         tqdm(zip(timesteps[:-1], timesteps[1:]), total=num_steps, desc="Denoising")
     ):
+        step_start = time.perf_counter()
+
+        # Report progress if callback provided
+        if progress_callback is not None:
+            progress_callback(step_idx + 1, num_steps, "Denoising")
+
         # =====================================================================
         # Step Start
         # =====================================================================
@@ -590,8 +627,19 @@ def denoise(
         img = img + (t_prev - t_curr) * pred
 
         # =====================================================================
-        # Step End - Memory Tracking
+        # Step End - Timing + Memory Tracking
         # =====================================================================
+        step_elapsed = time.perf_counter() - step_start
+        step_times.append(step_elapsed)
+
+        if step_idx == 0 and step_elapsed > 5.0:
+            logger.info(
+                f"[Denoise:Step 0] {step_elapsed:.1f}s "
+                "(torch.compile warmup -- subsequent steps will be fast)"
+            )
+        else:
+            logger.info(f"[Denoise:Step {step_idx}] {step_elapsed:.2f}s")
+
         if torch.cuda.is_available():
             step_alloc, step_reserved = _log_denoise_memory(step_idx, "end")
             peak_allocated = max(peak_allocated, step_alloc)
@@ -605,8 +653,12 @@ def denoise(
     # =========================================================================
     # Denoising Complete - Summary
     # =========================================================================
+    denoise_elapsed = time.perf_counter() - denoise_start
     logger.debug("=" * 60)
-    logger.debug("[Denoise] Denoising complete")
+    logger.info(
+        f"[Denoise] {num_steps} steps in {denoise_elapsed:.1f}s "
+        f"({', '.join(f'{t:.2f}s' for t in step_times)})"
+    )
 
     if torch.cuda.is_available():
         torch.cuda.synchronize()
@@ -626,6 +678,144 @@ def denoise(
     logger.debug("=" * 60)
 
     return img
+
+
+def denoise_cfg(
+    model,
+    img: torch.Tensor,
+    img_ids: torch.Tensor,
+    txt: torch.Tensor,
+    txt_ids: torch.Tensor,
+    timesteps: list[float],
+    guidance: float,
+    img_cond_seq: torch.Tensor | None = None,
+    img_cond_seq_ids: torch.Tensor | None = None,
+    progress_callback: Callable | None = None,
+) -> torch.Tensor:
+    """
+    FLUX.2 denoising loop with explicit Classifier-Free Guidance (CFG).
+
+    Used for base (non-distilled) models. Unlike denoise(), which passes a
+    guidance embedding vector to the model, this function:
+    1. Doubles the batch (uncond + cond) for a single forward pass
+    2. Passes guidance=None to the model (no guidance embedding)
+    3. Applies the CFG formula: pred = pred_uncond + scale * (pred_cond - pred_uncond)
+
+    The txt tensor must already be cat([txt_empty, txt_prompt]) along dim=0,
+    where txt_empty is the encoder output for an empty string "".
+
+    Ported from: coderef/flux2/src/flux2/sampling.py:316-362
+
+    Args:
+        model: FLUX.2 transformer
+        img: Initial noise [1, seq_len, channels]
+        img_ids: Image position IDs [1, seq_len, 4]
+        txt: Text embeddings [2, txt_len, context_dim] -- cat([empty, prompt])
+        txt_ids: Text position IDs [2, txt_len, 4]
+        timesteps: List of timesteps from ~1 to ~0
+        guidance: CFG scale (e.g., 4.0 for base models)
+        img_cond_seq: Reference image tokens [1, ref_tokens, channels] (optional)
+        img_cond_seq_ids: Reference image position IDs [1, ref_tokens, 4] (optional)
+        progress_callback: Optional callback(step, total, stage) for progress updates
+
+    Returns:
+        Denoised latents [1, seq_len, channels]
+    """
+    num_steps = len(timesteps) - 1
+    num_img_tokens = img.shape[1]
+
+    logger.debug("=" * 60)
+    logger.debug("[DenoiseCFG] Starting CFG denoising loop")
+    logger.debug(f"[DenoiseCFG] num_steps={num_steps}, guidance={guidance}")
+    logger.debug(f"[DenoiseCFG] img shape={img.shape}, txt shape={txt.shape}")
+
+    # Double img and img_ids along batch dimension for uncond+cond
+    img = torch.cat([img, img], dim=0)  # [2, seq_len, C]
+    img_ids = torch.cat([img_ids, img_ids], dim=0)  # [2, seq_len, 4]
+
+    if img_cond_seq is not None:
+        assert img_cond_seq_ids is not None
+        img_cond_seq = torch.cat([img_cond_seq, img_cond_seq], dim=0)
+        img_cond_seq_ids = torch.cat([img_cond_seq_ids, img_cond_seq_ids], dim=0)
+
+    logger.debug(f"[DenoiseCFG] Doubled batch: img={img.shape}, txt={txt.shape}")
+
+    if torch.cuda.is_available():
+        torch.cuda.reset_peak_memory_stats()
+
+    denoise_start = time.perf_counter()
+    step_times: list[float] = []
+
+    for step_idx, (t_curr, t_prev) in enumerate(
+        tqdm(zip(timesteps[:-1], timesteps[1:]), total=num_steps, desc="Denoising (CFG)")
+    ):
+        step_start = time.perf_counter()
+
+        if progress_callback is not None:
+            progress_callback(step_idx + 1, num_steps, "Denoising (CFG)")
+
+        t_vec = torch.full(
+            (img.shape[0],), t_curr, dtype=img.dtype, device=img.device
+        )
+
+        # Prepare input -- concatenate reference tokens if provided
+        img_input = img
+        img_input_ids = img_ids
+        if img_cond_seq is not None:
+            img_input = torch.cat([img, img_cond_seq], dim=1)
+            img_input_ids = torch.cat([img_ids, img_cond_seq_ids], dim=1)
+
+        # Model forward -- guidance=None for CFG (no guidance embedding)
+        with torch.no_grad():
+            pred = model(
+                x=img_input,
+                x_ids=img_input_ids,
+                timesteps=t_vec,
+                ctx=txt,
+                ctx_ids=txt_ids,
+                guidance=None,
+            )
+
+        # Only take prediction for noise tokens (not reference tokens)
+        if img_cond_seq is not None:
+            pred = pred[:, :num_img_tokens]
+
+        # CFG formula: split into uncond/cond halves, combine
+        pred_uncond, pred_cond = pred.chunk(2)
+        pred = pred_uncond + guidance * (pred_cond - pred_uncond)
+
+        # Re-duplicate for next step (both halves get the same update)
+        pred = torch.cat([pred, pred], dim=0)
+
+        # Euler step
+        img = img + (t_prev - t_curr) * pred
+
+        step_elapsed = time.perf_counter() - step_start
+        step_times.append(step_elapsed)
+
+        if step_idx == 0 and step_elapsed > 5.0:
+            logger.info(
+                f"[DenoiseCFG:Step 0] {step_elapsed:.1f}s "
+                "(torch.compile warmup -- subsequent steps will be fast)"
+            )
+        else:
+            logger.info(f"[DenoiseCFG:Step {step_idx}] {step_elapsed:.2f}s")
+
+    # Return first half (both halves are identical)
+    denoise_elapsed = time.perf_counter() - denoise_start
+    logger.info(
+        f"[DenoiseCFG] {num_steps} steps in {denoise_elapsed:.1f}s "
+        f"({', '.join(f'{t:.2f}s' for t in step_times)})"
+    )
+
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+        pytorch_peak = torch.cuda.max_memory_allocated()
+        logger.debug(f"[DenoiseCFG] Peak (PyTorch): {_format_gb(pytorch_peak)} allocated")
+        if pytorch_peak > 20e9:
+            logger.warning(f"[DenoiseCFG] HIGH PEAK MEMORY: {_format_gb(pytorch_peak)} - may cause OOM")
+
+    return img.chunk(2)[0]
 
 
 def latents_to_image(
@@ -669,8 +859,18 @@ def latents_to_image(
         logger.debug(f"[Decode] Reshaped tensor dimensions: {list(latents.shape)}")
 
     # Decode
+    decode_start = time.perf_counter()
     with torch.no_grad():
         pixels = vae.decode(latents)
+    decode_elapsed = time.perf_counter() - decode_start
+
+    if decode_elapsed > 5.0:
+        logger.info(
+            f"[Decode] VAE decode {decode_elapsed:.1f}s "
+            "(torch.compile warmup -- subsequent decodes will be fast)"
+        )
+    else:
+        logger.info(f"[Decode] VAE decode {decode_elapsed:.2f}s")
 
     # Convert to PIL
     # pixels is in [-1, 1], convert to [0, 1]
@@ -692,6 +892,7 @@ def generate_image(
     encoder_path: Optional[str] = None,
     model_path: Optional[str] = None,
     vae_path: Optional[str] = None,
+    progress_callback: Callable | None = None,
 ) -> Image.Image:
     """
     Generate an image using FLUX.2 Klein.
@@ -708,6 +909,7 @@ def generate_image(
         encoder_path: Custom path for text encoder (overrides model default, auto-detects dtype)
         model_path: Local path to transformer weights (file or directory)
         vae_path: Local path to VAE weights (file or directory)
+        progress_callback: Optional callback(step, total, stage) for progress updates
 
     Returns:
         Generated PIL Image
@@ -715,58 +917,114 @@ def generate_image(
     device = torch.device(config.device)
     dtype = config.dtype
 
+    # Track which models were externally provided (persistent) vs loaded internally.
+    # Persistent models must NOT be deleted after use — they stay alive across requests.
+    encoder_is_persistent = encoder is not None
+    transformer_is_persistent = transformer is not None
+    vae_is_persistent = vae is not None
+
     # Set seed for reproducibility
     if config.seed is not None:
         torch.manual_seed(config.seed)
         if torch.cuda.is_available():
             torch.cuda.manual_seed(config.seed)
 
+    # ===========================================================================
+    # Match output dimensions to reference image (official FLUX.2 approach)
+    # ===========================================================================
+    width = config.width
+    height = config.height
+
+    if config.match_image_size is not None and config.is_editing_mode:
+        ref_images = load_reference_images(config)
+        idx = config.match_image_size
+        if idx < 0 or idx >= len(ref_images):
+            logger.warning(
+                f"match_image_size={idx} is out of range (0-{len(ref_images)-1}), "
+                f"using default dimensions: {width}x{height}"
+            )
+        else:
+            ref_img = ref_images[idx]
+            ref_w, ref_h = ref_img.size
+            # Round to multiples of 16 (required for latent space)
+            width = (ref_w // 16) * 16
+            height = (ref_h // 16) * 16
+            logger.info(f"Matched dimensions from reference image {idx}: {width}x{height}")
+            # Update config so downstream code uses correct dimensions
+            config.width = width
+            config.height = height
+
     mode = "editing" if config.is_editing_mode else "text-to-image"
     logger.info(f"Generating {config.width}x{config.height} image ({mode} mode) with {config.num_steps} steps")
+
+    gen_start = time.perf_counter()
 
     # ===========================================================================
     # Stage 1: Text Encoding
     # ===========================================================================
     log_gpu_memory("before encoder load")
+    stage1_start = time.perf_counter()
     logger.info("Stage 1: Encoding text...")
 
     if encoder is None:
-        from llm_dit.encoders.qwen3_flux2 import Qwen3Flux2Encoder
+        from llm_dit.encoders.qwen3_unified import Qwen3UnifiedEncoder
 
         # Use custom encoder path if provided, otherwise use model default
         model_info = FLUX2_MODEL_INFO[model_name.lower()]
         text_encoder_spec = encoder_path or model_info["text_encoder"]
         logger.info(f"Loading encoder from: {text_encoder_spec}")
+
+        # Determine preset based on model
+        preset = get_encoder_preset(model_name)
         layers_str = str(config.output_layers) if config.output_layers else "[9, 18, 27]"
-        logger.debug(f"[TextEnc] max_length={config.max_text_length}, pad_to_max={config.pad_to_max}, layers={layers_str}")
-        encoder = Qwen3Flux2Encoder.from_pretrained(
-            text_encoder_spec,
+        logger.debug(f"[TextEnc] preset={preset}, max_length={config.max_text_length}, pad_to_max={config.pad_to_max}, layers={layers_str}")
+
+        # Use unified encoder with FLUX.2 Klein preset
+        encoder = Qwen3UnifiedEncoder.from_preset(
+            preset,
+            model_path=text_encoder_spec,
             device=config.device,
-            max_length=config.max_text_length,
-            pad_to_max=config.pad_to_max,
-            output_layers=config.output_layers,
         )
 
     # Encode text
     log_gpu_memory("after encoder load")
-    txt_embeddings = encoder.encode([config.prompt])  # [1, seq_len, context_dim]
-    txt_embeddings = txt_embeddings.to(dtype)
+
+    # Determine if we need unconditional embeddings for CFG (base models)
+    model_info = FLUX2_MODEL_INFO[model_name.lower()]
+    distilled = model_info["distilled"]
+
+    if distilled:
+        # Distilled: single prompt encoding, guidance baked into model weights
+        txt_embeddings = encoder.encode([config.prompt])  # [1, seq_len, context_dim]
+        txt_embeddings = txt_embeddings.to(dtype)
+    else:
+        # Base model: encode empty string + prompt for CFG
+        # txt = cat([txt_empty, txt_prompt]) along batch dim -> [2, seq_len, context_dim]
+        logger.info("[TextEnc] Base model: encoding empty + prompt for CFG")
+        txt_empty = encoder.encode([""])  # [1, seq_len, context_dim]
+        txt_prompt = encoder.encode([config.prompt])  # [1, seq_len, context_dim]
+        txt_empty = txt_empty.to(dtype)
+        txt_prompt = txt_prompt.to(dtype)
+        txt_embeddings = torch.cat([txt_empty, txt_prompt], dim=0)  # [2, seq_len, context_dim]
+        logger.debug(f"[TextEnc] CFG embeddings shape: {txt_embeddings.shape}")
+
     log_gpu_memory("after text encoding")
 
-    # Create text position IDs
+    # Create text position IDs (batch size matches txt_embeddings)
     txt_ids = create_text_ids(
-        batch_size=1,
+        batch_size=txt_embeddings.shape[0],
         seq_len=txt_embeddings.shape[1],
         device=device,
         dtype=torch.float32,
     )
 
     # Offload encoder
-    if config.offload_between_stages:
+    if config.offload_between_stages or encoder_is_persistent:
         logger.info("Offloading encoder...")
         encoder.offload()
-        del encoder
-        cleanup_memory()
+        if not encoder_is_persistent:
+            del encoder
+            cleanup_memory()
         log_gpu_memory("after encoder offload + cleanup")
 
     # ===========================================================================
@@ -785,6 +1043,7 @@ def generate_image(
 
         # Load and encode reference images
         ref_images = load_reference_images(config)
+
         ref_tokens, ref_ids = encode_reference_images(
             vae=vae,
             images=ref_images,
@@ -797,15 +1056,19 @@ def generate_image(
             logger.info(f"Encoded reference images: {ref_tokens.shape[1]} tokens")
 
         # Optionally offload VAE (will reload for decode)
-        if config.offload_between_stages:
+        if config.offload_between_stages and not vae_is_persistent:
             logger.info("Offloading VAE (will reload for decode)...")
             del vae
             vae = None
             cleanup_memory()
 
+    stage1_elapsed = time.perf_counter() - stage1_start
+    logger.info(f"Stage 1 complete: {stage1_elapsed:.1f}s")
+
     # ===========================================================================
     # Stage 2: Denoising
     # ===========================================================================
+    stage2_start = time.perf_counter()
     logger.info("Stage 2: Denoising...")
 
     if transformer is None:
@@ -820,12 +1083,39 @@ def generate_image(
         )
         log_gpu_memory("after transformer load")
 
+    # Load LoRA weights if specified (with re-fusion guard for persistent models)
+    if config.loras:
+        from llm_dit.utils.lora import get_fused_state, load_lora, parse_lora_spec
+
+        requested = [(parse_lora_spec(spec)) for spec in config.loras]
+        fused_state = get_fused_state(transformer)
+
+        if fused_state.matches(requested):
+            logger.info(
+                f"LoRA already fused, skipping: {fused_state.summary()}"
+            )
+        elif not fused_state.is_empty:
+            raise RuntimeError(
+                f"LoRA mismatch on persistent model: "
+                f"fused=[{fused_state.summary()}], "
+                f"requested=[{', '.join(f'{Path(p).name}@{s}' for p, s in requested)}]. "
+                f"Reload the model to change LoRAs."
+            )
+        else:
+            total_updated = 0
+            for path, scale in requested:
+                logger.info(f"Loading LoRA: {path} (scale={scale})")
+                updated = load_lora(transformer, path, scale=scale)
+                total_updated += updated
+            logger.info(f"LoRA complete: {total_updated} layers updated")
+            log_gpu_memory("after LoRA fusion")
+
     # Move embeddings to device
     txt_embeddings = txt_embeddings.to(device)
     txt_ids = txt_ids.to(device)
 
     # Move reference tokens to device if present
-    if ref_tokens is not None:
+    if ref_tokens is not None and ref_ids is not None:
         ref_tokens = ref_tokens.to(device)
         ref_ids = ref_ids.to(device)
 
@@ -864,35 +1154,54 @@ def generate_image(
     # Get timestep schedule
     timesteps = get_schedule(config.num_steps, config.num_tokens)
 
-    # Determine guidance (None for distilled models)
-    guidance = None if FLUX2_MODEL_INFO[model_name.lower()]["distilled"] else config.guidance
-
     log_gpu_memory("before denoising loop")
     log_memory_snapshot("Pre-denoise")
 
-    # Denoise with optional reference image conditioning
-    latents = denoise(
-        model=transformer,
-        img=img,
-        img_ids=img_ids,
-        txt=txt_embeddings,
-        txt_ids=txt_ids,
-        timesteps=timesteps,
-        guidance=guidance,
-        img_cond_seq=ref_tokens,
-        img_cond_seq_ids=ref_ids,
-    )
+    # Dispatch to appropriate denoising function based on model type
+    if distilled:
+        # Distilled models: pass guidance as embedding vector, single forward pass
+        latents = denoise(
+            model=transformer,
+            img=img,
+            img_ids=img_ids,
+            txt=txt_embeddings,
+            txt_ids=txt_ids,
+            timesteps=timesteps,
+            guidance=config.guidance,
+            img_cond_seq=ref_tokens,
+            img_cond_seq_ids=ref_ids,
+            progress_callback=progress_callback,
+        )
+    else:
+        # Base models: explicit CFG with doubled batch (uncond+cond)
+        logger.info(f"[Denoise] Using CFG denoising (guidance={config.guidance})")
+        latents = denoise_cfg(
+            model=transformer,
+            img=img,
+            img_ids=img_ids,
+            txt=txt_embeddings,
+            txt_ids=txt_ids,
+            timesteps=timesteps,
+            guidance=config.guidance,
+            img_cond_seq=ref_tokens,
+            img_cond_seq_ids=ref_ids,
+            progress_callback=progress_callback,
+        )
 
     # Move latents to CPU and offload transformer
     latents = latents.cpu()
-    if config.offload_between_stages:
+    if config.offload_between_stages and not transformer_is_persistent:
         logger.info("Offloading transformer...")
         del transformer
         cleanup_memory()
 
+    stage2_elapsed = time.perf_counter() - stage2_start
+    logger.info(f"Stage 2 complete: {stage2_elapsed:.1f}s")
+
     # ===========================================================================
     # Stage 3: VAE Decode
     # ===========================================================================
+    stage3_start = time.perf_counter()
     logger.info("Stage 3: Decoding latents...")
 
     if vae is None:
@@ -906,13 +1215,62 @@ def generate_image(
     # Decode to image
     image = latents_to_image(latents, vae, height=config.height, width=config.width)
 
-    if config.offload_between_stages:
+    if config.offload_between_stages and not vae_is_persistent:
         logger.info("Offloading VAE...")
         del vae
         cleanup_memory()
 
-    logger.info("Generation complete!")
+    stage3_elapsed = time.perf_counter() - stage3_start
+    gen_elapsed = time.perf_counter() - gen_start
+    logger.info(
+        f"Generation complete: {gen_elapsed:.1f}s total "
+        f"(encode={stage1_elapsed:.1f}s, denoise={stage2_elapsed:.1f}s, decode={stage3_elapsed:.1f}s)"
+    )
     return image
+
+
+def generate_image_with_progress(
+    config: Flux2GenerationConfig,
+    model_name: str = "klein-9b",
+    encoder=None,
+    transformer=None,
+    vae=None,
+    encoder_path: Optional[str] = None,
+    model_path: Optional[str] = None,
+    vae_path: Optional[str] = None,
+    progress_callback: Callable | None = None,
+) -> Image.Image:
+    """
+    Generate an image using FLUX.2 Klein with progress callback support.
+
+    This is a convenience wrapper around generate_image that explicitly
+    exposes the progress_callback parameter for SSE streaming.
+
+    Args:
+        config: Generation configuration
+        model_name: Model variant
+        encoder: Pre-loaded encoder (optional)
+        transformer: Pre-loaded transformer (optional)
+        vae: Pre-loaded VAE (optional)
+        encoder_path: Custom path for text encoder
+        model_path: Local path to transformer weights
+        vae_path: Local path to VAE weights
+        progress_callback: Callback(step, total, stage) for progress updates
+
+    Returns:
+        Generated PIL Image
+    """
+    return generate_image(
+        config=config,
+        model_name=model_name,
+        encoder=encoder,
+        transformer=transformer,
+        vae=vae,
+        encoder_path=encoder_path,
+        model_path=model_path,
+        vae_path=vae_path,
+        progress_callback=progress_callback,
+    )
 
 
 def quick_generate(

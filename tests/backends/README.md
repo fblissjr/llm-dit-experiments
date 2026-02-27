@@ -17,13 +17,13 @@ Same prompts, same configs, same assertions -> comparable outputs for visual ins
 
 ```bash
 # Smoke test (~30s)
-uv run pytest tests/e2e/test_baseline_portable.py::TestBaselineSmoke -v -s
+uv run pytest tests/integration/pipeline/test_baseline_portable.py::TestBaselineSmoke -v -s
 
 # Short test (~2min)
-uv run pytest tests/e2e/test_baseline_portable.py::TestBaselineT2V::test_t2v_short -v -s
+uv run pytest tests/integration/pipeline/test_baseline_portable.py::TestBaselineT2V::test_t2v_short -v -s
 
 # Full reference test (~10min)
-uv run pytest tests/e2e/test_baseline_portable.py::TestBaselineT2V::test_t2v_reference -v -s --runslow
+uv run pytest tests/integration/pipeline/test_baseline_portable.py::TestBaselineT2V::test_t2v_reference -v -s --runslow
 ```
 
 ### run in LTX-2 repo (official implementation)
@@ -32,14 +32,14 @@ uv run pytest tests/e2e/test_baseline_portable.py::TestBaselineT2V::test_t2v_ref
    ```bash
    # From llm-dit-experiments root
    cp -r tests/backends /path/to/LTX-2/tests/
-   cp tests/e2e/test_baseline_portable.py /path/to/LTX-2/tests/e2e/
-   cp tests/e2e/conftest.py /path/to/LTX-2/tests/e2e/
+   cp tests/integration/pipeline/test_baseline_portable.py /path/to/LTX-2/tests/e2e/
+   cp tests/integration/pipeline/conftest.py /path/to/LTX-2/tests/e2e/
    ```
 
 2. Run tests:
    ```bash
    cd /path/to/LTX-2
-   pytest tests/e2e/test_baseline_portable.py -v -s
+   pytest tests/integration/pipeline/test_baseline_portable.py -v -s
    ```
 
 3. Compare outputs:
@@ -136,10 +136,10 @@ outputs/tests/baseline/{backend}/
 1. **Generate with both backends:**
    ```bash
    # In llm-dit-experiments
-   uv run pytest tests/e2e/test_baseline_portable.py::TestBaselineT2V::test_t2v_reference -v -s --runslow
+   uv run pytest tests/integration/pipeline/test_baseline_portable.py::TestBaselineT2V::test_t2v_reference -v -s --runslow
 
    # In LTX-2 repo (after copying files)
-   pytest tests/e2e/test_baseline_portable.py::TestBaselineT2V::test_t2v_reference -v -s --runslow
+   pytest tests/integration/pipeline/test_baseline_portable.py::TestBaselineT2V::test_t2v_reference -v -s --runslow
    ```
 
 2. **Compare outputs:**

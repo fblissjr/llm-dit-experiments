@@ -340,6 +340,113 @@ class TestLTX2Transformer:
 
 
 # ============================================================================
+# STG Perturbation Tests
+# ============================================================================
+
+class TestSTGPerturbation:
+    """Tests for Spatio-Temporal Guidance (STG) perturbation support.
+
+    STG works by running a 3rd forward pass where self-attention is skipped
+    at specified blocks. The delta between conditioned and perturbed predictions
+    drives spatial/temporal guidance. These tests verify:
+    1. skip_self_attn flag correctly changes block output
+    2. stg_blocks parameter propagates through transformer forward
+    3. Edge cases (None, empty set) produce expected behavior
+    """
+
+    @pytest.fixture
+    def stg_transformer(self):
+        """Create a mini LTX2Transformer with proper initialization."""
+        torch.manual_seed(42)
+        model = LTX2Transformer(
+            model_type=LTXModelType.VideoOnly,
+            num_attention_heads=4,
+            attention_head_dim=32,
+            in_channels=16,
+            out_channels=16,
+            num_layers=4,
+            cross_attention_dim=128,
+            caption_channels=64,
+            positional_embedding_max_pos=[4, 8, 8],
+        )
+        # Initialize all parameters to avoid NaN from torch.empty()
+        for p in model.parameters():
+            if p.dim() > 1:
+                torch.nn.init.xavier_normal_(p)
+            else:
+                torch.nn.init.zeros_(p)
+        return model
+
+    @pytest.fixture
+    def stg_modality(self):
+        """Create a Modality with proper position indices."""
+        from llm_dit.models.ltx2 import Modality
+        from llm_dit.pipelines.generate import create_position_indices
+
+        torch.manual_seed(42)
+        batch, latent_dim = 1, 16
+        # 9 frames at 256x256 -> t=2, h=8, w=8 -> 128 tokens
+        num_frames, height, width = 9, 256, 256
+        t_lat = (num_frames - 1) // 8 + 1
+        h_lat = height // 32
+        w_lat = width // 32
+        num_tokens = t_lat * h_lat * w_lat
+
+        positions = create_position_indices(
+            batch_size=batch,
+            num_frames=num_frames,
+            height=height,
+            width=width,
+            device=torch.device("cpu"),
+        )
+
+        return Modality(
+            latent=torch.randn(batch, num_tokens, latent_dim),
+            timesteps=torch.full((batch, num_tokens), 0.5),
+            positions=positions,
+            context=torch.randn(batch, 4, 64),
+            enabled=True,
+            context_mask=None,
+        )
+
+    def test_transformer_stg_blocks_changes_output(self, stg_transformer, stg_modality):
+        """LTX2Transformer.forward(stg_blocks={...}) should differ from normal."""
+        with torch.no_grad():
+            normal_out, _ = stg_transformer(video=stg_modality)
+            stg_out, _ = stg_transformer(video=stg_modality, stg_blocks={2})
+
+        assert not torch.equal(normal_out, stg_out), \
+            "STG output should differ from normal output"
+
+    def test_transformer_empty_stg_blocks_matches_normal(self, stg_transformer, stg_modality):
+        """Empty stg_blocks set should produce identical output to no STG."""
+        with torch.no_grad():
+            normal_out, _ = stg_transformer(video=stg_modality)
+            stg_out, _ = stg_transformer(video=stg_modality, stg_blocks=set())
+
+        assert torch.equal(normal_out, stg_out), \
+            "Empty stg_blocks should produce identical output to normal"
+
+    def test_transformer_stg_blocks_none_matches_normal(self, stg_transformer, stg_modality):
+        """stg_blocks=None should produce identical output to default."""
+        with torch.no_grad():
+            normal_out, _ = stg_transformer(video=stg_modality)
+            stg_out, _ = stg_transformer(video=stg_modality, stg_blocks=None)
+
+        assert torch.equal(normal_out, stg_out), \
+            "stg_blocks=None should produce identical output to default"
+
+    def test_multiple_stg_blocks(self, stg_transformer, stg_modality):
+        """Multiple STG blocks should produce different output than single block."""
+        with torch.no_grad():
+            single_out, _ = stg_transformer(video=stg_modality, stg_blocks={2})
+            multi_out, _ = stg_transformer(video=stg_modality, stg_blocks={1, 2, 3})
+
+        assert not torch.equal(single_out, multi_out), \
+            "More STG blocks should produce different output"
+
+
+# ============================================================================
 # Slow Tests (require checkpoint)
 # ============================================================================
 

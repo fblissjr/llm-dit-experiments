@@ -29,7 +29,7 @@ import torch
 logger = logging.getLogger(__name__)
 
 
-def cleanup_memory() -> None:
+def cleanup_memory(label: str = "") -> None:
     """
     Clean up GPU memory by running garbage collection and clearing CUDA cache.
 
@@ -37,15 +37,44 @@ def cleanup_memory() -> None:
     actually freed. Includes synchronization to ensure all CUDA operations
     complete before clearing cache.
 
+    When ``label`` is provided, logs VRAM state after cleanup at INFO level.
+    This is the canonical VRAM diagnostic -- use it at every stage transition
+    in multi-stage pipelines so OOM failures can be diagnosed from logs alone.
+
+    The log includes three metrics:
+    - **allocated**: memory actively used by PyTorch tensors
+    - **reserved**: memory held by PyTorch's CUDA caching allocator
+    - **cuda_free**: memory available according to the CUDA driver (what matters for OOM)
+
     Example:
         del text_encoder
-        cleanup_memory()
-        # Now safe to load transformer
+        cleanup_memory("post_encoder_unload")
+        # INFO [VRAM:post_encoder_unload] allocated=0.1GB, reserved=0.2GB, cuda_free=23.3GB, freed=14.9GB
     """
+    before_allocated = 0.0
+    if label and torch.cuda.is_available():
+        before_allocated = torch.cuda.memory_allocated()
+
     gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
         torch.cuda.synchronize()
+
+        if label:
+            after_allocated = torch.cuda.memory_allocated()
+            reserved = torch.cuda.memory_reserved()
+            cuda_free = torch.cuda.mem_get_info()[0]
+            freed = before_allocated - after_allocated
+
+            msg = (
+                f"[VRAM:{label}] "
+                f"allocated={after_allocated / 1024**3:.1f}GB, "
+                f"reserved={reserved / 1024**3:.1f}GB, "
+                f"cuda_free={cuda_free / 1024**3:.1f}GB"
+            )
+            if freed > 10 * 1024**2:  # only show freed if > 10 MB
+                msg += f", freed={freed / 1024**3:.1f}GB"
+            logger.info(msg)
 
 
 def get_gpu_memory() -> float:

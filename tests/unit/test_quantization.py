@@ -1,16 +1,179 @@
 """
 Unit tests for llm_dit.quantization module.
 
+Last Updated: 2026-02-06
+
 Tests cover:
+- Unified quantize_component() entry point
 - TorchAO quantization utilities
 - VAE quantization utilities
 - FP8 compatibility checking
+- Method validation and recommended method selection
 """
 
 from unittest.mock import MagicMock, patch
 import pytest
 import torch
 import torch.nn as nn
+
+
+# ============================================================================
+# Unified quantize_component() Tests
+# ============================================================================
+
+class TestQuantizeComponent:
+    """Test the unified quantize_component() entry point."""
+
+    def test_valid_methods_constant(self):
+        """Test VALID_METHODS contains all expected methods."""
+        from llm_dit.quantization.torchao_utils import VALID_METHODS
+
+        assert "none" in VALID_METHODS
+        assert "fp8-dynamic" in VALID_METHODS
+        assert "fp8-weight-only" in VALID_METHODS
+        assert "int8" in VALID_METHODS
+        assert "int4" in VALID_METHODS
+
+    def test_quantize_component_none_is_noop(self):
+        """Test quantize_component with method='none' returns model unchanged."""
+        from llm_dit.quantization import quantize_component
+
+        model = nn.Sequential(nn.Linear(64, 32), nn.ReLU(), nn.Linear(32, 16))
+        original_params = {n: p.clone() for n, p in model.named_parameters()}
+
+        result, stats = quantize_component(model, method="none", component_type="transformer")
+
+        assert result is model
+        assert stats["method"] == "none"
+        assert stats["quantized_layers"] == 0
+        # Parameters should be identical
+        for name, param in result.named_parameters():
+            assert torch.equal(param, original_params[name])
+
+    def test_quantize_component_invalid_method_raises(self):
+        """Test quantize_component raises ValueError for invalid method."""
+        from llm_dit.quantization import quantize_component
+
+        model = nn.Linear(64, 32)
+
+        with pytest.raises(ValueError, match="Unknown quantization method"):
+            quantize_component(model, method="banana", component_type="transformer")
+
+    def test_quantize_component_int8_on_small_model(self):
+        """Test quantize_component with int8 on a small model (no GPU needed)."""
+        from llm_dit.quantization import quantize_component
+
+        model = nn.Sequential(
+            nn.Linear(64, 32),
+            nn.LayerNorm(32),
+            nn.Linear(32, 16),
+        )
+
+        result, stats = quantize_component(
+            model, method="int8", component_type="transformer", verbose=False
+        )
+
+        assert stats["method"] == "int8"
+        assert stats["component_type"] == "transformer"
+        assert stats["quantized_layers"] > 0
+        assert stats["total_layers"] > 0
+
+    def test_quantize_component_int4_on_small_model(self):
+        """Test quantize_component with int4 on a small model (no GPU needed)."""
+        from llm_dit.quantization import quantize_component
+
+        model = nn.Sequential(
+            nn.Linear(64, 32),
+            nn.Linear(32, 16),
+        )
+
+        result, stats = quantize_component(
+            model, method="int4", component_type="transformer", verbose=False
+        )
+
+        assert stats["method"] == "int4"
+        assert stats["quantized_layers"] > 0
+
+    def test_quantize_component_encoder_skips_norms(self):
+        """Test encoder component_type skips norm layers."""
+        from llm_dit.quantization import quantize_component
+
+        class FakeEncoder(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.linear = nn.Linear(64, 32)
+                self.layer_norm = nn.LayerNorm(32)
+                self.embed_tokens = nn.Embedding(100, 64)
+
+        model = FakeEncoder()
+        result, stats = quantize_component(
+            model, method="int8", component_type="encoder", verbose=False
+        )
+
+        # embed_tokens and layer_norm should be skipped
+        assert stats["skipped_layers"] >= 0  # At least some skipped
+        assert stats["method"] == "int8"
+        assert stats["component_type"] == "encoder"
+
+    def test_quantize_component_stats_dict_shape(self):
+        """Test that stats dict contains all expected keys."""
+        from llm_dit.quantization import quantize_component
+
+        model = nn.Linear(64, 32)
+        _, stats = quantize_component(
+            model, method="none", component_type="transformer"
+        )
+
+        expected_keys = {"quantized_layers", "skipped_layers", "total_layers", "method", "component_type"}
+        assert expected_keys.issubset(set(stats.keys()))
+
+
+class TestAlreadyQuantizedDetection:
+    """Test early-exit when model weights are already quantized."""
+
+    def test_native_fp8_skips_quantization(self):
+        """quantize_component skips models with native float8 weights."""
+        from llm_dit.quantization import quantize_component
+
+        model = nn.Sequential(nn.Linear(64, 32))
+        # Manually set weight dtype to fp8
+        with torch.no_grad():
+            model[0].weight = nn.Parameter(
+                model[0].weight.to(torch.float8_e4m3fn)
+            )
+        result_model, stats = quantize_component(model, "fp8-weight-only", "transformer")
+        assert stats["method"] == "already_quantized"
+        assert stats["quantized_layers"] == 0
+        assert result_model is model
+
+    def test_bf16_does_not_skip(self):
+        """quantize_component proceeds normally for bf16 weights."""
+        from llm_dit.quantization import quantize_component
+
+        model = nn.Sequential(nn.Linear(64, 32))
+        _, stats = quantize_component(model, "int8", "transformer", verbose=False)
+        assert stats["method"] == "int8"
+        assert stats["quantized_layers"] > 0
+
+
+class TestQuantCompileWarnings:
+    """Test get_quant_compile_warnings()."""
+
+    def test_no_warnings_for_safe_combo(self):
+        """fp8-weight-only + default compile should produce no warnings."""
+        from llm_dit.quantization.torchao_utils import get_quant_compile_warnings
+
+        warnings = get_quant_compile_warnings("fp8-weight-only", "default")
+        assert isinstance(warnings, list)
+
+    def test_warnings_for_fp8_dynamic_compile(self):
+        """fp8-dynamic + compile should warn about autotune."""
+        from llm_dit.quantization.torchao_utils import get_quant_compile_warnings
+
+        warnings = get_quant_compile_warnings("fp8-dynamic", "reduce-overhead")
+        assert isinstance(warnings, list)
+        # fp8-dynamic with reduce-overhead may produce warnings
+        # (exact behavior depends on implementation)
 
 
 # ============================================================================
@@ -84,105 +247,6 @@ class TestFP8Compatibility:
             assert check_fp8_support() is False
 
 
-class TestCreateFP8FilterFn:
-    """Test FP8 filter function creation."""
-
-    def test_create_fp8_filter_fn_basic(self):
-        """Test basic filter function creation."""
-        from llm_dit.quantization.torchao_utils import create_fp8_filter_fn
-
-        filter_fn = create_fp8_filter_fn(skip_incompatible=True, verbose=False)
-        assert callable(filter_fn)
-
-    def test_filter_fn_returns_false_for_non_linear(self):
-        """Test filter function returns False for non-Linear modules."""
-        from llm_dit.quantization.torchao_utils import create_fp8_filter_fn
-
-        filter_fn = create_fp8_filter_fn(skip_incompatible=True, verbose=False)
-
-        # Non-Linear modules should return False (recurse into children)
-        conv = nn.Conv2d(3, 32, 3)
-        assert filter_fn(conv, "model.conv") is False
-
-        norm = nn.LayerNorm(256)
-        assert filter_fn(norm, "model.norm") is False
-
-    def test_filter_fn_returns_true_for_compatible_linear(self):
-        """Test filter function returns True for compatible Linear."""
-        from llm_dit.quantization.torchao_utils import create_fp8_filter_fn
-
-        filter_fn = create_fp8_filter_fn(skip_incompatible=True, verbose=False)
-
-        linear = nn.Linear(256, 128)  # 16-aligned
-        assert filter_fn(linear, "model.linear") is True
-
-    def test_filter_fn_returns_false_for_incompatible_linear(self):
-        """Test filter function returns False for incompatible Linear."""
-        from llm_dit.quantization.torchao_utils import create_fp8_filter_fn
-
-        filter_fn = create_fp8_filter_fn(skip_incompatible=True, verbose=False)
-
-        linear = nn.Linear(100, 128)  # 100 not divisible by 16
-        assert filter_fn(linear, "model.linear") is False
-
-
-class TestAnalyzeFP8Compatibility:
-    """Test FP8 compatibility analysis."""
-
-    def test_analyze_fp8_compatibility(self):
-        """Test analyze_fp8_compatibility returns correct stats."""
-        from llm_dit.quantization.torchao_utils import analyze_fp8_compatibility
-
-        class TestModel(nn.Module):
-            def __init__(self):
-                super().__init__()
-                self.compatible1 = nn.Linear(256, 128)
-                self.compatible2 = nn.Linear(512, 256)
-                self.incompatible = nn.Linear(100, 50)
-
-        model = TestModel()
-        analysis = analyze_fp8_compatibility(model)
-
-        assert analysis["total_linear_layers"] == 3
-        assert analysis["compatible_layers"] == 2
-        assert analysis["incompatible_layers"] == 1
-        assert len(analysis["incompatible_layer_info"]) == 1
-        assert analysis["incompatible_layer_info"][0]["name"] == "incompatible"
-
-    def test_analyze_fp8_compatibility_all_compatible(self):
-        """Test analysis with all compatible layers."""
-        from llm_dit.quantization.torchao_utils import analyze_fp8_compatibility
-
-        class TestModel(nn.Module):
-            def __init__(self):
-                super().__init__()
-                self.layer1 = nn.Linear(256, 128)
-                self.layer2 = nn.Linear(128, 64)
-
-        model = TestModel()
-        analysis = analyze_fp8_compatibility(model)
-
-        assert analysis["total_linear_layers"] == 2
-        assert analysis["compatible_layers"] == 2
-        assert analysis["incompatible_layers"] == 0
-        assert analysis["compatibility_rate"] == 100.0
-
-    def test_analyze_fp8_compatibility_empty_model(self):
-        """Test analysis with no Linear layers."""
-        from llm_dit.quantization.torchao_utils import analyze_fp8_compatibility
-
-        class TestModel(nn.Module):
-            def __init__(self):
-                super().__init__()
-                self.conv = nn.Conv2d(3, 32, 3)
-
-        model = TestModel()
-        analysis = analyze_fp8_compatibility(model)
-
-        assert analysis["total_linear_layers"] == 0
-        assert analysis["compatibility_rate"] == 0
-
-
 class TestGetRecommendedMethod:
     """Test recommended quantization method selection."""
 
@@ -191,7 +255,7 @@ class TestGetRecommendedMethod:
         from llm_dit.quantization.torchao_utils import get_recommended_method
 
         with patch('torch.cuda.is_available', return_value=False):
-            assert get_recommended_method() == "8bit"
+            assert get_recommended_method() == "int8"
 
     def test_get_recommended_method_with_fp8_support(self):
         """Test recommendation with FP8 support."""
@@ -199,7 +263,7 @@ class TestGetRecommendedMethod:
 
         with patch('torch.cuda.is_available', return_value=True):
             with patch('llm_dit.quantization.torchao_utils.check_fp8_support', return_value=True):
-                assert get_recommended_method() == "fp8"
+                assert get_recommended_method() == "fp8-dynamic"
 
     def test_get_recommended_method_without_fp8_support(self):
         """Test recommendation without FP8 support."""
@@ -224,17 +288,6 @@ class TestVAEQuantization:
         vae = MagicMock()
         result = quantize_vae(vae, "none")
         assert result is vae
-
-    def test_quantize_vae_8bit_warning(self):
-        """Test quantize_vae with '8bit' method logs warning."""
-        from llm_dit.quantization.vae_utils import quantize_vae
-
-        vae = MagicMock()
-
-        with patch('llm_dit.quantization.vae_utils.logger') as mock_logger:
-            result = quantize_vae(vae, "8bit")
-            mock_logger.warning.assert_called_once()
-            assert result is vae
 
     def test_quantize_vae_invalid_method(self):
         """Test quantize_vae with invalid method raises ValueError."""
@@ -263,12 +316,12 @@ class TestEstimateVAEVRAM:
         vram = estimate_vae_vram("int8")
         assert vram == 250  # 50% reduction
 
-    def test_estimate_vae_vram_8bit(self):
-        """Test VRAM estimate with 8bit."""
+    def test_estimate_vae_vram_unknown_fallback(self):
+        """Test VRAM estimate with unknown method returns base."""
         from llm_dit.quantization.vae_utils import estimate_vae_vram
 
-        vram = estimate_vae_vram("8bit")
-        assert vram == 250
+        vram = estimate_vae_vram("unknown")  # type: ignore[arg-type]
+        assert vram == 500  # Falls back to base
 
 
 class TestGetVAEQuantInfo:

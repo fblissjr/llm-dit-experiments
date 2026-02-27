@@ -39,9 +39,14 @@ from llm_dit.models.ltx2.transformer import (
     TransformerArgs,
     TransformerArgsPreprocessor,
     TransformerConfig,
+    PerturbationType,
+    Perturbation,
+    PerturbationConfig,
+    BatchedPerturbationConfig,
     to_velocity,
     to_denoised,
 )
+from llm_dit.models.ltx2.av_block import BasicAVTransformerBlock
 from llm_dit.layers import rms_norm
 from llm_dit.models.ltx2.components import (
     Modality,
@@ -71,7 +76,7 @@ from llm_dit.models.ltx2.connectors import (
 from llm_dit.models.ltx2.loader import (
     load_ltx2_transformer,
     load_ltx2_transformer_quantized,
-    load_ltx2_transformer_fp8_native,
+    load_ltx2_transformer_from_fp8,
 )
 from llm_dit.models.ltx2.constants import (
     # Generation defaults
@@ -119,14 +124,20 @@ __all__ = [
     "LTXModelType",
     "load_ltx2_transformer",
     "load_ltx2_transformer_quantized",
-    "load_ltx2_transformer_fp8_native",
+    "load_ltx2_transformer_from_fp8",
     # Input types
     "Modality",
     "TransformerArgs",
     "TransformerConfig",
     # Transformer components
     "BasicTransformerBlock",
+    "BasicAVTransformerBlock",
     "TransformerArgsPreprocessor",
+    # Perturbation model (STG)
+    "PerturbationType",
+    "Perturbation",
+    "PerturbationConfig",
+    "BatchedPerturbationConfig",
     "AdaLayerNormSingle",
     "FeedForward",
     "PixArtAlphaTextProjection",

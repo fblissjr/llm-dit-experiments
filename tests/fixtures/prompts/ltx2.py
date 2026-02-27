@@ -55,18 +55,18 @@ from ltx2.prompts import (
 )
 
 # =============================================================================
-# Test-Specific Prompts
+# Test-Specific Prompts (canonical source: tests.constants.ltx2)
 # =============================================================================
 
-# Single prompt for fastest possible test
-SMOKE_TEST_PROMPT = "A cat walking"
+from tests.constants.ltx2 import REFERENCE_PROMPTS as _CONSTANTS_REFERENCE_PROMPTS
+from tests.constants.ltx2 import SMOKE_PROMPT
 
-# Reference prompts for 1:1 comparison with official LTX-2
-# These are the prompts used in official demos/examples
+# Re-export canonical smoke prompt under the legacy name
+SMOKE_TEST_PROMPT = SMOKE_PROMPT
+
+# Reference prompts: start with canonical set, add extended prompts here
 REFERENCE_PROMPTS = {
-    "cat_walking": "A cat walking",
-    "cat_playing": "A cat playing with a ball",
-    "sunset": "A beautiful sunset over the ocean",
+    **_CONSTANTS_REFERENCE_PROMPTS,
     "expanded_cat_backrooms": "Style: cinematic-realistic. In a vast, empty room characterized by repetitive yellow wallpaper and a damp-looking beige carpet, a ginger tabby cat stands in the center of the frame. The ceiling consists of industrial grid tiles with recessed fluorescent panels that emit a steady, low-frequency electrical hum. The cat crouches low to the floor, its muscles tensing as it prepares for movement. It leaps upward, tucking its body into a tight rotation and performing a complete backflip in mid-air. The cat's fur ripples slightly during the turn, and its tail swishes to maintain balance. As it descends, the cat extends its paws and lands silently on the soft carpet. The constant buzzing of the overhead lights remains the only sound in the sterile environment as the cat stands still, looking down the endless, repeating hallway.",
 }
 

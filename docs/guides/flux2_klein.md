@@ -137,7 +137,7 @@ This moves transformer blocks to/from GPU one at a time during inference:
 
 In the web UI, FLUX.2 can be unloaded via the VRAM management panel to free memory for other models.
 
-API endpoint: `POST /api/vram/unload-flux2`
+API endpoint: `POST /api/models/flux2/unload`
 
 ## technical details
 
@@ -257,7 +257,7 @@ Response: PNG image binary with headers:
 ### unload endpoint
 
 ```
-POST /api/vram/unload-flux2
+POST /api/models/flux2/unload
 ```
 
 Frees VRAM by unloading the FLUX.2 pipeline.

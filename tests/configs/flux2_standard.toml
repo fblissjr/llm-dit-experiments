@@ -1,0 +1,16 @@
+# FLUX.2 standard test overlay -- merged over config.toml.example
+# Higher quality generation for thorough validation
+# 512x512, 4 steps, fp8-weight-only, seed=42
+
+default_pipeline = "none"
+
+[flux2]
+default_model = "klein-9b-fp8"
+default_steps = 4
+default_guidance = 1.0
+quantization = "fp8-weight-only"
+compile = false
+
+[server]
+host = "127.0.0.1"
+port = 7860

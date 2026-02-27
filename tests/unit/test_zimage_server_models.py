@@ -10,14 +10,8 @@ and validate negative_prompt and other Z-Image parameters.
 import pytest
 from pydantic import ValidationError
 
-# Import the request models from the web server
-import sys
-from pathlib import Path
-
-# Add web directory to path for imports
-sys.path.insert(0, str(Path(__file__).parents[2] / "web"))
-
-from server import GenerateRequest, Img2ImgRequest
+# Import the request models from shared schemas
+from web.schemas import GenerateRequest, Img2ImgRequest
 
 pytestmark = pytest.mark.unit
 

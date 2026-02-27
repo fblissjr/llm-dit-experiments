@@ -19,7 +19,7 @@ from dataclasses import dataclass, field, asdict
 from typing import Literal, Any
 
 
-ParamType = Literal["textarea", "slider", "number", "checkbox", "select", "image", "color"]
+ParamType = Literal["textarea", "slider", "number", "checkbox", "select", "image", "color", "lora_list"]
 OutputType = Literal["image", "video", "layers"]
 GroupType = Literal["basic", "advanced", "expert", "scheduler", "optimization", "enhancement"]
 
@@ -40,6 +40,7 @@ class ParamSchema:
         max: Maximum value for slider/number inputs
         step: Step increment for slider/number inputs
         options: List of valid options for select inputs
+        options_endpoint: API endpoint to fetch options dynamically (for select)
         group: Grouping for progressive disclosure (basic shown, advanced collapsed)
         tooltip: Help text shown on hover/focus
         conditional: Show only when another field matches condition
@@ -47,7 +48,13 @@ class ParamSchema:
         placeholder: Placeholder text for textarea/text inputs
         rows: Number of rows for textarea inputs
         required: Whether the field is required for generation
-        max_count: Maximum number of images allowed (for image type controls)
+        max_count: Maximum number of items allowed (for image/lora_list types)
+        scale_min: Minimum scale value for lora_list type (default -2.0)
+        scale_max: Maximum scale value for lora_list type (default 2.0)
+        dependent_defaults: Maps trigger param values to this param's default.
+                     Format: {trigger_param_id: {trigger_value: new_default}}
+                     e.g., {"model_name": {"klein-base-9b": 50}} -- when
+                     model_name="klein-base-9b", this param's default becomes 50.
     """
     id: str
     type: ParamType
@@ -57,6 +64,7 @@ class ParamSchema:
     max: float | None = None
     step: float | None = None
     options: list[str] | None = None
+    options_endpoint: str | None = None  # API endpoint for dynamic options
     group: GroupType = "basic"
     tooltip: str | None = None
     conditional: dict[str, Any] | None = None
@@ -64,6 +72,12 @@ class ParamSchema:
     rows: int | None = None
     required: bool = False
     max_count: int | None = None
+    # LoRA-specific constraints
+    scale_min: float | None = None
+    scale_max: float | None = None
+    # Value-dependent defaults: when a trigger param changes, this param's
+    # default updates. Format: {trigger_param_id: {trigger_value: new_default}}
+    dependent_defaults: dict[str, dict[str, Any]] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dict, excluding None values for cleaner JSON."""

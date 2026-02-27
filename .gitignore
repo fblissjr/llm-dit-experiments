@@ -12,6 +12,7 @@ __pycache__/
 config.toml
 experiments/results/*
 results
+logs/*
 
 # Distribution / packaging
 .Python
@@ -34,11 +35,13 @@ share/python-wheels/
 MANIFEST
 .claude
 scripts/archive
-models/
+models/*
+loras/*
 outputs/
 embeddings/*
 test_images/*
 experiments/outputs
+*.safetensors
 
 # PyInstaller
 #  Usually these files are written by a python script from a template

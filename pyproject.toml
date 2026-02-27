@@ -1,60 +1,50 @@
 [project]
 name = "llm-dit-experiments"
-version = "0.5.0"
+version = "0.6.1"
 description = "LLM-DiT experimentation platform with pluggable backends"
 authors = [
   { name = "Fred Bliss" }
 ]
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     # PyTorch with CUDA 13.0 - see [tool.uv.sources] for index config
     "torch",
     "torchvision",
-    # LTX-2 requires diffusers 0.37+ with LTX2Pipeline (local coderef build)
+    # For now, LTX-2 requires diffusers 0.37+ with LTX2Pipeline (local coderef build)
     "diffusers",
+    "hf-xet",  # HF Hub fast download protocol (used transparently by huggingface_hub)
     # transformers v5 compatible (uses quantization_config instead of load_in_8bit/load_in_4bit)
     # Works with both v4.40+ and v5.0+
-    "transformers>=4.40.0",
+    "transformers>=5.0",
     "accelerate",
     "safetensors",
     "pillow",
-    "numpy",  # Used by experiments/compare/diff.py for image difference calculations
-    "pyyaml",
-    "tomli; python_version < '3.11'",  # TOML config support
-    "bitsandbytes; sys_platform != 'darwin'",  # 8-bit quantization (Linux/CUDA only)
+    "numpy",
     "httpx",  # API backend support
     "uvicorn>=0.38.0",
     "fastapi>=0.123.4",
     "python-multipart>=0.0.20",
     "einops",  # Tensor reshaping for Qwen-Image models
-    "image-reward>=1.5",
-    "matplotlib>=3.10.7",
-    "torchao>=0.15.0",
+    "torchao>=0.16.0",
     "tomli-w>=1.2.0",
-    "sentencepiece>=0.2.1",
-    "imageio>=2.37.2",
+    "imageio[pyav]>=2.37.2",
     "imageio-ffmpeg>=0.6.0",
-    "spacy>=3.8.11",
-    "protobuf>=6.33.2",
-    "optimum-quanto>=0.2.7",
+    "tqdm>=4.65.0",  # Progress bars in pipeline generation loops
+    "orjson>=3.11.7",
+    "pyright>=1.1.408",
 ]
 
 [project.optional-dependencies]
-dev = [
-    "pytest",
-    "ruff",
-]
-analysis = [
-    "matplotlib>=3.7",
-    "seaborn>=0.12",
-    "scikit-learn>=1.3",  # For t-SNE, PCA, clustering
-    "umap-learn>=0.5",
+experiments = [
+    "matplotlib>=3.10.7",  # Visualization in experiment scripts
+    "image-reward>=1.5",  # Image quality scoring (experiments/metrics/)
+    "scikit-learn>=1.3",  # t-SNE, PCA, clustering (scripts/embeddings.py)
+    "spacy>=3.8.11",  # POS tagging (experiments/ltx2/token_layer_correlation.py)
 ]
 training = [
     "peft>=0.8.0",  # LoRA adapters
     "pandas>=2.0.0",  # CSV dataset loading
-    "tqdm>=4.65.0",  # Progress bars
     "tensorboard>=2.15.0",  # Optional logging
 ]
 # Attention backends (require source builds, see scripts/ for install helpers)
@@ -103,4 +93,6 @@ ignore = ["E501"]  # Line too long handled by formatter
 dev = [
     "pytest>=9.0.1",
     "pytest-asyncio>=1.3.0",
+    "ruff",
+    "pyright",  # LSP
 ]

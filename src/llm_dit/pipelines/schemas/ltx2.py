@@ -1,21 +1,18 @@
 """
 LTX-2 Pipeline Schema
 
-last updated: 2026-01-25
+last updated: 2026-02-15
 
 LTX-2 is a video generation pipeline with:
 - Pure PyTorch implementation (recommended) or diffusers wrapper
 - SSE streaming for real-time progress updates
 - Native FP8 support on RTX 4090
-- Frame formula: 8n+1 (33, 41, 49, 57, 65 frames)
+- Frame formula: 8n+1 (9, 17, 25, 33, ..., 121, ...)
 - Enhancement features: NAG, FETA, TeaCache, Latent Norm
 """
 
 from . import register_pipeline, PipelineSchema, ParamSchema
 
-
-# Common frame count options (8n+1 formula)
-FRAME_PRESETS = ["33", "41", "49", "57", "65"]
 
 # Video dimension presets (width x height)
 VIDEO_DIMENSION_PRESETS = [
@@ -24,6 +21,7 @@ VIDEO_DIMENSION_PRESETS = [
     "768x768",    # Square
     "1024x576",   # Widescreen 16:9
     "576x1024",   # Vertical video
+    "Custom",     # Set when width/height are modified directly
 ]
 
 # Offload strategies
@@ -65,6 +63,14 @@ register_pipeline(PipelineSchema(
             tooltip="What to avoid in the generation.",
         ),
         ParamSchema(
+            id="enhance_prompt",
+            type="checkbox",
+            label="Enhance Prompt",
+            default=False,
+            group="basic",
+            tooltip="Use Gemma3 to expand your prompt into a detailed video description with motion, lighting, and audio cues.",
+        ),
+        ParamSchema(
             id="width",
             type="number",
             label="Width",
@@ -97,12 +103,13 @@ register_pipeline(PipelineSchema(
         ),
         ParamSchema(
             id="num_frames",
-            type="select",
+            type="number",
             label="Frames",
-            default="33",
-            options=FRAME_PRESETS,
+            default=33,
+            min=9,
+            step=8,
             group="basic",
-            tooltip="Number of frames (8n+1 formula). 33 frames = ~1.3s at 24fps.",
+            tooltip="Number of frames. Must follow 8n+1 formula (9, 17, 25, 33, ..., 121, ...). Values are snapped to nearest valid count. 33 = ~1.3s, 65 = ~2.7s, 121 = ~5s at 24fps.",
         ),
         ParamSchema(
             id="fps",
@@ -116,15 +123,35 @@ register_pipeline(PipelineSchema(
             tooltip="Frames per second for output video.",
         ),
         ParamSchema(
-            id="num_inference_steps",
+            id="use_two_stage",
+            type="checkbox",
+            label="Two-Stage",
+            default=True,
+            group="basic",
+            tooltip="Two-stage generation: coarse pass + refinement. Higher quality, slightly slower.",
+        ),
+        ParamSchema(
+            id="stage1_steps",
             type="slider",
-            label="Steps",
-            default=12,
+            label="Stage 1 Steps",
+            default=40,
             min=4,
-            max=50,
+            max=80,
             step=1,
             group="basic",
-            tooltip="Number of denoising steps. 12 recommended for distilled model.",
+            tooltip="Denoising steps for stage 1 (coarse generation). 40 recommended for two-stage, 12 for single-stage distilled.",
+        ),
+        ParamSchema(
+            id="stage2_steps",
+            type="slider",
+            label="Stage 2 Steps",
+            default=3,
+            min=1,
+            max=10,
+            step=1,
+            group="basic",
+            conditional={"use_two_stage": True},
+            tooltip="Refinement steps for stage 2. 3 recommended.",
         ),
         ParamSchema(
             id="guidance_scale",
@@ -251,7 +278,7 @@ register_pipeline(PipelineSchema(
             id="stg_enabled",
             type="checkbox",
             label="Enable STG",
-            default=False,
+            default=True,
             group="advanced",
             tooltip="Spatio-Temporal Guidance for better motion consistency.",
         ),
@@ -290,6 +317,42 @@ register_pipeline(PipelineSchema(
             group="advanced",
             conditional={"stg_enabled": True},
             tooltip="When to end STG (fraction of steps).",
+        ),
+        ParamSchema(
+            id="rescale_scale",
+            type="slider",
+            label="CFG Rescale",
+            default=0.7,
+            min=0.0,
+            max=1.0,
+            step=0.05,
+            group="advanced",
+            conditional={"use_two_stage": True},
+            tooltip="CFG rescaling factor for two-stage generation. 0.7 recommended.",
+        ),
+        ParamSchema(
+            id="ge_gamma",
+            type="slider",
+            label="GE Gamma",
+            default=0.0,
+            min=0.0,
+            max=2.0,
+            step=0.05,
+            group="advanced",
+            conditional={"use_two_stage": True},
+            tooltip="Gradient estimation gamma. 0=disabled, 2.0=reference. Extrapolates velocity between denoising steps.",
+        ),
+        ParamSchema(
+            id="distilled_lora_scale",
+            type="slider",
+            label="Distilled LoRA Scale",
+            default=1.0,
+            min=0.0,
+            max=1.0,
+            step=0.01,
+            group="advanced",
+            conditional={"use_two_stage": True},
+            tooltip="Distilled LoRA blend strength for stage 2 refinement. 0 = disable LoRA (base model for stage 2).",
         ),
     ],
 ))

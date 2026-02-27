@@ -5,8 +5,6 @@ Tests TOML parsing, CLI overrides, device resolution, and v5 quantization API.
 These tests run on any platform without GPU or model files.
 """
 
-import warnings
-
 import pytest
 import torch
 
@@ -37,17 +35,13 @@ class TestEncoderConfig:
         assert config.trust_remote_code is True
         assert config.max_length == 512
 
-    def test_quantization_8bit(self):
-        config = EncoderConfig(quantization="8bit")
-        assert config.quantization == "8bit"
+    def test_quantization_int8(self):
+        config = EncoderConfig(quantization="int8")
+        assert config.quantization == "int8"
 
-    def test_quantization_4bit(self):
-        config = EncoderConfig(quantization="4bit")
-        assert config.quantization == "4bit"
-
-    def test_quantization_none_returns_none_config(self):
-        config = EncoderConfig(quantization="none")
-        assert config.get_quantization_config() is None
+    def test_quantization_fp8_weight_only(self):
+        config = EncoderConfig(quantization="fp8-weight-only")
+        assert config.quantization == "fp8-weight-only"
 
     def test_get_dtype(self):
         config = EncoderConfig(dtype="bfloat16")
@@ -68,43 +62,6 @@ class TestEncoderConfig:
     def test_get_device_explicit(self):
         config = EncoderConfig(device="cpu")
         assert config.get_device() == "cpu"
-
-
-class TestEncoderConfigDeprecation:
-    """Test deprecated load_in_8bit/load_in_4bit migration."""
-
-    def test_load_in_8bit_migration(self):
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            config = EncoderConfig(load_in_8bit=True)
-
-            # Should migrate to new field
-            assert config.quantization == "8bit"
-
-            # Should emit deprecation warning
-            assert len(w) == 1
-            assert issubclass(w[0].category, DeprecationWarning)
-            assert "deprecated" in str(w[0].message).lower()
-
-    def test_load_in_4bit_migration(self):
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            config = EncoderConfig(load_in_4bit=True)
-
-            assert config.quantization == "4bit"
-            assert len(w) == 1
-            assert issubclass(w[0].category, DeprecationWarning)
-
-    def test_new_quantization_takes_precedence(self):
-        """If both old and new fields set, new field wins (no migration)."""
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            config = EncoderConfig(quantization="4bit", load_in_8bit=True)
-
-            # New field takes precedence, no migration occurs
-            assert config.quantization == "4bit"
-            # No warning since quantization was explicitly set
-            assert len(w) == 0
 
 
 class TestPipelineConfig:
@@ -176,26 +133,26 @@ class TestConfig:
         data = {
             "model_path": "/path/to/model",
             "templates_dir": "templates",
-            "encoder": {"device": "cpu", "quantization": "8bit"},
+            "encoder": {"device": "cpu", "quantization": "int8"},
             "generation": {"width": 512, "height": 512},
         }
         config = Config.from_dict(data)
 
         assert config.model_path == "/path/to/model"
         assert config.encoder.device == "cpu"
-        assert config.encoder.quantization == "8bit"
+        assert config.encoder.quantization == "int8"
         assert config.generation.width == 512
 
     def test_to_dict(self):
         config = Config(
             model_path="/test/path",
-            encoder=EncoderConfig(quantization="8bit"),
+            encoder=EncoderConfig(quantization="int8"),
             generation=GenerationConfig(width=512),
         )
         data = config.to_dict()
 
         assert data["model_path"] == "/test/path"
-        assert data["encoder"]["quantization"] == "8bit"
+        assert data["encoder"]["quantization"] == "int8"
         assert data["generation"]["width"] == 512
         # Should NOT include deprecated fields
         assert "load_in_8bit" not in data["encoder"]
@@ -218,7 +175,7 @@ class TestConfigTOML:
         config = Config.from_toml(test_config_file, profile="low_vram")
 
         assert config.encoder.device == "cuda"
-        assert config.encoder.quantization == "8bit"
+        assert config.encoder.quantization == "int8"
         assert config.encoder.cpu_offload is True
 
     def test_missing_profile_raises(self, test_config_file):
@@ -242,7 +199,7 @@ class TestPresets:
 
     def test_low_vram_preset(self):
         config = get_preset("low_vram")
-        assert config.encoder.quantization == "8bit"
+        assert config.encoder.quantization == "int8"
         assert config.encoder.cpu_offload is True
         assert config.pipeline.enable_model_cpu_offload is True
 
@@ -265,7 +222,7 @@ class TestLoadConfig:
 
     def test_load_from_preset(self):
         config = load_config(preset="low_vram")
-        assert config.encoder.quantization == "8bit"
+        assert config.encoder.quantization == "int8"
 
     def test_load_default(self):
         config = load_config()

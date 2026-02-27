@@ -284,10 +284,14 @@ class TestPipelineLoaderApplyOptimizations:
 
 
 class TestPipelineLoaderLoadLoras:
-    """Test PipelineLoader._load_loras method."""
+    """Test PipelineLoader._load_loras is a no-op.
+
+    LoRAs are loaded per-request (not at startup), so _load_loras
+    must never call pipeline.load_lora regardless of config.
+    """
 
     def test_load_loras_empty(self):
-        """Test loading empty LoRA list."""
+        """No-op when config has no LoRA paths."""
         from llm_dit.startup import PipelineLoader
 
         config = MagicMock()
@@ -297,11 +301,10 @@ class TestPipelineLoaderLoadLoras:
         mock_pipeline = MagicMock()
         loader._load_loras(mock_pipeline)
 
-        # Should not call load_lora
         mock_pipeline.load_lora.assert_not_called()
 
     def test_load_loras_with_paths(self):
-        """Test loading LoRAs from paths."""
+        """No-op even when config has LoRA paths (per-request only)."""
         from llm_dit.startup import PipelineLoader
 
         config = MagicMock()
@@ -310,13 +313,9 @@ class TestPipelineLoaderLoadLoras:
         loader = PipelineLoader(config)
 
         mock_pipeline = MagicMock()
-        mock_pipeline.load_lora = MagicMock(return_value=10)
         loader._load_loras(mock_pipeline)
 
-        mock_pipeline.load_lora.assert_called_once_with(
-            config.lora_paths,
-            scale=[0.8, 0.5],
-        )
+        mock_pipeline.load_lora.assert_not_called()
 
 
 class TestPipelineLoaderAutoLoad:
@@ -406,7 +405,7 @@ class TestPipelineLoaderLoadEncoder:
 
         loader = PipelineLoader(config)
 
-        with patch("llm_dit.startup.ZImageTextEncoder") as MockEncoder:
+        with patch("llm_dit.encoders.ZImageTextEncoder") as MockEncoder:
             mock_encoder = MagicMock()
             mock_encoder.device = "cpu"
             MockEncoder.from_pretrained = MagicMock(return_value=mock_encoder)

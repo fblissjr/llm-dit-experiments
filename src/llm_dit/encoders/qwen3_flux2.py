@@ -1,7 +1,25 @@
 """
+-----
+**DEPRECATED** - Use qwen3_unified.py instead
+
+This module is deprecated as of 2026-02-03. FLUX.2 Klein now uses the unified
+Qwen3 encoder with the "klein-9b" or "klein-4b" preset.
+
+Migration:
+    # Old (deprecated)
+    from llm_dit.encoders.qwen3_flux2 import Qwen3Flux2Encoder
+    encoder = Qwen3Flux2Encoder.from_pretrained("Qwen/Qwen3-8B-FP8")
+
+    # New (recommended)
+    from llm_dit.encoders.qwen3_unified import Qwen3UnifiedEncoder
+    encoder = Qwen3UnifiedEncoder.from_preset("klein-9b")
+
+This file will be removed in a future release.
+-----
+
 Qwen3 Encoder for FLUX.2 Klein models.
 
-Last Updated: 2026-01-23
+Last Updated: 2026-02-03 (DEPRECATED)
 
 Implements multi-layer extraction from Qwen3 models (4B and 8B) for FLUX.2
 text conditioning. Unlike the standard single-layer encoder, this extracts

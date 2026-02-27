@@ -206,31 +206,7 @@ class QwenImageTextEncoderBackend:
             vision_token_id=151654,
         )
 
-        # Set up quantization config if requested
-        quantization_config = None
-        if quantization in ("4bit", "8bit"):
-            try:
-                from transformers import BitsAndBytesConfig
-
-                if quantization == "4bit":
-                    quantization_config = BitsAndBytesConfig(
-                        load_in_4bit=True,
-                        bnb_4bit_compute_dtype=dtype,
-                        bnb_4bit_use_double_quant=True,
-                        bnb_4bit_quant_type="nf4",
-                    )
-                    logger.info("Using 4-bit quantization (NF4)")
-                else:
-                    quantization_config = BitsAndBytesConfig(
-                        load_in_8bit=True,
-                    )
-                    logger.info("Using 8-bit quantization")
-            except ImportError:
-                logger.warning(
-                    "bitsandbytes not available, falling back to no quantization. "
-                    "Install with: pip install bitsandbytes"
-                )
-                quantization = "none"
+        # Quantization is applied post-load via quantize_component()
 
         # Create model from config (with lm_head for generation support)
         logger.info(f"Creating Qwen2.5-VL model (hidden_size={config.hidden_size})")
@@ -278,18 +254,20 @@ class QwenImageTextEncoderBackend:
         if unexpected_keys:
             logger.debug(f"Unexpected keys: {unexpected_keys[:5]}...")
 
-        # Apply quantization if configured
-        if quantization_config is not None:
-            # For bitsandbytes quantization, we need to move to CUDA first then quantize
-            # This is a simplified approach - full quantization support would use from_pretrained
-            logger.info(f"Applying {quantization} quantization...")
-            model = model.to(device=device, dtype=dtype)
-            # Note: Full bitsandbytes quantization requires using from_pretrained with
-            # quantization_config. For manual loading, we move to device and dtype only.
-            # TODO: Implement full quantization support by saving/loading in HF format
-        else:
-            # Move to device and set dtype
-            model = model.to(device=device, dtype=dtype)
+        # Move to device and set dtype
+        model = model.to(device=device, dtype=dtype)
+
+        # Apply post-load quantization via unified system
+        if quantization != "none":
+            from llm_dit.quantization import quantize_component
+
+            model, stats = quantize_component(
+                model, method=quantization, component_type="encoder"
+            )
+            logger.info(
+                f"Quantized text encoder: {stats['quantized_layers']}/{stats['total_layers']} "
+                f"layers ({quantization})"
+            )
 
         model.eval()
 

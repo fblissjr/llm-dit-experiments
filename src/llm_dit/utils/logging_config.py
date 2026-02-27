@@ -4,18 +4,16 @@ Structured logging configuration with JSON file output and rotation.
 Provides:
 - Console logging with human-readable format
 - JSON file logging with automatic rotation
-- Context injection for generation metadata
 
-last updated: 2025-12-27
+last updated: 2026-02-06
 """
 
 import json
 import logging
-import os
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 
 # Default log directory
 DEFAULT_LOG_DIR = Path.home() / ".llm_dit" / "logs"
@@ -63,23 +61,6 @@ class JSONFormatter(logging.Formatter):
         return json.dumps(log_entry, default=str)
 
 
-class ContextLogger(logging.LoggerAdapter):
-    """
-    Logger adapter that injects context into log records.
-
-    Usage:
-        logger = get_context_logger(__name__)
-        logger.info("Generating image", extra={"prompt": "A cat", "steps": 9})
-    """
-
-    def process(self, msg: str, kwargs: dict) -> tuple:
-        # Move context from extra to record attribute
-        extra = kwargs.get("extra", {})
-        if extra:
-            kwargs["extra"] = {"context": extra}
-        return msg, kwargs
-
-
 def setup_logging(
     level: int = logging.INFO,
     log_dir: Optional[Path] = None,
@@ -92,6 +73,10 @@ def setup_logging(
     """
     Configure logging with console and optional JSON file output.
 
+    This is the single entry point for all logging configuration. Called from
+    cli.py::setup_logging() during server startup. No other module should
+    configure logging handlers.
+
     Args:
         level: Logging level (default INFO)
         log_dir: Directory for JSON log files (default ~/.llm_dit/logs)
@@ -100,19 +85,6 @@ def setup_logging(
         backup_count: Number of backup files to keep (default 5)
         console_format: Format string for console output
         date_format: Date format for console timestamps
-
-    Example:
-        from llm_dit.utils.logging_config import setup_logging
-
-        # Basic setup (console only)
-        setup_logging(level=logging.DEBUG)
-
-        # With JSON file logging
-        setup_logging(
-            level=logging.INFO,
-            enable_json_file=True,
-            log_dir=Path("/var/log/llm_dit"),
-        )
     """
     # Configure root logger
     root_logger = logging.getLogger()
@@ -154,86 +126,3 @@ def setup_logging(
             f"JSON logging enabled: {log_file} "
             f"(max {max_bytes // 1024 // 1024}MB, {backup_count} backups)"
         )
-
-
-def get_context_logger(name: str) -> ContextLogger:
-    """
-    Get a logger with context injection support.
-
-    Args:
-        name: Logger name (typically __name__)
-
-    Returns:
-        ContextLogger instance
-
-    Usage:
-        logger = get_context_logger(__name__)
-
-        # Log with context
-        logger.info("Generation complete", extra={
-            "prompt": "A cat",
-            "duration_ms": 1234,
-            "seed": 42,
-        })
-    """
-    return ContextLogger(logging.getLogger(name), {})
-
-
-def log_generation(
-    logger: logging.Logger,
-    prompt: str,
-    width: int,
-    height: int,
-    steps: int,
-    duration_ms: float,
-    seed: Optional[int] = None,
-    **kwargs: Any,
-) -> None:
-    """
-    Log a generation event with structured metadata.
-
-    Args:
-        logger: Logger instance
-        prompt: Generation prompt
-        width: Image width
-        height: Image height
-        steps: Number of inference steps
-        duration_ms: Generation duration in milliseconds
-        seed: Random seed (optional)
-        **kwargs: Additional context fields
-
-    Example:
-        log_generation(
-            logger,
-            prompt="A cat sleeping",
-            width=1024,
-            height=1024,
-            steps=9,
-            duration_ms=1234.5,
-            seed=42,
-            model="z-image-turbo",
-        )
-    """
-    context = {
-        "prompt": prompt[:200],  # Truncate long prompts
-        "width": width,
-        "height": height,
-        "steps": steps,
-        "duration_ms": round(duration_ms, 2),
-    }
-    if seed is not None:
-        context["seed"] = seed
-    context.update(kwargs)
-
-    # Create a log record with context
-    record = logger.makeRecord(
-        logger.name,
-        logging.INFO,
-        "(generation)",
-        0,
-        "Generation complete",
-        (),
-        None,
-    )
-    record.context = context
-    logger.handle(record)

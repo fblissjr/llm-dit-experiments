@@ -1,4 +1,6 @@
-# Experiments Guide
+# experiments guide
+
+*last updated: 2026-02-14*
 
 This guide covers the complete experiment infrastructure for Z-Image ablation studies.
 
@@ -377,7 +379,7 @@ animal_001,42,shift,3.0,2.34,156,0.42,0.31,,experiments/results/shift_sweep/imag
 
 ## Web UI for Manual Exploration
 
-Start the web server:
+The web UI is a React 18 + Zustand 5 application with schema-driven forms. Start the web server:
 
 ```bash
 # Using config.toml (recommended)
@@ -389,33 +391,11 @@ uv run web/server.py --config config.toml --profile rtx4090
 
 Open http://localhost:8000 (or the port specified in `[server]`).
 
-### Available Controls
-
-**Basic:**
-- Prompt text
-- Template selection
-- Resolution presets
-- Steps (1-50)
-- Seed
-
-**Chat Template Options:**
-- System prompt
-- Thinking block enable/disable
-- Thinking content
-- Assistant content
-
-**Scheduler Options:**
-- Guidance scale (0.0-10.0, default 0.0)
-- Scheduler shift (0.5-10.0, default 3.0)
-- Hidden layer (-6 to -1, default -2)
-
-**Prompt Rewriter:**
-- Template-based or custom rewriting
-- Temperature, top_p, min_p, max_tokens controls
+The frontend auto-generates form controls from the backend's `ParamSchema` definitions, so available controls match the active pipeline. Each pipeline (Z-Image, FLUX.2, LTX-2, Qwen-Image) has its own parameter set, presets, and dependent defaults.
 
 ### History
 
-All generations are saved in history (max 50). Click any thumbnail to:
+All generations are saved in history (max 500, stored in IndexedDB). Click any thumbnail to:
 - View full image
 - See generation parameters
 - Click "Edit" to reuse all parameters

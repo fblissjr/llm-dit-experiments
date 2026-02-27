@@ -1,0 +1,20 @@
+# LTX-2 standard test overlay -- merged over config.toml.example
+# Higher quality video generation: 512x768, 33 frames
+# Uses two-stage pipeline with model-level offloading
+# Resolution matches official reference: landscape (512h x 768w)
+
+default_pipeline = "none"
+
+[ltx2]
+height = 512
+width = 768
+num_frames = 33
+guidance_scale = 3.0
+offload_mode = "model"
+use_two_stage = true
+stage1_num_inference_steps = 8
+stage2_num_inference_steps = 4
+
+[server]
+host = "127.0.0.1"
+port = 7860

@@ -39,18 +39,30 @@ logger = logging.getLogger(__name__)
 
 # Key mapping from diffusers format to our implementation
 DIFFUSERS_TO_OURS = {
-    # Input/output projections
+    # Video input/output projections
     "proj_in.": "patchify_proj.",
 
-    # Timestep embedding (AdaLayerNormSingle)
+    # Video timestep embedding (AdaLayerNormSingle)
     "time_embed.emb.timestep_embedder.": "adaln_single.emb.timestep_embedder.",
     "time_embed.linear.": "adaln_single.linear.",
 
+    # Audio input/output projections
+    "audio_proj_in.": "audio_patchify_proj.",
+
+    # Audio timestep embedding
+    "audio_time_embed.emb.timestep_embedder.": "audio_adaln_single.emb.timestep_embedder.",
+    "audio_time_embed.linear.": "audio_adaln_single.linear.",
+
+    # Cross-modal AdaLN modules
+    "av_cross_attn_video_scale_shift.": "av_ca_video_scale_shift_adaln_single.",
+    "av_cross_attn_audio_scale_shift.": "av_ca_audio_scale_shift_adaln_single.",
+    "av_cross_attn_a2v_gate.": "av_ca_a2v_gate_adaln_single.",
+    "av_cross_attn_v2a_gate.": "av_ca_v2a_gate_adaln_single.",
+
     # Attention norm naming (diffusers uses norm_q/norm_k, we use q_norm/k_norm)
+    # This applies to all attention modules (video, audio, cross-modal)
     ".norm_q.": ".q_norm.",
     ".norm_k.": ".k_norm.",
-
-    # The rest should match (caption_projection, transformer_blocks, etc.)
 }
 
 # Keys to skip when loading video-only (audio components)
@@ -182,21 +194,40 @@ def load_config(path: Path) -> dict:
     }
 
 
-def create_model_from_config(config: dict, dtype: torch.dtype = torch.bfloat16) -> LTX2Transformer:
+def create_model_from_config(
+    config: dict,
+    dtype: torch.dtype = torch.bfloat16,
+    model_type: LTXModelType = LTXModelType.VideoOnly,
+) -> LTX2Transformer:
     """
     Create LTX2Transformer from config dictionary.
 
     Args:
         config: Model configuration
         dtype: Model dtype
+        model_type: Which variant to create (VideoOnly, AudioVideo, AudioOnly)
 
     Returns:
         Initialized model (random weights)
     """
     rope_type = LTXRopeType.SPLIT if config.get("rope_type") == "split" else LTXRopeType.INTERLEAVED
 
+    # Audio parameters (only used when model_type includes audio)
+    audio_kwargs = {}
+    if model_type.is_audio_enabled():
+        audio_kwargs = dict(
+            audio_num_attention_heads=config.get("audio_num_attention_heads", 32),
+            audio_attention_head_dim=config.get("audio_attention_head_dim", 64),
+            audio_in_channels=config.get("audio_in_channels", 128),
+            audio_out_channels=config.get("audio_out_channels", 128),
+            audio_cross_attention_dim=config.get("audio_cross_attention_dim", 2048),
+            audio_positional_embedding_max_pos=[
+                config.get("audio_pos_embed_max_pos", 20),
+            ],
+        )
+
     model = LTX2Transformer(
-        model_type=LTXModelType.VideoOnly,
+        model_type=model_type,
         num_attention_heads=config.get("num_attention_heads", 32),
         attention_head_dim=config.get("attention_head_dim", 128),
         in_channels=config.get("in_channels", 128),
@@ -214,6 +245,7 @@ def create_model_from_config(config: dict, dtype: torch.dtype = torch.bfloat16) 
         use_middle_indices_grid=True,
         rope_type=rope_type,
         double_precision_rope=config.get("rope_double_precision", True),
+        **audio_kwargs,
     )
 
     return model.to(dtype)
@@ -225,6 +257,7 @@ def load_ltx2_transformer(
     device: str = "cpu",
     video_only: bool = True,
     strict: bool = False,
+    model_type: Optional[LTXModelType] = None,
 ) -> LTX2Transformer:
     """
     Load LTX-2 transformer from checkpoint.
@@ -236,8 +269,9 @@ def load_ltx2_transformer(
         path: Path to checkpoint file or directory
         dtype: Model dtype (bf16 recommended)
         device: Device to load to initially (use 'cpu' then .to('cuda') for large models)
-        video_only: If True, skip audio weights
+        video_only: If True, skip audio weights (ignored if model_type is set)
         strict: If True, raise error on missing/extra keys
+        model_type: Explicit model type. If set, overrides video_only flag.
 
     Returns:
         Loaded LTX2Transformer model
@@ -247,10 +281,15 @@ def load_ltx2_transformer(
         model = load_ltx2_transformer("models/LTX-2/transformer/")
         model = model.cuda()  # Move to GPU after loading
 
-        # Load with specific dtype
-        model = load_ltx2_transformer(path, dtype=torch.float16)
+        # Load audio-video model
+        model = load_ltx2_transformer(path, model_type=LTXModelType.AudioVideo)
     """
     path = Path(path)
+
+    # Resolve model_type from video_only flag if not explicitly set
+    if model_type is None:
+        model_type = LTXModelType.VideoOnly if video_only else LTXModelType.AudioVideo
+    video_only = not model_type.is_audio_enabled()
 
     # Load config
     config = load_config(path)
@@ -258,7 +297,7 @@ def load_ltx2_transformer(
                 f"{config.get('num_attention_heads', 32)} heads")
 
     # Create model
-    model = create_model_from_config(config, dtype)
+    model = create_model_from_config(config, dtype, model_type=model_type)
 
     # Load weights
     logger.info(f"Loading weights from {path}")
@@ -276,7 +315,12 @@ def load_ltx2_transformer(
             continue
 
         our_key = map_key(diffusers_key)
-        our_state_dict[our_key] = tensor.to(dtype)
+        if tensor.dtype in (torch.float8_e4m3fn, torch.float8_e5m2):
+            logger.warning(f"FP8 tensor {our_key} loaded without scale dequantization -- "
+                           "consider using transformer_file config for proper FP8 handling")
+            our_state_dict[our_key] = tensor  # Preserve FP8, don't cast to BF16 without scales
+        else:
+            our_state_dict[our_key] = tensor.to(dtype)
 
     # Load into model
     load_result = model.load_state_dict(our_state_dict, strict=strict)
@@ -416,83 +460,142 @@ def load_ltx2_transformer_quantized(
     return quantized_model  # type: ignore[return-value]
 
 
-def load_ltx2_transformer_fp8_native(
+def load_ltx2_transformer_from_fp8(
     path: Union[str, Path],
     dtype: torch.dtype = torch.bfloat16,
-    device: str = "cuda",
+    device: str = "cpu",
     video_only: bool = True,
-    verbose: bool = True,
+    model_type: Optional[LTXModelType] = None,
 ) -> LTX2Transformer:
-    """
-    Load LTX-2 transformer with native FP8 quantization (official approach).
+    """Load LTX-2 transformer from a pre-quantized FP8 safetensors file.
 
-    This function uses the same approach as the official LTX-2 implementation:
-    - Weights stored as torch.float8_e4m3fn
-    - Forward pass upcasts to bf16 before computation
-    - No frozen scale buffers = no memory leak
+    Dequantizes FP8 weights to the target dtype using scale factors embedded in
+    the checkpoint. This is the counterpart to the FLUX.2 FP8 loading path.
 
-    This is the recommended quantization method for RTX 4090 and similar GPUs.
+    The FP8 safetensors file format:
+    - FP8 weight tensors (float8_e4m3fn)
+    - Scale tensors (weight_scale, input_scale as scalar float32)
+    - BF16 tensors (norms, biases)
+    - Key prefix: ``model.diffusion_model.``
+    - Contains transformer + VAE + audio + vocoder (filtered by video_only)
 
-    Memory usage:
-    - bf16 (default): ~26GB (won't fit on 24GB GPU)
-    - fp8-native: ~13GB (fits on 24GB GPU with room for activations)
+    Dequantization formula: ``actual_weight = fp8_value * weight_scale``
 
     Args:
-        path: Path to checkpoint file or directory
-        dtype: Base dtype for loading before quantization (bf16 recommended)
-        device: Device to load to ("cuda" recommended)
-        video_only: If True, skip audio weights
-        verbose: Print progress during loading
+        path: Path to FP8 safetensors file (NOT a directory).
+        dtype: Target dtype for dequantized weights (bf16 recommended).
+        device: Device to load to (use 'cpu' for offloading workflows).
+        video_only: If True, skip audio/vocoder weights (ignored if model_type set).
+        model_type: Explicit model type. If set, overrides video_only flag.
 
     Returns:
-        FP8-quantized LTX2Transformer model on specified device
-
-    Example:
-        >>> model = load_ltx2_transformer_fp8_native("models/LTX-2/transformer/")
-        >>> # Model is ready for inference, no .to('cuda') needed
+        LTX2Transformer with dequantized weights in target dtype.
     """
-    from llm_dit.quantization.fp8_native import apply_fp8_native, estimate_memory_savings
+    path = Path(path)
+    if not path.is_file():
+        raise FileNotFoundError(f"FP8 checkpoint not found: {path}")
 
-    # Load model to CPU first in bf16
-    if verbose:
-        logger.info(f"Loading model to CPU (dtype={dtype})")
+    # Resolve model_type from video_only flag if not explicitly set
+    if model_type is None:
+        model_type = LTXModelType.VideoOnly if video_only else LTXModelType.AudioVideo
+    video_only = not model_type.is_audio_enabled()
 
-    model = load_ltx2_transformer(
-        path,
-        dtype=dtype,
-        device="cpu",
-        video_only=video_only,
-        strict=False,
+    logger.info(f"Loading FP8 checkpoint from {path} (model_type={model_type.value})")
+
+    # Load raw state dict
+    raw_sd = load_safetensors(path, device="cpu")
+    logger.info(f"Loaded {len(raw_sd)} tensors from FP8 checkpoint")
+
+    # Strip model.diffusion_model. prefix and filter to transformer keys
+    prefix = "model.diffusion_model."
+    stripped_sd: Dict[str, torch.Tensor] = {}
+    scale_keys: list[str] = []
+    skipped_audio = 0
+    skipped_non_transformer = 0
+
+    # Identify non-transformer prefixes to skip
+    non_transformer_prefixes = (
+        "model.vae.", "model.vocoder.", "model.audio_codec.",
+        "vae.", "vocoder.", "audio_codec.",
     )
 
-    # Estimate memory savings
-    num_params = model.get_num_params()
-    if verbose:
-        savings = estimate_memory_savings(model)
-        logger.info(f"Model: {num_params / 1e9:.2f}B params")
-        logger.info(
-            f"Memory: {savings['original_gb']:.1f}GB (bf16) → "
-            f"{savings['quantized_gb']:.1f}GB (fp8-native) "
-            f"[{savings['savings_percent']:.0f}% reduction]"
-        )
+    for key, tensor in raw_sd.items():
+        # Skip non-transformer components
+        if key.startswith(non_transformer_prefixes):
+            skipped_non_transformer += 1
+            continue
 
-    # Apply FP8 on CPU first (reduces memory before GPU transfer)
-    if verbose:
-        logger.info("Applying native FP8 on CPU...")
+        # Strip prefix
+        stripped_key = key[len(prefix):] if key.startswith(prefix) else key
 
-    model, stats = apply_fp8_native(model, verbose=verbose)
+        # Skip audio keys
+        if video_only and is_audio_key(stripped_key):
+            skipped_audio += 1
+            continue
 
-    # Now move quantized model to GPU (much smaller: ~13GB instead of ~26GB)
-    if verbose:
-        logger.info(f"Moving FP8 model to {device}...")
+        # Track scale tensors separately
+        if stripped_key.endswith(("_scale", ".weight_scale", ".input_scale")):
+            scale_keys.append(stripped_key)
 
-    model = model.to(device)
+        stripped_sd[stripped_key] = tensor
 
-    if verbose:
-        logger.info(
-            f"Native FP8 complete: {stats['quantized']} layers quantized, "
-            f"{stats['skipped']} layers kept in bf16"
-        )
+    logger.info(
+        f"Filtered: {len(stripped_sd)} transformer tensors, "
+        f"skipped {skipped_audio} audio + {skipped_non_transformer} non-transformer"
+    )
+
+    # Build scale map: weight_key -> scale_tensor
+    scale_map: Dict[str, torch.Tensor] = {}
+    for scale_key in scale_keys:
+        if scale_key.endswith(".input_scale"):
+            continue  # Input scales are for activations, not weights
+        if scale_key.endswith(".weight_scale"):
+            weight_key = scale_key.replace(".weight_scale", ".weight")
+        else:
+            weight_key = scale_key.rsplit("_scale", 1)[0]
+        if scale_key in stripped_sd:
+            scale_map[weight_key] = stripped_sd[scale_key]
+
+    if scale_map:
+        logger.info(f"Found {len(scale_map)} weight scales for FP8 dequantization")
+
+    # Dequantize FP8 tensors and build final state dict
+    final_sd: Dict[str, torch.Tensor] = {}
+    fp8_count = 0
+
+    for key, tensor in stripped_sd.items():
+        # Skip scale tensors (they're consumed during dequantization)
+        if key in scale_keys:
+            continue
+
+        if tensor.dtype in (torch.float8_e4m3fn, torch.float8_e5m2):
+            dequantized = tensor.to(dtype)
+            if key in scale_map:
+                scale = scale_map[key].to(dtype)
+                dequantized = dequantized * scale
+            else:
+                logger.warning(f"No scale found for FP8 weight: {key}")
+            final_sd[key] = dequantized
+            fp8_count += 1
+        else:
+            final_sd[key] = tensor.to(dtype)
+
+    logger.info(f"Dequantized {fp8_count} FP8 tensors to {dtype}")
+
+    # Load config and create model -- FP8 files use our naming, no diffusers mapping needed
+    config = load_config(path.parent)
+    model = create_model_from_config(config, dtype, model_type=model_type)
+
+    load_result = model.load_state_dict(final_sd, strict=False)
+    if load_result.missing_keys:
+        logger.warning(f"Missing keys: {load_result.missing_keys[:10]}... ({len(load_result.missing_keys)} total)")
+    if load_result.unexpected_keys:
+        logger.warning(f"Unexpected keys: {load_result.unexpected_keys[:10]}... ({len(load_result.unexpected_keys)} total)")
+
+    logger.info(f"Loaded LTX-2 transformer from FP8: {model.get_num_params() / 1e9:.2f}B parameters")
+
+    if device != "cpu":
+        model = model.to(device)
 
     return model
 

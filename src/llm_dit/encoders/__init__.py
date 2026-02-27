@@ -35,7 +35,26 @@ Quick Start (High-Level with templates):
 """
 
 # High-level encoder with template support (existing)
-from llm_dit.encoders.z_image import ZImageTextEncoder
+from llm_dit.encoders.embeddings_connector import (
+    Embeddings1DConnector,
+    RopeType,
+    load_connector_weights,
+)
+
+# Factory
+from llm_dit.encoders.factory import (
+    PIPELINE_ENCODER_MAP,
+    EncoderConfig,
+    EncoderFactory,
+)
+from llm_dit.encoders.gemma3 import Gemma3Encoder, LTX2Encoder, SubLayerExtractor
+
+# Gemma3 variant loaders
+from llm_dit.encoders.gemma3_variants import (
+    Gemma3Variant,
+    create_gemma3_encoder,
+    estimate_encoder_memory,
+)
 
 # Protocol definitions
 from llm_dit.encoders.protocol import (
@@ -49,28 +68,8 @@ from llm_dit.encoders.protocol import (
     VisionLanguageEncoderProtocol,
 )
 
-# Factory
-from llm_dit.encoders.factory import (
-    EncoderConfig,
-    EncoderFactory,
-    PIPELINE_ENCODER_MAP,
-)
-
 # Low-level protocol implementations
 from llm_dit.encoders.qwen3 import Qwen3Encoder
-from llm_dit.encoders.gemma3 import Gemma3Encoder, LTX2Encoder, SubLayerExtractor
-from llm_dit.encoders.embeddings_connector import (
-    Embeddings1DConnector,
-    RopeType,
-    load_connector_weights,
-)
-
-# Gemma3 variant loaders
-from llm_dit.encoders.gemma3_variants import (
-    create_gemma3_encoder,
-    Gemma3Variant,
-    estimate_encoder_memory,
-)
 
 # Qwen3 FLUX.2 encoder
 from llm_dit.encoders.qwen3_flux2 import (
@@ -80,13 +79,14 @@ from llm_dit.encoders.qwen3_flux2 import (
 
 # Unified Qwen3 encoder (new - supports both Z-Image and FLUX.2 modes)
 from llm_dit.encoders.qwen3_unified import (
-    Qwen3UnifiedEncoder,
-    Qwen3EncoderConfig,
-    get_unified_encoder,
-    ZIMAGE_CONFIG,
     KLEIN_4B_CONFIG,
-    KLEIN_8B_CONFIG,
+    KLEIN_9B_CONFIG,
+    ZIMAGE_CONFIG,
+    Qwen3EncoderConfig,
+    Qwen3UnifiedEncoder,
+    get_unified_encoder,
 )
+from llm_dit.encoders.z_image import ZImageTextEncoder
 
 __all__ = [
     # High-level encoder (existing)
@@ -128,5 +128,5 @@ __all__ = [
     "get_unified_encoder",
     "ZIMAGE_CONFIG",
     "KLEIN_4B_CONFIG",
-    "KLEIN_8B_CONFIG",
+    "KLEIN_9B_CONFIG",
 ]
