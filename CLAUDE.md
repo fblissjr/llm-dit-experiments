@@ -296,6 +296,7 @@ For full debugging patterns, see [lessons_learned.md](internal/state/lessons_lea
 | Generate button disabled silently | Validation error not displayed to user | Check DevTools for `[Generate]` namespace logs; likely stale IndexedDB value exceeds schema min/max |
 | Noisy/garbage LTX-2 output | Compounding optimizations | Disable `ge_gamma`, `fbcache_threshold`, `use_distilled_sigmas` in config.toml; test one at a time. All three together = no CFG + stale cached blocks + amplified velocity = runaway noise |
 | Stale form values from IndexedDB | Schema range changed after values persisted | `getResolvedValues()` clamps automatically; use "Reset Storage" in Settings or clear IndexedDB via DevTools Application tab |
+| Audio keys cause `load_state_dict` failure | Cache created with `audio_enabled=True` but reconstruction defaults to VideoOnly | Cache carries `video_only` flag; reconstruction uses `_reconstruct_transformer_from_cache()` helper |
 
 ## quick test commands
 

@@ -289,3 +289,133 @@ class TestCrossModalPE:
             caption_channels=2048,
         )
         assert not hasattr(model, "_cross_pe_max_pos")
+
+
+class TestTransformerCacheVideoOnlyFlag:
+    """Tests for video_only flag in cached transformer dict.
+
+    The cache must be self-describing so reconstruction creates the correct
+    model architecture (BasicTransformerBlock vs BasicAVTransformerBlock).
+    """
+
+    def test_cache_dict_contains_video_only_key(self):
+        """Cache dict structure includes 'video_only' alongside config and state_dict."""
+        cache = {"config": {}, "state_dict": {}, "video_only": True}
+        assert "video_only" in cache
+
+    def test_cache_video_only_true_resolves_to_video_only_model_type(self):
+        """video_only=True in cache -> LTXModelType.VideoOnly."""
+        from llm_dit.models.ltx2.loader import LTXModelType
+
+        cache_video_only = True
+        model_type = LTXModelType.VideoOnly if cache_video_only else LTXModelType.AudioVideo
+        assert model_type == LTXModelType.VideoOnly
+
+    def test_cache_video_only_false_resolves_to_audio_video_model_type(self):
+        """video_only=False in cache -> LTXModelType.AudioVideo."""
+        from llm_dit.models.ltx2.loader import LTXModelType
+
+        cache_video_only = False
+        model_type = LTXModelType.VideoOnly if cache_video_only else LTXModelType.AudioVideo
+        assert model_type == LTXModelType.AudioVideo
+
+    def test_missing_video_only_defaults_to_true(self):
+        """Legacy caches without video_only key default to video-only (backward compat)."""
+        cache = {"config": {}, "state_dict": {}}
+        cache_video_only = cache.get("video_only", True)
+        assert cache_video_only is True
+
+    def test_audio_video_model_has_audio_modules(self):
+        """AudioVideo model type creates blocks with audio attention modules."""
+        from llm_dit.models.ltx2.loader import create_model_from_config, LTXModelType
+        from llm_dit.utils.meta_init import meta_init
+
+        config = {
+            "num_attention_heads": 4,
+            "attention_head_dim": 32,
+            "in_channels": 128,
+            "out_channels": 128,
+            "caption_channels": 2048,
+            "num_layers": 2,
+            "audio_num_attention_heads": 4,
+            "audio_attention_head_dim": 32,
+            "audio_cross_attention_dim": 128,
+        }
+        with meta_init():
+            model = create_model_from_config(config, dtype=torch.bfloat16, model_type=LTXModelType.AudioVideo)
+
+        # AV blocks should have audio_to_video cross-attention
+        block = model.transformer_blocks[0]
+        assert hasattr(block, "audio_to_video_attn"), "AV block missing audio_to_video_attn"
+
+    def test_video_only_model_lacks_audio_modules(self):
+        """VideoOnly model type creates blocks WITHOUT audio attention modules."""
+        from llm_dit.models.ltx2.loader import create_model_from_config, LTXModelType
+        from llm_dit.utils.meta_init import meta_init
+
+        config = {
+            "num_attention_heads": 4,
+            "attention_head_dim": 32,
+            "in_channels": 128,
+            "out_channels": 128,
+            "caption_channels": 2048,
+            "num_layers": 2,
+        }
+        with meta_init():
+            model = create_model_from_config(config, dtype=torch.bfloat16, model_type=LTXModelType.VideoOnly)
+
+        block = model.transformer_blocks[0]
+        assert not hasattr(block, "audio_to_video_attn"), "VideoOnly block should NOT have audio_to_video_attn"
+
+    def test_reconstruct_helper_creates_video_only_model(self):
+        """_reconstruct_transformer_from_cache creates VideoOnly model from video-only cache."""
+        from llm_dit.models.ltx2.loader import create_model_from_config, LTXModelType
+
+        config = {
+            "num_attention_heads": 4,
+            "attention_head_dim": 32,
+            "in_channels": 128,
+            "out_channels": 128,
+            "caption_channels": 2048,
+            "num_layers": 2,
+        }
+        # Build a real (non-meta) model to get a valid state_dict with actual tensors
+        ref = create_model_from_config(config, dtype=torch.bfloat16, model_type=LTXModelType.VideoOnly)
+        sd = {k: v.clone() for k, v in ref.state_dict().items()}
+        del ref
+
+        cache = {"config": config, "state_dict": sd, "video_only": True}
+
+        from llm_dit.pipelines.generate import _reconstruct_transformer_from_cache
+        model = _reconstruct_transformer_from_cache(
+            cache, torch.bfloat16, "cpu", False, "none", "per-row",
+        )
+        assert not hasattr(model.transformer_blocks[0], "audio_to_video_attn")
+
+    def test_reconstruct_helper_creates_av_model(self):
+        """_reconstruct_transformer_from_cache creates AV model from audio-video cache."""
+        from llm_dit.models.ltx2.loader import create_model_from_config, LTXModelType
+
+        config = {
+            "num_attention_heads": 4,
+            "attention_head_dim": 32,
+            "in_channels": 128,
+            "out_channels": 128,
+            "caption_channels": 2048,
+            "num_layers": 2,
+            "audio_num_attention_heads": 4,
+            "audio_attention_head_dim": 32,
+            "audio_cross_attention_dim": 128,
+        }
+        # Build a real (non-meta) model to get a valid state_dict with actual tensors
+        ref = create_model_from_config(config, dtype=torch.bfloat16, model_type=LTXModelType.AudioVideo)
+        sd = {k: v.clone() for k, v in ref.state_dict().items()}
+        del ref
+
+        cache = {"config": config, "state_dict": sd, "video_only": False}
+
+        from llm_dit.pipelines.generate import _reconstruct_transformer_from_cache
+        model = _reconstruct_transformer_from_cache(
+            cache, torch.bfloat16, "cpu", False, "none", "per-row",
+        )
+        assert hasattr(model.transformer_blocks[0], "audio_to_video_attn")

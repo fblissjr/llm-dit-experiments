@@ -75,6 +75,57 @@ def _resolve_quantize(quantize: str) -> tuple[bool, str]:
     return True, precision
 
 
+def _reconstruct_transformer_from_cache(
+    cached_transformer: dict,
+    dtype: torch.dtype,
+    transformer_device: torch.device | str,
+    effective_quantize: bool,
+    effective_precision: str,
+    granularity: str,
+) -> "LTX2Transformer":
+    """Reconstruct a transformer model from a cached state_dict.
+
+    The cache dict is self-describing: it carries a 'video_only' flag so the
+    correct model architecture (BasicTransformerBlock vs BasicAVTransformerBlock)
+    is created. Legacy caches without the flag default to video-only.
+
+    Args:
+        cached_transformer: Dict with "config", "state_dict", and optionally
+            "video_only" (defaults True for backward compat).
+        dtype: Model dtype (usually torch.bfloat16).
+        transformer_device: Target device for the model after construction.
+        effective_quantize: Whether to quantize after loading.
+        effective_precision: Quantization method string (e.g. "fp8-dynamic").
+        granularity: Quantization granularity (e.g. "per-row").
+
+    Returns:
+        Fully loaded (and optionally quantized) transformer on transformer_device.
+    """
+    from llm_dit.models.ltx2.loader import LTXModelType, create_model_from_config
+    from llm_dit.utils.meta_init import meta_init
+
+    logger.info("Using cached transformer weights, reconstructing model...")
+    cache_video_only = cached_transformer.get("video_only", True)
+    model_type = LTXModelType.VideoOnly if cache_video_only else LTXModelType.AudioVideo
+    with meta_init():
+        model = create_model_from_config(cached_transformer["config"], dtype, model_type=model_type)
+    model.load_state_dict(cached_transformer["state_dict"], assign=True)
+
+    if effective_quantize and effective_precision != "none":
+        from llm_dit.quantization import quantize_component
+        model, stats = quantize_component(
+            model, method=effective_precision, component_type="transformer",
+            granularity=granularity,
+        )
+        logger.info(
+            f"Transformer quantized: {stats['quantized_layers']}/{stats['total_layers']} layers "
+            f"({effective_precision}, granularity={granularity})"
+        )
+
+    model = model.to(transformer_device)
+    return model
+
+
 @dataclass
 class GenerationConfig:
     """Configuration for pure PyTorch video generation."""
@@ -744,8 +795,8 @@ def generate_video_with_offloading(
             fp8-dynamic, int8, int4.
         skip_cleanup: Skip memory cleanup between stages.
         cached_transformer: Pre-loaded transformer data from ModelManager. Dict with
-            "config" (model config) and "state_dict" (pinned bf16 tensors). Skips
-            disk I/O when provided.
+            "config" (model config), "state_dict" (pinned bf16 tensors), and
+            "video_only" (bool). Skips disk I/O when provided.
         cached_vae: Pre-loaded VAE decoder from ModelManager. Shuttled to GPU for
             decoding, then returned to CPU.
 
@@ -856,27 +907,10 @@ def generate_video_with_offloading(
     logger.info(f"Stage 2: Loading transformer on {transformer_device}...")
 
     if cached_transformer is not None:
-        # Reconstruct from cached bf16 state dict (skips disk I/O)
-        # meta_init eliminates 2x memory spike during construction
-        logger.info("Using cached transformer weights, reconstructing model...")
-        from llm_dit.models.ltx2.loader import create_model_from_config
-        from llm_dit.utils.meta_init import meta_init
-        with meta_init():
-            model = create_model_from_config(cached_transformer["config"], dtype)
-        model.load_state_dict(cached_transformer["state_dict"], assign=True)
-
-        if effective_quantize and effective_precision != "none":
-            from llm_dit.quantization import quantize_component
-            model, stats = quantize_component(  # type: ignore[assignment]
-                model, method=effective_precision, component_type="transformer",
-                granularity=granularity,
-            )
-            logger.info(
-                f"Transformer quantized: {stats['quantized_layers']}/{stats['total_layers']} layers "
-                f"({effective_precision}, granularity={granularity})"
-            )
-
-        model = model.to(transformer_device)
+        model = _reconstruct_transformer_from_cache(
+            cached_transformer, dtype, transformer_device,
+            effective_quantize, effective_precision, granularity,
+        )
     else:
         # Load from disk (fallback when no cache)
         from llm_dit.models.ltx2 import load_ltx2_transformer
@@ -1702,7 +1736,8 @@ def generate_video_two_stage(
             fp8-dynamic, int8, int4.
         skip_cleanup: Skip memory cleanup between stages.
         cached_transformer: Pre-loaded transformer data from ModelManager. Dict with
-            "config" (model config) and "state_dict" (pinned bf16 tensors).
+            "config" (model config), "state_dict" (pinned bf16 tensors), and
+            "video_only" (bool).
         cached_vae: Pre-loaded VAE decoder from ModelManager. Used for
             per_channel_statistics in Stage 1.5 and decoding in Stage 3.
         video_only: When True (default), generate video only. When False,
@@ -1838,27 +1873,10 @@ def generate_video_two_stage(
     )
 
     if cached_transformer is not None:
-        # Reconstruct from cached bf16 state dict (skips disk I/O)
-        # meta_init eliminates 2x memory spike during construction
-        logger.info("Using cached transformer weights, reconstructing model...")
-        from llm_dit.models.ltx2.loader import create_model_from_config
-        from llm_dit.utils.meta_init import meta_init
-        with meta_init():
-            model = create_model_from_config(cached_transformer["config"], dtype)
-        model.load_state_dict(cached_transformer["state_dict"], assign=True)
-
-        if effective_quantize and effective_precision != "none":
-            from llm_dit.quantization import quantize_component
-            model, stats = quantize_component(
-                model, method=effective_precision, component_type="transformer",
-                granularity=granularity,
-            )
-            logger.info(
-                f"Transformer quantized: {stats['quantized_layers']}/{stats['total_layers']} layers "
-                f"({effective_precision}, granularity={granularity})"
-            )
-
-        model = model.to(transformer_device)
+        model = _reconstruct_transformer_from_cache(
+            cached_transformer, dtype, transformer_device,
+            effective_quantize, effective_precision, granularity,
+        )
     else:
         # Load from disk (fallback when no cache)
         from llm_dit.models.ltx2 import load_ltx2_transformer

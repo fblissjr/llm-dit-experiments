@@ -746,7 +746,7 @@ class ModelManager:
         )
 
         del model
-        return {"config": config, "state_dict": sd}
+        return {"config": config, "state_dict": sd, "video_only": video_only}
 
     def _pin_model_memory(self, model: torch.nn.Module, label: str) -> int:
         """Pin all parameter and buffer memory for fast DMA shuttle.
