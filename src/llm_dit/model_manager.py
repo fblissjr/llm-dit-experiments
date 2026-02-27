@@ -143,6 +143,10 @@ REQUIRES_RESTART = {
     # Compilation
     "compile",
     "compile_mode",
+    # Audio models
+    "audio_enabled",
+    "audio_vae_path",
+    "vocoder_path",
 }
 
 
@@ -229,6 +233,9 @@ class ModelManager:
         self._ltx2_transformer_cache: Optional[dict] = None
         # LTX-2 cached VAE decoder (pinned memory, shuttled to GPU per generation)
         self._ltx2_vae: Any = None
+        # LTX-2 cached audio decoder and vocoder (pinned memory, shuttled to GPU)
+        self._ltx2_audio_decoder: Any = None
+        self._ltx2_vocoder: Any = None
 
     # -- public API --
 
@@ -378,6 +385,16 @@ class ModelManager:
     def ltx2_vae(self) -> Any:
         """Get cached LTX-2 VAE decoder (None if not loaded)."""
         return self._ltx2_vae
+
+    @property
+    def ltx2_audio_decoder(self) -> Any:
+        """Get cached LTX-2 audio decoder (None if not loaded)."""
+        return self._ltx2_audio_decoder
+
+    @property
+    def ltx2_vocoder(self) -> Any:
+        """Get cached LTX-2 vocoder (None if not loaded)."""
+        return self._ltx2_vocoder
 
     def get_vram_status(self) -> dict:
         """Get current VRAM usage and loaded models status."""
@@ -696,16 +713,20 @@ class ModelManager:
             tf_path = model_path / "transformer"
 
         # Load model to CPU in bf16 (handles key mapping, FP8 dequantization, etc.)
+        # When audio_enabled, load full AV model (video_only=False) so audio weights
+        # are included in the cached state dict.
+        audio_enabled = ltx2_cfg.audio_enabled if ltx2_cfg else False
+        video_only = not audio_enabled
         is_fp8_file = tf_path.is_file() and "fp8" in tf_path.name.lower()
         if is_fp8_file:
             from llm_dit.models.ltx2 import load_ltx2_transformer_from_fp8
             model = load_ltx2_transformer_from_fp8(
-                tf_path, dtype=torch.bfloat16, device="cpu", video_only=True
+                tf_path, dtype=torch.bfloat16, device="cpu", video_only=video_only
             )
         else:
             from llm_dit.models.ltx2 import load_ltx2_transformer
             model = load_ltx2_transformer(
-                tf_path, dtype=torch.bfloat16, device="cpu", video_only=True
+                tf_path, dtype=torch.bfloat16, device="cpu", video_only=video_only
             )
 
         # Load config for model reconstruction
@@ -727,6 +748,24 @@ class ModelManager:
         del model
         return {"config": config, "state_dict": sd}
 
+    def _pin_model_memory(self, model: torch.nn.Module, label: str) -> int:
+        """Pin all parameter and buffer memory for fast DMA shuttle.
+
+        Returns number of tensors pinned.
+        """
+        pinned = 0
+        for param in model.parameters():
+            if not param.data.is_pinned():
+                param.data = param.data.pin_memory()
+                pinned += 1
+        for _name, buf in model.named_buffers():
+            if not buf.data.is_pinned():
+                buf.data = buf.data.pin_memory()
+                pinned += 1
+        num_params = sum(p.numel() for p in model.parameters())
+        logger.info(f"  {label} cached: {num_params / 1e6:.1f}M params, {pinned} tensors pinned")
+        return pinned
+
     def _preload_ltx2_vae(self, model_path: Path) -> Any:
         """Load VAE decoder and cache on CPU with pinned memory.
 
@@ -738,22 +777,26 @@ class ModelManager:
         vae = load_ltx2_vae_decoder(
             model_path / "vae", dtype=torch.bfloat16, device="cpu"
         )
-
-        # Pin all parameter and buffer memory for fast DMA shuttle
-        pinned = 0
-        for param in vae.parameters():
-            if not param.data.is_pinned():
-                param.data = param.data.pin_memory()
-                pinned += 1
-        for _name, buf in vae.named_buffers():
-            if not buf.data.is_pinned():
-                buf.data = buf.data.pin_memory()
-                pinned += 1
-
-        num_params = sum(p.numel() for p in vae.parameters())
-        logger.info(f"  VAE cached: {num_params / 1e6:.1f}M params, {pinned} tensors pinned")
-
+        self._pin_model_memory(vae, "VAE")
         return vae
+
+    def _preload_ltx2_audio_decoder(self, model_path: Path, audio_vae_path: str = "") -> Any:
+        """Load audio decoder and cache on CPU with pinned memory (~102MB)."""
+        from llm_dit.models.ltx2.audio_vae.loader import load_audio_decoder
+
+        path = Path(audio_vae_path) if audio_vae_path else model_path / "audio_vae"
+        decoder = load_audio_decoder(path, dtype=torch.bfloat16, device="cpu")
+        self._pin_model_memory(decoder, "Audio decoder")
+        return decoder
+
+    def _preload_ltx2_vocoder(self, model_path: Path, vocoder_path: str = "") -> Any:
+        """Load vocoder and cache on CPU with pinned memory (~107MB)."""
+        from llm_dit.models.ltx2.audio_vae.loader import load_vocoder
+
+        path = Path(vocoder_path) if vocoder_path else model_path / "vocoder"
+        vocoder = load_vocoder(path, dtype=torch.bfloat16, device="cpu")
+        self._pin_model_memory(vocoder, "Vocoder")
+        return vocoder
 
     def _load_ltx2(self) -> LoadResult:
         """Validate LTX-2 configuration and pre-load Gemma3 encoder.
@@ -831,10 +874,35 @@ class ModelManager:
         vae_time = time.time() - vae_start
         logger.info(f"[LTX-2] VAE cached in {vae_time:.1f}s")
 
+        # Pre-load audio models when audio_enabled (optional, ~209MB total)
+        audio_time = 0.0
+        if ltx2_cfg and ltx2_cfg.audio_enabled:
+            audio_vae_dir = Path(ltx2_cfg.audio_vae_path) if ltx2_cfg.audio_vae_path else model_path / "audio_vae"
+            vocoder_dir = Path(ltx2_cfg.vocoder_path) if ltx2_cfg.vocoder_path else model_path / "vocoder"
+
+            if audio_vae_dir.exists() and vocoder_dir.exists():
+                logger.info("[LTX-2] Pre-loading audio models for caching...")
+                audio_start = time.time()
+                self._ltx2_audio_decoder = self._preload_ltx2_audio_decoder(
+                    model_path, ltx2_cfg.audio_vae_path,
+                )
+                self._ltx2_vocoder = self._preload_ltx2_vocoder(
+                    model_path, ltx2_cfg.vocoder_path,
+                )
+                audio_time = time.time() - audio_start
+                logger.info(f"[LTX-2] Audio models cached in {audio_time:.1f}s")
+            else:
+                logger.warning(
+                    "[LTX-2] audio_enabled=True but audio models not found. "
+                    f"audio_vae={audio_vae_dir.exists()}, vocoder={vocoder_dir.exists()}. "
+                    "Audio unavailable."
+                )
+
         total_time = time.time() - start
         logger.info(
             f"[LTX-2] All components pre-loaded in {total_time:.1f}s "
-            f"(encoder={encoder_time:.1f}s, transformer={tf_time:.1f}s, vae={vae_time:.1f}s)"
+            f"(encoder={encoder_time:.1f}s, transformer={tf_time:.1f}s, vae={vae_time:.1f}s"
+            f"{f', audio={audio_time:.1f}s' if audio_time > 0 else ''})"
         )
 
         # Store config dict as sentinel (not None) so is_loaded() returns True
@@ -1146,6 +1214,8 @@ class ModelManager:
             or self._ltx2_encoder is not None
             or self._ltx2_transformer_cache is not None
             or self._ltx2_vae is not None
+            or self._ltx2_audio_decoder is not None
+            or self._ltx2_vocoder is not None
         )
         if not has_anything:
             return False
@@ -1169,6 +1239,18 @@ class ModelManager:
             del self._ltx2_vae
             self._ltx2_vae = None
             logger.info("[VRAM] LTX-2 VAE cache released")
+
+        # Release cached audio decoder
+        if self._ltx2_audio_decoder is not None:
+            del self._ltx2_audio_decoder
+            self._ltx2_audio_decoder = None
+            logger.info("[VRAM] LTX-2 audio decoder cache released")
+
+        # Release cached vocoder
+        if self._ltx2_vocoder is not None:
+            del self._ltx2_vocoder
+            self._ltx2_vocoder = None
+            logger.info("[VRAM] LTX-2 vocoder cache released")
 
         self._pipelines.pop("ltx2", None)
         gc.collect()

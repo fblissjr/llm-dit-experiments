@@ -492,68 +492,21 @@ class Attention(nn.Module):
         """
         # Compute Q, K, V
         q = self.to_q(x)
-        is_cross_attn = context is not None
         context = x if context is None else context
         k = self.to_k(context)
         v = self.to_v(context)
 
-        # DEBUG: Log Q, K, V stats for cross-attention debugging
-        if is_cross_attn and hasattr(self, '_debug_cross_attn') and self._debug_cross_attn:
-            # Check if x varies across visual tokens - this indicates structure
-            x_token_std = x.std(dim=1).mean()  # Std across tokens, averaged over batch and features
-            x_feature_std = x.std(dim=2).mean()  # Std across features, averaged over batch and tokens
-            print(f"  [CROSS-ATTN DEBUG] x shape: {x.shape}")
-            print(f"  [CROSS-ATTN DEBUG] x inter-token std: {x_token_std:.6f} (variation across tokens)")
-            print(f"  [CROSS-ATTN DEBUG] x intra-token std: {x_feature_std:.6f} (variation within each token)")
-            print(f"  [CROSS-ATTN DEBUG] input x: mean={x.mean():.6f}, std={x.std():.6f}")
-            print(f"  [CROSS-ATTN DEBUG] context shape: {context.shape}")
-            print(f"  [CROSS-ATTN DEBUG] q (pre-norm): mean={q.mean():.6f}, std={q.std():.6f}")
-            print(f"  [CROSS-ATTN DEBUG] context: mean={context.mean():.6f}, std={context.std():.6f}")
-            print(f"  [CROSS-ATTN DEBUG] k (pre-norm): mean={k.mean():.6f}, std={k.std():.6f}")
-            print(f"  [CROSS-ATTN DEBUG] v: mean={v.mean():.6f}, std={v.std():.6f}")
-            self._debug_cross_attn = False  # Only log once
-
         # Apply Q/K RMSNorm
         q = self.q_norm(q)
         k = self.k_norm(k)
-
-        # DEBUG: Post-norm Q, K stats
-        _debug_cross_attn_post = is_cross_attn and hasattr(self, '_debug_cross_attn_post') and self._debug_cross_attn_post
-        if _debug_cross_attn_post:
-            print(f"  [CROSS-ATTN DEBUG] q (post-norm): mean={q.mean():.6f}, std={q.std():.6f}")
-            print(f"  [CROSS-ATTN DEBUG] k (post-norm): mean={k.mean():.6f}, std={k.std():.6f}")
 
         # Apply RoPE position embeddings
         if pe is not None:
             q = apply_rotary_emb(q, pe, self.rope_type)
             k = apply_rotary_emb(k, pe if k_pe is None else k_pe, self.rope_type)
 
-        # DEBUG: Post-RoPE Q, K stats (only for cross-attn which doesn't use RoPE)
-        if _debug_cross_attn_post and pe is None:
-            print(f"  [CROSS-ATTN DEBUG] No RoPE for cross-attn")
-
         # Compute attention
-        # attention_function can be an AttentionFunction enum or a custom callable
         out = self.attention_function(q, k, v, self.heads, mask)
-
-        # DEBUG: attention output
-        if _debug_cross_attn_post:
-            print(f"  [CROSS-ATTN DEBUG] output: mean={out.mean():.6f}, std={out.std():.6f}")
-            # Manually compute attention weights to analyze entropy
-            b, seq_q, inner = q.shape
-            _, seq_k, _ = k.shape
-            dim_head = inner // self.heads
-            q_debug = q.view(b, seq_q, self.heads, dim_head).transpose(1, 2)  # [B, H, Tq, D]
-            k_debug = k.view(b, seq_k, self.heads, dim_head).transpose(1, 2)  # [B, H, Tk, D]
-            attn_weights = torch.matmul(q_debug, k_debug.transpose(-2, -1)) / (dim_head ** 0.5)
-            attn_probs = torch.softmax(attn_weights, dim=-1)
-            # Compute entropy: -sum(p * log(p))
-            entropy = -(attn_probs * (attn_probs + 1e-10).log()).sum(dim=-1).mean()
-            max_entropy = torch.tensor(seq_k, dtype=torch.float32).log()
-            print(f"  [CROSS-ATTN DEBUG] attn weights (pre-softmax): mean={attn_weights.mean():.4f}, std={attn_weights.std():.4f}, min={attn_weights.min():.4f}, max={attn_weights.max():.4f}")
-            print(f"  [CROSS-ATTN DEBUG] attn probs max: {attn_probs.max():.4f}, min: {attn_probs.min():.6f}")
-            print(f"  [CROSS-ATTN DEBUG] entropy: {entropy:.4f} (max possible: {max_entropy:.4f}, ratio: {entropy/max_entropy:.4f})")
-            self._debug_cross_attn_post = False
 
         return self.to_out(out)
 

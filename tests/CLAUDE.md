@@ -200,7 +200,7 @@ uv run pytest tests/unit/test_ltx2_video_vae.py -v
 ## quick commands
 
 ```bash
-# Run ALL tests (~1200 tests, ~5 min)
+# Run ALL tests (~1600 tests, ~5 min)
 uv run pytest tests/ -v
 
 # API E2E smoke tests (GPU + models required)
@@ -295,6 +295,12 @@ uv run pytest tests/unit/test_gemma3_encoder.py -v
 ```bash
 uv run pytest tests/unit/test_conditioning.py -v
 uv run pytest tests/integration/test_conditioning_integration.py -v
+```
+
+### after changing audio/AV code
+```bash
+uv run pytest tests/unit/test_ltx2_audio_vae.py -v
+uv run pytest tests/unit/test_ltx2_av_transformer.py -v
 ```
 
 ### after changing scheduler/sigma logic
@@ -470,7 +476,9 @@ LLM_DIT_TEST_BACKEND=ltx2 uv run pytest tests/integration/pipeline/test_baseline
 | **Integration** | 5 | ~60 | Numerical equivalence, memory |
 | **E2E** | 3 | ~12 | Full pipeline, reference comparison |
 | **LTX-2 Embeddings** | 2 | ~19 | Embedding precomputation CLI, save/load |
-| **Total** | - | **~1050** | Comprehensive regression protection |
+| **Audio VAE** | 1 | 31 | AudioDecoder, HiFiGAN vocoder, AudioPatchifier, weight loading |
+| **AV Transformer** | 1 | 41 | BasicAVTransformerBlock, dual-stream, STG perturbation, FBCache |
+| **Total** | - | **~1600** | Comprehensive regression protection |
 
 ## critical: visual verification
 

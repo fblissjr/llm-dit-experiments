@@ -39,18 +39,30 @@ logger = logging.getLogger(__name__)
 
 # Key mapping from diffusers format to our implementation
 DIFFUSERS_TO_OURS = {
-    # Input/output projections
+    # Video input/output projections
     "proj_in.": "patchify_proj.",
 
-    # Timestep embedding (AdaLayerNormSingle)
+    # Video timestep embedding (AdaLayerNormSingle)
     "time_embed.emb.timestep_embedder.": "adaln_single.emb.timestep_embedder.",
     "time_embed.linear.": "adaln_single.linear.",
 
+    # Audio input/output projections
+    "audio_proj_in.": "audio_patchify_proj.",
+
+    # Audio timestep embedding
+    "audio_time_embed.emb.timestep_embedder.": "audio_adaln_single.emb.timestep_embedder.",
+    "audio_time_embed.linear.": "audio_adaln_single.linear.",
+
+    # Cross-modal AdaLN modules
+    "av_cross_attn_video_scale_shift.": "av_ca_video_scale_shift_adaln_single.",
+    "av_cross_attn_audio_scale_shift.": "av_ca_audio_scale_shift_adaln_single.",
+    "av_cross_attn_a2v_gate.": "av_ca_a2v_gate_adaln_single.",
+    "av_cross_attn_v2a_gate.": "av_ca_v2a_gate_adaln_single.",
+
     # Attention norm naming (diffusers uses norm_q/norm_k, we use q_norm/k_norm)
+    # This applies to all attention modules (video, audio, cross-modal)
     ".norm_q.": ".q_norm.",
     ".norm_k.": ".k_norm.",
-
-    # The rest should match (caption_projection, transformer_blocks, etc.)
 }
 
 # Keys to skip when loading video-only (audio components)
@@ -182,21 +194,40 @@ def load_config(path: Path) -> dict:
     }
 
 
-def create_model_from_config(config: dict, dtype: torch.dtype = torch.bfloat16) -> LTX2Transformer:
+def create_model_from_config(
+    config: dict,
+    dtype: torch.dtype = torch.bfloat16,
+    model_type: LTXModelType = LTXModelType.VideoOnly,
+) -> LTX2Transformer:
     """
     Create LTX2Transformer from config dictionary.
 
     Args:
         config: Model configuration
         dtype: Model dtype
+        model_type: Which variant to create (VideoOnly, AudioVideo, AudioOnly)
 
     Returns:
         Initialized model (random weights)
     """
     rope_type = LTXRopeType.SPLIT if config.get("rope_type") == "split" else LTXRopeType.INTERLEAVED
 
+    # Audio parameters (only used when model_type includes audio)
+    audio_kwargs = {}
+    if model_type.is_audio_enabled():
+        audio_kwargs = dict(
+            audio_num_attention_heads=config.get("audio_num_attention_heads", 32),
+            audio_attention_head_dim=config.get("audio_attention_head_dim", 64),
+            audio_in_channels=config.get("audio_in_channels", 128),
+            audio_out_channels=config.get("audio_out_channels", 128),
+            audio_cross_attention_dim=config.get("audio_cross_attention_dim", 2048),
+            audio_positional_embedding_max_pos=[
+                config.get("audio_pos_embed_max_pos", 20),
+            ],
+        )
+
     model = LTX2Transformer(
-        model_type=LTXModelType.VideoOnly,
+        model_type=model_type,
         num_attention_heads=config.get("num_attention_heads", 32),
         attention_head_dim=config.get("attention_head_dim", 128),
         in_channels=config.get("in_channels", 128),
@@ -214,6 +245,7 @@ def create_model_from_config(config: dict, dtype: torch.dtype = torch.bfloat16) 
         use_middle_indices_grid=True,
         rope_type=rope_type,
         double_precision_rope=config.get("rope_double_precision", True),
+        **audio_kwargs,
     )
 
     return model.to(dtype)
@@ -225,6 +257,7 @@ def load_ltx2_transformer(
     device: str = "cpu",
     video_only: bool = True,
     strict: bool = False,
+    model_type: Optional[LTXModelType] = None,
 ) -> LTX2Transformer:
     """
     Load LTX-2 transformer from checkpoint.
@@ -236,8 +269,9 @@ def load_ltx2_transformer(
         path: Path to checkpoint file or directory
         dtype: Model dtype (bf16 recommended)
         device: Device to load to initially (use 'cpu' then .to('cuda') for large models)
-        video_only: If True, skip audio weights
+        video_only: If True, skip audio weights (ignored if model_type is set)
         strict: If True, raise error on missing/extra keys
+        model_type: Explicit model type. If set, overrides video_only flag.
 
     Returns:
         Loaded LTX2Transformer model
@@ -247,10 +281,15 @@ def load_ltx2_transformer(
         model = load_ltx2_transformer("models/LTX-2/transformer/")
         model = model.cuda()  # Move to GPU after loading
 
-        # Load with specific dtype
-        model = load_ltx2_transformer(path, dtype=torch.float16)
+        # Load audio-video model
+        model = load_ltx2_transformer(path, model_type=LTXModelType.AudioVideo)
     """
     path = Path(path)
+
+    # Resolve model_type from video_only flag if not explicitly set
+    if model_type is None:
+        model_type = LTXModelType.VideoOnly if video_only else LTXModelType.AudioVideo
+    video_only = not model_type.is_audio_enabled()
 
     # Load config
     config = load_config(path)
@@ -258,7 +297,7 @@ def load_ltx2_transformer(
                 f"{config.get('num_attention_heads', 32)} heads")
 
     # Create model
-    model = create_model_from_config(config, dtype)
+    model = create_model_from_config(config, dtype, model_type=model_type)
 
     # Load weights
     logger.info(f"Loading weights from {path}")
@@ -426,6 +465,7 @@ def load_ltx2_transformer_from_fp8(
     dtype: torch.dtype = torch.bfloat16,
     device: str = "cpu",
     video_only: bool = True,
+    model_type: Optional[LTXModelType] = None,
 ) -> LTX2Transformer:
     """Load LTX-2 transformer from a pre-quantized FP8 safetensors file.
 
@@ -445,7 +485,8 @@ def load_ltx2_transformer_from_fp8(
         path: Path to FP8 safetensors file (NOT a directory).
         dtype: Target dtype for dequantized weights (bf16 recommended).
         device: Device to load to (use 'cpu' for offloading workflows).
-        video_only: If True, skip audio/vocoder weights.
+        video_only: If True, skip audio/vocoder weights (ignored if model_type set).
+        model_type: Explicit model type. If set, overrides video_only flag.
 
     Returns:
         LTX2Transformer with dequantized weights in target dtype.
@@ -454,7 +495,12 @@ def load_ltx2_transformer_from_fp8(
     if not path.is_file():
         raise FileNotFoundError(f"FP8 checkpoint not found: {path}")
 
-    logger.info(f"Loading FP8 checkpoint from {path}")
+    # Resolve model_type from video_only flag if not explicitly set
+    if model_type is None:
+        model_type = LTXModelType.VideoOnly if video_only else LTXModelType.AudioVideo
+    video_only = not model_type.is_audio_enabled()
+
+    logger.info(f"Loading FP8 checkpoint from {path} (model_type={model_type.value})")
 
     # Load raw state dict
     raw_sd = load_safetensors(path, device="cpu")
@@ -538,7 +584,7 @@ def load_ltx2_transformer_from_fp8(
 
     # Load config and create model -- FP8 files use our naming, no diffusers mapping needed
     config = load_config(path.parent)
-    model = create_model_from_config(config, dtype)
+    model = create_model_from_config(config, dtype, model_type=model_type)
 
     load_result = model.load_state_dict(final_sd, strict=False)
     if load_result.missing_keys:

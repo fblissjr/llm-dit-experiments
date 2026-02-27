@@ -169,6 +169,8 @@ guidance_scale = 3.5
 # Audio
 audio_enabled = false
 audio_negative_prompt = ""
+audio_vae_path = ""    # leave empty to use model_path/audio_vae
+vocoder_path = ""      # leave empty to use model_path/vocoder
 
 # Two-stage pipeline (reference: TI2VidTwoStagesPipeline)
 use_two_stage = true

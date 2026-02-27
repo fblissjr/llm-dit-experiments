@@ -33,7 +33,7 @@ Usage:
 import logging
 from dataclasses import dataclass, replace
 from enum import Enum
-from typing import Callable, Optional, Tuple, Union
+from typing import Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -54,6 +54,86 @@ from llm_dit.models.ltx2.rope import (
     generate_freq_grid_pytorch,
     precompute_freqs_cis,
 )
+
+# Additive attention mask fill value. Valid tokens get 0, padding tokens get
+# this large negative value so they contribute ~0 after softmax.
+_MASK_FILL_VALUE = -10000.0
+
+
+class PerturbationType(Enum):
+    """Types of attention perturbation for STG (Spatio-Temporal Guidance).
+
+    Each type corresponds to a specific attention operation that can be
+    selectively skipped during the perturbed forward pass.
+    """
+    SKIP_A2V_CROSS_ATTN = "skip_a2v_cross_attn"
+    SKIP_V2A_CROSS_ATTN = "skip_v2a_cross_attn"
+    SKIP_VIDEO_SELF_ATTN = "skip_video_self_attn"
+    SKIP_AUDIO_SELF_ATTN = "skip_audio_self_attn"
+
+
+@dataclass(frozen=True)
+class Perturbation:
+    """A single perturbation: skip a specific attention type in specific blocks."""
+    type: PerturbationType
+    blocks: list[int] | None  # None = all blocks
+
+    def is_perturbed(self, perturbation_type: PerturbationType, block: int) -> bool:
+        if self.type != perturbation_type:
+            return False
+        if self.blocks is None:
+            return True
+        return block in self.blocks
+
+
+@dataclass(frozen=True)
+class PerturbationConfig:
+    """Perturbation configuration for a single sample in a batch."""
+    perturbations: list[Perturbation] | None
+
+    def is_perturbed(self, perturbation_type: PerturbationType, block: int) -> bool:
+        if self.perturbations is None:
+            return False
+        return any(p.is_perturbed(perturbation_type, block) for p in self.perturbations)
+
+    @staticmethod
+    def empty() -> "PerturbationConfig":
+        return PerturbationConfig([])
+
+
+@dataclass(frozen=True)
+class BatchedPerturbationConfig:
+    """Perturbation configs for a batch, with mask generation utilities."""
+    perturbations: list[PerturbationConfig]
+
+    def mask(
+        self, perturbation_type: PerturbationType, block: int,
+        device: torch.device, dtype: torch.dtype,
+    ) -> torch.Tensor:
+        """Generate [B] mask: 1.0 where NOT perturbed, 0.0 where perturbed."""
+        mask = torch.ones(len(self.perturbations), device=device, dtype=dtype)
+        for idx, pc in enumerate(self.perturbations):
+            if pc.is_perturbed(perturbation_type, block):
+                mask[idx] = 0.0
+        return mask
+
+    def mask_like(
+        self, perturbation_type: PerturbationType, block: int,
+        values: torch.Tensor,
+    ) -> torch.Tensor:
+        """Generate broadcastable mask shaped [B, 1, 1, ...] matching values dims."""
+        mask = self.mask(perturbation_type, block, values.device, values.dtype)
+        return mask.view(mask.numel(), *([1] * len(values.shape[1:])))
+
+    def any_in_batch(self, perturbation_type: PerturbationType, block: int) -> bool:
+        return any(pc.is_perturbed(perturbation_type, block) for pc in self.perturbations)
+
+    def all_in_batch(self, perturbation_type: PerturbationType, block: int) -> bool:
+        return all(pc.is_perturbed(perturbation_type, block) for pc in self.perturbations)
+
+    @staticmethod
+    def empty(batch_size: int) -> "BatchedPerturbationConfig":
+        return BatchedPerturbationConfig([PerturbationConfig.empty() for _ in range(batch_size)])
 
 
 class LTXModelType(Enum):
@@ -175,19 +255,19 @@ class TransformerArgsPreprocessor:
         # The per-dim mean offsets ARE the semantic signal, not noise.
         # Original hypothesis was wrong - centering removes 70% of variance.
 
-        # Trace context signal before projection
-        logger.debug(
-            f"[TRANSFORMER] Before caption_projection: shape={list(context.shape)}, "
-            f"mean={context.float().mean():.4f}, std={context.float().std():.4f}"
-        )
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                "[TRANSFORMER] Before caption_projection: shape=%s, mean=%.4f, std=%.4f",
+                list(context.shape), context.float().mean(), context.float().std(),
+            )
 
         context = self.caption_projection(context)
 
-        # Trace context signal after projection
-        logger.debug(
-            f"[TRANSFORMER] After caption_projection: shape={list(context.shape)}, "
-            f"mean={context.float().mean():.4f}, std={context.float().std():.4f}"
-        )
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                "[TRANSFORMER] After caption_projection: shape=%s, mean=%.4f, std=%.4f",
+                list(context.shape), context.float().mean(), context.float().std(),
+            )
 
         context = context.view(batch_size, -1, x.shape[-1])
         return context, attention_mask
@@ -202,10 +282,9 @@ class TransformerArgsPreprocessor:
             return attention_mask
 
         # Convert boolean mask to additive attention mask: 0=attend, -10000=ignore
-        # Using -10000.0 like official LTX-2 (not finfo.max which can cause precision issues)
         return (attention_mask - 1).to(x_dtype).reshape(
             (attention_mask.shape[0], 1, -1, attention_mask.shape[-1])
-        ) * 10000.0  # Results in 0 for valid, -10000 for padding
+        ) * abs(_MASK_FILL_VALUE)
 
     def _prepare_positional_embeddings(
         self,
@@ -363,58 +442,19 @@ class BasicTransformerBlock(nn.Module):
             self.scale_shift_table, batch_size, args.timesteps, slice(0, 3)
         )
 
-        # DEBUG: Track variance at each stage in block 0
-        _debug_block0 = self.idx == 0 and hasattr(self, '_debug_step') and self._debug_step in [0, 20, 39]
-        if _debug_block0:
-            x_in_inter = x.std(dim=1).mean().item()
-            print(f"[VARIANCE TRACE] Block 0, Step {self._debug_step}:")
-            print(f"  1. x input inter-token std: {x_in_inter:.4f}")
-
         # Self-attention with RoPE (skipped during STG perturbed pass)
         if not skip_self_attn:
             norm_x = rms_norm(x, eps=self.norm_eps) * (1 + scale_msa) + shift_msa
-
-            if _debug_block0:
-                norm_x_inter = norm_x.std(dim=1).mean().item()
-                print(f"  2. after RMSNorm+AdaLN inter-token std: {norm_x_inter:.4f}")
-
             self_attn_out = self.attn1(norm_x, pe=args.positional_embeddings) * gate_msa
-
-            if _debug_block0:
-                self_attn_inter = self_attn_out.std(dim=1).mean().item()
-                gate_mean = gate_msa.mean().item()
-                print(f"  3. self_attn_out*gate inter-token std: {self_attn_inter:.4f} (gate_mean={gate_mean:.4f})")
-
             x = x + self_attn_out
 
-            if _debug_block0:
-                x_post_self_inter = x.std(dim=1).mean().item()
-                print(f"  4. x after self-attn residual inter-token std: {x_post_self_inter:.4f}")
-
         # Cross-attention with text conditioning
-        norm_x_cross = rms_norm(x, eps=self.norm_eps)
-
-        if _debug_block0:
-            norm_x_cross_inter = norm_x_cross.std(dim=1).mean().item()
-            print(f"  5. after 2nd RMSNorm (cross-attn input) inter-token std: {norm_x_cross_inter:.4f}")
-
         cross_attn_out = self.attn2(
-            norm_x_cross,
+            rms_norm(x, eps=self.norm_eps),
             context=args.context,
             mask=args.context_mask
         )
         x = x + cross_attn_out
-
-        # DEBUG: Log attention magnitudes for diagnostic blocks
-        if not skip_self_attn and self.idx in [0, 23, 47] and hasattr(self, '_debug_step'):
-            if self._debug_step in [0, 20, 39]:
-                x_inter_token = x.std(dim=1).mean()  # Variation across tokens
-                self_attn_inter = self_attn_out.std(dim=1).mean()
-                print(f"[ATTN DEBUG] Block {self.idx}, Step {self._debug_step}:")
-                print(f"  x inter-token std: {x_inter_token:.6f}")
-                print(f"  self_attn inter-token std: {self_attn_inter:.6f}")
-                print(f"  self_attn: mean={self_attn_out.mean():.6f}, std={self_attn_out.std():.6f}")
-                print(f"  cross_attn: mean={cross_attn_out.mean():.6f}, std={cross_attn_out.std():.6f}")
 
         # Get AdaLN values for FFN
         shift_mlp, scale_mlp, gate_mlp = self.get_ada_values(
@@ -478,8 +518,15 @@ class LTX2Transformer(nn.Module):
         positional_embedding_max_pos: Optional[list[int]] = None,
         timestep_scale_multiplier: int = 1000,
         use_middle_indices_grid: bool = True,
-        rope_type: LTXRopeType = LTXRopeType.SPLIT,  # Official LTX-2 config.json uses "split"
-        double_precision_rope: bool = True,  # Official LTX-2 config.json uses true
+        rope_type: LTXRopeType = LTXRopeType.SPLIT,
+        double_precision_rope: bool = True,
+        # Audio parameters (only used when model_type includes audio)
+        audio_num_attention_heads: int = 32,
+        audio_attention_head_dim: int = 64,
+        audio_in_channels: int = 128,
+        audio_out_channels: int = 128,
+        audio_cross_attention_dim: int = 2048,
+        audio_positional_embedding_max_pos: Optional[list[int]] = None,
     ):
         super().__init__()
 
@@ -508,13 +555,35 @@ class LTX2Transformer(nn.Module):
 
             self._init_preprocessor()
 
-            self._init_transformer_blocks(
-                num_layers=num_layers,
-                attention_head_dim=attention_head_dim,
-                cross_attention_dim=cross_attention_dim,
+        if model_type.is_audio_enabled():
+            if audio_positional_embedding_max_pos is None:
+                audio_positional_embedding_max_pos = [20]
+            self.audio_positional_embedding_max_pos = audio_positional_embedding_max_pos
+            self.audio_num_attention_heads = audio_num_attention_heads
+            self.audio_inner_dim = audio_num_attention_heads * audio_attention_head_dim
+            self.audio_cross_attention_dim = audio_cross_attention_dim
+
+            self._init_audio(
+                in_channels=audio_in_channels,
+                out_channels=audio_out_channels,
+                caption_channels=caption_channels,
                 norm_eps=norm_eps,
-                attention_type=attention_type,
             )
+
+            self._init_audio_preprocessor()
+
+        if model_type.is_video_enabled() and model_type.is_audio_enabled():
+            self._init_audio_video()
+
+        self._init_transformer_blocks(
+            num_layers=num_layers,
+            attention_head_dim=attention_head_dim,
+            cross_attention_dim=cross_attention_dim,
+            norm_eps=norm_eps,
+            attention_type=attention_type,
+            audio_attention_head_dim=audio_attention_head_dim if model_type.is_audio_enabled() else None,
+            audio_cross_attention_dim=audio_cross_attention_dim if model_type.is_audio_enabled() else None,
+        )
 
     def _init_video(
         self,
@@ -541,8 +610,45 @@ class LTX2Transformer(nn.Module):
         self.norm_out = nn.LayerNorm(self.inner_dim, elementwise_affine=False, eps=norm_eps)
         self.proj_out = nn.Linear(self.inner_dim, out_channels)
 
+    def _init_audio(
+        self,
+        in_channels: int,
+        out_channels: int,
+        caption_channels: int,
+        norm_eps: float,
+    ) -> None:
+        """Initialize audio-specific components (mirrors _init_video)."""
+        self.audio_patchify_proj = nn.Linear(in_channels, self.audio_inner_dim, bias=True)
+        self.audio_adaln_single = AdaLayerNormSingle(self.audio_inner_dim)
+        self.audio_caption_projection = PixArtAlphaTextProjection(
+            in_features=caption_channels,
+            hidden_size=self.audio_inner_dim,
+        )
+        self.audio_scale_shift_table = nn.Parameter(torch.empty(2, self.audio_inner_dim))
+        self.audio_norm_out = nn.LayerNorm(
+            self.audio_inner_dim, elementwise_affine=False, eps=norm_eps,
+        )
+        self.audio_proj_out = nn.Linear(self.audio_inner_dim, out_channels)
+
+    def _init_audio_video(self) -> None:
+        """Initialize cross-modal AdaLN modules for audio-video interaction."""
+        # Cross-attention scale/shift: 4 values (scale_a2v, shift_a2v, scale_v2a, shift_v2a)
+        self.av_ca_video_scale_shift_adaln_single = AdaLayerNormSingle(
+            self.inner_dim, embedding_coefficient=4,
+        )
+        self.av_ca_audio_scale_shift_adaln_single = AdaLayerNormSingle(
+            self.audio_inner_dim, embedding_coefficient=4,
+        )
+        # Cross-attention gates: 1 value each
+        self.av_ca_a2v_gate_adaln_single = AdaLayerNormSingle(
+            self.inner_dim, embedding_coefficient=1,
+        )
+        self.av_ca_v2a_gate_adaln_single = AdaLayerNormSingle(
+            self.audio_inner_dim, embedding_coefficient=1,
+        )
+
     def _init_preprocessor(self) -> None:
-        """Initialize input preprocessor."""
+        """Initialize video input preprocessor."""
         self.args_preprocessor = TransformerArgsPreprocessor(
             patchify_proj=self.patchify_proj,
             adaln=self.adaln_single,
@@ -557,6 +663,22 @@ class LTX2Transformer(nn.Module):
             rope_type=self.rope_type,
         )
 
+    def _init_audio_preprocessor(self) -> None:
+        """Initialize audio input preprocessor (same class, different dims)."""
+        self.audio_args_preprocessor = TransformerArgsPreprocessor(
+            patchify_proj=self.audio_patchify_proj,
+            adaln=self.audio_adaln_single,
+            caption_projection=self.audio_caption_projection,
+            inner_dim=self.audio_inner_dim,
+            max_pos=self.audio_positional_embedding_max_pos,
+            num_attention_heads=self.audio_num_attention_heads,
+            use_middle_indices_grid=self.use_middle_indices_grid,
+            timestep_scale_multiplier=self.timestep_scale_multiplier,
+            double_precision_rope=self.double_precision_rope,
+            positional_embedding_theta=self.positional_embedding_theta,
+            rope_type=self.rope_type,
+        )
+
     def _init_transformer_blocks(
         self,
         num_layers: int,
@@ -564,25 +686,64 @@ class LTX2Transformer(nn.Module):
         cross_attention_dim: int,
         norm_eps: float,
         attention_type: Union[AttentionFunction, AttentionCallable],
+        audio_attention_head_dim: Optional[int] = None,
+        audio_cross_attention_dim: Optional[int] = None,
     ) -> None:
-        """Initialize transformer blocks."""
-        video_config = TransformerConfig(
-            dim=self.inner_dim,
-            heads=self.num_attention_heads,
-            d_head=attention_head_dim,
-            context_dim=cross_attention_dim,
-        )
+        """Initialize transformer blocks.
 
-        self.transformer_blocks = nn.ModuleList([
-            BasicTransformerBlock(
-                idx=idx,
-                config=video_config,
-                rope_type=self.rope_type,
-                norm_eps=norm_eps,
-                attention_function=attention_type,
+        For VideoOnly: creates BasicTransformerBlock instances (unchanged).
+        For AudioVideo: creates BasicAVTransformerBlock with both configs.
+        """
+        video_config: Optional[TransformerConfig] = None
+        if self.model_type.is_video_enabled():
+            video_config = TransformerConfig(
+                dim=self.inner_dim,
+                heads=self.num_attention_heads,
+                d_head=attention_head_dim,
+                context_dim=cross_attention_dim,
             )
-            for idx in range(num_layers)
-        ])
+
+        audio_config: Optional[TransformerConfig] = None
+        if self.model_type.is_audio_enabled():
+            assert audio_attention_head_dim is not None
+            assert audio_cross_attention_dim is not None
+            audio_config = TransformerConfig(
+                dim=self.audio_inner_dim,
+                heads=self.audio_num_attention_heads,
+                d_head=audio_attention_head_dim,
+                context_dim=audio_cross_attention_dim,
+            )
+
+        if self.model_type.is_audio_enabled():
+            # Deferred import to avoid circular dependency:
+            # av_block.py imports TransformerArgs/TransformerConfig from this module
+            from llm_dit.models.ltx2.av_block import BasicAVTransformerBlock
+
+            # AV blocks handle both modalities
+            self.transformer_blocks = nn.ModuleList([
+                BasicAVTransformerBlock(
+                    idx=idx,
+                    video=video_config,
+                    audio=audio_config,
+                    rope_type=self.rope_type,
+                    norm_eps=norm_eps,
+                    attention_function=attention_type,
+                )
+                for idx in range(num_layers)
+            ])
+        else:
+            # Video-only: use existing lightweight block
+            assert video_config is not None
+            self.transformer_blocks = nn.ModuleList([
+                BasicTransformerBlock(
+                    idx=idx,
+                    config=video_config,
+                    rope_type=self.rope_type,
+                    norm_eps=norm_eps,
+                    attention_function=attention_type,
+                )
+                for idx in range(num_layers)
+            ])
 
     def set_gradient_checkpointing(self, enable: bool) -> None:
         """Enable or disable gradient checkpointing."""
@@ -592,26 +753,104 @@ class LTX2Transformer(nn.Module):
         self,
         x: torch.Tensor,
         embedded_timestep: torch.Tensor,
+        scale_shift_table: nn.Parameter,
+        norm_out: nn.LayerNorm,
+        proj_out: nn.Linear,
     ) -> torch.Tensor:
-        """Apply final output projection with scale-shift modulation."""
-        # Compute scale-shift from timestep
+        """Apply final output projection with scale-shift modulation.
+
+        Args:
+            x: Hidden states [B, T, D]
+            embedded_timestep: Timestep embedding [B, T', D]
+            scale_shift_table: Parameter [2, D] for output modulation
+            norm_out: LayerNorm for output normalization
+            proj_out: Linear projection to output channels
+        """
         scale_shift_values = (
-            self.scale_shift_table[None, None].to(device=x.device, dtype=x.dtype)
+            scale_shift_table[None, None].to(device=x.device, dtype=x.dtype)
             + embedded_timestep[:, :, None]
         )
         shift, scale = scale_shift_values[:, :, 0], scale_shift_values[:, :, 1]
 
-        # Apply modulation and project
-        x = self.norm_out(x)
+        x = norm_out(x)
         x = x * (1 + scale) + shift
-        x = self.proj_out(x)
+        x = proj_out(x)
 
         return x
 
     def reset_fbcache(self) -> None:
         """Reset FBCache state. Call between generations."""
-        self._fbcache_prev_residuals: dict[int, torch.Tensor] = {}
+        self._fbcache_prev_residuals_video: dict[int, float] = {}
+        self._fbcache_prev_residuals_audio: dict[int, float] = {}
         self._fbcache_skip_mask: list[bool] = [False] * self.num_layers
+
+    def _prepare_cross_modal_args(
+        self,
+        video_args: TransformerArgs,
+        audio_args: TransformerArgs,
+        video_raw_timesteps: torch.Tensor,
+        audio_raw_timesteps: torch.Tensor,
+    ) -> Tuple[TransformerArgs, TransformerArgs]:
+        """Compute cross-modal PE and timestep embeddings for AV attention.
+
+        Cross-PE uses temporal dimension only, projected to audio cross-attention dim.
+        Cross-timestep embeddings come from the model-level AV AdaLN modules.
+
+        Args:
+            video_args: Preprocessed video TransformerArgs
+            audio_args: Preprocessed audio TransformerArgs
+            video_raw_timesteps: Raw video timestep values [B, 1] from Modality
+            audio_raw_timesteps: Raw audio timestep values [B, 1] from Modality
+        """
+        # Cross-modal PE: set to None for now (attention skips RoPE when pe=None).
+        # Phase 3 will compute proper 1D temporal cross-PE at audio cross-attention dim.
+        # Can't reuse modality PE here -- it's at the modality's own d_head, but
+        # cross-modal attention projects to audio.d_head which may differ.
+        video_cross_pe = None
+        audio_cross_pe = None
+
+        batch_size = video_args.x.shape[0]
+        hidden_dtype = video_args.x.dtype
+        timestep_mult = self.timestep_scale_multiplier
+
+        # Scale raw timesteps (same scaling used by regular AdaLN in preprocessor)
+        video_ts_scaled = (video_raw_timesteps * timestep_mult).flatten()  # [B]
+        audio_ts_scaled = (audio_raw_timesteps * timestep_mult).flatten()  # [B]
+
+        # Video cross-modal timestep embeddings
+        # AdaLayerNormSingle expects raw scalars [B] and handles embedding internally
+        v_cross_ss, _ = self.av_ca_video_scale_shift_adaln_single(
+            video_ts_scaled, hidden_dtype=hidden_dtype,
+        )
+        v_cross_ss = v_cross_ss.view(batch_size, -1, v_cross_ss.shape[-1])
+        v_cross_gate, _ = self.av_ca_a2v_gate_adaln_single(
+            video_ts_scaled, hidden_dtype=hidden_dtype,
+        )
+        v_cross_gate = v_cross_gate.view(batch_size, -1, v_cross_gate.shape[-1])
+
+        # Audio cross-modal timestep embeddings
+        a_cross_ss, _ = self.av_ca_audio_scale_shift_adaln_single(
+            audio_ts_scaled, hidden_dtype=hidden_dtype,
+        )
+        a_cross_ss = a_cross_ss.view(batch_size, -1, a_cross_ss.shape[-1])
+        a_cross_gate, _ = self.av_ca_v2a_gate_adaln_single(
+            audio_ts_scaled, hidden_dtype=hidden_dtype,
+        )
+        a_cross_gate = a_cross_gate.view(batch_size, -1, a_cross_gate.shape[-1])
+
+        video_args = replace(
+            video_args,
+            cross_positional_embeddings=video_cross_pe,
+            cross_scale_shift_timestep=v_cross_ss,
+            cross_gate_timestep=v_cross_gate,
+        )
+        audio_args = replace(
+            audio_args,
+            cross_positional_embeddings=audio_cross_pe,
+            cross_scale_shift_timestep=a_cross_ss,
+            cross_gate_timestep=a_cross_gate,
+        )
+        return video_args, audio_args
 
     def forward(
         self,
@@ -619,6 +858,7 @@ class LTX2Transformer(nn.Module):
         audio: Optional[Modality] = None,
         layer_mask: Optional[torch.Tensor] = None,
         stg_blocks: Optional[set[int]] = None,
+        perturbation_config: Optional[BatchedPerturbationConfig] = None,
         fbcache_threshold: float = 0.0,
         step_index: int = 0,
         num_steps: int = 1,
@@ -628,14 +868,15 @@ class LTX2Transformer(nn.Module):
 
         Args:
             video: Video modality input (required for VideoOnly model)
-            audio: Audio modality input (not used in VideoOnly)
+            audio: Audio modality input (requires AudioVideo model)
             layer_mask: Optional mask for layer ablation [num_layers] with 0/1
-            stg_blocks: Optional set of block indices where self-attention is
-                skipped (for Spatio-Temporal Guidance perturbed pass)
+            stg_blocks: Optional set of block indices where video self-attention
+                is skipped (for STG perturbed pass, video-only backward compat)
+            perturbation_config: Optional per-sample perturbation masks for STG
+                (replaces stg_blocks for AV models). Takes precedence if both set.
             fbcache_threshold: L1 residual norm threshold for block skipping.
-                0.0 = disabled (default). Values around 0.05 recommended.
-                Blocks whose residual change is below this threshold between
-                consecutive steps are skipped.
+                0.0 = disabled. For AV models, blocks are only skipped when BOTH
+                modalities are below threshold (conservative).
             step_index: Current denoising step index (0-based).
             num_steps: Total number of denoising steps.
 
@@ -644,31 +885,40 @@ class LTX2Transformer(nn.Module):
         """
         if not self.model_type.is_video_enabled() and video is not None:
             raise ValueError("Video is not enabled for this model")
+        if audio is not None and not self.model_type.is_audio_enabled():
+            raise ValueError("Audio passed to model without audio support")
 
-        if video is None:
+        if video is None and audio is None:
             return None, None
 
         # Preprocess inputs
-        args = self.args_preprocessor.prepare(video)
+        video_args: Optional[TransformerArgs] = None
+        audio_args: Optional[TransformerArgs] = None
+
+        if video is not None:
+            video_args = self.args_preprocessor.prepare(video)
+        if audio is not None:
+            audio_args = self.audio_args_preprocessor.prepare(audio)
+
+        # Cross-modal PE and timestep embeddings for AV models
+        if video_args is not None and audio_args is not None:
+            assert video is not None and audio is not None
+            video_args, audio_args = self._prepare_cross_modal_args(
+                video_args, audio_args,
+                video_raw_timesteps=video.timesteps,
+                audio_raw_timesteps=audio.timesteps,
+            )
 
         use_fbcache = fbcache_threshold > 0.0
         is_first_step = step_index == 0
         is_last_step = step_index == num_steps - 1
 
-        # First/last steps always compute all blocks
-        if use_fbcache and not is_first_step and not is_last_step:
-            if not hasattr(self, '_fbcache_prev_residuals'):
-                self.reset_fbcache()
-        else:
-            # Ensure state dict exists for residual tracking
-            if use_fbcache and not hasattr(self, '_fbcache_prev_residuals'):
-                self.reset_fbcache()
+        if use_fbcache and not hasattr(self, '_fbcache_prev_residuals_video'):
+            self.reset_fbcache()
 
         blocks_skipped = 0
 
-        # Process through transformer blocks
         for idx, block in enumerate(self.transformer_blocks):
-            # Optional layer masking for ablation
             if layer_mask is not None and not layer_mask[idx]:
                 continue
 
@@ -678,43 +928,84 @@ class LTX2Transformer(nn.Module):
                 blocks_skipped += 1
                 continue
 
-            skip_self_attn = stg_blocks is not None and idx in stg_blocks
+            if hasattr(block, 'has_audio'):  # BasicAVTransformerBlock
+                # AV block: pass both modalities
+                vx_before = video_args.x if video_args is not None else None
+                ax_before = audio_args.x if audio_args is not None else None
 
-            x_before = args.x
-
-            if self._enable_gradient_checkpointing and self.training:
-                args = torch.utils.checkpoint.checkpoint(
-                    block,
-                    args,
-                    skip_self_attn,
-                    use_reentrant=False,
+                video_args, audio_args = block(
+                    video=video_args,
+                    audio=audio_args,
+                    perturbation_config=perturbation_config,
                 )
+
+                # FBCache: track per-modality residuals, skip only when both below threshold
+                if use_fbcache:
+                    v_below = True
+                    a_below = True
+                    if video_args is not None and vx_before is not None:
+                        v_norm = (video_args.x - vx_before).abs().mean().item()
+                        v_prev = self._fbcache_prev_residuals_video.get(idx)
+                        if v_prev is not None:
+                            v_below = abs(v_norm - v_prev) < fbcache_threshold
+                        else:
+                            v_below = False
+                        self._fbcache_prev_residuals_video[idx] = v_norm
+                    if audio_args is not None and ax_before is not None:
+                        a_norm = (audio_args.x - ax_before).abs().mean().item()
+                        a_prev = self._fbcache_prev_residuals_audio.get(idx)
+                        if a_prev is not None:
+                            a_below = abs(a_norm - a_prev) < fbcache_threshold
+                        else:
+                            a_below = False
+                        self._fbcache_prev_residuals_audio[idx] = a_norm
+                    self._fbcache_skip_mask[idx] = v_below and a_below
             else:
-                args = block(args, skip_self_attn=skip_self_attn)
+                # Video-only BasicTransformerBlock
+                assert video_args is not None
+                skip_self_attn = stg_blocks is not None and idx in stg_blocks
+                x_before = video_args.x
 
-            # FBCache: track residual change for next step's skip decision
-            if use_fbcache:
-                residual = args.x - x_before
-                residual_norm = residual.abs().mean().item()
-
-                prev_norm = self._fbcache_prev_residuals.get(idx)
-                if prev_norm is not None:
-                    delta = abs(residual_norm - prev_norm)
-                    self._fbcache_skip_mask[idx] = delta < fbcache_threshold
+                if self._enable_gradient_checkpointing and self.training:
+                    video_args = torch.utils.checkpoint.checkpoint(
+                        block,
+                        video_args,
+                        skip_self_attn,
+                        use_reentrant=False,
+                    )
                 else:
-                    self._fbcache_skip_mask[idx] = False
+                    video_args = block(video_args, skip_self_attn=skip_self_attn)
 
-                self._fbcache_prev_residuals[idx] = residual_norm
+                if use_fbcache:
+                    residual_norm = (video_args.x - x_before).abs().mean().item()
+                    prev_norm = self._fbcache_prev_residuals_video.get(idx)
+                    if prev_norm is not None:
+                        self._fbcache_skip_mask[idx] = abs(residual_norm - prev_norm) < fbcache_threshold
+                    else:
+                        self._fbcache_skip_mask[idx] = False
+                    self._fbcache_prev_residuals_video[idx] = residual_norm
 
         if use_fbcache and blocks_skipped > 0:
             logger.debug(
-                f"[FBCache] Step {step_index}: skipped {blocks_skipped}/{self.num_layers} blocks"
+                "[FBCache] Step %d: skipped %d/%d blocks", step_index, blocks_skipped, self.num_layers,
             )
 
-        # Final output projection
-        video_out = self._process_output(args.x, args.embedded_timestep)
+        # Final output projections
+        video_out: Optional[torch.Tensor] = None
+        audio_out: Optional[torch.Tensor] = None
 
-        return video_out, None
+        if video_args is not None:
+            video_out = self._process_output(
+                video_args.x, video_args.embedded_timestep,
+                self.scale_shift_table, self.norm_out, self.proj_out,
+            )
+        if audio_args is not None:
+            audio_out = self._process_output(
+                audio_args.x, audio_args.embedded_timestep,
+                self.audio_scale_shift_table, self.audio_norm_out, self.audio_proj_out,
+            )
+
+        return video_out, audio_out
 
     def forward_with_layer_weights(
         self,
@@ -763,7 +1054,10 @@ class LTX2Transformer(nn.Module):
             else:
                 args = new_args
 
-        return self._process_output(args.x, args.embedded_timestep)
+        return self._process_output(
+            args.x, args.embedded_timestep,
+            self.scale_shift_table, self.norm_out, self.proj_out,
+        )
 
     def get_num_params(self) -> int:
         """Get total number of parameters."""

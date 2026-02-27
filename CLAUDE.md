@@ -1,6 +1,6 @@
-# agent context (v0.9.11)
+# agent context (v0.9.12)
 
-*last updated: 2026-02-26*
+*last updated: 2026-02-27*
 
 Quick reference for LLM agents. Read only what you need.
 
@@ -14,12 +14,13 @@ This machine has an **RTX 4090 with 24GB VRAM**. Tests requiring GPU should alwa
 
 **ALWAYS rely on retrieval and search over assumptions.**
 
-Before implementing anything, USE grep/search to:
-1. Check if config fields already exist
-2. Trace the full data flow from entry point to execution
-3. Find similar implementations in other pipelines
+Before implementing anything, take a retrieval based approach rather than making assumptions.
+1. Check if config fields and values are exist and/or are accurate
+2. Check the schema for a given module
+3. Trace the full data flow from entry point to execution
+4. Find similar implementations in other pipelines
 
-Never assume you know where code is or what exists. Always verify by reading.
+Never assume you know where code is or what exists. Always verify by retrieval and search.
 
 ## onboarding (3 steps)
 
@@ -87,36 +88,11 @@ All routers use `resolve_param()` from `web/param_resolver.py` for generation pa
 | **Debugging** | [lessons_learned.md](internal/state/lessons_learned.md) |
 | **Agent workflows** | [claude_workflow.md](internal/principles/claude_workflow.md) |
 | **Quantization** | [quantization.md](docs/reference/quantization.md) |
-| **HTTPS setup** | [README.md](README.md#https-setup) |
 | **Codebase map** | [codebase_map.md](internal/docs/architecture/codebase_map.md) |
 | **Logging standards** | [logging_standards.md](internal/principles/logging_standards.md) |
 | **Modular architecture (L1-L6)** | [modular_architecture.md](internal/principles/modular_architecture.md) |
 | **API endpoints / OpenAPI** | `scripts/export_openapi.py` or `npm run export-openapi && npm run gen-api` from `web/frontend-v2/` |
 | **E2E testing standard** | [tests/e2e/api/README.md](tests/e2e/api/README.md) |
-| **Model-specific docs** | See quickstarts below |
-
-## skills (slash commands)
-
-Use `/skill-name` for instant context loading. Skills inject live file listings and coderef mappings.
-
-| Skill | Invoked as | Scope |
-|-------|-----------|-------|
-| **Pipeline skills** | | |
-| LTX-2 pipeline | `/pipeline-ltx2` | Full LTX-2 pipeline context + sub-skill references |
-| FLUX.2 pipeline | `/pipeline-flux2` | FLUX.2 pipeline, persistent model pattern, LoRA |
-| Z-Image pipeline | `/pipeline-zimage` | Z-Image turbo/base variants |
-| Qwen-Image pipeline | `/pipeline-qwenimage` | Qwen-Image 2511 (edit) and 2512 (t2i) |
-| **LTX-2 sub-skills** | | |
-| LTX-2 encoder | `/ltx2-encoder` | Gemma3 49-layer extraction, connector, thinking tokens |
-| LTX-2 transformer | `/ltx2-transformer` | 48-block DiT, AdaLN-Zero, RoPE |
-| LTX-2 VAE | `/ltx2-vae` | Causal 3D VAE, tiling, upsampler |
-| LTX-2 conditioning | `/ltx2-conditioning` | LatentState, keyframes, I2V, two-stage |
-| LTX-2 research | `/ltx2-research` | Experiments, traces, analysis docs |
-| **Area skills** | | |
-| Architecture | `/architecture` | Config, ModelManager, quantization, LoRA, encoders |
-| Frontend | `/frontend` | React UI, FastAPI routers, OpenAPI codegen |
-| Testing | `/testing` | Unit/integration/E2E tests, constants, infrastructure |
-| Experiments | `/experiment` | Experiment framework, metrics, research protocols |
 
 ## feature implementation workflow
 
@@ -188,6 +164,8 @@ This is a **multi-workstream project**. Work happens in parallel across layers:
 | LoRA | `src/llm_dit/utils/lora.py` | Pipeline-agnostic: `load_lora()`, `FusedLoRAState` tracking |
 | Prompt rewriting | `src/llm_dit/utils/prompt_rewriter.py` | `PromptRewriter` (Qwen-Image), `Flux2PromptUpsampler` (FLUX.2) |
 | Meta init | `src/llm_dit/utils/meta_init.py` | Zero-memory model construction; use with `load_state_dict(assign=True)` |
+| Audio VAE | `src/llm_dit/models/ltx2/audio_vae/` | AudioDecoder (latents to mel), HiFiGAN Vocoder (mel to 24kHz waveform), AudioPatchifier |
+| AV Blocks | `src/llm_dit/models/ltx2/av_block.py` | `BasicAVTransformerBlock` -- video-only, audio-only, or dual-stream with cross-modal attention |
 | Param resolution | `web/param_resolver.py` | `resolve_param()` -- all routers use for generation param defaults |
 | Model lifecycle | `src/llm_dit/model_manager.py` | `ModelManager` -- load/unload/reload any pipeline |
 | API layer | `web/routers/`, `web/schemas.py` | 7 domain routers + Pydantic models (~730 lines) |
@@ -214,6 +192,10 @@ This is a **multi-workstream project**. Work happens in parallel across layers:
 **FBCache (block skipping):** `LTX2Transformer` tracks residual norms between denoising steps. When `fbcache_threshold > 0`, blocks with small residual changes are skipped. Must call `model.reset_fbcache()` at the start of each generation. First/last steps always compute fully.
 
 **Distilled sigma mode:** When `use_distilled_sigmas=True`, Stage 1 uses predefined `DISTILLED_SIGMA_VALUES` from `constants.py`. Forces `guidance_scale=1.0` (no CFG, no STG) -- guidance is baked into the distilled model weights.
+
+**STG perturbation model:** `PerturbationType`, `PerturbationConfig`, and `BatchedPerturbationConfig` in `av_block.py` define per-sample attention skipping for Spatio-Temporal Guidance. `BasicAVTransformerBlock` uses these to selectively skip cross-modal attention (A2V/V2A) during denoising, enabling separate guidance scales for audio and video streams.
+
+**Audio-video dual-stream:** `BasicAVTransformerBlock` extends `BasicTransformerBlock` with bidirectional cross-modal attention. Three modes: video-only (no audio latents), audio-only (no video latents), dual-stream (both with A2V + V2A cross-attention). Each modality has independent FBCache tracking. Audio connector uses 2048 dim vs video's 4096 dim.
 
 **Frontend logging:** `web/frontend-v2/src/utils/logger.ts` provides namespaced console logging. Factory: `logger('API')` returns `{ debug, info, warn, error }` with `[API]` prefix. Log level controlled by `VITE_LOG_LEVEL` env var (defaults: `debug` in dev, `warn` in prod). All 22 console calls across 8 files migrated -- zero raw `console.*` calls remain outside logger.ts. Filter in DevTools by namespace (e.g., `[Generate]`, `[Model]`, `[Session]`).
 
@@ -323,6 +305,9 @@ uv run pytest tests/unit/test_dry_config.py -v
 
 # Parameter resolution logic
 uv run pytest tests/unit/test_param_resolver.py -v
+
+# Audio/AV tests (audio VAE + AV transformer blocks)
+uv run pytest tests/unit/test_ltx2_audio_vae.py tests/unit/test_ltx2_av_transformer.py -v
 
 # Quantization tests (alias, detection, recommended method)
 uv run pytest tests/unit/test_ltx2_resolve_quantize.py tests/unit/test_quantization.py -v

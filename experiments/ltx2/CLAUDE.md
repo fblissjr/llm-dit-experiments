@@ -1,6 +1,6 @@
 # LTX-2 Experiments Agent Context
 
-*last updated: 2026-02-19*
+*last updated: 2026-02-27*
 
 ---
 
@@ -17,7 +17,7 @@
 
 ---
 
-## CRITICAL: Prompt Standardization (2026-01-16)
+## CRITICAL: Prompt Standardization
 
 **All experiment prompts have been centralized.** Do NOT define inline prompts.
 
@@ -252,6 +252,9 @@ Key parameters:
 - **188160 packed dim**: 3840 × 49 flattened for projection
 - **128 thinking tokens**: Learnable registers for global context
 - **48 DiT blocks**: Transformer blocks in the diffusion model (14B video + 5B audio)
+- **Dual-stream AV**: `BasicAVTransformerBlock` extends DiT blocks with bidirectional cross-modal attention (A2V, V2A). Three modes: video-only, audio-only, dual-stream
+- **Audio connector**: 2048 dim (vs 4096 for video). Separate `LTX2ConnectorTransformer1d` instance
+- **STG perturbation**: Per-sample attention skipping via `PerturbationConfig` for spatio-temporal guidance
 
 ---
 

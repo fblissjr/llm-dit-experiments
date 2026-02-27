@@ -1313,7 +1313,12 @@ def generate_video_two_stage(
     text_encoder: Optional[Any] = None,
     cached_transformer: Optional[dict] = None,
     cached_vae: Optional[Any] = None,
-) -> torch.Tensor:
+    # Audio generation params (Phase 3)
+    video_only: bool = True,
+    audio_negative_prompt: str = "",
+    cached_audio_decoder: Optional[Any] = None,
+    cached_vocoder: Optional[Any] = None,
+) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
     """Generate video using two-stage pipeline with spatial upsampling.
 
     Reference: TI2VidTwoStagesPipeline from official LTX-2 repo.
@@ -1324,6 +1329,7 @@ def generate_video_two_stage(
       Stage 1.5: Spatial upsample latents 2x
       Stage 2: Refine at full resolution with distilled LoRA (no CFG, 3 steps)
       Stage 3: VAE decode to pixels
+      Stage 4 (audio): Audio VAE decode + vocoder (when video_only=False)
 
     Only one major component is on GPU at a time (sequential offloading).
 
@@ -1349,9 +1355,15 @@ def generate_video_two_stage(
             "config" (model config) and "state_dict" (pinned bf16 tensors).
         cached_vae: Pre-loaded VAE decoder from ModelManager. Used for
             per_channel_statistics in Stage 1.5 and decoding in Stage 3.
+        video_only: When True (default), generate video only. When False,
+            generate both video and audio streams.
+        audio_negative_prompt: Negative prompt for audio CFG guidance.
+        cached_audio_decoder: Pre-loaded audio decoder from ModelManager.
+        cached_vocoder: Pre-loaded vocoder from ModelManager.
 
     Returns:
-        Video tensor [F, H, W, C] in uint8 format.
+        When video_only=True: Video tensor [F, H, W, C] in uint8 format.
+        When video_only=False: Tuple of (video_tensor, audio_waveform).
     """
     if two_stage.distilled_lora_scale > 0 and not two_stage.distilled_lora_path:
         raise ValueError(

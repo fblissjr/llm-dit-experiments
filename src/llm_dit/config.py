@@ -367,6 +367,8 @@ class LTX2Config:
     # Audio generation
     audio_enabled: bool = False  # Enable audio stream generation
     audio_negative_prompt: str = ""  # Negative prompt for audio CFG
+    audio_vae_path: str = ""  # Path to audio decoder checkpoint (empty = model_path/audio_vae)
+    vocoder_path: str = ""  # Path to vocoder checkpoint (empty = model_path/vocoder)
 
     # Two-stage pipeline settings (matching reference TI2VidTwoStagesPipeline)
     use_two_stage: bool = True  # Enable two-stage generation

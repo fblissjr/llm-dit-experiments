@@ -85,6 +85,28 @@ def get_ltx2_model_path(config: RuntimeConfig) -> Path:
     return path
 
 
+def save_audio_wav(waveform: torch.Tensor, path: str, sample_rate: int = 24000) -> str:
+    """Save audio waveform tensor to WAV file.
+
+    Args:
+        waveform: Audio tensor [B, channels, samples] or [channels, samples].
+        path: Output path (.wav).
+        sample_rate: Sample rate in Hz (default 24000 for LTX-2 vocoder output).
+
+    Returns:
+        Path to saved WAV file.
+    """
+    import numpy as np
+    import scipy.io.wavfile
+
+    audio = waveform.squeeze(0).float().cpu().clamp(-1.0, 1.0)
+    # scipy expects (samples, channels) for multichannel
+    audio_np = audio.numpy().T  # [channels, samples] -> [samples, channels]
+    scipy.io.wavfile.write(path, sample_rate, (audio_np * 32767).astype(np.int16))
+    logger.info(f"[LTX-2] Saved audio to {path}")
+    return path
+
+
 def save_ltx2_video(video: torch.Tensor, path: str, fps: float = 24.0) -> str:
     """Save LTX-2 video tensor to file.
 
@@ -178,6 +200,15 @@ async def ltx2_generate_stream(request: LTX2GenerateRequest, config: ConfigDep, 
             # Merge request params with config defaults
             ltx2_cfg = config.ltx2
 
+            # Resolve audio parameters
+            audio_enabled = resolve_param(request, "enable_audio", ltx2_cfg.audio_enabled)
+            audio_available = manager.ltx2_audio_decoder is not None and manager.ltx2_vocoder is not None
+            if audio_enabled and not audio_available:
+                logger.warning("[LTX-2] Audio requested but models not loaded. Falling back to video-only.")
+                audio_enabled = False
+            video_only = not audio_enabled
+            audio_neg = resolve_param(request, "audio_negative_prompt", ltx2_cfg.audio_negative_prompt, skip_none=True)
+
             @torch.no_grad()
             def do_generate():
                 from llm_dit.pipelines import (
@@ -251,6 +282,10 @@ async def ltx2_generate_stream(request: LTX2GenerateRequest, config: ConfigDep, 
                         text_encoder=manager.ltx2_encoder,
                         cached_transformer=manager.ltx2_transformer_cache,
                         cached_vae=manager.ltx2_vae,
+                        video_only=video_only,
+                        audio_negative_prompt=audio_neg or "",
+                        cached_audio_decoder=manager.ltx2_audio_decoder if not video_only else None,
+                        cached_vocoder=manager.ltx2_vocoder if not video_only else None,
                     )
                 else:
                     # Single-stage fallback
@@ -298,8 +333,18 @@ async def ltx2_generate_stream(request: LTX2GenerateRequest, config: ConfigDep, 
                     its = step / elapsed if elapsed > 0 else 0
                     yield f"data: {json.dumps({'type': 'progress', 'stage': stage, 'step': step, 'total': total, 'elapsed': round(elapsed, 1), 'eta': round(eta, 1), 'its': round(its, 2)})}\n\n"
 
-            video = await gen_task
+            gen_result = await gen_task
             generation_time = time.time() - start_time
+
+            # Unpack audio+video tuple when audio is enabled
+            if isinstance(gen_result, tuple):
+                video, audio_waveform = gen_result
+                has_audio = True
+            else:
+                assert isinstance(gen_result, torch.Tensor)
+                video = gen_result
+                audio_waveform = None
+                has_audio = False
 
             yield f"data: {json.dumps({'type': 'status', 'message': 'Saving video...'})}\n\n"
 
@@ -312,6 +357,15 @@ async def ltx2_generate_stream(request: LTX2GenerateRequest, config: ConfigDep, 
             await asyncio.get_event_loop().run_in_executor(
                 None, lambda: save_ltx2_video(video, str(video_path), fps=resolved_fps)
             )
+
+            # Save audio WAV if generated
+            audio_filename = None
+            if has_audio and audio_waveform is not None:
+                audio_filename = f"audio_{timestamp}_{hash_suffix}.wav"
+                audio_path = VIDEO_OUTPUT_DIR / audio_filename
+                await asyncio.get_event_loop().run_in_executor(
+                    None, lambda: save_audio_wav(audio_waveform, str(audio_path))
+                )
 
             # Generate thumbnail (first frame)
             thumb_filename = f"thumb_{timestamp}_{hash_suffix}.png"
@@ -332,7 +386,8 @@ async def ltx2_generate_stream(request: LTX2GenerateRequest, config: ConfigDep, 
                 "generation_time": round(generation_time, 1),
                 "num_frames": resolve_param(request, "num_frames", ltx2_cfg.num_frames if ltx2_cfg else 33),
                 "fps": resolved_fps,
-                "has_audio": False,
+                "has_audio": has_audio,
+                "audio_url": f"/outputs/videos/{audio_filename}" if audio_filename else None,
                 "two_stage": request.use_two_stage,
                 "enhanced_prompt": enhanced_prompt_ref[0],
             }

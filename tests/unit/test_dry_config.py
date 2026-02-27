@@ -493,6 +493,7 @@ class TestResolveParamFieldConsistency:
         # LTX-2 mappings
         ("stage1_steps", "LTX2Config"): "stage1_num_inference_steps",
         ("stage2_steps", "LTX2Config"): "stage2_num_inference_steps",
+        ("enable_audio", "LTX2Config"): "audio_enabled",
         # FLUX.2 mappings
         ("num_steps", "Flux2Config"): "default_steps",
         ("guidance", "Flux2Config"): "default_guidance",

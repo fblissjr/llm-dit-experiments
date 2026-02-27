@@ -10,6 +10,13 @@ Uses [Semantic Versioning](https://semver.org/).
 
 ### added
 - **LTX-2**: Audio VAE decode pipeline (Phase 1). Pure PyTorch port of AudioDecoder (latents to stereo mel) and HiFiGAN Vocoder (mel to 24kHz waveform). Includes AudioPatchifier for 1D temporal patchify/unpatchify, PerChannelStatistics for latent denormalization, CausalConv2d blocks, and weight loaders for both models. 31 unit tests covering shapes, round-trips, weight loading, and full pipeline validation. New package: `src/llm_dit/models/ltx2/audio_vae/`.
+- **LTX-2**: Transformer audio support (Phase 2). New `BasicAVTransformerBlock` handles video-only, audio-only, or dual-stream audio-video processing with bidirectional cross-modal attention (A2V, V2A). Extended `LTX2Transformer` with audio initialization, per-modality FBCache tracking, and dual-stream forward pass. Weight loading supports audio key mappings. Includes STG perturbation model (`PerturbationType`, `PerturbationConfig`, `BatchedPerturbationConfig`) for per-sample attention skipping. 41 unit tests. New file: `src/llm_dit/models/ltx2/av_block.py`.
+
+### changed
+- **LTX-2**: Removed ~106 lines of dead debug prints from `BasicTransformerBlock.forward()` and `Attention.forward()`. These were guarded by never-set debug attributes and included expensive operations (attention weight recomputation for entropy).
+- **LTX-2**: Parameterized `LTX2Transformer._process_output()` to accept scale_shift_table, norm_out, proj_out as parameters (enables audio reuse).
+- **LTX-2**: Collapsed redundant FBCache init branches in transformer forward pass.
+- **LTX-2**: Fixed eager debug log evaluation in transformer -- `logger.debug()` with f-string `.float().mean()` now wrapped in `logger.isEnabledFor(logging.DEBUG)` guard.
 - **LTX-2**: FBCache (Forward-Backward Cache) for transformer block skipping during denoising. Tracks L1 norm of residual changes between steps; blocks below threshold are skipped. First/last steps always compute fully. Config: `fbcache_threshold` (0.0 = disabled, 0.05 = recommended). Expected 10-30% speedup on denoising loop.
 - **LTX-2**: Distilled sigma schedule mode. When `use_distilled_sigmas` is enabled, Stage 1 uses predefined sigma values from official LTX-2 constants instead of dynamic scheduler computation. Forces guidance_scale=1.0 (no CFG, no STG) -- guidance is baked into the distilled model.
 - **LTX-2**: Meta-device skip init utility (`src/llm_dit/utils/meta_init.py`). Context manager that allocates model parameters on meta device (0 bytes) during construction. Combined with `load_state_dict(assign=True)`, eliminates 2x peak memory spike when reconstructing transformer from cached state dict.

@@ -39,9 +39,14 @@ from llm_dit.models.ltx2.transformer import (
     TransformerArgs,
     TransformerArgsPreprocessor,
     TransformerConfig,
+    PerturbationType,
+    Perturbation,
+    PerturbationConfig,
+    BatchedPerturbationConfig,
     to_velocity,
     to_denoised,
 )
+from llm_dit.models.ltx2.av_block import BasicAVTransformerBlock
 from llm_dit.layers import rms_norm
 from llm_dit.models.ltx2.components import (
     Modality,
@@ -126,7 +131,13 @@ __all__ = [
     "TransformerConfig",
     # Transformer components
     "BasicTransformerBlock",
+    "BasicAVTransformerBlock",
     "TransformerArgsPreprocessor",
+    # Perturbation model (STG)
+    "PerturbationType",
+    "Perturbation",
+    "PerturbationConfig",
+    "BatchedPerturbationConfig",
     "AdaLayerNormSingle",
     "FeedForward",
     "PixArtAlphaTextProjection",
