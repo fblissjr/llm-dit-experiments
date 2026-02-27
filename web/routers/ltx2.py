@@ -257,6 +257,10 @@ async def ltx2_generate_stream(request: LTX2GenerateRequest, config: ConfigDep, 
                     if stg_blocks is not None:
                         two_stage_cfg.stg_blocks = stg_blocks
 
+                    # Gate STG: if client explicitly disabled stg_enabled, force stg_scale=0
+                    if "stg_enabled" in request.model_fields_set and not request.stg_enabled:
+                        two_stage_cfg.stg_scale = 0.0
+
                     # Validate distilled LoRA exists before expensive generation
                     distilled_path = two_stage_cfg.distilled_lora_path
                     if distilled_path:

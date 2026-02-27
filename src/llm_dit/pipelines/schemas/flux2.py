@@ -64,6 +64,7 @@ register_pipeline(PipelineSchema(
             group="basic",
             required=True,
             tooltip="Detailed description of the image.",
+            config_mapped=False,
         ),
 
         # === Reference Images (key FLUX.2 feature - right after prompt) ===
@@ -74,6 +75,7 @@ register_pipeline(PipelineSchema(
             group="basic",
             tooltip="Upload reference images for style/subject transfer (up to 4 images).",
             max_count=4,
+            config_mapped=False,
         ),
         ParamSchema(
             id="match_image_size",
@@ -89,6 +91,7 @@ register_pipeline(PipelineSchema(
             ],
             group="basic",
             tooltip="Match output dimensions to a reference image. Prevents squishing when ref has different aspect ratio.",
+            config_mapped=False,
         ),
         # === Model & Dimensions ===
         ParamSchema(
@@ -110,6 +113,7 @@ register_pipeline(PipelineSchema(
             step=16,
             group="basic",
             tooltip="Image width in pixels (multiple of 16).",
+            config_mapped=False,
         ),
         ParamSchema(
             id="height",
@@ -121,6 +125,7 @@ register_pipeline(PipelineSchema(
             step=16,
             group="basic",
             tooltip="Image height in pixels (multiple of 16).",
+            config_mapped=False,
         ),
         ParamSchema(
             id="dimension_preset",
@@ -130,6 +135,7 @@ register_pipeline(PipelineSchema(
             options=DIMENSION_PRESETS,
             group="basic",
             tooltip="Quick dimension presets.",
+            config_mapped=False,
         ),
 
         # === Generation Settings ===
@@ -189,6 +195,7 @@ register_pipeline(PipelineSchema(
             step=1,
             group="basic",
             tooltip="Random seed for reproducibility. -1 for random.",
+            config_mapped=False,
         ),
 
         # === Enhancement ===
@@ -199,6 +206,7 @@ register_pipeline(PipelineSchema(
             default=False,
             group="enhancement",
             tooltip="Enrich prompt with visual details using BFL's official upsampling (requires heylookitsanllm API).",
+            config_mapped=False,
         ),
 
         # === Memory & Performance ===
@@ -230,6 +238,7 @@ register_pipeline(PipelineSchema(
             scale_min=-2.0,
             scale_max=2.0,
             max_count=5,
+            config_mapped=False,
         ),
     ],
 ))

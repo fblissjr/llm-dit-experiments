@@ -8,7 +8,7 @@ LTX-2 is a video generation pipeline with:
 - SSE streaming for real-time progress updates
 - Native FP8 support on RTX 4090
 - Frame formula: 8n+1 (9, 17, 25, 33, ..., 121, ...)
-- Enhancement features: NAG, FETA, TeaCache, Latent Norm
+- Enhancement features: STG (Spatio-Temporal Guidance)
 """
 
 from . import register_pipeline, PipelineSchema, ParamSchema
@@ -51,6 +51,7 @@ register_pipeline(PipelineSchema(
             group="basic",
             required=True,
             tooltip="Detailed description of the video. Be specific about motion and camera movement.",
+            config_mapped=False,
         ),
         ParamSchema(
             id="negative_prompt",
@@ -100,6 +101,7 @@ register_pipeline(PipelineSchema(
             options=VIDEO_DIMENSION_PRESETS,
             group="basic",
             tooltip="Quick dimension presets for common video formats.",
+            config_mapped=False,
         ),
         ParamSchema(
             id="num_frames",
@@ -174,6 +176,7 @@ register_pipeline(PipelineSchema(
             step=1,
             group="basic",
             tooltip="Random seed for reproducibility. -1 for random.",
+            config_mapped=False,
         ),
 
         # === Audio ===
@@ -234,76 +237,7 @@ register_pipeline(PipelineSchema(
             default=False,
             group="optimization",
             tooltip="Use torch.compile for faster inference (slow first run).",
-        ),
-
-        # === Enhancement Features ===
-        ParamSchema(
-            id="latent_norm_enabled",
-            type="checkbox",
-            label="Latent Normalization",
-            default=True,
-            group="enhancement",
-            tooltip="Normalize latents during generation (recommended).",
-        ),
-        ParamSchema(
-            id="nag_enabled",
-            type="checkbox",
-            label="Enable NAG",
-            default=False,
-            group="enhancement",
-            tooltip="Normalized Attention Guidance for improved coherence.",
-        ),
-        ParamSchema(
-            id="nag_scale",
-            type="slider",
-            label="NAG Scale",
-            default=1.0,
-            min=0.1,
-            max=3.0,
-            step=0.1,
-            group="enhancement",
-            conditional={"nag_enabled": True},
-            tooltip="NAG strength multiplier.",
-        ),
-        ParamSchema(
-            id="feta_enabled",
-            type="checkbox",
-            label="Enable FETA",
-            default=False,
-            group="enhancement",
-            tooltip="Feature-Enhanced Temporal Attention for smoother motion.",
-        ),
-        ParamSchema(
-            id="feta_scale",
-            type="slider",
-            label="FETA Scale",
-            default=1.0,
-            min=0.1,
-            max=3.0,
-            step=0.1,
-            group="enhancement",
-            conditional={"feta_enabled": True},
-            tooltip="FETA strength multiplier.",
-        ),
-        ParamSchema(
-            id="teacache_enabled",
-            type="checkbox",
-            label="Enable TeaCache",
-            default=False,
-            group="enhancement",
-            tooltip="Temporal-Efficient Attention Cache for faster generation.",
-        ),
-        ParamSchema(
-            id="teacache_threshold",
-            type="slider",
-            label="TeaCache Threshold",
-            default=0.15,
-            min=0.05,
-            max=0.5,
-            step=0.01,
-            group="enhancement",
-            conditional={"teacache_enabled": True},
-            tooltip="Cache similarity threshold. Lower = more caching.",
+            config_mapped=False,
         ),
 
         # === Advanced ===
@@ -314,6 +248,7 @@ register_pipeline(PipelineSchema(
             default=True,
             group="advanced",
             tooltip="Spatio-Temporal Guidance for better motion consistency.",
+            config_mapped=False,
         ),
         ParamSchema(
             id="stg_scale",
@@ -338,6 +273,7 @@ register_pipeline(PipelineSchema(
             group="advanced",
             conditional={"stg_enabled": True},
             tooltip="When to start STG (fraction of steps).",
+            config_mapped=False,
         ),
         ParamSchema(
             id="stg_end_step",
@@ -350,6 +286,7 @@ register_pipeline(PipelineSchema(
             group="advanced",
             conditional={"stg_enabled": True},
             tooltip="When to end STG (fraction of steps).",
+            config_mapped=False,
         ),
         ParamSchema(
             id="rescale_scale",

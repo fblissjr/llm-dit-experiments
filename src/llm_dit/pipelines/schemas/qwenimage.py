@@ -46,6 +46,7 @@ register_pipeline(PipelineSchema(
             group="basic",
             required=True,
             tooltip="Detailed description of the image to generate.",
+            config_mapped=False,
         ),
         ParamSchema(
             id="negative_prompt",
@@ -56,6 +57,7 @@ register_pipeline(PipelineSchema(
             default="worst quality, blurry, distorted",
             group="basic",
             tooltip="What to avoid in the generation.",
+            config_mapped=False,
         ),
         ParamSchema(
             id="width",
@@ -67,6 +69,7 @@ register_pipeline(PipelineSchema(
             step=64,
             group="basic",
             tooltip="Image width (1024 recommended).",
+            config_mapped=False,
         ),
         ParamSchema(
             id="height",
@@ -78,6 +81,7 @@ register_pipeline(PipelineSchema(
             step=64,
             group="basic",
             tooltip="Image height (1024 recommended).",
+            config_mapped=False,
         ),
         ParamSchema(
             id="steps",
@@ -111,6 +115,7 @@ register_pipeline(PipelineSchema(
             step=1,
             group="basic",
             tooltip="Random seed. -1 for random.",
+            config_mapped=False,
         ),
 
         # === Memory & Performance ===
@@ -122,6 +127,7 @@ register_pipeline(PipelineSchema(
             options=QUANTIZATION_OPTIONS,
             group="optimization",
             tooltip="Quantization for reduced VRAM. FP8 recommended on RTX 4090.",
+            config_mapped=False,
         ),
         ParamSchema(
             id="offload_type",
@@ -157,6 +163,7 @@ register_pipeline(PipelineSchema(
             group="basic",
             required=True,
             tooltip="The image to edit.",
+            config_mapped=False,
         ),
         ParamSchema(
             id="instruction",
@@ -167,6 +174,7 @@ register_pipeline(PipelineSchema(
             group="basic",
             required=True,
             tooltip="Natural language instruction for editing (e.g., 'make the sky sunset colors').",
+            config_mapped=False,
         ),
         ParamSchema(
             id="resolution",
@@ -209,6 +217,7 @@ register_pipeline(PipelineSchema(
             step=1,
             group="basic",
             tooltip="Random seed. -1 for random.",
+            config_mapped=False,
         ),
 
         # === Memory ===
@@ -220,6 +229,7 @@ register_pipeline(PipelineSchema(
             options=QUANTIZATION_OPTIONS,
             group="optimization",
             tooltip="Quantization for reduced VRAM.",
+            config_mapped=False,
         ),
     ],
 ))

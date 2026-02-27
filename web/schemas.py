@@ -11,6 +11,8 @@ from typing import Any, Dict, List, Optional, Union
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from pydantic.alias_generators import to_camel
 
+from llm_dit.models.ltx2.constants import LTX2_DEFAULT_NEGATIVE_PROMPT
+
 
 # =============================================================================
 # CamelCase Response Base
@@ -627,19 +629,7 @@ class LTX2GenerateRequest(BaseModel):
 
     prompt: str
     enhance_prompt: bool = False
-    negative_prompt: str = (
-        "blurry, out of focus, overexposed, underexposed, low contrast, washed out colors, excessive noise, "
-        "grainy texture, poor lighting, flickering, motion blur, distorted proportions, unnatural skin tones, "
-        "deformed facial features, asymmetrical face, missing facial features, extra limbs, disfigured hands, "
-        "wrong hand count, artifacts around text, inconsistent perspective, camera shake, incorrect depth of "
-        "field, background too sharp, background clutter, distracting reflections, harsh shadows, inconsistent "
-        "lighting direction, color banding, cartoonish rendering, 3D CGI look, unrealistic materials, uncanny "
-        "valley effect, incorrect ethnicity, wrong gender, exaggerated expressions, wrong gaze direction, "
-        "mismatched lip sync, silent or muted audio, distorted voice, robotic voice, echo, background noise, "
-        "off-sync audio, incorrect dialogue, added dialogue, repetitive speech, jittery movement, awkward "
-        "pauses, incorrect timing, unnatural transitions, inconsistent framing, tilted camera, flat lighting, "
-        "inconsistent tone, cinematic oversaturation, stylized filters, or AI artifacts."
-    )
+    negative_prompt: str = LTX2_DEFAULT_NEGATIVE_PROMPT
     width: int = Field(768, ge=256, le=1536)
     height: int = Field(512, ge=256, le=1024)
 
@@ -673,6 +663,7 @@ class LTX2GenerateRequest(BaseModel):
     guidance_scale: float = 3.0
 
     # Guidance (stage 1 only)
+    stg_enabled: bool = True
     stg_scale: float = 1.0
     stg_blocks: Optional[List[int]] = None
     rescale_scale: float = 0.7

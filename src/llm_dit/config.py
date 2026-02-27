@@ -32,6 +32,8 @@ from typing import Any, ClassVar, List, Literal
 
 import torch
 
+from llm_dit.models.ltx2.constants import LTX2_DEFAULT_NEGATIVE_PROMPT
+
 logger = logging.getLogger(__name__)
 
 # Try to import tomllib (Python 3.11+) or tomli
@@ -375,19 +377,7 @@ class LTX2Config:
     use_two_stage: bool = True  # Enable two-stage generation
     stage1_num_inference_steps: int = 40  # Full denoising for stage 1
     stage2_num_inference_steps: int = 3  # Distilled refinement for stage 2
-    negative_prompt: str = (
-        "blurry, out of focus, overexposed, underexposed, low contrast, washed out colors, excessive noise, "
-        "grainy texture, poor lighting, flickering, motion blur, distorted proportions, unnatural skin tones, "
-        "deformed facial features, asymmetrical face, missing facial features, extra limbs, disfigured hands, "
-        "wrong hand count, artifacts around text, inconsistent perspective, camera shake, incorrect depth of "
-        "field, background too sharp, background clutter, distracting reflections, harsh shadows, inconsistent "
-        "lighting direction, color banding, cartoonish rendering, 3D CGI look, unrealistic materials, uncanny "
-        "valley effect, incorrect ethnicity, wrong gender, exaggerated expressions, wrong gaze direction, "
-        "mismatched lip sync, silent or muted audio, distorted voice, robotic voice, echo, background noise, "
-        "off-sync audio, incorrect dialogue, added dialogue, repetitive speech, jittery movement, awkward "
-        "pauses, incorrect timing, unnatural transitions, inconsistent framing, tilted camera, flat lighting, "
-        "inconsistent tone, cinematic oversaturation, stylized filters, or AI artifacts."
-    )
+    negative_prompt: str = LTX2_DEFAULT_NEGATIVE_PROMPT
 
     # Guidance (stage 1 only; stage 2 uses simple denoising)
     stg_scale: float = 1.0  # Spatio-temporal guidance scale (0=disabled, 1.0=reference)

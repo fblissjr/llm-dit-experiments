@@ -47,6 +47,7 @@ from llm_dit.models.ltx2 import (
     Modality,
     VideoDecoder,
 )
+from llm_dit.models.ltx2.constants import LTX2_DEFAULT_NEGATIVE_PROMPT
 from llm_dit.schedulers import LTX2Scheduler
 from llm_dit.utils.memory import cleanup_memory
 
@@ -1128,20 +1129,7 @@ class TwoStageConfig:
     stg_blocks: list[int] = None  # type: ignore[assignment]
     rescale_scale: float = 0.7  # CFG rescaling
 
-    # Negative prompt (reference DEFAULT_NEGATIVE_PROMPT from constants.py)
-    negative_prompt: str = (
-        "blurry, out of focus, overexposed, underexposed, low contrast, washed out colors, excessive noise, "
-        "grainy texture, poor lighting, flickering, motion blur, distorted proportions, unnatural skin tones, "
-        "deformed facial features, asymmetrical face, missing facial features, extra limbs, disfigured hands, "
-        "wrong hand count, artifacts around text, inconsistent perspective, camera shake, incorrect depth of "
-        "field, background too sharp, background clutter, distracting reflections, harsh shadows, inconsistent "
-        "lighting direction, color banding, cartoonish rendering, 3D CGI look, unrealistic materials, uncanny "
-        "valley effect, incorrect ethnicity, wrong gender, exaggerated expressions, wrong gaze direction, "
-        "mismatched lip sync, silent or muted audio, distorted voice, robotic voice, echo, background noise, "
-        "off-sync audio, incorrect dialogue, added dialogue, repetitive speech, jittery movement, awkward "
-        "pauses, incorrect timing, unnatural transitions, inconsistent framing, tilted camera, flat lighting, "
-        "inconsistent tone, cinematic oversaturation, stylized filters, or AI artifacts."
-    )
+    negative_prompt: str = LTX2_DEFAULT_NEGATIVE_PROMPT
 
     # Gradient estimation
     ge_gamma: float = 0.0  # 0=disabled, 2.0=reference default

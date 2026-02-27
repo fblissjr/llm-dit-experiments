@@ -6,6 +6,16 @@ last updated: 2026-02-27
 All notable changes to this project will be documented in this file.
 Uses [Semantic Versioning](https://semver.org/).
 
+## 0.9.13
+
+### changed
+- **Schemas**: `ParamSchema.config_mapped` field replaces global `EXCLUDED_PARAMS` set in `test_dry_config.py` -- each param self-declares per-pipeline whether it maps to a config dataclass, eliminating a ~30-entry hardcoded set that was imprecise (global across all pipelines) and required manual updates
+- **LTX-2**: `LTX2_DEFAULT_NEGATIVE_PROMPT` constant extracted to `constants.py` -- replaces 3 inline copies in config.py, schemas.py, and generate.py
+- **LTX-2**: `stg_enabled` checkbox now functionally gates STG -- when unchecked, forces `stg_scale=0.0` in router (previously hid sliders but STG stayed active at config default)
+
+### removed
+- **LTX-2**: Dead enhancement schema params (`latent_norm_enabled`, `nag_enabled`, `nag_scale`, `feta_enabled`, `feta_scale`, `teacache_enabled`, `teacache_threshold`) -- rendered UI controls with no router/pipeline wiring
+
 ## 0.9.12
 
 ### added

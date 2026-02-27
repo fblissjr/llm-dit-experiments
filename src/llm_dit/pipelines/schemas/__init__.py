@@ -79,10 +79,16 @@ class ParamSchema:
     # default updates. Format: {trigger_param_id: {trigger_value: new_default}}
     dependent_defaults: dict[str, dict[str, Any]] | None = None
 
+    # Internal metadata (not serialized to frontend)
+    config_mapped: bool = True  # Whether this param maps to a config dataclass field
+
     def to_dict(self) -> dict[str, Any]:
-        """Convert to dict, excluding None values for cleaner JSON."""
+        """Convert to dict, excluding None values and internal fields for cleaner JSON."""
+        _INTERNAL_FIELDS = {"config_mapped"}
         result = {}
         for key, value in asdict(self).items():
+            if key in _INTERNAL_FIELDS:
+                continue
             if value is not None:
                 result[key] = value
         return result

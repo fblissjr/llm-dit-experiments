@@ -756,33 +756,6 @@ class TestDefaultsEndpointNameMappings:
             "qwenimage-edit": QwenImageConfig,
         }
 
-        # Schema params that are intentionally NOT in config (per-request only,
-        # infrastructure handled separately, or non-config concepts)
-        EXCLUDED_PARAMS = {
-            # Per-request params (no config.toml equivalent)
-            "prompt", "negative_prompt", "seed", "image", "instruction",
-            "reference_images", "match_image_size", "upsample_prompt",
-            "dimension_preset", "preset", "loras",
-            # Infrastructure params (handled separately, not generation defaults)
-            "quantization", "cpu_offload", "compile", "block_offload",
-            "offload_type", "use_fp8", "hidden_layer", "resolution",
-            # Feature flags (boolean toggles, not generation params)
-            "use_two_stage",
-            "latent_norm_enabled", "nag_enabled", "feta_enabled",
-            "teacache_enabled", "stg_enabled",
-            "dype_enabled", "dynamic_shift", "d_noise", "fbcache_enabled",
-            # Fine-grained optimization knobs (UI-only, not in config dataclasses)
-            "nag_scale", "feta_scale", "teacache_threshold",
-            "stg_start_step", "stg_end_step",
-            "dype_base_resolution", "dype_ntk_factor",
-            "fbcache_start_step", "fbcache_threshold",
-            # Resolution params not in pipeline-specific configs
-            # (handled by resolution-config endpoint or presets instead)
-            "width", "height",
-            # Z-Image generation params come from presets, not ZImageConfig
-            "steps", "guidance_scale", "shift",
-        }
-
         warnings = []
         for pipeline_id, config_cls in config_classes.items():
             schema = get_pipeline(pipeline_id)
@@ -793,7 +766,7 @@ class TestDefaultsEndpointNameMappings:
             param_map = _PARAM_NAME_MAPS.get(pipeline_id, {})
 
             for param in schema.params:
-                if param.id in EXCLUDED_PARAMS:
+                if not param.config_mapped:
                     continue
                 if param.id in param_map:
                     continue  # Already mapped
@@ -803,8 +776,7 @@ class TestDefaultsEndpointNameMappings:
                 warnings.append(
                     f"Pipeline '{pipeline_id}': schema param '{param.id}' has no direct "
                     f"match in {config_cls.__name__} and no entry in _PARAM_NAME_MAPS. "
-                    f"Either add a mapping or add '{param.id}' to EXCLUDED_PARAMS if "
-                    f"it's intentionally not in config."
+                    f"Either add a mapping or set config_mapped=False on the ParamSchema."
                 )
 
         assert not warnings, "\n".join(warnings)
