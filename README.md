@@ -1,6 +1,6 @@
 # llm-dit-experiments
 
-PyTorch and Diffusers-based experimentation platform for LLM-DiT image and video generation. Pluggable backends, quantization, LoRA fusion, and a React frontend for research on a single GPU.
+PyTorch experimentation platform for LLM-DiT image and video generation on a single GPU.
 
 ## Pipelines
 
@@ -12,117 +12,35 @@ PyTorch and Diffusers-based experimentation platform for LLM-DiT image and video
 | Qwen-Image-2512 | text-to-image | Qwen2.5-VL-7B | 39GB transformer, requires fp8 on 24GB |
 | Qwen-Image-Edit-2511 | image editing, multi-image | Qwen2.5-VL-7B | Multi-image composition, instruction editing |
 
-
-## Architecture
-
-```
-                          config.toml
-                              |
-                              v
-Client -> React UI -> FastAPI (7 domain routers) -> ModelManager -> Pipeline -> Output
-                              |
-                              v
-                    Prompt -> Encoder -> hidden_states[layer] -> DiT -> VAE -> Image/Video
-```
-
-Text encoder extracts embeddings from LLM hidden states (default layer -2). DiT uses flow matching to generate latents. VAE decodes to RGB/RGBA. ModelManager handles load/unload/reload lifecycle for all pipelines. Routers live in `web/routers/` (core, flux2, ltx2, qwen_image, vram, config_mgmt, system).
-
 ## Quick Start
 
 ```bash
 uv sync
+cp config.toml.example config.toml   # edit model paths
+uv run web/server.py --config config.toml
 ```
 
+Open `http://localhost:7860` -- the React UI auto-detects loaded pipelines.
+
+CLI generation is also available:
+
 ```bash
-# FLUX.2 Klein (text-to-image with FP8 and block offload for 24GB GPU)
 uv run scripts/generate.py --model-type flux2 \
-    --flux2-model-name klein-9b-fp8 \
-    --flux2-block-offload \
     --flux2-model-path /path/to/FLUX.2-klein-9b-fp8 \
-    --flux2-vae-path /path/to/FLUX.2-klein-9B \
     "A photo of a cat"
-
-# Z-Image (text-to-image)
-uv run scripts/generate.py --model-path /path/to/z-image-turbo "A cat sleeping"
-
-# LTX-2 (text-to-video with explicit device placement)
-uv run scripts/generate.py --model-type ltx2 \
-    --ltx2-model-path /path/to/LTX-2 \
-    --ltx2-text-encoder-device cpu \
-    --ltx2-transformer-device cuda \
-    --ltx2-quantize fp8 \
-    --ltx2-num-frames 33 --width 768 --height 512 \
-    "A cat walking through a sunny garden"
-
-# Web UI (HTTP)
-uv run web/server.py --config config.toml
-
-# Web UI (HTTPS)
-uv run web/server.py --config config.toml \
-    --ssl-certfile /path/to/cert.pem --ssl-keyfile /path/to/key.pem
 ```
 
 See [docs/reference/cli_flags.md](docs/reference/cli_flags.md) for full CLI reference.
 
 ## Features
 
-**Quantization** (torchao for transformers, native fp8 layerwise casting for encoders):
-- `fp8-dynamic`: FP8 weights + activations (~50%, RTX 4090+)
-- `fp8-weight-only`: FP8 weights, BF16 compute (~50%, compile-safe)
-- `int8`: INT8 weight-only (~50%, any GPU)
-- `int4`: INT4 weight-only (~75%, max compression)
-
-**Generation**:
-- LoRA with multi-stack support and fusion tracking (prevents re-fusion OOM on persistent models)
-- DyPE for high-resolution (2K-4K)
-- Long prompt compression (4 modes for >1504 tokens)
-
-**Backends**:
-- Attention: Flash Attention 2/3, SageAttention, xFormers, SDPA (auto-detect)
-- Text Encoder: local (transformers), [heylookitsanllm local inference API](http://github.com/fblissjr/heylookitsanllm)
-- Distributed: example: encode on mac, generate on cuda
-
-**Configuration**:
-- TOML-based with hardware profiles
-- HTTPS via SSL certificates (uvicorn-native)
-- Web UI config management (edit params, switch profiles, restart server)
-- CLI overrides for all config fields
-
-## Configuration
-
-```bash
-cp config.toml.example config.toml
-uv run web/server.py --config config.toml --profile rtx4090
-```
-
-Key sections: `[server]`, `[encoder]`, `[generation]`, `[quantization]`, `[rewriter]`
-
-HTTPS:
-```toml
-[server]
-host = "0.0.0.0"
-port = 7860
-ssl_certfile = "/path/to/cert.pem"
-ssl_keyfile = "/path/to/key.pem"
-```
-
-See [config.toml.example](config.toml.example) for all options.
-
-## HTTPS Setup
-
-### Self-signed cert (local dev)
-
-```bash
-openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 365 -nodes -subj '/CN=localhost'
-
-# Backend
-uv run web/server.py --config config.toml --ssl-certfile cert.pem --ssl-keyfile key.pem
-
-# Frontend dev server
-VITE_BACKEND_URL=https://localhost:7860 VITE_SSL_CERT=cert.pem VITE_SSL_KEY=key.pem bun run dev
-```
-
-For production, use certificates from a real CA (Let's Encrypt, etc.).
+- **Quantization:** fp8-dynamic, fp8-weight-only, int8, int4 (torchao for transformers, native fp8 layerwise casting for encoders)
+- **LoRA:** multi-stack support with fusion tracking (prevents re-fusion OOM on persistent models)
+- **Attention:** Flash Attention 2/3, SageAttention, xFormers, SDPA (auto-detect)
+- **DyPE:** high-resolution generation (2K-4K)
+- **Long prompts:** 4 compression modes for >1504 tokens
+- **Text encoding:** local (transformers) or remote via [heylookitsanllm](http://github.com/fblissjr/heylookitsanllm)
+- **Config management:** TOML-based with hardware profiles, live session editing, CLI overrides
 
 ## API
 
@@ -148,3 +66,11 @@ See [docs/reference/api_endpoints.md](docs/reference/api_endpoints.md) for full 
 Ablation sweeps and comparison tools in `experiments/`. Interactive viewer on port 7861.
 
 See [experiments/README.md](experiments/README.md).
+
+## Reference
+
+- [Configuration](docs/reference/configuration.md) -- TOML config, hardware profiles, HTTPS setup
+- [CLI flags](docs/reference/cli_flags.md) -- all command-line options
+- [API endpoints](docs/reference/api_endpoints.md) -- full request/response reference
+- [Quantization](docs/reference/quantization.md) -- methods, tradeoffs, backend details
+- [config.toml.example](config.toml.example) -- annotated example config
