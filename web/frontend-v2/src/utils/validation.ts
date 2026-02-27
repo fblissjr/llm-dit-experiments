@@ -97,36 +97,3 @@ export function validateParam(
 
   return null;
 }
-
-/**
- * Validate all parameters for a pipeline
- */
-export function validateForm(
-  params: ParamSchema[],
-  formValues: FormValues
-): ValidationError[] {
-  const errors: ValidationError[] = [];
-
-  for (const param of params) {
-    const error = validateParam(param, formValues[param.id], formValues);
-    if (error) {
-      errors.push(error);
-    }
-  }
-
-  return errors;
-}
-
-/**
- * Check if a parameter should be visible based on conditionals
- */
-export function isParamVisible(
-  param: ParamSchema,
-  formValues: FormValues
-): boolean {
-  if (!param.conditional) return true;
-
-  return Object.entries(param.conditional).every(
-    ([key, expectedValue]) => formValues[key] === expectedValue
-  );
-}

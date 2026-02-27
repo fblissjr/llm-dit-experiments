@@ -373,7 +373,18 @@ export const useFormStore = create<FormState>()(
       name: 'llm-dit-form',
       storage: createJSONStorage(() => idbStorage),
       partialize: (state) => ({
-        values: state.values,
+        // Strip base64 data URLs from form values (img2img source images)
+        values: Object.fromEntries(
+          Object.entries(state.values).map(([pid, vals]) => [
+            pid,
+            Object.fromEntries(
+              Object.entries(vals as Record<string, unknown>).map(([k, v]) => [
+                k,
+                typeof v === 'string' && v.startsWith('data:') ? '' : v,
+              ])
+            ),
+          ])
+        ),
         activePreset: state.activePreset,
       }),
     }

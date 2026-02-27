@@ -94,6 +94,19 @@ function extractKeyParams(params: FormValues): string {
   return parts.join(' / ') || 'Default settings';
 }
 
+/**
+ * Strip base64 data URLs from params to avoid persisting large blobs to IndexedDB.
+ * Replaces data: URLs with empty string so the param key is preserved.
+ */
+function stripBase64FromParams(params: FormValues): FormValues {
+  return Object.fromEntries(
+    Object.entries(params).map(([k, v]) => [
+      k,
+      typeof v === 'string' && v.startsWith('data:') ? '' : v,
+    ])
+  );
+}
+
 // Abort controller for cancellation
 let abortController: AbortController | null = null;
 
@@ -406,11 +419,13 @@ export const useSessionStore = create<SessionState>()(
         }
       },
       partialize: (state) => ({
-        // Strip fullImageUrl from history items - it's only for current session
-        // and contains full base64 data that would blow up localStorage
+        // Strip fullImageUrl and base64 data URLs from params before persisting.
+        // fullImageUrl is session-only. Params may contain base64 source images
+        // from img2img (1.5-4MB each) which would bloat IndexedDB.
         history: state.history.map((item) => ({
           ...item,
           fullImageUrl: undefined,
+          params: stripBase64FromParams(item.params),
         })),
       }),
     }

@@ -7,8 +7,6 @@
 
 import type {
   PipelinesResponse,
-  PipelineSchema,
-  GenerationPreset,
   PresetsResponse,
   VRAMStatus,
   GenerationResult,
@@ -72,13 +70,6 @@ export async function fetchPipelines(): Promise<PipelinesResponse> {
 }
 
 /**
- * Fetch a single pipeline schema
- */
-export async function fetchPipeline(pipelineId: string): Promise<PipelineSchema> {
-  return request<PipelineSchema>(`/api/pipelines/${pipelineId}`);
-}
-
-/**
  * Fetch defaults for a pipeline (schema + server config merged)
  */
 export async function fetchPipelineDefaults(
@@ -99,13 +90,6 @@ export async function fetchPresets(
     : `/api/presets/${pipelineId}`;
 
   return request<PresetsResponse>(url);
-}
-
-/**
- * Fetch a specific preset by name
- */
-export async function fetchPresetByName(name: string): Promise<GenerationPreset> {
-  return request<GenerationPreset>(`/api/presets/preset/${name}`);
 }
 
 /**
@@ -259,13 +243,6 @@ export async function unloadModel(pipelineId: string): Promise<ModelStatusRespon
  */
 export async function fetchAvailableLoras(): Promise<LoRAListResponse> {
   return request<LoRAListResponse>('/api/loras');
-}
-
-/**
- * Fetch LoRA files for a specific pipeline
- */
-export async function fetchLorasForPipeline(pipelineId: string): Promise<LoRAListResponse> {
-  return request<LoRAListResponse>(`/api/loras/${pipelineId}`);
 }
 
 /**

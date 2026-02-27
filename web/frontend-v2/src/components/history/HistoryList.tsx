@@ -4,14 +4,17 @@
  * Scrollable list of history items with empty state.
  */
 
+import { useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { useSessionStore } from '@/stores';
 import { HistoryCard } from './HistoryCard';
+import { ConfirmDialog } from '@/components/common/ConfirmDialog';
 
 export function HistoryList() {
   // Use useShallow for array selector to prevent infinite re-renders
   const history = useSessionStore(useShallow((s) => s.history));
   const clearHistory = useSessionStore((s) => s.clearHistory);
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
 
   if (history.length === 0) {
     return (
@@ -40,7 +43,7 @@ export function HistoryList() {
       {/* Clear all button */}
       <div className="flex justify-end mb-2">
         <button
-          onClick={clearHistory}
+          onClick={() => setShowClearConfirm(true)}
           className="text-xs text-gray-500 hover:text-gray-300 transition-colors"
         >
           Clear all
@@ -51,6 +54,16 @@ export function HistoryList() {
       {history.map((item) => (
         <HistoryCard key={item.id} item={item} />
       ))}
+
+      <ConfirmDialog
+        isOpen={showClearConfirm}
+        title="Clear History"
+        message="This will permanently delete all generation history."
+        confirmLabel="Clear"
+        confirmVariant="danger"
+        onConfirm={() => { clearHistory(); setShowClearConfirm(false); }}
+        onCancel={() => setShowClearConfirm(false)}
+      />
     </div>
   );
 }

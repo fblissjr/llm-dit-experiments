@@ -79,7 +79,7 @@ See [docs/reference/cli_flags.md](docs/reference/cli_flags.md) for full CLI refe
 
 **Backends**:
 - Attention: Flash Attention 2/3, SageAttention, xFormers, SDPA (auto-detect)
-- Text Encoder: local (transformers), (heylookitsanllm local inference API)[http://github.com/fblissjr/heylookitsanllm]
+- Text Encoder: local (transformers), [heylookitsanllm local inference API](http://github.com/fblissjr/heylookitsanllm)
 - Distributed: example: encode on mac, generate on cuda
 
 **Configuration**:
@@ -119,7 +119,7 @@ openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 365 -node
 uv run web/server.py --config config.toml --ssl-certfile cert.pem --ssl-keyfile key.pem
 
 # Frontend dev server
-VITE_BACKEND_URL=https://localhost:7860 VITE_SSL_CERT=cert.pem VITE_SSL_KEY=key.pem npm run dev
+VITE_BACKEND_URL=https://localhost:7860 VITE_SSL_CERT=cert.pem VITE_SSL_KEY=key.pem bun run dev
 ```
 
 For production, use certificates from a real CA (Let's Encrypt, etc.).

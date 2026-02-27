@@ -10,6 +10,7 @@ import { useEffect } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { cn } from '@/utils';
 import { useAppStore } from '@/stores';
+import { VRAMBar } from '@/components/common/VRAMBar';
 
 interface LoRABadgeInfo {
   name: string;
@@ -233,23 +234,12 @@ export function ModelManager() {
         <div className="mb-4">
           <div className="flex items-center justify-between text-xs text-gray-400 mb-1">
             <span>VRAM Usage</span>
-            <span>
-              {(vram.usedMb / 1024).toFixed(1)} / {(vram.totalMb / 1024).toFixed(1)} GB
-            </span>
           </div>
-          <div className="h-2 bg-gray-700 rounded-full overflow-hidden">
-            <div
-              className={cn(
-                'h-full transition-all duration-300',
-                vram.utilizationPercent > 90
-                  ? 'bg-red-500'
-                  : vram.utilizationPercent > 70
-                    ? 'bg-yellow-500'
-                    : 'bg-blue-500'
-              )}
-              style={{ width: `${Math.min(100, vram.utilizationPercent)}%` }}
-            />
-          </div>
+          <VRAMBar
+            usedGb={vram.usedMb / 1024}
+            totalGb={vram.totalMb / 1024}
+            height="h-2"
+          />
         </div>
       )}
 

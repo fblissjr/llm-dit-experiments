@@ -1,6 +1,6 @@
 # architecture overview
 
-*last updated: 2026-02-14*
+*last updated: 2026-02-27*
 
 High-level architecture of the LLM-DiT multi-model generation platform. For detailed post-refactor internals, see [internal/docs/architecture/post_refactor_guide.md](../internal/docs/architecture/post_refactor_guide.md).
 
@@ -148,13 +148,14 @@ torchao is the sole backend. Valid methods: `none`, `fp8-dynamic`, `fp8-weight-o
 
 ## frontend
 
-React 18 + Zustand 5 + Vite 7 application in `web/frontend-v2/`:
+React 19 + Zustand 5 + Vite 7 + Bun application in `web/frontend-v2/`:
 
 - **Schema-driven forms:** Backend returns `ParamSchema` lists, frontend renders controls automatically
 - **Zustand stores:** `appStore` (pipelines, presets), `formStore` (per-pipeline state), `sessionStore` (history)
-- **Persist middleware:** appStore, formStore, and sessionStore persist across sessions (IndexedDB for history, localStorage for others)
-- **OpenAPI codegen:** `npm run export-openapi && npm run gen-api` generates TypeScript types from the API spec
-- **Build:** `cd web/frontend-v2 && npm run build` -> served from `dist/`
+- **Persist middleware:** All three stores persist via IndexedDB (`utils/idbStorage.ts`), falls back to localStorage
+- **Media system:** Unified `MediaItem` type with `detectKind()`/`mediaItemFromResult()`/`mediaItemFromHistory()` utilities
+- **OpenAPI codegen:** `bun run export-openapi && bun run gen-api` generates TypeScript types from the API spec
+- **Build:** `cd web/frontend-v2 && bun run build` -> served from `dist/`
 
 ## strategic direction
 

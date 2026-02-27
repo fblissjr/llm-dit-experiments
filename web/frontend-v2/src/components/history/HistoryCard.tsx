@@ -5,10 +5,11 @@
  */
 
 import { memo, useCallback, useState } from 'react';
-import { cn } from '@/utils';
+import { cn, formatRelativeTime } from '@/utils';
 import { useSessionStore } from '@/stores';
 import type { HistoryItem } from '@/api/types';
 import { MediaViewer } from '@/components/viewer';
+import { mediaItemFromHistory } from '@/utils/media';
 import { PIPELINE_COLOR_MAP } from '@/constants/colors';
 
 interface HistoryCardProps {
@@ -20,7 +21,8 @@ export const HistoryCard = memo(function HistoryCard({ item }: HistoryCardProps)
   const removeHistoryItem = useSessionStore((s) => s.removeHistoryItem);
   const [showViewer, setShowViewer] = useState(false);
 
-  const isVideo = item.result.outputType === 'video';
+  const media = mediaItemFromHistory(item);
+  const isVideo = media.kind === 'video';
 
   const handleClick = useCallback(() => {
     loadHistoryParams(item);
@@ -37,19 +39,15 @@ export const HistoryCard = memo(function HistoryCard({ item }: HistoryCardProps)
   const handleThumbnailClick = useCallback(
     (e: React.MouseEvent) => {
       e.stopPropagation();
-      const imageUrl = item.fullImageUrl || item.thumbnailUrl;
-      if (imageUrl && imageUrl !== '') {
+      if (media.url) {
         setShowViewer(true);
       }
     },
-    [item.fullImageUrl, item.thumbnailUrl]
+    [media.url]
   );
 
   const relativeTime = formatRelativeTime(item.timestamp);
   const pipelineColor = PIPELINE_COLOR_MAP[item.pipelineColor] ?? PIPELINE_COLOR_MAP.blue;
-
-  // Viewer shows the full-resolution media (video file or full image)
-  const viewerUrl = item.fullImageUrl || item.thumbnailUrl;
 
   return (
     <>
@@ -162,33 +160,12 @@ export const HistoryCard = memo(function HistoryCard({ item }: HistoryCardProps)
       </div>
 
       {/* Media viewer modal */}
-      {showViewer && viewerUrl && (
+      {showViewer && media.url && (
         <MediaViewer
-          url={viewerUrl}
-          alt={item.shortPrompt}
-          mediaType={isVideo ? 'video' : 'image'}
-          audioUrl={item.audioUrl}
+          item={media}
           onClose={() => setShowViewer(false)}
         />
       )}
     </>
   );
 }, (prev, next) => prev.item.id === next.item.id);
-
-/**
- * Format timestamp to relative time string
- */
-function formatRelativeTime(timestamp: number): string {
-  const now = Date.now();
-  const diff = now - timestamp;
-
-  const seconds = Math.floor(diff / 1000);
-  const minutes = Math.floor(seconds / 60);
-  const hours = Math.floor(minutes / 60);
-  const days = Math.floor(hours / 24);
-
-  if (days > 0) return `${days}d ago`;
-  if (hours > 0) return `${hours}h ago`;
-  if (minutes > 0) return `${minutes}m ago`;
-  return 'just now';
-}

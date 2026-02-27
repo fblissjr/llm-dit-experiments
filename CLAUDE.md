@@ -40,6 +40,15 @@ Never assume you know where code is or what exists. Always verify by retrieval a
 - **never commit** without explicit user approval
 - **use `ModelManager`** for all model load/unload/reload -- never manipulate model globals directly
 - **always update state** after significant work (see state management below)
+- **use `bun`** for all frontend ops (`bun install`, `bun run`, `bunx`) -- never `npm` or `yarn`
+
+### IndexedDB conventions (frontend)
+
+The frontend uses IndexedDB for persistence (3 stores: `llm-dit-history`, `llm-dit-app`, `llm-dit-form`). Rules:
+- **Never write migration scripts.** IndexedDB is a cache, not a database. Always provide a nuke path.
+- **Strip base64 data URLs** from persisted history params and form values in Zustand `partialize`. Large data URLs exhaust IndexedDB quota.
+- **"Reset Storage" button** in SettingsMenu wipes all IndexedDB stores and reloads. Use `ConfirmDialog` for destructive actions (clear history, reset storage).
+- **New persisted fields must be optional** with sensible defaults so existing stores hydrate without errors.
 
 ### configuration hierarchy
 
@@ -92,7 +101,7 @@ All routers use `resolve_param()` from `web/param_resolver.py` for generation pa
 | **Codebase map** | [codebase_map.md](internal/docs/architecture/codebase_map.md) |
 | **Logging standards** | [logging_standards.md](internal/principles/logging_standards.md) |
 | **Modular architecture (L1-L6)** | [modular_architecture.md](internal/principles/modular_architecture.md) |
-| **API endpoints / OpenAPI** | `scripts/export_openapi.py` or `npm run export-openapi && npm run gen-api` from `web/frontend-v2/` |
+| **API endpoints / OpenAPI** | `scripts/export_openapi.py` or `bun run export-openapi && bun run gen-api` from `web/frontend-v2/` |
 | **E2E testing standard** | [tests/e2e/api/README.md](tests/e2e/api/README.md) |
 
 ## feature implementation workflow
@@ -171,8 +180,10 @@ This is a **multi-workstream project**. Work happens in parallel across layers:
 | Model lifecycle | `src/llm_dit/model_manager.py` | `ModelManager` -- load/unload/reload any pipeline |
 | API layer | `web/routers/`, `web/schemas.py` | 7 domain routers + Pydantic models (~730 lines) |
 | Pipelines | `src/llm_dit/pipelines/` | Each pipeline has its own file |
-| Frontend | `web/frontend-v2/` | React 19 + Zustand 5 + Vite 7 + Tailwind 4. Schema-driven forms from OpenAPI. See [web CLAUDE.md](internal/web/CLAUDE.md) |
+| Frontend | `web/frontend-v2/` | React 19 + Zustand 5 + Vite 7 + Tailwind 4 + Bun. Schema-driven forms from OpenAPI. See [web CLAUDE.md](internal/web/CLAUDE.md) |
 | Frontend logger | `web/frontend-v2/src/utils/logger.ts` | Namespaced logging factory; `VITE_LOG_LEVEL` env var; zero raw console calls |
+| Media utilities | `web/frontend-v2/src/utils/media.ts` | `detectKind()`, `mediaItemFromResult()`, `mediaItemFromHistory()` -- unified `MediaItem` type |
+| VRAM bar | `web/frontend-v2/src/components/common/VRAMBar.tsx` | Shared VRAM usage bar component used by StatusBar and SettingsMenu |
 
 ## architecture patterns (post-refactor)
 
@@ -283,7 +294,7 @@ For full debugging patterns, see [lessons_learned.md](internal/state/lessons_lea
 | 3 pre-existing unit test failures | Not caused by recent changes | `test_resolution_validators.py` (2): snap_to_32 vs snap_to_64 mismatch. `test_pipeline.py` (1): unrelated. Verify with `git stash && uv run pytest tests/unit/ -v` |
 | Generate button disabled silently | Validation error not displayed to user | Check DevTools for `[Generate]` namespace logs; likely stale IndexedDB value exceeds schema min/max |
 | Noisy/garbage LTX-2 output | Compounding optimizations | Disable `ge_gamma`, `fbcache_threshold`, `use_distilled_sigmas` in config.toml; test one at a time. All three together = no CFG + stale cached blocks + amplified velocity = runaway noise |
-| Stale form values from IndexedDB | Schema range changed after values persisted | `getResolvedValues()` clamps automatically; clear IndexedDB via DevTools Application tab to hard-reset |
+| Stale form values from IndexedDB | Schema range changed after values persisted | `getResolvedValues()` clamps automatically; use "Reset Storage" in Settings or clear IndexedDB via DevTools Application tab |
 
 ## quick test commands
 
@@ -314,10 +325,10 @@ uv run pytest tests/unit/test_ltx2_audio_vae.py tests/unit/test_ltx2_av_transfor
 uv run pytest tests/unit/test_ltx2_resolve_quantize.py tests/unit/test_quantization.py -v
 
 # Frontend TypeScript check (from web/frontend-v2/)
-cd web/frontend-v2 && npx tsc --noEmit
+cd web/frontend-v2 && bunx tsc --noEmit
 
 # Regenerate frontend types from API (from web/frontend-v2/)
-npm run export-openapi && npm run gen-api
+cd web/frontend-v2 && bun run export-openapi && bun run gen-api
 ```
 
 Full testing guide: [tests/CLAUDE.md](tests/CLAUDE.md)

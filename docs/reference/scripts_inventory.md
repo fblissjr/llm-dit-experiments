@@ -1,6 +1,6 @@
 # scripts inventory
 
-*last updated: 2026-02-14*
+*last updated: 2026-02-27*
 
 Complete inventory of `scripts/` directory with current status.
 
@@ -11,7 +11,7 @@ These are in active use and should be maintained.
 | Script | Purpose | Notes |
 |--------|---------|-------|
 | `generate.py` | CLI generation entry point | **Deprecated** -- see [entry_points.md](entry_points.md). Will be replaced by CLI-over-API tool. |
-| `export_openapi.py` | Export OpenAPI spec from FastAPI app | Used by frontend codegen: `npm run export-openapi` |
+| `export_openapi.py` | Export OpenAPI spec from FastAPI app | Used by frontend codegen: `bun run export-openapi` |
 | `quantize_model.py` | Quantize model weights to fp8/int8/int4 | Offline quantization utility |
 | `train.py` | Training script | Training entry point |
 | `convert_to_safetensors.py` | Convert model checkpoints to safetensors format | One-time conversion utility, still useful for new models |

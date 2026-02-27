@@ -13,26 +13,7 @@ import { cn, formatUptime } from '@/utils';
 import { useAppStore } from '@/stores';
 import { useIsMobile } from '@/hooks';
 import { RestartWarning } from '@/components/common/RestartWarning';
-
-function VRAMBar({ usedGb, totalGb }: { usedGb: number; totalGb: number }) {
-  const percent = totalGb > 0 ? (usedGb / totalGb) * 100 : 0;
-  return (
-    <div className="flex items-center gap-2 text-xs">
-      <div className="w-20 h-1.5 bg-gray-700 rounded-full overflow-hidden">
-        <div
-          className={cn(
-            'h-full transition-all',
-            percent > 90 ? 'bg-red-500' : percent > 70 ? 'bg-yellow-500' : 'bg-blue-500'
-          )}
-          style={{ width: `${Math.min(100, percent)}%` }}
-        />
-      </div>
-      <span className="text-gray-400 tabular-nums">
-        {usedGb.toFixed(1)}/{totalGb.toFixed(1)}
-      </span>
-    </div>
-  );
-}
+import { VRAMBar } from '@/components/common/VRAMBar';
 
 function LoRABadge({ name, scale }: { name: string; scale: number }) {
   return (

@@ -7,6 +7,7 @@
 import { useState, useCallback, useRef } from 'react';
 import { useSessionStore, useFormStore } from '@/stores';
 import { MediaViewer } from '@/components/viewer';
+import { mediaItemFromResult } from '@/utils/media';
 
 export function ResultDisplay() {
   const result = useSessionStore((s) => s.result);
@@ -45,9 +46,8 @@ export function ResultDisplay() {
     );
   }
 
-  const url = result.urls[0];
-  const isVideo = result.outputType === 'video' || (url && (url.endsWith('.mp4') || url.endsWith('.webm')));
-  const mediaType = isVideo ? 'video' as const : 'image' as const;
+  const media = mediaItemFromResult(result);
+  const isVideo = media.kind === 'video';
 
   return (
     <>
@@ -58,7 +58,7 @@ export function ResultDisplay() {
             <>
               <video
                 ref={videoRef}
-                src={url}
+                src={media.url}
                 controls
                 autoPlay
                 loop
@@ -68,6 +68,7 @@ export function ResultDisplay() {
                 onSeeked={() => {
                   if (audioRef.current && videoRef.current) {
                     audioRef.current.currentTime = videoRef.current.currentTime;
+                    if (!videoRef.current.paused) audioRef.current.play();
                   }
                 }}
               />
@@ -97,7 +98,7 @@ export function ResultDisplay() {
             </>
           ) : (
             <img
-              src={url}
+              src={media.url}
               alt="Generated content"
               className="w-full max-h-[600px] object-contain cursor-pointer hover:opacity-90 transition-opacity"
               onClick={() => setShowViewer(true)}
@@ -208,7 +209,7 @@ export function ResultDisplay() {
 
           {/* Download button - larger touch target for mobile */}
           <a
-            href={url}
+            href={media.url}
             download
             className="btn-ghost px-4 py-2 text-sm flex items-center gap-2 min-h-touch"
           >
@@ -234,10 +235,7 @@ export function ResultDisplay() {
       {/* Media viewer modal */}
       {showViewer && (
         <MediaViewer
-          url={url}
-          alt="Generated content"
-          mediaType={mediaType}
-          audioUrl={result.audioUrl}
+          item={media}
           onClose={() => setShowViewer(false)}
         />
       )}

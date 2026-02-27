@@ -11,6 +11,7 @@ import { cn, formatUptime } from '@/utils';
 import { useAppStore } from '@/stores';
 import { ConfirmDialog } from '@/components/common/ConfirmDialog';
 import { RestartWarning } from '@/components/common/RestartWarning';
+import { DB_NAME } from '@/utils/idbStorage';
 
 interface SettingsMenuProps {
   /** Whether the menu is rendered as a dropdown (desktop) or inline (mobile) */
@@ -24,6 +25,7 @@ export function SettingsMenu({ variant = 'dropdown', onClose }: SettingsMenuProp
   const clearCache = useAppStore((s) => s.clearCache);
 
   const [showRestartConfirm, setShowRestartConfirm] = useState(false);
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [cacheFeedback, setCacheFeedback] = useState<string | null>(null);
   const [isRestarting, setIsRestarting] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -60,6 +62,15 @@ export function SettingsMenu({ variant = 'dropdown', onClose }: SettingsMenuProp
     setIsRestarting(true);
     await restartServer();
     // Server is restarting -- the UI will show a health-polling state
+  };
+
+  const handleResetStorage = () => {
+    setShowResetConfirm(false);
+    indexedDB.deleteDatabase(DB_NAME);
+    localStorage.removeItem('llm-dit-history');
+    localStorage.removeItem('llm-dit-app');
+    localStorage.removeItem('llm-dit-form');
+    window.location.reload();
   };
 
   const handleClearCache = async () => {
@@ -145,6 +156,22 @@ export function SettingsMenu({ variant = 'dropdown', onClose }: SettingsMenuProp
       {ctx && (
         <RestartWarning fields={ctx.pendingRestartFields} className="p-3" />
       )}
+
+      {/* Data Management */}
+      <section>
+        <h4 className="text-xs font-medium text-gray-400 uppercase tracking-wider mb-2">
+          Data
+        </h4>
+        <button
+          onClick={() => setShowResetConfirm(true)}
+          className="w-full px-3 py-2.5 text-sm text-left rounded-lg transition-colors flex items-center gap-3 bg-red-500/10 text-red-400 hover:bg-red-500/20"
+        >
+          <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
+          </svg>
+          Reset Storage
+        </button>
+      </section>
     </div>
   );
 
@@ -169,6 +196,16 @@ export function SettingsMenu({ variant = 'dropdown', onClose }: SettingsMenuProp
         confirmVariant="danger"
         onConfirm={handleRestart}
         onCancel={() => setShowRestartConfirm(false)}
+      />
+
+      <ConfirmDialog
+        isOpen={showResetConfirm}
+        title="Reset Storage"
+        message="This will delete all generation history, saved form values, and app preferences. The page will reload with fresh defaults."
+        confirmLabel="Reset"
+        confirmVariant="danger"
+        onConfirm={handleResetStorage}
+        onCancel={() => setShowResetConfirm(false)}
       />
     </>
   );

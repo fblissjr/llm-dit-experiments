@@ -1,10 +1,10 @@
 export { cn } from './cn';
-export { validateParam, validateForm, isParamVisible } from './validation';
+export { validateParam } from './validation';
 export { generateUUID } from './uuid';
-export { createThumbnail, isBase64DataUrl, estimateDataUrlSize } from './thumbnail';
+export { createThumbnail, isBase64DataUrl } from './thumbnail';
 export { snapToStep } from './numbers';
-export { formatUptime } from './format';
+export { formatUptime, formatRelativeTime } from './format';
 export { debounce } from './debounce';
 export { idbStorage, migrateFromLocalStorage } from './idbStorage';
 export { logger } from './logger';
-export type { NamespacedLogger } from './logger';
+export { detectKind, mediaItemFromResult, mediaItemFromHistory } from './media';

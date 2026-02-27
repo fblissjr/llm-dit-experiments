@@ -5,7 +5,6 @@
  * Handles responsive layout switching between desktop and mobile.
  */
 
-import { useEffect } from 'react';
 import { cn } from '@/utils';
 import { useAppStore } from '@/stores';
 import { useIsMobile, useIsDesktop } from '@/hooks';
@@ -24,12 +23,6 @@ export function AppShell({ children }: AppShellProps) {
   const isDesktop = useIsDesktop();
   const isHistoryOpen = useAppStore((s) => s.isHistoryOpen);
   const isLeftNavOpen = useAppStore((s) => s.isLeftNavOpen);
-  const setIsMobile = useAppStore((s) => s.setIsMobile);
-
-  // Sync mobile state with store
-  useEffect(() => {
-    setIsMobile(isMobile);
-  }, [isMobile, setIsMobile]);
 
   return (
     <div className="min-h-screen bg-gray-900 text-gray-100">

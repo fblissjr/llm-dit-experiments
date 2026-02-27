@@ -89,13 +89,3 @@ export async function createThumbnail(
 export function isBase64DataUrl(url: string): boolean {
   return url.startsWith('data:');
 }
-
-/**
- * Estimate the size in bytes of a base64 data URL
- */
-export function estimateDataUrlSize(dataUrl: string): number {
-  // Base64 encoding is ~4/3 the size of the original data
-  // Also account for the "data:image/...;base64," prefix
-  const base64Data = dataUrl.split(',')[1] || '';
-  return Math.ceil((base64Data.length * 3) / 4);
-}

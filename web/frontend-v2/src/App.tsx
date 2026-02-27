@@ -91,8 +91,19 @@ function PipelineView() {
 
       {/* Right column: Result */}
       <div>
-        <ResultDisplay />
+        <ErrorBoundary fallback={<ResultDisplayFallback />}>
+          <ResultDisplay />
+        </ErrorBoundary>
       </div>
+    </div>
+  );
+}
+
+function ResultDisplayFallback() {
+  return (
+    <div className="card p-8 text-center text-gray-500">
+      <p>Failed to display result.</p>
+      <p className="text-sm mt-1">Try generating again.</p>
     </div>
   );
 }

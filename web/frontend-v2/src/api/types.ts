@@ -36,7 +36,19 @@ export type {
 export type ParamType = 'textarea' | 'slider' | 'number' | 'checkbox' | 'select' | 'image' | 'color' | 'lora_list';
 
 // Output type -- affects result display
-export type OutputType = 'image' | 'video' | 'layers';
+export type OutputType = 'image' | 'video';
+
+// Media kind -- used by MediaItem for display dispatch
+export type MediaKind = 'image' | 'video' | 'audio';
+
+// Unified media item for display components (MediaViewer, HistoryCard, ResultDisplay)
+export interface MediaItem {
+  kind: MediaKind;
+  url: string;
+  thumbnailUrl?: string;
+  audioUrl?: string;
+  alt?: string;
+}
 
 // Param group -- for progressive disclosure
 export type GroupType = 'basic' | 'advanced' | 'expert' | 'scheduler' | 'optimization' | 'enhancement';
@@ -97,7 +109,6 @@ export interface PipelineSchema {
  */
 export interface PipelinesResponse {
   pipelines: Record<string, PipelineSchema>;
-  defaults: Record<string, unknown>;
   loaded_pipeline: string | null;
 }
 
@@ -117,13 +128,7 @@ export interface PresetsResponse {
 export interface VRAMStatus {
   usedMb: number;
   totalMb: number;
-  freeMb: number;
   utilizationPercent: number;
-  breakdown: {
-    label: string;
-    sizeMb: number;
-    color: string;
-  }[];
 }
 
 /**
@@ -137,12 +142,9 @@ export interface ModelStatusResponse {
   pipelineId?: string;
   status: ModelStatus | string;
   components?: { name: string; sizeMb: number; device: string }[];
-  totalVramMb?: number;
   vramMb?: number;
   modelVariant?: string | null;
-  displayName?: string | null;
   loras?: { name: string; scale: number; layersUpdated: number }[];
-  loraSummary?: string | null;
   configTags?: import('../generated').ConfigTag[];
   configWarnings?: import('../generated').ConfigWarning[];
   error?: string;
@@ -159,7 +161,6 @@ export interface GenerationContext {
   pipelineDisplayName: string | null;
   modelVariant: string | null;
   loras: import('../generated').LoRaInfo[];
-  loraSummary: string | null;
   quantization: Record<string, string>;
   compileEnabled: boolean;
   compileMode: string | null;
@@ -168,9 +169,6 @@ export interface GenerationContext {
   vramTotalGb: number | null;
   vramPercent: number | null;
   pendingRestartFields: string[];
-  sessionModifiedFields: string[];
-  fmttCached: boolean;
-  historyCount: number;
 }
 
 /**
@@ -192,16 +190,6 @@ export interface GenerationPreset {
 // ---------------------------------------------------------------------------
 
 /**
- * Generation progress update (SSE event shape -- not in OpenAPI since SSE is untyped)
- */
-export interface GenerationProgress {
-  step: number;
-  total: number;
-  percent?: number;
-  message?: string;
-}
-
-/**
  * Generation result -- frontend-enriched version of ImageGenerationResult.
  * Adds params, durationMs, timestamp fields for history tracking.
  */
@@ -219,16 +207,6 @@ export interface GenerationResult {
   warnings?: string[];
   hasAudio?: boolean;
   audioUrl?: string;
-}
-
-/**
- * Generation error (SSE error shape)
- */
-export interface GenerationError {
-  message: string;
-  code?: string;
-  details?: unknown;
-  recoverable: boolean;
 }
 
 /**

@@ -54,10 +54,8 @@ interface AppState {
   selectedPipelineId: string | null;
 
   // UI state
-  isMobile: boolean;
   isHistoryOpen: boolean;
   isLeftNavOpen: boolean;
-  isSettingsOpen: boolean;
 
   // Generation context (composite status)
   generationContext: GenerationContext | null;
@@ -73,10 +71,8 @@ interface AppState {
   initialize: () => Promise<void>;
   setActiveTab: (tab: 'image' | 'video') => void;
   selectPipeline: (pipelineId: string) => void;
-  setIsMobile: (isMobile: boolean) => void;
   toggleHistory: () => void;
   toggleLeftNav: () => void;
-  toggleSettings: () => void;
   refreshVRAM: () => Promise<void>;
   refreshContext: () => Promise<void>;
   restartServer: () => Promise<void>;
@@ -107,10 +103,8 @@ export const useAppStore = create<AppState>()(
     modelStatus: {},
     activeTab: 'image' as const,
     selectedPipelineId: null,
-    isMobile: false,
     isHistoryOpen: false,
     isLeftNavOpen: true,
-    isSettingsOpen: false,
     generationContext: null,
     vram: null,
     isLoading: true,
@@ -229,12 +223,6 @@ export const useAppStore = create<AppState>()(
       get().loadPresets(pipelineId);
     },
 
-    setIsMobile: (isMobile) => {
-      set((state) => {
-        state.isMobile = isMobile;
-      });
-    },
-
     toggleHistory: () => {
       set((state) => {
         state.isHistoryOpen = !state.isHistoryOpen;
@@ -244,12 +232,6 @@ export const useAppStore = create<AppState>()(
     toggleLeftNav: () => {
       set((state) => {
         state.isLeftNavOpen = !state.isLeftNavOpen;
-      });
-    },
-
-    toggleSettings: () => {
-      set((state) => {
-        state.isSettingsOpen = !state.isSettingsOpen;
       });
     },
 

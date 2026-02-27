@@ -9,6 +9,29 @@ Uses [Semantic Versioning](https://semver.org/).
 ## 0.9.12
 
 ### added
+- **Frontend**: "Reset Storage" button in Settings menu (ConfirmDialog-guarded IndexedDB wipe + reload)
+- **Frontend**: ConfirmDialog on "Clear all" history (destructive action guard)
+- **Frontend**: MediaItem type and media utility functions (`utils/media.ts`) -- unified media display vocabulary with `detectKind`, `mediaItemFromResult`, `mediaItemFromHistory`
+- **Frontend**: Extracted VideoViewer component from MediaViewer inline function
+- **Frontend**: Shared VRAMBar component (`components/common/VRAMBar.tsx`) -- consolidates 2 identical VRAM progress bar implementations
+
+### changed
+- **Frontend**: Migrated from npm to bun (package manager only, runtime unchanged)
+- **Frontend**: MediaViewer accepts `MediaItem` instead of separate url/mediaType/audioUrl props
+- **Frontend**: ResultDisplay and HistoryCard use `mediaItemFromResult`/`mediaItemFromHistory` factories
+- **Frontend**: Base64 data URLs stripped from persisted history params and form values (IndexedDB bloat fix)
+- **Frontend**: BottomSheet close button touch target increased from p-1 to p-2 (44px minimum)
+- **Frontend**: Moved `formatRelativeTime` from HistoryCard to shared `utils/format.ts`
+
+### fixed
+- **Frontend**: Audio post-seek resume -- audio now resumes playback after seeking while video is playing
+- **Frontend**: ErrorBoundary around ResultDisplay prevents form loss on render crash
+
+### removed
+- **Frontend**: Dead utility functions removed from source files (`estimateDataUrlSize`, `validateForm`, `isParamVisible`)
+- **Frontend**: ~470 lines of dead code (components/models/ directory, PipelineSelector, TabBar, unused API functions, unused types, dead store state)
+- **Frontend**: Unused type fields: `VRAMStatus.freeMb`/`breakdown`, `ModelStatusResponse.totalVramMb`/`displayName`/`loraSummary`, `GenerationContext.loraSummary`/`fmttCached`/`historyCount`/`sessionModifiedFields`, `PipelinesResponse.defaults`, `GenerationError`, `GenerationProgress`, `OutputType.'layers'`
+
 - **LTX-2**: Audio VAE decode pipeline (Phase 1). Pure PyTorch port of AudioDecoder (latents to stereo mel) and HiFiGAN Vocoder (mel to 24kHz waveform). Includes AudioPatchifier for 1D temporal patchify/unpatchify, PerChannelStatistics for latent denormalization, CausalConv2d blocks, and weight loaders for both models. 31 unit tests covering shapes, round-trips, weight loading, and full pipeline validation. New package: `src/llm_dit/models/ltx2/audio_vae/`.
 - **LTX-2**: Transformer audio support (Phase 2). New `BasicAVTransformerBlock` handles video-only, audio-only, or dual-stream audio-video processing with bidirectional cross-modal attention (A2V, V2A). Extended `LTX2Transformer` with audio initialization, per-modality FBCache tracking, and dual-stream forward pass. Weight loading supports audio key mappings. Includes STG perturbation model (`PerturbationType`, `PerturbationConfig`, `BatchedPerturbationConfig`) for per-sample attention skipping. 41 unit tests. New file: `src/llm_dit/models/ltx2/av_block.py`.
 - **LTX-2**: Pipeline integration for audio generation (Phase 3). Full end-to-end audio support: config fields (`audio_vae_path`, `vocoder_path`), ModelManager caching with pinned-memory shuttle for audio decoder and vocoder, `generate_video_two_stage()` extended with dual-stream denoising (`_compute_av_velocity`, `_denoise_av_stage`), cross-modal positional embeddings in transformer, audio utility functions (`compute_audio_latent_frames`, `create_audio_position_indices`, `create_audio_modality`), web layer wiring (parameter resolution, tuple return handling, WAV file saving). 29 new pipeline tests.
@@ -264,7 +287,7 @@ Uses [Semantic Versioning](https://semver.org/).
 ### added
 - IndexedDB storage adapter (`idbStorage.ts`) for zustand persist middleware -- replaces localStorage with ~50MB+ async storage
 - One-time `migrateFromLocalStorage()` function for seamless upgrade of existing history data
-- OpenAPI TypeScript codegen pipeline: `npm run export-openapi && npm run gen-api` generates frontend types from FastAPI OpenAPI spec
+- OpenAPI TypeScript codegen pipeline: `bun run export-openapi && bun run gen-api` generates frontend types from FastAPI OpenAPI spec
 - 3 new Pydantic response models: `ParamSchemaResponse`, `PipelineSchemaResponse`, `PresetDetailResponse`
 - `_ensure_qwen_image_loaded()` and `_ensure_qwen_image_t2i_loaded()` helpers for on-demand pipeline loading via ModelManager
 - `_get_zimage_encoder()` and `_ensure_zimage_loaded()` helpers in `core.py` for ModelManager access
@@ -308,7 +331,7 @@ Uses [Semantic Versioning](https://semver.org/).
 - `response_model=` applied to 4 remaining untyped endpoints (`/api/dype/status`, `/api/pipelines`, `/api/pipelines/{id}/defaults`, `/api/resolution-config`)
 - `create_app()` factory function in server.py for OpenAPI spec extraction
 - `scripts/export_openapi.py` for headless OpenAPI JSON export
-- `openapi-ts.config.ts` and npm scripts (`export-openapi`, `gen-api`) for TypeScript codegen scaffolding
+- `openapi-ts.config.ts` and bun scripts (`export-openapi`, `gen-api`) for TypeScript codegen scaffolding
 
 ### changed
 - Frontend context polling switched from `setInterval` to `setTimeout` chaining (prevents request pile-up during slow responses)

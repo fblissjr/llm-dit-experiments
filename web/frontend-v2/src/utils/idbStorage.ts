@@ -13,7 +13,7 @@ import { logger } from './logger';
 
 const log = logger('IDB');
 
-const DB_NAME = 'llm-dit-studio';
+export const DB_NAME = 'llm-dit-studio';
 const STORE_NAME = 'zustand';
 const DB_VERSION = 1;
 
