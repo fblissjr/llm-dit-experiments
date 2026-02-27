@@ -1,4 +1,4 @@
-last updated: 2026-02-24
+last updated: 2026-02-27
 
 # changelog
 
@@ -11,6 +11,10 @@ Uses [Semantic Versioning](https://semver.org/).
 ### added
 - **LTX-2**: Audio VAE decode pipeline (Phase 1). Pure PyTorch port of AudioDecoder (latents to stereo mel) and HiFiGAN Vocoder (mel to 24kHz waveform). Includes AudioPatchifier for 1D temporal patchify/unpatchify, PerChannelStatistics for latent denormalization, CausalConv2d blocks, and weight loaders for both models. 31 unit tests covering shapes, round-trips, weight loading, and full pipeline validation. New package: `src/llm_dit/models/ltx2/audio_vae/`.
 - **LTX-2**: Transformer audio support (Phase 2). New `BasicAVTransformerBlock` handles video-only, audio-only, or dual-stream audio-video processing with bidirectional cross-modal attention (A2V, V2A). Extended `LTX2Transformer` with audio initialization, per-modality FBCache tracking, and dual-stream forward pass. Weight loading supports audio key mappings. Includes STG perturbation model (`PerturbationType`, `PerturbationConfig`, `BatchedPerturbationConfig`) for per-sample attention skipping. 41 unit tests. New file: `src/llm_dit/models/ltx2/av_block.py`.
+- **LTX-2**: Pipeline integration for audio generation (Phase 3). Full end-to-end audio support: config fields (`audio_vae_path`, `vocoder_path`), ModelManager caching with pinned-memory shuttle for audio decoder and vocoder, `generate_video_two_stage()` extended with dual-stream denoising (`_compute_av_velocity`, `_denoise_av_stage`), cross-modal positional embeddings in transformer, audio utility functions (`compute_audio_latent_frames`, `create_audio_position_indices`, `create_audio_modality`), web layer wiring (parameter resolution, tuple return handling, WAV file saving). 29 new pipeline tests.
+
+- **Frontend**: Audio playback support for LTX-2 video generation. Synced `<audio>` element with `<video>` in both ResultDisplay and fullscreen MediaViewer (onPlay/onPause/onSeeked sync). Audio indicator badge in metadata footer and history cards. Separate audio download button. SSE event parsing extracts `has_audio` and `audio_url` from completion events. OpenAPI types regenerated with `audio_negative_prompt` field.
+- **Docs**: Composability analysis document (`internal/docs/architecture/composability_analysis.md`). Evaluates 6 patterns from the LTX-2 audio work against VISION.md's L1-L6 hierarchy. Includes summary matrix, cross-pipeline duplication map (sigma shift formulas, pinned memory shuttle, cleanup_memory), 3 prioritized actionable extractions (PerturbationConfig, ModalityPreprocessor protocol, sigma dedup), and roadmap alignment with DiTProtocol/UniversalFlowMatchLoop prerequisites.
 
 ### changed
 - **LTX-2**: Removed ~106 lines of dead debug prints from `BasicTransformerBlock.forward()` and `Attention.forward()`. These were guarded by never-set debug attributes and included expensive operations (attention weight recomputation for entropy).

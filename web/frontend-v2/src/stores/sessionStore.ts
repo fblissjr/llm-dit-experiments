@@ -180,6 +180,8 @@ export const useSessionStore = create<SessionState>()(
                   enhanced_prompt?: string;
                   seed?: number;
                   warnings?: string[];
+                  has_audio?: boolean;
+                  audio_url?: string | null;
                 };
                 const urls = eventData.urls
                   ?? (eventData.url ? [eventData.url] : null)
@@ -197,6 +199,8 @@ export const useSessionStore = create<SessionState>()(
                   durationMs: Date.now() - startTime,
                   timestamp: Date.now(),
                   warnings: eventData.warnings,
+                  hasAudio: eventData.has_audio ?? false,
+                  audioUrl: eventData.audio_url ?? undefined,
                 };
 
                 set((state) => {
@@ -372,6 +376,8 @@ export const useSessionStore = create<SessionState>()(
           timestamp: result.timestamp,
           params,
           result: storableResult,
+          hasAudio: result.hasAudio,
+          audioUrl: result.audioUrl,
         };
 
         set((state) => {

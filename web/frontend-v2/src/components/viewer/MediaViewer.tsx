@@ -6,7 +6,7 @@
  * Videos render a fullscreen modal with native controls.
  */
 
-import { useEffect, useCallback } from 'react';
+import { useEffect, useCallback, useRef } from 'react';
 import { ImageViewer } from './ImageViewer';
 
 type MediaType = 'image' | 'video';
@@ -15,6 +15,7 @@ interface MediaViewerProps {
   url: string;
   alt?: string;
   mediaType?: MediaType;
+  audioUrl?: string;
   onClose: () => void;
 }
 
@@ -28,21 +29,24 @@ function detectMediaType(url: string): MediaType {
   return 'image';
 }
 
-export function MediaViewer({ url, alt, mediaType, onClose }: MediaViewerProps) {
+export function MediaViewer({ url, alt, mediaType, audioUrl, onClose }: MediaViewerProps) {
   const resolved = mediaType ?? detectMediaType(url);
 
   if (resolved === 'image') {
     return <ImageViewer url={url} alt={alt} onClose={onClose} />;
   }
 
-  return <VideoViewer url={url} onClose={onClose} />;
+  return <VideoViewer url={url} audioUrl={audioUrl} onClose={onClose} />;
 }
 
 // ---------------------------------------------------------------------------
 // VideoViewer -- fullscreen video modal
 // ---------------------------------------------------------------------------
 
-function VideoViewer({ url, onClose }: { url: string; onClose: () => void }) {
+function VideoViewer({ url, audioUrl, onClose }: { url: string; audioUrl?: string; onClose: () => void }) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const audioRef = useRef<HTMLAudioElement>(null);
+
   // Close on Escape
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -92,12 +96,27 @@ function VideoViewer({ url, onClose }: { url: string; onClose: () => void }) {
 
       {/* Video */}
       <video
+        ref={videoRef}
         src={url}
         controls
         autoPlay
         loop
         className="max-w-[90vw] max-h-[90vh] rounded-lg"
+        onPlay={() => audioRef.current?.play()}
+        onPause={() => audioRef.current?.pause()}
+        onSeeked={() => {
+          if (audioRef.current && videoRef.current) {
+            audioRef.current.currentTime = videoRef.current.currentTime;
+          }
+        }}
       />
+      {audioUrl && (
+        <audio
+          ref={audioRef}
+          src={audioUrl}
+          loop
+        />
+      )}
 
       {/* Hint */}
       <div className="absolute bottom-4 left-1/2 -translate-x-1/2 text-sm text-gray-400 bg-gray-900/80 px-4 py-2 rounded-lg">

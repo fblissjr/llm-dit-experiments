@@ -1,7 +1,7 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "Z-Image Generator",
+    "title": "LLM-DiT Studio",
     "version": "0.1.0"
   },
   "paths": {
@@ -1154,6 +1154,44 @@
         }
       }
     },
+    "/api/flux2/models/{model_name}": {
+      "get": {
+        "summary": "Flux2 Model Info",
+        "description": "Get model metadata including distilled status and fixed params.\n\nUsed by frontend to conditionally disable controls for distilled models.",
+        "operationId": "flux2_model_info_api_flux2_models__model_name__get",
+        "parameters": [
+          {
+            "name": "model_name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Model Name"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/flux2/generate": {
       "post": {
         "summary": "Flux2 Generate",
@@ -1233,7 +1271,7 @@
     "/api/ltx2/status": {
       "get": {
         "summary": "Ltx2 Status",
-        "description": "Get LTX-2 pipeline status.\n\nReturns availability, loaded state, and VRAM usage.",
+        "description": "Get LTX-2 pipeline status.\n\nReturns availability based on the injected RuntimeConfig -- no TOML re-parsing.",
         "operationId": "ltx2_status_api_ltx2_status_get",
         "responses": {
           "200": {
@@ -1252,7 +1290,7 @@
     "/api/ltx2/generate/stream": {
       "post": {
         "summary": "Ltx2 Generate Stream",
-        "description": "Generate video with SSE progress streaming.\n\nReturns Server-Sent Events with progress updates during generation,\nthen final result with video URL.\n\nUses pure PyTorch generation via generate_video_with_offloading().",
+        "description": "Generate video with SSE progress streaming.\n\nSupports two-stage generation (default) or single-stage fallback.\nReturns Server-Sent Events with multi-stage progress updates.",
         "operationId": "ltx2_generate_stream_api_ltx2_generate_stream_post",
         "requestBody": {
           "content": {
@@ -1815,14 +1853,14 @@
             "maximum": 2048.0,
             "minimum": 256.0,
             "title": "Width",
-            "default": 1024
+            "default": 1360
           },
           "height": {
             "type": "integer",
             "maximum": 2048.0,
             "minimum": 256.0,
             "title": "Height",
-            "default": 1024
+            "default": 768
           },
           "num_steps": {
             "anyOf": [
@@ -1923,6 +1961,11 @@
               }
             ],
             "title": "Loras"
+          },
+          "upsample_prompt": {
+            "type": "boolean",
+            "title": "Upsample Prompt",
+            "default": false
           },
           "max_text_length": {
             "type": "integer",
@@ -2397,6 +2440,20 @@
             "type": "boolean",
             "title": "Fbcache Log",
             "default": false
+          },
+          "loras": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Loras"
           }
         },
         "type": "object",
@@ -2695,6 +2752,13 @@
             "type": "number",
             "title": "Generationtime",
             "default": 0.0
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Warnings"
           }
         },
         "type": "object",
@@ -2923,6 +2987,20 @@
             "type": "boolean",
             "title": "Fbcache Log",
             "default": false
+          },
+          "loras": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Loras"
           }
         },
         "type": "object",
@@ -2939,27 +3017,33 @@
             "type": "string",
             "title": "Prompt"
           },
+          "enhance_prompt": {
+            "type": "boolean",
+            "title": "Enhance Prompt",
+            "default": false
+          },
           "negative_prompt": {
             "type": "string",
             "title": "Negative Prompt",
-            "default": "worst quality, blurry, distorted, inconsistent motion"
+            "default": "blurry, out of focus, overexposed, underexposed, low contrast, washed out colors, excessive noise, grainy texture, poor lighting, flickering, motion blur, distorted proportions, unnatural skin tones, deformed facial features, asymmetrical face, missing facial features, extra limbs, disfigured hands, wrong hand count, artifacts around text, inconsistent perspective, camera shake, incorrect depth of field, background too sharp, background clutter, distracting reflections, harsh shadows, inconsistent lighting direction, color banding, cartoonish rendering, 3D CGI look, unrealistic materials, uncanny valley effect, incorrect ethnicity, wrong gender, exaggerated expressions, wrong gaze direction, mismatched lip sync, silent or muted audio, distorted voice, robotic voice, echo, background noise, off-sync audio, incorrect dialogue, added dialogue, repetitive speech, jittery movement, awkward pauses, incorrect timing, unnatural transitions, inconsistent framing, tilted camera, flat lighting, inconsistent tone, cinematic oversaturation, stylized filters, or AI artifacts."
           },
           "width": {
             "type": "integer",
-            "maximum": 1280.0,
+            "maximum": 1536.0,
             "minimum": 256.0,
             "title": "Width",
             "default": 768
           },
           "height": {
             "type": "integer",
-            "maximum": 1280.0,
+            "maximum": 1024.0,
             "minimum": 256.0,
             "title": "Height",
             "default": 512
           },
           "num_frames": {
             "type": "integer",
+            "minimum": 9.0,
             "title": "Num Frames",
             "default": 33
           },
@@ -2967,16 +3051,6 @@
             "type": "number",
             "title": "Fps",
             "default": 24.0
-          },
-          "num_inference_steps": {
-            "type": "integer",
-            "title": "Num Inference Steps",
-            "default": 12
-          },
-          "guidance_scale": {
-            "type": "number",
-            "title": "Guidance Scale",
-            "default": 3.5
           },
           "seed": {
             "anyOf": [
@@ -2993,6 +3067,17 @@
             "type": "boolean",
             "title": "Enable Audio",
             "default": false
+          },
+          "audio_negative_prompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Audio Negative Prompt"
           },
           "lora_path": {
             "anyOf": [
@@ -3015,6 +3100,93 @@
               }
             ],
             "title": "Lora Scale"
+          },
+          "use_two_stage": {
+            "type": "boolean",
+            "title": "Use Two Stage",
+            "default": true
+          },
+          "stage1_steps": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stage1 Steps"
+          },
+          "stage2_steps": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stage2 Steps"
+          },
+          "guidance_scale": {
+            "type": "number",
+            "title": "Guidance Scale",
+            "default": 3.0
+          },
+          "stg_scale": {
+            "type": "number",
+            "title": "Stg Scale",
+            "default": 1.0
+          },
+          "stg_blocks": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stg Blocks"
+          },
+          "rescale_scale": {
+            "type": "number",
+            "title": "Rescale Scale",
+            "default": 0.7
+          },
+          "distilled_lora_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Distilled Lora Path"
+          },
+          "distilled_lora_scale": {
+            "type": "number",
+            "title": "Distilled Lora Scale",
+            "default": 1.0
+          },
+          "ge_gamma": {
+            "type": "number",
+            "title": "Ge Gamma",
+            "default": 0.0
+          },
+          "fbcache_threshold": {
+            "type": "number",
+            "title": "Fbcache Threshold",
+            "default": 0.0
+          },
+          "use_distilled_sigmas": {
+            "type": "boolean",
+            "title": "Use Distilled Sigmas",
+            "default": false
           }
         },
         "type": "object",
@@ -3022,7 +3194,7 @@
           "prompt"
         ],
         "title": "LTX2GenerateRequest",
-        "description": "Request for LTX-2 video generation."
+        "description": "Request for LTX-2 two-stage video generation."
       },
       "LTX2StatusResponse": {
         "properties": {

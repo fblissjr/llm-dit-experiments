@@ -142,6 +142,9 @@ export const HistoryCard = memo(function HistoryCard({ item }: HistoryCardProps)
               >
                 {item.pipelineName}
               </span>
+              {item.hasAudio && (
+                <span className="text-xs text-blue-400 ml-1">+Audio</span>
+              )}
               <span className="text-xs text-gray-500">{relativeTime}</span>
             </div>
 
@@ -164,6 +167,7 @@ export const HistoryCard = memo(function HistoryCard({ item }: HistoryCardProps)
           url={viewerUrl}
           alt={item.shortPrompt}
           mediaType={isVideo ? 'video' : 'image'}
+          audioUrl={item.audioUrl}
           onClose={() => setShowViewer(false)}
         />
       )}

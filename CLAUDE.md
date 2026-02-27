@@ -83,6 +83,7 @@ All routers use `resolve_param()` from `web/param_resolver.py` for generation pa
 | **Writing/running tests** | [tests/CLAUDE.md](tests/CLAUDE.md) |
 | **Research/experiments** | [experiments/CLAUDE.md](experiments/CLAUDE.md) |
 | **Post-refactor architecture** | [post_refactor_guide.md](internal/docs/architecture/post_refactor_guide.md) |
+| **Composability analysis** | [composability_analysis.md](internal/docs/architecture/composability_analysis.md) |
 | **Architecture decisions** | [architectural_decisions.md](internal/principles/architectural_decisions.md) |
 | **Planned improvements / tech debt** | [backlog.md](internal/state/backlog.md) |
 | **Debugging** | [lessons_learned.md](internal/state/lessons_learned.md) |

@@ -313,6 +313,10 @@ export type Flux2GenerateRequest = {
      */
     loras?: Array<string> | null;
     /**
+     * Upsample Prompt
+     */
+    upsample_prompt?: boolean;
+    /**
      * Max Text Length
      */
     max_text_length?: number;
@@ -557,6 +561,10 @@ export type GenerateRequest = {
      * Fbcache Log
      */
     fbcache_log?: boolean;
+    /**
+     * Loras
+     */
+    loras?: Array<string> | null;
 };
 
 /**
@@ -756,6 +764,10 @@ export type ImageGenerationResult = {
      * Generationtime
      */
     generationTime?: number;
+    /**
+     * Warnings
+     */
+    warnings?: Array<string>;
 };
 
 /**
@@ -874,18 +886,26 @@ export type Img2ImgRequest = {
      * Fbcache Log
      */
     fbcache_log?: boolean;
+    /**
+     * Loras
+     */
+    loras?: Array<string> | null;
 };
 
 /**
  * LTX2GenerateRequest
  *
- * Request for LTX-2 video generation.
+ * Request for LTX-2 two-stage video generation.
  */
 export type Ltx2GenerateRequest = {
     /**
      * Prompt
      */
     prompt: string;
+    /**
+     * Enhance Prompt
+     */
+    enhance_prompt?: boolean;
     /**
      * Negative Prompt
      */
@@ -907,14 +927,6 @@ export type Ltx2GenerateRequest = {
      */
     fps?: number;
     /**
-     * Num Inference Steps
-     */
-    num_inference_steps?: number;
-    /**
-     * Guidance Scale
-     */
-    guidance_scale?: number;
-    /**
      * Seed
      */
     seed?: number | null;
@@ -923,6 +935,10 @@ export type Ltx2GenerateRequest = {
      */
     enable_audio?: boolean;
     /**
+     * Audio Negative Prompt
+     */
+    audio_negative_prompt?: string | null;
+    /**
      * Lora Path
      */
     lora_path?: string | null;
@@ -930,6 +946,54 @@ export type Ltx2GenerateRequest = {
      * Lora Scale
      */
     lora_scale?: number | null;
+    /**
+     * Use Two Stage
+     */
+    use_two_stage?: boolean;
+    /**
+     * Stage1 Steps
+     */
+    stage1_steps?: number | null;
+    /**
+     * Stage2 Steps
+     */
+    stage2_steps?: number | null;
+    /**
+     * Guidance Scale
+     */
+    guidance_scale?: number;
+    /**
+     * Stg Scale
+     */
+    stg_scale?: number;
+    /**
+     * Stg Blocks
+     */
+    stg_blocks?: Array<number> | null;
+    /**
+     * Rescale Scale
+     */
+    rescale_scale?: number;
+    /**
+     * Distilled Lora Path
+     */
+    distilled_lora_path?: string | null;
+    /**
+     * Distilled Lora Scale
+     */
+    distilled_lora_scale?: number;
+    /**
+     * Ge Gamma
+     */
+    ge_gamma?: number;
+    /**
+     * Fbcache Threshold
+     */
+    fbcache_threshold?: number;
+    /**
+     * Use Distilled Sigmas
+     */
+    use_distilled_sigmas?: boolean;
 };
 
 /**
@@ -2839,6 +2903,34 @@ export type Flux2StatusApiFlux2StatusGetResponses = {
 };
 
 export type Flux2StatusApiFlux2StatusGetResponse = Flux2StatusApiFlux2StatusGetResponses[keyof Flux2StatusApiFlux2StatusGetResponses];
+
+export type Flux2ModelInfoApiFlux2ModelsModelNameGetData = {
+    body?: never;
+    path: {
+        /**
+         * Model Name
+         */
+        model_name: string;
+    };
+    query?: never;
+    url: '/api/flux2/models/{model_name}';
+};
+
+export type Flux2ModelInfoApiFlux2ModelsModelNameGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type Flux2ModelInfoApiFlux2ModelsModelNameGetError = Flux2ModelInfoApiFlux2ModelsModelNameGetErrors[keyof Flux2ModelInfoApiFlux2ModelsModelNameGetErrors];
+
+export type Flux2ModelInfoApiFlux2ModelsModelNameGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
 
 export type Flux2GenerateApiFlux2GeneratePostData = {
     body: Flux2GenerateRequest;

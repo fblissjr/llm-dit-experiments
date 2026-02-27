@@ -41,6 +41,9 @@ from llm_dit.pipelines.generate import (
     generate_video_two_stage,
     create_position_indices,
     create_video_modality,
+    compute_audio_latent_frames,
+    create_audio_position_indices,
+    create_audio_modality,
     cleanup_memory,
 )
 # WanVideoPipeline for Wan 2.1/2.2 video generation
@@ -74,5 +77,8 @@ __all__ = [
     "generate_video_two_stage",
     "create_position_indices",
     "create_video_modality",
+    "compute_audio_latent_frames",
+    "create_audio_position_indices",
+    "create_audio_modality",
     "cleanup_memory",
 ]

@@ -217,6 +217,8 @@ export interface GenerationResult {
   durationMs: number;
   timestamp: number;
   warnings?: string[];
+  hasAudio?: boolean;
+  audioUrl?: string;
 }
 
 /**
@@ -245,6 +247,8 @@ export interface HistoryItem {
   timestamp: number;
   params: Record<string, unknown>;
   result: GenerationResult;
+  hasAudio?: boolean;
+  audioUrl?: string;
 }
 
 /**

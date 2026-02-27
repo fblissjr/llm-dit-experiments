@@ -4,7 +4,7 @@
  * Shows the generated image or video result.
  */
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { useSessionStore, useFormStore } from '@/stores';
 import { MediaViewer } from '@/components/viewer';
 
@@ -14,6 +14,8 @@ export function ResultDisplay() {
   const [showViewer, setShowViewer] = useState(false);
   const [promptExpanded, setPromptExpanded] = useState(false);
   const setFormValue = useFormStore((s) => s.setValue);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const audioRef = useRef<HTMLAudioElement>(null);
 
   const useEnhancedPrompt = useCallback(() => {
     if (!result?.enhancedPrompt || !result.pipelineId) return;
@@ -55,12 +57,27 @@ export function ResultDisplay() {
           {isVideo ? (
             <>
               <video
+                ref={videoRef}
                 src={url}
                 controls
                 autoPlay
                 loop
                 className="w-full max-h-[600px] object-contain"
+                onPlay={() => audioRef.current?.play()}
+                onPause={() => audioRef.current?.pause()}
+                onSeeked={() => {
+                  if (audioRef.current && videoRef.current) {
+                    audioRef.current.currentTime = videoRef.current.currentTime;
+                  }
+                }}
               />
+              {result.hasAudio && result.audioUrl && (
+                <audio
+                  ref={audioRef}
+                  src={result.audioUrl}
+                  loop
+                />
+              )}
               {/* Expand button for video (click on video itself is play/pause) */}
               <button
                 onClick={() => setShowViewer(true)}
@@ -158,29 +175,59 @@ export function ResultDisplay() {
         <div className="flex items-center gap-4">
           <span>Seed: {result.seed}</span>
           <span>{(result.durationMs / 1000).toFixed(1)}s</span>
+          {result.hasAudio && (
+            <span className="text-xs text-blue-400">Audio</span>
+          )}
         </div>
 
-        {/* Download button - larger touch target for mobile */}
-        <a
-          href={url}
-          download
-          className="btn-ghost px-4 py-2 text-sm flex items-center gap-2 min-h-touch"
-        >
-          <svg
-            className="w-4 h-4"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
+        <div className="flex items-center gap-2">
+          {/* Download audio button */}
+          {result.hasAudio && result.audioUrl && (
+            <a
+              href={result.audioUrl}
+              download
+              className="btn-ghost px-3 py-2 text-sm flex items-center gap-1.5 min-h-touch"
+              title="Download audio"
+            >
+              <svg
+                className="w-4 h-4"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3"
+                />
+              </svg>
+              Audio
+            </a>
+          )}
+
+          {/* Download button - larger touch target for mobile */}
+          <a
+            href={url}
+            download
+            className="btn-ghost px-4 py-2 text-sm flex items-center gap-2 min-h-touch"
           >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
-            />
-          </svg>
-          Download
-        </a>
+            <svg
+              className="w-4 h-4"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
+              />
+            </svg>
+            Download
+          </a>
+        </div>
       </div>
       </div>
 
@@ -190,6 +237,7 @@ export function ResultDisplay() {
           url={url}
           alt="Generated content"
           mediaType={mediaType}
+          audioUrl={result.audioUrl}
           onClose={() => setShowViewer(false)}
         />
       )}

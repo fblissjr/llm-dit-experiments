@@ -1259,6 +1259,150 @@ def _compute_velocity(
     return velocity
 
 
+def _compute_av_velocity(
+    model: LTX2Transformer,
+    video_latents: torch.Tensor,
+    video_timestep: torch.Tensor,
+    video_positions: torch.Tensor,
+    video_prompt_embeds: torch.Tensor,
+    audio_latents: torch.Tensor,
+    audio_timestep: torch.Tensor,
+    audio_positions: torch.Tensor,
+    audio_prompt_embeds: torch.Tensor,
+    ctx: StepContext,
+    audio_neg_embeds: Optional[torch.Tensor] = None,
+    fbcache_threshold: float = 0.0,
+    step_index: int = 0,
+    num_steps: int = 1,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Compute velocity prediction for both video and audio streams.
+
+    Mirrors _compute_velocity() but creates both modalities for each pass.
+    Same guidance formula applies to both streams:
+      v = v_cond + (cfg-1)*(v_cond - v_uncond) + stg*(v_cond - v_perturbed)
+
+    STG uses PerturbationConfig for AV models (SKIP_VIDEO_SELF_ATTN).
+    Same guidance_scale applies to both modalities (per DiffSynth reference).
+
+    Args:
+        model: LTX2Transformer (AudioVideo mode) on GPU.
+        video_latents: [B, T_v, D_v] noisy video latent tokens.
+        video_timestep: [B, T_v] per-token video timestep values.
+        video_positions: [B, 3, T_v, 2] video RoPE position indices.
+        video_prompt_embeds: [B, seq_len, dim] positive video text embeddings.
+        audio_latents: [B, T_a, D_a] noisy audio latent tokens.
+        audio_timestep: [B, T_a] per-token audio timestep values.
+        audio_positions: [B, 1, T_a, 2] audio RoPE position indices.
+        audio_prompt_embeds: [B, seq_len, dim] positive audio text embeddings.
+        ctx: Per-step denoising parameters.
+        audio_neg_embeds: Optional audio negative embeddings for CFG.
+        fbcache_threshold: FBCache block-skip threshold (0=disabled).
+        step_index: Current denoising step (0-based).
+        num_steps: Total denoising steps.
+
+    Returns:
+        Tuple of (video_velocity, audio_velocity) tensors.
+    """
+    from llm_dit.models.ltx2.transformer import (
+        BatchedPerturbationConfig,
+        Perturbation,
+        PerturbationConfig,
+        PerturbationType,
+    )
+
+    fb_kwargs = {}
+    if fbcache_threshold > 0.0:
+        fb_kwargs = dict(
+            fbcache_threshold=fbcache_threshold,
+            step_index=step_index,
+            num_steps=num_steps,
+        )
+
+    if ctx.guidance_scale > 1.0 and ctx.neg_embeds is not None:
+        # Pass 1: Unconditional (negative prompts for both modalities)
+        uncond_video = create_video_modality(
+            video_latents, video_timestep, video_positions, ctx.neg_embeds,
+        )
+        uncond_audio = create_audio_modality(
+            audio_latents, audio_timestep, audio_positions,
+            audio_neg_embeds if audio_neg_embeds is not None else audio_prompt_embeds,
+        )
+        v_uncond, a_uncond = model(video=uncond_video, audio=uncond_audio, **fb_kwargs)
+        del uncond_video, uncond_audio
+        torch.cuda.synchronize()
+        torch.cuda.empty_cache()
+
+        # Pass 2: Conditional (positive prompts)
+        cond_video = create_video_modality(
+            video_latents, video_timestep, video_positions, video_prompt_embeds,
+        )
+        cond_audio = create_audio_modality(
+            audio_latents, audio_timestep, audio_positions, audio_prompt_embeds,
+        )
+        v_cond, a_cond = model(video=cond_video, audio=cond_audio, **fb_kwargs)
+
+        # CFG blend -- same guidance_scale for both modalities
+        video_vel = v_cond + (ctx.guidance_scale - 1.0) * (v_cond - v_uncond)
+        audio_vel = a_cond + (ctx.guidance_scale - 1.0) * (a_cond - a_uncond)
+        del v_uncond, a_uncond
+
+        # Pass 3: Perturbed (STG) -- video self-attention skipped
+        if ctx.stg_scale > 0 and ctx.stg_blocks:
+            del cond_video, cond_audio
+            torch.cuda.synchronize()
+            torch.cuda.empty_cache()
+
+            stg_video = create_video_modality(
+                video_latents, video_timestep, video_positions, video_prompt_embeds,
+            )
+            stg_audio = create_audio_modality(
+                audio_latents, audio_timestep, audio_positions, audio_prompt_embeds,
+            )
+            perturbation = Perturbation(
+                type=PerturbationType.SKIP_VIDEO_SELF_ATTN,
+                blocks=list(ctx.stg_blocks),
+            )
+            perturb_config = BatchedPerturbationConfig(
+                perturbations=[PerturbationConfig(perturbations=[perturbation])],
+            )
+            v_perturbed, a_perturbed = model(
+                video=stg_video, audio=stg_audio,
+                perturbation_config=perturb_config,
+                **fb_kwargs,
+            )
+            del stg_video, stg_audio
+
+            video_vel = video_vel + ctx.stg_scale * (v_cond - v_perturbed)
+            audio_vel = audio_vel + ctx.stg_scale * (a_cond - a_perturbed)
+            del v_perturbed, a_perturbed
+        else:
+            del cond_video, cond_audio
+
+        # CFG rescaling
+        if ctx.rescale_scale > 0:
+            v_factor = v_cond.std() / video_vel.std()
+            v_factor = ctx.rescale_scale * v_factor + (1.0 - ctx.rescale_scale)
+            video_vel = video_vel * v_factor
+
+            a_factor = a_cond.std() / audio_vel.std()
+            a_factor = ctx.rescale_scale * a_factor + (1.0 - ctx.rescale_scale)
+            audio_vel = audio_vel * a_factor
+
+        del v_cond, a_cond
+    else:
+        # Simple denoising (no guidance)
+        video_mod = create_video_modality(
+            video_latents, video_timestep, video_positions, video_prompt_embeds,
+        )
+        audio_mod = create_audio_modality(
+            audio_latents, audio_timestep, audio_positions, audio_prompt_embeds,
+        )
+        video_vel, audio_vel = model(video=video_mod, audio=audio_mod, **fb_kwargs)
+        del video_mod, audio_mod
+
+    return video_vel, audio_vel
+
+
 def _denoise_stage(
     model: LTX2Transformer,
     latents: torch.Tensor,
@@ -1371,6 +1515,138 @@ def _denoise_stage(
         logger.info(f"[{stage_name}] {num_steps} steps in {denoise_elapsed:.1f}s")
 
     return latents
+
+
+def _denoise_av_stage(
+    model: LTX2Transformer,
+    video_latents: torch.Tensor,
+    audio_latents: torch.Tensor,
+    video_prompt_embeds: torch.Tensor,
+    audio_prompt_embeds: torch.Tensor,
+    sigmas: torch.Tensor,
+    video_positions: torch.Tensor,
+    audio_positions: torch.Tensor,
+    stage_name: str,
+    step_schedule: Optional[StepSchedule] = None,
+    audio_neg_embeds: Optional[torch.Tensor] = None,
+    callback: Optional[Callable[[str, int, int], None]] = None,
+    denoise_mask: Optional[torch.Tensor] = None,
+    clean_latent: Optional[torch.Tensor] = None,
+    fbcache_threshold: float = 0.0,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Run denoising stage for both video and audio streams.
+
+    Same Euler method and sigma schedule as _denoise_stage. Audio uses
+    uniform timesteps (no denoise_mask support for audio -- audio has
+    no spatial conditioning).
+
+    Args:
+        model: LTX2Transformer (AudioVideo mode) on GPU.
+        video_latents: [B, T_v, D_v] noisy video latent tokens.
+        audio_latents: [B, T_a, D_a] noisy audio latent tokens.
+        video_prompt_embeds: [B, seq_len, dim] video text embeddings.
+        audio_prompt_embeds: [B, seq_len, dim] audio text embeddings.
+        sigmas: [N+1] sigma schedule (shared for both modalities).
+        video_positions: [B, 3, T_v, 2] video RoPE position indices.
+        audio_positions: [B, 1, T_a, 2] audio RoPE position indices.
+        stage_name: Name for logging.
+        step_schedule: Callable(step_index, sigma) -> StepContext.
+        audio_neg_embeds: Optional audio negative embeddings for CFG.
+        callback: Optional progress callback.
+        denoise_mask: Optional per-token denoise mask (video only).
+        clean_latent: Optional clean latent for conditioned regions (video only).
+        fbcache_threshold: FBCache block-skip threshold (0=disabled).
+
+    Returns:
+        Tuple of (video_latents, audio_latents) after denoising.
+    """
+    if step_schedule is None:
+        step_schedule = constant_schedule()
+
+    dtype = video_latents.dtype
+    video_num_tokens = video_latents.shape[1]
+    audio_num_tokens = audio_latents.shape[1]
+    num_steps = len(sigmas) - 1
+
+    model.train(False)
+
+    if fbcache_threshold > 0.0:
+        model.reset_fbcache()
+        logger.info(f"[{stage_name}] FBCache enabled (threshold={fbcache_threshold})")
+
+    prev_video_vel: Optional[torch.Tensor] = None
+    prev_audio_vel: Optional[torch.Tensor] = None
+
+    with torch.no_grad():
+        denoise_start = time.perf_counter()
+        step_times: list[float] = []
+
+        for i in range(num_steps):
+            step_start = time.perf_counter()
+            sigma = sigmas[i]
+            sigma_next = sigmas[i + 1]
+
+            ctx = step_schedule(i, sigma.item())
+
+            # Video timesteps: per-token (with mask) or uniform
+            if denoise_mask is not None:
+                video_timestep = timesteps_from_mask(denoise_mask, sigma).squeeze(-1)
+            else:
+                video_timestep = sigma.expand(1, video_num_tokens)
+
+            # Audio timesteps: always uniform (no spatial conditioning)
+            audio_timestep = sigma.expand(1, audio_num_tokens)
+
+            video_vel, audio_vel = _compute_av_velocity(
+                model,
+                video_latents, video_timestep, video_positions, video_prompt_embeds,
+                audio_latents, audio_timestep, audio_positions, audio_prompt_embeds,
+                ctx,
+                audio_neg_embeds=audio_neg_embeds,
+                fbcache_threshold=fbcache_threshold,
+                step_index=i,
+                num_steps=num_steps,
+            )
+
+            # Gradient estimation correction (both modalities independently)
+            if ctx.ge_gamma > 0 and prev_video_vel is not None:
+                video_vel = ctx.ge_gamma * (video_vel - prev_video_vel) + prev_video_vel
+            if ctx.ge_gamma > 0 and prev_audio_vel is not None:
+                audio_vel = ctx.ge_gamma * (audio_vel - prev_audio_vel) + prev_audio_vel
+
+            if ctx.ge_gamma > 0:
+                prev_video_vel = video_vel.clone()
+                prev_audio_vel = audio_vel.clone()
+
+            # Euler step: x_{t-1} = x_t + v * dt
+            dt = sigma_next - sigma
+            video_denoised = (video_latents.float() + video_vel.float() * dt).to(dtype)
+            audio_denoised = (audio_latents.float() + audio_vel.float() * dt).to(dtype)
+
+            # Post-process conditioned regions (video only)
+            if denoise_mask is not None and clean_latent is not None:
+                video_latents = post_process_latent(video_denoised, denoise_mask, clean_latent)
+            else:
+                video_latents = video_denoised
+            audio_latents = audio_denoised
+
+            del video_vel, audio_vel
+            if (i + 1) % 5 == 0:
+                torch.cuda.synchronize()
+                torch.cuda.empty_cache()
+
+            step_elapsed = time.perf_counter() - step_start
+            step_times.append(step_elapsed)
+            if i == 0 or (i + 1) % 10 == 0 or i == num_steps - 1:
+                logger.info(f"[{stage_name}:Step {i}] {step_elapsed:.2f}s")
+
+            if callback:
+                callback(stage_name, i + 1, num_steps)
+
+        denoise_elapsed = time.perf_counter() - denoise_start
+        logger.info(f"[{stage_name}] {num_steps} steps in {denoise_elapsed:.1f}s")
+
+    return video_latents, audio_latents
 
 
 def generate_video_two_stage(
@@ -1517,6 +1793,13 @@ def generate_video_two_stage(
     neg_output = text_encoder.encode([two_stage.negative_prompt])
     neg_embeds = neg_output.embeddings[0].unsqueeze(0)
 
+    # Encode audio negative prompt if audio is enabled
+    audio_neg_embeds = None
+    if not video_only and audio_negative_prompt:
+        logger.info("Encoding audio negative prompt...")
+        audio_neg_output = text_encoder.encode([audio_negative_prompt])
+        audio_neg_embeds = audio_neg_output.embeddings[0].unsqueeze(0)
+
     if callback:
         callback("encoding", 2, 2)
 
@@ -1524,6 +1807,8 @@ def generate_video_two_stage(
     pos_embeds = pos_embeds.to(transformer_device, dtype)
     pos_mask = pos_mask.to(transformer_device)
     neg_embeds = neg_embeds.to(transformer_device, dtype)
+    if audio_neg_embeds is not None:
+        audio_neg_embeds = audio_neg_embeds.to(transformer_device, dtype)
 
     if encoder_is_borrowed:
         text_encoder.offload()  # Return to CPU pinned memory
@@ -1600,10 +1885,10 @@ def generate_video_two_stage(
         is_fp8_file = tf_path.is_file() and "fp8" in tf_path.name.lower()
         if is_fp8_file:
             from llm_dit.models.ltx2 import load_ltx2_transformer_from_fp8
-            model = load_ltx2_transformer_from_fp8(tf_path, dtype=dtype, device=load_device, video_only=True)
+            model = load_ltx2_transformer_from_fp8(tf_path, dtype=dtype, device=load_device, video_only=video_only)
         else:
             model = load_ltx2_transformer(
-                tf_path, dtype=dtype, device=load_device, video_only=True,
+                tf_path, dtype=dtype, device=load_device, video_only=video_only,
             )
 
         if effective_quantize and effective_precision != "none":
@@ -1666,6 +1951,28 @@ def generate_video_two_stage(
         causal_fix=True,
     )
 
+    # Initialize audio latents and positions if audio enabled
+    audio_latents: Optional[torch.Tensor] = None
+    audio_positions: Optional[torch.Tensor] = None
+    audio_noise: Optional[torch.Tensor] = None
+    audio_latent_frames = 0
+    if not video_only:
+        audio_latent_frames = compute_audio_latent_frames(config.num_frames)
+        audio_latents = torch.randn(
+            (1, audio_latent_frames, 128),
+            generator=generator,
+            device=transformer_device,
+            dtype=dtype,
+        )
+        audio_positions = create_audio_position_indices(
+            batch_size=1,
+            audio_latent_frames=audio_latent_frames,
+            device=torch.device(transformer_device),
+        )
+        # Save audio noise for stage 2 re-noising
+        audio_noise = torch.randn_like(audio_latents)
+        logger.info(f"Audio: {audio_latent_frames} latent frames ({config.num_frames / 24.0:.2f}s)")
+
     # Sigma schedule for stage 1
     if two_stage.use_distilled_sigmas:
         from llm_dit.models.ltx2.constants import DISTILLED_SIGMA_VALUES
@@ -1696,17 +2003,35 @@ def generate_video_two_stage(
             stg_scale=two_stage.stg_scale,
             stg_blocks=two_stage.stg_blocks,
         )
-    latents = _denoise_stage(
-        model=model,
-        latents=latents,
-        prompt_embeds=pos_embeds,
-        sigmas=sigmas,
-        positions=positions,
-        stage_name="stage1_denoise",
-        step_schedule=schedule,
-        callback=callback,
-        fbcache_threshold=two_stage.fbcache_threshold,
-    )
+
+    if not video_only and audio_latents is not None and audio_positions is not None:
+        latents, audio_latents = _denoise_av_stage(
+            model=model,
+            video_latents=latents,
+            audio_latents=audio_latents,
+            video_prompt_embeds=pos_embeds,
+            audio_prompt_embeds=pos_embeds,
+            sigmas=sigmas,
+            video_positions=positions,
+            audio_positions=audio_positions,
+            stage_name="stage1_denoise",
+            step_schedule=schedule,
+            audio_neg_embeds=audio_neg_embeds,
+            callback=callback,
+            fbcache_threshold=two_stage.fbcache_threshold,
+        )
+    else:
+        latents = _denoise_stage(
+            model=model,
+            latents=latents,
+            prompt_embeds=pos_embeds,
+            sigmas=sigmas,
+            positions=positions,
+            stage_name="stage1_denoise",
+            step_schedule=schedule,
+            callback=callback,
+            fbcache_threshold=two_stage.fbcache_threshold,
+        )
 
     # Reshape to spatial format for upsampler: [B, T, D] -> [B, D, T_lat, H_lat, W_lat]
     latents = latents.transpose(1, 2).reshape(1, 128, t_latent, h_latent, w_latent)
@@ -1831,6 +2156,13 @@ def generate_video_two_stage(
     latents_noisy = (1 - noise_scale) * latents_flat + noise_scale * noise
     del noise, latents_flat
 
+    # Re-noise audio latents for stage 2 (same flow-matching interpolation)
+    if not video_only and audio_latents is not None and audio_noise is not None:
+        audio_latents_noisy = (1 - noise_scale) * audio_latents + noise_scale * audio_noise
+        del audio_noise
+    else:
+        audio_latents_noisy = None
+
     # Full-resolution positions
     positions_full = create_position_indices(
         batch_size=1,
@@ -1844,16 +2176,31 @@ def generate_video_two_stage(
     )
 
     # Denoise stage 2 (no CFG, simple denoising -- defaults to constant_schedule())
-    latents_refined = _denoise_stage(
-        model=model,
-        latents=latents_noisy,
-        prompt_embeds=pos_embeds,
-        sigmas=distilled_sigmas,
-        positions=positions_full,
-        stage_name="stage2_denoise",
-        callback=callback,
-        fbcache_threshold=two_stage.fbcache_threshold,
-    )
+    if not video_only and audio_latents_noisy is not None and audio_positions is not None:
+        latents_refined, audio_latents = _denoise_av_stage(
+            model=model,
+            video_latents=latents_noisy,
+            audio_latents=audio_latents_noisy,
+            video_prompt_embeds=pos_embeds,
+            audio_prompt_embeds=pos_embeds,
+            sigmas=distilled_sigmas,
+            video_positions=positions_full,
+            audio_positions=audio_positions,
+            stage_name="stage2_denoise",
+            callback=callback,
+            fbcache_threshold=two_stage.fbcache_threshold,
+        )
+    else:
+        latents_refined = _denoise_stage(
+            model=model,
+            latents=latents_noisy,
+            prompt_embeds=pos_embeds,
+            sigmas=distilled_sigmas,
+            positions=positions_full,
+            stage_name="stage2_denoise",
+            callback=callback,
+            fbcache_threshold=two_stage.fbcache_threshold,
+        )
 
     # Reshape back to spatial: [B, T, D] -> [B, D, T_lat, H_lat, W_lat]
     latents = latents_refined.transpose(1, 2).reshape(1, 128, t_lat_full, h_lat_full, w_lat_full)
@@ -1913,11 +2260,75 @@ def generate_video_two_stage(
     stage3_elapsed = time.perf_counter() - stage3_start
     logger.info(f"Stage 3 complete: {stage3_elapsed:.1f}s")
 
+    # =========================================================================
+    # Stage 4: Audio Decode (when audio is enabled)
+    # =========================================================================
+    audio_waveform = None
+    if not video_only and audio_latents is not None:
+        stage4_start = time.perf_counter()
+        if callback:
+            callback("audio_decode", 0, 1)
+
+        logger.info("Stage 4: Decoding audio latents...")
+
+        # Reshape: [B, T, D] -> [B, C, T_audio, mel_bins] = [B, 8, T, 16]
+        audio_latents_4d = audio_latents.reshape(1, audio_latent_frames, 8, 16)
+        audio_latents_4d = audio_latents_4d.permute(0, 2, 1, 3)  # [B, 8, T, 16]
+
+        # Audio decoder: latents -> mel spectrogram
+        if cached_audio_decoder is not None:
+            audio_decoder = cached_audio_decoder.to(vae_device)
+            with torch.no_grad():
+                mel = audio_decoder(audio_latents_4d.to(vae_device))
+            audio_decoder.to("cpu")
+            logger.info("Cached audio decoder returned to CPU")
+        else:
+            from llm_dit.models.ltx2.audio_vae.loader import load_audio_decoder
+            audio_decoder = load_audio_decoder(
+                model_path / "audio_vae", dtype=dtype, device=vae_device,
+            )
+            with torch.no_grad():
+                mel = audio_decoder(audio_latents_4d.to(vae_device))
+            del audio_decoder
+
+        # Vocoder: mel -> waveform
+        if cached_vocoder is not None:
+            vocoder = cached_vocoder.to(vae_device)
+            with torch.no_grad():
+                audio_waveform = vocoder(mel)
+            vocoder.to("cpu")
+            logger.info("Cached vocoder returned to CPU")
+        else:
+            from llm_dit.models.ltx2.audio_vae.loader import load_vocoder
+            vocoder = load_vocoder(
+                model_path / "vocoder", dtype=dtype, device=vae_device,
+            )
+            with torch.no_grad():
+                audio_waveform = vocoder(mel)
+            del vocoder
+
+        del mel, audio_latents_4d, audio_latents
+        if not skip_cleanup:
+            cleanup_memory("post_audio_decode")
+
+        if callback:
+            callback("audio_decode", 1, 1)
+
+        stage4_elapsed = time.perf_counter() - stage4_start
+        logger.info(f"Stage 4 complete: {stage4_elapsed:.1f}s")
+    else:
+        stage4_elapsed = 0.0
+
     gen_elapsed = time.perf_counter() - gen_start
-    logger.info(
-        f"Two-stage generation complete: {gen_elapsed:.1f}s total "
-        f"(encode={stage0_elapsed:.1f}s, stage1={stage1_elapsed:.1f}s, "
+    timing = (
+        f"encode={stage0_elapsed:.1f}s, stage1={stage1_elapsed:.1f}s, "
         f"upsample={stage15_elapsed:.1f}s, stage2={stage2_elapsed:.1f}s, "
-        f"decode={stage3_elapsed:.1f}s)"
+        f"decode={stage3_elapsed:.1f}s"
     )
+    if stage4_elapsed > 0:
+        timing += f", audio={stage4_elapsed:.1f}s"
+    logger.info(f"Two-stage generation complete: {gen_elapsed:.1f}s total ({timing})")
+
+    if audio_waveform is not None:
+        return video, audio_waveform
     return video
