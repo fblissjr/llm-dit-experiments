@@ -129,8 +129,6 @@ export function Slider({
                 onChange={handleInputChange}
                 onBlur={handleInputBlur}
                 onKeyDown={handleInputKeyDown}
-                min={min}
-                max={max}
                 step={step}
                 disabled={disabled}
                 className={cn(

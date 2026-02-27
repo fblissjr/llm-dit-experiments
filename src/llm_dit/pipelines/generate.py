@@ -1073,6 +1073,7 @@ class StepContext:
     When stg_scale > 0 and stg_blocks is set, adds a 3rd perturbed pass (STG).
     """
     guidance_scale: float = 1.0
+    audio_guidance_scale: float = 0.0  # 0 = use guidance_scale for audio too
     neg_embeds: Optional[torch.Tensor] = None
     rescale_scale: float = 0.0
     ge_gamma: float = 0.0
@@ -1086,6 +1087,7 @@ StepSchedule = Callable[[int, float], StepContext]
 
 def constant_schedule(
     guidance_scale: float = 1.0,
+    audio_guidance_scale: float = 0.0,
     neg_embeds: Optional[torch.Tensor] = None,
     rescale_scale: float = 0.0,
     ge_gamma: float = 0.0,
@@ -1095,6 +1097,7 @@ def constant_schedule(
     """Static parameters for all steps (default behavior)."""
     ctx = StepContext(
         guidance_scale=guidance_scale,
+        audio_guidance_scale=audio_guidance_scale,
         neg_embeds=neg_embeds,
         rescale_scale=rescale_scale,
         ge_gamma=ge_gamma,
@@ -1278,11 +1281,10 @@ def _compute_av_velocity(
     """Compute velocity prediction for both video and audio streams.
 
     Mirrors _compute_velocity() but creates both modalities for each pass.
-    Same guidance formula applies to both streams:
-      v = v_cond + (cfg-1)*(v_cond - v_uncond) + stg*(v_cond - v_perturbed)
+    Guidance formula: v = v_cond + (cfg-1)*(v_cond - v_uncond) + stg*(v_cond - v_perturbed)
 
     STG uses PerturbationConfig for AV models (SKIP_VIDEO_SELF_ATTN).
-    Same guidance_scale applies to both modalities (per DiffSynth reference).
+    Audio uses ctx.audio_guidance_scale when > 0, else falls back to ctx.guidance_scale.
 
     Args:
         model: LTX2Transformer (AudioVideo mode) on GPU.
@@ -1341,9 +1343,10 @@ def _compute_av_velocity(
         )
         v_cond, a_cond = model(video=cond_video, audio=cond_audio, **fb_kwargs)
 
-        # CFG blend -- same guidance_scale for both modalities
+        # CFG blend -- separate guidance scale for audio when specified
         video_vel = v_cond + (ctx.guidance_scale - 1.0) * (v_cond - v_uncond)
-        audio_vel = a_cond + (ctx.guidance_scale - 1.0) * (a_cond - a_uncond)
+        audio_cfg = ctx.audio_guidance_scale if ctx.audio_guidance_scale > 0 else ctx.guidance_scale
+        audio_vel = a_cond + (audio_cfg - 1.0) * (a_cond - a_uncond)
         del v_uncond, a_uncond
 
         # Pass 3: Perturbed (STG) -- video self-attention skipped
@@ -1674,6 +1677,7 @@ def generate_video_two_stage(
     # Audio generation params (Phase 3)
     video_only: bool = True,
     audio_negative_prompt: str = "",
+    audio_guidance_scale: float = 7.0,
     cached_audio_decoder: Optional[Any] = None,
     cached_vocoder: Optional[Any] = None,
 ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
@@ -1997,6 +2001,7 @@ def generate_video_two_stage(
     else:
         schedule = constant_schedule(
             guidance_scale=two_stage.guidance_scale,
+            audio_guidance_scale=audio_guidance_scale,
             neg_embeds=neg_embeds,
             rescale_scale=two_stage.rescale_scale,
             ge_gamma=two_stage.ge_gamma,

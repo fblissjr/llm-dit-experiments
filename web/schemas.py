@@ -662,6 +662,7 @@ class LTX2GenerateRequest(BaseModel):
     seed: Optional[int] = None
     enable_audio: bool = False
     audio_negative_prompt: Optional[str] = None  # Override audio negative prompt
+    audio_guidance_scale: float = 7.0  # Audio CFG scale (separate from video)
     lora_path: Optional[str] = None
     lora_scale: Optional[float] = None
 

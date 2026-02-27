@@ -164,13 +164,14 @@ width = 768
 num_frames = 33
 fps = 24
 num_inference_steps = 40        # stage 1 steps (full denoising)
-guidance_scale = 3.5
+guidance_scale = 3.0            # video CFG (reference default)
 
 # Audio
 audio_enabled = false
-audio_negative_prompt = ""
-audio_vae_path = ""    # leave empty to use model_path/audio_vae
-vocoder_path = ""      # leave empty to use model_path/vocoder
+audio_negative_prompt = ""      # empty = falls back to video negative_prompt
+audio_guidance_scale = 7.0      # audio CFG -- higher than video per reference
+audio_vae_path = ""             # leave empty to use model_path/audio_vae
+vocoder_path = ""               # leave empty to use model_path/vocoder
 
 # Two-stage pipeline (reference: TI2VidTwoStagesPipeline)
 use_two_stage = true

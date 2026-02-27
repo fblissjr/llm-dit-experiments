@@ -367,6 +367,7 @@ class LTX2Config:
     # Audio generation
     audio_enabled: bool = False  # Enable audio stream generation
     audio_negative_prompt: str = ""  # Negative prompt for audio CFG
+    audio_guidance_scale: float = 7.0  # Audio CFG scale (higher than video per official reference)
     audio_vae_path: str = ""  # Path to audio decoder checkpoint (empty = model_path/audio_vae)
     vocoder_path: str = ""  # Path to vocoder checkpoint (empty = model_path/vocoder)
 

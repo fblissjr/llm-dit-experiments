@@ -63,6 +63,7 @@ _PARAM_NAME_MAPS: dict[str, dict[str, str]] = {
         "stage2_steps": "stage2_num_inference_steps",
         "offload_type": "offload_mode",
         "use_fp8": "quantize",
+        "enable_audio": "audio_enabled",
     },
     "flux2": {
         "num_steps": "default_steps",

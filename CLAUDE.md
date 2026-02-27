@@ -41,6 +41,7 @@ Never assume you know where code is or what exists. Always verify by retrieval a
 - **use `ModelManager`** for all model load/unload/reload -- never manipulate model globals directly
 - **always update state** after significant work (see state management below)
 - **use `bun`** for all frontend ops (`bun install`, `bun run`, `bunx`) -- never `npm` or `yarn`
+- **always update config.toml AND config.toml.example** when adding or changing any pipeline config parameter -- for all pipelines, not just the one you're working on
 
 ### IndexedDB conventions (frontend)
 

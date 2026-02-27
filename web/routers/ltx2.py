@@ -208,6 +208,11 @@ async def ltx2_generate_stream(request: LTX2GenerateRequest, config: ConfigDep, 
                 audio_enabled = False
             video_only = not audio_enabled
             audio_neg = resolve_param(request, "audio_negative_prompt", ltx2_cfg.audio_negative_prompt, skip_none=True)
+            # Fall back to video negative_prompt when audio negative prompt is empty
+            # (empty audio neg makes a_cond == a_uncond, silently disabling audio CFG)
+            if not audio_neg:
+                audio_neg = resolve_param(request, "negative_prompt", ltx2_cfg.negative_prompt)
+            audio_guidance_scale = resolve_param(request, "audio_guidance_scale", ltx2_cfg.audio_guidance_scale)
 
             @torch.no_grad()
             def do_generate():
@@ -284,6 +289,7 @@ async def ltx2_generate_stream(request: LTX2GenerateRequest, config: ConfigDep, 
                         cached_vae=manager.ltx2_vae,
                         video_only=video_only,
                         audio_negative_prompt=audio_neg or "",
+                        audio_guidance_scale=audio_guidance_scale,
                         cached_audio_decoder=manager.ltx2_audio_decoder if not video_only else None,
                         cached_vocoder=manager.ltx2_vocoder if not video_only else None,
                     )
