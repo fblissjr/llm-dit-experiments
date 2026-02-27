@@ -220,6 +220,88 @@ def create_video_modality(
     )
 
 
+def compute_audio_latent_frames(
+    num_frames: int,
+    fps: float = 24.0,
+    sample_rate: int = 16000,
+    hop_length: int = 160,
+    downsample_factor: int = 4,
+) -> int:
+    """Compute number of audio latent frames from video parameters.
+
+    Formula: round(video_duration_seconds * sample_rate / hop_length / downsample_factor)
+
+    Args:
+        num_frames: Number of video frames
+        fps: Video frame rate (default 24.0)
+        sample_rate: Audio sample rate in Hz (default 16000)
+        hop_length: Mel spectrogram hop length (default 160)
+        downsample_factor: Audio VAE temporal compression factor (default 4)
+
+    Returns:
+        Number of audio latent frames (= number of audio transformer tokens)
+    """
+    duration = num_frames / fps
+    return round(duration * sample_rate / hop_length / downsample_factor)
+
+
+def create_audio_position_indices(
+    batch_size: int,
+    audio_latent_frames: int,
+    device: torch.device,
+) -> torch.Tensor:
+    """Create 1D temporal position indices [B, 1, T, 2] for audio RoPE.
+
+    Uses AudioPatchifier.get_patch_grid_bounds() which returns timestamps
+    in seconds, aligned with the causal VAE.
+
+    Args:
+        batch_size: Batch size
+        audio_latent_frames: Number of audio latent frames
+        device: Target device
+
+    Returns:
+        Position indices tensor [B, 1, T, 2] where T = audio_latent_frames
+    """
+    from llm_dit.models.ltx2.audio_vae.patchifier import AudioPatchifier
+    from llm_dit.models.ltx2.audio_vae.types import AudioLatentShape
+
+    patchifier = AudioPatchifier(patch_size=1)
+    audio_shape = AudioLatentShape(
+        batch=batch_size, channels=8, frames=audio_latent_frames, mel_bins=16,
+    )
+    return patchifier.get_patch_grid_bounds(audio_shape, device=device)
+
+
+def create_audio_modality(
+    latent: torch.Tensor,
+    timestep: torch.Tensor,
+    positions: torch.Tensor,
+    prompt_embeds: torch.Tensor,
+    context_mask: Optional[torch.Tensor] = None,
+) -> Modality:
+    """Create Modality dataclass for audio transformer input.
+
+    Args:
+        latent: [B, T, D] audio latent tokens (D=128 = 8 channels * 16 mel_bins)
+        timestep: [B, T] per-token timesteps (same sigmas as video)
+        positions: [B, 1, T, 2] temporal position indices
+        prompt_embeds: [B, seq_len, context_dim] audio text embeddings
+        context_mask: Optional [B, seq_len] attention mask
+
+    Returns:
+        Modality dataclass ready for transformer forward pass
+    """
+    return Modality(
+        latent=latent,
+        timesteps=timestep,
+        positions=positions,
+        context=prompt_embeds,
+        enabled=True,
+        context_mask=context_mask,
+    )
+
+
 def generate_video(
     model: LTX2Transformer,
     prompt_embeds: torch.Tensor,

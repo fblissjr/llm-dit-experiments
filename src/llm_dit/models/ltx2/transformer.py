@@ -574,6 +574,11 @@ class LTX2Transformer(nn.Module):
 
         if model_type.is_video_enabled() and model_type.is_audio_enabled():
             self._init_audio_video()
+            # Cross-modal PE max position: max of video temporal and audio temporal
+            self._cross_pe_max_pos = max(
+                self.positional_embedding_max_pos[0],
+                self.audio_positional_embedding_max_pos[0],
+            )
 
         self._init_transformer_blocks(
             num_layers=num_layers,
@@ -788,34 +793,54 @@ class LTX2Transformer(nn.Module):
         self,
         video_args: TransformerArgs,
         audio_args: TransformerArgs,
-        video_raw_timesteps: torch.Tensor,
-        audio_raw_timesteps: torch.Tensor,
+        video: Modality,
+        audio: Modality,
     ) -> Tuple[TransformerArgs, TransformerArgs]:
         """Compute cross-modal PE and timestep embeddings for AV attention.
 
-        Cross-PE uses temporal dimension only, projected to audio cross-attention dim.
+        Cross-PE uses temporal dimension only ([:, 0:1, :] of each modality's
+        positions), projected to audio cross-attention dim (2048 = 32 heads x 64).
+        Both A2V and V2A attention use audio.heads and audio.d_head, so cross-PE
+        must be at audio_cross_attention_dim.
+
         Cross-timestep embeddings come from the model-level AV AdaLN modules.
 
         Args:
             video_args: Preprocessed video TransformerArgs
             audio_args: Preprocessed audio TransformerArgs
-            video_raw_timesteps: Raw video timestep values [B, 1] from Modality
-            audio_raw_timesteps: Raw audio timestep values [B, 1] from Modality
+            video: Video Modality (for positions and timesteps)
+            audio: Audio Modality (for positions and timesteps)
         """
-        # Cross-modal PE: set to None for now (attention skips RoPE when pe=None).
-        # Phase 3 will compute proper 1D temporal cross-PE at audio cross-attention dim.
-        # Can't reuse modality PE here -- it's at the modality's own d_head, but
-        # cross-modal attention projects to audio.d_head which may differ.
-        video_cross_pe = None
-        audio_cross_pe = None
+        # Cross-modal PE: 1D temporal positions projected to audio cross-attention dim.
+        # Both A2V (Q=video, K=audio) and V2A (Q=audio, K=video) use audio heads,
+        # so cross-PE must be at audio_cross_attention_dim for both.
+        video_temporal_pos = video.positions[:, 0:1, :]   # [B, 1, T_video, 2]
+        audio_temporal_pos = audio.positions[:, 0:1, :]   # [B, 1, T_audio, 2]
+
+        video_cross_pe = self.audio_args_preprocessor._prepare_positional_embeddings(
+            positions=video_temporal_pos,
+            inner_dim=self.audio_cross_attention_dim,
+            max_pos=[self._cross_pe_max_pos],
+            use_middle_indices_grid=self.use_middle_indices_grid,
+            num_attention_heads=self.audio_num_attention_heads,
+            x_dtype=video_args.x.dtype,
+        )
+        audio_cross_pe = self.audio_args_preprocessor._prepare_positional_embeddings(
+            positions=audio_temporal_pos,
+            inner_dim=self.audio_cross_attention_dim,
+            max_pos=[self._cross_pe_max_pos],
+            use_middle_indices_grid=self.use_middle_indices_grid,
+            num_attention_heads=self.audio_num_attention_heads,
+            x_dtype=audio_args.x.dtype,
+        )
 
         batch_size = video_args.x.shape[0]
         hidden_dtype = video_args.x.dtype
         timestep_mult = self.timestep_scale_multiplier
 
         # Scale raw timesteps (same scaling used by regular AdaLN in preprocessor)
-        video_ts_scaled = (video_raw_timesteps * timestep_mult).flatten()  # [B]
-        audio_ts_scaled = (audio_raw_timesteps * timestep_mult).flatten()  # [B]
+        video_ts_scaled = (video.timesteps * timestep_mult).flatten()  # [B]
+        audio_ts_scaled = (audio.timesteps * timestep_mult).flatten()  # [B]
 
         # Video cross-modal timestep embeddings
         # AdaLayerNormSingle expects raw scalars [B] and handles embedding internally
@@ -905,8 +930,8 @@ class LTX2Transformer(nn.Module):
             assert video is not None and audio is not None
             video_args, audio_args = self._prepare_cross_modal_args(
                 video_args, audio_args,
-                video_raw_timesteps=video.timesteps,
-                audio_raw_timesteps=audio.timesteps,
+                video=video,
+                audio=audio,
             )
 
         use_fbcache = fbcache_threshold > 0.0
