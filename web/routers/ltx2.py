@@ -174,7 +174,7 @@ async def ltx2_generate_stream(request: LTX2GenerateRequest, config: ConfigDep, 
             )
 
             # Lazy-load and cache LTX-2 components on first request
-            if manager.ltx2_encoder is None:
+            if not manager.is_loaded("ltx2"):
                 yield f"data: {json.dumps({'type': 'status', 'message': 'Loading LTX-2 models (first request, will be cached)...'})}\n\n"
                 await asyncio.get_event_loop().run_in_executor(
                     None, lambda: manager.load("ltx2")

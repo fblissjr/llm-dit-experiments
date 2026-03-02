@@ -211,6 +211,9 @@ export async function fetchModelStatus(pipelineId: string): Promise<ModelStatusR
  * Load a model for a pipeline.
  * The load endpoint returns { success, message } -- not the ModelStatusResponse shape.
  * After a successful load, we fetch the actual model status for consistent state.
+ *
+ * Not called from UI (models auto-load on generate). Kept as a library function
+ * for power users via curl/scripts and the /api/models/{id}/load endpoint.
  */
 export async function loadModel(pipelineId: string): Promise<ModelStatusResponse> {
   await request<{ success: boolean; message: string }>(

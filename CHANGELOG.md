@@ -20,7 +20,10 @@ Uses [Semantic Versioning](https://semver.org/).
 ### removed
 - **Z-Image**: Dead `compile` checkbox from schema (never wired to router or pipeline)
 - **LTX-2**: Dead `compile` checkbox from schema (never wired to router or pipeline)
-- **Frontend**: `loadPipelineModel` action from appStore (no longer needed with auto-load UX)
+- **Frontend**: `loadPipelineModel` and `unloadPipelineModel` actions from appStore (replaced by auto-load + `unloadAllModels`)
+
+### infrastructure
+- **Playwright E2E**: Initial setup with chromium, Vite dev server integration, 3 test suites covering schema rendering, model status panel, and settings menu
 
 ## 0.9.13
 

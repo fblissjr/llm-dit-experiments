@@ -416,19 +416,17 @@ async def flux2_generate_stream(request: Flux2GenerateRequest, config: ConfigDep
     """
     from typing import AsyncIterator
 
-    # Auto-load on first request (like LTX-2 pattern)
-    if not manager.is_loaded("flux2"):
-        logger.info("[FLUX.2] Auto-loading pipeline (first request)...")
-        await asyncio.get_event_loop().run_in_executor(None, lambda: manager.load("flux2"))
-
-    # Verify loaded model matches request BEFORE entering the SSE generator.
-    # This blocks synchronously during reload, which is intentional --
-    # we want the reload to complete before we start streaming progress.
-    _ensure_correct_model(request.model_name, manager, requested_loras=request.loras)
-
     async def generate_with_progress() -> AsyncIterator[str]:
         """Async generator for SSE events."""
         try:
+            # Auto-load on first request (like LTX-2 pattern)
+            if not manager.is_loaded("flux2"):
+                yield f"data: {json.dumps({'type': 'status', 'message': 'Loading FLUX.2 models (first request, will be cached)...'})}\n\n"
+                await asyncio.get_event_loop().run_in_executor(None, lambda: manager.load("flux2"))
+
+            # Verify loaded model matches request; reload if mismatched
+            _ensure_correct_model(request.model_name, manager, requested_loras=request.loras)
+
             # Import the FLUX.2 generation pipeline
             from llm_dit.pipelines.flux2_generate import (
                 Flux2GenerationConfig,

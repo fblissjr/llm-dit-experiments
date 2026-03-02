@@ -329,6 +329,11 @@ uv run pytest tests/unit/test_ltx2_resolve_quantize.py tests/unit/test_quantizat
 # Frontend TypeScript check (from web/frontend-v2/)
 cd web/frontend-v2 && bunx tsc --noEmit
 
+# Frontend E2E tests (requires backend running, from web/frontend-v2/)
+cd web/frontend-v2 && bun run test:e2e           # headless
+cd web/frontend-v2 && bun run test:e2e:headed     # visible browser
+cd web/frontend-v2 && bun run test:e2e:ui          # interactive UI
+
 # Regenerate frontend types from API (from web/frontend-v2/)
 cd web/frontend-v2 && bun run export-openapi && bun run gen-api
 ```

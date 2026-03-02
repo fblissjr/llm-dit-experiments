@@ -30,7 +30,6 @@ import {
   fetchVRAMStatus,
   fetchPipelineDefaults,
   fetchModelStatus,
-  unloadModel,
   unloadAllModels as unloadAllModelsApi,
   fetchGenerationContext,
   restartServer as restartServerApi,
@@ -82,7 +81,6 @@ interface AppState {
   // Model management
   refreshModelStatus: (pipelineId: string) => Promise<void>;
   refreshAllModelStatus: () => Promise<void>;
-  unloadPipelineModel: (pipelineId: string) => Promise<void>;
   unloadAllModels: () => Promise<void>;
 
   // Computed
@@ -345,37 +343,6 @@ export const useAppStore = create<AppState>()(
       await Promise.all(
         pipelineIds.map((id) => get().refreshModelStatus(id))
       );
-    },
-
-    /**
-     * Unload a pipeline model
-     */
-    unloadPipelineModel: async (pipelineId) => {
-      log.info(`Unloading ${pipelineId}...`);
-      // Set to loading state (unloading)
-      set((state) => {
-        state.modelStatus[pipelineId] = { status: 'loading' };
-      });
-
-      try {
-        const result = await unloadModel(pipelineId);
-        set((state) => {
-          state.modelStatus[pipelineId] = result;
-        });
-        log.info(`${pipelineId} status:`, result.status);
-
-        // Refresh VRAM and context after unloading
-        get().refreshVRAM();
-        get().refreshContext();
-      } catch (error) {
-        log.error(`${pipelineId} unload failed:`, error);
-        set((state) => {
-          state.modelStatus[pipelineId] = {
-            status: 'error',
-            error: error instanceof Error ? error.message : 'Failed to unload model',
-          };
-        });
-      }
     },
 
     /**

@@ -12,6 +12,9 @@
     "test": "vitest",
     "test:ui": "vitest --ui",
     "test:run": "vitest run",
+    "test:e2e": "playwright test",
+    "test:e2e:headed": "playwright test --headed",
+    "test:e2e:ui": "playwright test --ui",
     "export-openapi": "cd ../.. && PYTHONPATH=. uv run python scripts/export_openapi.py > web/frontend-v2/openapi.json",
     "gen-api": "openapi-ts"
   },
@@ -23,6 +26,7 @@
   },
   "devDependencies": {
     "@hey-api/openapi-ts": "^0.92.4",
+    "@playwright/test": "^1.58.2",
     "@tailwindcss/vite": "^4.1.18",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
