@@ -14,7 +14,6 @@ LTX-2 Components (in llm_dit.models.ltx2):
     - Modality: Input container for video/audio latents
 
 Other Models:
-    - QwenImageVAE, QwenImageDiT: Qwen image generation
     - HuMoTransformer: Human motion generation
     - WanVAE: WAN video VAE
 """
@@ -45,8 +44,6 @@ __all__ = [
     "LTX2ConnectorTransformer1d",
     "load_ltx2_connectors",
     # Other models (lazy loaded)
-    "QwenImageVAE",
-    "QwenImageDiT",
     "HuMoTransformer",
     "WanVAE",
 ]
@@ -83,12 +80,6 @@ def __getattr__(name: str):
         return load_ltx2_connectors
 
     # Other models
-    if name == "QwenImageVAE":
-        from llm_dit.models.qwen_image_vae import QwenImageVAE
-        return QwenImageVAE
-    if name == "QwenImageDiT":
-        from llm_dit.models.qwen_image_dit import QwenImageDiT
-        return QwenImageDiT
     if name == "HuMoTransformer":
         from llm_dit.models.humo_transformer import HuMoTransformer
         return HuMoTransformer
