@@ -132,6 +132,131 @@ class LoRALoader:
         self.device = device
         self.dtype = dtype
 
+    def _detect_format(self, state_dict: Dict[str, torch.Tensor]) -> str:
+        """Detect LoRA format from state dict keys.
+
+        Returns:
+            "lokr" if any key contains .lokr_w1, "lora" otherwise.
+        """
+        for key in state_dict:
+            if ".lokr_w1" in key:
+                return "lokr"
+        return "lora"
+
+    def _get_lokr_name_dict(
+        self, state_dict: Dict[str, torch.Tensor]
+    ) -> Dict[str, Tuple[str, str]]:
+        """Extract LoKR layer name mappings from state dict.
+
+        Iterates keys ending with .lokr_w1, strips common prefixes
+        (diffusion_model., transformer.) and the .lokr_w1 suffix.
+
+        Returns:
+            Dict mapping target_name -> (w1_key, w2_key)
+        """
+        name_dict: Dict[str, Tuple[str, str]] = {}
+
+        for key in state_dict:
+            if not key.endswith(".lokr_w1"):
+                continue
+
+            w1_key = key
+            w2_key = key.replace(".lokr_w1", ".lokr_w2")
+
+            # Strip .lokr_w1 suffix to get module path
+            target = key.removesuffix(".lokr_w1")
+
+            # Remove common prefixes
+            if target.startswith("diffusion_model."):
+                target = target.removeprefix("diffusion_model.")
+            if target.startswith("transformer."):
+                target = target.removeprefix("transformer.")
+
+            name_dict[target] = (w1_key, w2_key)
+
+        return name_dict
+
+    def _fuse_lokr_to_base_model(
+        self,
+        model: nn.Module,
+        state_dict: Dict[str, torch.Tensor],
+        alpha: float = 1.0,
+    ) -> int:
+        """Fuse LoKR (Kronecker product) weights into the base model.
+
+        For full-matrix LoKR: weight += alpha * kron(lokr_w1, lokr_w2)
+        The stored .alpha tensor is ignored for full-matrix LoKR (scale = 1.0).
+
+        Args:
+            model: Target model
+            state_dict: Raw LoKR state dict
+            alpha: User-specified scale factor
+
+        Returns:
+            Number of layers updated
+        """
+        updated_num = 0
+        requant_num = 0
+        lokr_name_dict = self._get_lokr_name_dict(state_dict)
+
+        _requant_config = None
+        _quantize_fn = None
+
+        logger.debug(f"Found {len(lokr_name_dict)} LoKR layers to fuse")
+
+        for name, module in model.named_modules():
+            if name not in lokr_name_dict:
+                continue
+
+            w1_key, w2_key = lokr_name_dict[name]
+            w1 = state_dict[w1_key].to(device=self.device, dtype=self.dtype)
+            w2 = state_dict[w2_key].to(device=self.device, dtype=self.dtype)
+
+            delta_w = alpha * torch.kron(w1, w2)
+
+            # Fuse into base model
+            state_dict_base = module.state_dict()
+            base_weight = state_dict_base["weight"]
+
+            is_quantized = type(base_weight) is not torch.Tensor
+            if is_quantized:
+                if hasattr(base_weight, "dequantize"):
+                    base_weight = base_weight.dequantize()
+                else:
+                    base_weight = base_weight.float()
+
+            merged_weight = (
+                base_weight.to(device=self.device, dtype=self.dtype) + delta_w
+            )
+
+            if is_quantized:
+                module.weight = nn.Parameter(
+                    merged_weight,
+                    requires_grad=module.weight.requires_grad,
+                )
+                del w1, w2, delta_w, base_weight, state_dict_base
+
+                if _requant_config is None:
+                    from torchao.quantization import Float8WeightOnlyConfig, quantize_
+                    _requant_config = Float8WeightOnlyConfig()
+                    _quantize_fn = quantize_
+                _quantize_fn(module, _requant_config)
+                requant_num += 1
+
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+            else:
+                state_dict_base["weight"] = merged_weight
+                module.load_state_dict(state_dict_base)
+
+            updated_num += 1
+
+        if requant_num:
+            logger.info(f"Re-quantized {requant_num} layers to fp8 during LoKR fusion")
+
+        logger.info(f"Fused {updated_num} LoKR layers (alpha={alpha})")
+        return updated_num
+
     def get_name_dict(self, lora_state_dict: Dict[str, torch.Tensor]) -> Dict:
         """
         Extract LoRA layer name mappings from state dict.
@@ -229,6 +354,11 @@ class LoRALoader:
         Returns:
             Number of layers updated
         """
+        # Dispatch by format
+        fmt = self._detect_format(state_dict)
+        if fmt == "lokr":
+            return self._fuse_lokr_to_base_model(model, state_dict, alpha)
+
         updated_num = 0
         requant_num = 0
         state_dict = self.convert_state_dict(state_dict)
