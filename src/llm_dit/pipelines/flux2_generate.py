@@ -1041,6 +1041,13 @@ def generate_image(
             from llm_dit.models.flux2.loader import load_flux2_vae
             vae = load_flux2_vae(model_name, device=config.device, dtype=dtype, vae_path=vae_path)
 
+        # Shuttle persistent VAE to GPU for encoding
+        if vae_is_persistent and hasattr(vae, "_is_offloaded") and vae._is_offloaded:
+            logger.info("Shuttling VAE to GPU for reference encoding...")
+            needs_sync = vae.to_device(device)
+            if needs_sync:
+                torch.cuda.synchronize()
+
         # Load and encode reference images
         ref_images = load_reference_images(config)
 
@@ -1055,8 +1062,12 @@ def generate_image(
         if ref_tokens is not None:
             logger.info(f"Encoded reference images: {ref_tokens.shape[1]} tokens")
 
-        # Optionally offload VAE (will reload for decode)
-        if config.offload_between_stages and not vae_is_persistent:
+        # Offload VAE after encoding
+        if vae_is_persistent and hasattr(vae, "offload"):
+            logger.info("Offloading VAE after reference encoding...")
+            vae.offload()
+            log_gpu_memory("after VAE offload (stage 1.5)")
+        elif config.offload_between_stages and not vae_is_persistent:
             logger.info("Offloading VAE (will reload for decode)...")
             del vae
             vae = None
@@ -1209,13 +1220,25 @@ def generate_image(
 
         vae = load_flux2_vae(model_name, device=config.device, dtype=dtype, vae_path=vae_path)
 
+    # Shuttle persistent VAE to GPU for decoding
+    if vae_is_persistent and hasattr(vae, "_is_offloaded") and vae._is_offloaded:
+        logger.info("Shuttling VAE to GPU for decode...")
+        needs_sync = vae.to_device(device)
+        if needs_sync:
+            torch.cuda.synchronize()
+
     # Move latents back to device for decoding
     latents = latents.to(device).to(dtype)
 
     # Decode to image
     image = latents_to_image(latents, vae, height=config.height, width=config.width)
 
-    if config.offload_between_stages and not vae_is_persistent:
+    # Offload VAE after decoding
+    if vae_is_persistent and hasattr(vae, "offload"):
+        logger.info("Offloading VAE after decode...")
+        vae.offload()
+        log_gpu_memory("after VAE offload (stage 3)")
+    elif config.offload_between_stages and not vae_is_persistent:
         logger.info("Offloading VAE...")
         del vae
         cleanup_memory()

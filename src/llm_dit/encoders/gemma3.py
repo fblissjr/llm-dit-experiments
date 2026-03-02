@@ -1,7 +1,7 @@
 """
 Gemma3 Encoder implementation for LTX-2.
 
-Last Updated: 2026-01-20
+Last Updated: 2026-03-02
 
 Gemma 3-12B is used as the text encoder for LTX-2 video generation.
 Architecture based on LTX-2 reference implementation.
@@ -21,7 +21,6 @@ Pipeline stages:
 6. Output to DiT
 """
 
-import gc
 import json
 import logging
 import math
@@ -45,6 +44,7 @@ from llm_dit.encoders.protocol import (
     GenerativeEncoderProtocol,
     VisionLanguageEncoderProtocol,
 )
+from llm_dit.utils.shuttle import PinnedShuttleMixin
 
 logger = logging.getLogger(__name__)
 
@@ -458,7 +458,7 @@ class FeatureExtractorLinear(nn.Module):
         return self.aggregate_embed(x)
 
 
-class Gemma3Encoder:
+class Gemma3Encoder(PinnedShuttleMixin):
     """
     Gemma3 vision-language encoder for LTX-2.
 
@@ -526,15 +526,14 @@ class Gemma3Encoder:
         self._tokenizer_path = tokenizer_path or DEFAULT_TOKENIZER_PATH  # models/LTX-2/tokenizer
         self._use_connector = use_connector
 
+        self._init_shuttle_state()
+
         # Model components (lazy loaded)
         self._model = None
         self._tokenizer = None
         self._feature_extractor = None
         self._embeddings_connector: Optional[Embeddings1DConnector] = None
         self._is_loaded = False
-        self._is_offloaded = False
-        self._is_pinned = False
-        self._pinned_shadows: dict[str, torch.Tensor] = {}
 
     @classmethod
     def from_pretrained(
@@ -991,6 +990,12 @@ class Gemma3Encoder:
         """Return model dtype."""
         return self._dtype
 
+    def _shuttle_module(self) -> nn.Module | None:
+        return self._model
+
+    def _shuttle_extra_modules(self) -> list[nn.Module]:
+        return [m for m in [self._feature_extractor, self._embeddings_connector] if m is not None]
+
     def encode(
         self,
         texts: Union[str, List[str]],
@@ -1021,8 +1026,7 @@ class Gemma3Encoder:
             self._load_model()
 
         if self._is_offloaded:
-            self._model.to(self.device)
-            self._is_offloaded = False
+            self.to_device(torch.device(self._device_str))
 
         # Handle single text input
         if isinstance(texts, str):
@@ -1192,8 +1196,7 @@ class Gemma3Encoder:
             self._load_model()
 
         if self._is_offloaded:
-            self._model.to(self.device)
-            self._is_offloaded = False
+            self.to_device(torch.device(self._device_str))
 
         if isinstance(texts, str):
             texts = [texts]
@@ -1333,8 +1336,7 @@ class Gemma3Encoder:
             self._load_model()
 
         if self._is_offloaded:
-            self._model.to(self.device)
-            self._is_offloaded = False
+            self.to_device(torch.device(self._device_str))
 
         if isinstance(texts, str):
             texts = [texts]
@@ -1474,8 +1476,7 @@ class Gemma3Encoder:
             self._load_model()
 
         if self._is_offloaded:
-            self._model.to(self.device)
-            self._is_offloaded = False
+            self.to_device(torch.device(self._device_str))
 
         # Build structured messages for proper Gemma3 chat formatting.
         # The tokenizer ships chat_template.jinja with <start_of_turn>/<end_of_turn>
@@ -1520,84 +1521,6 @@ class Gemma3Encoder:
         generated_text = self._tokenizer.decode(generated_ids, skip_special_tokens=True)
 
         return generated_text.strip()
-
-    def offload(self) -> None:
-        """Offload model to CPU and free GPU memory.
-
-        When pinned shadow buffers exist (from offload_to_pinned), copies CUDA
-        tensors directly into the pre-allocated pinned buffers. This avoids
-        the 2N allocation + 2N copy overhead of model.to("cpu") + re-pin
-        on every cycle, replacing it with 0 allocations + N copies.
-        """
-        if self._model is not None:
-            if self._is_pinned and self._pinned_shadows:
-                # Fast path: copy CUDA -> pre-allocated pinned buffers
-                for name, param in self._model.named_parameters():
-                    pinned = self._pinned_shadows.get(name)
-                    if pinned is not None:
-                        pinned.copy_(param.data)
-                        param.data = pinned
-                    else:
-                        param.data = param.data.cpu().pin_memory()
-                for name, buf in self._model.named_buffers():
-                    pinned = self._pinned_shadows.get(name)
-                    if pinned is not None:
-                        pinned.copy_(buf.data)
-                        buf.data = pinned
-                    else:
-                        buf.data = buf.data.cpu().pin_memory()
-            else:
-                self._model.to("cpu")
-        if self._feature_extractor is not None:
-            self._feature_extractor.to("cpu")
-        if self._embeddings_connector is not None:
-            self._embeddings_connector.to("cpu")
-        self._is_offloaded = True
-
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-
-        logger.info("Gemma3 encoder offloaded to CPU")
-
-    def offload_to_pinned(self) -> None:
-        """Offload model to CPU with pinned memory for fast GPU shuttle via DMA.
-
-        Pinned (page-locked) memory enables direct DMA transfers between CPU
-        and GPU, making subsequent .to("cuda") calls ~2-3x faster (~1-2s for
-        the full 12GB encoder instead of ~4-5s).
-
-        Also stores references to the pinned tensors as shadow buffers so that
-        subsequent offload() calls can copy CUDA->pinned directly without
-        re-allocating pinned memory on every cycle.
-        """
-        if self._model is None:
-            return
-
-        logger.info("Offloading Gemma3 encoder to CPU with pinned memory...")
-        self._model.to("cpu")
-
-        pinned_count = 0
-        self._pinned_shadows = {}
-        for name, param in self._model.named_parameters():
-            if not param.data.is_pinned():
-                param.data = param.data.pin_memory()
-                pinned_count += 1
-            self._pinned_shadows[name] = param.data
-        for name, buf in self._model.named_buffers():
-            if not buf.data.is_pinned():
-                buf.data = buf.data.pin_memory()
-            self._pinned_shadows[name] = buf.data
-
-        # Also offload feature extractor and connector
-        if self._feature_extractor is not None:
-            self._feature_extractor.to("cpu")
-        if self._embeddings_connector is not None:
-            self._embeddings_connector.to("cpu")
-
-        self._is_offloaded = True
-        self._is_pinned = True
-        logger.info(f"Gemma3 encoder offloaded with {pinned_count} pinned tensors")
 
     def to(self, device: torch.device) -> "Gemma3Encoder":
         """Move model to device."""

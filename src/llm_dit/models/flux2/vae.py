@@ -1,7 +1,7 @@
 """
 FLUX.2 VAE (AutoEncoder) with patchify and BatchNorm latent normalization.
 
-Last Updated: 2026-01-23
+Last Updated: 2026-03-02
 
 Implements the FLUX.2 image VAE with 2x2 patchify that increases channels
 and reduces spatial dimensions. Uses BatchNorm for latent normalization.
@@ -29,12 +29,17 @@ Usage:
     x_recon = vae.decode(z)  # [1, 3, 1024, 1024]
 """
 
+import logging
 import math
 from dataclasses import dataclass, field
 
 import torch
 from einops import rearrange
 from torch import Tensor, nn
+
+from llm_dit.utils.shuttle import PinnedShuttleMixin
+
+logger = logging.getLogger(__name__)
 
 
 def swish(x: Tensor) -> Tensor:
@@ -363,7 +368,7 @@ class Decoder(nn.Module):
         return h
 
 
-class AutoEncoder(nn.Module):
+class AutoEncoder(PinnedShuttleMixin, nn.Module):
     """
     FLUX.2 AutoEncoder with patchify and BatchNorm latent normalization.
 
@@ -380,7 +385,8 @@ class AutoEncoder(nn.Module):
     """
 
     def __init__(self, params: AutoEncoderParams):
-        super().__init__()
+        nn.Module.__init__(self)
+        self._init_shuttle_state()
         self.params = params
 
         self.encoder = Encoder(

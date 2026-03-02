@@ -663,6 +663,9 @@ class ModelManager:
                     loaded_vae.decode, mode=compile_mode, fullgraph=True,
                 )
 
+            # Offload VAE to CPU with pinned memory -- shuttle to GPU only when needed
+            loaded_vae.offload_to_pinned()
+
             load_time = time.time() - start
 
             # Store persistent model references (only after all three succeed)

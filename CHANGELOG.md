@@ -6,6 +6,14 @@ last updated: 2026-03-02
 All notable changes to this project will be documented in this file.
 Uses [Semantic Versioning](https://semver.org/).
 
+## 0.9.15
+
+### changed
+- **Core**: Extract `PinnedShuttleMixin` from duplicated pinned-memory shuttle code across AutoEncoder (VAE), Qwen3UnifiedEncoder, and Gemma3Encoder into `src/llm_dit/utils/shuttle.py`
+
+### fixed
+- **Gemma3**: `offload_to_pinned()` now includes `gc.collect()` + `torch.cuda.empty_cache()` (was missing, unlike VAE and Qwen3)
+
 ## 0.9.14
 
 ### added

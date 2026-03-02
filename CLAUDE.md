@@ -175,6 +175,7 @@ This is a **multi-workstream project**. Work happens in parallel across layers:
 | LoRA | `src/llm_dit/utils/lora.py` | Pipeline-agnostic: `load_lora()`, `FusedLoRAState` tracking |
 | Prompt rewriting | `src/llm_dit/utils/prompt_rewriter.py` | `PromptRewriter` (Qwen-Image), `Flux2PromptUpsampler` (FLUX.2) |
 | Meta init | `src/llm_dit/utils/meta_init.py` | Zero-memory model construction; use with `load_state_dict(assign=True)` |
+| Pinned shuttle | `src/llm_dit/utils/shuttle.py` | `PinnedShuttleMixin` -- pinned-memory CPU<->GPU shuttle for AutoEncoder, Qwen3, Gemma3 |
 | Audio VAE | `src/llm_dit/models/ltx2/audio_vae/` | AudioDecoder (latents to mel), HiFiGAN Vocoder (mel to 24kHz waveform), AudioPatchifier |
 | AV Blocks | `src/llm_dit/models/ltx2/av_block.py` | `BasicAVTransformerBlock` -- video-only, audio-only, or dual-stream with cross-modal attention |
 | Param resolution | `web/param_resolver.py` | `resolve_param()` -- all routers use for generation param defaults |
