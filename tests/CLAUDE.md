@@ -1,6 +1,6 @@
 # testing guide for agents
 
-*last updated: 2026-02-13*
+*last updated: 2026-03-02*
 
 Quick reference for LLM agents running tests in this codebase.
 
@@ -62,6 +62,51 @@ class TestFlux2APISmoke:
 
 ### full reference
 See [tests/e2e/api/README.md](e2e/api/README.md) for architecture, config factory, validation thresholds, and step-by-step guide for adding new tests.
+
+## playwright browser e2e tests
+
+**For testing frontend UI behavior** against a running backend + frontend. These tests use Playwright to drive a real browser, not TestClient.
+
+### quick start
+```bash
+cd web/frontend-v2
+
+# Headless (CI-friendly)
+bun run test:e2e
+
+# Visible browser (debugging)
+bun run test:e2e:headed
+
+# Interactive Playwright UI
+bun run test:e2e:ui
+```
+
+### how it works
+- Config: `web/frontend-v2/playwright.config.ts`
+- Targets Vite dev server on `http://localhost:5175` (auto-starts via `webServer` config)
+- Backend must be running separately (`uv run web/server.py --config config.toml`)
+- Chromium only (no Firefox/WebKit by default)
+- 30s action timeout, 60s test timeout
+
+### test suites
+| Suite | File | What it tests |
+|-------|------|---------------|
+| Model Status Panel | `tests/e2e/schema/model_status_panel.spec.ts` | No load/unload buttons, status badges, pipeline names, refresh button |
+| Pipeline Schema | `tests/e2e/schema/pipeline_schema.spec.ts` | SLG sliders visible (Z-Image), compile checkboxes removed, FBCache/FP8 present |
+| Settings Menu | `tests/e2e/schema/settings_menu.spec.ts` | Unload All Models button, confirm dialog, server action buttons |
+
+### when to write playwright tests
+- After schema changes that affect which controls are visible/hidden
+- After component changes (ModelManager, SettingsMenu, etc.)
+- After adding new UI features that need regression protection
+
+### anti-patterns
+- **NEVER use `page.waitForTimeout()` for synchronization** -- prefer `waitForSelector()`, `expect().toBeVisible()`, or network idle detection
+- **NEVER rely on CSS class names for selectors** -- use roles, text, test IDs
+- **NEVER test backend logic via Playwright** -- use TestClient-based API E2E tests instead
+
+### full reference
+See [web/frontend-v2/tests/e2e/README.md](../web/frontend-v2/tests/e2e/README.md) for conventions, patterns, and step-by-step guide for adding new tests.
 
 ## core principle
 
@@ -219,6 +264,11 @@ uv run pytest tests/ -v -k ltx2
 
 # Run with slow tests enabled
 uv run pytest tests/ -v --runslow
+
+# Playwright browser E2E tests (requires backend + frontend running)
+cd web/frontend-v2 && bun run test:e2e           # headless
+cd web/frontend-v2 && bun run test:e2e:headed     # visible browser
+cd web/frontend-v2 && bun run test:e2e:ui          # interactive UI
 ```
 
 ## test hierarchy
@@ -228,8 +278,9 @@ uv run pytest tests/ -v --runslow
 | **1. Unit** | `tests/unit/` | After any code change | Yes (component-level) |
 | **2. Integration** | `tests/integration/` (incl. `pipeline/`) | After component changes | Yes (cross-component) |
 | **3. E2E (API)** | `tests/e2e/api/` | Before commits, after major changes | **NO -- TestClient only** |
+| **4. E2E (Browser)** | `web/frontend-v2/tests/e2e/` | After UI/schema changes | **NO -- Playwright browser** |
 
-**Rule:** Only unit and integration tests may call pipeline functions directly. E2E tests MUST go through the API via `TestClient`. This ensures the full request lifecycle (Pydantic validation, router logic, DI, ModelManager) is exercised.
+**Rule:** Only unit and integration tests may call pipeline functions directly. API E2E tests MUST go through `TestClient`. Browser E2E tests use Playwright against a running frontend+backend and validate UI behavior (visible controls, interactions, schema rendering).
 
 ## test structure
 
@@ -252,6 +303,7 @@ tests/
 │   └── ...
 ├── e2e/                           # API-first E2E tests (require GPU + models)
 │   └── api/                       # TestClient-based API tests
+# Also: web/frontend-v2/tests/e2e/ -- Playwright browser E2E tests (separate from pytest)
 │       ├── conftest.py            # TestClient + RunRecorder fixtures
 │       ├── config_factory.py      # TOML overlay merging
 │       ├── run_recorder.py        # Metadata capture
