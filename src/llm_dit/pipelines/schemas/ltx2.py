@@ -1,7 +1,7 @@
 """
 LTX-2 Pipeline Schema
 
-last updated: 2026-02-15
+last updated: 2026-03-02
 
 LTX-2 is a video generation pipeline with:
 - Pure PyTorch implementation (recommended) or diffusers wrapper
@@ -141,7 +141,10 @@ register_pipeline(PipelineSchema(
             max=80,
             step=1,
             group="basic",
-            tooltip="Denoising steps for stage 1 (coarse generation). 40 recommended for two-stage, 12 for single-stage distilled.",
+            tooltip="Denoising steps for stage 1 (coarse generation). 40 recommended for two-stage, 8 for distilled.",
+            dependent_defaults={
+                "use_distilled_sigmas": {"true": 8, "false": 40},
+            },
         ),
         ParamSchema(
             id="stage2_steps",
@@ -153,7 +156,10 @@ register_pipeline(PipelineSchema(
             step=1,
             group="basic",
             conditional={"use_two_stage": True},
-            tooltip="Refinement steps for stage 2. 3 recommended.",
+            tooltip="Refinement steps for stage 2. 3 recommended, 4 for distilled.",
+            dependent_defaults={
+                "use_distilled_sigmas": {"true": 4, "false": 3},
+            },
         ),
         ParamSchema(
             id="guidance_scale",
@@ -164,7 +170,10 @@ register_pipeline(PipelineSchema(
             max=10.0,
             step=0.1,
             group="basic",
-            tooltip="Classifier-free guidance scale. 3.0 recommended (reference default).",
+            tooltip="Classifier-free guidance scale. 3.0 recommended. Forced to 1.0 in distilled mode.",
+            dependent_defaults={
+                "use_distilled_sigmas": {"true": 1.0, "false": 3.0},
+            },
         ),
         ParamSchema(
             id="seed",
@@ -239,16 +248,38 @@ register_pipeline(PipelineSchema(
             tooltip="Use torch.compile for faster inference (slow first run).",
             config_mapped=False,
         ),
+        ParamSchema(
+            id="fbcache_threshold",
+            type="slider",
+            label="FBCache Threshold",
+            default=0.0,
+            min=0.0,
+            max=0.2,
+            step=0.01,
+            group="optimization",
+            tooltip="Block-skip threshold. 0=disabled, 0.05=recommended. Skips transformer blocks with small residual changes.",
+        ),
 
         # === Advanced ===
+        ParamSchema(
+            id="use_distilled_sigmas",
+            type="checkbox",
+            label="Distilled Mode",
+            default=False,
+            group="advanced",
+            tooltip="Use predefined 8+4 step sigma schedule. Forces guidance_scale=1.0 and disables STG.",
+        ),
         ParamSchema(
             id="stg_enabled",
             type="checkbox",
             label="Enable STG",
             default=True,
             group="advanced",
-            tooltip="Spatio-Temporal Guidance for better motion consistency.",
+            tooltip="Spatio-Temporal Guidance for better motion consistency. Disabled in distilled mode.",
             config_mapped=False,
+            dependent_defaults={
+                "use_distilled_sigmas": {"true": False, "false": True},
+            },
         ),
         ParamSchema(
             id="stg_scale",
@@ -323,6 +354,20 @@ register_pipeline(PipelineSchema(
             group="advanced",
             conditional={"use_two_stage": True},
             tooltip="Distilled LoRA blend strength for stage 2 refinement. 1.0 = full strength, 0 = disabled, negative = inverse.",
+        ),
+
+        # === LoRA Enhancement ===
+        ParamSchema(
+            id="loras",
+            type="lora_list",
+            label="LoRA Weights",
+            default=[],
+            group="enhancement",
+            tooltip="LoRA files with strength (path:scale format, e.g. style.safetensors:0.8).",
+            scale_min=-2.0,
+            scale_max=2.0,
+            max_count=5,
+            config_mapped=False,
         ),
     ],
 ))

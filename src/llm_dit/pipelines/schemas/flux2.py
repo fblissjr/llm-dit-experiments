@@ -1,7 +1,7 @@
 """
 FLUX.2 Pipeline Schema
 
-last updated: 2026-01-31
+last updated: 2026-03-02
 
 FLUX.2 is an image generation pipeline with:
 - Klein models: 4 distilled + 4 base variants
@@ -218,15 +218,6 @@ register_pipeline(PipelineSchema(
             group="optimization",
             tooltip="Enable block-by-block CPU offloading for low VRAM systems.",
         ),
-        ParamSchema(
-            id="compile",
-            type="checkbox",
-            label="Torch Compile",
-            default=False,
-            group="optimization",
-            tooltip="Use torch.compile for faster inference (slow first run).",
-        ),
-
         # === LoRA Enhancement ===
         ParamSchema(
             id="loras",

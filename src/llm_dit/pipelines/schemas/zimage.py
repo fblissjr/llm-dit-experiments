@@ -1,7 +1,7 @@
 """
 Z-Image Pipeline Schema
 
-last updated: 2026-02-27
+last updated: 2026-03-02
 
 Z-Image (S3-DiT 6B) is the primary image generation pipeline with two variants:
 - Turbo: Fast 9-step distilled generation (CFG baked in)
@@ -13,8 +13,9 @@ Advanced features include:
 - VL conditioning via Qwen3-VL vision-language model
 - Image-to-image editing with mask support
 
-Note: SLG and FMTT are supported at the API level but not exposed in the
-frontend schema. Pass slg_* and fmtt_* parameters directly via API requests.
+Note: FMTT is supported at the API level but not exposed in the frontend
+schema. Pass fmtt_* parameters directly via API requests. SLG controls
+(slg_scale, slg_start, slg_stop) are exposed; slg_layers stays API-only.
 
 ZImageConfig only holds infrastructure (model_path, text_encoder_path, variant,
 default_preset). All generation params come from presets, not config -- so every
@@ -224,6 +225,72 @@ register_pipeline(PipelineSchema(
             group="advanced",
             conditional={"dype_enabled": True},
             tooltip="NTK-aware scaling factor. 0 = auto-calculate from resolution.",
+            config_mapped=False,
+        ),
+
+        # === Skip-Layer Guidance (SLG) ===
+        ParamSchema(
+            id="slg_scale",
+            type="slider",
+            label="SLG Scale",
+            default=0.0,
+            min=0.0,
+            max=2.0,
+            step=0.1,
+            group="advanced",
+            tooltip="Skip-Layer Guidance strength. 0=disabled.",
+            config_mapped=False,
+        ),
+        ParamSchema(
+            id="slg_start",
+            type="slider",
+            label="SLG Start",
+            default=0.01,
+            min=0.0,
+            max=1.0,
+            step=0.01,
+            group="advanced",
+            conditional={"slg_scale": {"gt": 0}},
+            tooltip="SLG start (fraction of denoising).",
+            config_mapped=False,
+        ),
+        ParamSchema(
+            id="slg_stop",
+            type="slider",
+            label="SLG Stop",
+            default=0.2,
+            min=0.0,
+            max=1.0,
+            step=0.01,
+            group="advanced",
+            conditional={"slg_scale": {"gt": 0}},
+            tooltip="SLG stop (fraction of denoising).",
+            config_mapped=False,
+        ),
+
+        # === CFG Normalization & Truncation ===
+        ParamSchema(
+            id="cfg_normalization",
+            type="slider",
+            label="CFG Normalization",
+            default=0.0,
+            min=0.0,
+            max=10.0,
+            step=0.1,
+            group="advanced",
+            tooltip="Rescale CFG to prevent oversaturation. 0=disabled.",
+            config_mapped=False,
+        ),
+        ParamSchema(
+            id="cfg_truncation",
+            type="slider",
+            label="CFG Truncation",
+            default=1.0,
+            min=0.0,
+            max=1.0,
+            step=0.05,
+            group="advanced",
+            tooltip="Stop CFG at this fraction of denoising. 1.0=never truncate.",
             config_mapped=False,
         ),
 

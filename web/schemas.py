@@ -655,6 +655,7 @@ class LTX2GenerateRequest(BaseModel):
     audio_guidance_scale: float = 7.0  # Audio CFG scale (separate from video)
     lora_path: Optional[str] = None
     lora_scale: Optional[float] = None
+    loras: Optional[List[str]] = None  # Multi-LoRA: "path:scale" format
 
     # Two-stage settings
     use_two_stage: bool = True

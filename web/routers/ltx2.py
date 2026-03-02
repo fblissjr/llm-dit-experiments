@@ -214,6 +214,20 @@ async def ltx2_generate_stream(request: LTX2GenerateRequest, config: ConfigDep, 
                 audio_neg = resolve_param(request, "negative_prompt", ltx2_cfg.negative_prompt)
             audio_guidance_scale = resolve_param(request, "audio_guidance_scale", ltx2_cfg.audio_guidance_scale)
 
+            # Resolve LoRA paths: prefer multi-LoRA list, fall back to legacy single
+            lora_paths = None
+            lora_scales = None
+            if request.loras:
+                from llm_dit.utils.lora import parse_lora_spec
+                clean_loras = [s for s in request.loras if not s.startswith(":")]
+                if clean_loras:
+                    parsed = [parse_lora_spec(s) for s in clean_loras]
+                    lora_paths = [p for p, _ in parsed]
+                    lora_scales = [s for _, s in parsed]
+            elif request.lora_path:
+                lora_paths = [request.lora_path]
+                lora_scales = [request.lora_scale or 1.0]
+
             @torch.no_grad()
             def do_generate():
                 from llm_dit.pipelines import (
@@ -278,8 +292,8 @@ async def ltx2_generate_stream(request: LTX2GenerateRequest, config: ConfigDep, 
                         text_encoder_path=text_encoder_path,
                         callback=progress_callback,
                         gemma_variant=ltx2_cfg.gemma_variant if ltx2_cfg else "bf16",
-                        lora_path=request.lora_path,
-                        lora_scale=request.lora_scale,
+                        lora_path=lora_paths,
+                        lora_scale=lora_scales,
                         text_encoder_device=ltx2_cfg.text_encoder_device if ltx2_cfg else "cpu",
                         transformer_device=ltx2_cfg.transformer_device if ltx2_cfg else "cuda",
                         vae_device=ltx2_cfg.vae_device if ltx2_cfg else "cuda",
@@ -307,8 +321,8 @@ async def ltx2_generate_stream(request: LTX2GenerateRequest, config: ConfigDep, 
                         text_encoder_path=text_encoder_path,
                         callback=progress_callback,
                         use_progress=False,
-                        lora_path=request.lora_path,
-                        lora_scale=request.lora_scale,
+                        lora_path=lora_paths,
+                        lora_scale=lora_scales,
                         gemma_variant=ltx2_cfg.gemma_variant if ltx2_cfg else "bf16",
                         text_encoder_device=ltx2_cfg.text_encoder_device if ltx2_cfg else "cpu",
                         transformer_device=ltx2_cfg.transformer_device if ltx2_cfg else "cuda",
