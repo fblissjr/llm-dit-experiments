@@ -222,6 +222,16 @@ export async function loadModel(pipelineId: string): Promise<ModelStatusResponse
 }
 
 /**
+ * Unload all loaded models to free VRAM.
+ */
+export async function unloadAllModels(): Promise<{ success: boolean; message: string }> {
+  return request<{ success: boolean; message: string }>(
+    '/api/models/unload-all',
+    { method: 'POST' },
+  );
+}
+
+/**
  * Unload a model for a pipeline.
  * Same pattern as loadModel -- fetch status after the action completes.
  */

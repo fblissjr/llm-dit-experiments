@@ -23,11 +23,14 @@ export function SettingsMenu({ variant = 'dropdown', onClose }: SettingsMenuProp
   const ctx = useAppStore((s) => s.generationContext);
   const restartServer = useAppStore((s) => s.restartServer);
   const clearCache = useAppStore((s) => s.clearCache);
+  const unloadAllModels = useAppStore((s) => s.unloadAllModels);
 
   const [showRestartConfirm, setShowRestartConfirm] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [showUnloadAllConfirm, setShowUnloadAllConfirm] = useState(false);
   const [cacheFeedback, setCacheFeedback] = useState<string | null>(null);
   const [isRestarting, setIsRestarting] = useState(false);
+  const [isUnloading, setIsUnloading] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
   // Close dropdown on outside click (only for dropdown variant)
@@ -119,6 +122,24 @@ export function SettingsMenu({ variant = 'dropdown', onClose }: SettingsMenuProp
               <span className="text-xs text-green-400">{cacheFeedback}</span>
             )}
           </button>
+
+          {/* Unload All Models */}
+          <button
+            onClick={() => setShowUnloadAllConfirm(true)}
+            disabled={isUnloading}
+            className={cn(
+              'w-full px-3 py-2.5 text-sm text-left rounded-lg transition-colors',
+              'flex items-center gap-3',
+              isUnloading
+                ? 'bg-gray-700/50 text-gray-500 cursor-not-allowed'
+                : 'bg-gray-700/50 text-gray-300 hover:bg-gray-700'
+            )}
+          >
+            <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 12H4" />
+            </svg>
+            {isUnloading ? 'Unloading...' : 'Unload All Models'}
+          </button>
         </div>
       </section>
 
@@ -206,6 +227,21 @@ export function SettingsMenu({ variant = 'dropdown', onClose }: SettingsMenuProp
         confirmVariant="danger"
         onConfirm={handleResetStorage}
         onCancel={() => setShowResetConfirm(false)}
+      />
+
+      <ConfirmDialog
+        isOpen={showUnloadAllConfirm}
+        title="Unload All Models"
+        message="All loaded models will be removed from VRAM. They will auto-load again when you generate."
+        confirmLabel="Unload All"
+        confirmVariant="danger"
+        onConfirm={async () => {
+          setShowUnloadAllConfirm(false);
+          setIsUnloading(true);
+          await unloadAllModels();
+          setIsUnloading(false);
+        }}
+        onCancel={() => setShowUnloadAllConfirm(false)}
       />
     </>
   );

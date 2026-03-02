@@ -1,10 +1,26 @@
-last updated: 2026-02-27
+last updated: 2026-03-02
 
 # changelog
 
 
 All notable changes to this project will be documented in this file.
 Uses [Semantic Versioning](https://semver.org/).
+
+## 0.9.14
+
+### added
+- **FLUX.2**: Auto-load on generate -- pipeline loads on first request like LTX-2 and Z-Image, removing the need for manual pre-loading
+- **Frontend**: "Unload All Models" button in SettingsMenu (ConfirmDialog-guarded, calls `/api/models/unload-all`)
+- **Frontend**: Model status auto-refreshes after every generation (catches auto-load state changes)
+
+### changed
+- **Frontend**: ModelManager converted from interactive load/unload panel to read-only status display -- models auto-load on generate, manual management unnecessary
+- **Z-Image**: SLG start/stop sliders always visible (removed broken `{"gt": 0}` conditional that frontend couldn't evaluate)
+
+### removed
+- **Z-Image**: Dead `compile` checkbox from schema (never wired to router or pipeline)
+- **LTX-2**: Dead `compile` checkbox from schema (never wired to router or pipeline)
+- **Frontend**: `loadPipelineModel` action from appStore (no longer needed with auto-load UX)
 
 ## 0.9.13
 

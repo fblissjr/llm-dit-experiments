@@ -30,8 +30,8 @@ import {
   fetchVRAMStatus,
   fetchPipelineDefaults,
   fetchModelStatus,
-  loadModel,
   unloadModel,
+  unloadAllModels as unloadAllModelsApi,
   fetchGenerationContext,
   restartServer as restartServerApi,
   clearCache as clearCacheApi,
@@ -82,8 +82,8 @@ interface AppState {
   // Model management
   refreshModelStatus: (pipelineId: string) => Promise<void>;
   refreshAllModelStatus: () => Promise<void>;
-  loadPipelineModel: (pipelineId: string) => Promise<void>;
   unloadPipelineModel: (pipelineId: string) => Promise<void>;
+  unloadAllModels: () => Promise<void>;
 
   // Computed
   getPipelinesForTab: (tab: 'image' | 'video') => PipelineSchema[];
@@ -348,37 +348,6 @@ export const useAppStore = create<AppState>()(
     },
 
     /**
-     * Load a pipeline model
-     */
-    loadPipelineModel: async (pipelineId) => {
-      log.info(`Loading ${pipelineId}...`);
-      // Set to loading state
-      set((state) => {
-        state.modelStatus[pipelineId] = { status: 'loading' };
-      });
-
-      try {
-        const result = await loadModel(pipelineId);
-        set((state) => {
-          state.modelStatus[pipelineId] = result;
-        });
-        log.info(`${pipelineId} status:`, result.status);
-
-        // Refresh VRAM and context after loading
-        get().refreshVRAM();
-        get().refreshContext();
-      } catch (error) {
-        log.error(`${pipelineId} load failed:`, error);
-        set((state) => {
-          state.modelStatus[pipelineId] = {
-            status: 'error',
-            error: error instanceof Error ? error.message : 'Failed to load model',
-          };
-        });
-      }
-    },
-
-    /**
      * Unload a pipeline model
      */
     unloadPipelineModel: async (pipelineId) => {
@@ -406,6 +375,22 @@ export const useAppStore = create<AppState>()(
             error: error instanceof Error ? error.message : 'Failed to unload model',
           };
         });
+      }
+    },
+
+    /**
+     * Unload all loaded models to free VRAM
+     */
+    unloadAllModels: async () => {
+      log.info('Unloading all models...');
+      try {
+        await unloadAllModelsApi();
+        await get().refreshAllModelStatus();
+        await get().refreshVRAM();
+        get().refreshContext();
+        log.info('All models unloaded');
+      } catch (error) {
+        log.error('Unload all failed:', error);
       }
     },
 

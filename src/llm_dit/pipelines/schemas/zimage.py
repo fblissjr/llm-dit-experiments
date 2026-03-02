@@ -250,8 +250,7 @@ register_pipeline(PipelineSchema(
             max=1.0,
             step=0.01,
             group="advanced",
-            conditional={"slg_scale": {"gt": 0}},
-            tooltip="SLG start (fraction of denoising).",
+            tooltip="SLG start (fraction of denoising). Only used when SLG Scale > 0.",
             config_mapped=False,
         ),
         ParamSchema(
@@ -263,8 +262,7 @@ register_pipeline(PipelineSchema(
             max=1.0,
             step=0.01,
             group="advanced",
-            conditional={"slg_scale": {"gt": 0}},
-            tooltip="SLG stop (fraction of denoising).",
+            tooltip="SLG stop (fraction of denoising). Only used when SLG Scale > 0.",
             config_mapped=False,
         ),
 
@@ -339,17 +337,6 @@ register_pipeline(PipelineSchema(
             default=False,
             group="optimization",
             tooltip="Move encoder to CPU to fit in 24GB VRAM. Slower but uses less GPU memory.",
-            config_mapped=False,
-        ),
-
-        # === Torch Compile ===
-        ParamSchema(
-            id="compile",
-            type="checkbox",
-            label="Torch Compile",
-            default=False,
-            group="optimization",
-            tooltip="Use torch.compile for faster inference (slow first run, then 20-40% speedup).",
             config_mapped=False,
         ),
 

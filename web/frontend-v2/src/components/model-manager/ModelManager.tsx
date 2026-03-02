@@ -1,9 +1,9 @@
 /**
  * ModelManager Component
  *
- * Displays model loading status for all pipelines and allows
- * loading/unloading models. Designed to work in both desktop
- * sidebar and mobile bottom sheet contexts.
+ * Read-only status panel showing what models are loaded in memory.
+ * Auto-load happens at generation time -- no manual load/unload buttons.
+ * Unload All is in SettingsMenu for the rare case of freeing VRAM.
  */
 
 import { useEffect } from 'react';
@@ -18,7 +18,6 @@ interface LoRABadgeInfo {
 }
 
 interface ModelCardProps {
-  pipelineId: string;
   name: string;
   color: string;
   status: 'unloaded' | 'loading' | 'loaded' | 'error';
@@ -27,8 +26,6 @@ interface ModelCardProps {
   modelVariant?: string | null;
   loras?: LoRABadgeInfo[];
   configTags?: { key: string; label: string; color: string }[];
-  onLoad: () => void;
-  onUnload: () => void;
 }
 
 function ModelCard({
@@ -40,8 +37,6 @@ function ModelCard({
   modelVariant,
   loras,
   configTags,
-  onLoad,
-  onUnload,
 }: ModelCardProps) {
   const isLoading = status === 'loading';
   const isLoaded = status === 'loaded';
@@ -57,7 +52,7 @@ function ModelCard({
       )}
     >
       {/* Header row */}
-      <div className="flex items-center justify-between gap-2 mb-2">
+      <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 min-w-0">
           <div
             className="w-2 h-2 rounded-full shrink-0"
@@ -84,12 +79,12 @@ function ModelCard({
 
       {/* Model variant */}
       {isLoaded && modelVariant && (
-        <p className="text-xs text-gray-500 mb-1">{modelVariant}</p>
+        <p className="text-xs text-gray-500 mt-1.5">{modelVariant}</p>
       )}
 
       {/* LoRA badges */}
       {isLoaded && loras && loras.length > 0 && (
-        <div className="flex flex-wrap gap-1 mb-1.5">
+        <div className="flex flex-wrap gap-1 mt-1.5">
           {loras.map((lora) => (
             <span
               key={lora.name}
@@ -104,7 +99,7 @@ function ModelCard({
 
       {/* Config tags */}
       {isLoaded && configTags && configTags.length > 0 && (
-        <div className="flex flex-wrap gap-1 mb-1.5">
+        <div className="flex flex-wrap gap-1 mt-1.5">
           {configTags.map((tag) => {
             const colorMap: Record<string, string> = {
               purple: 'bg-purple-500/20 text-purple-300',
@@ -129,75 +124,15 @@ function ModelCard({
 
       {/* VRAM info */}
       {isLoaded && vramMb != null && vramMb > 0 && (
-        <div className="text-xs text-gray-500 mb-2">
+        <div className="text-xs text-gray-500 mt-1.5">
           <span>Using {(vramMb / 1024).toFixed(1)} GB VRAM</span>
         </div>
       )}
 
       {/* Error message */}
       {hasError && error && (
-        <p className="text-xs text-red-400 mb-2 line-clamp-2">{error}</p>
+        <p className="text-xs text-red-400 mt-1.5 line-clamp-2">{error}</p>
       )}
-
-      {/* Action button */}
-      <button
-        onClick={isLoaded ? onUnload : onLoad}
-        disabled={isLoading}
-        className={cn(
-          'w-full py-2 px-3 text-sm font-medium rounded-lg transition-colors',
-          'flex items-center justify-center gap-2',
-          isLoaded
-            ? 'bg-gray-700 hover:bg-gray-600 text-gray-200'
-            : 'bg-blue-600 hover:bg-blue-500 text-white',
-          isLoading && 'opacity-50 cursor-not-allowed'
-        )}
-      >
-        {isLoading ? (
-          <>
-            <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24">
-              <circle
-                className="opacity-25"
-                cx="12"
-                cy="12"
-                r="10"
-                stroke="currentColor"
-                strokeWidth="4"
-                fill="none"
-              />
-              <path
-                className="opacity-75"
-                fill="currentColor"
-                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-              />
-            </svg>
-            Loading...
-          </>
-        ) : isLoaded ? (
-          <>
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-              />
-            </svg>
-            Unload
-          </>
-        ) : (
-          <>
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"
-              />
-            </svg>
-            Load Model
-          </>
-        )}
-      </button>
     </div>
   );
 }
@@ -210,8 +145,6 @@ export function ModelManager() {
   const generationContext = useAppStore((s) => s.generationContext);
   const getPipelineColor = useAppStore((s) => s.getPipelineColor);
   const refreshAllModelStatus = useAppStore((s) => s.refreshAllModelStatus);
-  const loadPipelineModel = useAppStore((s) => s.loadPipelineModel);
-  const unloadPipelineModel = useAppStore((s) => s.unloadPipelineModel);
   const vram = useAppStore((s) => s.vram);
 
   // Refresh model status on mount
@@ -259,7 +192,6 @@ export function ModelManager() {
           return (
             <ModelCard
               key={pipeline.id}
-              pipelineId={pipeline.id}
               name={pipeline.name}
               color={color}
               status={status.status as ModelCardProps['status']}
@@ -268,8 +200,6 @@ export function ModelManager() {
               modelVariant={variant}
               loras={lorasForCard}
               configTags={status.configTags}
-              onLoad={() => loadPipelineModel(pipeline.id)}
-              onUnload={() => unloadPipelineModel(pipeline.id)}
             />
           );
         })}

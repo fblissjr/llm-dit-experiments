@@ -240,15 +240,6 @@ register_pipeline(PipelineSchema(
             tooltip="Enable FP8 quantization (native on RTX 4090, saves ~40% VRAM).",
         ),
         ParamSchema(
-            id="compile",
-            type="checkbox",
-            label="Torch Compile",
-            default=False,
-            group="optimization",
-            tooltip="Use torch.compile for faster inference (slow first run).",
-            config_mapped=False,
-        ),
-        ParamSchema(
             id="fbcache_threshold",
             type="slider",
             label="FBCache Threshold",

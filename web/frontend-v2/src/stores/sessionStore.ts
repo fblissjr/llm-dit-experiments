@@ -271,6 +271,8 @@ export const useSessionStore = create<SessionState>()(
           }
         } finally {
           abortController = null;
+          // Refresh model status -- auto-load may have changed pipeline state
+          useAppStore.getState().refreshAllModelStatus();
         }
       },
 

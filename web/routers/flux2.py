@@ -183,6 +183,11 @@ async def flux2_generate(request: Flux2GenerateRequest, config: ConfigDep, manag
     Returns PNG image as binary response.
     """
     try:
+        # Auto-load on first request (like LTX-2 pattern)
+        if not manager.is_loaded("flux2"):
+            logger.info("[FLUX.2] Auto-loading pipeline (first request)...")
+            await asyncio.get_event_loop().run_in_executor(None, lambda: manager.load("flux2"))
+
         # Import the FLUX.2 generation pipeline
         from llm_dit.pipelines.flux2_generate import (
             Flux2GenerationConfig,
@@ -410,6 +415,11 @@ async def flux2_generate_stream(request: Flux2GenerateRequest, config: ConfigDep
     - {"type": "error", "message": "..."} - Error occurred
     """
     from typing import AsyncIterator
+
+    # Auto-load on first request (like LTX-2 pattern)
+    if not manager.is_loaded("flux2"):
+        logger.info("[FLUX.2] Auto-loading pipeline (first request)...")
+        await asyncio.get_event_loop().run_in_executor(None, lambda: manager.load("flux2"))
 
     # Verify loaded model matches request BEFORE entering the SSE generator.
     # This blocks synchronously during reload, which is intentional --
