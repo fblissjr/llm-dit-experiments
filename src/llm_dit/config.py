@@ -47,6 +47,25 @@ except ImportError:
         tomllib = None
 
 
+def _strip_unknown(dc_cls: type, data: dict[str, Any]) -> dict[str, Any]:
+    """Strip keys from *data* that aren't fields on *dc_cls*.
+
+    Logs a warning for each dropped key so stale config.toml entries are
+    visible in the server log rather than silently crashing the entire
+    config parse.
+    """
+    from dataclasses import fields as dc_fields
+    valid = {f.name for f in dc_fields(dc_cls)}
+    unknown = set(data) - valid
+    if unknown:
+        logger.warning(
+            "[config] Ignoring unknown keys in [%s]: %s",
+            dc_cls.__name__, ", ".join(sorted(unknown)),
+        )
+        return {k: v for k, v in data.items() if k in valid}
+    return data
+
+
 # ---------------------------------------------------------------------------
 # Unified quantization config (shared across all pipelines)
 # ---------------------------------------------------------------------------
@@ -1985,25 +2004,25 @@ class Config:
             model_path=data.get("model_path", ""),
             templates_dir=data.get("templates_dir"),
             presets_dir=data.get("presets_dir", "presets"),
-            encoder=EncoderConfig(**encoder_data),
-            generation=GenerationConfig(**generation_data),
-            optimization=OptimizationConfig(**optimization_data),
-            scheduler=SchedulerConfig(**scheduler_data),
-            api=APIConfig(**api_data),
-            lora=LoRAConfig(**lora_data),
-            pytorch=PyTorchConfig(**pytorch_data),
-            rewriter=RewriterConfig(**rewriter_data),
-            logging=LoggingConfig(**logging_data),
-            zimage=ZImageConfig(**zimage_data),
-            qwen_image=QwenImageConfig(**qwen_image_data),
-            ltx2=LTX2Config(**ltx2_data),
-            flux2=Flux2Config(**flux2_data),
-            dype=DyPEConfig(**dype_data),
-            slg=SLGConfig(**slg_data),
-            fmtt=FMTTConfig(**fmtt_data),
-            fbcache=FBCacheRuntimeConfig(**fbcache_data),
-            wan=WanConfig(**wan_data),
-            enhancement=EnhancementConfig(**enhancement_data),
+            encoder=EncoderConfig(**_strip_unknown(EncoderConfig, encoder_data)),
+            generation=GenerationConfig(**_strip_unknown(GenerationConfig, generation_data)),
+            optimization=OptimizationConfig(**_strip_unknown(OptimizationConfig, optimization_data)),
+            scheduler=SchedulerConfig(**_strip_unknown(SchedulerConfig, scheduler_data)),
+            api=APIConfig(**_strip_unknown(APIConfig, api_data)),
+            lora=LoRAConfig(**_strip_unknown(LoRAConfig, lora_data)),
+            pytorch=PyTorchConfig(**_strip_unknown(PyTorchConfig, pytorch_data)),
+            rewriter=RewriterConfig(**_strip_unknown(RewriterConfig, rewriter_data)),
+            logging=LoggingConfig(**_strip_unknown(LoggingConfig, logging_data)),
+            zimage=ZImageConfig(**_strip_unknown(ZImageConfig, zimage_data)),
+            qwen_image=QwenImageConfig(**_strip_unknown(QwenImageConfig, qwen_image_data)),
+            ltx2=LTX2Config(**_strip_unknown(LTX2Config, ltx2_data)),
+            flux2=Flux2Config(**_strip_unknown(Flux2Config, flux2_data)),
+            dype=DyPEConfig(**_strip_unknown(DyPEConfig, dype_data)),
+            slg=SLGConfig(**_strip_unknown(SLGConfig, slg_data)),
+            fmtt=FMTTConfig(**_strip_unknown(FMTTConfig, fmtt_data)),
+            fbcache=FBCacheRuntimeConfig(**_strip_unknown(FBCacheRuntimeConfig, fbcache_data)),
+            wan=WanConfig(**_strip_unknown(WanConfig, wan_data)),
+            enhancement=EnhancementConfig(**_strip_unknown(EnhancementConfig, enhancement_data)),
         )
 
     @classmethod

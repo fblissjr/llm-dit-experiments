@@ -191,10 +191,6 @@ fbcache_threshold = 0.0         # FBCache block-skip threshold (0=disabled, 0.05
 # Distilled pipeline mode (predefined sigma schedule: 8+4 steps, no CFG)
 use_distilled_sigmas = false
 
-# Legacy single-stage distilled mode
-use_distilled = false
-distilled_steps_stage1 = 8
-distilled_steps_stage2 = 4
 
 # Image-to-video
 input_image = ""

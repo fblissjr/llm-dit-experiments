@@ -298,6 +298,50 @@ class TestKeyParameterWiring:
         )
 
 
+class TestStripUnknownKeys:
+    """Config.from_dict() must tolerate stale TOML keys."""
+
+    def test_unknown_keys_stripped_not_crash(self):
+        """A stale TOML key in one section must not crash the entire config."""
+        from llm_dit.config import Config
+
+        data = {
+            "default_pipeline": "none",
+            "encoder": {"device": "cpu"},
+            "ltx2": {"model_path": "/tmp/ltx2", "bogus_key": True},
+            "flux2": {"model_path": "/tmp/flux2"},
+        }
+        config = Config.from_dict(data)
+        assert config.ltx2.model_path == "/tmp/ltx2"
+        assert config.flux2.model_path == "/tmp/flux2"
+        assert not hasattr(config.ltx2, "bogus_key")
+
+    def test_unknown_keys_logged(self, caplog):
+        """Stripped keys should produce a warning."""
+        import logging
+        from llm_dit.config import Config
+
+        data = {
+            "encoder": {},
+            "flux2": {"model_path": "/tmp/flux2", "nonexistent_field": 42},
+        }
+        with caplog.at_level(logging.WARNING, logger="llm_dit.config"):
+            Config.from_dict(data)
+        assert "nonexistent_field" in caplog.text
+
+    def test_valid_keys_pass_through(self):
+        """Valid keys are not stripped."""
+        from llm_dit.config import Config
+
+        data = {
+            "encoder": {"device": "cpu", "hidden_layer": -3},
+            "flux2": {"model_path": "/tmp/flux2", "encoder_path": "/tmp/enc"},
+        }
+        config = Config.from_dict(data)
+        assert config.encoder.hidden_layer == -3
+        assert config.flux2.encoder_path == "/tmp/enc"
+
+
 class TestConfigSerialization:
     """Ensure Config.to_dict() includes all fields."""
 
