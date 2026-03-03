@@ -1,4 +1,4 @@
-last updated: 2026-03-02
+last updated: 2026-03-03
 
 # changelog
 
@@ -13,6 +13,8 @@ Uses [Semantic Versioning](https://semver.org/).
 
 ### fixed
 - **Gemma3**: `offload_to_pinned()` now includes `gc.collect()` + `torch.cuda.empty_cache()` (was missing, unlike VAE and Qwen3)
+- **FLUX.2**: Fix OOM on 24GB GPUs with persistent model loading -- temporarily offload transformer to CPU during text encoding, reload after encoder offloads
+- **FLUX.2**: Wire `[flux2].quantization` to `get_pipeline_quant_config()` via `quant_transformer` property (was dead -- `getattr` returned None, falling through to global default)
 
 ## 0.9.14
 
