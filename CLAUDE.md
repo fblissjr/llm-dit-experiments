@@ -1,6 +1,6 @@
-# agent context (v0.9.12)
+# agent context (v0.9.17)
 
-*last updated: 2026-02-27*
+*last updated: 2026-03-03*
 
 Quick reference for LLM agents. Read only what you need.
 
@@ -128,7 +128,8 @@ Every feature has a data flow chain. Trace it BEFORE coding:
 | **API Endpoint** | `web/routers/<pipeline>.py` | `@router.post("/api/<pipeline>/")` |
 | **Config Defaults** | `src/llm_dit/config.py` | `class <Pipeline>Config` (dataclass) |
 | **RuntimeConfig** | `src/llm_dit/config.py` | `class RuntimeConfig` (composed sub-configs) |
-| **CLI** | `src/llm_dit/cli.py` | `<pipeline>` subcommand |
+| **CLI (server)** | `src/llm_dit/cli.py` | Server startup CLI args |
+| **CLI (gen)** | `scripts/gen.py` | CLI-over-API client (deprecated: `scripts/generate.py`) |
 | **Model lifecycle** | `src/llm_dit/model_manager.py` | `ModelManager`, load/unload/reload |
 | **Pipeline Function** | `src/llm_dit/pipelines/` | Main generation function |
 | **Shared Utils** | `src/llm_dit/utils/` | LoRA, quantization, attention, memory |
@@ -186,6 +187,10 @@ This is a **multi-workstream project**. Work happens in parallel across layers:
 | Frontend logger | `web/frontend-v2/src/utils/logger.ts` | Namespaced logging factory; `VITE_LOG_LEVEL` env var; zero raw console calls |
 | Media utilities | `web/frontend-v2/src/utils/media.ts` | `detectKind()`, `mediaItemFromResult()`, `mediaItemFromHistory()` -- unified `MediaItem` type |
 | VRAM bar | `web/frontend-v2/src/components/common/VRAMBar.tsx` | Shared VRAM usage bar component used by StatusBar and SettingsMenu |
+| CLI-over-API | `scripts/gen.py` | Thin httpx client: `flux2`, `zimage`, `ltx2`, `qwen`, `status` subcommands. Tests: `tests/unit/test_gen_cli.py` (52 tests) |
+| Memory cleanup | `src/llm_dit/utils/memory.py` | `cleanup_memory()` -- centralized gc.collect + torch.cuda.empty_cache (CUDA guard) |
+| Quant aliases | `src/llm_dit/quantization/__init__.py` | `QUANT_ALIASES` dict -- canonical `"fp8"` -> `"fp8-dynamic"` mapping (single source of truth) |
+| FLUX.2 scheduler | `src/llm_dit/schedulers/flux2_scheduler.py` | `get_schedule()`, `compute_empirical_mu()`, `generalized_time_snr_shift()` |
 
 ## architecture patterns (post-refactor)
 
@@ -298,6 +303,7 @@ For full debugging patterns, see [lessons_learned.md](internal/state/lessons_lea
 | Noisy/garbage LTX-2 output | Compounding optimizations | Disable `ge_gamma`, `fbcache_threshold`, `use_distilled_sigmas` in config.toml; test one at a time. All three together = no CFG + stale cached blocks + amplified velocity = runaway noise |
 | Stale form values from IndexedDB | Schema range changed after values persisted | `getResolvedValues()` clamps automatically; use "Reset Storage" in Settings or clear IndexedDB via DevTools Application tab |
 | Audio keys cause `load_state_dict` failure | Cache created with `audio_enabled=True` but reconstruction defaults to VideoOnly | Cache carries `video_only` flag; reconstruction uses `_reconstruct_transformer_from_cache()` helper |
+| Falsy-zero in dict lookups | `d.get("a") or d.get("b")` skips 0, 0.0, "" | Use `if key in data` pattern; see `_get_camel()` in `scripts/gen.py` |
 
 ## quick test commands
 
@@ -326,6 +332,9 @@ uv run pytest tests/unit/test_ltx2_audio_vae.py tests/unit/test_ltx2_av_transfor
 
 # Quantization tests (alias, detection, recommended method)
 uv run pytest tests/unit/test_ltx2_resolve_quantize.py tests/unit/test_quantization.py -v
+
+# CLI-over-API tool (gen.py arg parsing, body building, SSE handling)
+uv run pytest tests/unit/test_gen_cli.py -v
 
 # Frontend TypeScript check (from web/frontend-v2/)
 cd web/frontend-v2 && bunx tsc --noEmit

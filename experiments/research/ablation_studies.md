@@ -57,12 +57,12 @@ seeds: [42, 123, 456, 789, 1000]
 
 The parameter is now implemented and accessible via:
 
-**CLI:**
+**CLI** (requires server running):
 ```bash
-uv run scripts/generate.py \
-  --model-path /path/to/z-image \
+uv run scripts/gen.py zimage \
+  --prompt "Test prompt" \
   --hidden-layer -1 \
-  "Test prompt"
+  --seed 42
 ```
 
 **Config file:**
@@ -507,7 +507,7 @@ experiments/results/<experiment_name>/
 
 ### Quick Single-Image Tests
 
-For quick tests, use the generate script:
+For quick tests, use the profiler or gen.py client:
 
 ```bash
 # Use the profiler for quick tests
@@ -516,13 +516,12 @@ uv run scripts/profiler.py \
   --tests encode_short,encode_medium,full_generation \
   --output results/baseline.json
 
-# Single image with specific parameters
-uv run scripts/generate.py \
-  --model-path /path/to/z-image-turbo \
+# Single image with specific parameters (requires server running)
+uv run scripts/gen.py zimage \
+  --prompt "Test prompt" \
   --shift 2.0 \
   --steps 12 \
-  --output ablation_shift2_steps12.png \
-  "Test prompt"
+  --seed 42
 ```
 
 ### Listing Available Options

@@ -46,7 +46,6 @@ Usage:
     image = generate_image(config, model_name="klein-9b")
 """
 
-import gc
 import math
 import logging
 from dataclasses import dataclass, field
@@ -73,15 +72,9 @@ from llm_dit.models.flux2.constants import (
     FLUX2_MODEL_INFO,
     get_encoder_preset,
 )
+from llm_dit.utils.memory import cleanup_memory
 
 logger = logging.getLogger(__name__)
-
-
-def cleanup_memory() -> None:
-    """Free GPU memory between stages."""
-    gc.collect()
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
 
 
 def log_gpu_memory(stage: str) -> None:
@@ -380,66 +373,7 @@ def _create_ref_image_ids(
     return ids
 
 
-def generalized_time_snr_shift(t: torch.Tensor, mu: float, sigma: float) -> torch.Tensor:
-    """
-    Apply SNR-based timestep shift.
-
-    Args:
-        t: Linear timesteps in [0, 1]
-        mu: Shift parameter (computed from image size)
-        sigma: Scale parameter (typically 1.0)
-
-    Returns:
-        Shifted timesteps
-    """
-    return math.exp(mu) / (math.exp(mu) + (1 / t - 1) ** sigma)
-
-
-def compute_empirical_mu(image_seq_len: int, num_steps: int) -> float:
-    """
-    Compute empirical mu parameter for timestep shifting.
-
-    Higher resolution images need different shift schedules.
-
-    Args:
-        image_seq_len: Number of image tokens
-        num_steps: Number of denoising steps
-
-    Returns:
-        Computed mu value
-    """
-    a1, b1 = 8.73809524e-05, 1.89833333
-    a2, b2 = 0.00016927, 0.45666666
-
-    if image_seq_len > 4300:
-        mu = a2 * image_seq_len + b2
-        return float(mu)
-
-    m_200 = a2 * image_seq_len + b2
-    m_10 = a1 * image_seq_len + b1
-
-    a = (m_200 - m_10) / 190.0
-    b = m_200 - 200.0 * a
-    mu = a * num_steps + b
-
-    return float(mu)
-
-
-def get_schedule(num_steps: int, image_seq_len: int) -> list[float]:
-    """
-    Generate timestep schedule with SNR-based shifting.
-
-    Args:
-        num_steps: Number of denoising steps
-        image_seq_len: Number of image tokens
-
-    Returns:
-        List of timesteps from 1.0 to ~0
-    """
-    mu = compute_empirical_mu(image_seq_len, num_steps)
-    timesteps = torch.linspace(1, 0, num_steps + 1)
-    timesteps = generalized_time_snr_shift(timesteps, mu, 1.0)
-    return timesteps.tolist()
+from llm_dit.schedulers.flux2_scheduler import get_schedule  # noqa: E402
 
 
 def _format_gb(bytes_val: int | float) -> str:

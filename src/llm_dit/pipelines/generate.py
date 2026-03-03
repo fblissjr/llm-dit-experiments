@@ -49,12 +49,10 @@ from llm_dit.models.ltx2 import (
 )
 from llm_dit.models.ltx2.constants import LTX2_DEFAULT_NEGATIVE_PROMPT
 from llm_dit.schedulers import LTX2Scheduler
+from llm_dit.quantization import QUANT_ALIASES
 from llm_dit.utils.memory import cleanup_memory
 
 logger = logging.getLogger(__name__)
-
-# Shorthand aliases for quantization method strings
-_QUANT_ALIASES = {"fp8": "fp8-dynamic"}
 
 
 def _resolve_quantize(quantize: str) -> tuple[bool, str]:
@@ -71,7 +69,7 @@ def _resolve_quantize(quantize: str) -> tuple[bool, str]:
     """
     if quantize in (None, "", "none"):
         return False, "none"
-    precision = _QUANT_ALIASES.get(quantize, quantize)
+    precision = QUANT_ALIASES.get(quantize, quantize)
     return True, precision
 
 

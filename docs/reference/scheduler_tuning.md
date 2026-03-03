@@ -1,8 +1,10 @@
 # scheduler tuning guide
 
-*last updated: 2026-01-06*
+*last updated: 2026-03-03*
 
 This guide explains how to tune the FlowMatch scheduler parameters (`shift` and `d_noise`) for Z-Image generation. Understanding these parameters helps you control image sharpness, detail level, and overall aesthetic.
+
+> **CLI note:** The examples below use `scripts/gen.py` (requires a running server). The `--shift` parameter is available as a gen.py flag. The `--d-noise` parameter is a server-side setting -- configure it in `config.toml` under `[default.scheduler]` or via the web UI. The deprecated `scripts/generate.py` supported both as CLI flags directly.
 
 ## Overview
 
@@ -41,13 +43,13 @@ Higher shift values compress the schedule, causing more denoising to happen in e
 
 ```bash
 # Softer, more artistic (shift 2.5)
-uv run scripts/generate.py --shift 2.5 "Watercolor painting of a garden"
+uv run scripts/gen.py zimage --prompt "Watercolor painting of a garden" --shift 2.5
 
 # Default balanced (shift 3.0)
-uv run scripts/generate.py --shift 3.0 "Portrait of a woman"
+uv run scripts/gen.py zimage --prompt "Portrait of a woman" --shift 3.0
 
 # Sharper, more detail (shift 4.0)
-uv run scripts/generate.py --shift 4.0 "Architectural photograph of a building"
+uv run scripts/gen.py zimage --prompt "Architectural photograph of a building" --shift 4.0
 ```
 
 ### Visual Guide: Shift Effects
@@ -86,15 +88,28 @@ This is a technique from the RES4LYF/ClownSharkSampler research.
 
 ### D-Noise Examples
 
+Set `d_noise` in `config.toml` (not available as a gen.py flag):
+
+```toml
+# config.toml -- sharper details
+[default.scheduler]
+d_noise = 0.96
+
+# config.toml -- default
+[default.scheduler]
+d_noise = 1.0
+
+# config.toml -- softer, dreamier
+[default.scheduler]
+d_noise = 1.04
+```
+
+Then generate:
+
 ```bash
-# Sharper details (d_noise 0.96)
-uv run scripts/generate.py --d-noise 0.96 "Detailed mechanical watch"
-
-# Default (d_noise 1.0)
-uv run scripts/generate.py --d-noise 1.0 "A cat sitting on a windowsill"
-
-# Softer, dreamier (d_noise 1.04)
-uv run scripts/generate.py --d-noise 1.04 "Misty morning in a forest"
+uv run scripts/gen.py zimage --prompt "Detailed mechanical watch"
+uv run scripts/gen.py zimage --prompt "A cat sitting on a windowsill"
+uv run scripts/gen.py zimage --prompt "Misty morning in a forest"
 ```
 
 ### Visual Guide: D-Noise Effects
@@ -117,57 +132,74 @@ These parameters work together but affect different aspects of the generation:
 
 ### Recommended Combinations
 
+For combined tuning, set `d_noise` in `config.toml` and pass `--shift` via gen.py.
+
 #### Maximum Sharpness (Technical/Detailed Subjects)
 
+```toml
+# config.toml
+[default.scheduler]
+d_noise = 0.96
+```
+
 ```bash
-uv run scripts/generate.py \
-  --shift 4.0 \
-  --d-noise 0.96 \
-  "Macro photograph of a circuit board, sharp details"
+uv run scripts/gen.py zimage --prompt "Macro photograph of a circuit board, sharp details" --shift 4.0
 ```
 
 **Expect:** Very crisp edges, enhanced fine detail, high contrast. May introduce subtle artifacts on smooth gradients.
 
 #### Balanced Sharp (Portraits, Products)
 
+```toml
+# config.toml
+[default.scheduler]
+d_noise = 0.98
+```
+
 ```bash
-uv run scripts/generate.py \
-  --shift 3.0 \
-  --d-noise 0.98 \
-  "Professional headshot portrait"
+uv run scripts/gen.py zimage --prompt "Professional headshot portrait" --shift 3.0
 ```
 
 **Expect:** Natural look with slightly enhanced detail. Good skin texture without being harsh.
 
 #### Default/Neutral
 
+```toml
+# config.toml
+[default.scheduler]
+d_noise = 1.0
+```
+
 ```bash
-uv run scripts/generate.py \
-  --shift 3.0 \
-  --d-noise 1.0 \
-  "A landscape at sunset"
+uv run scripts/gen.py zimage --prompt "A landscape at sunset" --shift 3.0
 ```
 
 **Expect:** The model's trained optimum. Balanced between detail and smoothness.
 
 #### Soft/Artistic (Dreamy, Painterly)
 
+```toml
+# config.toml
+[default.scheduler]
+d_noise = 1.04
+```
+
 ```bash
-uv run scripts/generate.py \
-  --shift 2.8 \
-  --d-noise 1.04 \
-  "Impressionist painting of a garden"
+uv run scripts/gen.py zimage --prompt "Impressionist painting of a garden" --shift 2.8
 ```
 
 **Expect:** Softer edges, blended colors, dreamy atmosphere. Less sharp detail but more cohesive mood.
 
 #### Maximum Softness (Abstract, Atmospheric)
 
+```toml
+# config.toml
+[default.scheduler]
+d_noise = 1.06
+```
+
 ```bash
-uv run scripts/generate.py \
-  --shift 2.5 \
-  --d-noise 1.06 \
-  "Abstract watercolor, flowing colors"
+uv run scripts/gen.py zimage --prompt "Abstract watercolor, flowing colors" --shift 2.5
 ```
 
 **Expect:** Very soft, painterly quality. Minimal hard edges, smooth color transitions.
@@ -202,37 +234,47 @@ For high-resolution generation, `dynamic_shift` calculates shift based on resolu
 
 #### 1024x1024 (Standard)
 
+```toml
+# config.toml
+[default.scheduler]
+d_noise = 0.98
+```
+
 ```bash
-# Use fixed shift, adjust d_noise for texture
-uv run scripts/generate.py \
-  --shift 3.0 \
-  --d-noise 0.98 \
-  --width 1024 --height 1024 \
-  "Your prompt"
+uv run scripts/gen.py zimage --prompt "Your prompt" --shift 3.0 --width 1024 --height 1024
 ```
 
 #### 2048x2048+ (High-Res with DyPE)
 
+DyPE and d_noise are server-side config parameters. Set them in `config.toml`:
+
+```toml
+# config.toml
+[default.scheduler]
+d_noise = 0.97
+
+[default.dype]
+enabled = true
+method = "vision_yarn"
+```
+
 ```bash
-# Use DyPE (handles shift internally), add slight sharpening
-uv run scripts/generate.py \
-  --dype \
-  --d-noise 0.97 \
-  --width 2048 --height 2048 \
-  "Your prompt"
+uv run scripts/gen.py zimage --prompt "Your prompt" --width 2048 --height 2048
 ```
 
 DyPE has its own shift parameters (`base_shift`, `max_shift`) that handle the resolution scaling internally.
 
 #### 2048x2048+ (Experimental: Dynamic Shift Only)
 
+```toml
+# config.toml
+[default.scheduler]
+d_noise = 0.98
+dynamic_shift = true
+```
+
 ```bash
-# Lower shift regime, experimental
-uv run scripts/generate.py \
-  --dynamic-shift \
-  --d-noise 0.98 \
-  --width 2048 --height 2048 \
-  "Your prompt"
+uv run scripts/gen.py zimage --prompt "Your prompt" --width 2048 --height 2048
 ```
 
 ## Interaction with Other Parameters
@@ -255,14 +297,19 @@ Z-Image has CFG baked in (guidance_scale=0.0), but if using CFG:
 
 ### SLG (Skip Layer Guidance)
 
-SLG adds detail without changing the sigma schedule. Can combine with d_noise:
+SLG adds detail without changing the sigma schedule. Can combine with d_noise. Both are server-side config parameters:
+
+```toml
+# config.toml
+[default.scheduler]
+d_noise = 0.98
+
+[default.slg]
+scale = 2.5
+```
 
 ```bash
-# SLG for semantic detail + d_noise for texture
-uv run scripts/generate.py \
-  --slg-scale 2.5 \
-  --d-noise 0.98 \
-  "Detailed subject"
+uv run scripts/gen.py zimage --prompt "Detailed subject"
 ```
 
 ## Troubleshooting

@@ -25,7 +25,6 @@ Usage:
     manager.unload_all_except("zimage")
 """
 
-import gc
 import logging
 import threading
 import time
@@ -34,6 +33,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
 import torch
+
+from llm_dit.utils.memory import cleanup_memory
 
 if TYPE_CHECKING:
     from llm_dit.cli import RuntimeConfig
@@ -293,9 +294,7 @@ class ModelManager:
             except Exception:
                 # Clean up partial state on failure
                 self._pipelines.pop(pid, None)
-                gc.collect()
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
+                cleanup_memory()
                 raise
             finally:
                 self._loading_in_progress[pid] = False
@@ -327,9 +326,7 @@ class ModelManager:
                 unloaded.append(pid)
 
         if unloaded:
-            gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+            cleanup_memory("unload_all")
             logger.info(f"[VRAM] Unloaded pipelines: {', '.join(unloaded)}")
 
         return unloaded
@@ -508,9 +505,7 @@ class ModelManager:
         with self._locks["flux2"]:
             # Unload current
             self._unload_flux2()
-            gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+            cleanup_memory("unload_flux2")
 
             # Load with the requested model_name
             self._loading_in_progress["flux2"] = True
@@ -519,9 +514,7 @@ class ModelManager:
                 return result
             except Exception:
                 self._pipelines.pop("flux2", None)
-                gc.collect()
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
+                cleanup_memory()
                 raise
             finally:
                 self._loading_in_progress["flux2"] = False
@@ -533,9 +526,7 @@ class ModelManager:
         """
         with self._locks["zimage"]:
             self._unload_zimage()
-            gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+            cleanup_memory("unload_zimage")
 
             self._loading_in_progress["zimage"] = True
             try:
@@ -543,9 +534,7 @@ class ModelManager:
                 return result
             except Exception:
                 self._pipelines.pop("zimage", None)
-                gc.collect()
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
+                cleanup_memory()
                 raise
             finally:
                 self._loading_in_progress["zimage"] = False
@@ -588,6 +577,14 @@ class ModelManager:
             raise ValueError(
                 "compile=true is incompatible with block_offload=true. "
                 "Set block_offload=false when using compile=true."
+            )
+
+        if compile_transformer and quantization == "none":
+            logger.warning(
+                "[FLUX.2] compile=true with quantization='none' may OOM on 24GB GPUs. "
+                "The bf16 transformer (~18GB) cannot be offloaded during encoding "
+                "because torch.compile invalidates graphs on device move. "
+                "Recommended: set [flux2].quantization = 'fp8' to reduce to ~9GB."
             )
 
         logger.info(
@@ -685,9 +682,7 @@ class ModelManager:
         except Exception:
             # Clean up any partially loaded models
             del loaded_encoder, loaded_transformer, loaded_vae
-            gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+            cleanup_memory("load_error")
             raise
 
     def _preload_ltx2_transformer(self, model_path: Path, ltx2_cfg: Any) -> dict:
@@ -1175,12 +1170,7 @@ class ModelManager:
             except Exception as e:
                 logger.warning(f"[VRAM] Could not clear compile cache: {e}")
 
-            gc.collect()
-            torch.cuda.empty_cache()
-            gc.collect()
-            if torch.cuda.is_available():
-                allocated = torch.cuda.memory_allocated() / 1024**3
-                logger.info(f"[VRAM] Z-Image unloaded. CUDA allocated: {allocated:.2f} GB")
+            cleanup_memory("unload_zimage")
 
         return unloaded
 
@@ -1203,11 +1193,7 @@ class ModelManager:
         except Exception as e:
             logger.warning(f"[FLUX.2] Could not clear compile cache: {e}")
 
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-        gc.collect()
-        logger.info("[FLUX.2] Pipeline unloaded, VRAM freed")
+        cleanup_memory("unload_flux2")
         return True
 
     def _unload_ltx2(self) -> bool:
@@ -1256,11 +1242,7 @@ class ModelManager:
             logger.info("[VRAM] LTX-2 vocoder cache released")
 
         self._pipelines.pop("ltx2", None)
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-            allocated = torch.cuda.memory_allocated() / 1024**3
-            logger.info(f"[VRAM] Cleanup complete. CUDA allocated: {allocated:.2f} GB")
+        cleanup_memory("unload_ltx2")
         return True
 
     def _unload_qwen_image(self) -> bool:
@@ -1272,9 +1254,7 @@ class ModelManager:
         logger.info("[VRAM] Unloading Qwen-Image pipeline...")
         del qwen
         self._pipelines.pop("qwen_image", None)
-        gc.collect()
-        torch.cuda.empty_cache()
-        logger.info("[VRAM] Qwen-Image pipeline unloaded")
+        cleanup_memory("unload_qwen_image")
         return True
 
     def _unload_qwen_image_t2i(self) -> bool:
@@ -1286,11 +1266,7 @@ class ModelManager:
         logger.info("[VRAM] Unloading Qwen-Image T2I pipeline...")
         del t2i
         self._pipelines.pop("qwen_image_t2i", None)
-        gc.collect()
-        torch.cuda.empty_cache()
-        if torch.cuda.is_available():
-            allocated = torch.cuda.memory_allocated() / 1024**3
-            logger.info(f"[VRAM] Qwen-Image T2I unloaded. CUDA allocated: {allocated:.2f} GB")
+        cleanup_memory("unload_qwen_image_t2i")
         return True
 
     def _unload_generic(self, pid: str, display_name: str) -> bool:
@@ -1302,10 +1278,7 @@ class ModelManager:
         logger.info(f"[VRAM] Unloading {display_name} pipeline...")
         del pipeline
         self._pipelines.pop(pid, None)
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-        logger.info(f"[VRAM] {display_name} pipeline unloaded")
+        cleanup_memory(f"unload_{pid}")
         return True
 
     # -- PipelineLoader compatibility (used by scripts/generate.py) --

@@ -1,6 +1,6 @@
 # flux.2 klein image generation guide
 
-*last updated: 2026-01-24*
+*last updated: 2026-03-03*
 
 **Status: PRODUCTION READY** - Text-to-image and multi-reference image editing both work.
 
@@ -25,59 +25,64 @@ FLUX.2 Klein is Black Forest Labs' latest image generation model, using a Qwen3 
 
 ## cli usage
 
+The CLI client `scripts/gen.py` requires the server to be running. Model paths, block offload, and other infrastructure settings are configured server-side in `config.toml`.
+
+```bash
+# Start the server (once)
+uv run web/server.py --config config.toml
+```
+
 ### basic text-to-image
 
 ```bash
-uv run scripts/generate.py "A photo of a cat sitting on a windowsill" \
-    --model-type flux2 \
-    --flux2-model-name klein-9b-fp8 \
-    --flux2-block-offload \
-    --width 1024 --height 1024
+uv run scripts/gen.py flux2 --prompt "A photo of a cat sitting on a windowsill" \
+    --width 1024 --height 1024 --seed 42
 ```
 
-### with local model paths
+### with model switching
 
 ```bash
-uv run scripts/generate.py "A sunset over mountains" \
-    --model-type flux2 \
-    --flux2-model-name klein-9b-fp8 \
-    --flux2-model-path models/FLUX.2-klein/FLUX.2-klein-9b-fp8/ \
-    --flux2-vae-path models/FLUX.2-klein/FLUX.2-klein-9B/ \
-    --flux2-block-offload \
-    --flux2-output sunset.png
+# Use a specific model variant (must be available on server)
+uv run scripts/gen.py flux2 --prompt "A sunset over mountains" \
+    --model-name klein-9b-fp8
 ```
 
 ### image editing with references
 
 ```bash
 # Single reference - transform existing image
-uv run scripts/generate.py "Transform the cat into a black cat" \
-    --model-type flux2 \
-    --flux2-model-name klein-9b-fp8 \
-    --flux2-block-offload \
-    --flux2-input-image cat.png
+uv run scripts/gen.py flux2 --prompt "Transform the cat into a black cat" \
+    --reference-images cat.png
 
 # Multiple references - combine elements
-uv run scripts/generate.py "Place the cat from image 1 on the mountain from image 2" \
-    --model-type flux2 \
-    --flux2-model-name klein-9b-fp8 \
-    --flux2-block-offload \
-    --flux2-input-image cat.png mountain.png
+uv run scripts/gen.py flux2 --prompt "Place the cat from image 1 on the mountain from image 2" \
+    --reference-images cat.png mountain.png
 ```
 
-## cli arguments
+### streaming progress
+
+```bash
+uv run scripts/gen.py flux2 --prompt "A detailed landscape" --stream
+```
+
+## cli arguments (gen.py flux2)
 
 | Argument | Default | Description |
 |----------|---------|-------------|
-| `--flux2-model-name` | klein-9b-fp8 | Model variant (see table above) |
-| `--flux2-model-path` | (HuggingFace) | Local path to transformer weights |
-| `--flux2-vae-path` | (HuggingFace) | Local path to VAE weights |
-| `--flux2-block-offload` | False | Enable block-by-block GPU offloading |
-| `--flux2-input-image` | None | Reference image(s) for editing |
-| `--flux2-output` | flux2_output.png | Output file path |
-| `--flux2-steps` | (auto) | Override denoising steps |
-| `--flux2-guidance` | (auto) | Override CFG scale |
-| `--flux2-seed` | (random) | Reproducibility seed |
+| `--prompt` | (required) | Generation prompt |
+| `--width` | (config) | Image width |
+| `--height` | (config) | Image height |
+| `--num-steps` | (config) | Override denoising steps |
+| `--guidance` | (config) | Override CFG scale |
+| `--seed` | (random) | Reproducibility seed |
+| `--model-name` | (config) | Model variant (see table above) |
+| `--loras` | None | LoRA specs (path:scale) |
+| `--block-offload` | (config) | Enable block-by-block GPU offloading |
+| `--reference-images` | None | Reference image path(s) for editing |
+| `--upsample-prompt` | (config) | Enable prompt upsampling |
+| `--stream` | False | Use SSE streaming for progress |
+
+> **Note:** Model paths (`model_path`, `vae_path`) and other infrastructure settings are server-side config in `config.toml`, not gen.py flags.
 
 ## web ui usage
 
@@ -122,13 +127,14 @@ Expand **"Advanced Options"** for:
 
 ### block offload mode
 
-For GPUs with less than 24GB VRAM, enable block offload:
+For GPUs with less than 24GB VRAM, enable block offload in `config.toml`:
 
-```bash
---flux2-block-offload
+```toml
+[rtx4090.flux2]
+block_offload = true
 ```
 
-This moves transformer blocks to/from GPU one at a time during inference:
+Or pass `--block-offload` to gen.py. This moves transformer blocks to/from GPU one at a time during inference:
 - Peak VRAM: ~12-15GB (vs ~22GB without)
 - Speed: ~2x slower due to CPU-GPU transfers
 - Works on RTX 3080/4070/4080 (16GB+ recommended)
@@ -193,7 +199,7 @@ See [config_management.md](config_management.md) for detailed TOML configuration
 
 ### out of memory (OOM)
 
-1. Enable block offload: `--flux2-block-offload`
+1. Enable block offload: set `block_offload = true` in `config.toml` or pass `--block-offload` to gen.py
 2. Use FP8 variant: `klein-9b-fp8` instead of `klein-9b`
 3. Use smaller model: `klein-4b-fp8`
 4. Reduce resolution: 768x768 instead of 1024x1024

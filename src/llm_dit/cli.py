@@ -307,8 +307,6 @@ def create_base_parser(
         help="Number of denoising steps (default: 4 for distilled, 50 for base)")
     flux2_group.add_argument("--flux2-guidance", type=float, default=None,
         help="Guidance scale (default: 1.0 for distilled, 4.0 for base)")
-    flux2_group.add_argument("--flux2-seed", type=int, default=None,
-        help="Random seed for reproducibility")
     flux2_group.add_argument("--flux2-offload", action="store_true", default=None,
         help="Enable three-stage memory offloading (default: True)")
     flux2_group.add_argument("--flux2-no-offload", action="store_true", default=None,
@@ -630,12 +628,9 @@ def _apply_cli_overrides(args: argparse.Namespace, config: RuntimeConfig) -> Run
     _set_if(args, "flux2_model_name", config.flux2, "default_model")
     _set_if(args, "flux2_num_steps", config.flux2, "default_steps")
     _set_if(args, "flux2_guidance", config.flux2, "default_guidance")
-    _set_if(args, "flux2_seed", config.flux2, "seed")
     _set_if(args, "flux2_encoder_path", config.flux2, "encoder_path")
     _set_if(args, "flux2_model_path", config.flux2, "model_path")
     _set_if(args, "flux2_vae_path", config.flux2, "vae_path")
-    _set_if(args, "flux2_output", config.flux2, "output_path")
-    _set_if(args, "flux2_input_image", config.flux2, "input_images")
     if getattr(args, "flux2_offload", False):
         config.flux2.offload_between_stages = True
     if getattr(args, "flux2_no_offload", False):

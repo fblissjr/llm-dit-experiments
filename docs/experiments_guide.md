@@ -1,6 +1,6 @@
 # experiments guide
 
-*last updated: 2026-02-14*
+*last updated: 2026-03-03*
 
 This guide covers the complete experiment infrastructure for Z-Image ablation studies.
 
@@ -44,16 +44,23 @@ long_prompt_mode = "interpolate" # truncate/interpolate/pool/attention_pool (def
 
 ### Using Config
 
-```bash
-# Use default profile
-uv run scripts/generate.py --config config.toml "A cat"
+Config values are set in `config.toml` and read by the server. The CLI client (`scripts/gen.py`) sends requests to the running server, which applies config defaults via `resolve_param()`.
 
-# Use specific profile
-uv run scripts/generate.py --config config.toml --profile rtx4090 "A cat"
+```bash
+# Start the server with config (run once)
+uv run web/server.py --config config.toml
+
+# Generate via CLI (requires server running)
+uv run scripts/gen.py zimage --prompt "A cat"
 
 # Override specific values
-uv run scripts/generate.py --config config.toml --shift 4.0 "A cat"
+uv run scripts/gen.py zimage --prompt "A cat" --shift 4.0
+
+# Config profiles are set server-side:
+uv run web/server.py --config config.toml --profile rtx4090
 ```
+
+> **Note:** The legacy `scripts/generate.py` accepted `--config` and `--profile` directly. With `gen.py`, configuration is server-side -- set in `config.toml` and applied when starting the server.
 
 ---
 
@@ -488,12 +495,11 @@ The Z-Image DiT has a text sequence limit due to RoPE position encoding.
 
 ### Compression Modes
 
-```bash
-# Use via CLI
-uv run scripts/generate.py \
-  --long-prompt-mode interpolate \
-  --model-path /path/to/model \
-  "Your very long prompt here..."
+Long prompt mode is configured server-side in `config.toml`:
+
+```toml
+[default.pytorch]
+long_prompt_mode = "interpolate"  # truncate/interpolate/pool/attention_pool
 ```
 
 | Mode | Description | Best For |
@@ -530,16 +536,11 @@ print(f"Token count: {output.token_counts[0]}/1024")
 
 ### Testing Long Prompts
 
+To compare compression modes, update `long_prompt_mode` in `config.toml` and restart the server for each mode, then generate with `gen.py`:
+
 ```bash
-# Compare compression modes
-for mode in truncate interpolate pool attention_pool; do
-  uv run scripts/generate.py \
-    --model-path /path/to/model \
-    --long-prompt-mode $mode \
-    --seed 42 \
-    --output "mode_${mode}.png" \
-    "Your very long prompt..."
-done
+# For each mode, update config.toml [default.pytorch].long_prompt_mode, restart server, then:
+uv run scripts/gen.py zimage --prompt "Your very long prompt..." --seed 42
 ```
 
 See `internal/research/long_prompt_research.md` for detailed research notes and improvement roadmap.
@@ -550,11 +551,14 @@ See `internal/research/long_prompt_research.md` for detailed research notes and 
 
 ### CUDA Out of Memory
 
-```bash
-# Move encoder to CPU
---text-encoder-device cpu --dit-device cuda --vae-device cuda
+Device placement is configured server-side in `config.toml`:
 
-# Or use smaller batch (one image at a time is default)
+```toml
+[default.encoder]
+device = "cpu"       # move encoder to CPU to save VRAM
+
+[default.pipeline]
+device = "cuda"      # DiT + VAE stay on GPU
 ```
 
 ### Slow Generation

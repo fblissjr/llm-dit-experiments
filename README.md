@@ -39,9 +39,8 @@ UI on `http://localhost:5175`. Vite proxies `/api` to the backend.
 ### 3. CLI (optional)
 
 ```bash
-uv run scripts/generate.py --model-type flux2 \
-    --flux2-model-path /path/to/FLUX.2-klein-9b-fp8 \
-    "A photo of a cat"
+# Requires server running (step 1)
+uv run scripts/gen.py flux2 --prompt "A photo of a cat" --seed 42
 ```
 
 ## API

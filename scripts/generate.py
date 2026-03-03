@@ -68,6 +68,7 @@ Usage:
 import logging
 import sys
 import time
+import warnings
 from pathlib import Path
 
 import torch
@@ -479,8 +480,8 @@ def run_flux2_generation(args, config, logger) -> int:
     guidance = config.flux2_guidance or defaults["guidance"]
     width = config.width or 1024
     height = config.height or 1024
-    seed = config.flux2_seed
-    output_path = config.flux2_output_path
+    seed = config.seed  # From GenerationConfig (shared)
+    output_path = args.flux2_output or "outputs/flux2"
 
     # Prompt validation
     if not args.prompt:
@@ -488,9 +489,7 @@ def run_flux2_generation(args, config, logger) -> int:
         return 1
 
     # Prepare reference images (for editing mode)
-    reference_images = []
-    if config.flux2_input_images:
-        reference_images = config.flux2_input_images
+    reference_images = args.flux2_input_image or []
 
     mode = "editing" if reference_images else "text-to-image"
 
@@ -567,6 +566,13 @@ def run_flux2_generation(args, config, logger) -> int:
 
 
 def main():
+    warnings.warn(
+        "scripts/generate.py is deprecated. Use scripts/gen.py (CLI-over-API) instead. "
+        "This script will be removed in v1.0.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+
     # Create parser with generation args
     parser = create_base_parser(
         description="Generate images with Z-Image, Qwen-Image-Layered, or Qwen-Image-2512",

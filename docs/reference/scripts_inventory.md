@@ -1,6 +1,6 @@
 # scripts inventory
 
-*last updated: 2026-02-27*
+*last updated: 2026-03-03*
 
 Complete inventory of `scripts/` directory with current status.
 
@@ -10,7 +10,8 @@ These are in active use and should be maintained.
 
 | Script | Purpose | Notes |
 |--------|---------|-------|
-| `generate.py` | CLI generation entry point | **Deprecated** -- see [entry_points.md](entry_points.md). Will be replaced by CLI-over-API tool. |
+| `gen.py` | CLI-over-API generation tool | Thin httpx client. Subcommands: flux2, zimage, ltx2, qwen, status. See [entry_points.md](entry_points.md). |
+| `generate.py` | Legacy CLI generation entry point | **Deprecated (v0.9.17)** -- use `gen.py` instead. Removal planned for v1.0. Still needed for embedding precompute, encoder-only mode. |
 | `export_openapi.py` | Export OpenAPI spec from FastAPI app | Used by frontend codegen: `bun run export-openapi` |
 | `quantize_model.py` | Quantize model weights to fp8/int8/int4 | Offline quantization utility |
 | `train.py` | Training script | Training entry point |

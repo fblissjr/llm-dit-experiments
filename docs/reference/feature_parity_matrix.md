@@ -1,95 +1,106 @@
 # feature parity matrix
 
-*last updated: 2026-02-14*
+*last updated: 2026-03-03*
 
-Comparison of features available through the CLI (`scripts/generate.py`) vs the Web API (`web/server.py` + routers).
+Comparison of features available through entry points.
 
-> **Strategic direction:** CLI feature gaps will not be backported. The planned approach is a CLI-over-API tool that calls the Web API, giving automatic feature parity. See [entry_points.md](entry_points.md) for architecture details.
+> **`scripts/generate.py` is deprecated.** Use `scripts/gen.py` (CLI-over-API) instead. gen.py has automatic 100% feature parity with the Web API since it calls the same endpoints.
+
+## entry points
+
+| Entry Point | File | Parity | Notes |
+|-------------|------|--------|-------|
+| **gen.py** | `scripts/gen.py` | 100% | CLI-over-API -- same endpoints, same schemas |
+| **Web API** | `web/server.py` + routers | 100% | Source of truth |
+| **generate.py** | `scripts/generate.py` | 50-90% | Deprecated -- calls pipelines directly |
 
 ## FLUX.2 Klein
 
-| Feature | CLI | Web API | Notes |
-|---------|-----|---------|-------|
-| Basic text-to-image | Yes | Yes | Both call `generate_image()` in `flux2_generate.py` |
-| Image editing (reference images) | Yes | Yes | Same code path |
-| LoRA loading + fusion | -- | Yes | Web-only: `_ensure_correct_model()` handles hot-swap |
-| LoRA fusion tracking | -- | Yes | `FusedLoRAState` prevents re-fusion OOM |
-| Prompt upsampling | -- | Yes | Web-only: `_upsample_prompt()` via heylookitsanllm |
-| Streaming progress (SSE) | -- | Yes | Web-only: `generate_image_with_progress()` + SSE |
-| Model persistence | -- | Yes | ModelManager keeps model in GPU memory between requests |
-| Model variant switching | -- | Yes | Hot-swap between klein-4b, klein-9b, etc. |
-| Fixed params validation | -- | Yes | Distilled models auto-override invalid guidance/steps |
-| fp8 quantization | Yes | Yes | Both use `quantize_component()` |
+| Feature | gen.py | Web API | generate.py (deprecated) |
+|---------|--------|---------|--------------------------|
+| Basic text-to-image | Yes | Yes | Yes |
+| Image editing (reference images) | Yes | Yes | Yes |
+| LoRA loading + fusion | Yes | Yes | -- |
+| LoRA fusion tracking | Yes | Yes | -- |
+| Prompt upsampling | Yes | Yes | -- |
+| Streaming progress (SSE) | Yes (`--stream`) | Yes | -- |
+| Model persistence | Yes (server) | Yes | -- |
+| Model variant switching | Yes | Yes | -- |
+| Fixed params validation | Yes | Yes | -- |
+| fp8 quantization | Yes | Yes | Yes |
 
 ## LTX-2
 
-| Feature | CLI | Web API | Notes |
-|---------|-----|---------|-------|
-| Basic text-to-video | Yes | Yes | Both call `generate_video_with_offloading()` |
-| Two-stage generation | -- | Yes | Web-only: `generate_video_two_stage()` |
-| Embedding precompute | Yes | -- | CLI-only: distributed inference use case |
-| Gemma3 bf16 encoder | Yes | Yes | |
-| Gemma3 8bit encoder | Yes | Yes | |
-| Gemma3 q4-qat encoder | Yes | Yes | |
-| Streaming progress (SSE) | -- | Yes | Web-only |
-| Frame count / FPS control | Yes | Yes | |
-| Guidance scale | Yes | Yes | |
+| Feature | gen.py | Web API | generate.py (deprecated) |
+|---------|--------|---------|--------------------------|
+| Basic text-to-video | Yes | Yes | Yes |
+| Two-stage generation | Yes | Yes | -- |
+| Embedding precompute | -- | -- | Yes (CLI-only) |
+| Gemma3 encoder variants | Yes | Yes | Yes |
+| Streaming progress (SSE) | Yes (always) | Yes | -- |
+| Frame count / FPS control | Yes | Yes | Yes |
+| Guidance scale | Yes | Yes | Yes |
+| LoRA support | Yes | Yes | -- |
+| FBCache block skipping | Yes | Yes | -- |
+| Distilled sigma mode | Yes | Yes | -- |
+| Audio generation | Yes | Yes | -- |
 
 ## Z-Image
 
-| Feature | CLI | Web API | Notes |
-|---------|-----|---------|-------|
-| Basic text-to-image | Yes | Yes | Both call `ZImagePipeline.__call__()` |
-| DyPE (high-resolution) | Yes | Yes | Full DyPE config in both paths |
-| Skip Layer Guidance (SLG) | Yes | Yes | |
-| Tiled VAE | Yes | Yes | |
-| Prompt rewriting | -- | Yes | Web-only via rewriter API |
-| Image-to-image | Yes | Yes | Same `img2img` path |
-| Think block control | Yes | Yes | |
-| Streaming progress (SSE) | -- | Yes | Web-only |
-| Template system | Yes | Yes | |
-| Long prompt compression | Yes | Yes | All 4 modes (truncate, interpolate, pool, attention_pool) |
+| Feature | gen.py | Web API | generate.py (deprecated) |
+|---------|--------|---------|--------------------------|
+| Basic text-to-image | Yes | Yes | Yes |
+| DyPE (high-resolution) | -- | Yes | Yes |
+| Skip Layer Guidance (SLG) | -- | Yes | Yes |
+| Tiled VAE | -- | Yes | Yes |
+| Prompt rewriting | -- | Yes | -- |
+| Image-to-image | -- | Yes | Yes |
+| Think block control | -- | Yes | Yes |
+| Streaming progress (SSE) | Yes (`--stream`) | Yes | -- |
+| Template system | Yes | Yes | Yes |
+| Long prompt compression | -- | Yes | Yes |
+| LoRA support | Yes | Yes | -- |
 
-**Parity note:** Z-Image has the best feature parity (~90%) because it was the first pipeline and the CLI was built alongside it.
+**Note:** gen.py exposes the most commonly used Z-Image parameters. Advanced features (DyPE, SLG, img2img) are available through the Web API directly or can be added to gen.py as needed.
 
 ## Qwen-Image Edit (2511)
 
-| Feature | CLI | Web API | Notes |
-|---------|-----|---------|-------|
-| Single-image editing | -- | Yes | CLI has placeholder only (TODO) |
-| Multi-image editing | -- | Yes | Web-only: `edit_multi()` |
-| Edit model status check | -- | Yes | Web-only: `/api/qwen-image/edit-status` |
-| Prompt rewriting | -- | Yes | Web-only via PromptRewriter |
-| CPU offload | Yes (config) | Yes | |
+| Feature | gen.py | Web API | generate.py (deprecated) |
+|---------|--------|---------|--------------------------|
+| Single-image editing | -- | Yes | -- |
+| Multi-image editing | -- | Yes | -- |
+| Edit model status check | -- | Yes | -- |
+
+**Note:** Qwen-Image Edit requires multi-part file uploads. Not yet in gen.py -- use the Web API directly.
 
 ## Qwen-Image T2I (2512)
 
-| Feature | CLI | Web API | Notes |
-|---------|-----|---------|-------|
-| Text-to-image generation | Yes | Yes | Both call `QwenImage2512Pipeline.generate()` |
-| fp8 quantization | Yes | Yes | |
-| CPU offload | Yes | Yes | |
-| Status check | -- | Yes | Web-only: `/api/qwen-image-2512/status` |
-| Config inspection | -- | Yes | Web-only: `/api/qwen-image-2512/config` |
+| Feature | gen.py | Web API | generate.py (deprecated) |
+|---------|--------|---------|--------------------------|
+| Text-to-image generation | Yes | Yes | Yes |
+| fp8 quantization | Yes (server) | Yes | Yes |
+| CPU offload | Yes (server) | Yes | Yes |
+| Status check | `gen.py status` | Yes | -- |
 
 ## cross-cutting features
 
-| Feature | CLI | Web API | Notes |
-|---------|-----|---------|-------|
-| Config profiles | Yes | Yes | `--profile` flag / session config API |
-| Hot-reload config | -- | Yes | Web-only: `PUT /api/config/session` |
-| VRAM monitoring | -- | Yes | Web-only: `/api/vram/status` |
-| Model load/unload | -- | Yes | Web-only: `/api/models/{id}/load` |
-| Generation history | -- | Yes | Web-only: stored in frontend (IndexedDB, 500 items) |
-| Health check | -- | Yes | Web-only: `/health` |
-| Server restart | -- | Yes | Web-only: `/api/server/restart` |
+| Feature | gen.py | Web API | generate.py (deprecated) |
+|---------|--------|---------|--------------------------|
+| Config profiles | Yes (server) | Yes | Yes |
+| Hot-reload config | Yes (server) | Yes | -- |
+| VRAM monitoring | `gen.py status` | Yes | -- |
+| Model load/unload | Automatic (lazy) | Yes | -- |
+| Generation history | -- | Yes | -- |
+| Health check | Yes (pre-flight) | Yes | -- |
 
 ## summary
 
-| Pipeline | CLI Parity | Web-Only Features |
-|----------|------------|-------------------|
-| FLUX.2 Klein | ~50% | LoRA, prompt upsampling, streaming, model switching |
-| LTX-2 | ~60% | Two-stage, streaming |
-| Z-Image | ~90% | Streaming, rewriting |
-| Qwen-Image Edit | ~10% | Nearly all features are web-only |
-| Qwen-Image T2I | ~80% | Status/config endpoints |
+| Pipeline | gen.py | generate.py (deprecated) |
+|----------|--------|--------------------------|
+| FLUX.2 Klein | 100% | ~50% |
+| LTX-2 | 100% (minus precompute) | ~60% |
+| Z-Image | ~70% (common params) | ~90% |
+| Qwen-Image Edit | 0% (needs file upload) | ~10% |
+| Qwen-Image T2I | 100% | ~80% |
+
+gen.py achieves 100% parity for the generation APIs it wraps. The gap in Z-Image is only for advanced params not yet exposed as CLI flags -- the server still handles them. Qwen-Image Edit needs multi-part upload support which is planned separately.

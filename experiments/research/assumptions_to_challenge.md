@@ -30,14 +30,12 @@ This is a common pattern in text-to-image models, based on intuition that:
 ### Experiment
 
 ```bash
-# Test layers -1 through -6
+# Test layers -1 through -6 (requires server running)
 for layer in -1 -2 -3 -4 -5 -6; do
-  uv run scripts/generate.py \
-    --model-path /path/to/z-image \
+  uv run scripts/gen.py zimage \
+    --prompt "A beautiful sunset over mountains" \
     --hidden-layer $layer \
-    --seed 42 \
-    --output "layer${layer}.png" \
-    "A beautiful sunset over mountains"
+    --seed 42
 done
 ```
 

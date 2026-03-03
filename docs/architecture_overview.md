@@ -1,6 +1,6 @@
 # architecture overview
 
-*last updated: 2026-02-27*
+*last updated: 2026-03-03*
 
 High-level architecture of the LLM-DiT multi-model generation platform. For detailed post-refactor internals, see [internal/docs/architecture/post_refactor_guide.md](../internal/docs/architecture/post_refactor_guide.md).
 
@@ -16,7 +16,7 @@ A multi-model image and video generation platform running on a single RTX 4090 (
 | **Qwen-Image Edit (2511)** | image editing | Qwen2.5-VL-7B | 8B instruction-following DiT |
 | **Qwen-Image T2I (2512)** | text-to-image | Qwen2.5-VL-7B | 60-layer DiT |
 
-Two entry points: CLI (`scripts/generate.py`) and Web API (`web/server.py`). See [docs/reference/entry_points.md](reference/entry_points.md) for detailed comparison.
+Two entry points: CLI (`scripts/gen.py`, a thin client over the Web API) and Web API (`web/server.py`). The legacy `scripts/generate.py` is deprecated. See [docs/reference/entry_points.md](reference/entry_points.md) for detailed comparison.
 
 ## server architecture
 
@@ -159,7 +159,19 @@ React 19 + Zustand 5 + Vite 7 + Bun application in `web/frontend-v2/`:
 
 ## strategic direction
 
-The Web API is the authoritative path for generation. `scripts/generate.py` is planned for deprecation in favor of a CLI tool that calls the Web API, making the API the single source of truth and eliminating the feature parity problem. See [docs/reference/feature_parity_matrix.md](reference/feature_parity_matrix.md) for current gaps.
+The Web API is the authoritative path for generation. `scripts/gen.py` is the primary CLI -- a thin HTTP client that calls the running server's API endpoints. This makes the API the single source of truth and eliminates the feature parity problem that existed with the old `scripts/generate.py` (now deprecated). See [docs/reference/feature_parity_matrix.md](reference/feature_parity_matrix.md) for current gaps.
+
+```bash
+# gen.py requires the server to be running
+uv run web/server.py --config config.toml &
+
+# Then use gen.py as the CLI
+uv run scripts/gen.py flux2 --prompt "A sunset over mountains" --seed 42
+uv run scripts/gen.py zimage --prompt "A cat" --width 1024 --height 1024
+uv run scripts/gen.py ltx2 --prompt "Ocean waves" --num-frames 33
+uv run scripts/gen.py qwen --prompt "A bird"
+uv run scripts/gen.py status
+```
 
 ## related docs
 

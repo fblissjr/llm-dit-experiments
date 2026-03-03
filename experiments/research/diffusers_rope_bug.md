@@ -128,12 +128,13 @@ def apply_rope(positions, frequencies):
 2. **Test the fix**
    ```bash
    # Install patched diffusers
-   pip install -e /path/to/patched/diffusers
+   uv add /path/to/patched/diffusers
 
-   # Test with 1505-1536 token prompts
-   uv run scripts/generate.py \
-     --model-path /path/to/z-image \
-     "$(python -c 'print(\"A cat \" * 250)')"  # ~1520 tokens
+   # Test with 1505-1536 token prompts (requires server running with patched diffusers)
+   uv run scripts/gen.py zimage \
+     --prompt "$(python -c 'print(\"A cat \" * 250)')" \
+     --seed 42
+   # ~1520 tokens -- should now succeed with the fix
    ```
 
 3. **Verify stability**

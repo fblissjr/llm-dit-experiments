@@ -28,11 +28,12 @@ import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, ClassVar, List, Literal
+from typing import Any, List
 
 import torch
 
 from llm_dit.models.ltx2.constants import LTX2_DEFAULT_NEGATIVE_PROMPT
+from llm_dit.quantization import QUANT_ALIASES
 
 logger = logging.getLogger(__name__)
 
@@ -199,36 +200,6 @@ class EncoderConfig:
         return self.device
 
 @dataclass
-class PipelineConfig:
-    """Configuration for the diffusers pipeline (transformer + VAE)."""
-
-    device: str = "auto"  # auto, cuda, mps, cpu
-    dtype: str = "bfloat16"
-    enable_model_cpu_offload: bool = False  # Sequential CPU offload
-    enable_sequential_cpu_offload: bool = False  # More aggressive offload
-
-    def get_dtype(self) -> torch.dtype:
-        """Convert string dtype to torch.dtype."""
-        dtype_map = {
-            "bfloat16": torch.bfloat16,
-            "float16": torch.float16,
-            "float32": torch.float32,
-        }
-        return dtype_map.get(self.dtype, torch.bfloat16)
-
-    def get_device(self) -> str:
-        """Get resolved device string."""
-        if self.device == "auto":
-            if torch.cuda.is_available():
-                return "cuda"
-            elif torch.backends.mps.is_available():
-                return "mps"
-            else:
-                return "cpu"
-        return self.device
-
-
-@dataclass
 class GenerationConfig:
     """Default generation parameters."""
 
@@ -344,9 +315,6 @@ class LTX2Config:
 
     # Text encoder (Gemma 3-12B)
     encoder_model_id: str = "models/LTX-2/text_encoder"
-    encoder_quantization: str = "fp8-weight-only"  # Deprecated: use gemma_variant instead
-    encoder_cpu_offload: bool = True  # Deprecated: encoder always deleted after encoding
-
     # Prompt enhancement
     enhance_prompt: bool = False  # Use Gemma3 to expand prompt before encoding
 
@@ -391,11 +359,6 @@ class LTX2Config:
     # Distilled pipeline mode
     use_distilled_sigmas: bool = False  # Use predefined sigma schedule (8+4 steps, no CFG)
 
-    # Legacy distillation settings (single-stage distilled model)
-    use_distilled: bool = False  # Use single-stage distilled model (legacy)
-    distilled_steps_stage1: int = 8  # First stage steps (distilled)
-    distilled_steps_stage2: int = 4  # Second stage steps (distilled)
-
     # Image-to-video (optional)
     input_image: str = ""  # Path to input image for I2V mode
     image_weight: float = 0.7  # Blend weight for input image (0.0-1.0)
@@ -424,6 +387,19 @@ class LTX2Config:
     skip_cleanup: bool = False  # Skip memory cleanup between stages
     gemma_variant: str = "fp8"  # Gemma3 backbone: bf16, fp8, 8bit, q4-qat
 
+    @property
+    def quant_transformer(self) -> str | None:
+        """Bridge for get_pipeline_quant_config() resolution.
+
+        Maps [ltx2].quantize -> quant_transformer so that
+        getattr(self.ltx2, 'quant_transformer') returns the value.
+        Resolves aliases (e.g. 'fp8' -> 'fp8-dynamic') before returning.
+        Returns None when 'none'/empty (no override, fall through to global default).
+        """
+        if self.quantize in (None, "", "none"):
+            return None
+        return QUANT_ALIASES.get(self.quantize, self.quantize)
+
     # Preset configuration
     default_preset: str = ""  # Default preset to load (e.g., "cinematic")
 
@@ -441,12 +417,6 @@ class LTX2Config:
         if not self.model_path:
             raise ValueError("model_path is required")
         return os.path.join(self.model_path, self.transformer_file)
-
-    def get_total_steps(self) -> int:
-        """Get total inference steps based on distillation mode."""
-        if self.use_distilled:
-            return self.distilled_steps_stage1 + self.distilled_steps_stage2
-        return self.num_inference_steps
 
     def validate(self) -> None:
         """Validate configuration settings."""
@@ -478,15 +448,6 @@ class LTX2Config:
         if not 0.0 <= self.image_weight <= 1.0:
             raise ValueError(f"image_weight must be 0.0-1.0, got {self.image_weight}")
 
-        # Warn if num_inference_steps doesn't match distilled mode
-        expected_steps = self.distilled_steps_stage1 + self.distilled_steps_stage2
-        if self.use_distilled and self.num_inference_steps != expected_steps:
-            logger.warning(
-                f"use_distilled=True but num_inference_steps={self.num_inference_steps} "
-                f"doesn't match distilled steps ({expected_steps}). "
-                f"get_total_steps() will return {expected_steps} for distilled mode."
-            )
-
         # Warn about FP4 on RTX 4090
         if "fp4" in self.transformer_file.lower():
             logger.warning(
@@ -494,74 +455,12 @@ class LTX2Config:
                 "than native FP8. Consider using FP8 model for better performance on RTX 4090."
             )
 
-    # LTX-2 architecture constants for VRAM estimation (ClassVar to exclude from dataclass fields)
-    _LTX2_NUM_BLOCKS: ClassVar[int] = 48  # Total transformer blocks (14B video DiT)
-    _LTX2_VRAM_FP8_GB: ClassVar[float] = 19.0  # FP8 quantized transformer
-    _LTX2_VRAM_FP4_GB: ClassVar[float] = 14.0  # FP4 quantized transformer
-    _LTX2_VRAM_BF16_GB: ClassVar[float] = 38.0  # Full precision transformer
-    _GEMMA3_VRAM_Q4_GB: ClassVar[float] = 6.0  # Q4 quantized Gemma 3-12B
-    _GEMMA3_VRAM_FULL_GB: ClassVar[float] = 24.0  # Full precision Gemma 3-12B
-    _VAE_VRAM_GB: ClassVar[float] = 2.0  # Video VAE
-    _OVERHEAD_GB: ClassVar[float] = 2.0  # CUDA overhead, activations, etc.
-    _GROUP_OVERHEAD_GB: ClassVar[float] = 4.0  # Additional overhead for group offload
-
-    def estimate_vram_usage(self) -> dict[str, float]:
-        """Estimate VRAM usage for different components (in GB).
-
-        Returns:
-            Dictionary with estimated VRAM for each component and total peak.
-
-        Note:
-            These are rough estimates based on model architecture.
-            Actual usage depends on batch size, resolution, and runtime factors.
-        """
-        estimates = {}
-
-        # Transformer VRAM based on file type
-        if "fp8" in self.transformer_file.lower():
-            estimates["transformer"] = self._LTX2_VRAM_FP8_GB
-        elif "fp4" in self.transformer_file.lower():
-            estimates["transformer"] = self._LTX2_VRAM_FP4_GB
-        else:
-            estimates["transformer"] = self._LTX2_VRAM_BF16_GB
-
-        # Encoder (loaded temporarily, offloaded before transformer)
-        if "q4" in self.encoder_model_id.lower():
-            estimates["encoder"] = self._GEMMA3_VRAM_Q4_GB
-        else:
-            estimates["encoder"] = self._GEMMA3_VRAM_FULL_GB
-
-        # VAE
-        estimates["vae"] = self._VAE_VRAM_GB
-
-        # Peak depends on offload mode
-        if self.offload_mode == "none":
-            # All components loaded simultaneously
-            estimates["peak"] = estimates["transformer"] + estimates["vae"]
-        elif self.offload_mode in ("model", "sequential"):
-            # Sequential loading: max of any single component + overhead
-            estimates["peak"] = max(estimates.values()) + self._OVERHEAD_GB
-        else:  # group offload
-            # Reduced transformer based on blocks per group
-            # Clamp to valid range to avoid division errors
-            blocks = max(1, min(self.num_blocks_per_group, self._LTX2_NUM_BLOCKS))
-            block_fraction = blocks / self._LTX2_NUM_BLOCKS
-            estimates["peak"] = (
-                estimates["transformer"] * block_fraction
-                + estimates["vae"]
-                + self._GROUP_OVERHEAD_GB
-            )
-
-        return estimates
-
     def to_dict(self) -> dict:
         """Convert to dictionary."""
         return {
             "model_path": self.model_path,
             "transformer_file": self.transformer_file,
             "encoder_model_id": self.encoder_model_id,
-            "encoder_quantization": self.encoder_quantization,
-            "encoder_cpu_offload": self.encoder_cpu_offload,
             "lora_path": self.lora_path,
             "lora_scale": self.lora_scale,
             "offload_mode": self.offload_mode,
@@ -574,9 +473,6 @@ class LTX2Config:
             "guidance_scale": self.guidance_scale,
             "audio_enabled": self.audio_enabled,
             "audio_negative_prompt": self.audio_negative_prompt,
-            "use_distilled": self.use_distilled,
-            "distilled_steps_stage1": self.distilled_steps_stage1,
-            "distilled_steps_stage2": self.distilled_steps_stage2,
             "input_image": self.input_image,
             "image_weight": self.image_weight,
             "tiled_vae": self.tiled_vae,
@@ -614,9 +510,6 @@ class Flux2Config:
     compile_dynamic: bool = False  # dynamic shapes: avoid recompilation per resolution
     quantization: str = "none"  # none, fp8-dynamic, fp8-weight-only, int8, int4
 
-    # Alias map for shorthand quantization strings
-    _QUANT_ALIASES: ClassVar[dict[str, str]] = {"fp8": "fp8-dynamic"}
-
     @property
     def quant_transformer(self) -> str | None:
         """Bridge for get_pipeline_quant_config() resolution.
@@ -624,11 +517,11 @@ class Flux2Config:
         Maps [flux2].quantization -> quant_transformer so that
         getattr(self.flux2, 'quant_transformer') returns the value.
         Resolves aliases (e.g. 'fp8' -> 'fp8-dynamic') before returning.
-        Returns None when 'none' (no override, fall through to global default).
+        Returns None when 'none'/empty (no override, fall through to global default).
         """
-        if self.quantization == "none":
+        if self.quantization in (None, "", "none"):
             return None
-        return self._QUANT_ALIASES.get(self.quantization, self.quantization)
+        return QUANT_ALIASES.get(self.quantization, self.quantization)
 
 
 @dataclass
@@ -844,68 +737,9 @@ class QwenImageConfig:
         return config
 
 
-@dataclass
-class DyPEConfig:
-    """Configuration for DyPE (Dynamic Position Extrapolation).
-
-    DyPE is a training-free technique that enables high-resolution generation
-    (2K-4K+) by dynamically adjusting RoPE frequencies based on the diffusion
-    timestep. The core insight: early diffusion steps establish low-frequency
-    structure while late steps add high-frequency details.
-
-    Based on ComfyUI-DyPE implementation.
-
-    Attributes:
-        enabled: Whether DyPE is enabled (default: False)
-        method: RoPE extrapolation method (vision_yarn, yarn, ntk)
-        dype_scale: Magnitude of DyPE effect (lambda_s, default: 2.0)
-        dype_exponent: Decay speed of DyPE (lambda_t, default: 2.0 = quadratic)
-        dype_start_sigma: When to start DyPE decay (0-1, 1.0 = from start)
-        base_shift: Noise schedule shift at base resolution
-        max_shift: Noise schedule shift at max resolution
-        base_resolution: Training resolution (Z-Image: 1024, Qwen: 1328)
-        anisotropic: Use per-axis scaling for extreme aspect ratios
-        multipass: Generation mode (single, twopass, threepass)
-        pass2_strength: img2img strength for second pass (0.0-1.0)
-        pass3_strength: img2img strength for third pass (0.0-1.0)
-        frequency_modulation: Enable timestep-based RoPE frequency scaling
-    """
-
-    enabled: bool = False
-    method: Literal["vision_yarn", "yarn", "ntk"] = "vision_yarn"
-    dype_scale: float = 2.0
-    dype_exponent: float = 2.0
-    dype_start_sigma: float = 1.0
-    base_shift: float = 0.5
-    max_shift: float = 1.15
-    base_resolution: int = 1024
-    anisotropic: bool = False
-    multipass: Literal["single", "twopass", "threepass"] = "single"
-    pass2_strength: float = 0.5
-    pass3_strength: float = 0.4
-    frequency_modulation: bool = False
-
-    def __post_init__(self):
-        """Validate and clamp parameters."""
-        self.dype_start_sigma = max(0.001, min(1.0, self.dype_start_sigma))
-
-    def to_dict(self) -> dict:
-        """Convert to dictionary."""
-        return {
-            "enabled": self.enabled,
-            "method": self.method,
-            "dype_scale": self.dype_scale,
-            "dype_exponent": self.dype_exponent,
-            "dype_start_sigma": self.dype_start_sigma,
-            "base_shift": self.base_shift,
-            "max_shift": self.max_shift,
-            "base_resolution": self.base_resolution,
-            "anisotropic": self.anisotropic,
-            "multipass": self.multipass,
-            "pass2_strength": self.pass2_strength,
-            "pass3_strength": self.pass3_strength,
-            "frequency_modulation": self.frequency_modulation,
-        }
+# DyPEConfig canonical definition is in utils/dype.py. Re-exported here for
+# convenience since config.py is the standard import location for config types.
+from llm_dit.utils.dype import DyPEConfig  # noqa: E402, F811
 
 
 @dataclass
@@ -1127,35 +961,6 @@ class EnhancementConfig:
             "audio_norm_enabled": self.audio_norm_enabled,
             "audio_norm_factors": self.audio_norm_factors,
         }
-
-    @classmethod
-    def quality_preset(cls) -> "EnhancementConfig":
-        """Quality-focused preset: latent norm + FETA."""
-        return cls(
-            latent_norm_enabled=True,
-            feta_enabled=True,
-            feta_weight=4.0,
-        )
-
-    @classmethod
-    def speed_preset(cls) -> "EnhancementConfig":
-        """Speed-focused preset: TeaCache + FFN chunking."""
-        return cls(
-            tea_cache_enabled=True,
-            tea_cache_threshold=0.275,
-            ffn_chunking_enabled=True,
-        )
-
-    @classmethod
-    def all_preset(cls) -> "EnhancementConfig":
-        """All enhancements enabled."""
-        return cls(
-            latent_norm_enabled=True,
-            nag_enabled=True,
-            feta_enabled=True,
-            tea_cache_enabled=True,
-            ffn_chunking_enabled=True,
-        )
 
 
 @dataclass
@@ -1884,19 +1689,6 @@ class RuntimeConfig:
     def ltx2_output_path(self) -> str:
         return self.ltx2.output_path
 
-    # Additional FLUX.2 backward-compat
-    @property
-    def flux2_seed(self) -> int | None:
-        return getattr(self.flux2, "seed", None)
-
-    @property
-    def flux2_output_path(self) -> str:
-        return getattr(self.flux2, "output_path", "flux2_output.png")
-
-    @property
-    def flux2_input_images(self) -> list[str] | None:
-        return getattr(self.flux2, "input_images", None)
-
     # Additional Qwen-Image backward-compat
     @property
     def qwen_image_edit_only(self) -> bool:
@@ -2145,7 +1937,6 @@ class Config:
     presets_dir: str = "presets"  # Directory containing generation presets
 
     encoder: EncoderConfig = field(default_factory=EncoderConfig)
-    pipeline: PipelineConfig = field(default_factory=PipelineConfig)
     generation: GenerationConfig = field(default_factory=GenerationConfig)
     optimization: OptimizationConfig = field(default_factory=OptimizationConfig)
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
@@ -2169,7 +1960,7 @@ class Config:
     def from_dict(cls, data: dict[str, Any]) -> "Config":
         """Create config from dictionary."""
         encoder_data = data.pop("encoder", {})
-        pipeline_data = data.pop("pipeline", {})
+        data.pop("pipeline", {})  # Legacy, removed in v0.9.13
         generation_data = data.pop("generation", {})
         optimization_data = data.pop("optimization", {})
         scheduler_data = data.pop("scheduler", {})
@@ -2195,7 +1986,6 @@ class Config:
             templates_dir=data.get("templates_dir"),
             presets_dir=data.get("presets_dir", "presets"),
             encoder=EncoderConfig(**encoder_data),
-            pipeline=PipelineConfig(**pipeline_data),
             generation=GenerationConfig(**generation_data),
             optimization=OptimizationConfig(**optimization_data),
             scheduler=SchedulerConfig(**scheduler_data),
@@ -2290,12 +2080,6 @@ class Config:
                 "trust_remote_code": self.encoder.trust_remote_code,
                 "max_length": self.encoder.max_length,
                 "hidden_layer": self.encoder.hidden_layer,
-            },
-            "pipeline": {
-                "device": self.pipeline.device,
-                "dtype": self.pipeline.dtype,
-                "enable_model_cpu_offload": self.pipeline.enable_model_cpu_offload,
-                "enable_sequential_cpu_offload": self.pipeline.enable_sequential_cpu_offload,
             },
             "generation": {
                 "height": self.generation.height,
@@ -2393,7 +2177,6 @@ class Config:
 PRESETS = {
     "default": Config(
         encoder=EncoderConfig(device="auto", dtype="bfloat16"),
-        pipeline=PipelineConfig(device="auto", dtype="bfloat16"),
     ),
     "low_vram": Config(
         encoder=EncoderConfig(
@@ -2402,15 +2185,10 @@ PRESETS = {
             quantization="int8",
             cpu_offload=True,
         ),
-        pipeline=PipelineConfig(
-            device="cuda",
-            dtype="bfloat16",
-            enable_model_cpu_offload=True,
-        ),
+        optimization=OptimizationConfig(cpu_offload=True),
     ),
     "cpu_only": Config(
         encoder=EncoderConfig(device="cpu", dtype="float32"),
-        pipeline=PipelineConfig(device="cpu", dtype="float32"),
     ),
 }
 

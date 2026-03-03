@@ -1,55 +1,95 @@
 # entry points reference
 
-*last updated: 2026-02-14*
+*last updated: 2026-03-03*
 
-This document describes the two ways to invoke generation and how they relate to each other.
+This document describes the three ways to invoke generation and how they relate to each other.
 
 ## overview
 
-The platform has two entry points that both call the same underlying pipeline functions:
+| Entry Point | File | Use Case | Status |
+|-------------|------|----------|--------|
+| **CLI-over-API** | `scripts/gen.py` | Batch generation, scripting, automation | Active |
+| **Web API** | `web/server.py` | Interactive use, frontend, integrations | Active |
+| **Legacy CLI** | `scripts/generate.py` | CLI-only features (embedding precompute, encoder-only) | Deprecated (v0.9.17) |
 
-| Entry Point | File | Use Case |
-|-------------|------|----------|
-| **CLI** | `scripts/generate.py` | Batch generation, scripting, experiments |
-| **Web API** | `web/server.py` | Interactive use, frontend, integrations |
+> **`scripts/generate.py` is deprecated.** Use `scripts/gen.py` instead. The legacy script calls pipeline functions directly and has diverged from the API (~50-90% parity depending on pipeline). It will be removed in v1.0.
 
-> **Deprecation notice:** `scripts/generate.py` is planned for deprecation. The strategic direction is a CLI tool that calls the Web API, making the API the single source of truth for generation logic. See [feature_parity_matrix.md](feature_parity_matrix.md) for current gaps.
+## scripts/gen.py (CLI-over-API)
 
-## shared boundary
-
-Both entry points ultimately call the same pipeline functions:
-
-| Pipeline | Shared Function | File |
-|----------|----------------|------|
-| FLUX.2 Klein | `generate_image()`, `generate_image_with_progress()` | `src/llm_dit/pipelines/flux2_generate.py` |
-| LTX-2 | `generate_video_with_offloading()`, `generate_video_two_stage()` | `src/llm_dit/pipelines/generate.py` |
-| Z-Image | `ZImagePipeline.__call__()` | `src/llm_dit/pipelines/z_image.py` |
-| Qwen-Image Edit | `QwenImageDiffusersPipeline.edit_layer()`, `.edit_multi()` | `src/llm_dit/pipelines/qwen_image_diffusers.py` |
-| Qwen-Image T2I | `QwenImage2512Pipeline.generate()` | `src/llm_dit/pipelines/qwen_image_2512.py` |
-
-## CLI path
+Thin httpx client that talks to the running server. Uses the same API endpoints and request schemas that E2E tests validate.
 
 ```
-scripts/generate.py
+argparse subcommands
     |
     v
-cli.py: create_base_parser() -> parse args
+Request body builder (args -> dict, omit None for resolve_param precedence)
     |
     v
-cli.py: load_runtime_config(args) -> RuntimeConfig
+httpx POST to server endpoint
     |
     v
-Pipeline function called directly (fresh model load every time)
+Response handler (JSON, SSE, or raw PNG)
     |
     v
-Output saved to file
+Output writer (save file, print metadata)
 ```
 
-**Key characteristics:**
-- Models are loaded fresh for each invocation (no persistence between runs)
-- Config resolution: `config.toml` -> `RuntimeConfig` -> CLI flag overrides
-- Output: files written to disk
-- No model management layer -- loads and unloads within the script
+### subcommands
+
+| Subcommand | Endpoint | Response Format |
+|------------|----------|-----------------|
+| `status` | `GET /api/context` | JSON (server status) |
+| `flux2` | `POST /api/flux2/generate` | JSON (ImageGenerationResult) |
+| `flux2 --stream` | `POST /api/flux2/generate/stream` | SSE |
+| `zimage` | `POST /api/generate` | JSON (ImageGenerationResult) |
+| `zimage --stream` | `POST /api/generate/stream` | SSE |
+| `ltx2` | `POST /api/ltx2/generate/stream` | SSE (always streaming) |
+| `qwen` | `POST /api/qwen-image-2512/generate` | Raw PNG bytes |
+
+### usage
+
+```bash
+# Check server status
+uv run scripts/gen.py status
+
+# FLUX.2 image generation
+uv run scripts/gen.py flux2 --prompt "a cat sleeping in sunlight" --seed 42
+
+# FLUX.2 with streaming progress
+uv run scripts/gen.py flux2 --prompt "a cat" --stream
+
+# Z-Image generation
+uv run scripts/gen.py zimage --prompt "a mountain" --width 512 --height 512
+
+# LTX-2 video (always streaming)
+uv run scripts/gen.py ltx2 --prompt "ocean waves" --num-frames 33 --seed 42
+
+# Qwen-Image T2I
+uv run scripts/gen.py qwen --prompt "a bird" --seed 42
+
+# Custom server URL and output directory
+uv run scripts/gen.py --server http://localhost:9000 --output /tmp/gen/ flux2 --prompt "test"
+
+# JSON output instead of saving files
+uv run scripts/gen.py --json flux2 --prompt "test"
+```
+
+### global flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--server URL` | `http://127.0.0.1:7860` | Server base URL |
+| `--output PATH` | `outputs/gen/` | Output directory for saved files |
+| `--timeout SECONDS` | `300` | Request timeout |
+| `--no-save` | off | Print metadata only, don't save file |
+| `--json` | off | Output raw JSON response |
+
+### design
+
+- CLI arg names map directly to Pydantic schema field names (hyphens to underscores)
+- None-valued args are omitted from the request body to preserve `resolve_param()` precedence (client > config.toml > schema default)
+- Pre-flight health check before generation (warns if no pipeline loaded)
+- TTY-aware: progress bar in terminal, line-per-event when piped
 
 ## Web API path
 
@@ -78,19 +118,48 @@ HTTP response (JSON with base64 image or SSE stream)
 - Output: HTTP response (base64-encoded image, SSE stream for progress)
 - Full model lifecycle management (hot-reload, LoRA fusion tracking, VRAM monitoring)
 
+## legacy CLI path (deprecated)
+
+```
+scripts/generate.py
+    |
+    v
+cli.py: create_base_parser() -> parse args
+    |
+    v
+cli.py: load_runtime_config(args) -> RuntimeConfig
+    |
+    v
+Pipeline function called directly (fresh model load every time)
+    |
+    v
+Output saved to file
+```
+
+**Key characteristics:**
+- Models are loaded fresh for each invocation (no persistence between runs)
+- Config resolution: `config.toml` -> `RuntimeConfig` -> CLI flag overrides
+- Output: files written to disk
+- No model management layer -- loads and unloads within the script
+
+**Still needed for:**
+- Embedding precompute
+- Encoder-only mode
+- Distributed encoding
+
+These features will be migrated to the API in a future version.
+
 ## key differences
 
-| Aspect | CLI | Web API |
-|--------|-----|---------|
-| Model loading | Fresh each run | Persistent (ModelManager cache) |
-| Config source | config.toml + CLI flags | RuntimeConfig + request JSON |
-| Output format | File on disk | HTTP response (JSON/SSE) |
-| LoRA support | Limited | Full (fusion tracking, hot-swap) |
-| Prompt upsampling | No | Yes (FLUX.2 via heylookitsanllm) |
-| Streaming progress | No | Yes (SSE) |
-| Model switching | Restart required | Hot-swap via API |
-| VRAM management | Manual | Automatic (load/unload endpoints) |
-| Two-stage generation | No (LTX-2) | Yes (LTX-2) |
+| Aspect | gen.py (CLI-over-API) | Web API | generate.py (Legacy) |
+|--------|----------------------|---------|---------------------|
+| Model loading | Server-managed | Server-managed | Fresh each run |
+| Feature parity | 100% (same API) | 100% | 50-90% |
+| LoRA support | Full | Full | Limited |
+| Prompt upsampling | Yes | Yes | No |
+| Streaming progress | Yes (SSE) | Yes (SSE) | No |
+| Model switching | Via API | Hot-swap | Restart required |
+| Two-stage (LTX-2) | Yes | Yes | No |
 
 ## FLUX.2 request lifecycle (Web API)
 

@@ -1,14 +1,21 @@
 # configuration reference
 
-*last updated: 2026-02-14*
+*last updated: 2026-03-03*
 
 ## config format
 
-Uses `--profile` to select a config section from `config.toml`.
+Uses `--profile` to select a config section from `config.toml`. The config and profile are server-side flags passed when starting the server:
 
 ```bash
-uv run scripts/generate.py --config config.toml --profile rtx4090 "A cat"
+# Start the server with a config profile
+uv run web/server.py --config config.toml --profile rtx4090
+
+# Then use gen.py to generate (talks to the running server)
+uv run scripts/gen.py zimage --prompt "A cat"
+uv run scripts/gen.py flux2 --prompt "A cat" --seed 42
 ```
+
+> **Note:** The deprecated `scripts/generate.py` also accepted `--config` and `--profile` directly.
 
 ## dry configuration principles
 

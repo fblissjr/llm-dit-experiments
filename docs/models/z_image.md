@@ -1,4 +1,4 @@
-last updated: 2025-12-23
+last updated: 2026-03-03
 
 # z-image
 
@@ -113,46 +113,39 @@ long_prompt_mode = "interpolate"  # truncate, interpolate, pool, attention_pool
 
 ### cli overrides
 
-CLI flags override config file values:
+Generation parameters can be overridden per-request via `gen.py` flags. Server-side settings (model paths, devices, hidden layer) are set in `config.toml`.
 
 ```bash
-uv run scripts/generate.py \
-  --config config.toml \
-  --hidden-layer -3 \
+# gen.py overrides (requires server running)
+uv run scripts/gen.py zimage \
+  --prompt "Your prompt" \
   --steps 9 \
-  --width 1024 --height 1024 \
-  "Your prompt"
+  --width 1024 --height 1024
+
+# hidden-layer is available in gen.py
+uv run scripts/gen.py zimage --prompt "Your prompt" --hidden-layer -3
 ```
 
 ## usage
 
 ### cli
 
+`gen.py` requires the server to be running (`uv run web/server.py --config config.toml`).
+
 ```bash
 # Basic generation
-uv run scripts/generate.py \
-  --model-path /path/to/z-image \
-  "A cat sleeping in sunlight"
+uv run scripts/gen.py zimage --prompt "A cat sleeping in sunlight"
 
 # With seed for reproducibility
-uv run scripts/generate.py \
-  --model-path /path/to/z-image \
-  --seed 42 \
-  "A sunset over mountains"
+uv run scripts/gen.py zimage --prompt "A sunset over mountains" --seed 42
 
 # Custom resolution
-uv run scripts/generate.py \
-  --model-path /path/to/z-image \
-  --width 1536 --height 1024 \
-  "A panoramic landscape"
-
-# Image-to-image
-uv run scripts/generate.py \
-  --model-path /path/to/z-image \
-  --img2img input.jpg \
-  --strength 0.6 \
-  "A watercolor painting"
+uv run scripts/gen.py zimage \
+  --prompt "A panoramic landscape" \
+  --width 1536 --height 1024
 ```
+
+> **Note:** Image-to-image is available via the Web API (`POST /api/generate` with `input_image` field) or the Web UI. `gen.py zimage` currently supports text-to-image generation.
 
 ### web api
 
@@ -222,25 +215,18 @@ image = pipe.img2img(
 
 ### dype (dynamic position extrapolation)
 
-Enable high-resolution generation (2K-4K) by dynamically scaling RoPE position encodings:
+Enable high-resolution generation (2K-4K) by dynamically scaling RoPE position encodings. DyPE is configured server-side in `config.toml`:
 
 ```bash
-# 2K generation
-uv run scripts/generate.py \
-  --model-path /path/to/z-image \
-  --dype \
-  --dype-scale 2.0 \
-  --width 2048 --height 2048 \
-  "A detailed landscape"
+# Generate at 2K after enabling DyPE in config
+uv run scripts/gen.py zimage \
+  --prompt "A detailed landscape" \
+  --width 2048 --height 2048
 
-# 4K generation with tiled VAE
-uv run scripts/generate.py \
-  --model-path /path/to/z-image \
-  --dype \
-  --dype-scale 4.0 \
-  --tiled-vae \
-  --width 4096 --height 4096 \
-  "An ultra-detailed cityscape"
+# Generate at 4K (ensure tiled_vae is also enabled in config)
+uv run scripts/gen.py zimage \
+  --prompt "An ultra-detailed cityscape" \
+  --width 4096 --height 4096
 ```
 
 Config:
@@ -256,18 +242,7 @@ See [dype.md](../reference/dype.md) for detailed documentation.
 
 ### skip layer guidance (slg)
 
-Improve anatomy and structure coherence by skipping layers during part of the denoising process:
-
-```bash
-uv run scripts/generate.py \
-  --model-path /path/to/z-image \
-  --slg \
-  --slg-scale 2.5 \
-  --slg-layers 7,8,9,10,11,12 \
-  --slg-start 0.05 \
-  --slg-stop 0.5 \
-  "A portrait of a person"
-```
+Improve anatomy and structure coherence by skipping layers during part of the denoising process. SLG is configured server-side in `config.toml`:
 
 Config:
 ```toml
@@ -289,18 +264,12 @@ stop = 0.5                      # stop at 50% of steps
 Load and fuse LoRA weights into the transformer:
 
 ```bash
-# Single LoRA
-uv run scripts/generate.py \
-  --model-path /path/to/z-image \
-  --lora style.safetensors:0.8 \
-  "A prompt"
+# Single LoRA via gen.py
+uv run scripts/gen.py zimage --prompt "A prompt" --loras style.safetensors:0.8
 
 # Multiple LoRAs
-uv run scripts/generate.py \
-  --model-path /path/to/z-image \
-  --lora style.safetensors:0.5 \
-  --lora detail.safetensors:0.3 \
-  "A prompt"
+uv run scripts/gen.py zimage --prompt "A prompt" \
+  --loras style.safetensors:0.5 detail.safetensors:0.3
 ```
 
 Config:
@@ -318,12 +287,14 @@ See [lora.md](../guides/lora.md) for more details.
 
 Prompts exceeding 1504 tokens are automatically compressed:
 
-| Mode | Flag | Description |
-|------|------|-------------|
-| truncate | `--long-prompt-mode truncate` | Cut off at 1504 tokens |
-| interpolate | `--long-prompt-mode interpolate` | Linear resampling (default) |
-| pool | `--long-prompt-mode pool` | Adaptive average pooling |
-| attention_pool | `--long-prompt-mode attention_pool` | Cosine similarity weighting |
+| Mode | Config Value | Description |
+|------|-------------|-------------|
+| truncate | `"truncate"` | Cut off at 1504 tokens |
+| interpolate | `"interpolate"` | Linear resampling (default) |
+| pool | `"pool"` | Adaptive average pooling |
+| attention_pool | `"attention_pool"` | Cosine similarity weighting |
+
+Set in `config.toml` under `[default.pytorch].long_prompt_mode`.
 
 See [long_prompts.md](../reference/long_prompts.md) for details.
 
@@ -345,16 +316,21 @@ image = pipe.generate_multipass(
 
 ### tiled vae decoding
 
-Decode large images in tiles to save VRAM:
+Decode large images in tiles to save VRAM. Configure in `config.toml`:
+
+```toml
+[default.pytorch]
+tiled_vae = true
+tile_size = 512
+tile_overlap = 64
+```
+
+Then generate at high resolution:
 
 ```bash
-uv run scripts/generate.py \
-  --model-path /path/to/z-image \
-  --tiled-vae \
-  --tile-size 512 \
-  --tile-overlap 64 \
-  --width 2048 --height 2048 \
-  "A large image"
+uv run scripts/gen.py zimage \
+  --prompt "A large image" \
+  --width 2048 --height 2048
 ```
 
 ### distributed inference

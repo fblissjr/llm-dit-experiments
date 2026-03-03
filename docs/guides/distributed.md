@@ -83,18 +83,15 @@ uv run web/server.py \
 
 Access the web UI at `http://<cuda-server-ip>:7860`.
 
-#### Option B: CLI
+#### Option B: CLI (gen.py)
+
+With the server running (Option A), use `gen.py` to generate from the command line:
 
 ```bash
-uv run scripts/generate.py \
-  --api-url http://<mac-ip>:8080 \
-  --api-model Qwen3-4B-mlx \
-  --model-path /path/to/z-image-turbo \
-  --dit-device cuda \
-  --vae-device cuda \
-  --output image.png \
-  "A sunset over mountains"
+uv run scripts/gen.py zimage --prompt "A sunset over mountains" --seed 42
 ```
+
+> **Note:** Distributed settings (API URL, model paths, device placement) are all server-side config -- set in `config.toml` or as server CLI flags. `gen.py` is a thin HTTP client that talks to the running server.
 
 #### Option C: Config File
 
@@ -123,9 +120,11 @@ steps = 9
 Then run:
 
 ```bash
+# Start the server
 uv run web/server.py --config config.toml
-# or
-uv run scripts/generate.py --config config.toml "A landscape"
+
+# Generate via CLI (requires server running)
+uv run scripts/gen.py zimage --prompt "A landscape" --seed 42
 ```
 
 ## Optimal heylookitsanllm Settings
@@ -222,7 +221,7 @@ top_p = 0.95
 max_tokens = 512
 ```
 
-Or via CLI:
+Or via server CLI flags:
 
 ```bash
 uv run web/server.py \
@@ -231,6 +230,12 @@ uv run web/server.py \
   --model-path /path/to/z-image-turbo \
   --rewriter-use-api \
   --dit-device cuda
+```
+
+Then generate via gen.py as usual (prompt rewriting happens server-side):
+
+```bash
+uv run scripts/gen.py zimage --prompt "A landscape"
 ```
 
 ### How It Works

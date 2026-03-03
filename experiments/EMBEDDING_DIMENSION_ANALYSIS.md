@@ -1,6 +1,6 @@
 # Qwen3-Embedding-4B Dimension Analysis Summary
 
-Last updated: 2025-12-14
+Last updated: 2026-03-03
 
 ## Executive Summary
 
@@ -156,11 +156,11 @@ class EmbeddingExtractor:
 
 ### Step 2: Add CLI Flag
 ```bash
-uv run scripts/generate.py \
-    --use-embedding-encoder \
-    --fix-embedding-dimensions \
-    "A cat sleeping"
+# Requires server running with embedding encoder configured
+uv run scripts/gen.py zimage --prompt "A cat sleeping" --seed 42
 ```
+> **Note:** `generate.py` is deprecated. `gen.py` is a thin client that talks to the running server.
+> Embedding dimension fixing would be configured server-side in config.toml.
 
 ### Step 3: Add Config Option
 ```toml

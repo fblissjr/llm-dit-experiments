@@ -1,8 +1,10 @@
 # dype (dynamic position extrapolation)
 
-*last updated: 2026-01-06*
+*last updated: 2026-03-03*
 
 DyPE enables generation at resolutions beyond the model's training resolution (1024x1024) by dynamically scaling the RoPE position encodings. Essential for high-resolution generation (2K, 4K) without retraining.
+
+> **CLI note:** DyPE parameters are server-side configuration. Set them in `config.toml` under `[default.dype]` (or your profile section). They are not available as `scripts/gen.py` flags. The deprecated `scripts/generate.py` accepted `--dype*` flags directly.
 
 ## current status
 
@@ -15,7 +17,7 @@ DyPE now supports two high-resolution generation approaches:
 - Two-pass: 512px first pass, then img2img upscale to target
 - Three-pass: 256px -> 512px -> target
 
-Frequency modulation is available as an experimental option via `--dype-frequency-modulation`.
+Frequency modulation is available as an experimental option via `frequency_modulation = true` in `config.toml`.
 
 ## why dype is needed
 
@@ -48,38 +50,43 @@ alpha = 1.0
 beta = 32.0
 ```
 
-**Via CLI:**
+**Via gen.py** (with DyPE configured in config.toml above):
 ```bash
-uv run scripts/generate.py \
-  --dype \
-  --dype-method vision_yarn \
-  --dype-scale 2.0 \
-  --width 2048 --height 2048 \
-  "Your prompt"
+uv run scripts/gen.py zimage --prompt "Your prompt" --width 2048 --height 2048
 ```
 
 ## usage examples
 
 **2K Generation (2048x2048):**
+
+```toml
+# config.toml
+[default.dype]
+enabled = true
+method = "vision_yarn"
+scale = 2.0
+```
+
 ```bash
-uv run scripts/generate.py \
-  --model-path /path/to/z-image \
-  --dype \
-  --dype-scale 2.0 \
-  --width 2048 --height 2048 \
-  "A detailed mountain landscape"
+uv run scripts/gen.py zimage --prompt "A detailed mountain landscape" --width 2048 --height 2048
 ```
 
 **4K Generation (4096x4096):**
+
+```toml
+# config.toml
+[default.dype]
+enabled = true
+method = "vision_yarn"
+scale = 4.0
+
+[default.pytorch]
+tiled_vae = true
+tile_size = 512
+```
+
 ```bash
-uv run scripts/generate.py \
-  --model-path /path/to/z-image \
-  --dype \
-  --dype-scale 4.0 \
-  --width 4096 --height 4096 \
-  --tiled-vae \
-  --tile-size 512 \
-  "An ultra-detailed cityscape"
+uv run scripts/gen.py zimage --prompt "An ultra-detailed cityscape" --width 4096 --height 4096
 ```
 
 ## implementation
@@ -161,59 +168,77 @@ Enable `anisotropic = true` for extreme aspect ratios (wider than 2:1 or taller 
 
 ### quick reference cli
 
-```bash
-# 2K generation (recommended)
-uv run scripts/generate.py --config config.toml --profile rtx4090 \
-  --width 2048 --height 2048 "prompt"
+All DyPE parameters are set in `config.toml`. gen.py passes only generation params (prompt, dimensions, seed, etc.).
 
-# 2K with custom pass strength
-uv run scripts/generate.py --dype --dype-multipass twopass \
-  --dype-pass2-strength 0.4 --width 2048 --height 2048 "prompt"
+```bash
+# 2K generation (DyPE configured in config.toml, server started with --profile rtx4090)
+uv run scripts/gen.py zimage --prompt "prompt" --width 2048 --height 2048
 
 # 4K generation
-uv run scripts/generate.py --dype --dype-multipass threepass \
-  --dype-pass2-strength 0.5 --dype-pass3-strength 0.4 \
-  --tiled-vae --width 4096 --height 4096 "prompt"
+uv run scripts/gen.py zimage --prompt "prompt" --width 4096 --height 4096
 
 # Ultrawide panorama
-uv run scripts/generate.py --dype --dype-multipass twopass \
-  --width 3840 --height 1088 "prompt"
+uv run scripts/gen.py zimage --prompt "prompt" --width 3840 --height 1088
+```
+
+To change multipass mode or pass strengths, update `config.toml`:
+
+```toml
+# 2K with custom pass strength
+[default.dype]
+enabled = true
+multipass = "twopass"
+pass2_strength = 0.4
+
+# 4K generation
+[default.dype]
+enabled = true
+multipass = "threepass"
+pass2_strength = 0.5
+pass3_strength = 0.4
+
+[default.pytorch]
+tiled_vae = true
 ```
 
 ## complementary techniques
 
 DyPE works well with:
-- **Tiled VAE** (`--tiled-vae`): Decode large latents in tiles to save VRAM
+- **Tiled VAE** (`tiled_vae = true` in config.toml): Decode large latents in tiles to save VRAM
 - **Multi-pass rendering**: Generate ultra-high-res in overlapping passes
-- **CPU offload** (`--cpu-offload`): Save VRAM for large DiT models
+- **CPU offload** (`cpu_offload = true` in config.toml): Save VRAM for large DiT models
 
 ## multipass generation (recommended)
 
-For high-resolution generation, use multipass mode instead of single-pass DyPE:
+For high-resolution generation, use multipass mode instead of single-pass DyPE. Configure in `config.toml`:
+
+```toml
+# Two-pass 1080p
+[default.dype]
+enabled = true
+multipass = "twopass"
+pass2_strength = 0.5
+
+# Three-pass 4K
+[default.dype]
+enabled = true
+multipass = "threepass"
+pass2_strength = 0.5
+
+[default.pytorch]
+tiled_vae = true
+```
 
 ```bash
 # Two-pass 1080p generation
-uv run scripts/generate.py \
-  --model-path /path/to/z-image \
-  --dype \
-  --dype-multipass twopass \
-  --dype-pass2-strength 0.5 \
-  --width 1920 --height 1088 \
-  "A detailed landscape"
+uv run scripts/gen.py zimage --prompt "A detailed landscape" --width 1920 --height 1088
 
 # Three-pass 4K generation
-uv run scripts/generate.py \
-  --model-path /path/to/z-image \
-  --dype \
-  --dype-multipass threepass \
-  --dype-pass2-strength 0.5 \
-  --width 4096 --height 4096 \
-  --tiled-vae \
-  "An ultra-detailed cityscape"
+uv run scripts/gen.py zimage --prompt "An ultra-detailed cityscape" --width 4096 --height 4096
 ```
 
 **Multipass modes:**
-- `single`: Direct generation at target resolution (use with `--dype-frequency-modulation` for best results)
+- `single`: Direct generation at target resolution (use with `frequency_modulation = true` in config.toml for best results)
 - `twopass`: Half-res first pass, then img2img refinement (recommended)
 - `threepass`: Quarter-res -> half-res -> full-res (for 4K+)
 
@@ -227,14 +252,15 @@ Frequency modulation dynamically scales RoPE frequencies based on the diffusion 
 - Early steps (high sigma): Lower frequencies capture global structure
 - Late steps (low sigma): Higher frequencies capture fine details
 
+```toml
+# config.toml -- single-pass with frequency modulation
+[default.dype]
+enabled = true
+frequency_modulation = true
+```
+
 ```bash
-# Single-pass with frequency modulation
-uv run scripts/generate.py \
-  --model-path /path/to/z-image \
-  --dype \
-  --dype-frequency-modulation \
-  --width 2048 --height 2048 \
-  "A detailed landscape"
+uv run scripts/gen.py zimage --prompt "A detailed landscape" --width 2048 --height 2048
 ```
 
 **Note:** Frequency modulation is experimental. If results are unsatisfactory, use multipass mode instead.
@@ -265,22 +291,22 @@ uv run scripts/generate.py \
 
 You can combine DyPE with scheduler dynamic shift for optimal high-resolution generation:
 
-```bash
-# DyPE multipass with dynamic shift
-uv run scripts/generate.py --config config.toml --profile rtx4090 \
-  --dype --dype-multipass twopass \
-  --dynamic-shift \
-  --width 2048 --height 2048 "prompt"
-```
-
 ```toml
+# config.toml
 [rtx4090.scheduler]
 dynamic_shift = true   # Let scheduler calculate shift based on resolution
 
 [rtx4090.dype]
 enabled = true
+multipass = "twopass"
 base_shift = 0.5       # DyPE internal shift at base res
 max_shift = 1.15       # DyPE internal shift at max res
+```
+
+```bash
+# Start server with rtx4090 profile, then generate
+# uv run web/server.py --config config.toml --profile rtx4090
+uv run scripts/gen.py zimage --prompt "prompt" --width 2048 --height 2048
 ```
 
 ### when to use dynamic shift

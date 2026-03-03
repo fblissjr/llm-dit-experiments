@@ -14,7 +14,6 @@ from llm_dit.config import (
     GenerationConfig,
     LoRAConfig,
     OptimizationConfig,
-    PipelineConfig,
     SchedulerConfig,
     get_preset,
     load_config,
@@ -64,21 +63,6 @@ class TestEncoderConfig:
         assert config.get_device() == "cpu"
 
 
-class TestPipelineConfig:
-    """Test PipelineConfig dataclass."""
-
-    def test_default_values(self):
-        config = PipelineConfig()
-        assert config.device == "auto"
-        assert config.dtype == "bfloat16"
-        assert config.enable_model_cpu_offload is False
-        assert config.enable_sequential_cpu_offload is False
-
-    def test_get_dtype(self):
-        config = PipelineConfig(dtype="float16")
-        assert config.get_dtype() == torch.float16
-
-
 class TestGenerationConfig:
     """Test GenerationConfig dataclass."""
 
@@ -126,7 +110,6 @@ class TestConfig:
         assert config.model_path == ""
         assert config.templates_dir is None
         assert isinstance(config.encoder, EncoderConfig)
-        assert isinstance(config.pipeline, PipelineConfig)
         assert isinstance(config.generation, GenerationConfig)
 
     def test_from_dict(self):
@@ -201,7 +184,7 @@ class TestPresets:
         config = get_preset("low_vram")
         assert config.encoder.quantization == "int8"
         assert config.encoder.cpu_offload is True
-        assert config.pipeline.enable_model_cpu_offload is True
+        assert config.optimization.cpu_offload is True
 
     def test_cpu_only_preset(self):
         config = get_preset("cpu_only")

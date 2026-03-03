@@ -25,6 +25,48 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _resolve_flux2_params(
+    request: Flux2GenerateRequest,
+    config,
+) -> tuple[int, float, list[str]]:
+    """Resolve num_steps and guidance from request/config/model defaults.
+
+    Returns (num_steps, guidance, warnings).
+    """
+    from llm_dit.models.flux2.constants import FLUX2_MODEL_INFO, get_fixed_params
+
+    model_info = FLUX2_MODEL_INFO.get(request.model_name.lower(), {})
+    model_defaults = model_info.get("defaults", {"guidance": 1.0, "num_steps": 4})
+    fixed = get_fixed_params(request.model_name)
+
+    flux2_cfg = config.flux2 if hasattr(config, "flux2") and config.flux2 else None
+    num_steps = resolve_param(request, "num_steps", flux2_cfg.default_steps if flux2_cfg else None, skip_none=True)
+    if num_steps is None:
+        num_steps = model_defaults["num_steps"]
+    guidance = resolve_param(request, "guidance", flux2_cfg.default_guidance if flux2_cfg else None, skip_none=True)
+    if guidance is None:
+        guidance = model_defaults["guidance"]
+
+    warnings: list[str] = []
+    if "num_steps" in fixed and "num_steps" in request.model_fields_set and request.num_steps != model_defaults["num_steps"]:
+        warnings.append(
+            f"Distilled model '{request.model_name}' requires num_steps={model_defaults['num_steps']}. "
+            f"Overriding requested num_steps={request.num_steps}."
+        )
+        num_steps = model_defaults["num_steps"]
+        logger.warning(f"[FLUX.2] {warnings[-1]}")
+
+    if "guidance" in fixed and "guidance" in request.model_fields_set and request.guidance != model_defaults["guidance"]:
+        warnings.append(
+            f"Distilled model '{request.model_name}' requires guidance={model_defaults['guidance']}. "
+            f"Overriding requested guidance={request.guidance}."
+        )
+        guidance = model_defaults["guidance"]
+        logger.warning(f"[FLUX.2] {warnings[-1]}")
+
+    return num_steps, guidance, warnings
+
+
 def _upsample_prompt(
     config,
     prompt: str,
@@ -193,39 +235,7 @@ async def flux2_generate(request: Flux2GenerateRequest, config: ConfigDep, manag
             Flux2GenerationConfig,
             generate_image,
         )
-        from llm_dit.models.flux2.constants import FLUX2_MODEL_INFO, get_fixed_params
-
-        # Get model defaults and fixed params
-        model_info = FLUX2_MODEL_INFO.get(request.model_name.lower(), {})
-        model_defaults = model_info.get("defaults", {"guidance": 1.0, "num_steps": 4})
-        fixed = get_fixed_params(request.model_name)
-
-        # Resolve: client > config.toml > model-specific default
-        flux2_cfg = config.flux2 if hasattr(config, "flux2") and config.flux2 else None
-        num_steps = resolve_param(request, "num_steps", flux2_cfg.default_steps if flux2_cfg else None, skip_none=True)
-        if num_steps is None:
-            num_steps = model_defaults["num_steps"]
-        guidance = resolve_param(request, "guidance", flux2_cfg.default_guidance if flux2_cfg else None, skip_none=True)
-        if guidance is None:
-            guidance = model_defaults["guidance"]
-
-        # Validate fixed params -- override to model defaults and warn
-        warnings: list[str] = []
-        if "num_steps" in fixed and "num_steps" in request.model_fields_set and request.num_steps != model_defaults["num_steps"]:
-            warnings.append(
-                f"Distilled model '{request.model_name}' requires num_steps={model_defaults['num_steps']}. "
-                f"Overriding requested num_steps={request.num_steps}."
-            )
-            num_steps = model_defaults["num_steps"]
-            logger.warning(f"[FLUX.2] {warnings[-1]}")
-
-        if "guidance" in fixed and "guidance" in request.model_fields_set and request.guidance != model_defaults["guidance"]:
-            warnings.append(
-                f"Distilled model '{request.model_name}' requires guidance={model_defaults['guidance']}. "
-                f"Overriding requested guidance={request.guidance}."
-            )
-            guidance = model_defaults["guidance"]
-            logger.warning(f"[FLUX.2] {warnings[-1]}")
+        num_steps, guidance, warnings = _resolve_flux2_params(request, config)
 
         # Prompt upsampling (optional, requires heylookitsanllm API)
         prompt = request.prompt
@@ -432,39 +442,7 @@ async def flux2_generate_stream(request: Flux2GenerateRequest, config: ConfigDep
                 Flux2GenerationConfig,
                 generate_image_with_progress,
             )
-            from llm_dit.models.flux2.constants import FLUX2_MODEL_INFO, get_fixed_params
-
-            # Get model defaults and fixed params
-            model_info = FLUX2_MODEL_INFO.get(request.model_name.lower(), {})
-            model_defaults = model_info.get("defaults", {"guidance": 1.0, "num_steps": 4})
-            fixed = get_fixed_params(request.model_name)
-
-            # Resolve: client > config.toml > model-specific default
-            flux2_cfg = config.flux2 if hasattr(config, "flux2") and config.flux2 else None
-            num_steps = resolve_param(request, "num_steps", flux2_cfg.default_steps if flux2_cfg else None, skip_none=True)
-            if num_steps is None:
-                num_steps = model_defaults["num_steps"]
-            guidance = resolve_param(request, "guidance", flux2_cfg.default_guidance if flux2_cfg else None, skip_none=True)
-            if guidance is None:
-                guidance = model_defaults["guidance"]
-
-            # Validate fixed params -- override to model defaults and warn
-            stream_warnings: list[str] = []
-            if "num_steps" in fixed and "num_steps" in request.model_fields_set and request.num_steps != model_defaults["num_steps"]:
-                stream_warnings.append(
-                    f"Distilled model '{request.model_name}' requires num_steps={model_defaults['num_steps']}. "
-                    f"Overriding requested num_steps={request.num_steps}."
-                )
-                num_steps = model_defaults["num_steps"]
-                logger.warning(f"[FLUX.2] {stream_warnings[-1]}")
-
-            if "guidance" in fixed and "guidance" in request.model_fields_set and request.guidance != model_defaults["guidance"]:
-                stream_warnings.append(
-                    f"Distilled model '{request.model_name}' requires guidance={model_defaults['guidance']}. "
-                    f"Overriding requested guidance={request.guidance}."
-                )
-                guidance = model_defaults["guidance"]
-                logger.warning(f"[FLUX.2] {stream_warnings[-1]}")
+            num_steps, guidance, stream_warnings = _resolve_flux2_params(request, config)
 
             # Prompt upsampling (optional, requires heylookitsanllm API)
             prompt = request.prompt

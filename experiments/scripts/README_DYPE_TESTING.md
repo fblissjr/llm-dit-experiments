@@ -1,6 +1,6 @@
 # DyPE Testing Guide
 
-last updated: 2025-12-21
+last updated: 2026-03-03
 
 ## Overview
 
@@ -194,18 +194,29 @@ base_resolution = 1024     # Training resolution
 anisotropic = false        # Use per-axis scaling for extreme aspect ratios
 ```
 
-### CLI Arguments
+### CLI (gen.py + config.toml)
 
-```bash
-uv run scripts/generate.py \
-    --model-path /path/to/z-image \
-    --width 2048 --height 2048 \
-    --dype \
-    --dype-method vision_yarn \
-    --dype-scale 2.0 \
-    --dype-exponent 2.0 \
-    "Homer Simpson eating a donut"
+DyPE parameters are configured server-side in config.toml, not as gen.py flags.
+
+**1. Enable DyPE in config.toml:**
+```toml
+[default.dype]
+enabled = true
+method = "vision_yarn"
+dype_scale = 2.0
+dype_exponent = 2.0
 ```
+
+**2. Generate at target resolution** (requires server running):
+```bash
+uv run scripts/gen.py zimage \
+    --prompt "Homer Simpson eating a donut" \
+    --width 2048 --height 2048 \
+    --seed 42
+```
+
+> **Note:** `generate.py` is deprecated. `gen.py` is a thin client that talks to the running server.
+> DyPE, device placement, and quantization are all server-side config -- not gen.py flags.
 
 ### Python API
 
@@ -278,49 +289,50 @@ Based on ComfyUI-DyPE implementation and early testing:
 
 If you run out of VRAM at high resolutions:
 
-1. Use CPU offload:
+1. Configure CPU offload in config.toml:
+   ```toml
+   [default.encoder]
+   device = "cpu"
+
+   [default.pipeline]
+   device = "cuda"
+   ```
+   Then generate:
    ```bash
-   uv run scripts/generate.py \
-       --model-path /path/to/z-image \
-       --text-encoder-device cpu \
-       --dit-device cuda \
-       --vae-device cuda \
-       --dype \
-       --width 2048 --height 2048 \
-       "Prompt here"
+   uv run scripts/gen.py zimage \
+       --prompt "Prompt here" \
+       --width 2048 --height 2048
    ```
 
-2. Use tiled VAE for very large images:
+2. Enable tiled VAE in config.toml for very large images:
+   ```toml
+   [default.dype]
+   enabled = true
+
+   [default.vae]
+   tiled = true
+   tile_size = 512
+   ```
+   Then generate:
    ```bash
-   uv run scripts/generate.py \
-       --model-path /path/to/z-image \
-       --dype \
-       --tiled-vae \
-       --tile-size 512 \
-       --width 4096 --height 4096 \
-       "Prompt here"
+   uv run scripts/gen.py zimage \
+       --prompt "Prompt here" \
+       --width 4096 --height 4096
    ```
 
-3. Use multipass mode:
+3. Use multipass mode (two-pass at increasing resolution):
    ```bash
    # First pass at 2K
-   uv run scripts/generate.py \
-       --model-path /path/to/z-image \
-       --dype \
+   uv run scripts/gen.py zimage \
+       --prompt "Prompt here" \
        --width 2048 --height 2048 \
-       --output pass1.png \
-       "Prompt here"
+       --seed 42
 
-   # Second pass at 4K using img2img
-   uv run scripts/generate.py \
-       --model-path /path/to/z-image \
-       --dype \
-       --img2img pass1.png \
-       --width 4096 --height 4096 \
-       --strength 0.5 \
-       --output pass2.png \
-       "Prompt here"
+   # Second pass at 4K would use img2img via the web UI or API directly
    ```
+
+> **Note:** Device placement, tiled VAE, and DyPE are all server-side config.
+> Multipass img2img is available through the web UI or direct API calls.
 
 ### Quality Issues
 

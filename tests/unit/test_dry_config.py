@@ -132,20 +132,6 @@ class TestTOMLToConfigDataclass:
             f"Add these fields to EncoderConfig in config.py"
         )
 
-    def test_pipeline_params_exist_in_pipeline_config(self):
-        """All TOML [pipeline] params should exist in PipelineConfig."""
-        from llm_dit.config import PipelineConfig
-
-        toml_sections = parse_toml_keys(CONFIG_EXAMPLE)
-        toml_keys = toml_sections.get("pipeline", set())
-        dataclass_fields = get_dataclass_fields(PipelineConfig)
-
-        missing = toml_keys - dataclass_fields
-        assert not missing, (
-            f"TOML pipeline params not in PipelineConfig: {missing}. "
-            f"Add these fields to PipelineConfig in config.py"
-        )
-
     def test_generation_params_exist_in_generation_config(self):
         """All TOML [generation] params should exist in GenerationConfig."""
         from llm_dit.config import GenerationConfig

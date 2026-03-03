@@ -32,6 +32,10 @@ from .vae_utils import (
     estimate_vae_vram,
     get_vae_quant_info,
 )
+# Canonical alias map: shorthand -> full torchao method name.
+# Imported by config.py and pipelines/generate.py. Single source of truth.
+QUANT_ALIASES: dict[str, str] = {"fp8": "fp8-dynamic"}
+
 from .layerwise_fp8 import apply_fp8_layerwise_casting
 
 __all__ = [
@@ -50,4 +54,6 @@ __all__ = [
     "get_vae_quant_info",
     # Layerwise fp8 casting (no torchao dependency)
     "apply_fp8_layerwise_casting",
+    # Alias map
+    "QUANT_ALIASES",
 ]

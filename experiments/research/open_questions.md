@@ -25,16 +25,14 @@ Unanswered questions requiring investigation, organized by category.
 
 **Hypothesis**: Layer -2 may not be optimal for all prompt types.
 
-**How to test**:
+**How to test** (requires server running):
 ```bash
 # Test different layers
 for layer in -1 -2 -3 -4 -5 -6; do
-  uv run scripts/generate.py \
-    --model-path /path/to/z-image \
+  uv run scripts/gen.py zimage \
+    --prompt "A detailed portrait of a woman" \
     --hidden-layer $layer \
-    --seed 42 \
-    --output "output_layer${layer}.png" \
-    "A detailed portrait of a woman"
+    --seed 42
 done
 ```
 

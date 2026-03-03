@@ -1,6 +1,6 @@
 # resolution constraints
 
-*last updated: 2026-01-06*
+*last updated: 2026-03-03*
 
 Z-Image requires image dimensions divisible by 16 (VAE constraint). All preset resolutions are pre-validated.
 
@@ -127,10 +127,18 @@ Suggested exponent values based on scale factor:
 
 ## cli validation
 
-The CLI (`scripts/generate.py`) automatically:
+Resolution validation happens server-side. When using `scripts/gen.py`, pass `--width` and `--height` and the server validates:
+
+```bash
+uv run scripts/gen.py zimage --prompt "A landscape" --width 1920 --height 1088
+```
+
+The server automatically:
 1. Validates dimensions are divisible by 16
 2. Snaps invalid values to nearest valid resolution with a warning
 3. Warns if resolution is below minimum or above maximum
+
+> **Note:** The deprecated `scripts/generate.py` performed the same validation client-side.
 
 ## api endpoint
 

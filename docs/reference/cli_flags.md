@@ -1,10 +1,133 @@
 # cli flags reference
 
-*last updated: 2026-02-14*
+*last updated: 2026-03-03*
+
+## generation client: `scripts/gen.py` (recommended)
+
+`gen.py` is a thin CLI client that talks to the running server via HTTP. It requires the server to be running (`uv run web/server.py --config config.toml`).
+
+```bash
+# Check server status
+uv run scripts/gen.py status
+
+# FLUX.2 image generation
+uv run scripts/gen.py flux2 --prompt "a cat sleeping in sunlight" --seed 42
+
+# Z-Image generation
+uv run scripts/gen.py zimage --prompt "a mountain" --width 512 --height 512
+
+# LTX-2 video (always streaming)
+uv run scripts/gen.py ltx2 --prompt "ocean waves" --num-frames 33 --seed 42
+
+# Qwen-Image T2I
+uv run scripts/gen.py qwen --prompt "a bird" --seed 42
+
+# Custom server URL
+uv run scripts/gen.py --server http://localhost:9000 flux2 --prompt "test"
+```
+
+### gen.py global flags
+
+| Flag | Description |
+|------|-------------|
+| `--server` | Server base URL (default: `http://127.0.0.1:7860`) |
+| `--output` | Output directory for saved files (default: `outputs/gen/`) |
+| `--timeout` | Request timeout in seconds (default: 300) |
+| `--no-save` | Print metadata only, don't save file |
+| `--json` | Output raw JSON response instead of saving file |
+
+### gen.py flux2 subcommand
+
+| Flag | Description |
+|------|-------------|
+| `--prompt` | Prompt text (required) |
+| `--width` | Image width in pixels |
+| `--height` | Image height in pixels |
+| `--num-steps` | Number of inference steps |
+| `--seed` | Random seed |
+| `--guidance` | Guidance scale |
+| `--model-name` | Model variant name (e.g., klein-4b) |
+| `--upsample-prompt` / `--no-upsample-prompt` | Enable/disable prompt upsampling |
+| `--loras` | LoRA specs (path:scale), space-separated |
+| `--block-offload` | Enable block-level offload |
+| `--max-text-length` | Maximum text sequence length |
+| `--reference-images` | Input image path(s) for image editing |
+| `--stream` | Use streaming SSE endpoint |
+
+### gen.py zimage subcommand
+
+| Flag | Description |
+|------|-------------|
+| `--prompt` | Prompt text (required) |
+| `--width` | Image width in pixels |
+| `--height` | Image height in pixels |
+| `--steps` | Number of inference steps |
+| `--seed` | Random seed |
+| `--guidance-scale` | CFG scale |
+| `--shift` | Scheduler shift/mu |
+| `--hidden-layer` | Encoder hidden layer to extract from |
+| `--template` | Template name |
+| `--negative-prompt` | Negative prompt |
+| `--loras` | LoRA specs (path:scale), space-separated |
+| `--stream` | Use streaming SSE endpoint |
+
+### gen.py ltx2 subcommand
+
+| Flag | Description |
+|------|-------------|
+| `--prompt` | Prompt text (required) |
+| `--width` | Video width in pixels |
+| `--height` | Video height in pixels |
+| `--num-frames` | Number of frames (must be 8n+1) |
+| `--fps` | Frames per second |
+| `--seed` | Random seed |
+| `--guidance-scale` | Guidance scale |
+| `--use-two-stage` / `--no-two-stage` | Enable/disable two-stage generation |
+| `--stage1-steps` | Stage 1 inference steps |
+| `--stage2-steps` | Stage 2 inference steps |
+| `--negative-prompt` | Negative prompt |
+| `--stg-scale` | Spatio-Temporal Guidance scale |
+| `--loras` | LoRA specs, space-separated |
+| `--lora-path` | Single LoRA path |
+| `--lora-scale` | Single LoRA scale |
+| `--distilled-lora-path` | Distilled LoRA path |
+| `--distilled-lora-scale` | Distilled LoRA scale |
+| `--enhance-prompt` | Enable prompt enhancement |
+| `--ge-gamma` | GE gamma value |
+| `--fbcache-threshold` | FBCache block-skip threshold |
+| `--use-distilled-sigmas` | Use distilled sigma schedule |
+| `--enable-audio` | Enable audio generation |
+
+### gen.py qwen subcommand
+
+| Flag | Description |
+|------|-------------|
+| `--prompt` | Prompt text (required) |
+| `--width` | Image width in pixels |
+| `--height` | Image height in pixels |
+| `--steps` | Number of inference steps |
+| `--cfg-scale` | CFG scale |
+| `--seed` | Random seed |
+| `--negative-prompt` | Negative prompt |
+| `--max-sequence-length` | Maximum sequence length |
+
+---
+
+## server CLI: `web/server.py`
+
+Server-side flags for `web/server.py`. These configure model loading, device placement, optimization, and pipeline-specific parameters. All of these can also be set in `config.toml`.
+
+```bash
+uv run web/server.py --config config.toml
+```
+
+---
+
+## deprecated: `scripts/generate.py`
+
+> **Deprecated.** Use `scripts/gen.py` instead. `generate.py` is a standalone generation script that loads models directly. It remains functional but is no longer the recommended workflow. `gen.py` talks to the running server and benefits from persistent model loading, lazy-load, and the full API surface.
 
 CLI flags for `scripts/generate.py` and `web/server.py`. Both use the same base parser from `cli.py`. Use `--model-type` to select which pipeline to run.
-
-> **Note:** `scripts/generate.py` is planned for deprecation. See [entry_points.md](entry_points.md) for the strategic direction.
 
 ## model and config
 
@@ -18,6 +141,9 @@ CLI flags for `scripts/generate.py` and `web/server.py`. Both use the same base 
 | `--templates-dir` | Path to templates directory |
 
 ```bash
+# Deprecated -- config and profile are server-side flags:
+# uv run web/server.py --config config.toml --profile rtx4090
+# Then use gen.py: uv run scripts/gen.py zimage --prompt "A cat"
 uv run scripts/generate.py --config config.toml --profile rtx4090 "A cat"
 ```
 
@@ -167,6 +293,8 @@ Use `--model-type flux2` to select.
 | `--flux2-block-offload` | Enable block-level offload (incompatible with torch.compile and torchao) |
 
 ```bash
+# Deprecated -- use gen.py instead:
+# uv run scripts/gen.py flux2 --prompt "A cat sitting on a windowsill" --seed 42
 uv run scripts/generate.py --model-type flux2 \
   --flux2-model-name klein-4b \
   --flux2-model-path /path/to/flux2-klein \
@@ -204,6 +332,8 @@ Use `--model-type ltx2` to select.
 | `--ltx2-gemma-variant` | Gemma3 encoder variant: bf16/8bit/q4-qat |
 
 ```bash
+# Deprecated -- use gen.py instead:
+# uv run scripts/gen.py ltx2 --prompt "A golden retriever playing fetch in a park" --num-frames 41 --seed 42
 uv run scripts/generate.py --model-type ltx2 \
   --ltx2-model-path /path/to/ltx-video-2 \
   --ltx2-num-frames 41 --ltx2-fps 24 \
@@ -246,6 +376,9 @@ For RTX 4090 (24GB VRAM):
 - **Transformer**: Use variant default (fp8 for T2I, diffsynth-fp8 for edit/layered)
 
 ```bash
+# Deprecated -- use gen.py instead:
+# uv run scripts/gen.py qwen --prompt "A mountain landscape" --seed 42
+
 # T2I example (uses variant defaults)
 uv run scripts/generate.py --model-type qwenimage-t2i \
   --qwen-image-model-path /path/to/Qwen-Image-2512 \

@@ -12,7 +12,8 @@ Run with: uv run pytest tests/unit/test_ltx2_resolve_quantize.py -v
 
 import pytest
 
-from llm_dit.pipelines.generate import _resolve_quantize, _QUANT_ALIASES
+from llm_dit.pipelines.generate import _resolve_quantize
+from llm_dit.quantization import QUANT_ALIASES
 
 
 class TestResolveQuantize:
@@ -45,6 +46,6 @@ class TestResolveQuantize:
         assert precision == "future-method-v3"
 
     def test_quant_aliases_contains_fp8(self):
-        """_QUANT_ALIASES maps 'fp8' to 'fp8-dynamic'."""
-        assert "fp8" in _QUANT_ALIASES
-        assert _QUANT_ALIASES["fp8"] == "fp8-dynamic"
+        """QUANT_ALIASES maps 'fp8' to 'fp8-dynamic'."""
+        assert "fp8" in QUANT_ALIASES
+        assert QUANT_ALIASES["fp8"] == "fp8-dynamic"

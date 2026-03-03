@@ -6,6 +6,38 @@ last updated: 2026-03-03
 All notable changes to this project will be documented in this file.
 Uses [Semantic Versioning](https://semver.org/).
 
+## 0.9.17
+
+### added
+- **CLI**: `scripts/gen.py` -- CLI-over-API tool that talks to the running server via HTTP. Subcommands: `flux2`, `zimage`, `ltx2`, `qwen`, `status`. Supports streaming (SSE), JSON output, and PNG download. 43 unit tests.
+
+### deprecated
+- **CLI**: `scripts/generate.py` emits `DeprecationWarning` at startup, directing users to `scripts/gen.py`. Will be removed in v1.0. Still needed for CLI-only features (embedding precompute, encoder-only mode).
+
+### changed
+- **Docs**: Updated `entry_points.md` and `feature_parity_matrix.md` to reflect three entry points (gen.py, Web API, generate.py) and deprecation status.
+
+## 0.9.16
+
+### changed
+- **Core**: Replace 15 inline `gc.collect()` + `torch.cuda.empty_cache()` sequences in `model_manager.py` with centralized `cleanup_memory()` from `utils/memory.py`
+- **Core**: Centralize `QUANT_ALIASES` constant in `quantization/__init__.py` -- single source of truth replacing 3 duplicated dicts (LTX2Config, Flux2Config, pipelines/generate.py)
+- **Core**: Consolidate duplicate `DyPEConfig` -- canonical definition in `utils/dype.py`, re-exported from `config.py`
+- **FLUX.2**: Extract scheduler functions (`get_schedule`, `compute_empirical_mu`, `generalized_time_snr_shift`) from `flux2_generate.py` to `schedulers/flux2_scheduler.py`
+- **FLUX.2**: Replace local `cleanup_memory()` in `flux2_generate.py` with import from `utils/memory.py`
+- **FLUX.2**: Extract `_resolve_flux2_params()` helper in `web/routers/flux2.py` -- DRYs duplicated param resolution between sync and streaming endpoints
+
+### removed
+- **LTX-2**: Dead `get_total_steps()` method, `estimate_vram_usage()` method + 9 ClassVar VRAM constants from `LTX2Config`
+- **LTX-2**: Legacy distillation fields (`use_distilled`, `distilled_steps_stage1`, `distilled_steps_stage2`) from `LTX2Config`
+- **LTX-2**: Deprecated encoder fields (`encoder_quantization`, `encoder_cpu_offload`) from `LTX2Config`
+- **Config**: Dead `PipelineConfig` dataclass (not wired into RuntimeConfig)
+- **Config**: Dead `flux2_seed`, `flux2_output_path`, `flux2_input_images` backward-compat properties from RuntimeConfig
+- **Config**: `EnhancementConfig` preset classmethods (`quality_preset`, `speed_preset`, `all_preset`)
+
+### fixed
+- **Core**: `_unload_qwen_image()` and `_unload_qwen_image_t2i()` missing `torch.cuda.is_available()` guard before `torch.cuda.empty_cache()` (fixed via cleanup_memory adoption)
+
 ## 0.9.15
 
 ### changed

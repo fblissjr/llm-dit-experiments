@@ -1,4 +1,4 @@
-last updated: 2025-12-26
+last updated: 2026-03-03
 
 # qwen-image-edit-2511
 
@@ -96,21 +96,26 @@ edit_model_path = "/path/to/Qwen_Qwen-Image-Edit-2511"
 
 ### cli
 
-```bash
-# Use auto-download (default)
-uv run scripts/generate.py \
-  --model-type qwenimage \
-  --qwen-image-model-path ~/Storage/Qwen_Qwen-Image-Layered \
-  --img2img input.jpg \
-  "Decomposition prompt"
+The `gen.py qwen` subcommand supports Qwen-Image T2I generation. Model paths and edit model paths are configured server-side in `config.toml`.
 
-# Specify local edit model
-uv run scripts/generate.py \
-  --model-type qwenimage \
-  --qwen-image-model-path ~/Storage/Qwen_Qwen-Image-Layered \
-  --qwen-image-edit-model-path ~/Storage/Qwen_Qwen-Image-Edit-2511 \
-  --img2img input.jpg \
-  "Decomposition prompt"
+```bash
+# Start the server with Qwen-Image config
+uv run web/server.py --config config.toml
+
+# Qwen-Image T2I generation
+uv run scripts/gen.py qwen --prompt "A majestic mountain at golden hour" --seed 42
+```
+
+> **Note:** Image editing (decompose + edit layer) and multi-image editing are available via the Web API endpoints (`/api/qwen-image/edit-layer`, `/api/qwen-image/edit-multi`) or the Web UI. The `gen.py qwen` subcommand supports T2I generation.
+
+Server-side config for model paths:
+
+```toml
+[default.qwen_image]
+model_path = "/path/to/Qwen_Qwen-Image-Layered"
+edit_model_path = ""  # empty = auto-download from HuggingFace
+# Or specify local path:
+# edit_model_path = "/path/to/Qwen_Qwen-Image-Edit-2511"
 ```
 
 ## usage
