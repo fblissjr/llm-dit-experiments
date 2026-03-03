@@ -614,6 +614,22 @@ class Flux2Config:
     compile_dynamic: bool = False  # dynamic shapes: avoid recompilation per resolution
     quantization: str = "none"  # none, fp8-dynamic, fp8-weight-only, int8, int4
 
+    # Alias map for shorthand quantization strings
+    _QUANT_ALIASES: ClassVar[dict[str, str]] = {"fp8": "fp8-dynamic"}
+
+    @property
+    def quant_transformer(self) -> str | None:
+        """Bridge for get_pipeline_quant_config() resolution.
+
+        Maps [flux2].quantization -> quant_transformer so that
+        getattr(self.flux2, 'quant_transformer') returns the value.
+        Resolves aliases (e.g. 'fp8' -> 'fp8-dynamic') before returning.
+        Returns None when 'none' (no override, fall through to global default).
+        """
+        if self.quantization == "none":
+            return None
+        return self._QUANT_ALIASES.get(self.quantization, self.quantization)
+
 
 @dataclass
 class ZImageConfig:

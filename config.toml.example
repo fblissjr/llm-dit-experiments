@@ -118,7 +118,7 @@ offload_between_stages = true   # three-stage offload: encoder -> transformer ->
 block_offload = false           # INCOMPATIBLE with quantization + compile
 
 # Quantization: none, fp8 (alias for fp8-dynamic), fp8-dynamic, fp8-weight-only, int8, int4
-quantization = "none"           # Klein-9b fits in BF16 with offloading; quantize for Klein-9b persistent mode
+quantization = "fp8"            # fp8 recommended for 24GB GPUs; reduces transformer from ~18GB to ~9GB
 
 compile = false                 # marginal ROI for 4-step distilled (see docs/guides/compile_and_resolution.md)
 compile_vae = false             # marginal ROI (89s warmup, ~0.5s savings/decode)

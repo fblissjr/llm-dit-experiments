@@ -962,6 +962,19 @@ def generate_image(
     # ===========================================================================
     # Stage 1: Text Encoding
     # ===========================================================================
+
+    # Temporarily offload persistent transformer during text encoding.
+    # Prevents simultaneous transformer (~18GB) + encoder (~6GB) exceeding 24GB.
+    # Skip for compiled models -- device move invalidates compiled graphs.
+    transformer_was_offloaded = False
+    is_compiled = hasattr(transformer, "_orig_mod") if transformer is not None else False
+    if transformer_is_persistent and transformer is not None and not is_compiled:
+        log_gpu_memory("before transformer offload for encoding")
+        logger.info("Temporarily offloading transformer for text encoding...")
+        transformer.to("cpu")
+        cleanup_memory()
+        transformer_was_offloaded = True
+
     log_gpu_memory("before encoder load")
     stage1_start = time.perf_counter()
     logger.info("Stage 1: Encoding text...")
@@ -1026,6 +1039,12 @@ def generate_image(
             del encoder
             cleanup_memory()
         log_gpu_memory("after encoder offload + cleanup")
+
+    # Reload transformer to GPU after encoder frees VRAM
+    if transformer_was_offloaded:
+        logger.info("Reloading transformer to GPU for denoising...")
+        transformer.to(device)
+        log_gpu_memory("after transformer reload")
 
     # ===========================================================================
     # Stage 1.5: Reference Image Encoding (if editing mode)
