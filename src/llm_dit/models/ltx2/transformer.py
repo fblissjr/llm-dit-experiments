@@ -375,6 +375,7 @@ class BasicTransformerBlock(nn.Module):
         super().__init__()
         self.idx = idx
         self.norm_eps = norm_eps
+        self.cross_attention_adaln = config.cross_attention_adaln
 
         # Self-attention
         self.attn1 = Attention(
@@ -385,6 +386,7 @@ class BasicTransformerBlock(nn.Module):
             rope_type=rope_type,
             norm_eps=norm_eps,
             attention_function=attention_function,
+            apply_gated_attention=config.apply_gated_attention,
         )
 
         # Cross-attention
@@ -396,13 +398,21 @@ class BasicTransformerBlock(nn.Module):
             rope_type=rope_type,
             norm_eps=norm_eps,
             attention_function=attention_function,
+            apply_gated_attention=config.apply_gated_attention,
         )
 
         # Feed-forward
         self.ff = FeedForward(config.dim, dim_out=config.dim)
 
-        # Scale-shift table for AdaLN: 6 values (shift, scale, gate for attn and ff)
-        self.scale_shift_table = nn.Parameter(torch.empty(6, config.dim))
+        # Scale-shift table for AdaLN:
+        # V1: 6 values (shift, scale, gate for self-attn and ff)
+        # V2: 9 values (+3 for cross-attention Q-side modulation)
+        adaln_params = 9 if config.cross_attention_adaln else 6
+        self.scale_shift_table = nn.Parameter(torch.empty(adaln_params, config.dim))
+
+        # V2: per-block KV-side modulation for cross-attention
+        if config.cross_attention_adaln:
+            self.prompt_scale_shift_table = nn.Parameter(torch.empty(2, config.dim))
 
     def get_ada_values(
         self,
@@ -454,16 +464,31 @@ class BasicTransformerBlock(nn.Module):
             x = x + self_attn_out
 
         # Cross-attention with text conditioning
-        cross_attn_out = self.attn2(
-            rms_norm(x, eps=self.norm_eps),
-            context=args.context,
-            mask=args.context_mask
-        )
+        if self.cross_attention_adaln:
+            # V2: AdaLN modulation on both Q and KV sides
+            from llm_dit.models.ltx2.av_block import _apply_cross_attention_adaln
+            shift_q, scale_q, gate_q = self.get_ada_values(
+                self.scale_shift_table, batch_size, args.timesteps, slice(6, 9),
+            )
+            cross_attn_out = _apply_cross_attention_adaln(
+                x, args.context, self.attn2,
+                shift_q, scale_q, gate_q,
+                self.prompt_scale_shift_table,
+                args.prompt_timestep,
+                args.context_mask, self.norm_eps,
+            )
+        else:
+            # V1: simple cross-attention
+            cross_attn_out = self.attn2(
+                rms_norm(x, eps=self.norm_eps),
+                context=args.context,
+                mask=args.context_mask
+            )
         x = x + cross_attn_out
 
         # Get AdaLN values for FFN
         shift_mlp, scale_mlp, gate_mlp = self.get_ada_values(
-            self.scale_shift_table, batch_size, args.timesteps, slice(3, None)
+            self.scale_shift_table, batch_size, args.timesteps, slice(3, 6)
         )
 
         # Feed-forward
@@ -626,9 +651,12 @@ class LTX2Transformer(nn.Module):
             embedding_coefficient=self._adaln_embedding_coefficient(),
         )
 
-        # Text projection -- V2 may pass None (projection moved to encoder)
+        # Text projection -- V2 moved projection to encoder (FeatureExtractorV2)
         if caption_projection_module is not None:
             self.caption_projection = caption_projection_module
+        elif self.cross_attention_adaln:
+            # V2: encoder already projects to cross_attention_dim, use identity
+            self.caption_projection = nn.Identity()
         else:
             self.caption_projection = PixArtAlphaTextProjection(
                 in_features=caption_channels,
@@ -664,6 +692,8 @@ class LTX2Transformer(nn.Module):
         )
         if caption_projection_module is not None:
             self.audio_caption_projection = caption_projection_module
+        elif self.cross_attention_adaln:
+            self.audio_caption_projection = nn.Identity()
         else:
             self.audio_caption_projection = PixArtAlphaTextProjection(
                 in_features=caption_channels,

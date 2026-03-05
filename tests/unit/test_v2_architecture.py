@@ -261,6 +261,69 @@ class TestCreateModelV2:
         assert model.apply_gated_attention is True
         assert model.cross_attention_adaln is True
 
+    def test_v2_video_only_has_gate_logits_in_state_dict(self):
+        """V2 VideoOnly model should have to_gate_logits in state dict."""
+        config = {
+            "num_attention_heads": 4,
+            "attention_head_dim": 32,
+            "in_channels": 16,
+            "out_channels": 16,
+            "num_layers": 2,
+            "cross_attention_dim": 64,
+            "caption_channels": 48,
+        }
+        model = create_model_from_config(
+            config, torch.bfloat16,
+            apply_gated_attention=True,
+            cross_attention_adaln=True,
+        )
+        sd_keys = set(model.state_dict().keys())
+        # BasicTransformerBlock (VideoOnly) must have gate logits
+        assert "transformer_blocks.0.attn1.to_gate_logits.weight" in sd_keys
+        assert "transformer_blocks.0.attn2.to_gate_logits.weight" in sd_keys
+
+    def test_v2_video_only_has_prompt_scale_shift_table(self):
+        """V2 VideoOnly model should have prompt_scale_shift_table."""
+        config = {
+            "num_attention_heads": 4,
+            "attention_head_dim": 32,
+            "in_channels": 16,
+            "out_channels": 16,
+            "num_layers": 2,
+            "cross_attention_dim": 64,
+            "caption_channels": 48,
+        }
+        model = create_model_from_config(
+            config, torch.bfloat16,
+            apply_gated_attention=True,
+            cross_attention_adaln=True,
+        )
+        sd_keys = set(model.state_dict().keys())
+        assert "transformer_blocks.0.prompt_scale_shift_table" in sd_keys
+        # V2 scale_shift_table should be 9 params (not 6)
+        sst = model.state_dict()["transformer_blocks.0.scale_shift_table"]
+        assert sst.shape[0] == 9, f"Expected 9-param scale_shift_table, got {sst.shape[0]}"
+
+    def test_v2_video_only_no_caption_projection(self):
+        """V2 model should not have caption_projection (moved to encoder)."""
+        config = {
+            "num_attention_heads": 4,
+            "attention_head_dim": 32,
+            "in_channels": 16,
+            "out_channels": 16,
+            "num_layers": 2,
+            "cross_attention_dim": 64,
+            "caption_channels": 48,
+        }
+        model = create_model_from_config(
+            config, torch.bfloat16,
+            apply_gated_attention=True,
+            cross_attention_adaln=True,
+        )
+        sd_keys = set(model.state_dict().keys())
+        assert "caption_projection.linear_1.weight" not in sd_keys
+        assert "caption_projection.linear_2.weight" not in sd_keys
+
     def test_create_v1_model_default(self):
         config = {
             "num_attention_heads": 4,

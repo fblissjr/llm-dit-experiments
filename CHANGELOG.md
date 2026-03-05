@@ -6,6 +6,20 @@ last updated: 2026-03-05
 All notable changes to this project will be documented in this file.
 Uses [Semantic Versioning](https://semver.org/).
 
+## 0.9.19
+
+### added
+- **GGUF pipeline integration**: Full pipeline wiring for GGUF-quantized LTX-2.3 transformers. Persistent model pattern (no cache/reconstruct), per-forward LoRA application via `GGMLLinear.lora_delta`, ModelManager GGUF preloading, and router integration.
+- **GGUF-aware LoRA**: `load_lora_for_gguf()`, `attach_lora_deltas()`, `detach_lora_deltas()` in `utils/lora.py`. Pre-computes `lora_B @ lora_A` deltas and applies during dequant -- no base weight mutation.
+- **GGUF key audit**: `scripts/audit_gguf_keys.py` verifies GGUF key mapping against model architecture. 1457/1457 video keys match (0 missing, 66 audio-only extras).
+- **Tests**: 16 GGUF pipeline integration tests, 3 V2 VideoOnly state_dict verification tests (47 total new tests).
+
+### fixed
+- **V2 VideoOnly**: `BasicTransformerBlock` now supports V2 features (gated attention, cross-attention AdaLN, 9-param scale_shift_table, prompt_scale_shift_table). Previously V2 flags only worked in `BasicAVTransformerBlock`.
+- **V2 caption_projection**: V2 models use `nn.Identity()` instead of `PixArtAlphaTextProjection` (projection moved to FeatureExtractorV2 encoder). Eliminates 4 missing GGUF keys.
+- **GGUF loader**: Fixed `gguf_sd_loader()` tuple unpacking bug in `load_ltx2_transformer_gguf()`.
+- **FFN slice**: `BasicTransformerBlock` FFN AdaLN slice changed from `slice(3, None)` to `slice(3, 6)` for correct indexing with 9-param V2 tables.
+
 ## 0.9.18
 
 ### added
