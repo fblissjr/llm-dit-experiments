@@ -162,6 +162,8 @@ class TransformerConfig:
     heads: int
     d_head: int
     context_dim: int
+    apply_gated_attention: bool = False
+    cross_attention_adaln: bool = False
 
 
 @dataclass(frozen=True)
@@ -182,6 +184,9 @@ class TransformerArgs:
     cross_scale_shift_timestep: Optional[torch.Tensor]
     cross_gate_timestep: Optional[torch.Tensor]
     enabled: bool
+    # V2 (LTX-2.3) additions
+    prompt_timestep: Optional[torch.Tensor] = None  # Separate timestep for cross-attn AdaLN KV
+    self_attention_mask: Optional[torch.Tensor] = None  # Additive log-space bias (B, 1, T, T)
 
 
 class TransformerArgsPreprocessor:
@@ -527,6 +532,11 @@ class LTX2Transformer(nn.Module):
         audio_out_channels: int = 128,
         audio_cross_attention_dim: int = 2048,
         audio_positional_embedding_max_pos: Optional[list[int]] = None,
+        # V2 (LTX-2.3) parameters
+        apply_gated_attention: bool = False,
+        cross_attention_adaln: bool = False,
+        caption_projection_module: Optional[nn.Module] = None,
+        audio_caption_projection_module: Optional[nn.Module] = None,
     ):
         super().__init__()
 
@@ -538,6 +548,8 @@ class LTX2Transformer(nn.Module):
         self.positional_embedding_theta = positional_embedding_theta
         self.model_type = model_type
         self.num_layers = num_layers
+        self.cross_attention_adaln = cross_attention_adaln
+        self.apply_gated_attention = apply_gated_attention
 
         if model_type.is_video_enabled():
             if positional_embedding_max_pos is None:
@@ -551,6 +563,7 @@ class LTX2Transformer(nn.Module):
                 out_channels=out_channels,
                 caption_channels=caption_channels,
                 norm_eps=norm_eps,
+                caption_projection_module=caption_projection_module,
             )
 
             self._init_preprocessor()
@@ -568,6 +581,7 @@ class LTX2Transformer(nn.Module):
                 out_channels=audio_out_channels,
                 caption_channels=caption_channels,
                 norm_eps=norm_eps,
+                caption_projection_module=audio_caption_projection_module,
             )
 
             self._init_audio_preprocessor()
@@ -590,25 +604,44 @@ class LTX2Transformer(nn.Module):
             audio_cross_attention_dim=audio_cross_attention_dim if model_type.is_audio_enabled() else None,
         )
 
+    def _adaln_embedding_coefficient(self) -> int:
+        """Total AdaLN params per block: 6 base + 3 if cross_attention_adaln."""
+        return 6 + (3 if self.cross_attention_adaln else 0)
+
     def _init_video(
         self,
         in_channels: int,
         out_channels: int,
         caption_channels: int,
         norm_eps: float,
+        caption_projection_module: Optional[nn.Module] = None,
     ) -> None:
         """Initialize video-specific components."""
         # Input projection
         self.patchify_proj = nn.Linear(in_channels, self.inner_dim, bias=True)
 
         # Timestep conditioning
-        self.adaln_single = AdaLayerNormSingle(self.inner_dim)
-
-        # Text projection
-        self.caption_projection = PixArtAlphaTextProjection(
-            in_features=caption_channels,
-            hidden_size=self.inner_dim,
+        self.adaln_single = AdaLayerNormSingle(
+            self.inner_dim,
+            embedding_coefficient=self._adaln_embedding_coefficient(),
         )
+
+        # Text projection -- V2 may pass None (projection moved to encoder)
+        if caption_projection_module is not None:
+            self.caption_projection = caption_projection_module
+        else:
+            self.caption_projection = PixArtAlphaTextProjection(
+                in_features=caption_channels,
+                hidden_size=self.inner_dim,
+            )
+
+        # V2: prompt AdaLN for cross-attention KV modulation
+        if self.cross_attention_adaln:
+            self.prompt_adaln_single = AdaLayerNormSingle(
+                self.inner_dim, embedding_coefficient=2,
+            )
+        else:
+            self.prompt_adaln_single = None
 
         # Output components
         self.scale_shift_table = nn.Parameter(torch.empty(2, self.inner_dim))
@@ -621,14 +654,30 @@ class LTX2Transformer(nn.Module):
         out_channels: int,
         caption_channels: int,
         norm_eps: float,
+        caption_projection_module: Optional[nn.Module] = None,
     ) -> None:
         """Initialize audio-specific components (mirrors _init_video)."""
         self.audio_patchify_proj = nn.Linear(in_channels, self.audio_inner_dim, bias=True)
-        self.audio_adaln_single = AdaLayerNormSingle(self.audio_inner_dim)
-        self.audio_caption_projection = PixArtAlphaTextProjection(
-            in_features=caption_channels,
-            hidden_size=self.audio_inner_dim,
+        self.audio_adaln_single = AdaLayerNormSingle(
+            self.audio_inner_dim,
+            embedding_coefficient=self._adaln_embedding_coefficient(),
         )
+        if caption_projection_module is not None:
+            self.audio_caption_projection = caption_projection_module
+        else:
+            self.audio_caption_projection = PixArtAlphaTextProjection(
+                in_features=caption_channels,
+                hidden_size=self.audio_inner_dim,
+            )
+
+        # V2: prompt AdaLN for audio cross-attention KV modulation
+        if self.cross_attention_adaln:
+            self.audio_prompt_adaln_single = AdaLayerNormSingle(
+                self.audio_inner_dim, embedding_coefficient=2,
+            )
+        else:
+            self.audio_prompt_adaln_single = None
+
         self.audio_scale_shift_table = nn.Parameter(torch.empty(2, self.audio_inner_dim))
         self.audio_norm_out = nn.LayerNorm(
             self.audio_inner_dim, elementwise_affine=False, eps=norm_eps,
@@ -706,6 +755,8 @@ class LTX2Transformer(nn.Module):
                 heads=self.num_attention_heads,
                 d_head=attention_head_dim,
                 context_dim=cross_attention_dim,
+                apply_gated_attention=self.apply_gated_attention,
+                cross_attention_adaln=self.cross_attention_adaln,
             )
 
         audio_config: Optional[TransformerConfig] = None
@@ -717,6 +768,8 @@ class LTX2Transformer(nn.Module):
                 heads=self.audio_num_attention_heads,
                 d_head=audio_attention_head_dim,
                 context_dim=audio_cross_attention_dim,
+                apply_gated_attention=self.apply_gated_attention,
+                cross_attention_adaln=self.cross_attention_adaln,
             )
 
         if self.model_type.is_audio_enabled():

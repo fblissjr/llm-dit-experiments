@@ -46,6 +46,8 @@ class EncodingOutput:
     token_counts: List[int] | None = None
     # For multi-layer experiments (LTX-2 routing research)
     layer_stack: torch.Tensor | None = None  # [B, T, D, L] - all hidden states stacked
+    # V2 dual-stream: separate audio embeddings (video embeddings go in `embeddings`)
+    audio_embeddings: List[torch.Tensor] | None = None
 
     @property
     def batch_size(self) -> int:
@@ -74,6 +76,11 @@ class EncodingOutput:
             token_counts=self.token_counts,
             layer_stack=(
                 self.layer_stack.to(device) if self.layer_stack is not None else None
+            ),
+            audio_embeddings=(
+                [e.to(device) for e in self.audio_embeddings]
+                if self.audio_embeddings is not None
+                else None
             ),
         )
 

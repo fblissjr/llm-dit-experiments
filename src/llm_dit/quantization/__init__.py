@@ -34,9 +34,15 @@ from .vae_utils import (
 )
 # Canonical alias map: shorthand -> full torchao method name.
 # Imported by config.py and pipelines/generate.py. Single source of truth.
-QUANT_ALIASES: dict[str, str] = {"fp8": "fp8-dynamic"}
+QUANT_ALIASES: dict[str, str] = {"fp8": "fp8-dynamic", "gguf": "gguf"}
 
 from .layerwise_fp8 import apply_fp8_layerwise_casting
+
+# GGUF quantization support
+from .gguf_dequant import dequantize_tensor as gguf_dequantize_tensor, is_quantized as is_gguf_quantized
+from .gguf_tensor import GGMLTensor
+from .gguf_loader import gguf_sd_loader, detect_v2_from_state_dict
+from .gguf_linear import GGMLLinear, replace_linear_with_ggml
 
 __all__ = [
     # Unified API
@@ -56,4 +62,12 @@ __all__ = [
     "apply_fp8_layerwise_casting",
     # Alias map
     "QUANT_ALIASES",
+    # GGUF quantization
+    "gguf_dequantize_tensor",
+    "is_gguf_quantized",
+    "GGMLTensor",
+    "gguf_sd_loader",
+    "detect_v2_from_state_dict",
+    "GGMLLinear",
+    "replace_linear_with_ggml",
 ]

@@ -402,9 +402,13 @@ class LTX2Config:
     vae_device: str = "cuda"  # Device for VAE decoder
 
     # Quantization
-    quantize: str = "fp8"  # Transformer quantization (none, fp8)
+    quantize: str = "fp8"  # Transformer quantization (none, fp8, gguf)
     skip_cleanup: bool = False  # Skip memory cleanup between stages
     gemma_variant: str = "fp8"  # Gemma3 backbone: bf16, fp8, 8bit, q4-qat
+
+    # GGUF quantization (LTX-2.3 / 22B)
+    gguf_transformer_path: str = ""  # Path to GGUF quantized transformer (e.g. Q4_K_M)
+    model_version: str = "auto"  # "auto" (detect from checkpoint), "1.0" (19B), "2.3" (22B)
 
     @property
     def quant_transformer(self) -> str | None:

@@ -1,10 +1,27 @@
-last updated: 2026-03-03
+last updated: 2026-03-05
 
 # changelog
 
 
 All notable changes to this project will be documented in this file.
 Uses [Semantic Versioning](https://semver.org/).
+
+## 0.9.18
+
+### added
+- **GGUF**: Full GGUF quantization infrastructure (`quantization/gguf_dequant.py`, `gguf_tensor.py`, `gguf_loader.py`, `gguf_linear.py`). Supports Q2_K through Q8_0, IQ4_NL, IQ4_XS dequantization. GGMLLinear dequantizes per-forward, keeping quantized weights resident in VRAM.
+- **LTX-2.3 (V2)**: Gated attention (`apply_gated_attention`) -- per-head sigmoid gate on attention output: `2.0 * sigmoid(gate_logits)`. Added to `attention.py`.
+- **LTX-2.3 (V2)**: Cross-attention AdaLN (`cross_attention_adaln`) -- scale_shift_table grows from 6 to 9 params per block, with separate `prompt_scale_shift_table` for KV modulation. Added to `av_block.py`.
+- **LTX-2.3 (V2)**: `prompt_timestep` and `self_attention_mask` fields on `TransformerArgs` for V2 conditioning.
+- **LTX-2.3 (V2)**: `prompt_adaln_single` and `audio_prompt_adaln_single` modules in `LTX2Transformer` for cross-attention KV modulation.
+- **LTX-2.3 (V2)**: `FeatureExtractorV2` (`encoders/gemma3_feature_extractor_v2.py`) with per-token RMSNorm and dual projections (video 4096, audio 2048).
+- **LTX-2.3 (V2)**: Auto-detection of V1 vs V2 from checkpoint keys (`detect_v2_from_state_dict`).
+- **LTX-2.3 (V2)**: `load_ltx2_transformer_gguf()` in `loader.py` for loading GGUF-quantized transformers with GGMLLinear layers.
+- **Config**: `gguf_transformer_path` and `model_version` fields on `LTX2Config`.
+- **Config**: `model_version` param on `Gemma3Encoder` for V2 encoder dispatch.
+- **Protocol**: `audio_embeddings` field on `EncodingOutput` for V2 dual-stream audio embeddings.
+- **Tests**: 28 new unit tests in `test_v2_architecture.py` covering gated attention, cross-attention AdaLN, FeatureExtractorV2, V2 detection, GGMLTensor, GGMLLinear, and V2 model creation.
+- **Dependency**: `gguf>=0.18.0` (pure Python)
 
 ## 0.9.17
 

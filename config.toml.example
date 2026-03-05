@@ -223,6 +223,13 @@ skip_cleanup = false
 #   q4-qat           -- pre-quantized Q4 model (~3GB, requires separate model via encoder_model_id)
 gemma_variant = "fp8-safetensors"
 
+# GGUF quantization (LTX-2.3 / 22B)
+# Path to GGUF-quantized transformer file (e.g. from unsloth/LTX-2.3-GGUF)
+# When set, overrides transformer_file and quantize settings
+gguf_transformer_path = ""
+# Model version: "auto" (detect from checkpoint keys), "1.0" (19B), "2.3" (22B)
+model_version = "auto"
+
 # Preset configuration
 default_preset = ""
 

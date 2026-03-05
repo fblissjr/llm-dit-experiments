@@ -1,23 +1,27 @@
 """
 Audio-Video Transformer Block for LTX-2.
 
-Last Updated: 2026-02-27
+Last Updated: 2026-03-05
 
 Implements the BasicAVTransformerBlock that handles video-only, audio-only,
 or combined audio-video processing within LTX-2's dual-stream architecture.
+
+Supports both V1 (19B, 6-param AdaLN) and V2 (22B, 9-param AdaLN with
+cross_attention_adaln and apply_gated_attention).
 
 When both video and audio configs are provided, the block creates cross-modal
 attention modules (Audio-to-Video and Video-to-Audio) that enable the two
 streams to exchange information during denoising.
 
-Attribute names match DiffSynth-Studio's implementation exactly for checkpoint
+Attribute names match the official LTX-2 implementation for checkpoint
 weight compatibility:
   Video branch:  attn1, attn2, ff, scale_shift_table
   Audio branch:  audio_attn1, audio_attn2, audio_ff, audio_scale_shift_table
   Cross-modal:   audio_to_video_attn, video_to_audio_attn,
                  scale_shift_table_a2v_ca_audio, scale_shift_table_a2v_ca_video
+  V2 additions:  prompt_scale_shift_table, audio_prompt_scale_shift_table
 
-Ported from: coderef/DiffSynth-Studio/diffsynth/models/ltx2_dit.py (lines 785-1030)
+Ported from: coderef/LTX-2/packages/ltx-core/src/ltx_core/model/transformer/transformer.py
 """
 
 from __future__ import annotations
@@ -40,9 +44,37 @@ from llm_dit.models.ltx2.transformer import (
 )
 
 
+def _adaln_size(cross_attention_adaln: bool) -> int:
+    """Number of AdaLN params per block: 6 base + 3 for cross-attn AdaLN."""
+    return 6 + (3 if cross_attention_adaln else 0)
+
+
+def _apply_cross_attention_adaln(
+    x: torch.Tensor,
+    context: torch.Tensor,
+    attn: Attention,
+    q_shift: torch.Tensor,
+    q_scale: torch.Tensor,
+    q_gate: torch.Tensor,
+    prompt_scale_shift_table: torch.Tensor,
+    prompt_timestep: torch.Tensor,
+    context_mask: torch.Tensor | None,
+    norm_eps: float,
+) -> torch.Tensor:
+    """Apply cross-attention with AdaLN modulation on both Q and KV sides (V2)."""
+    batch_size = x.shape[0]
+    shift_kv, scale_kv = (
+        prompt_scale_shift_table[None, None].to(device=x.device, dtype=x.dtype)
+        + prompt_timestep.reshape(batch_size, prompt_timestep.shape[1], 2, -1)
+    ).unbind(dim=2)
+    attn_input = rms_norm(x, eps=norm_eps) * (1 + q_scale) + q_shift
+    encoder_hidden_states = context * (1 + scale_kv) + shift_kv
+    return attn(attn_input, context=encoder_hidden_states, mask=context_mask) * q_gate
+
+
 class BasicAVTransformerBlock(nn.Module):
     """
-    Audio-Video transformer block for LTX-2.
+    Audio-Video transformer block for LTX-2 (V1 and V2).
 
     Conditionally creates video, audio, and cross-modal attention branches
     based on which TransformerConfig objects are provided:
@@ -51,7 +83,12 @@ class BasicAVTransformerBlock(nn.Module):
     - audio only: same structure but for audio tokens
     - both: adds bidirectional cross-modal attention (A2V, V2A)
 
-    Forward order (matching DiffSynth):
+    V2 additions (LTX-2.3, 22B):
+    - cross_attention_adaln: AdaLN on text cross-attention (scale_shift_table 6->9)
+    - apply_gated_attention: per-head sigmoid gate on attention output
+    - prompt_scale_shift_table: per-block KV modulation for cross-attention
+
+    Forward order:
     1. Video self-attention + text cross-attention
     2. Audio self-attention + text cross-attention
     3. A2V cross-modal attention (Q=video, K/V=audio)
@@ -79,6 +116,12 @@ class BasicAVTransformerBlock(nn.Module):
         self.has_audio = audio is not None
         self.has_cross_modal = self.has_video and self.has_audio
 
+        # V2 detection from config
+        self.cross_attention_adaln = (
+            (video is not None and video.cross_attention_adaln)
+            or (audio is not None and audio.cross_attention_adaln)
+        )
+
         # --- Video branch ---
         if video is not None:
             self.attn1 = Attention(
@@ -89,6 +132,7 @@ class BasicAVTransformerBlock(nn.Module):
                 rope_type=rope_type,
                 norm_eps=norm_eps,
                 attention_function=attention_function,
+                apply_gated_attention=video.apply_gated_attention,
             )
             self.attn2 = Attention(
                 query_dim=video.dim,
@@ -98,9 +142,15 @@ class BasicAVTransformerBlock(nn.Module):
                 rope_type=rope_type,
                 norm_eps=norm_eps,
                 attention_function=attention_function,
+                apply_gated_attention=video.apply_gated_attention,
             )
             self.ff = FeedForward(video.dim, dim_out=video.dim)
-            self.scale_shift_table = nn.Parameter(torch.empty(6, video.dim))
+            sst_size = _adaln_size(video.cross_attention_adaln)
+            self.scale_shift_table = nn.Parameter(torch.empty(sst_size, video.dim))
+
+            # V2: per-block cross-attention KV modulation
+            if self.cross_attention_adaln:
+                self.prompt_scale_shift_table = nn.Parameter(torch.empty(2, video.dim))
 
         # --- Audio branch ---
         if audio is not None:
@@ -112,6 +162,7 @@ class BasicAVTransformerBlock(nn.Module):
                 rope_type=rope_type,
                 norm_eps=norm_eps,
                 attention_function=attention_function,
+                apply_gated_attention=audio.apply_gated_attention,
             )
             self.audio_attn2 = Attention(
                 query_dim=audio.dim,
@@ -121,9 +172,15 @@ class BasicAVTransformerBlock(nn.Module):
                 rope_type=rope_type,
                 norm_eps=norm_eps,
                 attention_function=attention_function,
+                apply_gated_attention=audio.apply_gated_attention,
             )
             self.audio_ff = FeedForward(audio.dim, dim_out=audio.dim)
-            self.audio_scale_shift_table = nn.Parameter(torch.empty(6, audio.dim))
+            sst_size = _adaln_size(audio.cross_attention_adaln)
+            self.audio_scale_shift_table = nn.Parameter(torch.empty(sst_size, audio.dim))
+
+            # V2: per-block cross-attention KV modulation
+            if self.cross_attention_adaln:
+                self.audio_prompt_scale_shift_table = nn.Parameter(torch.empty(2, audio.dim))
 
         # --- Cross-modal attention (both modalities present) ---
         if self.has_cross_modal:
@@ -137,6 +194,7 @@ class BasicAVTransformerBlock(nn.Module):
                 rope_type=rope_type,
                 norm_eps=norm_eps,
                 attention_function=attention_function,
+                apply_gated_attention=video.apply_gated_attention,
             )
             # V2A: Q from audio, K/V from video
             self.video_to_audio_attn = Attention(
@@ -147,6 +205,7 @@ class BasicAVTransformerBlock(nn.Module):
                 rope_type=rope_type,
                 norm_eps=norm_eps,
                 attention_function=attention_function,
+                apply_gated_attention=audio.apply_gated_attention,
             )
             # Cross-modal AdaLN: 5 values each (4 scale/shift + 1 gate)
             self.scale_shift_table_a2v_ca_audio = nn.Parameter(torch.empty(5, audio.dim))
@@ -191,6 +250,38 @@ class BasicAVTransformerBlock(nn.Module):
         )
         return (*scale_shift_ada, *gate_ada)
 
+    def _apply_text_cross_attention(
+        self,
+        x: torch.Tensor,
+        context: torch.Tensor,
+        attn: Attention,
+        scale_shift_table: torch.Tensor,
+        prompt_scale_shift_table: torch.Tensor | None,
+        timestep: torch.Tensor,
+        prompt_timestep: torch.Tensor | None,
+        context_mask: torch.Tensor | None,
+    ) -> torch.Tensor:
+        """Apply text cross-attention, branching on V1 vs V2 AdaLN."""
+        if self.cross_attention_adaln:
+            assert prompt_scale_shift_table is not None
+            assert prompt_timestep is not None
+            shift_q, scale_q, gate = self.get_ada_values(
+                scale_shift_table, x.shape[0], timestep, slice(6, 9),
+            )
+            return _apply_cross_attention_adaln(
+                x, context, attn,
+                shift_q, scale_q, gate,
+                prompt_scale_shift_table,
+                prompt_timestep,
+                context_mask, self.norm_eps,
+            )
+        # V1: simple cross-attention without AdaLN modulation
+        return attn(
+            rms_norm(x, eps=self.norm_eps),
+            context=context,
+            mask=context_mask,
+        )
+
     def forward(
         self,
         video: TransformerArgs | None = None,
@@ -230,12 +321,18 @@ class BasicAVTransformerBlock(nn.Module):
             if not perturbation_config.all_in_batch(PerturbationType.SKIP_VIDEO_SELF_ATTN, self.idx):
                 norm_vx = rms_norm(vx, eps=self.norm_eps) * (1 + vscale_msa) + vshift_msa
                 v_mask = perturbation_config.mask_like(PerturbationType.SKIP_VIDEO_SELF_ATTN, self.idx, vx)
-                vx = vx + self.attn1(norm_vx, pe=video.positional_embeddings) * vgate_msa * v_mask
+                vx = vx + self.attn1(
+                    norm_vx,
+                    pe=video.positional_embeddings,
+                    mask=video.self_attention_mask,
+                ) * vgate_msa * v_mask
 
-            vx = vx + self.attn2(
-                rms_norm(vx, eps=self.norm_eps),
-                context=video.context,
-                mask=video.context_mask,
+            vx = vx + self._apply_text_cross_attention(
+                vx, video.context, self.attn2,
+                self.scale_shift_table,
+                getattr(self, "prompt_scale_shift_table", None),
+                video.timesteps, video.prompt_timestep,
+                video.context_mask,
             )
 
         # === Audio self-attention + text cross-attention ===
@@ -248,12 +345,18 @@ class BasicAVTransformerBlock(nn.Module):
             if not perturbation_config.all_in_batch(PerturbationType.SKIP_AUDIO_SELF_ATTN, self.idx):
                 norm_ax = rms_norm(ax, eps=self.norm_eps) * (1 + ascale_msa) + ashift_msa
                 a_mask = perturbation_config.mask_like(PerturbationType.SKIP_AUDIO_SELF_ATTN, self.idx, ax)
-                ax = ax + self.audio_attn1(norm_ax, pe=audio.positional_embeddings) * agate_msa * a_mask
+                ax = ax + self.audio_attn1(
+                    norm_ax,
+                    pe=audio.positional_embeddings,
+                    mask=audio.self_attention_mask,
+                ) * agate_msa * a_mask
 
-            ax = ax + self.audio_attn2(
-                rms_norm(ax, eps=self.norm_eps),
-                context=audio.context,
-                mask=audio.context_mask,
+            ax = ax + self._apply_text_cross_attention(
+                ax, audio.context, self.audio_attn2,
+                self.audio_scale_shift_table,
+                getattr(self, "audio_prompt_scale_shift_table", None),
+                audio.timesteps, audio.prompt_timestep,
+                audio.context_mask,
             )
 
         # === Cross-modal attention (A2V and V2A) ===
@@ -331,14 +434,14 @@ class BasicAVTransformerBlock(nn.Module):
         if run_vx:
             assert vx is not None and video is not None
             vshift_mlp, vscale_mlp, vgate_mlp = self.get_ada_values(
-                self.scale_shift_table, vx.shape[0], video.timesteps, slice(3, None),
+                self.scale_shift_table, vx.shape[0], video.timesteps, slice(3, 6),
             )
             vx = vx + self.ff(rms_norm(vx, eps=self.norm_eps) * (1 + vscale_mlp) + vshift_mlp) * vgate_mlp
 
         if run_ax:
             assert ax is not None and audio is not None
             ashift_mlp, ascale_mlp, agate_mlp = self.get_ada_values(
-                self.audio_scale_shift_table, ax.shape[0], audio.timesteps, slice(3, None),
+                self.audio_scale_shift_table, ax.shape[0], audio.timesteps, slice(3, 6),
             )
             ax = ax + self.audio_ff(rms_norm(ax, eps=self.norm_eps) * (1 + ascale_mlp) + ashift_mlp) * agate_mlp
 

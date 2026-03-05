@@ -198,6 +198,8 @@ def create_model_from_config(
     config: dict,
     dtype: torch.dtype = torch.bfloat16,
     model_type: LTXModelType = LTXModelType.VideoOnly,
+    apply_gated_attention: bool = False,
+    cross_attention_adaln: bool = False,
 ) -> LTX2Transformer:
     """
     Create LTX2Transformer from config dictionary.
@@ -206,6 +208,8 @@ def create_model_from_config(
         config: Model configuration
         dtype: Model dtype
         model_type: Which variant to create (VideoOnly, AudioVideo, AudioOnly)
+        apply_gated_attention: V2 per-head sigmoid gate on attention output.
+        cross_attention_adaln: V2 AdaLN modulation on text cross-attention.
 
     Returns:
         Initialized model (random weights)
@@ -245,6 +249,8 @@ def create_model_from_config(
         use_middle_indices_grid=True,
         rope_type=rope_type,
         double_precision_rope=config.get("rope_double_precision", True),
+        apply_gated_attention=apply_gated_attention,
+        cross_attention_adaln=cross_attention_adaln,
         **audio_kwargs,
     )
 
@@ -629,3 +635,90 @@ def get_model_info(path: Union[str, Path]) -> dict:
         "estimated_params": estimated_params,
         "estimated_size_bf16_gb": estimated_params * 2 / 1e9,
     }
+
+
+def load_ltx2_transformer_gguf(
+    gguf_path: Union[str, Path],
+    dtype: torch.dtype = torch.bfloat16,
+    device: str = "cpu",
+    video_only: bool = False,
+    model_type: Optional[LTXModelType] = None,
+) -> LTX2Transformer:
+    """Load LTX-2 transformer from a GGUF-quantized checkpoint.
+
+    GGUF weights stay quantized in memory. GGMLLinear layers dequantize
+    per-forward, keeping peak VRAM = all quantized weights + ONE layer's bf16.
+
+    Args:
+        gguf_path: Path to GGUF file (e.g. Q4_K_M from unsloth/LTX-2.3-GGUF).
+        dtype: Computation dtype for non-quantized params.
+        device: Device to load to.
+        video_only: If True, skip audio weights.
+        model_type: Explicit model type override.
+
+    Returns:
+        LTX2Transformer with GGMLLinear layers holding quantized weights.
+    """
+    from llm_dit.quantization.gguf_loader import gguf_sd_loader, detect_v2_from_state_dict
+    from llm_dit.quantization.gguf_linear import replace_linear_with_ggml
+    from llm_dit.utils.meta_init import meta_init
+
+    gguf_path = Path(gguf_path)
+    logger.info(f"Loading GGUF transformer from {gguf_path}")
+
+    # Load GGUF state dict (strips model.diffusion_model. prefix)
+    state_dict = gguf_sd_loader(str(gguf_path))
+    logger.info(f"GGUF state dict: {len(state_dict)} keys")
+
+    # Detect V2 (22B) from state dict keys
+    is_v2 = detect_v2_from_state_dict(state_dict)
+    logger.info(f"Detected model version: {'2.3 (22B)' if is_v2 else '1.0 (19B)'}")
+
+    # Resolve model type
+    if model_type is None:
+        model_type = LTXModelType.VideoOnly if video_only else LTXModelType.AudioVideo
+    video_only = not model_type.is_audio_enabled()
+
+    # Build model config -- GGUF doesn't carry a config.json, use defaults
+    # that match the 22B model when V2, or 19B when V1
+    config = load_config(gguf_path)
+
+    # Build model on meta device to avoid allocating real memory
+    v2_kwargs = {}
+    if is_v2:
+        v2_kwargs["apply_gated_attention"] = True
+        v2_kwargs["cross_attention_adaln"] = True
+
+    with meta_init():
+        model = create_model_from_config(config, dtype, model_type=model_type, **v2_kwargs)
+
+    # Replace all nn.Linear with GGMLLinear (accepts quantized tensors)
+    num_replaced = replace_linear_with_ggml(model)
+    logger.info(f"Replaced {num_replaced} nn.Linear layers with GGMLLinear")
+
+    # Map GGUF keys to our model's key namespace
+    our_state_dict = {}
+    skipped_audio = 0
+    for key, tensor in state_dict.items():
+        if video_only and is_audio_key(key):
+            skipped_audio += 1
+            continue
+        our_key = map_key(key)
+        our_state_dict[our_key] = tensor
+
+    if skipped_audio:
+        logger.info(f"Skipped {skipped_audio} audio keys (video_only={video_only})")
+
+    # Load quantized weights (assign=True preserves GGMLTensor dtype)
+    load_result = model.load_state_dict(our_state_dict, strict=False, assign=True)
+    if load_result.missing_keys:
+        logger.warning(f"Missing keys: {load_result.missing_keys[:10]}... ({len(load_result.missing_keys)} total)")
+    if load_result.unexpected_keys:
+        logger.warning(f"Unexpected keys: {load_result.unexpected_keys[:10]}... ({len(load_result.unexpected_keys)} total)")
+
+    # Move non-quantized params (norms, embeddings) to target device
+    if device != "cpu":
+        model = model.to(device)
+
+    logger.info(f"Loaded GGUF LTX-2 transformer: {num_replaced} quantized layers on {device}")
+    return model

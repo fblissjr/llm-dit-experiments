@@ -443,6 +443,7 @@ class Attention(nn.Module):
         norm_eps: float = 1e-6,
         rope_type: LTXRopeType = LTXRopeType.INTERLEAVED,
         attention_function: AttentionCallable | AttentionFunction = AttentionFunction.DEFAULT,
+        apply_gated_attention: bool = False,
     ) -> None:
         super().__init__()
         self.rope_type = rope_type
@@ -462,6 +463,12 @@ class Attention(nn.Module):
         self.to_q = nn.Linear(query_dim, inner_dim, bias=True)
         self.to_k = nn.Linear(context_dim, inner_dim, bias=True)
         self.to_v = nn.Linear(context_dim, inner_dim, bias=True)
+
+        # Optional per-head gating (V2 / LTX-2.3)
+        if apply_gated_attention:
+            self.to_gate_logits = nn.Linear(query_dim, heads, bias=True)
+        else:
+            self.to_gate_logits = None
 
         # Output projection with Identity placeholder (for dropout if needed)
         self.to_out = nn.Sequential(
@@ -507,6 +514,16 @@ class Attention(nn.Module):
 
         # Compute attention
         out = self.attention_function(q, k, v, self.heads, mask)
+
+        # Apply per-head gating if enabled (V2 / LTX-2.3)
+        if self.to_gate_logits is not None:
+            gate_logits = self.to_gate_logits(x)  # (B, T, H)
+            b, t, _ = out.shape
+            out = out.view(b, t, self.heads, self.dim_head)
+            # 2 * sigmoid(x): zero-init gives identity (2 * 0.5 = 1.0)
+            gates = 2.0 * torch.sigmoid(gate_logits)
+            out = out * gates.unsqueeze(-1)
+            out = out.view(b, t, self.heads * self.dim_head)
 
         return self.to_out(out)
 
