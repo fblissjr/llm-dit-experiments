@@ -232,6 +232,8 @@ class ModelManager:
         self._ltx2_encoder: Any = None
         # LTX-2 cached transformer state dict + config (bf16 pinned, for fast reconstruction)
         self._ltx2_transformer_cache: Optional[dict] = None
+        # LTX-2 GGUF persistent transformer (stays loaded, no cache/reconstruct)
+        self._ltx2_gguf_model: Any = None
         # LTX-2 cached VAE decoder (pinned memory, shuttled to GPU per generation)
         self._ltx2_vae: Any = None
         # LTX-2 cached audio decoder and vocoder (pinned memory, shuttled to GPU)
@@ -377,6 +379,15 @@ class ModelManager:
         (bf16 pinned tensors) ready for fast model reconstruction.
         """
         return self._ltx2_transformer_cache
+
+    @property
+    def ltx2_gguf_model(self) -> Any:
+        """Get persistent LTX-2 GGUF transformer (None if not loaded).
+
+        When set, the model has GGMLLinear layers and stays resident between
+        generations. No cache/reconstruct pattern needed.
+        """
+        return self._ltx2_gguf_model
 
     @property
     def ltx2_vae(self) -> Any:
@@ -746,6 +757,29 @@ class ModelManager:
         del model
         return {"config": config, "state_dict": sd, "video_only": video_only}
 
+    def _preload_ltx2_gguf_transformer(self, gguf_path: str) -> Any:
+        """Load GGUF-quantized transformer as persistent model on CPU.
+
+        Unlike the safetensors path (cache dict + reconstruct per request),
+        GGUF models stay loaded because:
+        - Quantized weights are compact (~13GB Q4_K_M)
+        - LoRA applied per-forward (no weight mutation)
+        - No need to reconstruct from state dict
+
+        Returns:
+            LTX2Transformer with GGMLLinear layers on CPU.
+        """
+        from llm_dit.models.ltx2.loader import load_ltx2_transformer_gguf
+
+        model = load_ltx2_transformer_gguf(
+            gguf_path, dtype=torch.bfloat16, device="cpu",
+            video_only=True,  # TODO: audio support
+        )
+        logger.info(
+            f"  GGUF transformer loaded: persistent model on CPU"
+        )
+        return model
+
     def _pin_model_memory(self, model: torch.nn.Module, label: str) -> int:
         """Pin all parameter and buffer memory for fast DMA shuttle.
 
@@ -858,12 +892,18 @@ class ModelManager:
         encoder_time = time.time() - start
         logger.info(f"[LTX-2] Encoder pre-loaded and pinned in {encoder_time:.1f}s")
 
-        # Pre-load transformer weights (bf16, cached for fast reconstruction)
-        logger.info("[LTX-2] Pre-loading transformer weights for caching...")
+        # Pre-load transformer: GGUF (persistent model) or safetensors (cache dict)
+        gguf_path = ltx2_cfg.gguf_transformer_path if ltx2_cfg else ""
         tf_start = time.time()
-        self._ltx2_transformer_cache = self._preload_ltx2_transformer(model_path, ltx2_cfg)
+        if gguf_path:
+            logger.info(f"[LTX-2] Loading GGUF transformer: {gguf_path}")
+            self._ltx2_gguf_model = self._preload_ltx2_gguf_transformer(gguf_path)
+        else:
+            logger.info("[LTX-2] Pre-loading transformer weights for caching...")
+            self._ltx2_transformer_cache = self._preload_ltx2_transformer(model_path, ltx2_cfg)
         tf_time = time.time() - tf_start
-        logger.info(f"[LTX-2] Transformer weights cached in {tf_time:.1f}s")
+        tf_mode = "GGUF persistent" if gguf_path else "bf16 cache"
+        logger.info(f"[LTX-2] Transformer loaded ({tf_mode}) in {tf_time:.1f}s")
 
         # Pre-load VAE decoder (small, pinned for shuttle)
         logger.info("[LTX-2] Pre-loading VAE decoder for caching...")
@@ -1202,6 +1242,7 @@ class ModelManager:
             "ltx2" in self._pipelines
             or self._ltx2_encoder is not None
             or self._ltx2_transformer_cache is not None
+            or self._ltx2_gguf_model is not None
             or self._ltx2_vae is not None
             or self._ltx2_audio_decoder is not None
             or self._ltx2_vocoder is not None
@@ -1222,6 +1263,12 @@ class ModelManager:
             del self._ltx2_transformer_cache
             self._ltx2_transformer_cache = None
             logger.info("[VRAM] LTX-2 transformer cache released")
+
+        # Release GGUF persistent transformer
+        if self._ltx2_gguf_model is not None:
+            del self._ltx2_gguf_model
+            self._ltx2_gguf_model = None
+            logger.info("[VRAM] LTX-2 GGUF transformer released")
 
         # Release cached VAE
         if self._ltx2_vae is not None:

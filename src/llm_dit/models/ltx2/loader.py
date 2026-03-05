@@ -667,8 +667,8 @@ def load_ltx2_transformer_gguf(
     logger.info(f"Loading GGUF transformer from {gguf_path}")
 
     # Load GGUF state dict (strips model.diffusion_model. prefix)
-    state_dict = gguf_sd_loader(str(gguf_path))
-    logger.info(f"GGUF state dict: {len(state_dict)} keys")
+    state_dict, extra = gguf_sd_loader(str(gguf_path))
+    logger.info(f"GGUF state dict: {len(state_dict)} keys, arch={extra.get('arch_str', 'unknown')}")
 
     # Detect V2 (22B) from state dict keys
     is_v2 = detect_v2_from_state_dict(state_dict)

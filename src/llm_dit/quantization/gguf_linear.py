@@ -37,6 +37,9 @@ class GGMLLinear(nn.Linear):
         self.out_features = out_features
         self.weight = None
         self.bias = None
+        # LoRA per-forward fields (set externally via attach_lora_deltas)
+        self.lora_delta: torch.Tensor | None = None
+        self.lora_scale: float | None = None
 
     def _load_from_state_dict(self, state_dict, prefix, local_metadata, strict, missing_keys, unexpected_keys, error_msgs):
         """Accept GGMLTensors without shape validation."""
@@ -58,13 +61,16 @@ class GGMLLinear(nn.Linear):
     def _get_dequantized_weight(self, dtype: torch.dtype) -> torch.Tensor:
         """Dequantize weight to target dtype. Applies LoRA if attached."""
         if not is_quantized(self.weight):
-            return self.weight.to(dtype)
+            weight = self.weight.to(dtype)
+        else:
+            weight = dequantize_tensor(self.weight, dtype=dtype)
+            # Prevent GGMLTensor from propagating through matmul
+            if isinstance(weight, GGMLTensor):
+                weight = torch.Tensor(weight)
 
-        weight = dequantize_tensor(self.weight, dtype=dtype)
-
-        # Prevent GGMLTensor from propagating through matmul
-        if isinstance(weight, GGMLTensor):
-            weight = torch.Tensor(weight)
+        # Apply LoRA delta if attached (per-forward, no weight mutation)
+        if self.lora_delta is not None and self.lora_scale:
+            weight = weight + self.lora_scale * self.lora_delta.to(dtype)
 
         return weight
 

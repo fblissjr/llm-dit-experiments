@@ -305,6 +305,7 @@ async def ltx2_generate_stream(request: LTX2GenerateRequest, config: ConfigDep, 
                         text_encoder=manager.ltx2_encoder,
                         cached_transformer=manager.ltx2_transformer_cache,
                         cached_vae=manager.ltx2_vae,
+                        gguf_model=manager.ltx2_gguf_model,
                         video_only=video_only,
                         audio_negative_prompt=audio_neg or "",
                         audio_guidance_scale=audio_guidance_scale,
@@ -335,6 +336,7 @@ async def ltx2_generate_stream(request: LTX2GenerateRequest, config: ConfigDep, 
                         text_encoder=manager.ltx2_encoder,
                         cached_transformer=manager.ltx2_transformer_cache,
                         cached_vae=manager.ltx2_vae,
+                        gguf_model=manager.ltx2_gguf_model,
                     )
 
             loop = asyncio.get_event_loop()

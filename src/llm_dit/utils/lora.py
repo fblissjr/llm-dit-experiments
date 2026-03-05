@@ -620,3 +620,130 @@ def parse_lora_spec(spec: str) -> tuple[str, float]:
         scale = 1.0
 
     return path, scale
+
+
+# =============================================================================
+# GGUF-aware LoRA (per-forward, no weight mutation)
+# =============================================================================
+
+
+def is_gguf_model(model: nn.Module) -> bool:
+    """Check if model uses GGMLLinear layers (GGUF quantized)."""
+    from llm_dit.quantization.gguf_linear import GGMLLinear
+    return any(isinstance(m, GGMLLinear) for m in model.modules())
+
+
+def attach_lora_deltas(model: nn.Module, deltas: Dict[str, torch.Tensor], scale: float = 1.0) -> int:
+    """Attach LoRA weight deltas to GGMLLinear layers for per-forward application.
+
+    Unlike fuse_lora_to_base_model(), this does NOT mutate base weights.
+    Deltas are applied during forward() in GGMLLinear._get_dequantized_weight().
+
+    Args:
+        model: Model with GGMLLinear layers.
+        deltas: Dict mapping "module.name.weight" -> delta tensor.
+        scale: Scale factor for all deltas.
+
+    Returns:
+        Number of layers with deltas attached.
+    """
+    from llm_dit.quantization.gguf_linear import GGMLLinear
+
+    named = dict(model.named_modules())
+    count = 0
+    for key, delta in deltas.items():
+        parts = key.rsplit(".", 1)
+        if len(parts) != 2 or parts[1] != "weight":
+            continue
+        module = named.get(parts[0])
+        if module is not None and isinstance(module, GGMLLinear):
+            module.lora_delta = delta
+            module.lora_scale = scale
+            count += 1
+
+    logger.info(f"Attached {count} LoRA deltas (scale={scale}) to GGMLLinear layers")
+    return count
+
+
+def detach_lora_deltas(model: nn.Module) -> int:
+    """Remove all LoRA deltas from GGMLLinear layers.
+
+    Returns:
+        Number of layers cleared.
+    """
+    from llm_dit.quantization.gguf_linear import GGMLLinear
+
+    count = 0
+    for module in model.modules():
+        if isinstance(module, GGMLLinear):
+            if getattr(module, "lora_delta", None) is not None:
+                module.lora_delta = None
+                module.lora_scale = None
+                count += 1
+
+    if count:
+        logger.info(f"Detached LoRA deltas from {count} GGMLLinear layers")
+    return count
+
+
+def load_lora_for_gguf(
+    model: nn.Module,
+    lora_path: Union[str, Path],
+    scale: float = 1.0,
+    device: Optional[Union[str, torch.device]] = None,
+    dtype: Optional[torch.dtype] = None,
+) -> int:
+    """Load a LoRA and attach as per-forward deltas (no weight mutation).
+
+    For GGUF models, LoRA cannot be fused into quantized weights. Instead,
+    deltas are pre-computed (lora_B @ lora_A * scale) and attached to each
+    GGMLLinear layer. Applied during forward() in _get_dequantized_weight().
+
+    Args:
+        model: Model with GGMLLinear layers.
+        lora_path: Path to LoRA .safetensors file.
+        scale: LoRA blend scale.
+        device: Device for delta computation.
+        dtype: Dtype for delta computation.
+
+    Returns:
+        Number of layers with deltas attached.
+    """
+    lora_path = Path(lora_path)
+    if not lora_path.exists():
+        raise FileNotFoundError(f"LoRA file not found: {lora_path}")
+
+    device, dtype = _infer_model_device_dtype(model, device, dtype)
+    logger.info(f"Loading LoRA for GGUF model: {lora_path} (scale={scale})")
+
+    state_dict = load_safetensors(str(lora_path))
+
+    # Convert to standardized format and compute deltas
+    loader = LoRALoader(device=device, dtype=dtype)
+    fmt = loader._detect_format(state_dict)
+
+    deltas: Dict[str, torch.Tensor] = {}
+
+    if fmt == "lokr":
+        lokr_dict = loader._get_lokr_name_dict(state_dict)
+        for name, (w1_key, w2_key) in lokr_dict.items():
+            w1 = state_dict[w1_key].to(device=device, dtype=dtype)
+            w2 = state_dict[w2_key].to(device=device, dtype=dtype)
+            deltas[name + ".weight"] = torch.kron(w1, w2)
+    else:
+        std_sd = loader.convert_state_dict(state_dict)
+        layer_names = {
+            k.replace(".lora_B.weight", "")
+            for k in std_sd if k.endswith(".lora_B.weight")
+        }
+        for name in layer_names:
+            lora_B = std_sd[name + ".lora_B.weight"].to(device=device, dtype=dtype)
+            lora_A = std_sd[name + ".lora_A.weight"].to(device=device, dtype=dtype)
+            if len(lora_B.shape) == 4:
+                lora_B = lora_B.squeeze(3).squeeze(2)
+                lora_A = lora_A.squeeze(3).squeeze(2)
+                deltas[name + ".weight"] = torch.mm(lora_B, lora_A).unsqueeze(2).unsqueeze(3)
+            else:
+                deltas[name + ".weight"] = torch.mm(lora_B, lora_A)
+
+    return attach_lora_deltas(model, deltas, scale=scale)
