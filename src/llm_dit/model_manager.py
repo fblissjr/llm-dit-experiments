@@ -757,7 +757,7 @@ class ModelManager:
         del model
         return {"config": config, "state_dict": sd, "video_only": video_only}
 
-    def _preload_ltx2_gguf_transformer(self, gguf_path: str) -> Any:
+    def _preload_ltx2_gguf_transformer(self, gguf_path: str, model_version: str = "auto") -> Any:
         """Load GGUF-quantized transformer as persistent model on CPU.
 
         Unlike the safetensors path (cache dict + reconstruct per request),
@@ -766,14 +766,27 @@ class ModelManager:
         - LoRA applied per-forward (no weight mutation)
         - No need to reconstruct from state dict
 
+        Args:
+            gguf_path: Path to GGUF file.
+            model_version: "auto", "1.0", or "2.3". Passed to loader for explicit control.
+
         Returns:
             LTX2Transformer with GGMLLinear layers on CPU.
         """
         from llm_dit.models.ltx2.loader import load_ltx2_transformer_gguf
+        from llm_dit.models.ltx2.transformer import LTXModelType
+
+        # Convert model_version to model_type override (None = auto-detect)
+        model_type = None
+        if model_version == "1.0":
+            model_type = LTXModelType.VideoOnly
+        elif model_version == "2.3":
+            model_type = LTXModelType.VideoOnly  # TODO: AudioVideo when audio support lands
 
         model = load_ltx2_transformer_gguf(
             gguf_path, dtype=torch.bfloat16, device="cpu",
             video_only=True,  # TODO: audio support
+            model_type=model_type,
         )
         logger.info(
             f"  GGUF transformer loaded: persistent model on CPU"
@@ -900,7 +913,7 @@ class ModelManager:
         tf_start = time.time()
         if gguf_path:
             logger.info(f"[LTX-2] Loading GGUF transformer: {gguf_path}")
-            self._ltx2_gguf_model = self._preload_ltx2_gguf_transformer(gguf_path)
+            self._ltx2_gguf_model = self._preload_ltx2_gguf_transformer(gguf_path, model_version=model_version)
         else:
             logger.info("[LTX-2] Pre-loading transformer weights for caching...")
             self._ltx2_transformer_cache = self._preload_ltx2_transformer(model_path, ltx2_cfg)

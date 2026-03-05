@@ -15,6 +15,11 @@ Uses [Semantic Versioning](https://semver.org/).
 - **Tests**: 16 GGUF pipeline integration tests, 3 V2 VideoOnly state_dict verification tests (47 total new tests).
 
 ### fixed
+- **V2 prompt_timestep crash**: `TransformerArgsPreprocessor.prepare()` now computes `prompt_timestep` for V2 models via `prompt_adaln_single`. Previously left as None, causing crash in `BasicTransformerBlock._apply_cross_attention_adaln()`.
+- **model_version not passed to encoder**: `_load_ltx2()` now passes `model_version` to both `create_gemma3_encoder()` and `Gemma3Encoder()`. Previously always auto-detected, defeating explicit config control.
+- **model_version not passed to GGUF loader**: `_preload_ltx2_gguf_transformer()` now accepts `model_version` and converts to `LTXModelType` override for the GGUF loader.
+- **LoRA silent failure**: `attach_lora_deltas()` now logs warning when 0 of N delta keys match GGMLLinear layers.
+- **Status endpoint GGUF path**: `ltx2_status()` now checks `gguf_transformer_path` in addition to `model_path`. GGUF-only configurations no longer report `available=false`.
 - **V2 VideoOnly**: `BasicTransformerBlock` now supports V2 features (gated attention, cross-attention AdaLN, 9-param scale_shift_table, prompt_scale_shift_table). Previously V2 flags only worked in `BasicAVTransformerBlock`.
 - **V2 caption_projection**: V2 models use `nn.Identity()` instead of `PixArtAlphaTextProjection` (projection moved to FeatureExtractorV2 encoder). Eliminates 4 missing GGUF keys.
 - **GGUF loader**: Fixed `gguf_sd_loader()` tuple unpacking bug in `load_ltx2_transformer_gguf()`.

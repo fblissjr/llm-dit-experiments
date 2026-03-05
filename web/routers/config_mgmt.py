@@ -853,7 +853,7 @@ async def get_session_config(config: ConfigDep) -> SessionConfigResponse:
 
     return SessionConfigResponse(
         values=ui_values,
-        profile=getattr(config, "current_profile", "default"),
+        profile=getattr(config, "current_profile", None) or "default",
         modified=list(session_modified_fields),
         config_file=getattr(config, "config_path", None),
     )
