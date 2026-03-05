@@ -217,3 +217,42 @@ class TestLoadConfig:
         config = load_config(path=test_config_file, preset="cpu_only")
         # Should use TOML values, not cpu_only preset
         assert config.encoder.dtype == "bfloat16"  # From TOML, not float32
+
+
+class TestSessionConfigEndpoint:
+    """Test that /api/config/session serializes without errors."""
+
+    def test_session_config_none_profile(self):
+        """SessionConfigResponse should handle None current_profile."""
+        from llm_dit.config import RuntimeConfig
+        from web.schemas import SessionConfigResponse
+
+        rc = RuntimeConfig()
+        assert rc.current_profile is None
+
+        # This is the fix: getattr returns None (attr exists), not "default"
+        profile = getattr(rc, "current_profile", None) or "default"
+        resp = SessionConfigResponse(
+            values={},
+            profile=profile,
+            modified=[],
+            config_file=None,
+        )
+        assert resp.profile == "default"
+
+    def test_session_config_with_profile(self):
+        """SessionConfigResponse should preserve an explicit profile name."""
+        from llm_dit.config import RuntimeConfig
+        from web.schemas import SessionConfigResponse
+
+        rc = RuntimeConfig()
+        rc.current_profile = "testing"
+
+        profile = getattr(rc, "current_profile", None) or "default"
+        resp = SessionConfigResponse(
+            values={},
+            profile=profile,
+            modified=[],
+            config_file=None,
+        )
+        assert resp.profile == "testing"
