@@ -939,6 +939,10 @@ export type Ltx2GenerateRequest = {
      */
     audio_negative_prompt?: string | null;
     /**
+     * Audio Guidance Scale
+     */
+    audio_guidance_scale?: number;
+    /**
      * Lora Path
      */
     lora_path?: string | null;
@@ -946,6 +950,10 @@ export type Ltx2GenerateRequest = {
      * Lora Scale
      */
     lora_scale?: number | null;
+    /**
+     * Loras
+     */
+    loras?: Array<string> | null;
     /**
      * Use Two Stage
      */
@@ -962,6 +970,10 @@ export type Ltx2GenerateRequest = {
      * Guidance Scale
      */
     guidance_scale?: number;
+    /**
+     * Stg Enabled
+     */
+    stg_enabled?: boolean;
     /**
      * Stg Scale
      */

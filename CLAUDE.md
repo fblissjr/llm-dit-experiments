@@ -191,6 +191,9 @@ This is a **multi-workstream project**. Work happens in parallel across layers:
 | Memory cleanup | `src/llm_dit/utils/memory.py` | `cleanup_memory()` -- centralized gc.collect + torch.cuda.empty_cache (CUDA guard) |
 | Quant aliases | `src/llm_dit/quantization/__init__.py` | `QUANT_ALIASES` dict -- canonical `"fp8"` -> `"fp8-dynamic"` mapping (single source of truth) |
 | FLUX.2 scheduler | `src/llm_dit/schedulers/flux2_scheduler.py` | `get_schedule()`, `compute_empirical_mu()`, `generalized_time_snr_shift()` |
+| GGUF quantization | `src/llm_dit/quantization/gguf_*.py` | `GGMLLinear` (per-forward dequant), `GGMLTensor`, GGUF loader |
+| V2 Feature Extractor | `src/llm_dit/encoders/gemma3_feature_extractor_v2.py` | Per-token RMSNorm, dual projections (video 4096, audio 2048) |
+| GGUF audit | `scripts/audit_gguf_keys.py` | Validate GGUF keys against model state dict |
 
 ## architecture patterns (post-refactor)
 
@@ -215,6 +218,10 @@ This is a **multi-workstream project**. Work happens in parallel across layers:
 **STG perturbation model:** `PerturbationType`, `PerturbationConfig`, and `BatchedPerturbationConfig` in `av_block.py` define per-sample attention skipping for Spatio-Temporal Guidance. `BasicAVTransformerBlock` uses these to selectively skip cross-modal attention (A2V/V2A) during denoising, enabling separate guidance scales for audio and video streams.
 
 **Audio-video dual-stream:** `BasicAVTransformerBlock` extends `BasicTransformerBlock` with bidirectional cross-modal attention. Three modes: video-only (no audio latents), audio-only (no video latents), dual-stream (both with A2V + V2A cross-attention). Each modality has independent FBCache tracking. Audio connector uses 2048 dim vs video's 4096 dim.
+
+**GGUF persistent model:** Unlike bf16 cache+reconstruct, GGUF models stay loaded persistently (`_ltx2_gguf_model` in ModelManager). LoRA is applied per-forward via `lora_delta`/`lora_scale` on `GGMLLinear` layers without mutating base weights. No cache/reconstruct cycle needed.
+
+**V2 caption_projection identity:** V2 models use `nn.Identity()` for `caption_projection` because projection moved to the encoder (`FeatureExtractorV2`). V2 also adds `prompt_adaln_single` for cross-attention KV-side modulation, computed in `TransformerArgsPreprocessor.prepare()`.
 
 **Frontend logging:** `web/frontend-v2/src/utils/logger.ts` provides namespaced console logging. Factory: `logger('API')` returns `{ debug, info, warn, error }` with `[API]` prefix. Log level controlled by `VITE_LOG_LEVEL` env var (defaults: `debug` in dev, `warn` in prod). All 22 console calls across 8 files migrated -- zero raw `console.*` calls remain outside logger.ts. Filter in DevTools by namespace (e.g., `[Generate]`, `[Model]`, `[Session]`).
 
@@ -298,12 +305,15 @@ For full debugging patterns, see [lessons_learned.md](internal/state/lessons_lea
 | fp8 weights silently become bf16 | `load_state_dict` missing `assign=True` | Mixed-dtype models MUST use `assign=True` to preserve fp8 dtype; without it, tensors are copied into existing bf16 params |
 | LTX-2 encoder None in on-demand mode | `default_pipeline = "none"` skips preload | Router lazy-loads via `manager.load("ltx2")` on first request; check `manager.ltx2_encoder is None` guard |
 | Model construction OOM spike | Missing `meta_init()` wrapper | Wrap `create_model_from_config()` in `meta_init()` context manager + use `assign=True` in `load_state_dict` |
-| 3 pre-existing unit test failures | Not caused by recent changes | `test_resolution_validators.py` (2): snap_to_32 vs snap_to_64 mismatch. `test_pipeline.py` (1): unrelated. Verify with `git stash && uv run pytest tests/unit/ -v` |
+| 4 pre-existing unit test failures | Not caused by recent changes | `test_resolution_validators.py` (2): snap_to_32 vs snap_to_64 mismatch. `test_pipeline.py` (1): unrelated. `test_config_consistency.py` (1): config field drift. Verify with `git stash && uv run pytest tests/unit/ -v` |
 | Generate button disabled silently | Validation error not displayed to user | Check DevTools for `[Generate]` namespace logs; likely stale IndexedDB value exceeds schema min/max |
 | Noisy/garbage LTX-2 output | Compounding optimizations | Disable `ge_gamma`, `fbcache_threshold`, `use_distilled_sigmas` in config.toml; test one at a time. All three together = no CFG + stale cached blocks + amplified velocity = runaway noise |
 | Stale form values from IndexedDB | Schema range changed after values persisted | `getResolvedValues()` clamps automatically; use "Reset Storage" in Settings or clear IndexedDB via DevTools Application tab |
 | Audio keys cause `load_state_dict` failure | Cache created with `audio_enabled=True` but reconstruction defaults to VideoOnly | Cache carries `video_only` flag; reconstruction uses `_reconstruct_transformer_from_cache()` helper |
 | Falsy-zero in dict lookups | `d.get("a") or d.get("b")` skips 0, 0.0, "" | Use `if key in data` pattern; see `_get_camel()` in `scripts/gen.py` |
+| GGUF model shows `available=false` | `gguf_transformer_path` not checked | Verify `[ltx2].gguf_transformer_path` in config.toml points to valid .gguf file |
+| V2 cross-attention produces NaN/crash | `prompt_timestep` not populated | Fixed in v0.9.19: `TransformerArgsPreprocessor.prepare()` now computes `prompt_timestep` when `prompt_adaln_single` exists |
+| LoRA silently not applied with GGUF | Key mismatch in `attach_lora_deltas` | Check logs for "0 of N delta keys matched" warning |
 
 ## quick test commands
 
@@ -332,6 +342,12 @@ uv run pytest tests/unit/test_ltx2_audio_vae.py tests/unit/test_ltx2_av_transfor
 
 # Quantization tests (alias, detection, recommended method)
 uv run pytest tests/unit/test_ltx2_resolve_quantize.py tests/unit/test_quantization.py -v
+
+# V2 architecture + GGUF pipeline integration
+uv run pytest tests/unit/test_v2_architecture.py tests/unit/test_gguf_pipeline_integration.py -v
+
+# GGUF E2E smoke test (GPU + GGUF checkpoint)
+uv run pytest tests/e2e/api/test_ltx2_gguf_smoke.py -v -s
 
 # CLI-over-API tool (gen.py arg parsing, body building, SSE handling)
 uv run pytest tests/unit/test_gen_cli.py -v
