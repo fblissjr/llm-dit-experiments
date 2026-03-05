@@ -70,6 +70,7 @@ def create_gemma3_encoder(
     dtype: torch.dtype = torch.bfloat16,
     max_sequence_length: int = 256,
     use_connector: bool = True,
+    model_version: str = "auto",
 ) -> "Gemma3Encoder":
     """
     Factory function to create Gemma3 encoder with specified variant.
@@ -141,6 +142,7 @@ def create_gemma3_encoder(
             dtype=dtype,
             max_sequence_length=max_sequence_length,
             use_connector=use_connector,
+            model_version=model_version,
         )
     elif variant == "fp8":
         return _load_fp8_encoder(
@@ -151,6 +153,7 @@ def create_gemma3_encoder(
             dtype=dtype,
             max_sequence_length=max_sequence_length,
             use_connector=use_connector,
+            model_version=model_version,
         )
     elif variant == "fp8-safetensors":
         return _load_fp8_safetensors_encoder(
@@ -162,6 +165,7 @@ def create_gemma3_encoder(
             dtype=dtype,
             max_sequence_length=max_sequence_length,
             use_connector=use_connector,
+            model_version=model_version,
         )
     elif variant == "8bit":
         return _load_8bit_encoder(
@@ -172,6 +176,7 @@ def create_gemma3_encoder(
             dtype=dtype,
             max_sequence_length=max_sequence_length,
             use_connector=use_connector,
+            model_version=model_version,
         )
     elif variant == "q4-qat":
         return _load_q4_qat_encoder(
@@ -182,6 +187,7 @@ def create_gemma3_encoder(
             dtype=dtype,
             max_sequence_length=max_sequence_length,
             use_connector=use_connector,
+            model_version=model_version,
         )
     else:
         raise ValueError(f"Unknown variant: {variant}. Valid: bf16, fp8, fp8-safetensors, 8bit, q4-qat")
@@ -195,6 +201,7 @@ def _load_bf16_encoder(
     dtype: torch.dtype,
     max_sequence_length: int,
     use_connector: bool,
+    model_version: str = "auto",
 ) -> "Gemma3Encoder":
     """Load standard bf16 Gemma3 encoder."""
     from llm_dit.encoders.gemma3 import Gemma3Encoder
@@ -208,6 +215,7 @@ def _load_bf16_encoder(
         connectors_path=connectors_path,
         tokenizer_path=tokenizer_path,
         use_connector=use_connector,
+        model_version=model_version,
     )
     encoder._load_model()
 
@@ -223,6 +231,7 @@ def _load_fp8_encoder(
     dtype: torch.dtype,
     max_sequence_length: int,
     use_connector: bool,
+    model_version: str = "auto",
 ) -> "Gemma3Encoder":
     """Load Gemma3 encoder with native fp8 layerwise casting.
 
@@ -249,6 +258,7 @@ def _load_fp8_encoder(
         connectors_path=connectors_path,
         tokenizer_path=tokenizer_path,
         use_connector=use_connector,
+        model_version=model_version,
     )
     encoder._load_model()
     _log_memory_usage("After bf16 load on CPU")
@@ -284,6 +294,7 @@ def _load_fp8_safetensors_encoder(
     dtype: torch.dtype,
     max_sequence_length: int,
     use_connector: bool,
+    model_version: str = "auto",
 ) -> "Gemma3Encoder":
     """Load Gemma3 encoder from pre-converted fp8 safetensors checkpoint.
 
@@ -444,6 +455,7 @@ def _load_fp8_safetensors_encoder(
     encoder._is_offloaded = False
     encoder._is_pinned = False
     encoder._pinned_shadows = {}
+    encoder._model_version = model_version
 
     _log_memory_usage("fp8-safetensors encoder loaded")
     return encoder
@@ -457,6 +469,7 @@ def _load_8bit_encoder(
     dtype: torch.dtype,
     max_sequence_length: int,
     use_connector: bool,
+    model_version: str = "auto",
 ) -> "Gemma3Encoder":
     """
     Load 8-bit quantized Gemma3 encoder using torchao.
@@ -511,6 +524,7 @@ def _load_8bit_encoder(
             connectors_path=connectors_path,
             tokenizer_path=tokenizer_path,
             use_connector=use_connector,
+            model_version=model_version,
         )
         encoder._load_model()
 
@@ -647,6 +661,7 @@ def _load_8bit_encoder(
         encoder._embeddings_connector = embeddings_connector
         encoder._is_loaded = True
         encoder._is_offloaded = False
+        encoder._model_version = model_version
 
     _log_memory_usage("8-bit encoder loaded")
     return encoder
@@ -660,6 +675,7 @@ def _load_q4_qat_encoder(
     dtype: torch.dtype,
     max_sequence_length: int,
     use_connector: bool,
+    model_version: str = "auto",
 ) -> "Gemma3Encoder":
     """
     Load Q4 QAT pre-quantized Gemma3 model.
@@ -800,6 +816,7 @@ def _load_q4_qat_encoder(
     encoder._embeddings_connector = embeddings_connector
     encoder._is_loaded = True
     encoder._is_offloaded = False
+    encoder._model_version = model_version
 
     _log_memory_usage("Q4 QAT encoder loaded")
     return encoder

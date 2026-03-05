@@ -1,6 +1,6 @@
-# agent context (v0.9.17)
+# agent context (v0.9.19)
 
-*last updated: 2026-03-03*
+*last updated: 2026-03-05*
 
 Quick reference for LLM agents. Read only what you need.
 

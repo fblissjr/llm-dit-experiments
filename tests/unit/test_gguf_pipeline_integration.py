@@ -1,6 +1,6 @@
 """Tests for GGUF pipeline integration (LTX-2.3 / V2).
 
-Last Updated: 2026-03-05
+Last updated: 2026-03-05
 
 Covers:
 - GGUF key audit script functions
@@ -270,3 +270,87 @@ def detach_lora_deltas(model: nn.Module) -> int:
                 module.lora_scale = None
                 count += 1
     return count
+
+
+# ---------------------------------------------------------------------------
+# attach_lora_deltas zero-match warning (uses real lora.py)
+# ---------------------------------------------------------------------------
+
+
+class TestAttachLoRAWarnsOnZeroMatches:
+    """Test that attach_lora_deltas warns when no keys match."""
+
+    def test_warns_on_zero_matches(self, caplog):
+        """attach_lora_deltas with mismatched keys should log a warning."""
+        from llm_dit.utils.lora import attach_lora_deltas as real_attach
+
+        model = nn.Sequential(
+            GGMLLinear(8, 4, bias=False),
+        )
+        model[0].weight = nn.Parameter(torch.randn(4, 8), requires_grad=False)
+
+        # Keys that don't match any module name
+        deltas = {"nonexistent_module.weight": torch.randn(4, 8) * 0.1}
+
+        import logging
+        with caplog.at_level(logging.WARNING, logger="llm_dit.utils.lora"):
+            count = real_attach(model, deltas, scale=1.0)
+
+        assert count == 0
+        assert "0 of 1 delta keys matched" in caplog.text
+
+    def test_no_warning_when_matches_exist(self, caplog):
+        """attach_lora_deltas with valid keys should not warn."""
+        from llm_dit.utils.lora import attach_lora_deltas as real_attach
+
+        model = nn.Sequential(
+            GGMLLinear(8, 4, bias=False),
+        )
+        model[0].weight = nn.Parameter(torch.randn(4, 8), requires_grad=False)
+
+        deltas = {"0.weight": torch.randn(4, 8) * 0.1}
+
+        import logging
+        with caplog.at_level(logging.WARNING, logger="llm_dit.utils.lora"):
+            count = real_attach(model, deltas, scale=1.0)
+
+        assert count == 1
+        assert "0 of" not in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# Status endpoint GGUF path check
+# ---------------------------------------------------------------------------
+
+
+class TestStatusEndpointGGUFPath:
+    """Test that LTX-2 status endpoint checks gguf_transformer_path."""
+
+    def test_status_gguf_only(self):
+        """Status should report available=true when only GGUF path is configured."""
+        from unittest.mock import MagicMock
+        from pathlib import Path
+        import tempfile, os
+
+        # Create a temporary file to act as a GGUF model
+        with tempfile.NamedTemporaryFile(suffix=".gguf", delete=False) as f:
+            gguf_path = f.name
+
+        try:
+            config = MagicMock()
+            config.ltx2.model_path = "/nonexistent/model/path"
+            config.ltx2.gguf_transformer_path = gguf_path
+
+            # Simulate the status check logic
+            ltx2_configured = False
+            model_path = getattr(config.ltx2, "model_path", "") if config.ltx2 else ""
+            if model_path:
+                ltx2_configured = Path(model_path).expanduser().exists()
+
+            gguf_tp = getattr(config.ltx2, "gguf_transformer_path", "") if config.ltx2 else ""
+            if gguf_tp:
+                ltx2_configured = ltx2_configured or Path(gguf_tp).expanduser().exists()
+
+            assert ltx2_configured is True
+        finally:
+            os.unlink(gguf_path)

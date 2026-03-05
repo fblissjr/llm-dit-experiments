@@ -869,6 +869,7 @@ class ModelManager:
 
         logger.info(f"[LTX-2] Pre-loading Gemma3 encoder (variant={gemma_variant})...")
 
+        model_version = ltx2_cfg.model_version if ltx2_cfg else "auto"
         if gemma_variant != "bf16":
             from llm_dit.encoders.gemma3_variants import create_gemma3_encoder
             self._ltx2_encoder = create_gemma3_encoder(
@@ -877,6 +878,7 @@ class ModelManager:
                 text_encoder_path=text_encoder_path,
                 device="cpu",  # Load to CPU, shuttle to GPU per-request
                 dtype=torch.bfloat16,
+                model_version=model_version,
             )
         else:
             from llm_dit.encoders.gemma3 import Gemma3Encoder
@@ -884,6 +886,7 @@ class ModelManager:
                 model_id=text_encoder_path,
                 device="cpu",
                 dtype=torch.bfloat16,
+                model_version=model_version,
             )
             self._ltx2_encoder._load_model()
 

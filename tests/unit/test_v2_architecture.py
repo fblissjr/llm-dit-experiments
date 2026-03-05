@@ -1,11 +1,16 @@
 """Tests for LTX-2.3 (V2) architecture features.
 
+Last Updated: 2026-03-05
+
 Verifies V2-specific additions:
 - Gated attention (per-head sigmoid gate)
 - Cross-attention AdaLN (9-param scale_shift_table)
 - FeatureExtractorV2 (per-token RMSNorm, dual projections)
 - V2 detection from state dict keys
 - GGUF infrastructure (GGMLTensor, GGMLLinear)
+- TransformerArgsPreprocessor prompt_timestep computation (V2)
+
+Run with: uv run pytest tests/unit/test_v2_architecture.py -v
 """
 
 import torch
@@ -337,3 +342,91 @@ class TestCreateModelV2:
         model = create_model_from_config(config, torch.bfloat16)
         assert model.apply_gated_attention is False
         assert model.cross_attention_adaln is False
+
+
+class TestV2PreparePromptTimestep:
+    """Test that TransformerArgsPreprocessor computes prompt_timestep for V2."""
+
+    # inner_dim = heads * d_head = 4 * 32 = 128
+    # V2 uses Identity for caption_projection, so caption_channels must equal cross_attention_dim
+    _CONFIG = {
+        "num_attention_heads": 4,
+        "attention_head_dim": 32,
+        "in_channels": 16,
+        "out_channels": 16,
+        "num_layers": 2,
+        "cross_attention_dim": 128,
+        "caption_channels": 128,  # Must match cross_attention_dim for V2 Identity projection
+    }
+
+    def _make_v2_model(self):
+        """Create a small V2 model for testing."""
+        return create_model_from_config(
+            dict(self._CONFIG), torch.float32,
+            apply_gated_attention=True,
+            cross_attention_adaln=True,
+        )
+
+    def _make_v1_model(self):
+        """Create a small V1 model for testing."""
+        return create_model_from_config(dict(self._CONFIG), torch.float32)
+
+    def test_v2_prepare_sets_prompt_timestep(self):
+        """V2 preprocessor must return non-None prompt_timestep."""
+        from llm_dit.models.ltx2.components import Modality
+
+        model = self._make_v2_model()
+        seq_len = 32
+        modality = Modality(
+            latent=torch.randn(1, seq_len, 16),
+            context=torch.randn(1, 8, 128),
+            context_mask=torch.ones(1, 8),
+            positions=torch.zeros(1, 3, seq_len, 2),
+            timesteps=torch.tensor([0.5]),
+            enabled=True,
+        )
+        args = model.args_preprocessor.prepare(modality)
+        assert args.prompt_timestep is not None
+        assert args.prompt_timestep.ndim == 3  # [B, T', D]
+
+    def test_v1_prepare_prompt_timestep_is_none(self):
+        """V1 preprocessor must leave prompt_timestep=None."""
+        from llm_dit.models.ltx2.components import Modality
+
+        model = self._make_v1_model()
+        seq_len = 32
+        modality = Modality(
+            latent=torch.randn(1, seq_len, 16),
+            context=torch.randn(1, 8, 128),
+            context_mask=torch.ones(1, 8),
+            positions=torch.zeros(1, 3, seq_len, 2),
+            timesteps=torch.tensor([0.5]),
+            enabled=True,
+        )
+        args = model.args_preprocessor.prepare(modality)
+        assert args.prompt_timestep is None
+
+    def test_v2_forward_no_crash(self):
+        """V2 model forward pass should complete without error."""
+        from llm_dit.models.ltx2.components import Modality
+
+        model = self._make_v2_model()
+        # Initialize weights so forward doesn't crash on uninitialized params
+        for p in model.parameters():
+            if p.data.is_floating_point() and p.data.ndim >= 2:
+                torch.nn.init.xavier_uniform_(p.data)
+            elif p.data.is_floating_point():
+                torch.nn.init.zeros_(p.data)
+
+        seq_len = 32
+        modality = Modality(
+            latent=torch.randn(1, seq_len, 16),
+            context=torch.randn(1, 8, 128),
+            context_mask=torch.ones(1, 8),
+            positions=torch.zeros(1, 3, seq_len, 2),
+            timesteps=torch.tensor([0.5]),
+            enabled=True,
+        )
+        video_out, audio_out = model(video=modality)
+        assert video_out is not None
+        assert audio_out is None

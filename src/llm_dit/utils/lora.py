@@ -661,7 +661,13 @@ def attach_lora_deltas(model: nn.Module, deltas: Dict[str, torch.Tensor], scale:
             module.lora_scale = scale
             count += 1
 
-    logger.info(f"Attached {count} LoRA deltas (scale={scale}) to GGMLLinear layers")
+    if count == 0 and deltas:
+        logger.warning(
+            f"attach_lora_deltas: 0 of {len(deltas)} delta keys matched GGMLLinear layers. "
+            "LoRA will NOT be applied. Check key format matches model module names."
+        )
+    else:
+        logger.info(f"Attached {count} LoRA deltas (scale={scale}) to GGMLLinear layers")
     return count
 
 

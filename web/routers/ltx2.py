@@ -149,6 +149,10 @@ async def ltx2_status(config: ConfigDep) -> LTX2StatusResponse:
     if model_path:
         ltx2_configured = Path(model_path).expanduser().exists()
 
+    gguf_path = getattr(config.ltx2, "gguf_transformer_path", "") if config.ltx2 else ""
+    if gguf_path:
+        ltx2_configured = ltx2_configured or Path(gguf_path).expanduser().exists()
+
     return LTX2StatusResponse(
         available=ltx2_configured,
         loaded=False,

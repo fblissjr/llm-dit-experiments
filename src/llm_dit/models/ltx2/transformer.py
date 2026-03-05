@@ -213,6 +213,7 @@ class TransformerArgsPreprocessor:
         double_precision_rope: bool,
         positional_embedding_theta: float,
         rope_type: LTXRopeType,
+        prompt_adaln_single: Optional[AdaLayerNormSingle] = None,
     ) -> None:
         self.patchify_proj = patchify_proj
         self.adaln = adaln
@@ -225,6 +226,7 @@ class TransformerArgsPreprocessor:
         self.double_precision_rope = double_precision_rope
         self.positional_embedding_theta = positional_embedding_theta
         self.rope_type = rope_type
+        self.prompt_adaln_single = prompt_adaln_single
 
     def _prepare_timestep(
         self,
@@ -318,9 +320,10 @@ class TransformerArgsPreprocessor:
     def prepare(self, modality: Modality) -> TransformerArgs:
         """Preprocess modality into transformer arguments."""
         x = self.patchify_proj(modality.latent)
+        batch_size = x.shape[0]
         timestep, embedded_timestep = self._prepare_timestep(
             modality.timesteps,
-            x.shape[0],
+            batch_size,
             modality.latent.dtype
         )
         context, attention_mask = self._prepare_context(
@@ -338,6 +341,16 @@ class TransformerArgsPreprocessor:
             x_dtype=modality.latent.dtype,
         )
 
+        # V2: compute prompt_timestep for cross-attention KV-side AdaLN
+        prompt_timestep = None
+        if self.prompt_adaln_single is not None:
+            scaled_ts = modality.timesteps * self.timestep_scale_multiplier
+            prompt_timestep, _ = self.prompt_adaln_single(
+                scaled_ts.flatten(),
+                hidden_dtype=modality.latent.dtype,
+            )
+            prompt_timestep = prompt_timestep.view(batch_size, -1, prompt_timestep.shape[-1])
+
         return TransformerArgs(
             x=x,
             context=context,
@@ -349,6 +362,7 @@ class TransformerArgsPreprocessor:
             cross_scale_shift_timestep=None,
             cross_gate_timestep=None,
             enabled=modality.enabled,
+            prompt_timestep=prompt_timestep,
         )
 
 
@@ -745,6 +759,7 @@ class LTX2Transformer(nn.Module):
             double_precision_rope=self.double_precision_rope,
             positional_embedding_theta=self.positional_embedding_theta,
             rope_type=self.rope_type,
+            prompt_adaln_single=self.prompt_adaln_single,
         )
 
     def _init_audio_preprocessor(self) -> None:
@@ -761,6 +776,7 @@ class LTX2Transformer(nn.Module):
             double_precision_rope=self.double_precision_rope,
             positional_embedding_theta=self.positional_embedding_theta,
             rope_type=self.rope_type,
+            prompt_adaln_single=self.audio_prompt_adaln_single,
         )
 
     def _init_transformer_blocks(
