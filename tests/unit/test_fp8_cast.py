@@ -146,6 +146,72 @@ class TestFP8CastLoRAIntegration:
         assert fp8_count == 1, f"Expected 1 fp8 param after .to(cpu), got {fp8_count}"
 
 
+class TestPatchedForwardSurvivesLoadStateDict:
+    """Verify that amend_forward_with_upcast closures survive load_state_dict(assign=True).
+
+    This is the key assumption behind removing the redundant amend_forward_with_upcast
+    call from _apply_distilled_lora_fp8. If this test fails, the simplify was wrong
+    and fp8 models will produce garbage after distilled LoRA application.
+    """
+
+    def test_patched_forward_survives_assign_true(self):
+        """Forward patch should still work after load_state_dict(assign=True)."""
+        from llm_dit.quantization.fp8_cast import amend_forward_with_upcast
+
+        model = nn.Sequential(nn.Linear(32, 64, bias=False))
+        model[0].weight.data = model[0].weight.data.to(torch.float8_e4m3fn)
+
+        # Patch the forward
+        patched = amend_forward_with_upcast(model)
+        assert patched == 1
+
+        # Verify forward works before load_state_dict
+        x = torch.randn(2, 32, dtype=torch.bfloat16)
+        y_before = model(x)
+        assert y_before.dtype == torch.bfloat16
+
+        # Now replace parameters via load_state_dict(assign=True) -- same as
+        # what _apply_distilled_lora_fp8 does after fusing LoRA deltas
+        new_sd = {"0.weight": torch.randn(64, 32, dtype=torch.bfloat16).to(torch.float8_e4m3fn)}
+        model.load_state_dict(new_sd, assign=True)
+
+        # The patched forward should STILL work -- closures access layer.weight
+        # at call time, so they pick up the new parameter automatically
+        y_after = model(x)
+        assert y_after.dtype == torch.bfloat16, (
+            f"Patched forward broken after load_state_dict(assign=True): got {y_after.dtype}"
+        )
+        assert y_after.shape == (2, 64)
+
+        # Weight should still be fp8
+        assert model[0].weight.dtype == torch.float8_e4m3fn
+
+    def test_patched_forward_uses_new_weights(self):
+        """After load_state_dict(assign=True), forward should use the NEW weights."""
+        from llm_dit.quantization.fp8_cast import amend_forward_with_upcast
+
+        model = nn.Sequential(nn.Linear(32, 64, bias=False))
+        # Use zeros so output is deterministic
+        model[0].weight.data = torch.zeros(64, 32, dtype=torch.bfloat16).to(torch.float8_e4m3fn)
+
+        amend_forward_with_upcast(model)
+
+        x = torch.ones(1, 32, dtype=torch.bfloat16)
+        y_zeros = model(x)
+        assert torch.allclose(y_zeros, torch.zeros(1, 64, dtype=torch.bfloat16))
+
+        # Replace with ones -- output should change
+        new_sd = {"0.weight": torch.ones(64, 32, dtype=torch.bfloat16).to(torch.float8_e4m3fn)}
+        model.load_state_dict(new_sd, assign=True)
+
+        y_ones = model(x)
+        # Each output neuron = sum of 32 ones = 32.0
+        expected = torch.full((1, 64), 32.0, dtype=torch.bfloat16)
+        assert torch.allclose(y_ones, expected, atol=0.5), (
+            f"Forward not using new weights: got {y_ones[0, :4]}, expected ~32.0"
+        )
+
+
 class TestFP8CastDistilledLoRA:
     """Test distilled LoRA on fp8-cast models (Stage 2 fix)."""
 
