@@ -235,13 +235,17 @@ class TestLTX2ReferenceRepo:
     def test_constants_match_reference_repo(self):
         """Our constants match the official LTX-2 reference repo.
 
-        Parses the constants file directly (via AST) instead of importing,
+        Parses the constants file directly (via regex) instead of importing,
         because importing ltx_pipelines triggers ltx_core which may not be
         installed in this environment.
+
+        The reference repo uses a PipelineParams dataclass with defaults,
+        then overrides via `LTX_2_3_PARAMS = replace(...)`.
         """
-        import ast
+        import re
 
         from tests.constants.ltx2 import (
+            REFERENCE_CFG,
             REFERENCE_FPS,
             REFERENCE_FRAMES,
             REFERENCE_HEIGHT,
@@ -263,39 +267,37 @@ class TestLTX2ReferenceRepo:
         )
 
         source = constants_path.read_text()
-        tree = ast.parse(source)
 
-        # Extract top-level assignments
-        ref_values = {}
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Assign):
-                for target in node.targets:
-                    if isinstance(target, ast.Name) and isinstance(node.value, ast.Constant):
-                        ref_values[target.id] = node.value.value
+        # Extract PipelineParams dataclass field defaults (e.g. "seed: int = 10")
+        def _extract_field(name: str, cast=int):
+            m = re.search(rf"{name}\s*:\s*\w+\s*=\s*([0-9.]+)", source)
+            assert m, f"Could not find {name} in reference constants"
+            return cast(m.group(1))
 
-        assert REFERENCE_HEIGHT == ref_values["DEFAULT_1_STAGE_HEIGHT"]
-        assert REFERENCE_WIDTH == ref_values["DEFAULT_1_STAGE_WIDTH"]
-        assert REFERENCE_FRAMES == ref_values["DEFAULT_NUM_FRAMES"]
-        assert REFERENCE_SEED == ref_values["DEFAULT_SEED"]
-        assert REFERENCE_STEPS == ref_values["DEFAULT_NUM_INFERENCE_STEPS"]
-        assert REFERENCE_FPS == ref_values["DEFAULT_FRAME_RATE"]
+        assert REFERENCE_HEIGHT == _extract_field("stage_1_height")
+        assert REFERENCE_WIDTH == _extract_field("stage_1_width")
+        assert REFERENCE_FRAMES == _extract_field("num_frames")
+        assert REFERENCE_SEED == _extract_field("seed")
+        assert REFERENCE_FPS == _extract_field("frame_rate", cast=float)
 
-        # CFG scale is inside MultiModalGuiderParams(...) call -- extract via AST
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Assign):
-                for target in node.targets:
-                    if (
-                        isinstance(target, ast.Name)
-                        and target.id == "DEFAULT_VIDEO_GUIDER_PARAMS"
-                        and isinstance(node.value, ast.Call)
-                    ):
-                        for kw in node.value.keywords:
-                            if kw.arg == "cfg_scale" and isinstance(kw.value, ast.Constant):
-                                from tests.constants.ltx2 import REFERENCE_CFG
+        # num_inference_steps is overridden in LTX_2_3_PARAMS = replace(...)
+        # Find the replace() call and extract the overridden value
+        replace_match = re.search(
+            r"LTX_2_3_PARAMS\s*=\s*replace\(.*?num_inference_steps\s*=\s*(\d+)",
+            source,
+            re.DOTALL,
+        )
+        assert replace_match, "Could not find num_inference_steps in LTX_2_3_PARAMS"
+        assert REFERENCE_STEPS == int(replace_match.group(1))
 
-                                assert REFERENCE_CFG == kw.value.value
-                                return
-        pytest.fail("Could not find cfg_scale in DEFAULT_VIDEO_GUIDER_PARAMS")
+        # CFG scale is inside MultiModalGuiderParams(...) in PipelineParams defaults
+        cfg_match = re.search(
+            r"video_guider_params.*?cfg_scale\s*=\s*([0-9.]+)",
+            source,
+            re.DOTALL,
+        )
+        assert cfg_match, "Could not find cfg_scale in video_guider_params"
+        assert REFERENCE_CFG == float(cfg_match.group(1))
 
 
 class TestConfigTomlExample:

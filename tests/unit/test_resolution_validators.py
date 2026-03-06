@@ -4,7 +4,7 @@ Resolution validator tests for Pydantic request schemas and dataclass configs.
 last updated: 2026-02-07
 
 Tests the @field_validator snapping on Flux2GenerateRequest (mod 16),
-LTX2GenerateRequest (mod 32), and __post_init__ snapping on
+LTX2GenerateRequest (mod 64), and __post_init__ snapping on
 Flux2GenerationConfig. Pydantic Field(ge=, le=) constraints run BEFORE
 field_validators, so out-of-range inputs are rejected by Pydantic, not
 snapped.
@@ -87,31 +87,31 @@ class TestFlux2RequestSnapping:
 
 
 # ---------------------------------------------------------------------------
-# LTX-2 Pydantic request -- snap to 32 (within 256-1280 range)
+# LTX-2 Pydantic request -- snap to 64 (within 256-1536 / 256-1024 range)
 # ---------------------------------------------------------------------------
 
 class TestLTX2RequestSnapping:
-    """Tests for LTX2GenerateRequest width/height snap_to_32 validator."""
+    """Tests for LTX2GenerateRequest width/height snap_to_64 validator."""
 
-    @pytest.mark.parametrize("value", [256, 512, 768, 1024, 1280])
+    @pytest.mark.parametrize("value", [256, 512, 768, 1024])
     def test_valid_multiples_unchanged(self, value: int):
-        """Values already multiples of 32 should pass through unchanged."""
+        """Values already multiples of 64 should pass through unchanged."""
         req = LTX2GenerateRequest(prompt="test", width=value, height=value)
         assert req.width == value
         assert req.height == value
 
     @pytest.mark.parametrize("input_val,expected", [
-        # 1000/32=31.25, round=31, 31*32=992
-        (1000, 992),
-        # 1017/32=31.78125, round=32, 32*32=1024
+        # 1000/64=15.625, round=16 (banker's: half-to-even), 16*64=1024
+        (1000, 1024),
+        # 1017/64=15.890625, round=16, 16*64=1024
         (1017, 1024),
-        # 500/32=15.625, round=16 (banker's: half-to-even), 16*32=512
+        # 500/64=7.8125, round=8 (banker's: half-to-even), 8*64=512
         (500, 512),
-        # 780/32=24.375, round=24, 24*32=768
+        # 780/64=12.1875, round=12, 12*64=768
         (780, 768),
     ])
-    def test_snap_to_nearest_32(self, input_val: int, expected: int):
-        """Non-multiples of 32 should snap to nearest multiple."""
+    def test_snap_to_nearest_64(self, input_val: int, expected: int):
+        """Non-multiples of 64 should snap to nearest multiple."""
         req = LTX2GenerateRequest(prompt="test", width=input_val, height=512)
         assert req.width == expected
 
@@ -121,7 +121,7 @@ class TestLTX2RequestSnapping:
             LTX2GenerateRequest(prompt="test", width=100, height=512)
 
     def test_above_max_rejected(self):
-        """Values above 1280 are rejected by Pydantic Field(le=1280)."""
+        """Values above 1536 (width) / 1024 (height) are rejected."""
         with pytest.raises(ValidationError):
             LTX2GenerateRequest(prompt="test", width=2000, height=512)
 
@@ -182,12 +182,12 @@ class TestCrossPipelineConsistency:
         assert req.width % 16 == 0, f"width {req.width} not multiple of 16"
         assert req.height % 16 == 0, f"height {req.height} not multiple of 16"
 
-    @pytest.mark.parametrize("input_val", [999, 1001, 777, 513, 300])
-    def test_ltx2_always_produces_mod_32(self, input_val: int):
-        """LTX-2 output should always be a multiple of 32."""
+    @pytest.mark.parametrize("input_val", [999, 777, 513, 300])
+    def test_ltx2_always_produces_mod_64(self, input_val: int):
+        """LTX-2 output should always be a multiple of 64."""
         req = LTX2GenerateRequest(prompt="test", width=input_val, height=input_val)
-        assert req.width % 32 == 0, f"width {req.width} not multiple of 32"
-        assert req.height % 32 == 0, f"height {req.height} not multiple of 32"
+        assert req.width % 64 == 0, f"width {req.width} not multiple of 64"
+        assert req.height % 64 == 0, f"height {req.height} not multiple of 64"
 
     @pytest.mark.parametrize("input_val", [999, 1001, 777, 513, 100, 3000])
     def test_flux2_config_always_produces_mod_16(self, input_val: int):

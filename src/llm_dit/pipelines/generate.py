@@ -77,6 +77,167 @@ def _resolve_quantize(quantize: str) -> tuple[bool, str]:
     return True, precision
 
 
+def _normalize_lora_args(
+    lora_path: Optional[Union[str, Path, List[Union[str, Path]]]],
+    lora_scale: Optional[Union[float, List[float]]],
+) -> tuple[Optional[List[str]], Optional[List[float]]]:
+    """Normalize LoRA path/scale args into parallel lists.
+
+    Converts the flexible API-facing args (single or list, str or Path) into
+    canonical (list[str], list[float]) form. Also validates length consistency.
+
+    Returns:
+        (paths, scales): Both None if no LoRA, or parallel lists of equal length.
+    """
+    if lora_path is None:
+        return None, None
+
+    if isinstance(lora_path, (str, Path)):
+        paths = [str(lora_path)]
+    else:
+        paths = [str(p) for p in lora_path]
+
+    if lora_scale is None:
+        scales = [0.8] * len(paths)
+    elif isinstance(lora_scale, (int, float)):
+        scales = [float(lora_scale)] * len(paths)
+    else:
+        scales = list(lora_scale)
+
+    if len(paths) != len(scales):
+        raise ValueError(
+            f"Number of LoRA paths ({len(paths)}) must match "
+            f"number of scales ({len(scales)})"
+        )
+
+    return paths, scales
+
+
+def _apply_distilled_lora_fp8(
+    model: "LTX2Transformer",
+    lora_path: str,
+    scale: float,
+) -> None:
+    """Apply distilled LoRA to a live model with native fp8 weights.
+
+    Uses state-dict-level fusion: extract state dict, fuse LoRA deltas,
+    reload with assign=True, then re-patch forwards for per-forward upcast.
+    Same pattern as cache reconstruction but on a live model.
+    """
+    import itertools
+
+    from llm_dit.quantization.fp8_cast import amend_forward_with_upcast
+    from llm_dit.utils.lora import fuse_lora_to_state_dict
+
+    sd = model.state_dict()
+    sd = fuse_lora_to_state_dict(sd, [lora_path], [scale])
+    model.load_state_dict(sd, assign=True)
+    patched = amend_forward_with_upcast(model)
+    logger.info(f"FP8-cast distilled LoRA: {patched} layers re-patched after sd-level fusion")
+
+
+def _load_transformer_and_lora(
+    *,
+    gguf_model: Optional["LTX2Transformer"],
+    cached_transformer: Optional[dict],
+    model_path: Path,
+    transformer_file: str,
+    dtype: torch.dtype,
+    transformer_device: str,
+    effective_quantize: bool,
+    effective_precision: str,
+    granularity: str,
+    lora_paths: Optional[List[str]],
+    lora_scales: Optional[List[float]],
+    video_only: bool = True,
+) -> tuple["LTX2Transformer", bool]:
+    """Load transformer via GGUF/cache/disk and apply LoRA.
+
+    Three-branch dispatch:
+    1. GGUF: use persistent model directly (no cache/reconstruct)
+    2. Cached: reconstruct from pinned state_dict (LoRA fused at sd level for fp8-cast)
+    3. Disk: load from safetensors file (fallback)
+
+    Returns:
+        (model, is_gguf): Loaded model and whether it's a GGUF model.
+    """
+    is_gguf = gguf_model is not None
+    if is_gguf:
+        model = gguf_model.to(transformer_device)
+        logger.info(f"Using persistent GGUF transformer on {transformer_device}")
+    elif cached_transformer is not None:
+        model = _reconstruct_transformer_from_cache(
+            cached_transformer, dtype, transformer_device,
+            effective_quantize, effective_precision, granularity,
+            lora_paths=lora_paths, lora_scales=lora_scales,
+        )
+    else:
+        # Load from disk (fallback when no cache)
+        from llm_dit.models.ltx2 import load_ltx2_transformer
+
+        load_device = "cpu" if effective_quantize else transformer_device
+
+        if transformer_file:
+            tf_path = model_path / transformer_file
+            if not tf_path.exists():
+                logger.warning(f"transformer_file '{transformer_file}' not found at {tf_path}, "
+                               "falling back to transformer/ directory")
+                tf_path = model_path / "transformer"
+        else:
+            tf_path = model_path / "transformer"
+
+        is_fp8_file = tf_path.is_file() and "fp8" in tf_path.name.lower()
+        if is_fp8_file:
+            from llm_dit.models.ltx2 import load_ltx2_transformer_fp8_cast
+            model = load_ltx2_transformer_fp8_cast(
+                tf_path, dtype=dtype, device=load_device, video_only=video_only,
+            )
+        else:
+            model = load_ltx2_transformer(
+                tf_path, dtype=dtype, device=load_device, video_only=video_only,
+            )
+
+            if effective_quantize and effective_precision != "none":
+                from llm_dit.quantization import quantize_component
+                model, stats = quantize_component(  # type: ignore[assignment]
+                    model, method=effective_precision, component_type="transformer",
+                    granularity=granularity,
+                )
+                logger.info(
+                    f"Transformer quantized: {stats['quantized_layers']}/{stats['total_layers']} layers "
+                    f"({effective_precision}, granularity={granularity})"
+                )
+
+        if load_device == "cpu":
+            model = model.to(transformer_device)
+
+    # Apply LoRA if specified (skip if already fused at state-dict level)
+    lora_already_fused = getattr(model, "_lora_fused_at_sd_level", False)
+    if lora_paths and lora_scales and not lora_already_fused:
+        if is_gguf:
+            from llm_dit.utils.lora import load_lora_for_gguf
+            total_updated = 0
+            for path, scale in zip(lora_paths, lora_scales):
+                updated = load_lora_for_gguf(
+                    model, path, scale=scale,
+                    device=transformer_device, dtype=dtype,
+                )
+                total_updated += updated
+        else:
+            from llm_dit.utils.lora import load_lora as _load_lora
+            total_updated = 0
+            for path, scale in zip(lora_paths, lora_scales):
+                logger.info(f"Loading LoRA: {path} (scale={scale})")
+                updated = _load_lora(
+                    model, path, scale=scale,
+                    device=transformer_device, dtype=dtype,
+                )
+                total_updated += updated
+        logger.info(f"LoRA loading complete: {total_updated} layers updated")
+
+    return model, is_gguf
+
+
 def _reconstruct_transformer_from_cache(
     cached_transformer: dict,
     dtype: torch.dtype,
@@ -166,10 +327,10 @@ def _reconstruct_transformer_from_cache(
     if is_fp8_cast:
         fp8_count = sum(1 for p in model.parameters() if p.dtype == torch.float8_e4m3fn)
         if fp8_count == 0:
-            logger.error(
-                "FP8 weights lost during device transfer to %s -- "
-                "all parameters are now bf16. This hardware may not support float8.",
-                transformer_device,
+            raise RuntimeError(
+                f"FP8 weights lost during device transfer to {transformer_device} -- "
+                "all parameters are now bf16. This hardware may not support float8. "
+                "Use quantize='fp8-dynamic' (torchao runtime quantization) as an alternative."
             )
 
     # Tag model so callers know LoRA was already applied
@@ -959,74 +1120,22 @@ def generate_video_with_offloading(
 
     logger.info(f"Stage 2: Loading transformer on {transformer_device}...")
 
-    # Normalize LoRA args up front (needed by both reconstruct and post-load paths)
-    _lora_paths: list[str] | None = None
-    _lora_scales: list[float] | None = None
-    if lora_path is not None:
-        if isinstance(lora_path, (str, Path)):
-            _lora_paths = [str(lora_path)]
-        else:
-            _lora_paths = [str(p) for p in lora_path]
-        if lora_scale is None:
-            _lora_scales = [0.8] * len(_lora_paths)
-        elif isinstance(lora_scale, (int, float)):
-            _lora_scales = [float(lora_scale)] * len(_lora_paths)
-        else:
-            _lora_scales = list(lora_scale)
-        if len(_lora_paths) != len(_lora_scales):
-            raise ValueError(
-                f"Number of LoRA paths ({len(_lora_paths)}) must match "
-                f"number of scales ({len(_lora_scales)})"
-            )
+    _lora_paths, _lora_scales = _normalize_lora_args(lora_path, lora_scale)
 
-    is_gguf = gguf_model is not None
-    if is_gguf:
-        # GGUF: use persistent model directly (no cache/reconstruct)
-        model = gguf_model.to(transformer_device)
-        logger.info(f"Using persistent GGUF transformer on {transformer_device}")
-    elif cached_transformer is not None:
-        model = _reconstruct_transformer_from_cache(
-            cached_transformer, dtype, transformer_device,
-            effective_quantize, effective_precision, granularity,
-            lora_paths=_lora_paths, lora_scales=_lora_scales,
-        )
-    else:
-        # Load from disk (fallback when no cache)
-        from llm_dit.models.ltx2 import load_ltx2_transformer
-
-        load_device = "cpu" if effective_quantize else transformer_device
-
-        if transformer_file:
-            tf_path = model_path / transformer_file
-            if not tf_path.exists():
-                logger.warning(f"transformer_file '{transformer_file}' not found at {tf_path}, "
-                               "falling back to transformer/ directory")
-                tf_path = model_path / "transformer"
-        else:
-            tf_path = model_path / "transformer"
-
-        is_fp8_file = tf_path.is_file() and "fp8" in tf_path.name.lower()
-        if is_fp8_file:
-            from llm_dit.models.ltx2 import load_ltx2_transformer_fp8_cast
-            model = load_ltx2_transformer_fp8_cast(tf_path, dtype=dtype, device=load_device, video_only=True)
-        else:
-            model = load_ltx2_transformer(
-                tf_path, dtype=dtype, device=load_device, video_only=True,
-            )
-
-            if effective_quantize and effective_precision != "none":
-                from llm_dit.quantization import quantize_component
-                model, stats = quantize_component(  # type: ignore[assignment]
-                    model, method=effective_precision, component_type="transformer",
-                    granularity=granularity,
-                )
-                logger.info(
-                    f"Transformer quantized: {stats['quantized_layers']}/{stats['total_layers']} layers "
-                    f"({effective_precision}, granularity={granularity})"
-                )
-
-        if load_device == "cpu":
-            model = model.to(transformer_device)
+    model, is_gguf = _load_transformer_and_lora(
+        gguf_model=gguf_model,
+        cached_transformer=cached_transformer,
+        model_path=model_path,
+        transformer_file=transformer_file,
+        dtype=dtype,
+        transformer_device=transformer_device,
+        effective_quantize=effective_quantize,
+        effective_precision=effective_precision,
+        granularity=granularity,
+        lora_paths=_lora_paths,
+        lora_scales=_lora_scales,
+        video_only=True,
+    )
 
     # Only load connectors if embeddings need processing (188160 -> 3840 projection)
     # Our Gemma3Encoder already outputs 3840-dim via internal Embeddings1DConnector
@@ -1046,30 +1155,6 @@ def generate_video_with_offloading(
         logger.debug(f"Skipping connectors (embed_dim={embed_dim} already projected)")
 
     logger.debug(f"Transformer loaded: {model.get_num_params() / 1e9:.2f}B params")
-
-    # Load LoRA weights if specified (skip if already fused at state-dict level)
-    lora_already_fused = getattr(model, "_lora_fused_at_sd_level", False)
-    if _lora_paths and not lora_already_fused:
-        if is_gguf:
-            from llm_dit.utils.lora import load_lora_for_gguf
-            total_updated = 0
-            for path, scale in zip(_lora_paths, _lora_scales):
-                updated = load_lora_for_gguf(
-                    model, path, scale=scale,
-                    device=transformer_device, dtype=dtype,
-                )
-                total_updated += updated
-        else:
-            from llm_dit.utils.lora import load_lora as _load_lora
-            total_updated = 0
-            for path, scale in zip(_lora_paths, _lora_scales):
-                logger.info(f"Loading LoRA: {path} (scale={scale})")
-                updated = _load_lora(
-                    model, path, scale=scale,
-                    device=transformer_device, dtype=dtype,
-                )
-                total_updated += updated
-        logger.info(f"LoRA loading complete: {total_updated} layers updated")
 
     # Generate latents (no VAE decode yet)
     def progress_callback(step, total, _latents):
@@ -1948,82 +2033,22 @@ def generate_video_two_stage(
         terminal=config.terminal,
     )
 
-    # Normalize LoRA args up front (needed by both reconstruct and post-load paths)
-    _lora_paths: list[str] | None = None
-    _lora_scales: list[float] | None = None
-    if lora_path is not None:
-        if isinstance(lora_path, (str, Path)):
-            _lora_paths = [str(lora_path)]
-        else:
-            _lora_paths = [str(p) for p in lora_path]
-        if lora_scale is None:
-            _lora_scales = [0.8] * len(_lora_paths)
-        elif isinstance(lora_scale, (int, float)):
-            _lora_scales = [float(lora_scale)] * len(_lora_paths)
-        else:
-            _lora_scales = list(lora_scale)
+    _lora_paths, _lora_scales = _normalize_lora_args(lora_path, lora_scale)
 
-    is_gguf = gguf_model is not None
-    if is_gguf:
-        # GGUF: use persistent model directly (no cache/reconstruct)
-        model = gguf_model.to(transformer_device)
-        logger.info(f"Using persistent GGUF transformer on {transformer_device}")
-    elif cached_transformer is not None:
-        model = _reconstruct_transformer_from_cache(
-            cached_transformer, dtype, transformer_device,
-            effective_quantize, effective_precision, granularity,
-            lora_paths=_lora_paths, lora_scales=_lora_scales,
-        )
-    else:
-        # Load from disk (fallback when no cache)
-        from llm_dit.models.ltx2 import load_ltx2_transformer
-
-        load_device = "cpu" if effective_quantize else transformer_device
-
-        if transformer_file:
-            tf_path = model_path / transformer_file
-            if not tf_path.exists():
-                logger.warning(f"transformer_file '{transformer_file}' not found at {tf_path}, "
-                               "falling back to transformer/ directory")
-                tf_path = model_path / "transformer"
-        else:
-            tf_path = model_path / "transformer"
-
-        is_fp8_file = tf_path.is_file() and "fp8" in tf_path.name.lower()
-        if is_fp8_file:
-            from llm_dit.models.ltx2 import load_ltx2_transformer_fp8_cast
-            model = load_ltx2_transformer_fp8_cast(tf_path, dtype=dtype, device=load_device, video_only=video_only)
-        else:
-            model = load_ltx2_transformer(
-                tf_path, dtype=dtype, device=load_device, video_only=video_only,
-            )
-
-            if effective_quantize and effective_precision != "none":
-                from llm_dit.quantization import quantize_component
-                model, stats = quantize_component(
-                    model, method=effective_precision, component_type="transformer",
-                    granularity=granularity,
-                )
-                logger.info(
-                    f"Transformer quantized: {stats['quantized_layers']}/{stats['total_layers']} layers "
-                    f"({effective_precision}, granularity={granularity})"
-                )
-
-        if load_device == "cpu":
-            model = model.to(transformer_device)
-
-    # Apply base LoRA(s) if provided (skip if already fused at state-dict level)
-    lora_already_fused = getattr(model, "_lora_fused_at_sd_level", False)
-    if _lora_paths and not lora_already_fused:
-        if is_gguf:
-            from llm_dit.utils.lora import load_lora_for_gguf
-            for path, scale in zip(_lora_paths, _lora_scales):
-                load_lora_for_gguf(model, path, scale=scale, device=transformer_device, dtype=dtype)
-        else:
-            from llm_dit.utils.lora import load_lora as _load_lora
-            for path, scale in zip(_lora_paths, _lora_scales):
-                logger.info(f"Loading base LoRA: {path} (scale={scale})")
-                _load_lora(model, path, scale=scale, device=transformer_device, dtype=dtype)
+    model, is_gguf = _load_transformer_and_lora(
+        gguf_model=gguf_model,
+        cached_transformer=cached_transformer,
+        model_path=model_path,
+        transformer_file=transformer_file,
+        dtype=dtype,
+        transformer_device=transformer_device,
+        effective_quantize=effective_quantize,
+        effective_precision=effective_precision,
+        granularity=granularity,
+        lora_paths=_lora_paths,
+        lora_scales=_lora_scales,
+        video_only=video_only,
+    )
 
     # Initialize latent noise at half resolution
     t_latent, h_latent, w_latent = stage1_config.latent_dims
@@ -2230,12 +2255,24 @@ def generate_video_two_stage(
                 device=transformer_device, dtype=dtype,
             )
         else:
-            from llm_dit.utils.lora import load_lora as _load_lora
-            _load_lora(
-                model, distilled_path,
-                scale=two_stage.distilled_lora_scale,
-                device=transformer_device, dtype=dtype,
+            # Detect native fp8 weights (fp8-cast model)
+            import itertools
+            has_fp8_weights = any(
+                p.dtype in (torch.float8_e4m3fn, torch.float8_e5m2)
+                for p in itertools.islice(model.parameters(), 5)
             )
+            if has_fp8_weights:
+                _apply_distilled_lora_fp8(
+                    model, str(distilled_path),
+                    scale=two_stage.distilled_lora_scale,
+                )
+            else:
+                from llm_dit.utils.lora import load_lora as _load_lora
+                _load_lora(
+                    model, distilled_path,
+                    scale=two_stage.distilled_lora_scale,
+                    device=transformer_device, dtype=dtype,
+                )
     else:
         logger.info("Stage 2: Skipping distilled LoRA (scale=0 or no path)")
 

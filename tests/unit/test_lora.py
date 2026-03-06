@@ -6,8 +6,10 @@ Tests cover:
 - LoRA weight fusion
 - LoRA loading utilities
 - LoRA spec parsing
+- LoRA arg normalization (_normalize_lora_args from generate.py)
 """
 
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -775,3 +777,77 @@ class TestFuseLoraToStateDict:
 
         assert result["layer.weight"].dtype == torch.bfloat16
         assert not torch.allclose(result["layer.weight"], base_sd["layer.weight"])
+
+
+# ============================================================================
+# _normalize_lora_args Tests (from generate.py)
+# ============================================================================
+
+
+class TestNormalizeLoraArgs:
+    """Test _normalize_lora_args helper extracted from generate.py."""
+
+    def test_none_input_returns_none(self):
+        """None lora_path should return (None, None)."""
+        from llm_dit.pipelines.generate import _normalize_lora_args
+        paths, scales = _normalize_lora_args(None, None)
+        assert paths is None
+        assert scales is None
+
+    def test_single_str_path_with_float_scale(self):
+        """Single string path with float scale."""
+        from llm_dit.pipelines.generate import _normalize_lora_args
+        paths, scales = _normalize_lora_args("lora.safetensors", 0.7)
+        assert paths == ["lora.safetensors"]
+        assert scales == [0.7]
+
+    def test_single_path_none_scale_defaults_to_0_8(self):
+        """Single path with None scale should default to 0.8."""
+        from llm_dit.pipelines.generate import _normalize_lora_args
+        paths, scales = _normalize_lora_args("lora.safetensors", None)
+        assert paths == ["lora.safetensors"]
+        assert scales == [0.8]
+
+    def test_list_paths_with_list_scales(self):
+        """List of paths with matching list of scales."""
+        from llm_dit.pipelines.generate import _normalize_lora_args
+        paths, scales = _normalize_lora_args(
+            ["a.safetensors", "b.safetensors"], [0.5, 0.3],
+        )
+        assert paths == ["a.safetensors", "b.safetensors"]
+        assert scales == [0.5, 0.3]
+
+    def test_mismatched_lengths_raises_valueerror(self):
+        """Mismatched path and scale lengths should raise ValueError."""
+        from llm_dit.pipelines.generate import _normalize_lora_args
+        with pytest.raises(ValueError, match="must match"):
+            _normalize_lora_args(["a.safetensors", "b.safetensors"], [0.5])
+
+    def test_path_objects_converted_to_str(self):
+        """Path objects should be converted to strings."""
+        from llm_dit.pipelines.generate import _normalize_lora_args
+        paths, scales = _normalize_lora_args(Path("dir/lora.safetensors"), 1.0)
+        assert paths == ["dir/lora.safetensors"]
+        assert isinstance(paths[0], str)
+
+    def test_single_float_scale_broadcast_to_list(self):
+        """Single float scale should be broadcast to match path count."""
+        from llm_dit.pipelines.generate import _normalize_lora_args
+        paths, scales = _normalize_lora_args(
+            ["a.safetensors", "b.safetensors"], 0.5,
+        )
+        assert scales == [0.5, 0.5]
+
+    def test_single_path_as_list(self):
+        """Single-element list should work."""
+        from llm_dit.pipelines.generate import _normalize_lora_args
+        paths, scales = _normalize_lora_args(["lora.safetensors"], [0.8])
+        assert paths == ["lora.safetensors"]
+        assert scales == [0.8]
+
+    def test_int_scale_converted_to_float(self):
+        """Integer scale should be converted to float."""
+        from llm_dit.pipelines.generate import _normalize_lora_args
+        paths, scales = _normalize_lora_args("lora.safetensors", 1)
+        assert scales == [1.0]
+        assert isinstance(scales[0], float)

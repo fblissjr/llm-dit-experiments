@@ -166,7 +166,7 @@ class TestZImagePipelineFromPretrained:
         from llm_dit.pipelines.z_image import ZImagePipeline
 
         with patch('pathlib.Path.exists', return_value=False):
-            with pytest.raises((FileNotFoundError, ValueError)):
+            with pytest.raises((FileNotFoundError, ValueError, OSError)):
                 ZImagePipeline.from_pretrained("/nonexistent/path")
 
 

@@ -6,6 +6,20 @@ last updated: 2026-03-06
 All notable changes to this project will be documented in this file.
 Uses [Semantic Versioning](https://semver.org/).
 
+## 0.9.23
+
+### added
+- **`_normalize_lora_args()` helper**: Extracted from duplicate inline blocks in `generate_video_with_offloading()` and `generate_video_two_stage()`. Normalizes flexible LoRA path/scale args (str|Path|list, float|list|None) into canonical parallel lists. Also fixes missing length validation in the two-stage path.
+- **`_load_transformer_and_lora()` helper**: Extracted ~90 duplicated lines of 3-branch transformer loading (GGUF/cache/disk) + LoRA application into a single reusable helper with `video_only` parameter.
+- **`_apply_distilled_lora_fp8()` helper**: State-dict-level LoRA fusion for live models with native fp8 weights. Extracts state dict, fuses deltas, reloads with `assign=True`, re-patches forwards.
+- **Tests**: 9 `_normalize_lora_args` tests, 7 `_load_transformer_and_lora` tests, 1 fp8 distilled LoRA test, 1 FP8 guard test.
+
+### fixed
+- **Stage 2 distilled LoRA crash on fp8-cast models**: `load_lora()` called directly on live fp8-cast model would crash or silently upcast to bf16. Now detects native fp8 weights and routes through state-dict-level fusion.
+- **FP8 preservation guard**: Upgraded from `logger.error()` (warn-only) to `raise RuntimeError` with actionable message suggesting `quantize='fp8-dynamic'` as alternative.
+- **4 pre-existing test failures**: `test_resolution_validators.py` snap_to_32->snap_to_64 (2), `test_pipeline.py` OSError (1), `test_config_consistency.py` dataclass format (1).
+- **Missing LoRA length validation in two-stage**: The two-stage path was missing the `len(paths) != len(scales)` check that the offloading path had. Now both use `_normalize_lora_args()`.
+
 ## 0.9.22
 
 ### added

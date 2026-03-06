@@ -1,0 +1,216 @@
+"""
+Tests for generate.py helper functions.
+
+Last Updated: 2026-03-06
+
+Tests for extracted helpers: _normalize_lora_args (in test_lora.py),
+_load_transformer_and_lora.
+
+Run with: uv run pytest tests/unit/test_generate_helpers.py -v
+"""
+
+from pathlib import Path
+from unittest.mock import MagicMock, patch, call
+
+import pytest
+import torch
+import torch.nn as nn
+
+pytestmark = pytest.mark.unit
+
+
+class TestLoadTransformerAndLora:
+    """Test _load_transformer_and_lora helper."""
+
+    def test_gguf_branch_moves_model_to_device(self):
+        """GGUF model should be moved to target device."""
+        from llm_dit.pipelines.generate import _load_transformer_and_lora
+
+        mock_model = MagicMock()
+        mock_model.to.return_value = mock_model
+
+        model, is_gguf = _load_transformer_and_lora(
+            gguf_model=mock_model,
+            cached_transformer=None,
+            model_path=Path("/fake"),
+            transformer_file="",
+            dtype=torch.bfloat16,
+            transformer_device="cuda",
+            effective_quantize=False,
+            effective_precision="none",
+            granularity="per-row",
+            lora_paths=None,
+            lora_scales=None,
+        )
+
+        assert is_gguf is True
+        mock_model.to.assert_called_once_with("cuda")
+        assert model is mock_model
+
+    def test_cache_branch_calls_reconstruct(self):
+        """Cached transformer should route through _reconstruct_transformer_from_cache."""
+        from llm_dit.pipelines.generate import _load_transformer_and_lora
+
+        mock_reconstructed = MagicMock()
+
+        with patch(
+            "llm_dit.pipelines.generate._reconstruct_transformer_from_cache",
+            return_value=mock_reconstructed,
+        ) as mock_reconstruct:
+            model, is_gguf = _load_transformer_and_lora(
+                gguf_model=None,
+                cached_transformer={"config": {}, "state_dict": {}},
+                model_path=Path("/fake"),
+                transformer_file="",
+                dtype=torch.bfloat16,
+                transformer_device="cuda",
+                effective_quantize=False,
+                effective_precision="none",
+                granularity="per-row",
+                lora_paths=["lora.safetensors"],
+                lora_scales=[0.8],
+            )
+
+        assert is_gguf is False
+        mock_reconstruct.assert_called_once()
+        assert model is mock_reconstructed
+
+    def test_gguf_lora_uses_load_lora_for_gguf(self):
+        """GGUF with LoRA should use load_lora_for_gguf."""
+        from llm_dit.pipelines.generate import _load_transformer_and_lora
+
+        mock_model = MagicMock()
+        mock_model.to.return_value = mock_model
+        mock_model._lora_fused_at_sd_level = False
+
+        with patch("llm_dit.utils.lora.load_lora_for_gguf", return_value=5) as mock_gguf_lora:
+            model, is_gguf = _load_transformer_and_lora(
+                gguf_model=mock_model,
+                cached_transformer=None,
+                model_path=Path("/fake"),
+                transformer_file="",
+                dtype=torch.bfloat16,
+                transformer_device="cuda",
+                effective_quantize=False,
+                effective_precision="none",
+                granularity="per-row",
+                lora_paths=["lora.safetensors"],
+                lora_scales=[0.8],
+            )
+
+        assert is_gguf is True
+        mock_gguf_lora.assert_called_once()
+
+    def test_non_gguf_lora_uses_load_lora(self):
+        """Non-GGUF cached model with LoRA should use load_lora."""
+        from llm_dit.pipelines.generate import _load_transformer_and_lora
+
+        mock_model = MagicMock()
+        mock_model._lora_fused_at_sd_level = False
+
+        with patch(
+            "llm_dit.pipelines.generate._reconstruct_transformer_from_cache",
+            return_value=mock_model,
+        ):
+            with patch("llm_dit.utils.lora.load_lora", return_value=5) as mock_lora:
+                model, is_gguf = _load_transformer_and_lora(
+                    gguf_model=None,
+                    cached_transformer={"config": {}, "state_dict": {}},
+                    model_path=Path("/fake"),
+                    transformer_file="",
+                    dtype=torch.bfloat16,
+                    transformer_device="cuda",
+                    effective_quantize=False,
+                    effective_precision="none",
+                    granularity="per-row",
+                    lora_paths=["a.safetensors", "b.safetensors"],
+                    lora_scales=[0.5, 0.3],
+                )
+
+        assert mock_lora.call_count == 2
+
+    def test_sd_level_fusion_skips_post_load_lora(self):
+        """When LoRA was fused at state-dict level, post-load LoRA is skipped."""
+        from llm_dit.pipelines.generate import _load_transformer_and_lora
+
+        mock_model = MagicMock()
+        mock_model._lora_fused_at_sd_level = True
+
+        with patch(
+            "llm_dit.pipelines.generate._reconstruct_transformer_from_cache",
+            return_value=mock_model,
+        ):
+            with patch("llm_dit.utils.lora.load_lora") as mock_lora:
+                _load_transformer_and_lora(
+                    gguf_model=None,
+                    cached_transformer={"config": {}, "state_dict": {}},
+                    model_path=Path("/fake"),
+                    transformer_file="",
+                    dtype=torch.bfloat16,
+                    transformer_device="cuda",
+                    effective_quantize=False,
+                    effective_precision="none",
+                    granularity="per-row",
+                    lora_paths=["lora.safetensors"],
+                    lora_scales=[0.8],
+                )
+
+        mock_lora.assert_not_called()
+
+    def test_video_only_passed_to_disk_loader(self):
+        """video_only parameter should be forwarded to disk loaders."""
+        from llm_dit.pipelines.generate import _load_transformer_and_lora
+
+        mock_model = MagicMock()
+
+        with patch(
+            "llm_dit.models.ltx2.load_ltx2_transformer",
+            return_value=mock_model,
+        ) as mock_load:
+            mock_model.to.return_value = mock_model
+            mock_model._lora_fused_at_sd_level = False
+            mock_model.get_num_params.return_value = 22e9
+            # Need the path to exist as a directory (not file) so it takes non-fp8 path
+            with patch.object(Path, "exists", return_value=True):
+                with patch.object(Path, "is_file", return_value=False):
+                    _load_transformer_and_lora(
+                        gguf_model=None,
+                        cached_transformer=None,
+                        model_path=Path("/fake"),
+                        transformer_file="",
+                        dtype=torch.bfloat16,
+                        transformer_device="cuda",
+                        effective_quantize=False,
+                        effective_precision="none",
+                        granularity="per-row",
+                        lora_paths=None,
+                        lora_scales=None,
+                        video_only=False,
+                    )
+
+        # Check video_only was passed through
+        _, kwargs = mock_load.call_args
+        assert kwargs.get("video_only") is False
+
+    def test_no_lora_no_error(self):
+        """No LoRA paths should not cause any issues."""
+        from llm_dit.pipelines.generate import _load_transformer_and_lora
+
+        mock_model = MagicMock()
+        mock_model.to.return_value = mock_model
+
+        model, is_gguf = _load_transformer_and_lora(
+            gguf_model=mock_model,
+            cached_transformer=None,
+            model_path=Path("/fake"),
+            transformer_file="",
+            dtype=torch.bfloat16,
+            transformer_device="cuda",
+            effective_quantize=False,
+            effective_precision="none",
+            granularity="per-row",
+            lora_paths=None,
+            lora_scales=None,
+        )
+
+        assert model is mock_model

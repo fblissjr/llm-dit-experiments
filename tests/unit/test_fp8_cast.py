@@ -146,6 +146,73 @@ class TestFP8CastLoRAIntegration:
         assert fp8_count == 1, f"Expected 1 fp8 param after .to(cpu), got {fp8_count}"
 
 
+class TestFP8CastDistilledLoRA:
+    """Test distilled LoRA on fp8-cast models (Stage 2 fix)."""
+
+    def test_distilled_lora_on_fp8_uses_state_dict_fusion(self, tmp_path):
+        """Distilled LoRA on a model with native fp8 weights should use
+        state-dict-level fusion and preserve fp8 dtype."""
+        from llm_dit.pipelines.generate import _apply_distilled_lora_fp8
+        from llm_dit.utils.lora import fuse_lora_to_state_dict
+        from safetensors.torch import save_file
+
+        # Build a model with fp8 weights
+        model = nn.Sequential(nn.Linear(32, 64, bias=False))
+        model[0].weight.data = model[0].weight.data.to(torch.float8_e4m3fn)
+
+        # Write a LoRA file
+        lora_sd = {
+            "0.lora_A.weight": torch.randn(4, 32, dtype=torch.bfloat16),
+            "0.lora_B.weight": torch.randn(64, 4, dtype=torch.bfloat16),
+        }
+        lora_path = str(tmp_path / "distilled.safetensors")
+        save_file(lora_sd, lora_path)
+
+        # Apply distilled LoRA to fp8 model
+        _apply_distilled_lora_fp8(model, lora_path, scale=1.0)
+
+        # Weight should still be fp8 after fusion
+        assert model[0].weight.dtype == torch.float8_e4m3fn
+
+
+class TestFP8PreservationGuard:
+    """Test FP8 preservation guard raises RuntimeError."""
+
+    def test_fp8_guard_raises_on_zero_fp8_count(self):
+        """Guard should raise RuntimeError when fp8 count is 0 after reconstruction."""
+        from unittest.mock import patch, MagicMock
+        from llm_dit.pipelines.generate import _reconstruct_transformer_from_cache
+
+        # Create a fake cache dict that claims fp8_cast=True
+        fake_cache = {
+            "config": {},
+            "state_dict": {},
+            "fp8_cast": True,
+            "video_only": True,
+        }
+
+        # Mock the model creation chain so we can control what happens.
+        # The model will have NO fp8 params, triggering the guard.
+        mock_model = MagicMock()
+        # parameters() returns bf16-only params (no fp8)
+        mock_param = torch.nn.Parameter(torch.randn(4, 4, dtype=torch.bfloat16))
+        mock_model.parameters.return_value = [mock_param]
+        mock_model.to.return_value = mock_model
+
+        with patch("llm_dit.utils.meta_init.meta_init"):
+            with patch("llm_dit.models.ltx2.loader.create_model_from_config", return_value=mock_model):
+                with patch("llm_dit.quantization.fp8_cast.amend_forward_with_upcast", return_value=0):
+                    with pytest.raises(RuntimeError, match="FP8 weights lost"):
+                        _reconstruct_transformer_from_cache(
+                            fake_cache,
+                            dtype=torch.bfloat16,
+                            transformer_device="cpu",
+                            effective_quantize=False,
+                            effective_precision="none",
+                            granularity="per-row",
+                        )
+
+
 class TestFP8CastTransformerLoader:
     """Tests for loading LTX-2.3 transformer with fp8-cast."""
 
