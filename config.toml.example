@@ -144,8 +144,8 @@ distilled_lora_path = ""  # distilled LoRA for stage 2 refinement
 distilled_lora_scale = 1.0
 
 # Gemma 3-12B encoder
-# Leave empty to use model_path/text_encoder (works for bf16, fp8, fp8-safetensors, 8bit).
-# Set to HF model ID only for q4-qat variant (separate pre-quantized model).
+# Leave empty to use model_path/text_encoder (default).
+# Set to HF model ID or path only when encoder lives outside model_path.
 encoder_model_id = ""
 
 # Prompt enhancement -- expand terse prompts via Gemma3 before encoding
@@ -217,11 +217,11 @@ quantize = "fp8"
 skip_cleanup = false
 
 # Gemma3 encoder variant (separate from transformer quantization above):
+#   q4-qat           -- torchao int4 on QAT-trained model (~3GB, best for qat-q4_0-unquantized)
+#   fp8              -- loads bf16 then applies fp8 layerwise casting at startup (~12GB)
 #   fp8-safetensors  -- loads pre-converted fp8 checkpoint (fastest, requires convert_gemma3_fp8.py first)
-#   fp8              -- loads bf16 then applies fp8 layerwise casting at startup (~40s slower than fp8-safetensors)
-#   bf16             -- full precision (~24GB, may OOM during generation)
 #   8bit             -- torchao int8 quantization (~12GB)
-#   q4-qat           -- pre-quantized Q4 model (~3GB, requires separate model via encoder_model_id)
+#   bf16             -- full precision (~24GB, may OOM during generation)
 gemma_variant = "fp8-safetensors"
 
 # GGUF quantization (LTX-2.3 / 22B)

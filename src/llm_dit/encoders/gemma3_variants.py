@@ -77,13 +77,17 @@ def create_gemma3_encoder(
     from llm_dit.encoders.gemma3 import Gemma3Encoder
 
     model_path_obj = Path(model_path).expanduser()
-    tokenizer_path = str(model_path_obj / DEFAULT_TOKENIZER_SUBPATH)
     connectors_path = str(model_path_obj / connectors_file)
 
     if text_encoder_path:
         encoder_path = str(Path(text_encoder_path).expanduser())
     else:
         encoder_path = str(model_path_obj / DEFAULT_TEXT_ENCODER_SUBPATH)
+
+    # Tokenizer lives inside the encoder directory (HF model layout).
+    # Fall back to legacy separate tokenizer/ subpath if it exists.
+    legacy_tokenizer = model_path_obj / DEFAULT_TOKENIZER_SUBPATH
+    tokenizer_path = str(legacy_tokenizer) if legacy_tokenizer.exists() else encoder_path
 
     logger.info(f"Creating Gemma3 encoder with variant={variant}")
     logger.info(f"  Model path: {model_path}")

@@ -106,15 +106,16 @@ def convert_gemma3_to_fp8(
 
     from llm_dit.encoders.gemma3 import Gemma3Encoder
 
+    # Tokenizer is inside the encoder directory (HF model layout)
+    tokenizer_dir = model_path_obj / "tokenizer"
+    tokenizer_path = str(tokenizer_dir) if tokenizer_dir.exists() else enc_path
+
     encoder = Gemma3Encoder(
         model_id=enc_path,
         device="cpu",
         dtype=torch.bfloat16,
-        tokenizer_path=str(model_path_obj / "tokenizer"),
-        connectors_path=str(
-            model_path_obj / "text_encoder"
-            / "diffusion_pytorch_model-00011-of-00012.safetensors"
-        ),
+        tokenizer_path=tokenizer_path,
+        connectors_path=str(model_path_obj / "ltx-2.3-connectors.safetensors"),
     )
     encoder._load_model()
     load_time = time.time() - start
