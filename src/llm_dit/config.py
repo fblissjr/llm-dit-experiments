@@ -324,8 +324,9 @@ class LTX2Config:
     """
 
     # Model paths
-    model_path: str = ""  # Directory containing LTX-2 model files
-    transformer_file: str = "ltx-2-19b-dev-fp8.safetensors"  # Base model for stage 1
+    model_path: str = ""  # Directory containing LTX-2.3 model files
+    transformer_file: str = "ltx-2.3-transformer-fp8.safetensors"  # V2.3 transformer
+    connectors_file: str = "ltx-2.3-connectors.safetensors"  # V2.3 connectors + aggregate embeds
 
     # Two-stage pipeline files (reference: TI2VidTwoStagesPipeline)
     spatial_upsampler_file: str = "ltx-2-spatial-upscaler-x2-1.0.safetensors"
@@ -333,7 +334,7 @@ class LTX2Config:
     distilled_lora_scale: float = 1.0  # Distilled LoRA blend strength (ref: 1.0)
 
     # Text encoder (Gemma 3-12B)
-    encoder_model_id: str = "models/LTX-2/text_encoder"
+    encoder_model_id: str = ""
     # Prompt enhancement
     enhance_prompt: bool = False  # Use Gemma3 to expand prompt before encoding
 
@@ -407,8 +408,7 @@ class LTX2Config:
     gemma_variant: str = "fp8"  # Gemma3 backbone: bf16, fp8, 8bit, q4-qat
 
     # GGUF quantization (LTX-2.3 / 22B)
-    gguf_transformer_path: str = ""  # Path to GGUF quantized transformer (e.g. Q4_K_M)
-    model_version: str = "auto"  # "auto" (detect from checkpoint), "1.0" (19B), "2.3" (22B)
+    gguf_transformer_path: str = ""  # Path to GGUF quantized transformer (e.g. Q4_K_M, Q6_K)
 
     @property
     def quant_transformer(self) -> str | None:

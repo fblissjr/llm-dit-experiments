@@ -1,23 +1,19 @@
 """
-Embeddings 1D Connector for LTX-2 text encoder.
+Embeddings 1D Connector for LTX-2.3 text encoder.
 
-Last Updated: 2026-02-01
+Last Updated: 2026-03-06
 
 Ported from:
   coderef/LTX-2/packages/ltx-core/src/ltx_core/text_encoders/gemma/embeddings_connector.py
 
 This module implements a bidirectional transformer that processes text embeddings
-after the feature extractor linear projection. Key components:
-- 2 transformer layers with RoPE positional encoding (INTERLEAVED mode)
+after the feature extractor projection. V2.3 configuration:
+- 8 transformer layers with RoPE positional encoding
 - 128 learnable register tokens that replace padding
 - Self-attention + feed-forward blocks with RMSNorm
-
-The connector refines embeddings before they're passed to the DiT for conditioning.
-
-RoPE Configuration (matching reference):
-- Type: INTERLEAVED (pairs of dimensions rotated together)
-- Max positions: [1] (not [4096])
-- Double precision: False (use float32)
+- Per-head sigmoid gated attention (apply_gated_attention=True)
+- Video: 32 heads * 128 head_dim = 4096 inner_dim
+- Audio: 32 heads * 64 head_dim = 2048 inner_dim
 """
 
 import functools
@@ -338,8 +334,8 @@ class Attention(nn.Module):
 
         # QK normalization (important for stability)
         # Note: naming matches checkpoint keys (norm_q, norm_k)
-        self.norm_q = nn.RMSNorm(inner_dim, eps=norm_eps)
-        self.norm_k = nn.RMSNorm(inner_dim, eps=norm_eps)
+        self.q_norm = nn.RMSNorm(inner_dim, eps=norm_eps)
+        self.k_norm = nn.RMSNorm(inner_dim, eps=norm_eps)
 
         # Output projection
         self.to_out = nn.Sequential(
@@ -360,8 +356,8 @@ class Attention(nn.Module):
         v = self.to_v(context)
 
         # Normalize Q and K
-        q = self.norm_q(q)
-        k = self.norm_k(k)
+        q = self.q_norm(q)
+        k = self.k_norm(k)
 
         # Apply RoPE if provided
         if pe is not None:
@@ -406,6 +402,7 @@ class BasicTransformerBlock1D(nn.Module):
         heads: int,
         dim_head: int,
         rope_type: RopeType = RopeType.INTERLEAVED,
+        apply_gated_attention: bool = False,
     ):
         super().__init__()
         self.attn1 = Attention(
@@ -415,6 +412,11 @@ class BasicTransformerBlock1D(nn.Module):
             rope_type=rope_type,
         )
         self.ff = FeedForward(dim, dim_out=dim)
+
+        # V2.3: per-head sigmoid gate on attention output
+        self.apply_gated_attention = apply_gated_attention
+        if apply_gated_attention:
+            self.attn1.to_gate_logits = nn.Linear(dim, heads, bias=True)
 
     def forward(
         self,
@@ -428,6 +430,17 @@ class BasicTransformerBlock1D(nn.Module):
             norm_hidden_states = norm_hidden_states.squeeze(1)
 
         attn_output = self.attn1(norm_hidden_states, mask=attention_mask, pe=pe)
+
+        # V2.3: per-head sigmoid gate on attention output
+        if self.apply_gated_attention and hasattr(self.attn1, "to_gate_logits"):
+            gate = self.attn1.to_gate_logits(norm_hidden_states)  # [B, T, heads]
+            gate = torch.sigmoid(gate)
+            # Reshape attn_output to [B, T, heads, dim_head], apply gate, reshape back
+            b, t, d = attn_output.shape
+            attn_output = attn_output.view(b, t, self.attn1.heads, self.attn1.dim_head)
+            attn_output = attn_output * gate.unsqueeze(-1)
+            attn_output = attn_output.view(b, t, d)
+
         hidden_states = attn_output + hidden_states
 
         if hidden_states.ndim == 4:
@@ -478,6 +491,7 @@ class Embeddings1DConnector(nn.Module):
         num_learnable_registers: int = 128,
         rope_type: RopeType = RopeType.INTERLEAVED,
         use_double_precision_rope: bool = False,
+        apply_gated_attention: bool = False,
     ):
         super().__init__()
         self.num_attention_heads = num_attention_heads
@@ -490,12 +504,13 @@ class Embeddings1DConnector(nn.Module):
         self.use_double_precision_rope = use_double_precision_rope
 
         # Transformer blocks
-        self.transformer_blocks = nn.ModuleList([
+        self.transformer_1d_blocks = nn.ModuleList([
             BasicTransformerBlock1D(
                 dim=self.inner_dim,
                 heads=num_attention_heads,
                 dim_head=attention_head_dim,
                 rope_type=rope_type,
+                apply_gated_attention=apply_gated_attention,
             )
             for _ in range(num_layers)
         ])
@@ -632,7 +647,7 @@ class Embeddings1DConnector(nn.Module):
         )
 
         # Process through transformer blocks
-        for i, block in enumerate(self.transformer_blocks):
+        for i, block in enumerate(self.transformer_1d_blocks):
             hidden_states = block(hidden_states, attention_mask=attention_mask, pe=freqs_cis)
             logger.debug(
                 f"[CONNECTOR] After block {i}: mean={hidden_states.float().mean():.4f}, "
@@ -660,6 +675,7 @@ class Embeddings1DConnector(nn.Module):
             num_learnable_registers=config.get("video_connector_num_learnable_registers", 128),
             rope_type=rope_type,
             use_double_precision_rope=use_double_precision,
+            apply_gated_attention=config.get("apply_gated_attention", False),
         )
 
 

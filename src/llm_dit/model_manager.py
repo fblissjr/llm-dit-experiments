@@ -757,7 +757,7 @@ class ModelManager:
         del model
         return {"config": config, "state_dict": sd, "video_only": video_only}
 
-    def _preload_ltx2_gguf_transformer(self, gguf_path: str, model_version: str = "auto") -> Any:
+    def _preload_ltx2_gguf_transformer(self, gguf_path: str) -> Any:
         """Load GGUF-quantized transformer as persistent model on CPU.
 
         Unlike the safetensors path (cache dict + reconstruct per request),
@@ -768,25 +768,15 @@ class ModelManager:
 
         Args:
             gguf_path: Path to GGUF file.
-            model_version: "auto", "1.0", or "2.3". Passed to loader for explicit control.
 
         Returns:
             LTX2Transformer with GGMLLinear layers on CPU.
         """
         from llm_dit.models.ltx2.loader import load_ltx2_transformer_gguf
-        from llm_dit.models.ltx2.transformer import LTXModelType
-
-        # Convert model_version to model_type override (None = auto-detect)
-        model_type = None
-        if model_version == "1.0":
-            model_type = LTXModelType.VideoOnly
-        elif model_version == "2.3":
-            model_type = LTXModelType.VideoOnly  # TODO: AudioVideo when audio support lands
 
         model = load_ltx2_transformer_gguf(
             gguf_path, dtype=torch.bfloat16, device="cpu",
             video_only=True,  # TODO: audio support
-            model_type=model_type,
         )
         logger.info(
             f"  GGUF transformer loaded: persistent model on CPU"
@@ -861,7 +851,16 @@ class ModelManager:
 
         # Validate required directories/files for two-stage pipeline
         missing = []
-        for subdir in ["transformer", "text_encoder", "vae"]:
+        gguf_path = ltx2_cfg.gguf_transformer_path if ltx2_cfg else ""
+        transformer_file = ltx2_cfg.transformer_file if ltx2_cfg else ""
+        # Transformer: check GGUF path, transformer_file, or transformer/ dir
+        if not gguf_path:
+            if transformer_file and not (model_path / transformer_file).exists():
+                if not (model_path / "transformer").exists():
+                    missing.append(f"{transformer_file} (or transformer/)")
+            elif not transformer_file and not (model_path / "transformer").exists():
+                missing.append("transformer/")
+        for subdir in ["text_encoder", "vae"]:
             if not (model_path / subdir).exists():
                 missing.append(f"{subdir}/")
 
@@ -882,7 +881,7 @@ class ModelManager:
 
         logger.info(f"[LTX-2] Pre-loading Gemma3 encoder (variant={gemma_variant})...")
 
-        model_version = ltx2_cfg.model_version if ltx2_cfg else "auto"
+        connectors_file = ltx2_cfg.connectors_file if ltx2_cfg else "ltx-2.3-connectors.safetensors"
         if gemma_variant != "bf16":
             from llm_dit.encoders.gemma3_variants import create_gemma3_encoder
             self._ltx2_encoder = create_gemma3_encoder(
@@ -891,15 +890,16 @@ class ModelManager:
                 text_encoder_path=text_encoder_path,
                 device="cpu",  # Load to CPU, shuttle to GPU per-request
                 dtype=torch.bfloat16,
-                model_version=model_version,
+                connectors_file=connectors_file,
             )
         else:
             from llm_dit.encoders.gemma3 import Gemma3Encoder
+            connectors_path = str(model_path / connectors_file)
             self._ltx2_encoder = Gemma3Encoder(
                 model_id=text_encoder_path,
                 device="cpu",
                 dtype=torch.bfloat16,
-                model_version=model_version,
+                connectors_path=connectors_path,
             )
             self._ltx2_encoder._load_model()
 
@@ -913,7 +913,7 @@ class ModelManager:
         tf_start = time.time()
         if gguf_path:
             logger.info(f"[LTX-2] Loading GGUF transformer: {gguf_path}")
-            self._ltx2_gguf_model = self._preload_ltx2_gguf_transformer(gguf_path, model_version=model_version)
+            self._ltx2_gguf_model = self._preload_ltx2_gguf_transformer(gguf_path)
         else:
             logger.info("[LTX-2] Pre-loading transformer weights for caching...")
             self._ltx2_transformer_cache = self._preload_ltx2_transformer(model_path, ltx2_cfg)

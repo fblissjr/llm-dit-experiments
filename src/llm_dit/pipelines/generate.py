@@ -110,7 +110,10 @@ def _reconstruct_transformer_from_cache(
     cache_video_only = cached_transformer.get("video_only", True)
     model_type = LTXModelType.VideoOnly if cache_video_only else LTXModelType.AudioVideo
     with meta_init():
-        model = create_model_from_config(cached_transformer["config"], dtype, model_type=model_type)
+        model = create_model_from_config(
+            cached_transformer["config"], dtype, model_type=model_type,
+            apply_gated_attention=True, cross_attention_adaln=True,
+        )
     model.load_state_dict(cached_transformer["state_dict"], assign=True)
 
     if effective_quantize and effective_precision != "none":

@@ -491,30 +491,22 @@ class Gemma3Encoder(PinnedShuttleMixin):
         connectors_path: Optional[str] = None,
         tokenizer_path: Optional[str] = None,
         use_connector: bool = True,
-        model_version: str = "auto",
+        model_version: str = "auto",  # kept for signature compat; always V2.3
     ):
         """
-        Initialize Gemma3 encoder.
+        Initialize Gemma3 encoder for LTX-2.3 (V2.3 only).
 
         Args:
             model_id: Gemma 3 model ID or path.
             device: Device to load on ("cuda", "cpu", "auto").
             dtype: Model dtype (typically bfloat16).
             max_sequence_length: Maximum sequence length for encoding.
-            quantization_variant: Variant metadata: "bf16", "int8", "q4_0". Used for
-                                  encoder_info reporting, not for model loading.
+            quantization_variant: Variant metadata for reporting.
             max_memory: Memory limits per device for CPU offloading.
-                       Example: {0: "18GiB", "cpu": "32GiB"} limits GPU 0 to 18GB.
-            connectors_path: Path to connector weights (safetensors).
-                            Defaults to text_encoder shard with jointly-trained weights.
-                            IMPORTANT: Use text_encoder/ shard, NOT connectors/ (stale).
-            tokenizer_path: Path to tokenizer files. Defaults to local LTX-2 tokenizer.
-                           CRITICAL: Must use LTX-2's local tokenizer, NOT HuggingFace.
-                           Wrong tokenizer causes signal death in caption_projection.
-            use_connector: Whether to use the Embeddings1DConnector (default True).
-                          Set False for debugging feature extractor only.
-            model_version: "1.0" (19B), "2.3" (22B), or "auto" (detect from checkpoint).
-                          V2 uses FeatureExtractorV2 with per-token RMSNorm and dual projections.
+            connectors_path: Path to V2.3 connector weights (safetensors).
+            tokenizer_path: Path to tokenizer files.
+            use_connector: Whether to use the Embeddings1DConnector.
+            model_version: Ignored (always V2.3).
         """
         self._model_id = model_id
         self._device_str = device
@@ -523,20 +515,15 @@ class Gemma3Encoder(PinnedShuttleMixin):
         self._quantization_variant = quantization_variant
         self._max_memory = max_memory
         self._connectors_path = connectors_path or DEFAULT_CONNECTOR_WEIGHTS_SHARD
-        # CRITICAL: Text encoder model/config and tokenizer are in DIFFERENT directories!
-        # _text_encoder_path: Gemma model weights + config.json
-        # _tokenizer_path: tokenizer.model, tokenizer.json, etc.
-        self._text_encoder_path = model_id  # Usually models/LTX-2/text_encoder
-        self._tokenizer_path = tokenizer_path or DEFAULT_TOKENIZER_PATH  # models/LTX-2/tokenizer
+        self._text_encoder_path = model_id
+        self._tokenizer_path = tokenizer_path or DEFAULT_TOKENIZER_PATH
         self._use_connector = use_connector
-        self._model_version = model_version  # "1.0", "2.3", or "auto"
 
         self._init_shuttle_state()
 
         # Model components (lazy loaded)
         self._model = None
         self._tokenizer = None
-        self._feature_extractor = None
         self._feature_extractor_v2: Optional[FeatureExtractorV2] = None
         self._embeddings_connector: Optional[Embeddings1DConnector] = None
         self._audio_connector: Optional[Embeddings1DConnector] = None
@@ -554,30 +541,9 @@ class Gemma3Encoder(PinnedShuttleMixin):
         connectors_path: Optional[str] = None,
         tokenizer_path: Optional[str] = None,
         use_connector: bool = True,
-        model_version: str = "auto",
         **kwargs,
     ) -> "Gemma3Encoder":
-        """
-        Load Gemma3 encoder from pretrained model.
-
-        Args:
-            model_path: Path to model or HuggingFace ID.
-            device: Device to load on.
-            dtype: Model dtype as string.
-            max_sequence_length: Max sequence length.
-            quantization: Quantization method (torchao unified) or None for no quantization.
-            max_memory: Memory limits for CPU offloading. Example: {0: "18GiB", "cpu": "32GiB"}.
-            connectors_path: Path to connector weights shard.
-                            Defaults to text_encoder/ jointly-trained weights.
-            tokenizer_path: Path to tokenizer files.
-                           CRITICAL: Defaults to local LTX-2 tokenizer. Do NOT use HuggingFace.
-            use_connector: Whether to use Embeddings1DConnector (default True).
-            model_version: "1.0", "2.3", or "auto" (detect from checkpoint keys).
-            **kwargs: Additional arguments.
-
-        Returns:
-            Initialized Gemma3Encoder.
-        """
+        """Load Gemma3 encoder from pretrained model (V2.3 only)."""
         dtype_map = {
             "bfloat16": torch.bfloat16,
             "float16": torch.float16,
@@ -595,12 +561,9 @@ class Gemma3Encoder(PinnedShuttleMixin):
             connectors_path=connectors_path,
             tokenizer_path=tokenizer_path,
             use_connector=use_connector,
-            model_version=model_version,
         )
 
-        # Load model immediately
         encoder._load_model()
-
         return encoder
 
     def _load_model(self) -> None:
@@ -752,16 +715,11 @@ class Gemma3Encoder(PinnedShuttleMixin):
         if self._tokenizer.pad_token is None:
             self._tokenizer.pad_token = self._tokenizer.eos_token
 
-        # Initialize and load feature extractor + connectors from checkpoint
-        # V1: FeatureExtractorLinear (188160 -> 3840, no bias)
-        # V2: FeatureExtractorV2 (188160 -> 4096 video + 2048 audio, with bias)
-        self._feature_extractor = FeatureExtractorLinear(dtype=self._dtype)
+        # Initialize and load V2.3 feature extractor + connectors
         self._load_connector_weights()
 
         target_device = torch.device(self._device_str) if self._device_str not in ("cpu", "auto") else None
         if target_device is not None:
-            if self._feature_extractor is not None:
-                self._feature_extractor = self._feature_extractor.to(device=target_device)
             if self._feature_extractor_v2 is not None:
                 self._feature_extractor_v2 = self._feature_extractor_v2.to(device=target_device)
             if self._embeddings_connector is not None:
@@ -773,7 +731,6 @@ class Gemma3Encoder(PinnedShuttleMixin):
                     device=target_device, dtype=self._dtype,
                 )
         else:
-            # For "auto" device, still ensure dtype is correct
             for mod in [self._embeddings_connector, self._audio_connector]:
                 if mod is not None:
                     mod.to(dtype=self._dtype)
@@ -786,18 +743,13 @@ class Gemma3Encoder(PinnedShuttleMixin):
         logger.info(f"Gemma 3 encoder loaded: {self._model.device}")
 
     def _load_connector_weights(self) -> None:
-        """
-        Load feature extractor and embeddings connector weights from checkpoint.
+        """Load V2.3 feature extractor and embeddings connector weights.
 
-        CRITICAL: Load from text_encoder/ shard, NOT connectors/ folder.
-        The text_encoder/ contains jointly-trained weights; connectors/ may be stale.
-
-        Shard 00011 (text_encoder/diffusion_pytorch_model-00011-of-00012.safetensors) contains:
-        - text_proj_in.weight: [3840, 188160] - feature extractor linear
-        - video_connector.*: embeddings connector weights
-        - audio_connector.*: audio connector weights (unused for video-only)
-
-        The connectors/config.json is still used for architecture parameters.
+        The connectors safetensors file contains:
+        - text_embedding_projection.video_aggregate_embed.*: FeatureExtractorV2 video projection
+        - text_embedding_projection.audio_aggregate_embed.*: FeatureExtractorV2 audio projection
+        - model.diffusion_model.video_embeddings_connector.*: 8-block video connector
+        - model.diffusion_model.audio_embeddings_connector.*: 8-block audio connector
         """
         from safetensors import safe_open
 
@@ -809,94 +761,79 @@ class Gemma3Encoder(PinnedShuttleMixin):
             )
             return
 
-        logger.info(f"Loading connector weights from {connectors_path}")
-        logger.info("NOTE: Using text_encoder shard (jointly-trained weights)")
+        logger.info(f"Loading V2.3 connector weights from {connectors_path}")
 
-        # Load weights from safetensors
         with safe_open(connectors_path, framework="pt") as f:
             all_keys = set(f.keys())
 
-            # Detect V2 from checkpoint keys if model_version is "auto"
-            is_v2 = self._model_version == "2.3"
-            if self._model_version == "auto":
-                is_v2 = "video_aggregate_embed.weight" in all_keys
-                self._model_version = "2.3" if is_v2 else "1.0"
-                logger.info(f"Auto-detected model version: {self._model_version}")
+            # V2.3: FeatureExtractorV2 with dual projections (video + audio)
+            self._feature_extractor_v2 = FeatureExtractorV2(dtype=self._dtype)
 
-            if is_v2:
-                # V2: FeatureExtractorV2 with dual projections (video + audio)
-                self._feature_extractor = None  # Not used in V2
-                self._feature_extractor_v2 = FeatureExtractorV2(dtype=self._dtype)
-                # Load video projection
-                if "video_aggregate_embed.weight" in all_keys:
-                    w = f.get_tensor("video_aggregate_embed.weight").to(dtype=self._dtype)
+            # Load video aggregate embed (try both key formats)
+            for prefix in ["text_embedding_projection.", ""]:
+                vw_key = f"{prefix}video_aggregate_embed.weight"
+                vb_key = f"{prefix}video_aggregate_embed.bias"
+                if vw_key in all_keys:
+                    w = f.get_tensor(vw_key).to(dtype=self._dtype)
                     self._feature_extractor_v2.video_aggregate_embed.weight.data = w
-                    logger.info(f"Loaded V2 video_aggregate_embed weight: {w.shape}")
-                if "video_aggregate_embed.bias" in all_keys:
-                    b = f.get_tensor("video_aggregate_embed.bias").to(dtype=self._dtype)
+                    logger.info(f"Loaded V2.3 video_aggregate_embed weight: {w.shape}")
+                if vb_key in all_keys:
+                    b = f.get_tensor(vb_key).to(dtype=self._dtype)
                     self._feature_extractor_v2.video_aggregate_embed.bias.data = b
-                # Load audio projection
-                if "audio_aggregate_embed.weight" in all_keys:
-                    w = f.get_tensor("audio_aggregate_embed.weight").to(dtype=self._dtype)
+                if vw_key in all_keys:
+                    break
+
+            # Load audio aggregate embed
+            for prefix in ["text_embedding_projection.", ""]:
+                aw_key = f"{prefix}audio_aggregate_embed.weight"
+                ab_key = f"{prefix}audio_aggregate_embed.bias"
+                if aw_key in all_keys:
+                    w = f.get_tensor(aw_key).to(dtype=self._dtype)
                     if self._feature_extractor_v2.audio_aggregate_embed is not None:
                         self._feature_extractor_v2.audio_aggregate_embed.weight.data = w
-                        logger.info(f"Loaded V2 audio_aggregate_embed weight: {w.shape}")
-                if "audio_aggregate_embed.bias" in all_keys:
-                    b = f.get_tensor("audio_aggregate_embed.bias").to(dtype=self._dtype)
+                        logger.info(f"Loaded V2.3 audio_aggregate_embed weight: {w.shape}")
+                if ab_key in all_keys:
+                    b = f.get_tensor(ab_key).to(dtype=self._dtype)
                     if self._feature_extractor_v2.audio_aggregate_embed is not None:
                         self._feature_extractor_v2.audio_aggregate_embed.bias.data = b
-            else:
-                # V1: single FeatureExtractorLinear (188160 -> 3840)
-                if "text_proj_in.weight" in all_keys:
-                    fe_weight = f.get_tensor("text_proj_in.weight")
-                    assert self._feature_extractor is not None
-                    self._feature_extractor.aggregate_embed.weight.data = fe_weight.to(
-                        dtype=self._dtype
-                    )
-                    logger.info(
-                        f"Loaded feature extractor weight: {fe_weight.shape}, "
-                        f"mean={fe_weight.float().mean():.4f}, std={fe_weight.float().std():.4f}"
-                    )
-                else:
-                    logger.error(
-                        "text_proj_in.weight not found in checkpoint! "
-                        "Feature extractor will have random weights."
-                    )
+                if aw_key in all_keys:
+                    break
 
-            # Load embeddings connector (both V1 and V2 use video_connector)
+            # Load embeddings connectors
             if self._use_connector:
-                config_path = Path(DEFAULT_CONNECTORS_CONFIG)
-                if config_path.exists():
-                    with open(config_path) as cfg_file:
-                        config = json.load(cfg_file)
-                    logger.info(f"Loaded connector config from {config_path}")
-                else:
-                    logger.warning(f"Connector config not found at {config_path}, using defaults")
-                    config = {
-                        "video_connector_attention_head_dim": 128,
-                        "video_connector_num_attention_heads": 30,
-                        "video_connector_num_layers": 2,
-                        "video_connector_num_learnable_registers": 128,
-                        "rope_type": "interleaved",
-                        "rope_theta": 10000.0,
-                        "rope_double_precision": False,
-                        "connector_positional_embedding_max_pos": [1],
-                    }
+                # V2.3 connector config: 8 blocks, 32 heads, gated attention
+                video_config = {
+                    "video_connector_attention_head_dim": 128,
+                    "video_connector_num_attention_heads": 32,
+                    "video_connector_num_layers": 8,
+                    "video_connector_num_learnable_registers": 128,
+                    "rope_type": "interleaved",
+                    "rope_theta": 10000.0,
+                    "rope_double_precision": False,
+                    "connector_positional_embedding_max_pos": [1],
+                    "apply_gated_attention": True,
+                }
+                audio_config = {
+                    **video_config,
+                    "video_connector_attention_head_dim": 64,  # Audio uses 64 head_dim
+                }
 
                 # Video connector
-                self._embeddings_connector = Embeddings1DConnector.from_config(config)
+                self._embeddings_connector = Embeddings1DConnector.from_config(video_config)
                 load_connector_weights(
-                    self._embeddings_connector, connectors_path, prefix="video_connector.",
+                    self._embeddings_connector, connectors_path,
+                    prefix="model.diffusion_model.video_embeddings_connector.",
                 )
-                logger.info("Loaded video embeddings connector weights")
+                logger.info("Loaded V2.3 video embeddings connector (8 blocks, gated)")
 
-                # Audio connector (V2 has separate audio connector)
-                if is_v2 and any(k.startswith("audio_connector.") for k in all_keys):
-                    self._audio_connector = Embeddings1DConnector.from_config(config)
+                # Audio connector
+                if any(k.startswith("model.diffusion_model.audio_embeddings_connector.") for k in all_keys):
+                    self._audio_connector = Embeddings1DConnector.from_config(audio_config)
                     load_connector_weights(
-                        self._audio_connector, connectors_path, prefix="audio_connector.",
+                        self._audio_connector, connectors_path,
+                        prefix="model.diffusion_model.audio_embeddings_connector.",
                     )
-                    logger.info("Loaded audio embeddings connector weights")
+                    logger.info("Loaded V2.3 audio embeddings connector (8 blocks, gated)")
 
     def _load_ltx2_gemma_weights(self) -> dict:
         """Load and remap Gemma weights from LTX-2 checkpoint shards.
@@ -1003,8 +940,8 @@ class Gemma3Encoder(PinnedShuttleMixin):
 
     @property
     def is_v2(self) -> bool:
-        """Whether this encoder is configured for V2 (LTX-2.3, 22B)."""
-        return self._model_version == "2.3"
+        """Always True -- V1 support removed, only V2.3 (22B) is supported."""
+        return True
 
     @property
     def embedding_dim(self) -> int:
@@ -1051,7 +988,7 @@ class Gemma3Encoder(PinnedShuttleMixin):
 
     def _shuttle_extra_modules(self) -> list[nn.Module]:
         return [m for m in [
-            self._feature_extractor, self._feature_extractor_v2,
+            self._feature_extractor_v2,
             self._embeddings_connector, self._audio_connector,
         ] if m is not None]
 
@@ -1123,48 +1060,17 @@ class Gemma3Encoder(PinnedShuttleMixin):
         # Stack: [B, T, D, L]
         stacked = torch.stack(hidden_states, dim=-1)
 
-        # Branch on V1 vs V2 feature extraction
+        # V2.3: per-token RMSNorm + dual projections
         audio_embeddings_list: list[torch.Tensor] | None = None
-        if self._feature_extractor_v2 is not None:
-            # V2: per-token RMSNorm + dual projections
-            video_embeds, audio_embeds = self._feature_extractor_v2(stacked, attention_mask)
-            embeddings = video_embeds
-            logger.debug(
-                f"[TEXT-ENC] V2 video features: shape={list(embeddings.shape)}, "
-                f"mean={embeddings.float().mean():.4f}"
-            )
-        else:
-            # V1: per-batch norm + single projection
-            actual_feature_dim = stacked.shape[2] * num_layers
-            if actual_feature_dim != GEMMA3_FEATURE_DIM:
-                logger.warning(
-                    f"Gemma3 layer count differs from expected: {num_layers} vs {GEMMA3_NUM_LAYERS}. "
-                    f"Feature dim: {actual_feature_dim} vs {GEMMA3_FEATURE_DIM}"
-                )
-                feature_extractor = FeatureExtractorLinear(
-                    input_dim=actual_feature_dim,
-                    output_dim=GEMMA3_OUTPUT_DIM,
-                    dtype=self._dtype,
-                ).to(self.device)
-            else:
-                feature_extractor = self._feature_extractor
-
-            normalized = _norm_and_concat_layers(stacked, attention_mask)
-            logger.debug(
-                f"[TEXT-ENC] After normalization: shape={list(normalized.shape)}, "
-                f"mean={normalized.float().mean():.4f}, std={normalized.float().std():.4f}"
-            )
-
-            assert feature_extractor is not None
-            if feature_extractor.aggregate_embed.weight.device != normalized.device:
-                feature_extractor = feature_extractor.to(normalized.device)
-
-            embeddings = feature_extractor(normalized)
-            audio_embeds = None
-            logger.debug(
-                f"[TEXT-ENC] After feature extractor: shape={list(embeddings.shape)}, "
-                f"mean={embeddings.float().mean():.4f}, std={embeddings.float().std():.4f}"
-            )
+        assert self._feature_extractor_v2 is not None, (
+            "FeatureExtractorV2 not initialized. Connector weights not loaded?"
+        )
+        video_embeds, audio_embeds = self._feature_extractor_v2(stacked, attention_mask)
+        embeddings = video_embeds
+        logger.debug(
+            f"[TEXT-ENC] V2.3 video features: shape={list(embeddings.shape)}, "
+            f"mean={embeddings.float().mean():.4f}"
+        )
 
         # Run through embeddings connector (2-layer bidirectional transformer)
         def _run_connector(
@@ -1320,18 +1226,12 @@ class Gemma3Encoder(PinnedShuttleMixin):
                 # Always compute actual feature dimension from the stacked tensor
                 actual_feature_dim = stacked.shape[2] * stacked.shape[3]
 
-                # Use adjusted feature extractor if dimensions don't match default
-                if actual_feature_dim != GEMMA3_FEATURE_DIM:
-                    fe = FeatureExtractorLinear(
-                        input_dim=actual_feature_dim,
-                        output_dim=GEMMA3_OUTPUT_DIM,
-                        dtype=self._dtype,
-                    ).to(normalized.device)
-                else:
-                    fe = self._feature_extractor
-                    # Ensure feature extractor is on same device as data
-                    if fe.aggregate_embed.weight.device != normalized.device:
-                        fe = fe.to(normalized.device)
+                # Always create an appropriately-sized feature extractor for research
+                fe = FeatureExtractorLinear(
+                    input_dim=actual_feature_dim,
+                    output_dim=GEMMA3_OUTPUT_DIM,
+                    dtype=self._dtype,
+                ).to(normalized.device)
                 projected = fe(normalized)
                 projected = projected * attention_mask[:, :, None].to(projected.dtype)
 
@@ -1600,10 +1500,12 @@ class Gemma3Encoder(PinnedShuttleMixin):
         """Move model to device."""
         if self._model is not None:
             self._model.to(device)
-        if self._feature_extractor is not None:
-            self._feature_extractor.to(device)
+        if self._feature_extractor_v2 is not None:
+            self._feature_extractor_v2.to(device)
         if self._embeddings_connector is not None:
             self._embeddings_connector.to(device)
+        if self._audio_connector is not None:
+            self._audio_connector.to(device)
         self._is_offloaded = device.type == "cpu"
         return self
 

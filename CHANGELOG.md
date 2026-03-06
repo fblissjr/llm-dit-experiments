@@ -1,10 +1,35 @@
-last updated: 2026-03-05
+last updated: 2026-03-06
 
 # changelog
 
 
 All notable changes to this project will be documented in this file.
 Uses [Semantic Versioning](https://semver.org/).
+
+## 0.9.20
+
+### changed
+- **LTX-2.3 only**: Dropped all V1 (LTX-2, 19B) support. V2.3 (22B) is the only supported LTX model.
+- **Transformer loading**: `load_ltx2_transformer()`, `load_ltx2_transformer_from_fp8()`, `load_ltx2_transformer_gguf()` now always create V2.3 models (gated attention + cross-attention AdaLN).
+- **Encoder**: `Gemma3Encoder` no longer has `_model_version` or V1 `_feature_extractor`. Always V2.3 with `_feature_extractor_v2`.
+- **Config**: Removed `model_version` from `LTX2Config`. Added `connectors_file` (default: `ltx-2.3-connectors.safetensors`).
+- **Config defaults**: `transformer_file` default updated to `ltx-2.3-transformer-fp8.safetensors`, `model_path` to `models/LTX-2.3`.
+- **Embeddings connector**: Renamed `transformer_blocks` to `transformer_1d_blocks`, `norm_q`/`norm_k` to `q_norm`/`k_norm` to match V2.3 checkpoint key naming.
+
+### added
+- **Split script**: `scripts/split_ltx23_safetensors.py` splits the official 28GB bundled fp8 checkpoint into 5 component files (transformer, connectors, video-vae, audio-vae, vocoder).
+- **Gated attention in connectors**: `Embeddings1DConnector` and `BasicTransformerBlock1D` now support `apply_gated_attention` for V2.3 8-block connectors.
+- **V2.3 connector loading**: All encoder variants (bf16, fp8, fp8-safetensors, 8bit, q4-qat) load V2.3 connectors from `connectors_file`.
+
+### fixed
+- **fp8-safetensors crash**: `'Gemma3Encoder' object has no attribute '_feature_extractor_v2'` -- the `__new__()` bypass in fp8-safetensors variant never initialized V2 attributes. Now calls `_load_connector_weights()` after construction.
+- **Reconstruct cache V2.3**: `_reconstruct_transformer_from_cache()` now always creates V2.3 models, matching the cached state dict format.
+
+### removed
+- V1 (19B) code paths in encoder, loader, and model manager.
+- `model_version` config field and parameter threading.
+- V1 `FeatureExtractorLinear` usage in encoder (kept for research `encode_multilayer()`).
+- V1 feature extraction and normalization functions from `Gemma3Encoder.encode()`.
 
 ## 0.9.19
 

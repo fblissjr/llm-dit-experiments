@@ -368,7 +368,7 @@ class TestTransformerCacheVideoOnlyFlag:
         assert not hasattr(block, "audio_to_video_attn"), "VideoOnly block should NOT have audio_to_video_attn"
 
     def test_reconstruct_helper_creates_video_only_model(self):
-        """_reconstruct_transformer_from_cache creates VideoOnly model from video-only cache."""
+        """_reconstruct_transformer_from_cache creates VideoOnly V2.3 model from cache."""
         from llm_dit.models.ltx2.loader import create_model_from_config, LTXModelType
 
         config = {
@@ -379,8 +379,11 @@ class TestTransformerCacheVideoOnlyFlag:
             "caption_channels": 2048,
             "num_layers": 2,
         }
-        # Build a real (non-meta) model to get a valid state_dict with actual tensors
-        ref = create_model_from_config(config, dtype=torch.bfloat16, model_type=LTXModelType.VideoOnly)
+        # Build a V2.3 model (gated attention + cross-attention AdaLN) for valid state_dict
+        ref = create_model_from_config(
+            config, dtype=torch.bfloat16, model_type=LTXModelType.VideoOnly,
+            apply_gated_attention=True, cross_attention_adaln=True,
+        )
         sd = {k: v.clone() for k, v in ref.state_dict().items()}
         del ref
 
@@ -393,7 +396,7 @@ class TestTransformerCacheVideoOnlyFlag:
         assert not hasattr(model.transformer_blocks[0], "audio_to_video_attn")
 
     def test_reconstruct_helper_creates_av_model(self):
-        """_reconstruct_transformer_from_cache creates AV model from audio-video cache."""
+        """_reconstruct_transformer_from_cache creates AV V2.3 model from cache."""
         from llm_dit.models.ltx2.loader import create_model_from_config, LTXModelType
 
         config = {
@@ -407,8 +410,11 @@ class TestTransformerCacheVideoOnlyFlag:
             "audio_attention_head_dim": 32,
             "audio_cross_attention_dim": 128,
         }
-        # Build a real (non-meta) model to get a valid state_dict with actual tensors
-        ref = create_model_from_config(config, dtype=torch.bfloat16, model_type=LTXModelType.AudioVideo)
+        # Build a V2.3 AV model for valid state_dict
+        ref = create_model_from_config(
+            config, dtype=torch.bfloat16, model_type=LTXModelType.AudioVideo,
+            apply_gated_attention=True, cross_attention_adaln=True,
+        )
         sd = {k: v.clone() for k, v in ref.state_dict().items()}
         del ref
 

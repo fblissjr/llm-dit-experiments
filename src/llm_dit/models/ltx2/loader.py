@@ -302,8 +302,11 @@ def load_ltx2_transformer(
     logger.info(f"Loaded config: {config.get('num_layers', 48)} layers, "
                 f"{config.get('num_attention_heads', 32)} heads")
 
-    # Create model
-    model = create_model_from_config(config, dtype, model_type=model_type)
+    # Create model (always V2.3: gated attention + cross-attention AdaLN)
+    model = create_model_from_config(
+        config, dtype, model_type=model_type,
+        apply_gated_attention=True, cross_attention_adaln=True,
+    )
 
     # Load weights
     logger.info(f"Loading weights from {path}")
@@ -371,7 +374,7 @@ def load_ltx2_from_diffusers(
     # Check if local path
     local_path = Path(repo_or_path)
     if local_path.exists():
-        return load_ltx2_transformer(local_path, dtype=dtype)
+        return load_ltx2_transformer(local_path, dtype=dtype)  # type: ignore[return-value]
 
     # Download from HuggingFace
     try:
@@ -589,8 +592,12 @@ def load_ltx2_transformer_from_fp8(
     logger.info(f"Dequantized {fp8_count} FP8 tensors to {dtype}")
 
     # Load config and create model -- FP8 files use our naming, no diffusers mapping needed
+    # Always V2.3: gated attention + cross-attention AdaLN
     config = load_config(path.parent)
-    model = create_model_from_config(config, dtype, model_type=model_type)
+    model = create_model_from_config(
+        config, dtype, model_type=model_type,
+        apply_gated_attention=True, cross_attention_adaln=True,
+    )
 
     load_result = model.load_state_dict(final_sd, strict=False)
     if load_result.missing_keys:
@@ -659,7 +666,7 @@ def load_ltx2_transformer_gguf(
     Returns:
         LTX2Transformer with GGMLLinear layers holding quantized weights.
     """
-    from llm_dit.quantization.gguf_loader import gguf_sd_loader, detect_v2_from_state_dict
+    from llm_dit.quantization.gguf_loader import gguf_sd_loader
     from llm_dit.quantization.gguf_linear import replace_linear_with_ggml
     from llm_dit.utils.meta_init import meta_init
 
@@ -670,27 +677,19 @@ def load_ltx2_transformer_gguf(
     state_dict, extra = gguf_sd_loader(str(gguf_path))
     logger.info(f"GGUF state dict: {len(state_dict)} keys, arch={extra.get('arch_str', 'unknown')}")
 
-    # Detect V2 (22B) from state dict keys
-    is_v2 = detect_v2_from_state_dict(state_dict)
-    logger.info(f"Detected model version: {'2.3 (22B)' if is_v2 else '1.0 (19B)'}")
-
     # Resolve model type
     if model_type is None:
         model_type = LTXModelType.VideoOnly if video_only else LTXModelType.AudioVideo
     video_only = not model_type.is_audio_enabled()
 
-    # Build model config -- GGUF doesn't carry a config.json, use defaults
-    # that match the 22B model when V2, or 19B when V1
+    # Build model config -- always V2.3 (22B) with gated attention + cross-attention AdaLN
     config = load_config(gguf_path)
 
-    # Build model on meta device to avoid allocating real memory
-    v2_kwargs = {}
-    if is_v2:
-        v2_kwargs["apply_gated_attention"] = True
-        v2_kwargs["cross_attention_adaln"] = True
-
     with meta_init():
-        model = create_model_from_config(config, dtype, model_type=model_type, **v2_kwargs)
+        model = create_model_from_config(
+            config, dtype, model_type=model_type,
+            apply_gated_attention=True, cross_attention_adaln=True,
+        )
 
     # Replace all nn.Linear with GGMLLinear (accepts quantized tensors)
     num_replaced = replace_linear_with_ggml(model)
