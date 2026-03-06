@@ -98,7 +98,7 @@ def _normalize_lora_args(
         paths = [str(p) for p in lora_path]
 
     if lora_scale is None:
-        scales = [0.8] * len(paths)
+        scales = [1.0] * len(paths)
     elif isinstance(lora_scale, (int, float)):
         scales = [float(lora_scale)] * len(paths)
     else:
@@ -121,19 +121,17 @@ def _apply_distilled_lora_fp8(
     """Apply distilled LoRA to a live model with native fp8 weights.
 
     Uses state-dict-level fusion: extract state dict, fuse LoRA deltas,
-    reload with assign=True, then re-patch forwards for per-forward upcast.
-    Same pattern as cache reconstruction but on a live model.
+    reload with assign=True. The existing patched forwards (from
+    amend_forward_with_upcast during cache reconstruction) survive
+    load_state_dict(assign=True) because it replaces parameters, not
+    forward methods -- closures access layer.weight at call time.
     """
-    import itertools
-
-    from llm_dit.quantization.fp8_cast import amend_forward_with_upcast
     from llm_dit.utils.lora import fuse_lora_to_state_dict
 
     sd = model.state_dict()
     sd = fuse_lora_to_state_dict(sd, [lora_path], [scale])
     model.load_state_dict(sd, assign=True)
-    patched = amend_forward_with_upcast(model)
-    logger.info(f"FP8-cast distilled LoRA: {patched} layers re-patched after sd-level fusion")
+    logger.info("FP8-cast distilled LoRA: sd-level fusion applied")
 
 
 def _load_transformer_and_lora(
@@ -227,7 +225,6 @@ def _load_transformer_and_lora(
             from llm_dit.utils.lora import load_lora as _load_lora
             total_updated = 0
             for path, scale in zip(lora_paths, lora_scales):
-                logger.info(f"Loading LoRA: {path} (scale={scale})")
                 updated = _load_lora(
                     model, path, scale=scale,
                     device=transformer_device, dtype=dtype,
@@ -325,8 +322,8 @@ def _reconstruct_transformer_from_cache(
 
     # FP8 preservation guard: verify fp8 weights survived device transfer
     if is_fp8_cast:
-        fp8_count = sum(1 for p in model.parameters() if p.dtype == torch.float8_e4m3fn)
-        if fp8_count == 0:
+        has_fp8 = any(p.dtype == torch.float8_e4m3fn for p in model.parameters())
+        if not has_fp8:
             raise RuntimeError(
                 f"FP8 weights lost during device transfer to {transformer_device} -- "
                 "all parameters are now bf16. This hardware may not support float8. "
@@ -1001,7 +998,7 @@ def generate_video_with_offloading(
         debug_latents: Log detailed latent/velocity statistics at key denoising steps.
         lora_path: Optional path to LoRA weights (.safetensors). Can be a single
             path or list of paths for stacking multiple LoRAs.
-        lora_scale: LoRA scale factor(s). None defaults to 0.8 per LoRA.
+        lora_scale: LoRA scale factor(s). None defaults to 1.0 per LoRA.
         text_encoder_device: Device for Gemma3 text encoder.
         transformer_device: Device for DiT transformer.
         vae_device: Device for VAE decoder.

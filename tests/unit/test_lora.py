@@ -801,12 +801,12 @@ class TestNormalizeLoraArgs:
         assert paths == ["lora.safetensors"]
         assert scales == [0.7]
 
-    def test_single_path_none_scale_defaults_to_0_8(self):
-        """Single path with None scale should default to 0.8."""
+    def test_single_path_none_scale_defaults_to_1_0(self):
+        """Single path with None scale should default to 1.0 (matches config)."""
         from llm_dit.pipelines.generate import _normalize_lora_args
         paths, scales = _normalize_lora_args("lora.safetensors", None)
         assert paths == ["lora.safetensors"]
-        assert scales == [0.8]
+        assert scales == [1.0]
 
     def test_list_paths_with_list_scales(self):
         """List of paths with matching list of scales."""
