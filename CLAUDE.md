@@ -305,7 +305,7 @@ For full debugging patterns, see [lessons_learned.md](internal/state/lessons_lea
 | fp8 weights silently become bf16 | `load_state_dict` missing `assign=True` | Mixed-dtype models MUST use `assign=True` to preserve fp8 dtype; without it, tensors are copied into existing bf16 params |
 | LTX-2 encoder None in on-demand mode | `default_pipeline = "none"` skips preload | Router lazy-loads via `manager.load("ltx2")` on first request; check `manager.ltx2_encoder is None` guard |
 | Model construction OOM spike | Missing `meta_init()` wrapper | Wrap `create_model_from_config()` in `meta_init()` context manager + use `assign=True` in `load_state_dict` |
-| Stage 2 distilled LoRA crash on fp8-cast | `load_lora()` can't add bf16 delta to fp8 weight | Fixed in v0.9.23: `_apply_distilled_lora_fp8()` uses state-dict-level fusion |
+| Stage 2 distilled LoRA crash on fp8-cast | `load_lora()` can't add bf16 delta to fp8 weight | Fixed in v0.9.23: `_apply_distilled_lora_fp8()` uses state-dict-level fusion. Note: `fuse_lora_to_state_dict` clones ALL tensors -- peaks at ~24GB on live 12GB fp8 model |
 | Generate button disabled silently | Validation error not displayed to user | Check DevTools for `[Generate]` namespace logs; likely stale IndexedDB value exceeds schema min/max |
 | Noisy/garbage LTX-2 output | Compounding optimizations | Disable `ge_gamma`, `fbcache_threshold`, `use_distilled_sigmas` in config.toml; test one at a time. All three together = no CFG + stale cached blocks + amplified velocity = runaway noise |
 | Stale form values from IndexedDB | Schema range changed after values persisted | `getResolvedValues()` clamps automatically; use "Reset Storage" in Settings or clear IndexedDB via DevTools Application tab |
