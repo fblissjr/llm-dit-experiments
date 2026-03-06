@@ -23,7 +23,7 @@ REFERENCE_SEED = 10                    # DEFAULT_SEED
 REFERENCE_HEIGHT = 512                 # DEFAULT_1_STAGE_HEIGHT
 REFERENCE_WIDTH = 768                  # DEFAULT_1_STAGE_WIDTH
 REFERENCE_FRAMES = 121                 # DEFAULT_NUM_FRAMES
-REFERENCE_STEPS = 40                   # DEFAULT_NUM_INFERENCE_STEPS
+REFERENCE_STEPS = 30                   # DEFAULT_NUM_INFERENCE_STEPS (official V2.3)
 REFERENCE_CFG = 3.0                    # DEFAULT_VIDEO_GUIDER_PARAMS.cfg_scale
 REFERENCE_STG = 1.0                    # stg_scale
 REFERENCE_RESCALE = 0.7                # rescale_scale
@@ -91,7 +91,7 @@ FULL_REFERENCE = {
     "height": REFERENCE_HEIGHT,        # 512
     "width": REFERENCE_WIDTH,          # 768
     "num_frames": REFERENCE_FRAMES,    # 121
-    "num_inference_steps": REFERENCE_STEPS,  # 40
+    "num_inference_steps": REFERENCE_STEPS,  # 30
     "guidance_scale": REFERENCE_CFG,   # 3.0
     "seed": REFERENCE_SEED,            # 10
     "fps": REFERENCE_FPS,              # 24.0

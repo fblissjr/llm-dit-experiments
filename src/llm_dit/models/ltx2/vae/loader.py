@@ -1,25 +1,20 @@
 """
-LTX-2 VAE Loader - Weight loading utilities for VideoDecoder.
+LTX-2.3 VAE Loader - Weight loading utilities for VideoDecoder.
 
-Last Updated: 2026-01-19
+Last Updated: 2026-03-06
 
-Provides functions for loading official LTX-2 VAE checkpoints into our pure PyTorch
-VideoDecoder implementation. Handles the key mapping between diffusers format and
-our naming convention.
+Loads official LTX-2.3 VAE checkpoints into our pure PyTorch VideoDecoder.
+V2.3 checkpoints use native key format (decoder.up_blocks.N.res_blocks.M)
+and have a different architecture from V1 (9 up_blocks vs 7).
 
 Usage:
     from llm_dit.models.ltx2.vae import load_ltx2_vae_decoder
 
-    # Load from checkpoint directory
-    decoder = load_ltx2_vae_decoder("models/LTX-2/vae/")
-
-    # Load with specific dtype
-    decoder = load_ltx2_vae_decoder(path, dtype=torch.bfloat16)
+    # Load from V2.3 split checkpoint
+    decoder = load_ltx2_vae_decoder("models/LTX-2.3/ltx-2.3-video-vae.safetensors")
 """
 
-import json
 import logging
-import re
 from pathlib import Path
 from typing import Dict, Union
 
@@ -31,23 +26,33 @@ from .video_vae import VideoDecoder
 logger = logging.getLogger(__name__)
 
 
+# V2.3 decoder_blocks specification (encoder/forward order, reversed for up_blocks).
+# Inferred from checkpoint weight shapes:
+#   up_blocks.0: res_x(2)@1024 -> up_blocks.1: compress_all(mult=2) 1024->512
+#   up_blocks.2: res_x(2)@512  -> up_blocks.3: compress_all(mult=1) 512->512
+#   up_blocks.4: res_x(4)@512  -> up_blocks.5: compress_time(mult=2) 512->256
+#   up_blocks.6: res_x(6)@256  -> up_blocks.7: compress_space(mult=2) 256->128
+#   up_blocks.8: res_x(4)@128
+V23_DECODER_BLOCKS = [
+    ("res_x", {"num_layers": 4}),
+    ("compress_space", {"multiplier": 2}),
+    ("res_x", {"num_layers": 6}),
+    ("compress_time", {"multiplier": 2}),
+    ("res_x", {"num_layers": 4}),
+    ("compress_all", {"multiplier": 1}),
+    ("res_x", {"num_layers": 2}),
+    ("compress_all", {"multiplier": 2}),
+    ("res_x", {"num_layers": 2}),
+]
+
+
 def _load_safetensors(path: Path, device: str = "cpu") -> Dict[str, torch.Tensor]:
-    """
-    Load state dict from safetensors file.
-
-    Args:
-        path: Path to safetensors file or directory containing it
-        device: Device to load tensors to
-
-    Returns:
-        State dictionary
-    """
+    """Load state dict from safetensors file."""
     try:
         from safetensors import safe_open
     except ImportError:
         raise ImportError("safetensors required. Install: pip install safetensors")
 
-    # Handle both file and directory paths
     if path.is_dir():
         safetensors_path = path / "diffusion_pytorch_model.safetensors"
     else:
@@ -64,127 +69,6 @@ def _load_safetensors(path: Path, device: str = "cpu") -> Dict[str, torch.Tensor
     return state_dict
 
 
-def _load_config(path: Path) -> dict:
-    """
-    Load VAE configuration from checkpoint directory.
-
-    Args:
-        path: Path to checkpoint directory
-
-    Returns:
-        Configuration dictionary
-    """
-    config_path = path / "config.json" if path.is_dir() else path.parent / "config.json"
-
-    if config_path.exists():
-        with open(config_path) as f:
-            return json.load(f)
-
-    # Default config for LTX-2 VAE decoder
-    return {
-        "latent_channels": 128,
-        "out_channels": 3,
-        "patch_size": 4,
-        "decoder_causal": False,
-        "timestep_conditioning": False,
-        "decoder_spatial_padding_mode": "reflect",
-        "decoder_layers_per_block": [5, 5, 5, 5],
-        "decoder_spatio_temporal_scaling": [True, True, True],
-        "upsample_residual": [True, True, True],
-    }
-
-
-def _map_decoder_key(diffusers_key: str) -> str:
-    """
-    Map a diffusers VAE decoder key to our naming convention.
-
-    Mapping structure:
-        Diffusers                           → Ours
-        decoder.conv_in.conv.*              → conv_in.conv.*
-        decoder.mid_block.resnets.N.*       → up_blocks.0.res_blocks.N.*
-        decoder.up_blocks.K.upsamplers.0.*  → up_blocks.{2K+1}.*
-        decoder.up_blocks.K.resnets.N.*     → up_blocks.{2K+2}.res_blocks.N.*
-        decoder.conv_out.conv.*             → conv_out.conv.*
-
-    Args:
-        diffusers_key: Key from diffusers checkpoint
-
-    Returns:
-        Mapped key for our implementation
-    """
-    key = diffusers_key
-
-    # Strip 'decoder.' prefix
-    if key.startswith("decoder."):
-        key = key[8:]
-
-    # Map mid_block.resnets → up_blocks.0.res_blocks
-    if key.startswith("mid_block.resnets."):
-        key = key.replace("mid_block.resnets.", "up_blocks.0.res_blocks.")
-        return key
-
-    # Map up_blocks.K.upsamplers.0 → up_blocks.{2K+1}
-    # Map up_blocks.K.resnets.N → up_blocks.{2K+2}.res_blocks.N
-    match = re.match(r"up_blocks\.(\d+)\.(upsamplers|resnets)\.", key)
-    if match:
-        block_idx = int(match.group(1))
-        block_type = match.group(2)
-
-        if block_type == "upsamplers":
-            # upsamplers.0.conv.* → up_blocks.{2K+1}.*
-            new_idx = 2 * block_idx + 1
-            key = re.sub(
-                r"up_blocks\.\d+\.upsamplers\.0\.",
-                f"up_blocks.{new_idx}.",
-                key
-            )
-        else:  # resnets
-            # resnets.N.* → up_blocks.{2K+2}.res_blocks.N.*
-            new_idx = 2 * block_idx + 2
-            key = re.sub(
-                r"up_blocks\.\d+\.resnets\.",
-                f"up_blocks.{new_idx}.res_blocks.",
-                key
-            )
-
-    return key
-
-
-def _build_decoder_blocks(config: dict) -> list:
-    """
-    Build decoder_blocks list from config.
-
-    The decoder architecture consists of:
-    1. First res_x block (becomes mid_block in forward pass)
-    2. Alternating: compress_all (upsample) + res_x blocks
-
-    Args:
-        config: VAE configuration dictionary
-
-    Returns:
-        List of (block_name, block_config) tuples
-    """
-    layers_per_block = config.get("decoder_layers_per_block", [5, 5, 5, 5])
-    upsample_residual = config.get("upsample_residual", [True, True, True])
-
-    decoder_blocks = []
-
-    # First res_x block (mid_block)
-    decoder_blocks.append(("res_x", {"num_layers": layers_per_block[0]}))
-
-    # Alternating compress_all + res_x
-    for residual, num_layers in zip(upsample_residual, layers_per_block[1:]):
-        # Upsample block (compress_all because we're doing depth-to-space)
-        decoder_blocks.append((
-            "compress_all",
-            {"residual": residual, "multiplier": 2}
-        ))
-        # Resnet block
-        decoder_blocks.append(("res_x", {"num_layers": num_layers}))
-
-    return decoder_blocks
-
-
 def load_ltx2_vae_decoder(
     path: Union[str, Path],
     dtype: torch.dtype = torch.bfloat16,
@@ -192,93 +76,61 @@ def load_ltx2_vae_decoder(
     strict: bool = False,
 ) -> VideoDecoder:
     """
-    Load LTX-2 VAE decoder from official checkpoint.
+    Load LTX-2.3 VAE decoder from checkpoint.
 
-    Loads weights from official LTX-2 VAE checkpoints and maps them to our
-    pure PyTorch VideoDecoder implementation.
+    V2.3 checkpoints use native key format -- keys map directly after
+    stripping the 'decoder.' prefix. Architecture: 9 up_blocks with
+    mixed compress_all/compress_time/compress_space upsamplers.
 
     Args:
-        path: Path to checkpoint file or directory (e.g., "models/LTX-2/vae/")
-        dtype: Model dtype (bf16 recommended)
-        device: Device to load to initially (use 'cpu' then .to('cuda') for large models)
-        strict: If True, raise error on missing/extra keys
+        path: Path to safetensors file or directory.
+        dtype: Model dtype (bf16 recommended).
+        device: Device to load to.
+        strict: If True, raise error on missing/extra keys.
 
     Returns:
-        Loaded VideoDecoder model
-
-    Example:
-        # Load VAE decoder
-        decoder = load_ltx2_vae_decoder("models/LTX-2/vae/")
-        decoder = decoder.cuda()  # Move to GPU after loading
-
-        # Decode latents
-        latents = torch.randn(1, 128, 5, 16, 24)  # [B, C, F, H, W]
-        video = decoder(latents)  # [B, 3, 33, 512, 768]
+        Loaded VideoDecoder model.
     """
     path = Path(path)
 
-    # Load config
-    config = _load_config(path)
-    logger.info(f"Loading VAE decoder config: latent_channels={config.get('latent_channels', 128)}")
-
-    # Build decoder blocks from config
-    decoder_blocks = _build_decoder_blocks(config)
-
-    # Parse padding mode
-    padding_mode_str = config.get("decoder_spatial_padding_mode", "reflect")
-    if padding_mode_str == "reflect":
-        padding_mode = PaddingModeType.REFLECT
-    elif padding_mode_str == "zeros":
-        padding_mode = PaddingModeType.ZEROS
-    else:
-        padding_mode = PaddingModeType.REPLICATE
-
-    # Create decoder model
+    # Create V2.3 decoder model
     decoder = VideoDecoder(
         convolution_dimensions=3,
-        in_channels=config.get("latent_channels", 128),
-        out_channels=config.get("out_channels", 3),
-        decoder_blocks=decoder_blocks,
-        patch_size=config.get("patch_size", 4),
+        in_channels=128,
+        out_channels=3,
+        decoder_blocks=V23_DECODER_BLOCKS,
+        patch_size=4,
         norm_layer=NormLayerType.PIXEL_NORM,
-        causal=config.get("decoder_causal", False),
-        timestep_conditioning=config.get("timestep_conditioning", False),
-        decoder_spatial_padding_mode=padding_mode,
+        causal=False,
+        timestep_conditioning=False,
+        decoder_spatial_padding_mode=PaddingModeType.REFLECT,
     )
 
     # Load weights
-    logger.info(f"Loading weights from {path}")
-    diffusers_state_dict = _load_safetensors(path, device=device)
+    logger.info(f"Loading VAE weights from {path}")
+    raw_sd = _load_safetensors(path, device=device)
 
-    # Map keys
+    # Map keys: V2.3 uses native format, just strip 'decoder.' prefix
     our_state_dict = {}
     skipped_keys = []
 
-    for diffusers_key, tensor in diffusers_state_dict.items():
-        # Handle latents_mean → per_channel_statistics.mean-of-means
-        if diffusers_key == "latents_mean":
-            our_state_dict["per_channel_statistics.mean-of-means"] = tensor.to(dtype)
-            # Also copy to std-of-means for un_normalize to work correctly
-            # Note: diffusers uses latents_std for the standard deviation
-            continue
-
-        # Handle latents_std → per_channel_statistics.std-of-means
-        if diffusers_key == "latents_std":
-            our_state_dict["per_channel_statistics.std-of-means"] = tensor.to(dtype)
+    for raw_key, tensor in raw_sd.items():
+        # per_channel_statistics: direct mapping
+        if raw_key.startswith("per_channel_statistics."):
+            our_state_dict[raw_key] = tensor.to(dtype)
             continue
 
         # Skip encoder keys
-        if diffusers_key.startswith("encoder."):
-            skipped_keys.append(diffusers_key)
+        if raw_key.startswith("encoder."):
+            skipped_keys.append(raw_key)
             continue
 
-        # Skip non-decoder keys
-        if not diffusers_key.startswith("decoder."):
-            skipped_keys.append(diffusers_key)
-            continue
-
-        our_key = _map_decoder_key(diffusers_key)
-        our_state_dict[our_key] = tensor.to(dtype)
+        # Strip 'decoder.' prefix for decoder keys
+        if raw_key.startswith("decoder."):
+            our_key = raw_key[len("decoder."):]
+            our_state_dict[our_key] = tensor.to(dtype)
+        else:
+            skipped_keys.append(raw_key)
 
     # Load into model
     load_result = decoder.load_state_dict(our_state_dict, strict=strict)
@@ -287,7 +139,6 @@ def load_ltx2_vae_decoder(
         logger.info(f"Skipped {len(skipped_keys)} non-decoder keys")
 
     if load_result.missing_keys:
-        # Filter out per_channel_statistics keys that we don't need
         relevant_missing = [k for k in load_result.missing_keys
                           if not k.startswith("per_channel_statistics.")]
         if relevant_missing:
@@ -299,25 +150,17 @@ def load_ltx2_vae_decoder(
             f"({len(load_result.unexpected_keys)} total)"
         )
 
-    # Count parameters
+    # Validate
     num_params = sum(p.numel() for p in decoder.parameters())
     logger.info(f"Loaded VAE decoder: {num_params / 1e6:.1f}M parameters")
 
-    # Validate PerChannelStatistics buffers are loaded correctly
     std_buffer = decoder.per_channel_statistics.get_buffer("std-of-means")
     mean_buffer = decoder.per_channel_statistics.get_buffer("mean-of-means")
-
-    # Check buffers are not empty/zero (would indicate failed loading)
     if std_buffer.abs().max() < 1e-6:
         logger.warning(
             "PerChannelStatistics std-of-means buffer appears empty! "
             "Latent denormalization may not work correctly."
         )
-    if mean_buffer.abs().max() < 1e-6 and std_buffer.abs().max() > 1e-6:
-        # mean-of-means can legitimately be near zero, only warn if std is also zero
-        pass
-
-    # Log buffer statistics for debugging
     logger.info(
         f"PerChannelStatistics loaded: "
         f"std-of-means range=[{std_buffer.min():.4f}, {std_buffer.max():.4f}], "

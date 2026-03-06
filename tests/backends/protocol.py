@@ -83,7 +83,7 @@ class GenerationConfig:
     frame_rate: float = 24.0
 
     # Inference parameters
-    num_inference_steps: int = 40
+    num_inference_steps: int = 30
     guidance_scale: float = 3.0  # CFG scale (ref: DEFAULT_VIDEO_GUIDER_PARAMS.cfg_scale)
     seed: int = 10  # Default LTX-2 seed
 

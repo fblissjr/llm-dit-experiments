@@ -91,9 +91,13 @@ def _reconstruct_transformer_from_cache(
     correct model architecture (BasicTransformerBlock vs BasicAVTransformerBlock)
     is created. Legacy caches without the flag default to video-only.
 
+    When 'fp8_cast' is True, the cached state dict contains mixed-dtype tensors
+    (fp8 linears + bf16 norms/embeddings). Instead of torchao quantization, we
+    patch nn.Linear forwards for per-forward upcast (official Lightricks approach).
+
     Args:
         cached_transformer: Dict with "config", "state_dict", and optionally
-            "video_only" (defaults True for backward compat).
+            "video_only" (defaults True for backward compat) and "fp8_cast".
         dtype: Model dtype (usually torch.bfloat16).
         transformer_device: Target device for the model after construction.
         effective_quantize: Whether to quantize after loading.
@@ -106,7 +110,11 @@ def _reconstruct_transformer_from_cache(
     from llm_dit.models.ltx2.loader import LTXModelType, create_model_from_config
     from llm_dit.utils.meta_init import meta_init
 
-    logger.info("Using cached transformer weights, reconstructing model...")
+    is_fp8_cast = cached_transformer.get("fp8_cast", False)
+    logger.info(
+        "Using cached transformer weights, reconstructing model..."
+        + (" (fp8-cast)" if is_fp8_cast else "")
+    )
     cache_video_only = cached_transformer.get("video_only", True)
     model_type = LTXModelType.VideoOnly if cache_video_only else LTXModelType.AudioVideo
     with meta_init():
@@ -116,7 +124,12 @@ def _reconstruct_transformer_from_cache(
         )
     model.load_state_dict(cached_transformer["state_dict"], assign=True)
 
-    if effective_quantize and effective_precision != "none":
+    if is_fp8_cast:
+        # FP8-cast: patch forwards for per-forward upcast (no torchao)
+        from llm_dit.quantization.fp8_cast import amend_forward_with_upcast
+        patched = amend_forward_with_upcast(model)
+        logger.info(f"FP8-cast: {patched} linear layers patched for per-forward upcast")
+    elif effective_quantize and effective_precision != "none":
         from llm_dit.quantization import quantize_component
         model, stats = quantize_component(
             model, method=effective_precision, component_type="transformer",
@@ -939,23 +952,23 @@ def generate_video_with_offloading(
 
         is_fp8_file = tf_path.is_file() and "fp8" in tf_path.name.lower()
         if is_fp8_file:
-            from llm_dit.models.ltx2 import load_ltx2_transformer_from_fp8
-            model = load_ltx2_transformer_from_fp8(tf_path, dtype=dtype, device=load_device, video_only=True)
+            from llm_dit.models.ltx2 import load_ltx2_transformer_fp8_cast
+            model = load_ltx2_transformer_fp8_cast(tf_path, dtype=dtype, device=load_device, video_only=True)
         else:
             model = load_ltx2_transformer(
                 tf_path, dtype=dtype, device=load_device, video_only=True,
             )
 
-        if effective_quantize and effective_precision != "none":
-            from llm_dit.quantization import quantize_component
-            model, stats = quantize_component(  # type: ignore[assignment]
-                model, method=effective_precision, component_type="transformer",
-                granularity=granularity,
-            )
-            logger.info(
-                f"Transformer quantized: {stats['quantized_layers']}/{stats['total_layers']} layers "
-                f"({effective_precision}, granularity={granularity})"
-            )
+            if effective_quantize and effective_precision != "none":
+                from llm_dit.quantization import quantize_component
+                model, stats = quantize_component(  # type: ignore[assignment]
+                    model, method=effective_precision, component_type="transformer",
+                    granularity=granularity,
+                )
+                logger.info(
+                    f"Transformer quantized: {stats['quantized_layers']}/{stats['total_layers']} layers "
+                    f"({effective_precision}, granularity={granularity})"
+                )
 
         if load_device == "cpu":
             model = model.to(transformer_device)
@@ -1926,23 +1939,23 @@ def generate_video_two_stage(
 
         is_fp8_file = tf_path.is_file() and "fp8" in tf_path.name.lower()
         if is_fp8_file:
-            from llm_dit.models.ltx2 import load_ltx2_transformer_from_fp8
-            model = load_ltx2_transformer_from_fp8(tf_path, dtype=dtype, device=load_device, video_only=video_only)
+            from llm_dit.models.ltx2 import load_ltx2_transformer_fp8_cast
+            model = load_ltx2_transformer_fp8_cast(tf_path, dtype=dtype, device=load_device, video_only=video_only)
         else:
             model = load_ltx2_transformer(
                 tf_path, dtype=dtype, device=load_device, video_only=video_only,
             )
 
-        if effective_quantize and effective_precision != "none":
-            from llm_dit.quantization import quantize_component
-            model, stats = quantize_component(
-                model, method=effective_precision, component_type="transformer",
-                granularity=granularity,
-            )
-            logger.info(
-                f"Transformer quantized: {stats['quantized_layers']}/{stats['total_layers']} layers "
-                f"({effective_precision}, granularity={granularity})"
-            )
+            if effective_quantize and effective_precision != "none":
+                from llm_dit.quantization import quantize_component
+                model, stats = quantize_component(
+                    model, method=effective_precision, component_type="transformer",
+                    granularity=granularity,
+                )
+                logger.info(
+                    f"Transformer quantized: {stats['quantized_layers']}/{stats['total_layers']} layers "
+                    f"({effective_precision}, granularity={granularity})"
+                )
 
         if load_device == "cpu":
             model = model.to(transformer_device)

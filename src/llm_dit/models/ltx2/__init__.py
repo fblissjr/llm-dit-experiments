@@ -77,6 +77,7 @@ from llm_dit.models.ltx2.loader import (
     load_ltx2_transformer,
     load_ltx2_transformer_quantized,
     load_ltx2_transformer_from_fp8,
+    load_ltx2_transformer_fp8_cast,
 )
 from llm_dit.models.ltx2.constants import (
     # Generation defaults
@@ -125,6 +126,7 @@ __all__ = [
     "load_ltx2_transformer",
     "load_ltx2_transformer_quantized",
     "load_ltx2_transformer_from_fp8",
+    "load_ltx2_transformer_fp8_cast",
     # Input types
     "Modality",
     "TransformerArgs",

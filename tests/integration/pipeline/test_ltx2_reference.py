@@ -10,7 +10,7 @@ outputs for visual inspection.
 Reference Parameters (from coderef/LTX-2):
 - height: 512, width: 768
 - num_frames: 121 (or 33 for quick tests)
-- num_inference_steps: 40
+- num_inference_steps: 30
 - guidance_scale: 4.0
 - seed: 10
 

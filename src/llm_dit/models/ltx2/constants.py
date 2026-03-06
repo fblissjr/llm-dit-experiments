@@ -31,7 +31,7 @@ DEFAULT_NUM_FRAMES = 121  # 8 * 15 + 1 = 121
 DEFAULT_FRAME_RATE = 24.0
 
 # Diffusion parameters
-DEFAULT_NUM_INFERENCE_STEPS = 40  # T2V default
+DEFAULT_NUM_INFERENCE_STEPS = 30  # T2V default (official V2.3)
 DEFAULT_GUIDANCE_SCALE = 4.0  # CFG strength
 
 # Reproducibility

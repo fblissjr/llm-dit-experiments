@@ -1,6 +1,6 @@
 # LTX-2 reference test overlay -- merged over config.toml.example
-# Full reference quality: 512x768, 121 frames, 40 steps, no FP8
-# Matches official LTX-2 reference repo parameters exactly
+# Full reference quality: 512x768, 121 frames, 30 steps, no FP8
+# Matches official LTX-2.3 reference repo parameters exactly
 # For 1:1 comparison with coderef/LTX-2 implementation
 
 default_pipeline = "none"
@@ -9,7 +9,7 @@ default_pipeline = "none"
 height = 512
 width = 768
 num_frames = 121
-num_inference_steps = 40
+num_inference_steps = 30
 guidance_scale = 3.0
 offload_mode = "model"
 use_two_stage = false

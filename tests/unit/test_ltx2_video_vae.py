@@ -407,4 +407,206 @@ class TestCreateTiles:
             create_tiles(shape, splitters, [DEFAULT_MAPPING_OPERATION] * 4)
 
 
+# ============================================================================
+# V2.3 VAE Architecture Tests
+# ============================================================================
+
+
+# V2.3 decoder_blocks specification (encoder/forward order, reversed for up_blocks)
+V23_DECODER_BLOCKS = [
+    ("res_x", {"num_layers": 4}),
+    ("compress_space", {"multiplier": 2}),
+    ("res_x", {"num_layers": 6}),
+    ("compress_time", {"multiplier": 2}),
+    ("res_x", {"num_layers": 4}),
+    ("compress_all", {"multiplier": 1}),
+    ("res_x", {"num_layers": 2}),
+    ("compress_all", {"multiplier": 2}),
+    ("res_x", {"num_layers": 2}),
+]
+
+
+class TestV23DecoderArchitecture:
+    """Tests for V2.3 VideoDecoder architecture construction."""
+
+    def test_v23_decoder_constructs(self):
+        """V2.3 decoder should construct without error."""
+        from llm_dit.models.ltx2.vae.video_vae import VideoDecoder
+        from llm_dit.models.ltx2.vae.enums import NormLayerType, PaddingModeType
+
+        decoder = VideoDecoder(
+            convolution_dimensions=3,
+            in_channels=128,
+            out_channels=3,
+            decoder_blocks=V23_DECODER_BLOCKS,
+            patch_size=4,
+            norm_layer=NormLayerType.PIXEL_NORM,
+            causal=False,
+            timestep_conditioning=False,
+            decoder_spatial_padding_mode=PaddingModeType.REFLECT,
+        )
+        # Should have 9 up_blocks (5 res_x + 4 upsamplers)
+        assert len(decoder.up_blocks) == 9
+
+    def test_v23_conv_in_channels(self):
+        """conv_in should have 1024 output channels (base_channels=128 * 8)."""
+        from llm_dit.models.ltx2.vae.video_vae import VideoDecoder
+        from llm_dit.models.ltx2.vae.enums import NormLayerType, PaddingModeType
+
+        decoder = VideoDecoder(
+            convolution_dimensions=3,
+            in_channels=128,
+            out_channels=3,
+            decoder_blocks=V23_DECODER_BLOCKS,
+            patch_size=4,
+            norm_layer=NormLayerType.PIXEL_NORM,
+            decoder_spatial_padding_mode=PaddingModeType.REFLECT,
+        )
+        # conv_in: 128 -> 1024
+        conv_in_weight = decoder.conv_in.conv.weight
+        assert conv_in_weight.shape[0] == 1024, f"Expected 1024, got {conv_in_weight.shape[0]}"
+        assert conv_in_weight.shape[1] == 128, f"Expected 128, got {conv_in_weight.shape[1]}"
+
+    def test_v23_conv_out_channels(self):
+        """conv_out should have 48 output channels (3 * patch_size^2 = 3 * 16)."""
+        from llm_dit.models.ltx2.vae.video_vae import VideoDecoder
+        from llm_dit.models.ltx2.vae.enums import NormLayerType, PaddingModeType
+
+        decoder = VideoDecoder(
+            convolution_dimensions=3,
+            in_channels=128,
+            out_channels=3,
+            decoder_blocks=V23_DECODER_BLOCKS,
+            patch_size=4,
+            norm_layer=NormLayerType.PIXEL_NORM,
+            decoder_spatial_padding_mode=PaddingModeType.REFLECT,
+        )
+        # conv_out: 128 -> 48 (=3*16)
+        conv_out_weight = decoder.conv_out.conv.weight
+        assert conv_out_weight.shape[0] == 48, f"Expected 48, got {conv_out_weight.shape[0]}"
+        assert conv_out_weight.shape[1] == 128, f"Expected 128, got {conv_out_weight.shape[1]}"
+
+    def test_v23_state_dict_key_count(self):
+        """V2.3 decoder state dict should have the right number of keys."""
+        from llm_dit.models.ltx2.vae.video_vae import VideoDecoder
+        from llm_dit.models.ltx2.vae.enums import NormLayerType, PaddingModeType
+
+        decoder = VideoDecoder(
+            convolution_dimensions=3,
+            in_channels=128,
+            out_channels=3,
+            decoder_blocks=V23_DECODER_BLOCKS,
+            patch_size=4,
+            norm_layer=NormLayerType.PIXEL_NORM,
+            decoder_spatial_padding_mode=PaddingModeType.REFLECT,
+        )
+        # The V2.3 checkpoint has 84 decoder keys + 2 per_channel_statistics
+        # Our model should have a comparable number
+        sd = decoder.state_dict()
+        # Count decoder weight keys (excluding per_channel_statistics)
+        decoder_keys = [k for k in sd if not k.startswith("per_channel_statistics")]
+        # 84 decoder keys expected from checkpoint analysis:
+        # conv_in(2) + conv_out(2) + 5 res_x blocks + 4 upsamplers
+        assert len(decoder_keys) > 80, f"Too few keys: {len(decoder_keys)}"
+
+
+class TestV23DecoderBlockTypes:
+    """Tests for compress_time and compress_space with multiplier support."""
+
+    def test_compress_time_with_multiplier(self):
+        """compress_time with multiplier=2 should halve channels."""
+        upsample = DepthToSpaceUpsample(
+            dims=3,
+            in_channels=512,
+            stride=(2, 1, 1),
+            out_channels_reduction_factor=2,
+        )
+        # Conv should output: prod(stride) * in_channels / reduction = 2*512/2 = 512
+        assert upsample.out_channels == 512
+        # After depth-to-space: 512/2 = 256 channels
+        x = torch.randn(1, 512, 4, 8, 8)
+        y = upsample(x)
+        assert y.shape[1] == 256, f"Expected 256 channels, got {y.shape[1]}"
+        # Temporal doubled (minus 1 for causal removal)
+        assert y.shape[2] == 7, f"Expected 7 frames, got {y.shape[2]}"
+        # Spatial unchanged
+        assert y.shape[3] == 8
+        assert y.shape[4] == 8
+
+    def test_compress_space_with_multiplier(self):
+        """compress_space with multiplier=2 should halve channels."""
+        upsample = DepthToSpaceUpsample(
+            dims=3,
+            in_channels=256,
+            stride=(1, 2, 2),
+            out_channels_reduction_factor=2,
+        )
+        # Conv should output: prod(stride) * in_channels / reduction = 4*256/2 = 512
+        assert upsample.out_channels == 512
+        # After depth-to-space: 512/4 = 128 channels
+        x = torch.randn(1, 256, 4, 8, 8)
+        y = upsample(x)
+        assert y.shape[1] == 128, f"Expected 128 channels, got {y.shape[1]}"
+        # Temporal unchanged
+        assert y.shape[2] == 4
+        # Spatial doubled
+        assert y.shape[3] == 16
+        assert y.shape[4] == 16
+
+
+class TestV23VAELoading:
+    """Tests for loading V2.3 VAE from checkpoint."""
+
+    VAE_PATH = "models/LTX-2.3/ltx-2.3-video-vae.safetensors"
+
+    @pytest.fixture
+    def vae_exists(self):
+        """Skip if checkpoint not available."""
+        from pathlib import Path
+        if not Path(self.VAE_PATH).exists():
+            pytest.skip(f"V2.3 VAE checkpoint not found: {self.VAE_PATH}")
+
+    def test_load_v23_vae_no_shape_mismatch(self, vae_exists):
+        """Loading V2.3 VAE should have zero unexpected keys."""
+        from llm_dit.models.ltx2.vae.loader import load_ltx2_vae_decoder
+
+        decoder = load_ltx2_vae_decoder(self.VAE_PATH)
+        assert decoder is not None
+
+    def test_load_v23_vae_state_dict_matches(self, vae_exists):
+        """All decoder keys from checkpoint should load without missing keys."""
+        from llm_dit.models.ltx2.vae.loader import load_ltx2_vae_decoder, _load_safetensors
+        from pathlib import Path
+
+        # Load raw to count decoder keys
+        raw_sd = _load_safetensors(Path(self.VAE_PATH))
+        decoder_keys = [k for k in raw_sd if k.startswith("decoder.")]
+        stats_keys = [k for k in raw_sd if k.startswith("per_channel_statistics.")]
+
+        # Load model
+        decoder = load_ltx2_vae_decoder(self.VAE_PATH, strict=False)
+        sd = decoder.state_dict()
+
+        # All decoder keys should be present in model
+        for raw_key in decoder_keys:
+            our_key = raw_key[len("decoder."):]
+            assert our_key in sd, f"Key {our_key} missing from model state dict"
+
+        # per_channel_statistics should be loaded
+        for raw_key in stats_keys:
+            assert raw_key in sd, f"Key {raw_key} missing from model state dict"
+
+    def test_load_v23_vae_per_channel_stats(self, vae_exists):
+        """Per-channel statistics should have non-zero values."""
+        from llm_dit.models.ltx2.vae.loader import load_ltx2_vae_decoder
+
+        decoder = load_ltx2_vae_decoder(self.VAE_PATH)
+        std_buffer = decoder.per_channel_statistics.get_buffer("std-of-means")
+        mean_buffer = decoder.per_channel_statistics.get_buffer("mean-of-means")
+
+        assert std_buffer.abs().max() > 1e-6, "std-of-means should not be zero"
+        assert std_buffer.shape == (128,), f"Expected (128,), got {std_buffer.shape}"
+        assert mean_buffer.shape == (128,), f"Expected (128,), got {mean_buffer.shape}"
+
+
 # Run with: uv run pytest tests/unit/test_ltx2_video_vae.py -v

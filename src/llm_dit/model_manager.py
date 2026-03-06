@@ -697,15 +697,19 @@ class ModelManager:
             raise
 
     def _preload_ltx2_transformer(self, model_path: Path, ltx2_cfg: Any) -> dict:
-        """Load transformer weights from disk and cache as pinned bf16 tensors.
+        """Load transformer weights from disk and cache as pinned tensors.
 
         Loads the full transformer once (handling both regular and FP8 checkpoint
-        formats), extracts the bf16 state dict, pins all tensors for fast DMA
+        formats), extracts the state dict, pins all tensors for fast DMA
         transfer, then discards the model object.
 
+        For FP8 files, uses fp8-cast (official approach): keeps fp8 weights as-is,
+        patches forwards on reconstruction. Cache dict includes 'fp8_cast' flag.
+
         Returns:
-            Dict with "config" (model config dict for create_model_from_config)
-            and "state_dict" (pinned bf16 tensors ready for load_state_dict).
+            Dict with "config" (model config dict for create_model_from_config),
+            "state_dict" (pinned tensors ready for load_state_dict),
+            "video_only" (bool), and "fp8_cast" (bool).
         """
         transformer_file = ltx2_cfg.transformer_file if ltx2_cfg else ""
 
@@ -721,15 +725,16 @@ class ModelManager:
         else:
             tf_path = model_path / "transformer"
 
-        # Load model to CPU in bf16 (handles key mapping, FP8 dequantization, etc.)
+        # Load model to CPU (handles key mapping, etc.)
         # When audio_enabled, load full AV model (video_only=False) so audio weights
         # are included in the cached state dict.
         audio_enabled = ltx2_cfg.audio_enabled if ltx2_cfg else False
         video_only = not audio_enabled
         is_fp8_file = tf_path.is_file() and "fp8" in tf_path.name.lower()
         if is_fp8_file:
-            from llm_dit.models.ltx2 import load_ltx2_transformer_from_fp8
-            model = load_ltx2_transformer_from_fp8(
+            # FP8-cast: keep fp8 weights as-is, patch forwards on reconstruct
+            from llm_dit.models.ltx2 import load_ltx2_transformer_fp8_cast
+            model = load_ltx2_transformer_fp8_cast(
                 tf_path, dtype=torch.bfloat16, device="cpu", video_only=video_only
             )
         else:
@@ -755,7 +760,10 @@ class ModelManager:
         )
 
         del model
-        return {"config": config, "state_dict": sd, "video_only": video_only}
+        return {
+            "config": config, "state_dict": sd, "video_only": video_only,
+            "fp8_cast": is_fp8_file,
+        }
 
     def _preload_ltx2_gguf_transformer(self, gguf_path: str) -> Any:
         """Load GGUF-quantized transformer as persistent model on CPU.

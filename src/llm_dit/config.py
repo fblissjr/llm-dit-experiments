@@ -351,7 +351,7 @@ class LTX2Config:
     width: int = 768  # Video width (multiple of 32, ref: DEFAULT_1_STAGE_WIDTH)
     num_frames: int = 33  # Number of frames (33-65 typical for 24GB)
     fps: int = 24  # Output FPS
-    num_inference_steps: int = 40  # Stage 1 steps (full denoising, 40 for dev model)
+    num_inference_steps: int = 30  # Stage 1 steps (official V2.3 default)
     guidance_scale: float = 3.0  # CFG scale (ref: DEFAULT_VIDEO_GUIDER_PARAMS.cfg_scale)
 
     # Audio generation
@@ -363,13 +363,13 @@ class LTX2Config:
 
     # Two-stage pipeline settings (matching reference TI2VidTwoStagesPipeline)
     use_two_stage: bool = True  # Enable two-stage generation
-    stage1_num_inference_steps: int = 40  # Full denoising for stage 1
+    stage1_num_inference_steps: int = 30  # Full denoising for stage 1 (official V2.3 default)
     stage2_num_inference_steps: int = 3  # Distilled refinement for stage 2
     negative_prompt: str = LTX2_DEFAULT_NEGATIVE_PROMPT
 
     # Guidance (stage 1 only; stage 2 uses simple denoising)
     stg_scale: float = 1.0  # Spatio-temporal guidance scale (0=disabled, 1.0=reference)
-    stg_blocks: str = "29"  # Comma-separated block indices for STG
+    stg_blocks: str = "28"  # Comma-separated block indices for STG (official V2.3 default)
     rescale_scale: float = 0.7  # CFG rescaling to prevent over-saturation
 
     # Optimization

@@ -743,7 +743,7 @@ class TestLTX2ReferenceValues:
         "width_2stage": 1536,   # 768 * 2
         "num_frames": 121,
         "frame_rate": 24.0,
-        "num_inference_steps": 40,
+        "num_inference_steps": 30,
         "guidance_scale": 4.0,
         "latent_channels": 128,
     }
@@ -850,7 +850,7 @@ class TestLTX2ReferenceValues:
 
     def test_reference_inference_steps(self):
         """Test default inference steps matches reference."""
-        assert self.LTX2_REFERENCE["num_inference_steps"] == 40
+        assert self.LTX2_REFERENCE["num_inference_steps"] == 30
 
     def test_reference_guidance_scale(self):
         """Test default guidance scale matches reference."""

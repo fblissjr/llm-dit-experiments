@@ -21,7 +21,7 @@ Usage in Tests:
         num_frames=121,
         height=512,
         width=768,
-        num_inference_steps=40,
+        num_inference_steps=30,
         guidance_scale=4.0,
         seed=10,
     )

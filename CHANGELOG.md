@@ -6,6 +6,23 @@ last updated: 2026-03-06
 All notable changes to this project will be documented in this file.
 Uses [Semantic Versioning](https://semver.org/).
 
+## 0.9.21
+
+### changed
+- **FP8-cast loading**: Replaced eager dequantization (`load_ltx2_transformer_from_fp8`) with official Lightricks fp8-cast approach (`load_ltx2_transformer_fp8_cast`). Keeps FP8 weights as-is, patches nn.Linear forwards for per-forward upcast. Peak memory ~12GB (was ~42GB with dequant+requant cycle).
+- **V2.3 defaults**: `num_inference_steps` 40->30, `stage1_num_inference_steps` 40->30, `stg_blocks` "29"->"28" to match official LTX-2.3 reference constants.
+- **Cache/reconstruct fp8-cast**: `_reconstruct_transformer_from_cache()` detects fp8-cast cached state dicts and applies `amend_forward_with_upcast` instead of torchao quantization.
+
+### added
+- **`fp8_cast.py`**: New `src/llm_dit/quantization/fp8_cast.py` -- port of official Lightricks per-forward upcast pattern. `amend_forward_with_upcast()` patches all nn.Linear layers, skipping norms/embeddings.
+- **V2.3 VAE loader**: Rewrote `src/llm_dit/models/ltx2/vae/loader.py` for V2.3 native key format. Hardcoded V2.3 decoder_blocks config (reverse-engineered from checkpoint shapes). Supports `compress_time` and `compress_space` blocks with multiplier.
+- **V2.3 VAE architecture**: `VideoDecoder.__init__` and `_make_decoder_block` now handle `compress_time`/`compress_space` block types with `multiplier` and `out_channels_reduction_factor` parameters.
+- **Tests**: 7 fp8-cast tests, 9 V2.3 VAE architecture + loading tests.
+
+### fixed
+- **V2.3 VAE channel computation**: `VideoDecoder.__init__` reverse-walk now handles all compress block types (was only `compress_all` and `res_x_y`), fixing conv_in channel mismatch (256 vs 1024).
+- **Audio key filtering**: `is_audio_key()` now catches `av_ca_*` prefixed keys in addition to `av_cross_attn`.
+
 ## 0.9.20
 
 ### changed

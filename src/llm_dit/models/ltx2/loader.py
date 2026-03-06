@@ -102,12 +102,13 @@ def is_audio_key(key: str) -> bool:
     # Direct audio prefixes
     if key.startswith("audio_"):
         return True
-    if key.startswith("av_cross_attn"):
+    # Cross-modal AV prefixes (diffusers format and our mapped format)
+    if key.startswith(("av_cross_attn", "av_ca_")):
         return True
     # Audio in the key name (catches audio_attn, audio_to_video_attn, etc.)
     if "audio" in key:
         return True
-    # Cross-modal attention variants
+    # Cross-modal attention variants (within transformer blocks)
     if "a2v_cross_attn" in key or "v2a_cross_attn" in key:
         return True
     return False
@@ -606,6 +607,115 @@ def load_ltx2_transformer_from_fp8(
         logger.warning(f"Unexpected keys: {load_result.unexpected_keys[:10]}... ({len(load_result.unexpected_keys)} total)")
 
     logger.info(f"Loaded LTX-2 transformer from FP8: {model.get_num_params() / 1e9:.2f}B parameters")
+
+    if device != "cpu":
+        model = model.to(device)
+
+    return model
+
+
+def load_ltx2_transformer_fp8_cast(
+    path: Union[str, Path],
+    dtype: torch.dtype = torch.bfloat16,
+    device: str = "cpu",
+    video_only: bool = True,
+    model_type: Optional[LTXModelType] = None,
+) -> LTX2Transformer:
+    """Load LTX-2.3 transformer with fp8-cast (official approach).
+
+    Keeps FP8 weights as-is and patches nn.Linear.forward to upcast per-forward.
+    Scale tensors are skipped -- the calibrated FP8 values in the checkpoint
+    are used directly. This avoids the dequant->bf16->requant cycle.
+
+    Peak memory: ~12GB (FP8 weights stay FP8, only one layer upcasted at a time).
+
+    Args:
+        path: Path to FP8 safetensors file.
+        dtype: Dtype for non-quantized params (norms, embeddings). bf16 recommended.
+        device: Device to load to.
+        video_only: If True, skip audio weights.
+        model_type: Explicit model type override.
+
+    Returns:
+        LTX2Transformer with fp8 weights and patched forward methods.
+    """
+    from llm_dit.quantization.fp8_cast import amend_forward_with_upcast
+    from llm_dit.utils.meta_init import meta_init
+
+    path = Path(path)
+    if not path.is_file():
+        raise FileNotFoundError(f"FP8 checkpoint not found: {path}")
+
+    if model_type is None:
+        model_type = LTXModelType.VideoOnly if video_only else LTXModelType.AudioVideo
+    video_only = not model_type.is_audio_enabled()
+
+    logger.info(f"Loading FP8-cast transformer from {path} (model_type={model_type.value})")
+
+    # Load raw state dict
+    raw_sd = load_safetensors(path, device="cpu")
+
+    # Filter to transformer keys, skip scales + non-transformer components
+    prefix = "model.diffusion_model."
+    non_transformer_prefixes = (
+        "model.vae.", "model.vocoder.", "model.audio_codec.",
+        "vae.", "vocoder.", "audio_codec.",
+    )
+
+    our_sd: Dict[str, torch.Tensor] = {}
+    skipped = {"audio": 0, "non_transformer": 0, "scale": 0}
+
+    for key, tensor in raw_sd.items():
+        if key.startswith(non_transformer_prefixes):
+            skipped["non_transformer"] += 1
+            continue
+
+        stripped_key = key[len(prefix):] if key.startswith(prefix) else key
+
+        if video_only and is_audio_key(stripped_key):
+            skipped["audio"] += 1
+            continue
+
+        # Skip scale tensors -- we use the fp8 values directly
+        if stripped_key.endswith((".weight_scale", ".input_scale")):
+            skipped["scale"] += 1
+            continue
+
+        our_key = map_key(stripped_key)
+
+        if tensor.dtype == torch.float8_e4m3fn:
+            our_sd[our_key] = tensor  # Keep fp8 as-is
+        else:
+            our_sd[our_key] = tensor.to(dtype)
+
+    logger.info(
+        f"FP8-cast: {len(our_sd)} keys loaded, "
+        f"skipped {skipped['scale']} scales, "
+        f"{skipped['audio']} audio, {skipped['non_transformer']} non-transformer"
+    )
+
+    # Create model shell with meta_init (zero memory)
+    config = load_config(path.parent)
+    with meta_init():
+        model = create_model_from_config(
+            config, dtype, model_type=model_type,
+            apply_gated_attention=True, cross_attention_adaln=True,
+        )
+
+    # Load mixed-dtype state dict (fp8 linears + bf16 norms/embeddings)
+    load_result = model.load_state_dict(our_sd, strict=False, assign=True)
+    if load_result.missing_keys:
+        logger.warning(f"Missing keys: {load_result.missing_keys[:10]}... ({len(load_result.missing_keys)} total)")
+    if load_result.unexpected_keys:
+        logger.warning(f"Unexpected keys: {load_result.unexpected_keys[:10]}... ({len(load_result.unexpected_keys)} total)")
+
+    # Patch nn.Linear forwards for per-forward upcast
+    patched = amend_forward_with_upcast(model)
+    logger.info(f"FP8-cast: {patched} linear layers patched for per-forward upcast")
+
+    fp8_params = sum(1 for p in model.parameters() if p.dtype == torch.float8_e4m3fn)
+    bf16_params = sum(1 for p in model.parameters() if p.dtype in (torch.bfloat16, torch.float32))
+    logger.info(f"Loaded LTX-2.3 transformer (fp8-cast): {fp8_params} fp8 + {bf16_params} bf16 params")
 
     if device != "cpu":
         model = model.to(device)
