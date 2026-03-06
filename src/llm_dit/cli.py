@@ -866,7 +866,9 @@ def setup_logging(config: RuntimeConfig) -> None:
     if config.debug:
         # Enable debug for all project modules
         logging.getLogger("llm_dit").setLevel(logging.DEBUG)
-        logging.getLogger("llm_dit.backends").setLevel(logging.DEBUG)
-        logging.getLogger("llm_dit.pipelines").setLevel(logging.DEBUG)
         logging.getLogger("web").setLevel(logging.DEBUG)
         logging.getLogger("__main__").setLevel(logging.DEBUG)
+        # Suppress noisy third-party loggers that flood output at DEBUG
+        for lib in ("transformers", "httpx", "httpcore", "urllib3",
+                     "torch", "filelock", "huggingface_hub"):
+            logging.getLogger(lib).setLevel(logging.WARNING)

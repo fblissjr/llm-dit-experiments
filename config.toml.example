@@ -1,5 +1,5 @@
 # llm-dit-experiments configuration template
-# last updated: 2026-02-17
+# last updated: 2026-03-06
 #
 # Copy to config.toml and edit paths for your setup:
 #   cp config.toml.example config.toml
@@ -128,18 +128,19 @@ compile_dynamic = false         # dynamic shapes: avoid recompilation per resolu
 
 
 # ==========================================================================
-# Pipeline: LTX-2 (video + audio)
+# Pipeline: LTX-2.3 (video + audio)
 # ==========================================================================
-# 19B model (14B video + 5B audio). Encoder: Gemma 3-12B.
+# 22B model (LTX-2.3). Encoder: Gemma 3-12B.
 # RTX 4090: use FP8 + model-level offloading.
 
 [ltx2]
-# model_path = "/path/to/LTX-2"
-transformer_file = "ltx-2-19b-dev-fp8.safetensors"
+# model_path = "/path/to/LTX-2.3"
+transformer_file = "ltx-2.3-transformer-fp8.safetensors"
+connectors_file = "ltx-2.3-connectors.safetensors"  # V2.3 connectors + aggregate embeds
 
 # Two-stage pipeline files
-spatial_upsampler_file = "ltx-2-spatial-upscaler-x2-1.0.safetensors"
-distilled_lora_path = "ltx-2-19b-distilled-lora-384.safetensors"  # distilled LoRA for stage 2 refinement
+spatial_upsampler_file = "ltx-2.3-spatial-upscaler-x2-1.0.safetensors"
+distilled_lora_path = ""  # distilled LoRA for stage 2 refinement
 distilled_lora_scale = 1.0
 
 # Gemma 3-12B encoder
@@ -227,8 +228,6 @@ gemma_variant = "fp8-safetensors"
 # Path to GGUF-quantized transformer file (e.g. from unsloth/LTX-2.3-GGUF)
 # When set, overrides transformer_file and quantize settings
 gguf_transformer_path = ""
-# Model version: "auto" (detect from checkpoint keys), "1.0" (19B), "2.3" (22B)
-model_version = "auto"
 
 # Preset configuration
 default_preset = ""

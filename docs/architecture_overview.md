@@ -1,6 +1,6 @@
 # architecture overview
 
-*last updated: 2026-03-03*
+*last updated: 2026-03-06*
 
 High-level architecture of the LLM-DiT multi-model generation platform. For detailed post-refactor internals, see [internal/docs/architecture/post_refactor_guide.md](../internal/docs/architecture/post_refactor_guide.md).
 
@@ -11,7 +11,7 @@ A multi-model image and video generation platform running on a single RTX 4090 (
 | Pipeline | Task | Encoder | Model |
 |----------|------|---------|-------|
 | **FLUX.2 Klein** | text-to-image, editing | Qwen3-8B/4B | 4B/9B distilled, persistent in GPU |
-| **LTX-2** | text-to-video | Gemma3-12B | 19B DiT, fresh load per session |
+| **LTX-2.3** | text-to-video | Gemma3-12B | 22B DiT (LTX-2.3), fresh load per session |
 | **Z-Image** | text-to-image | Qwen3-4B | Custom turbo/base DiT |
 | **Qwen-Image Edit (2511)** | image editing | Qwen2.5-VL-7B | 8B instruction-following DiT |
 | **Qwen-Image T2I (2512)** | text-to-image | Qwen2.5-VL-7B | 60-layer DiT |

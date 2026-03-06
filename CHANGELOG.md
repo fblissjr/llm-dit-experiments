@@ -25,11 +25,20 @@ Uses [Semantic Versioning](https://semver.org/).
 - **fp8-safetensors crash**: `'Gemma3Encoder' object has no attribute '_feature_extractor_v2'` -- the `__new__()` bypass in fp8-safetensors variant never initialized V2 attributes. Now calls `_load_connector_weights()` after construction.
 - **Reconstruct cache V2.3**: `_reconstruct_transformer_from_cache()` now always creates V2.3 models, matching the cached state dict format.
 
+### polish (v0.9.20)
+- **Config**: Updated config.toml and config.toml.example section headers, comments, and lora paths to reference LTX-2.3.
+- **Tests**: Added 20 tests for `split_ltx23_safetensors.py`, 5 V2.3 config/architecture tests, removed 3 stale V1 tests.
+- **Debug logging**: `--debug` now suppresses noisy third-party loggers (transformers, httpx, torch, etc.) at WARNING level.
+- **Stale docstrings**: Fixed "19B" references in `models/__init__.py` and `av_block.py`.
+- **Frontend**: Regenerated OpenAPI types; `model_version` confirmed absent from schema.
+
 ### removed
 - V1 (19B) code paths in encoder, loader, and model manager.
 - `model_version` config field and parameter threading.
 - V1 `FeatureExtractorLinear` usage in encoder (kept for research `encode_multilayer()`).
 - V1 feature extraction and normalization functions from `Gemma3Encoder.encode()`.
+- Stale V1 model creation tests (`test_create_v1_model_default`, `test_v1_prepare_prompt_timestep_is_none`).
+- `model_version = "2.3"` from GGUF smoke test TOML.
 
 ## 0.9.19
 

@@ -11,7 +11,6 @@ num_frames = 9
 guidance_scale = 1.0
 use_two_stage = false
 stage1_num_inference_steps = 4
-model_version = "2.3"
 use_distilled_sigmas = true
 
 [server]

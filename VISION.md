@@ -31,7 +31,7 @@ Existing DiT repositories share common limitations:
 |---------|--------|
 | Logic siloed inside model implementations | Can't reuse schedulers, attention, or guidance across models |
 | Generation loops hardcoded to specific inputs | Each model requires a completely separate pipeline |
-| No resource management | 24GB consumer GPUs can't run 19B+ models |
+| No resource management | 24GB consumer GPUs can't run 22B+ models |
 | Optimizations scattered and duplicated | RMSNorm, RoPE, attention backends reimplemented per model |
 | Monolithic pipelines | Testing one component requires the whole stack |
 

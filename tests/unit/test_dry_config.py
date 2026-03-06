@@ -1,6 +1,8 @@
 """
 DRY Configuration Consistency Tests.
 
+Last Updated: 2026-03-06
+
 Ensures parameters flow correctly through all configuration layers:
     config.toml -> Config dataclasses -> RuntimeConfig -> Backend configs
 
@@ -810,6 +812,35 @@ class TestDefaultsEndpointNameMappings:
                 )
 
         assert not warnings, "\n".join(warnings)
+
+
+class TestLTX2ConfigFields:
+    """LTX-2.3 specific config field validation."""
+
+    def test_connectors_file_in_config(self):
+        """connectors_file must exist on LTX2Config."""
+        from llm_dit.config import LTX2Config
+
+        fields = get_dataclass_fields(LTX2Config)
+        assert "connectors_file" in fields
+
+    def test_model_version_removed_from_config(self):
+        """model_version must NOT be in LTX2Config (V2.3-only, no version dispatch)."""
+        from llm_dit.config import LTX2Config
+
+        fields = get_dataclass_fields(LTX2Config)
+        assert "model_version" not in fields
+
+    def test_stale_model_version_toml_stripped(self):
+        """TOML with model_version in [ltx2] should be silently stripped without crash."""
+        from llm_dit.config import Config
+
+        data = {
+            "ltx2": {"model_path": "/tmp/ltx2", "model_version": "2.3"},
+        }
+        config = Config.from_dict(data)
+        assert config.ltx2.model_path == "/tmp/ltx2"
+        assert not hasattr(config.ltx2, "model_version")
 
 
 if __name__ == "__main__":

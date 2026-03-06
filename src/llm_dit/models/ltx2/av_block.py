@@ -6,7 +6,7 @@ Last Updated: 2026-03-05
 Implements the BasicAVTransformerBlock that handles video-only, audio-only,
 or combined audio-video processing within LTX-2's dual-stream architecture.
 
-Supports both V1 (19B, 6-param AdaLN) and V2 (22B, 9-param AdaLN with
+Supports 6-param AdaLN (base) and 9-param AdaLN (LTX-2.3, 22B, with
 cross_attention_adaln and apply_gated_attention).
 
 When both video and audio configs are provided, the block creates cross-modal

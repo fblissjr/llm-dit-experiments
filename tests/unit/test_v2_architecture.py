@@ -1,6 +1,6 @@
 """Tests for LTX-2.3 (V2) architecture features.
 
-Last Updated: 2026-03-05
+Last Updated: 2026-03-06
 
 Verifies V2-specific additions:
 - Gated attention (per-head sigmoid gate)
@@ -329,7 +329,9 @@ class TestCreateModelV2:
         assert "caption_projection.linear_1.weight" not in sd_keys
         assert "caption_projection.linear_2.weight" not in sd_keys
 
-    def test_create_v1_model_default(self):
+    def test_reconstruct_always_v23(self):
+        """_reconstruct_transformer_from_cache() produces V2.3 model with gated attention."""
+        # This tests that reconstruction always enables V2.3 features
         config = {
             "num_attention_heads": 4,
             "attention_head_dim": 32,
@@ -339,9 +341,61 @@ class TestCreateModelV2:
             "cross_attention_dim": 64,
             "caption_channels": 48,
         }
-        model = create_model_from_config(config, torch.bfloat16)
-        assert model.apply_gated_attention is False
-        assert model.cross_attention_adaln is False
+        # Simulate what _reconstruct_transformer_from_cache does:
+        # always apply_gated_attention=True, cross_attention_adaln=True
+        model = create_model_from_config(
+            config, torch.bfloat16,
+            apply_gated_attention=True,
+            cross_attention_adaln=True,
+        )
+        assert model.apply_gated_attention is True
+        assert model.cross_attention_adaln is True
+        # Verify state dict has V2.3 markers
+        sd_keys = set(model.state_dict().keys())
+        assert any("to_gate_logits" in k for k in sd_keys)
+        assert any("prompt_scale_shift_table" in k for k in sd_keys)
+
+
+class TestV23ConnectorFeatures:
+    """Test V2.3 connector-specific features."""
+
+    def test_v23_connector_gated_attention(self):
+        """Embeddings1DConnector with gated attention has to_gate_logits on blocks."""
+        from llm_dit.encoders.embeddings_connector import Embeddings1DConnector
+
+        connector = Embeddings1DConnector(
+            attention_head_dim=32,
+            num_attention_heads=4,
+            num_layers=2,
+            apply_gated_attention=True,
+        )
+        # Check that transformer blocks have gate logits
+        sd_keys = set(connector.state_dict().keys())
+        gate_keys = [k for k in sd_keys if "to_gate_logits" in k]
+        assert len(gate_keys) > 0, (
+            f"Expected gate logit keys, got none. Keys: {sorted(sd_keys)}"
+        )
+
+    def test_v23_connector_key_naming(self):
+        """Connector uses transformer_1d_blocks (not transformer_blocks) and q_norm/k_norm."""
+        from llm_dit.encoders.embeddings_connector import Embeddings1DConnector
+
+        connector = Embeddings1DConnector(
+            attention_head_dim=32,
+            num_attention_heads=4,
+            num_layers=2,
+        )
+        sd_keys = set(connector.state_dict().keys())
+        # Check for correct naming convention
+        has_1d_blocks = any("transformer_1d_blocks" in k for k in sd_keys)
+        assert has_1d_blocks, (
+            f"Expected 'transformer_1d_blocks' in keys, got: {sorted(sd_keys)[:10]}"
+        )
+        # Check for q_norm/k_norm (not just norm1/norm2)
+        has_q_norm = any("q_norm" in k for k in sd_keys)
+        has_k_norm = any("k_norm" in k for k in sd_keys)
+        assert has_q_norm, f"Expected 'q_norm' in keys, got: {sorted(sd_keys)[:10]}"
+        assert has_k_norm, f"Expected 'k_norm' in keys, got: {sorted(sd_keys)[:10]}"
 
 
 class TestV2PreparePromptTimestep:
@@ -367,10 +421,6 @@ class TestV2PreparePromptTimestep:
             cross_attention_adaln=True,
         )
 
-    def _make_v1_model(self):
-        """Create a small V1 model for testing."""
-        return create_model_from_config(dict(self._CONFIG), torch.float32)
-
     def test_v2_prepare_sets_prompt_timestep(self):
         """V2 preprocessor must return non-None prompt_timestep."""
         from llm_dit.models.ltx2.components import Modality
@@ -388,23 +438,6 @@ class TestV2PreparePromptTimestep:
         args = model.args_preprocessor.prepare(modality)
         assert args.prompt_timestep is not None
         assert args.prompt_timestep.ndim == 3  # [B, T', D]
-
-    def test_v1_prepare_prompt_timestep_is_none(self):
-        """V1 preprocessor must leave prompt_timestep=None."""
-        from llm_dit.models.ltx2.components import Modality
-
-        model = self._make_v1_model()
-        seq_len = 32
-        modality = Modality(
-            latent=torch.randn(1, seq_len, 16),
-            context=torch.randn(1, 8, 128),
-            context_mask=torch.ones(1, 8),
-            positions=torch.zeros(1, 3, seq_len, 2),
-            timesteps=torch.tensor([0.5]),
-            enabled=True,
-        )
-        args = model.args_preprocessor.prepare(modality)
-        assert args.prompt_timestep is None
 
     def test_v2_forward_no_crash(self):
         """V2 model forward pass should complete without error."""

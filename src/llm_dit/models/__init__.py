@@ -1,13 +1,13 @@
 """
 LLM-DiT model components.
 
-Last Updated: 2026-01-18
+Last Updated: 2026-03-06
 
 Provides pure PyTorch implementations of model components that can be used
 standalone or integrated with diffusers pipelines.
 
 LTX-2 Components (in llm_dit.models.ltx2):
-    - LTX2Transformer: Pure PyTorch LTX-2 diffusion transformer (48 layers, 19B params)
+    - LTX2Transformer: Pure PyTorch LTX-2.3 diffusion transformer (48 layers, 22B params)
     - LTXModelType: Model variant enum (VideoOnly, AudioVideo, AudioOnly)
     - load_ltx2_transformer: Load from official checkpoints
     - load_ltx2_transformer_quantized: Load with FP8 quantization for 24GB GPUs
