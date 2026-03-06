@@ -51,10 +51,9 @@ class TestLTX2APISmoke:
             "height": 384,
             "num_frames": 9,
             "seed": 42,
-            "use_two_stage": True,
-            "stage1_steps": 4,
-            "stage2_steps": 2,
-            # STG disabled: 4 distilled steps is too few for STG guidance
+            "use_two_stage": False,
+            "num_steps": 4,
+            # STG disabled: 4 steps is too few for STG guidance
             # to develop temporal variation. STG validated at standard tier (40 steps).
             "stg_scale": 0.0,
         })
