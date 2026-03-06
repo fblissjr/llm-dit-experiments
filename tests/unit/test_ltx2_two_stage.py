@@ -36,9 +36,9 @@ class TestTwoStageConfig:
         assert cfg.distilled_lora_scale == 1.0  # ref: distilled_lora_scale default
 
     def test_stg_blocks_default(self):
-        """STG blocks should default to [29] via __post_init__."""
+        """STG blocks should default to [28] via __post_init__."""
         cfg = TwoStageConfig()
-        assert cfg.stg_blocks == [29]
+        assert cfg.stg_blocks == [28]
 
     def test_custom_stg_blocks(self):
         cfg = TwoStageConfig(stg_blocks=[10, 20, 29])
@@ -268,4 +268,4 @@ class TestStepSchedule:
         assert ctx.rescale_scale == 0.7
         assert ctx.ge_gamma == 2.0
         assert ctx.stg_scale == 1.0  # TwoStageConfig default
-        assert ctx.stg_blocks == [29]  # TwoStageConfig default
+        assert ctx.stg_blocks == [28]  # TwoStageConfig default

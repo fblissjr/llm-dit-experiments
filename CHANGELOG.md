@@ -6,6 +6,21 @@ last updated: 2026-03-06
 All notable changes to this project will be documented in this file.
 Uses [Semantic Versioning](https://semver.org/).
 
+## 0.9.22
+
+### added
+- **State-dict LoRA fusion**: `fuse_lora_to_state_dict()` in `lora.py` -- fuses LoRA deltas into a state dict before `load_state_dict`, supporting fp8 + bf16 weights. Matches official LTX-2 `fuse_loras.py` pattern. fp8 weights are upcast to bf16, delta added, then downcast back.
+- **FP8 preservation guard**: `_reconstruct_transformer_from_cache()` now validates fp8 weights survive device transfer, logging error if all parameters silently promoted to bf16.
+- **Tests**: 9 new `fuse_lora_to_state_dict` tests (bf16, fp8, multi-LoRA, LoKR, immutability, scale), 2 fp8-cast LoRA integration tests.
+
+### fixed
+- **LoRA fusion crash on fp8-cast models**: `fuse_lora_to_base_model()` used `type(base_weight) is not torch.Tensor` to detect quantization, but native `float8_e4m3fn` tensors ARE `torch.Tensor`, causing fp8+bf16 addition crash. Now routes fp8-cast models through state-dict fusion path automatically.
+- **Stale stg_blocks default**: `TwoStageConfig.__post_init__` defaulted to `[29]`, now `[28]` matching v0.9.20 config.
+- **Stale single-stage fallback steps**: `web/routers/ltx2.py` fallback was `40` steps, now `30` matching v0.9.20 config.
+
+### removed
+- **Dead code**: `load_ltx2_transformer_from_fp8()` (~140 lines) removed from `loader.py` and `__init__.py`. Replaced by `load_ltx2_transformer_fp8_cast()` in v0.9.21.
+
 ## 0.9.21
 
 ### changed

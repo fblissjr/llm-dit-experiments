@@ -591,6 +591,101 @@ def clear_lora(model: nn.Module) -> None:
     )
 
 
+def fuse_lora_to_state_dict(
+    state_dict: Dict[str, torch.Tensor],
+    lora_paths: list[Union[str, Path]],
+    lora_scales: list[float],
+    device: str = "cpu",
+) -> Dict[str, torch.Tensor]:
+    """Fuse LoRA deltas into a state dict (supports fp8 + bf16 weights).
+
+    Matches official LTX-2 fuse_loras.py pattern:
+    - fp8 weights: upcast to bf16, add delta, downcast back to fp8
+    - bf16 weights: direct addition
+    - LoRA deltas always computed in bf16
+
+    This operates on the raw state dict BEFORE load_state_dict(), which is
+    critical for fp8-cast models where native fp8 tensors can't do arithmetic.
+
+    Args:
+        state_dict: Base model state dict (NOT mutated -- cloned internally).
+        lora_paths: List of paths to LoRA .safetensors files.
+        lora_scales: Scale factor for each LoRA (same length as lora_paths).
+        device: Device for delta computation (typically "cpu").
+
+    Returns:
+        New state dict with LoRA deltas fused into matching weight keys.
+    """
+    if len(lora_paths) != len(lora_scales):
+        raise ValueError(
+            f"Number of LoRA paths ({len(lora_paths)}) must match "
+            f"number of scales ({len(lora_scales)})"
+        )
+
+    # Clone so we don't mutate the cache
+    result = {k: v.clone() for k, v in state_dict.items()}
+
+    loader = LoRALoader(device=device, dtype=torch.bfloat16)
+
+    for lora_path, scale in zip(lora_paths, lora_scales):
+        lora_path = Path(lora_path)
+        if not lora_path.exists():
+            raise FileNotFoundError(f"LoRA file not found: {lora_path}")
+        if lora_path.suffix != ".safetensors":
+            raise ValueError(f"Expected .safetensors file, got {lora_path.suffix}")
+
+        raw_sd = load_safetensors(str(lora_path))
+
+        fmt = loader._detect_format(raw_sd)
+        if fmt == "lokr":
+            lokr_dict = loader._get_lokr_name_dict(raw_sd)
+            for name, (w1_key, w2_key) in lokr_dict.items():
+                weight_key = name + ".weight"
+                if weight_key not in result:
+                    continue
+                w1 = raw_sd[w1_key].to(device=device, dtype=torch.bfloat16)
+                w2 = raw_sd[w2_key].to(device=device, dtype=torch.bfloat16)
+                delta = scale * torch.kron(w1, w2)
+                result[weight_key] = _fuse_delta_into_weight(result[weight_key], delta)
+        else:
+            std_sd = loader.convert_state_dict(raw_sd)
+            layer_names = {
+                k.replace(".lora_B.weight", "")
+                for k in std_sd if k.endswith(".lora_B.weight")
+            }
+            for name in layer_names:
+                weight_key = name + ".weight"
+                if weight_key not in result:
+                    continue
+                lora_B = std_sd[name + ".lora_B.weight"].to(device=device, dtype=torch.bfloat16)
+                lora_A = std_sd[name + ".lora_A.weight"].to(device=device, dtype=torch.bfloat16)
+                if len(lora_B.shape) == 4:
+                    lora_B = lora_B.squeeze(3).squeeze(2)
+                    lora_A = lora_A.squeeze(3).squeeze(2)
+                    delta = scale * torch.mm(lora_B, lora_A).unsqueeze(2).unsqueeze(3)
+                else:
+                    delta = scale * torch.mm(lora_B, lora_A)
+                result[weight_key] = _fuse_delta_into_weight(result[weight_key], delta)
+
+        logger.info(f"State-dict LoRA fusion: {lora_path.name} (scale={scale})")
+
+    return result
+
+
+def _fuse_delta_into_weight(weight: torch.Tensor, delta: torch.Tensor) -> torch.Tensor:
+    """Fuse a LoRA delta into a weight tensor, handling fp8 dtype.
+
+    - fp8: upcast to bf16, add delta, downcast back to fp8
+    - bf16/fp32: direct addition
+    """
+    if weight.dtype in (torch.float8_e4m3fn, torch.float8_e5m2):
+        original_dtype = weight.dtype
+        merged = weight.to(torch.bfloat16) + delta.to(torch.bfloat16)
+        return merged.to(original_dtype)
+    else:
+        return weight + delta.to(weight.dtype)
+
+
 def parse_lora_spec(spec: str) -> tuple[str, float]:
     """
     Parse a LoRA specification string.

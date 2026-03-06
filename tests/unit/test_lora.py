@@ -631,3 +631,147 @@ class TestInferModelDeviceDtype:
 
         assert device == "cpu"
         assert dtype == torch.float32
+
+
+# ============================================================================
+# fuse_lora_to_state_dict Tests (FP8-cast state-dict LoRA fusion)
+# ============================================================================
+
+
+class TestFuseLoraToStateDict:
+    """Test state-dict level LoRA fusion for fp8-cast models.
+
+    Aligns with official LTX-2 fuse_loras.py: fuse LoRA deltas into a state dict
+    before load_state_dict, supporting mixed fp8+bf16 weights.
+    """
+
+    def _make_lora_sd(self, key_prefix: str, out_features: int, in_features: int, rank: int):
+        """Build a LoRA state dict with lora_A + lora_B keys."""
+        return {
+            f"{key_prefix}.lora_A.weight": torch.randn(rank, in_features, dtype=torch.bfloat16),
+            f"{key_prefix}.lora_B.weight": torch.randn(out_features, rank, dtype=torch.bfloat16),
+        }
+
+    def _write_lora_file(self, tmp_path, key_prefix, out_features, in_features, rank):
+        """Write a LoRA safetensors file and return its path."""
+        from safetensors.torch import save_file
+        sd = self._make_lora_sd(key_prefix, out_features, in_features, rank)
+        path = tmp_path / "test_lora.safetensors"
+        save_file(sd, str(path))
+        return str(path)
+
+    def test_bf16_weights_direct_add(self, tmp_path):
+        """bf16 base weight + LoRA delta = bf16 result (no dtype conversion)."""
+        from llm_dit.utils.lora import fuse_lora_to_state_dict
+
+        base_sd = {"layer.weight": torch.randn(64, 32, dtype=torch.bfloat16)}
+        lora_path = self._write_lora_file(tmp_path, "layer", 64, 32, 8)
+
+        result = fuse_lora_to_state_dict(base_sd, [lora_path], [1.0])
+
+        assert result["layer.weight"].dtype == torch.bfloat16
+        # Weight should have changed
+        assert not torch.allclose(result["layer.weight"], base_sd["layer.weight"])
+
+    def test_fp8_weights_upcast_fuse_downcast(self, tmp_path):
+        """fp8 base weight + LoRA delta: upcast to bf16, add, downcast to fp8."""
+        from llm_dit.utils.lora import fuse_lora_to_state_dict
+
+        base_weight = torch.randn(64, 32, dtype=torch.bfloat16).to(torch.float8_e4m3fn)
+        base_sd = {"layer.weight": base_weight}
+
+        lora_path = self._write_lora_file(tmp_path, "layer", 64, 32, 8)
+        result = fuse_lora_to_state_dict(base_sd, [lora_path], [1.0])
+
+        # Result should be fp8 (downcast back after fusion)
+        assert result["layer.weight"].dtype == torch.float8_e4m3fn
+
+    def test_non_weight_keys_pass_through(self, tmp_path):
+        """Non-linear keys (norms, biases) should pass through unchanged."""
+        from llm_dit.utils.lora import fuse_lora_to_state_dict
+
+        base_sd = {
+            "layer.weight": torch.randn(64, 32, dtype=torch.bfloat16),
+            "norm.weight": torch.ones(64, dtype=torch.bfloat16),
+            "layer.bias": torch.zeros(64, dtype=torch.bfloat16),
+        }
+
+        lora_path = self._write_lora_file(tmp_path, "layer", 64, 32, 8)
+        result = fuse_lora_to_state_dict(base_sd, [lora_path], [1.0])
+
+        # Norm and bias should be untouched
+        assert torch.equal(result["norm.weight"], base_sd["norm.weight"])
+        assert torch.equal(result["layer.bias"], base_sd["layer.bias"])
+
+    def test_multiple_loras_accumulated(self, tmp_path):
+        """Multiple LoRAs should accumulate deltas."""
+        from llm_dit.utils.lora import fuse_lora_to_state_dict
+
+        base_sd = {
+            "layer.weight": torch.zeros(64, 32, dtype=torch.bfloat16),
+        }
+
+        dir_a = tmp_path / "a"
+        dir_a.mkdir()
+        dir_b = tmp_path / "b"
+        dir_b.mkdir()
+        path_a = self._write_lora_file(dir_a, "layer", 64, 32, 8)
+        path_b = self._write_lora_file(dir_b, "layer", 64, 32, 8)
+
+        result = fuse_lora_to_state_dict(base_sd, [path_a, path_b], [1.0, 0.5])
+
+        # Result should not be zeros (deltas applied)
+        assert not torch.allclose(result["layer.weight"], base_sd["layer.weight"])
+
+    def test_scale_affects_magnitude(self, tmp_path):
+        """Scale=0 should leave weights unchanged, scale=1 should change them."""
+        from llm_dit.utils.lora import fuse_lora_to_state_dict
+
+        base_weight = torch.randn(64, 32, dtype=torch.bfloat16)
+        lora_path = self._write_lora_file(tmp_path, "layer", 64, 32, 8)
+
+        result_zero = fuse_lora_to_state_dict(
+            {"layer.weight": base_weight.clone()}, [lora_path], [0.0],
+        )
+        result_one = fuse_lora_to_state_dict(
+            {"layer.weight": base_weight.clone()}, [lora_path], [1.0],
+        )
+
+        # scale=0: weight unchanged
+        assert torch.allclose(result_zero["layer.weight"], base_weight, atol=1e-6)
+        # scale=1: weight changed
+        assert not torch.allclose(result_one["layer.weight"], base_weight)
+
+    def test_does_not_mutate_input_state_dict(self, tmp_path):
+        """Input state dict should not be modified in-place."""
+        from llm_dit.utils.lora import fuse_lora_to_state_dict
+
+        base_weight = torch.randn(64, 32, dtype=torch.bfloat16)
+        base_sd = {"layer.weight": base_weight.clone()}
+        original_data = base_sd["layer.weight"].clone()
+
+        lora_path = self._write_lora_file(tmp_path, "layer", 64, 32, 8)
+        fuse_lora_to_state_dict(base_sd, [lora_path], [1.0])
+
+        # Original should be untouched
+        assert torch.equal(base_sd["layer.weight"], original_data)
+
+    def test_lokr_format_supported(self, tmp_path):
+        """LoKR (Kronecker product) format LoRAs should also work."""
+        from llm_dit.utils.lora import fuse_lora_to_state_dict
+        from safetensors.torch import save_file
+
+        base_sd = {"layer.weight": torch.randn(64, 32, dtype=torch.bfloat16)}
+
+        lokr_sd = {
+            "layer.lokr_w1": torch.randn(8, 4, dtype=torch.bfloat16),
+            "layer.lokr_w2": torch.randn(8, 8, dtype=torch.bfloat16),
+        }
+
+        path = str(tmp_path / "lokr.safetensors")
+        save_file(lokr_sd, path)
+
+        result = fuse_lora_to_state_dict(base_sd, [path], [1.0])
+
+        assert result["layer.weight"].dtype == torch.bfloat16
+        assert not torch.allclose(result["layer.weight"], base_sd["layer.weight"])

@@ -104,6 +104,48 @@ class TestFP8Cast:
         assert y.dtype == torch.bfloat16
 
 
+class TestFP8CastLoRAIntegration:
+    """Test LoRA fusion with fp8-cast models via state-dict approach."""
+
+    def test_reconstruct_with_lora_fuses_into_state_dict(self):
+        """When fp8_cast=True and LoRA provided, fusion happens at state-dict level."""
+        from llm_dit.utils.lora import fuse_lora_to_state_dict
+        from safetensors.torch import save_file
+
+        # Build a small mixed-dtype state dict (simulating fp8-cast cache)
+        base_sd = {
+            "linear.weight": torch.randn(16, 8, dtype=torch.bfloat16).to(torch.float8_e4m3fn),
+            "norm.weight": torch.ones(16, dtype=torch.bfloat16),
+        }
+
+        # Write LoRA
+        lora_sd = {
+            "linear.lora_A.weight": torch.randn(4, 8, dtype=torch.bfloat16),
+            "linear.lora_B.weight": torch.randn(16, 4, dtype=torch.bfloat16),
+        }
+        import os
+        os.makedirs("/tmp/claude-1000/test_fp8_lora", exist_ok=True)
+        lora_path = "/tmp/claude-1000/test_fp8_lora/lora.safetensors"
+        save_file(lora_sd, lora_path)
+
+        result = fuse_lora_to_state_dict(base_sd, [lora_path], [1.0])
+
+        # FP8 weight should stay fp8 after fusion
+        assert result["linear.weight"].dtype == torch.float8_e4m3fn
+        # Norm should pass through unchanged
+        assert torch.equal(result["norm.weight"], base_sd["norm.weight"])
+
+    def test_fp8_preservation_guard(self):
+        """After .to(device), fp8 weights should still be fp8."""
+        model = nn.Sequential(nn.Linear(8, 16, bias=False))
+        model[0].weight.data = torch.randn(16, 8, dtype=torch.bfloat16).to(torch.float8_e4m3fn)
+
+        # .to("cpu") should preserve fp8 dtype
+        model = model.to("cpu")
+        fp8_count = sum(1 for p in model.parameters() if p.dtype == torch.float8_e4m3fn)
+        assert fp8_count == 1, f"Expected 1 fp8 param after .to(cpu), got {fp8_count}"
+
+
 class TestFP8CastTransformerLoader:
     """Tests for loading LTX-2.3 transformer with fp8-cast."""
 

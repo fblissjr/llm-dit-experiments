@@ -301,7 +301,7 @@ For full debugging patterns, see [lessons_learned.md](internal/state/lessons_lea
 | Prompt upsampling skipped | Empty `api_url` in config | Check `config.toml [rewriter].api_url` is set |
 | Prompt upsampling silent fail | heylookitsanllm unreachable | Verify `192.168.1.123:8080` is live; check logs for `[FLUX2:Upsample] Failed` |
 | Video thumbnails broken in history | SSE type assertion missing field | Check `eventData` type in `sessionStore.ts` (~line 170) -- uses `as unknown as` cast |
-| Wrong transformer weights loaded | `transformer_file` config mismatch | Verify `[ltx2].transformer_file` points to correct safetensors; FP8 files use `load_ltx2_transformer_from_fp8()` |
+| Wrong transformer weights loaded | `transformer_file` config mismatch | Verify `[ltx2].transformer_file` points to correct safetensors; FP8 files use `load_ltx2_transformer_fp8_cast()` |
 | fp8 weights silently become bf16 | `load_state_dict` missing `assign=True` | Mixed-dtype models MUST use `assign=True` to preserve fp8 dtype; without it, tensors are copied into existing bf16 params |
 | LTX-2 encoder None in on-demand mode | `default_pipeline = "none"` skips preload | Router lazy-loads via `manager.load("ltx2")` on first request; check `manager.ltx2_encoder is None` guard |
 | Model construction OOM spike | Missing `meta_init()` wrapper | Wrap `create_model_from_config()` in `meta_init()` context manager + use `assign=True` in `load_state_dict` |

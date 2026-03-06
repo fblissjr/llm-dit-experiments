@@ -318,7 +318,7 @@ async def ltx2_generate_stream(request: LTX2GenerateRequest, config: ConfigDep, 
                     )
                 else:
                     # Single-stage fallback
-                    gen_config.num_inference_steps = resolve_param(request, "stage1_steps", ltx2_cfg.num_inference_steps if ltx2_cfg else 40, skip_none=True)
+                    gen_config.num_inference_steps = resolve_param(request, "stage1_steps", ltx2_cfg.num_inference_steps if ltx2_cfg else 30, skip_none=True)
                     return generate_video_with_offloading(
                         prompt=request.prompt,
                         config=gen_config,

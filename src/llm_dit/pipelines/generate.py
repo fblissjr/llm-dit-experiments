@@ -84,6 +84,8 @@ def _reconstruct_transformer_from_cache(
     effective_quantize: bool,
     effective_precision: str,
     granularity: str,
+    lora_paths: Optional[List[str]] = None,
+    lora_scales: Optional[List[float]] = None,
 ) -> "LTX2Transformer":
     """Reconstruct a transformer model from a cached state_dict.
 
@@ -95,6 +97,10 @@ def _reconstruct_transformer_from_cache(
     (fp8 linears + bf16 norms/embeddings). Instead of torchao quantization, we
     patch nn.Linear forwards for per-forward upcast (official Lightricks approach).
 
+    For fp8_cast models with LoRA, fusion happens at the state-dict level BEFORE
+    load_state_dict (matching official LTX-2 fuse_loras.py). This avoids the
+    unsupported fp8+bf16 addition that crashes fuse_lora_to_base_model().
+
     Args:
         cached_transformer: Dict with "config", "state_dict", and optionally
             "video_only" (defaults True for backward compat) and "fp8_cast".
@@ -103,6 +109,8 @@ def _reconstruct_transformer_from_cache(
         effective_quantize: Whether to quantize after loading.
         effective_precision: Quantization method string (e.g. "fp8-dynamic").
         granularity: Quantization granularity (e.g. "per-row").
+        lora_paths: Optional list of LoRA .safetensors paths to fuse (fp8_cast only).
+        lora_scales: Optional list of scale factors, same length as lora_paths.
 
     Returns:
         Fully loaded (and optionally quantized) transformer on transformer_device.
@@ -117,12 +125,24 @@ def _reconstruct_transformer_from_cache(
     )
     cache_video_only = cached_transformer.get("video_only", True)
     model_type = LTXModelType.VideoOnly if cache_video_only else LTXModelType.AudioVideo
+
+    # For fp8_cast models, fuse LoRA into the state dict BEFORE load_state_dict.
+    # Native fp8 tensors can't do fp8+bf16 addition, so we upcast/fuse/downcast
+    # at the state-dict level (matching official LTX-2 fuse_loras.py pattern).
+    sd = cached_transformer["state_dict"]
+    lora_fused_at_sd_level = False
+    if is_fp8_cast and lora_paths and lora_scales:
+        from llm_dit.utils.lora import fuse_lora_to_state_dict
+        sd = fuse_lora_to_state_dict(sd, lora_paths, lora_scales)
+        lora_fused_at_sd_level = True
+        logger.info(f"LoRA fused at state-dict level ({len(lora_paths)} LoRA(s))")
+
     with meta_init():
         model = create_model_from_config(
             cached_transformer["config"], dtype, model_type=model_type,
             apply_gated_attention=True, cross_attention_adaln=True,
         )
-    model.load_state_dict(cached_transformer["state_dict"], assign=True)
+    model.load_state_dict(sd, assign=True)
 
     if is_fp8_cast:
         # FP8-cast: patch forwards for per-forward upcast (no torchao)
@@ -141,6 +161,20 @@ def _reconstruct_transformer_from_cache(
         )
 
     model = model.to(transformer_device)
+
+    # FP8 preservation guard: verify fp8 weights survived device transfer
+    if is_fp8_cast:
+        fp8_count = sum(1 for p in model.parameters() if p.dtype == torch.float8_e4m3fn)
+        if fp8_count == 0:
+            logger.error(
+                "FP8 weights lost during device transfer to %s -- "
+                "all parameters are now bf16. This hardware may not support float8.",
+                transformer_device,
+            )
+
+    # Tag model so callers know LoRA was already applied
+    model._lora_fused_at_sd_level = lora_fused_at_sd_level  # type: ignore[attr-defined]
+
     return model
 
 
@@ -925,6 +959,26 @@ def generate_video_with_offloading(
 
     logger.info(f"Stage 2: Loading transformer on {transformer_device}...")
 
+    # Normalize LoRA args up front (needed by both reconstruct and post-load paths)
+    _lora_paths: list[str] | None = None
+    _lora_scales: list[float] | None = None
+    if lora_path is not None:
+        if isinstance(lora_path, (str, Path)):
+            _lora_paths = [str(lora_path)]
+        else:
+            _lora_paths = [str(p) for p in lora_path]
+        if lora_scale is None:
+            _lora_scales = [0.8] * len(_lora_paths)
+        elif isinstance(lora_scale, (int, float)):
+            _lora_scales = [float(lora_scale)] * len(_lora_paths)
+        else:
+            _lora_scales = list(lora_scale)
+        if len(_lora_paths) != len(_lora_scales):
+            raise ValueError(
+                f"Number of LoRA paths ({len(_lora_paths)}) must match "
+                f"number of scales ({len(_lora_scales)})"
+            )
+
     is_gguf = gguf_model is not None
     if is_gguf:
         # GGUF: use persistent model directly (no cache/reconstruct)
@@ -934,6 +988,7 @@ def generate_video_with_offloading(
         model = _reconstruct_transformer_from_cache(
             cached_transformer, dtype, transformer_device,
             effective_quantize, effective_precision, granularity,
+            lora_paths=_lora_paths, lora_scales=_lora_scales,
         )
     else:
         # Load from disk (fallback when no cache)
@@ -992,32 +1047,13 @@ def generate_video_with_offloading(
 
     logger.debug(f"Transformer loaded: {model.get_num_params() / 1e9:.2f}B params")
 
-    # Load LoRA weights if specified
-    if lora_path is not None:
-        # Normalize to lists
-        if isinstance(lora_path, (str, Path)):
-            lora_paths = [lora_path]
-        else:
-            lora_paths = list(lora_path)
-
-        if lora_scale is None:
-            lora_scales = [0.8] * len(lora_paths)  # Default scale
-        elif isinstance(lora_scale, (int, float)):
-            lora_scales = [float(lora_scale)] * len(lora_paths)
-        else:
-            lora_scales = list(lora_scale)
-
-        if len(lora_paths) != len(lora_scales):
-            raise ValueError(
-                f"Number of LoRA paths ({len(lora_paths)}) must match "
-                f"number of scales ({len(lora_scales)})"
-            )
-
+    # Load LoRA weights if specified (skip if already fused at state-dict level)
+    lora_already_fused = getattr(model, "_lora_fused_at_sd_level", False)
+    if _lora_paths and not lora_already_fused:
         if is_gguf:
-            # GGUF: attach deltas per-forward (no weight mutation)
             from llm_dit.utils.lora import load_lora_for_gguf
             total_updated = 0
-            for path, scale in zip(lora_paths, lora_scales):
+            for path, scale in zip(_lora_paths, _lora_scales):
                 updated = load_lora_for_gguf(
                     model, path, scale=scale,
                     device=transformer_device, dtype=dtype,
@@ -1026,7 +1062,7 @@ def generate_video_with_offloading(
         else:
             from llm_dit.utils.lora import load_lora as _load_lora
             total_updated = 0
-            for path, scale in zip(lora_paths, lora_scales):
+            for path, scale in zip(_lora_paths, _lora_scales):
                 logger.info(f"Loading LoRA: {path} (scale={scale})")
                 updated = _load_lora(
                     model, path, scale=scale,
@@ -1223,7 +1259,7 @@ class TwoStageConfig:
 
     def __post_init__(self):
         if self.stg_blocks is None:
-            self.stg_blocks = [29]
+            self.stg_blocks = [28]
 
 
 def _compute_velocity(
@@ -1912,6 +1948,21 @@ def generate_video_two_stage(
         terminal=config.terminal,
     )
 
+    # Normalize LoRA args up front (needed by both reconstruct and post-load paths)
+    _lora_paths: list[str] | None = None
+    _lora_scales: list[float] | None = None
+    if lora_path is not None:
+        if isinstance(lora_path, (str, Path)):
+            _lora_paths = [str(lora_path)]
+        else:
+            _lora_paths = [str(p) for p in lora_path]
+        if lora_scale is None:
+            _lora_scales = [0.8] * len(_lora_paths)
+        elif isinstance(lora_scale, (int, float)):
+            _lora_scales = [float(lora_scale)] * len(_lora_paths)
+        else:
+            _lora_scales = list(lora_scale)
+
     is_gguf = gguf_model is not None
     if is_gguf:
         # GGUF: use persistent model directly (no cache/reconstruct)
@@ -1921,6 +1972,7 @@ def generate_video_two_stage(
         model = _reconstruct_transformer_from_cache(
             cached_transformer, dtype, transformer_device,
             effective_quantize, effective_precision, granularity,
+            lora_paths=_lora_paths, lora_scales=_lora_scales,
         )
     else:
         # Load from disk (fallback when no cache)
@@ -1960,27 +2012,16 @@ def generate_video_two_stage(
         if load_device == "cpu":
             model = model.to(transformer_device)
 
-    # Apply base LoRA(s) if provided
-    if lora_path is not None:
-        if isinstance(lora_path, (str, Path)):
-            lora_paths = [lora_path]
-        else:
-            lora_paths = list(lora_path)
-
-        if lora_scale is None:
-            lora_scales = [0.8] * len(lora_paths)
-        elif isinstance(lora_scale, (int, float)):
-            lora_scales = [float(lora_scale)] * len(lora_paths)
-        else:
-            lora_scales = list(lora_scale)
-
+    # Apply base LoRA(s) if provided (skip if already fused at state-dict level)
+    lora_already_fused = getattr(model, "_lora_fused_at_sd_level", False)
+    if _lora_paths and not lora_already_fused:
         if is_gguf:
             from llm_dit.utils.lora import load_lora_for_gguf
-            for path, scale in zip(lora_paths, lora_scales):
+            for path, scale in zip(_lora_paths, _lora_scales):
                 load_lora_for_gguf(model, path, scale=scale, device=transformer_device, dtype=dtype)
         else:
             from llm_dit.utils.lora import load_lora as _load_lora
-            for path, scale in zip(lora_paths, lora_scales):
+            for path, scale in zip(_lora_paths, _lora_scales):
                 logger.info(f"Loading base LoRA: {path} (scale={scale})")
                 _load_lora(model, path, scale=scale, device=transformer_device, dtype=dtype)
 
