@@ -213,18 +213,8 @@ def convert_gemma3_to_fp8(
         # safetensors requires contiguous tensors
         state_dict[name] = param.contiguous()
 
-    # Also save feature extractor and connector weights
-    if encoder._feature_extractor is not None:
-        fe_state = encoder._feature_extractor.state_dict()
-        logger.info(f"  Adding {len(fe_state)} feature extractor keys")
-        for name, param in fe_state.items():
-            state_dict[f"feature_extractor.{name}"] = param.contiguous()
-
-    if encoder._embeddings_connector is not None:
-        conn_state = encoder._embeddings_connector.state_dict()
-        logger.info(f"  Adding {len(conn_state)} embeddings connector keys")
-        for name, param in conn_state.items():
-            state_dict[f"embeddings_connector.{name}"] = param.contiguous()
+    # V2.3 connectors are loaded from separate ltx-2.3-connectors.safetensors
+    # at runtime -- no need to embed them in the fp8 checkpoint.
 
     build_time = time.time() - build_start
     logger.info(f"  {len(state_dict)} total keys assembled in {build_time:.1f}s")

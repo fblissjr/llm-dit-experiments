@@ -817,8 +817,12 @@ class ModelManager:
         """
         from llm_dit.models.ltx2.vae import load_ltx2_vae_decoder
 
+        # V2.3: standalone file at model root; V1: vae/ subdirectory
+        v23_path = model_path / "ltx-2.3-video-vae.safetensors"
+        vae_path = v23_path if v23_path.exists() else model_path / "vae"
+
         vae = load_ltx2_vae_decoder(
-            model_path / "vae", dtype=torch.bfloat16, device="cpu"
+            vae_path, dtype=torch.bfloat16, device="cpu"
         )
         self._pin_model_memory(vae, "VAE")
         return vae
@@ -827,7 +831,12 @@ class ModelManager:
         """Load audio decoder and cache on CPU with pinned memory (~102MB)."""
         from llm_dit.models.ltx2.audio_vae.loader import load_audio_decoder
 
-        path = Path(audio_vae_path) if audio_vae_path else model_path / "audio_vae"
+        if audio_vae_path:
+            path = Path(audio_vae_path)
+        else:
+            # V2.3: standalone file at model root; V1: audio_vae/ subdirectory
+            v23_path = model_path / "ltx-2.3-audio-vae.safetensors"
+            path = v23_path if v23_path.exists() else model_path / "audio_vae"
         decoder = load_audio_decoder(path, dtype=torch.bfloat16, device="cpu")
         self._pin_model_memory(decoder, "Audio decoder")
         return decoder
@@ -836,7 +845,12 @@ class ModelManager:
         """Load vocoder and cache on CPU with pinned memory (~107MB)."""
         from llm_dit.models.ltx2.audio_vae.loader import load_vocoder
 
-        path = Path(vocoder_path) if vocoder_path else model_path / "vocoder"
+        if vocoder_path:
+            path = Path(vocoder_path)
+        else:
+            # V2.3: standalone file at model root; V1: vocoder/ subdirectory
+            v23_path = model_path / "ltx-2.3-vocoder.safetensors"
+            path = v23_path if v23_path.exists() else model_path / "vocoder"
         vocoder = load_vocoder(path, dtype=torch.bfloat16, device="cpu")
         self._pin_model_memory(vocoder, "Vocoder")
         return vocoder
@@ -939,10 +953,19 @@ class ModelManager:
         # Pre-load audio models when audio_enabled (optional, ~209MB total)
         audio_time = 0.0
         if ltx2_cfg and ltx2_cfg.audio_enabled:
-            audio_vae_dir = Path(ltx2_cfg.audio_vae_path) if ltx2_cfg.audio_vae_path else model_path / "audio_vae"
-            vocoder_dir = Path(ltx2_cfg.vocoder_path) if ltx2_cfg.vocoder_path else model_path / "vocoder"
+            # Resolve audio paths: V2.3 standalone files or V1 subdirectories
+            if ltx2_cfg.audio_vae_path:
+                audio_vae_resolved = Path(ltx2_cfg.audio_vae_path)
+            else:
+                v23_audio = model_path / "ltx-2.3-audio-vae.safetensors"
+                audio_vae_resolved = v23_audio if v23_audio.exists() else model_path / "audio_vae"
+            if ltx2_cfg.vocoder_path:
+                vocoder_resolved = Path(ltx2_cfg.vocoder_path)
+            else:
+                v23_vocoder = model_path / "ltx-2.3-vocoder.safetensors"
+                vocoder_resolved = v23_vocoder if v23_vocoder.exists() else model_path / "vocoder"
 
-            if audio_vae_dir.exists() and vocoder_dir.exists():
+            if audio_vae_resolved.exists() and vocoder_resolved.exists():
                 logger.info("[LTX-2] Pre-loading audio models for caching...")
                 audio_start = time.time()
                 self._ltx2_audio_decoder = self._preload_ltx2_audio_decoder(
@@ -956,7 +979,7 @@ class ModelManager:
             else:
                 logger.warning(
                     "[LTX-2] audio_enabled=True but audio models not found. "
-                    f"audio_vae={audio_vae_dir.exists()}, vocoder={vocoder_dir.exists()}. "
+                    f"audio_vae={audio_vae_resolved.exists()}, vocoder={vocoder_resolved.exists()}. "
                     "Audio unavailable."
                 )
 
