@@ -1512,12 +1512,18 @@ def _compute_av_velocity(
 
     if ctx.guidance_scale > 1.0 and ctx.neg_embeds is not None:
         # Pass 1: Unconditional (negative prompts for both modalities)
+        if step_index == 0:
+            has_neg = audio_neg_embeds is not None
+            logger.debug(
+                f"AV CFG: guidance={ctx.guidance_scale}, "
+                f"audio_neg_embeds={'provided' if has_neg else 'ZEROS_FALLBACK'}"
+            )
         uncond_video = create_video_modality(
             video_latents, video_timestep, video_positions, ctx.neg_embeds,
         )
         uncond_audio = create_audio_modality(
             audio_latents, audio_timestep, audio_positions,
-            audio_neg_embeds if audio_neg_embeds is not None else audio_prompt_embeds,
+            audio_neg_embeds if audio_neg_embeds is not None else torch.zeros_like(audio_prompt_embeds),
         )
         v_uncond, a_uncond = model(video=uncond_video, audio=uncond_audio, **fb_kwargs)
         del uncond_video, uncond_audio
@@ -1986,6 +1992,8 @@ def generate_video_two_stage(
     if not video_only and pos_output.audio_embeddings is not None:
         pos_audio_embeds = pos_output.audio_embeddings[0].unsqueeze(0)
         logger.info(f"Audio embeddings: {pos_audio_embeds.shape}")
+    elif not video_only:
+        logger.warning("Audio mode but encoder returned no audio embeddings")
 
     if callback:
         callback("encoding", 1, 2)
@@ -2005,6 +2013,13 @@ def generate_video_two_stage(
         elif neg_output.audio_embeddings is not None:
             # Fall back to negative prompt's audio embeddings
             audio_neg_embeds = neg_output.audio_embeddings[0].unsqueeze(0)
+
+        # Final fallback: zeros matching positive audio shape (ensures CFG gradient is nonzero)
+        if audio_neg_embeds is None and pos_audio_embeds is not None:
+            audio_neg_embeds = torch.zeros_like(pos_audio_embeds)
+            logger.warning("No audio negative embeddings from encoder, using zeros")
+        elif audio_neg_embeds is not None:
+            logger.info(f"Audio neg embeddings: {audio_neg_embeds.shape}")
 
     if callback:
         callback("encoding", 2, 2)
