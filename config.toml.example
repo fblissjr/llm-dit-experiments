@@ -171,8 +171,8 @@ guidance_scale = 3.0            # video CFG (reference default)
 audio_enabled = false
 audio_negative_prompt = ""      # empty = falls back to video negative_prompt
 audio_guidance_scale = 7.0      # audio CFG -- higher than video per reference
-audio_vae_path = ""             # leave empty to use model_path/audio_vae
-vocoder_path = ""               # leave empty to use model_path/vocoder
+audio_vae_path = ""             # leave empty for auto-detect (V2.3: ltx-2.3-audio-vae.safetensors)
+vocoder_path = ""               # leave empty for auto-detect (V2.3: ltx-2.3-vocoder.safetensors)
 
 # Two-stage pipeline (reference: TI2VidTwoStagesPipeline)
 use_two_stage = true

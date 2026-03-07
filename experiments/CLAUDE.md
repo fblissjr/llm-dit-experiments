@@ -1,6 +1,6 @@
 # experiments agent context
 
-*last updated: 2026-02-19*
+*last updated: 2026-03-07*
 
 ---
 
@@ -59,7 +59,7 @@
 | Layer 47 anomaly (near-zero norm) | `[NEEDS_CHECK]` | Needs re-verification with full 49-layer run |
 | Projection weights uniform | `[NEEDS_CHECK]` | Depends on correct layer extraction |
 
-### new findings (jan 20)
+### validated findings (jan 17-20)
 
 | Finding | Status | Notes |
 |---------|--------|-------|
@@ -67,11 +67,6 @@
 | FP8 transformer validated | `[VALIDATED]` | Forward pass produces healthy output (mean=0.06, std=1.05) |
 | "Blurry blob" is downstream | `[VALIDATED]` | Core components work, issue in pipeline integration |
 | ModelLedger architecture documented | `[VALIDATED]` | Full analysis in `internal/analysis/model_ledger_*.md` |
-
-### new findings (jan 17)
-
-| Finding | Status | Notes |
-|---------|--------|-------|
 | Layer 0 (embedding) contributes 51% isolated | `[VALIDATED]` | Highest contribution when only layer active |
 | Layer 24 contributes 49% isolated | `[VALIDATED]` | Mid-layers carry semantic content |
 | Layer 48 contributes ~0% isolated | `[VALIDATED]` | Final layer alone contributes nothing |
@@ -93,7 +88,6 @@ experiments/results/
 │   └── ltx2_layer_blend_20260116_105604/
 ├── z_image/                               # Z-Image experiments
 │   └── hidden_layer_blend_20260101_172411/
-├── wan/                                   # Wan video experiments (future)
 └── archive/                               # Superseded/analysis files
 ```
 
@@ -181,7 +175,9 @@ Historical dated reports: [archive/dated_reports/](archive/dated_reports/)
 
 ## research priorities
 
-### tier 1: validation (do first)
+**Note:** These priorities were established in January 2026 and may need re-evaluation given V2.3 architecture changes.
+
+### tier 1: validation
 
 | Task | Status | Purpose |
 |------|--------|---------|
@@ -189,7 +185,7 @@ Historical dated reports: [archive/dated_reports/](archive/dated_reports/)
 | Layer 47 anomaly verification | `[OPEN]` | Confirm near-zero norm (needs full 49-layer run) |
 | GPU numerical equivalence test | `[OPEN]` | Compare pure PyTorch vs diffusers output |
 
-### tier 2: high-value experiments (NOW UNBLOCKED)
+### tier 2: high-value experiments
 
 | Task | Status | Expected Impact |
 |------|--------|-----------------|

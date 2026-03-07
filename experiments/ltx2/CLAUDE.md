@@ -1,19 +1,10 @@
 # LTX-2 Experiments Agent Context
 
-*last updated: 2026-02-27*
+*last updated: 2026-03-07*
 
 ---
 
-## research status legend
-
-| Tag | Status | Meaning |
-|-----|--------|---------|
-| `[VALIDATED]` | **Validated** | Confirmed through experiments or architecture analysis |
-| `[OPEN]` | **Open** | Hypothesis needs testing or re-testing |
-| `[NEEDS_CHECK]` | **Needs Verification** | Previous results may have bugs |
-| `[DEAD_END]` | **Dead-End** | Tested, doesn't work |
-
-**Consolidated findings:** [docs/findings/](docs/findings/)
+Status legend: see [../CLAUDE.md](../CLAUDE.md). Consolidated findings: [docs/findings/](docs/findings/)
 
 ---
 
@@ -119,28 +110,15 @@ LTX-2 does NOT use Gemma-3 as a traditional text encoder (final layer only). Ins
                     [B, T, 3840, 49]
                               ↓
 ┌─────────────────────────────────────────────────────────────────────┐
-│                    _pack_text_embeds()                              │
-│                    (NO LEARNED PARAMETERS)                          │
+│              FeatureExtractorV2 (V2.3)                              │
+│              (LEARNED, replaces V1 _pack_text_embeds + text_proj_in)│
 │                                                                     │
-│  1. Compute masked statistics per layer (mean, min, max)           │
-│  2. Mean-center: x - mean                                          │
-│  3. Scale to [-8, +8] range: x / (max - min) * 8                   │
-│  4. Flatten: [B, T, 3840, 49] → [B, T, 188160]                     │
+│  1. Per-token RMSNorm (learned, not global stats)                  │
+│  2. Flatten: [B, T, 3840, 49] -> [B, T, 188160]                    │
+│  3. Dual projections:                                               │
+│     - Video: nn.Linear(188160, 4096) -> [B, T, 4096]               │
+│     - Audio: nn.Linear(188160, 2048) -> [B, T, 2048]               │
 └─────────────────────────────────────────────────────────────────────┘
-                              ↓
-┌─────────────────────────────────────────────────────────────────────┐
-│                 connectors.text_proj_in                             │
-│                 (LEARNED PROJECTION W)                              │
-│                                                                     │
-│  nn.Linear(188160, 3840, bias=False)                               │
-│                                                                     │
-│  W shape: [3840, 188160] = [3840, 49 × 3840]                       │
-│                                                                     │
-│  This W was trained via MSE loss against DiT denoising.            │
-│  It learned which layers matter and how to combine them.           │
-└─────────────────────────────────────────────────────────────────────┘
-                              ↓
-                    [B, T, 3840]
                               ↓
 ┌─────────────────────────────────────────────────────────────────────┐
 │              LTX2ConnectorTransformer1d                             │
@@ -148,9 +126,10 @@ LTX-2 does NOT use Gemma-3 as a traditional text encoder (final layer only). Ins
 │                                                                     │
 │  1. Replace padding positions with 128 learnable "thinking tokens" │
 │  2. Full bidirectional attention (no causal masking)               │
-│  3. Transform to modality-specific representation                  │
+│  3. 8 blocks, 32 heads, gated attention                            │
 │                                                                     │
-│  Separate connectors for video (4096 dim) and audio (2048 dim)     │
+│  Video connector: 4096 dim (128 head_dim)                          │
+│  Audio connector: 2048 dim (64 head_dim)                           │
 └─────────────────────────────────────────────────────────────────────┘
                               ↓
                     DiT Cross-Attention
@@ -203,9 +182,11 @@ hidden_states = [h * scale_factor for h in hidden_states]
 # Option 3: Use higher bit quantization (8-bit less affected than 4-bit)
 ```
 
-### GGUF Models
+### GGUF Models (Encoder only -- NOT COMPATIBLE)
 
-**Compatibility**: **NOT COMPATIBLE**. GGUF/llama.cpp does not expose intermediate hidden states. Would require C++ modifications. Not worth pursuing.
+**Compatibility**: **NOT COMPATIBLE for the encoder (Gemma3)**. GGUF/llama.cpp does not expose intermediate hidden states. Would require C++ modifications. Not worth pursuing.
+
+**Note:** The *transformer* (DiT) does support GGUF quantization -- see root CLAUDE.md for `gguf_transformer_path` config. This section is about the Gemma3 text *encoder* only.
 
 ### Recommendation Matrix
 

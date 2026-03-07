@@ -1,6 +1,6 @@
 # testing guide for agents
 
-*last updated: 2026-03-02*
+*last updated: 2026-03-07*
 
 Quick reference for LLM agents running tests in this codebase.
 
@@ -149,98 +149,15 @@ When adding tests for a new feature, cover:
 - [ ] **Parameter effects** - Changing values changes output
 - [ ] **Error handling** - Invalid inputs handled gracefully
 
-## tdd workflow (test-driven development)
+## tdd workflow
 
-**Always write tests first when implementing new features or fixing bugs.**
+**Always write tests first.** Follow the red/green TDD cycle from the global CLAUDE.md.
 
-### the cycle
-
-```
-1. Write test  ->  2. Watch it fail  ->  3. Implement  ->  4. Tests pass  ->  5. Commit
-```
-
-### step by step
-
-1. **Write a test first** for each change (grouped logically in test files)
-   ```bash
-   # Create or edit test file
-   # tests/unit/test_my_feature.py
-   ```
-
-2. **Run the specific test** to watch it fail
-   ```bash
-   uv run pytest tests/unit/test_my_feature.py::test_specific_case -v
-   ```
-
-3. **Implement the change** to make the test pass
-
-4. **Run tests** to confirm they pass
-   ```bash
-   uv run pytest tests/unit/test_my_feature.py -v
-   ```
-
-5. **Run related tests** to ensure no regressions
-   ```bash
-   uv run pytest tests/unit/ -v -k "related_component"
-   ```
-
-6. **Commit** implementation + tests + docs together (single commit)
-
-### code execution standards
-
-```bash
-# Always use uv for Python execution
-uv run python -c "from llm_dit.models.ltx2 import ..."
-uv run pytest tests/unit/test_foo.py -v
-
-# Add dependencies
-uv add package_name
-uv add pytest-mock --dev  # dev dependencies
-
-# Sync environment
-uv sync
-```
-
-### testing best practices
-
-- **Use fixtures** - Reuse setup code via pytest fixtures (see `conftest.py`)
-- **Parametrize** - Use `@pytest.mark.parametrize` to avoid duplicated test code
-- **Isolate** - Each test should be independent and not rely on test order
-- **Name clearly** - `test_<action>_<expected_outcome>`
-
-### commit strategy
-
-- **Commit often** in sensible chunks
-- **Single commit** should include: implementation + tests + documentation
-- **Never commit** failing tests (except skip-marked stubs for future work)
-
-### example tdd session
-
-```bash
-# 1. Create test for new VAE feature
-cat > tests/unit/test_vae_new_feature.py << 'EOF'
-def test_vae_handles_odd_dimensions():
-    """VAE should handle non-standard input dimensions."""
-    from llm_dit.models.ltx2.vae import VideoDecoder
-    # ... test code
-EOF
-
-# 2. Run test - expect failure
-uv run pytest tests/unit/test_vae_new_feature.py -v
-# FAILED - function not implemented
-
-# 3. Implement the feature in src/llm_dit/models/ltx2/vae/...
-
-# 4. Run test - expect pass
-uv run pytest tests/unit/test_vae_new_feature.py -v
-# PASSED
-
-# 5. Run broader tests for regressions
-uv run pytest tests/unit/test_ltx2_video_vae.py -v
-# All PASSED
-
-# 6. Commit (user approval required)
-```
+**Test-specific conventions:**
+- **Use fixtures** -- reuse setup code via pytest fixtures (see `conftest.py`)
+- **Parametrize** -- use `@pytest.mark.parametrize` to avoid duplicated test code
+- **Isolate** -- each test should be independent and not rely on test order
+- **Name clearly** -- `test_<action>_<expected_outcome>`
 
 ## quick commands
 
