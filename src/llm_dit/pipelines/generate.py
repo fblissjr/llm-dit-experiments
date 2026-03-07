@@ -298,7 +298,6 @@ def _reconstruct_transformer_from_cache(
     with meta_init():
         model = create_model_from_config(
             cached_transformer["config"], dtype, model_type=model_type,
-            apply_gated_attention=True, cross_attention_adaln=True,
         )
     model.load_state_dict(sd, assign=True)
 
@@ -457,6 +456,7 @@ def create_video_modality(
     timestep: torch.Tensor,
     positions: torch.Tensor,
     prompt_embeds: torch.Tensor,
+    sigma: Optional[torch.Tensor] = None,
     context_mask: Optional[torch.Tensor] = None,
 ) -> Modality:
     """
@@ -467,13 +467,18 @@ def create_video_modality(
         timestep: [B, T] per-token timesteps
         positions: [B, 3, T] position indices
         prompt_embeds: [B, seq_len, context_dim] text embeddings
+        sigma: [B] scalar noise level for cross-attention AdaLN.
+            If None, derived from timestep[:,0].
         context_mask: Optional [B, seq_len] attention mask
 
     Returns:
         Modality dataclass ready for transformer forward pass
     """
+    if sigma is None:
+        sigma = timestep[:, 0]
     return Modality(
         latent=latent,
+        sigma=sigma,
         timesteps=timestep,
         positions=positions,
         context=prompt_embeds,
@@ -540,6 +545,7 @@ def create_audio_modality(
     timestep: torch.Tensor,
     positions: torch.Tensor,
     prompt_embeds: torch.Tensor,
+    sigma: Optional[torch.Tensor] = None,
     context_mask: Optional[torch.Tensor] = None,
 ) -> Modality:
     """Create Modality dataclass for audio transformer input.
@@ -549,13 +555,18 @@ def create_audio_modality(
         timestep: [B, T] per-token timesteps (same sigmas as video)
         positions: [B, 1, T, 2] temporal position indices
         prompt_embeds: [B, seq_len, context_dim] audio text embeddings
+        sigma: [B] scalar noise level for cross-attention AdaLN.
+            If None, derived from timestep[:,0].
         context_mask: Optional [B, seq_len] attention mask
 
     Returns:
         Modality dataclass ready for transformer forward pass
     """
+    if sigma is None:
+        sigma = timestep[:, 0]
     return Modality(
         latent=latent,
+        sigma=sigma,
         timesteps=timestep,
         positions=positions,
         context=prompt_embeds,
@@ -1970,6 +1981,12 @@ def generate_video_two_stage(
     pos_embeds = pos_output.embeddings[0].unsqueeze(0)
     pos_mask = pos_output.attention_masks[0].unsqueeze(0)
 
+    # Extract audio embeddings (2048-dim) from encoder output
+    pos_audio_embeds: Optional[torch.Tensor] = None
+    if not video_only and pos_output.audio_embeddings is not None:
+        pos_audio_embeds = pos_output.audio_embeddings[0].unsqueeze(0)
+        logger.info(f"Audio embeddings: {pos_audio_embeds.shape}")
+
     if callback:
         callback("encoding", 1, 2)
 
@@ -1980,10 +1997,14 @@ def generate_video_two_stage(
 
     # Encode audio negative prompt if audio is enabled
     audio_neg_embeds = None
-    if not video_only and audio_negative_prompt:
-        logger.info("Encoding audio negative prompt...")
-        audio_neg_output = text_encoder.encode([audio_negative_prompt])
-        audio_neg_embeds = audio_neg_output.embeddings[0].unsqueeze(0)
+    if not video_only:
+        if audio_negative_prompt:
+            logger.info("Encoding audio negative prompt...")
+            audio_neg_output = text_encoder.encode([audio_negative_prompt])
+            audio_neg_embeds = audio_neg_output.embeddings[0].unsqueeze(0)
+        elif neg_output.audio_embeddings is not None:
+            # Fall back to negative prompt's audio embeddings
+            audio_neg_embeds = neg_output.audio_embeddings[0].unsqueeze(0)
 
     if callback:
         callback("encoding", 2, 2)
@@ -1992,6 +2013,8 @@ def generate_video_two_stage(
     pos_embeds = pos_embeds.to(transformer_device, dtype)
     pos_mask = pos_mask.to(transformer_device)
     neg_embeds = neg_embeds.to(transformer_device, dtype)
+    if pos_audio_embeds is not None:
+        pos_audio_embeds = pos_audio_embeds.to(transformer_device, dtype)
     if audio_neg_embeds is not None:
         audio_neg_embeds = audio_neg_embeds.to(transformer_device, dtype)
 
@@ -2138,7 +2161,7 @@ def generate_video_two_stage(
             video_latents=latents,
             audio_latents=audio_latents,
             video_prompt_embeds=pos_embeds,
-            audio_prompt_embeds=pos_embeds,
+            audio_prompt_embeds=pos_audio_embeds if pos_audio_embeds is not None else pos_embeds,
             sigmas=sigmas,
             video_positions=positions,
             audio_positions=audio_positions,
@@ -2329,7 +2352,7 @@ def generate_video_two_stage(
             video_latents=latents_noisy,
             audio_latents=audio_latents_noisy,
             video_prompt_embeds=pos_embeds,
-            audio_prompt_embeds=pos_embeds,
+            audio_prompt_embeds=pos_audio_embeds if pos_audio_embeds is not None else pos_embeds,
             sigmas=distilled_sigmas,
             video_positions=positions_full,
             audio_positions=audio_positions,

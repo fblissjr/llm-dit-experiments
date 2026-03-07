@@ -403,11 +403,13 @@ class Modality:
 
     Attributes:
         latent: [B, T, D] where B=batch, T=tokens, D=input dimension (128 for LTX-2)
+        sigma: [B] scalar noise level for cross-attention AdaLN (prompt_timestep)
         timesteps: [B, T] diffusion timesteps (can be per-token for IC-LoRA)
         positions: [B, 3, T] position indices for video (temporal, height, width)
         context: [B, seq_len, context_dim] text conditioning embeddings
         enabled: Whether this modality is active
         context_mask: Optional attention mask for text [B, seq_len]
+        attention_mask: Optional [B, T, T] self-attention mask (0=masked, 1=attend)
     """
     latent: torch.Tensor
     timesteps: torch.Tensor
@@ -415,3 +417,5 @@ class Modality:
     context: torch.Tensor
     enabled: bool = True
     context_mask: Optional[torch.Tensor] = None
+    attention_mask: Optional[torch.Tensor] = None
+    sigma: Optional[torch.Tensor] = None  # [B] scalar noise level; None = derive from timesteps[:,0]

@@ -700,13 +700,12 @@ def load_ltx2_transformer_gguf(
         model_type = LTXModelType.VideoOnly if video_only else LTXModelType.AudioVideo
     video_only = not model_type.is_audio_enabled()
 
-    # Build model config -- always V2.3 (22B) with gated attention + cross-attention AdaLN
+    # Build model config from checkpoint metadata or defaults
     config = load_config(gguf_path)
 
     with meta_init():
         model = create_model_from_config(
             config, dtype, model_type=model_type,
-            apply_gated_attention=True, cross_attention_adaln=True,
         )
 
     # Replace all nn.Linear with GGMLLinear (accepts quantized tensors)

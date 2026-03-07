@@ -378,11 +378,12 @@ class TestTransformerCacheVideoOnlyFlag:
             "out_channels": 128,
             "caption_channels": 2048,
             "num_layers": 2,
+            "apply_gated_attention": True,
+            "cross_attention_adaln": True,
         }
         # Build a V2.3 model (gated attention + cross-attention AdaLN) for valid state_dict
         ref = create_model_from_config(
             config, dtype=torch.bfloat16, model_type=LTXModelType.VideoOnly,
-            apply_gated_attention=True, cross_attention_adaln=True,
         )
         sd = {k: v.clone() for k, v in ref.state_dict().items()}
         del ref
@@ -409,11 +410,12 @@ class TestTransformerCacheVideoOnlyFlag:
             "audio_num_attention_heads": 4,
             "audio_attention_head_dim": 32,
             "audio_cross_attention_dim": 128,
+            "apply_gated_attention": True,
+            "cross_attention_adaln": True,
         }
         # Build a V2.3 AV model for valid state_dict
         ref = create_model_from_config(
             config, dtype=torch.bfloat16, model_type=LTXModelType.AudioVideo,
-            apply_gated_attention=True, cross_attention_adaln=True,
         )
         sd = {k: v.clone() for k, v in ref.state_dict().items()}
         del ref

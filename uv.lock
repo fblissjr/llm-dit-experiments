@@ -631,7 +631,7 @@ wheels = [
 
 [[package]]
 name = "diffusers"
-version = "0.37.0.dev0"
+version = "0.38.0.dev0"
 source = { editable = "coderef/diffusers" }
 dependencies = [
     { name = "filelock" },

@@ -342,11 +342,16 @@ class TransformerArgsPreprocessor:
         )
 
         # V2: compute prompt_timestep for cross-attention KV-side AdaLN
+        # Uses scalar sigma (per-batch), NOT per-token timesteps.
+        # prompt_timestep modulates text context (seq_len tokens), so must be [B, 1, D].
         prompt_timestep = None
         if self.prompt_adaln_single is not None:
-            scaled_ts = modality.timesteps * self.timestep_scale_multiplier
+            sigma = modality.sigma if modality.sigma is not None else (
+                modality.timesteps[:, 0] if modality.timesteps.ndim >= 2 else modality.timesteps
+            )
+            scaled_sigma = sigma * self.timestep_scale_multiplier
             prompt_timestep, _ = self.prompt_adaln_single(
-                scaled_ts.flatten(),
+                scaled_sigma.flatten(),
                 hidden_dtype=modality.latent.dtype,
             )
             prompt_timestep = prompt_timestep.view(batch_size, -1, prompt_timestep.shape[-1])
