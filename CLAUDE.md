@@ -205,7 +205,7 @@ This is a **multi-workstream project**. Work happens in parallel across layers:
 
 **On-demand lazy loading:** When `default_pipeline = "none"`, routers trigger `manager.load("pipeline_id")` on first request. Method is `manager.load()` (NOT `load_pipeline()`). Idempotent -- double-check inside lock, returns early if already loaded. Unloads other pipelines to free VRAM.
 
-**`gemma_variant` vs `quantize` are independent:** `quantize` controls transformer quantization (torchao fp8-dynamic at runtime). `gemma_variant` controls encoder loading strategy (pure PyTorch for fp8/fp8-safetensors, torchao for 8bit). The fp8-safetensors path has zero torchao dependency; torchao debug logs during load are transitive from transformers import.
+**`gemma_variant` vs `quantize` are independent:** `quantize` controls transformer quantization (torchao fp8-dynamic at runtime). `gemma_variant` controls encoder loading strategy (pure PyTorch for fp8/fp8-safetensors, torchao for 8bit/q4-qat). The fp8-safetensors path has zero torchao dependency; torchao debug logs during load are transitive from transformers import. The q4-qat variant currently uses int8 (torchao int4 requires unreleased `mslk` package). Encoder weight loading auto-detects V1 bundled format vs standard HF model format in `_load_ltx2_gemma_weights()`.
 
 **Unified quantization:** All pipelines use `quantize_component()` as the sole entry point. torchao is the only backend. `"fp8"` alias maps to `"fp8-dynamic"` (W8A8, FP8 tensor cores). Default granularity is `"per-row"`. Already-quantized weights (torchao subclasses or native FP8 dtypes) are auto-detected and skipped. See `docs/reference/quantization.md`.
 
@@ -314,6 +314,10 @@ For full debugging patterns, see [lessons_learned.md](internal/state/lessons_lea
 | GGUF model shows `available=false` | `gguf_transformer_path` not checked | Verify `[ltx2].gguf_transformer_path` in config.toml points to valid .gguf file |
 | V2 cross-attention produces NaN/crash | `prompt_timestep` not populated | Fixed in v0.9.19: `TransformerArgsPreprocessor.prepare()` now computes `prompt_timestep` when `prompt_adaln_single` exists |
 | LoRA silently not applied with GGUF | Key mismatch in `attach_lora_deltas` | Check logs for "0 of N delta keys matched" warning |
+| Encoder load fails "index file not found" | V1 vs HF checkpoint format | `_load_ltx2_gemma_weights()` auto-detects: V1 (`diffusion_pytorch_model.safetensors.index.json`) vs HF (`model.safetensors.index.json`) |
+| Encoder load key mismatch (all UNEXPECTED) | Multimodal model loaded as CausalLM | HF Gemma3 is `Gemma3ForConditionalGeneration`; keys need `language_model.` prefix stripped |
+| torchao int4 "Requires mslk >= 1.0.0" | Meta-internal CUDA kernel lib not public | Use int8 fallback; q4-qat variant uses int8 until mslk ships |
+| Tokenizer not found at `model_path/tokenizer/` | V1 layout assumed separate tokenizer dir | Tokenizer is inside `text_encoder/` dir; `gemma3_variants.py` now falls back |
 
 ## quick test commands
 
