@@ -323,6 +323,18 @@ register_pipeline(PipelineSchema(
             tooltip="CFG rescaling factor for two-stage generation. 0.7 recommended.",
         ),
         ParamSchema(
+            id="modality_scale",
+            type="slider",
+            label="Modality Scale",
+            default=3.0,
+            min=1.0,
+            max=10.0,
+            step=0.5,
+            group="advanced",
+            conditional={"enable_audio": True},
+            tooltip="Cross-modal attention guidance strength. Controls AV coherence and lipsync. 1.0=disabled, 3.0=reference default.",
+        ),
+        ParamSchema(
             id="ge_gamma",
             type="slider",
             label="GE Gamma",

@@ -668,6 +668,7 @@ class LTX2GenerateRequest(BaseModel):
     stg_scale: float = 1.0
     stg_blocks: Optional[List[int]] = None
     rescale_scale: float = 0.7
+    modality_scale: float = 3.0  # Cross-modal attention guidance (1.0=disabled, 3.0=reference)
 
     # LoRA
     distilled_lora_path: Optional[str] = None

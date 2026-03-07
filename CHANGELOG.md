@@ -1,10 +1,25 @@
-last updated: 2026-03-06
+last updated: 2026-03-07
 
 # changelog
 
 
 All notable changes to this project will be documented in this file.
 Uses [Semantic Versioning](https://semver.org/).
+
+## 0.9.24
+
+### added
+- **Modality guidance (4th forward pass):** `modality_scale` parameter controls cross-modal attention guidance strength. When > 1.0, an additional transformer pass runs with cross-modal attention skipped (`SKIP_A2V_CROSS_ATTN` + `SKIP_V2A_CROSS_ATTN`), isolating each modality. Critical for lipsync and AV coherence. Default 3.0 (matching official reference).
+- **Audio STG perturbation:** STG pass now creates both `SKIP_VIDEO_SELF_ATTN` and `SKIP_AUDIO_SELF_ATTN` perturbations (was video-only). Matches official pipeline behavior.
+- **Audio embed dimension safety:** Guard in `generate_video_two_stage()` prevents 4096-dim video embeddings from being used as 2048-dim audio context when encoder fails to produce audio embeddings. Falls back to video-only with error log.
+- **Config/schema/router:** `modality_scale` wired through `LTX2Config`, `config.toml`, `config.toml.example`, `LTX2GenerateRequest`, `resolve_param()` in router, and pipeline schema (UI slider, conditional on `enable_audio`).
+- **Tests:** 5 new unit tests: modality guidance 4th pass activation/skip, cross-attn perturbation types, STG dual perturbation types, single-pass no-guidance.
+
+### fixed
+- **CFG audio negative embeddings (v0.9.23 followup):** Removed unsafe `pos_embeds` fallback in stage 1 and stage 2 AV denoising calls. Stage 2 AV call no longer passes `pos_audio_embeds if ... else pos_embeds` -- the dimension guard above ensures `pos_audio_embeds` is always valid when audio is enabled.
+- **Modality guidance `blocks=None`:** Changed `list(range(48))` to `blocks=None` for cross-modal perturbations, matching the official reference. `None` means "all blocks" per `Perturbation.is_perturbed()` and is architecture-independent.
+- **Eager `cond_video`/`cond_audio` cleanup:** Moved deletion immediately after Pass 2 model call (was deferred to STG/else branches). Frees memory before STG/modality passes allocate their own modality objects.
+- **CLI audio params:** Added `--audio-guidance-scale`, `--audio-negative-prompt`, `--modality-scale`, `--rescale-scale`, and `--stg-blocks` to `scripts/gen.py` ltx2 subcommand.
 
 ## 0.9.23
 

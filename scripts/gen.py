@@ -154,6 +154,11 @@ def create_parser() -> argparse.ArgumentParser:
     ltx2.add_argument("--fbcache-threshold", type=float, default=None)
     ltx2.add_argument("--use-distilled-sigmas", action="store_true", default=None)
     ltx2.add_argument("--enable-audio", action="store_true", default=None)
+    ltx2.add_argument("--audio-guidance-scale", type=float, default=None)
+    ltx2.add_argument("--audio-negative-prompt", default=None)
+    ltx2.add_argument("--modality-scale", type=float, default=None)
+    ltx2.add_argument("--rescale-scale", type=float, default=None)
+    ltx2.add_argument("--stg-blocks", type=int, nargs="+", default=None)
 
     # -- qwen ----------------------------------------------------------
     qwen = subs.add_parser("qwen", help="Qwen-Image T2I generation")

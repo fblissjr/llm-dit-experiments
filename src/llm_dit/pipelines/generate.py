@@ -1282,6 +1282,7 @@ class StepContext:
     ge_gamma: float = 0.0
     stg_scale: float = 0.0
     stg_blocks: Optional[List[int]] = None
+    modality_scale: float = 1.0  # Cross-modal attention guidance (1.0=disabled, 3.0=reference)
 
 
 # A callable that returns StepContext for a given (step_index, sigma_value)
@@ -1296,6 +1297,7 @@ def constant_schedule(
     ge_gamma: float = 0.0,
     stg_scale: float = 0.0,
     stg_blocks: Optional[List[int]] = None,
+    modality_scale: float = 1.0,
 ) -> StepSchedule:
     """Static parameters for all steps (default behavior)."""
     ctx = StepContext(
@@ -1306,6 +1308,7 @@ def constant_schedule(
         ge_gamma=ge_gamma,
         stg_scale=stg_scale,
         stg_blocks=stg_blocks,
+        modality_scale=modality_scale,
     )
     return lambda step, sigma: ctx
 
@@ -1330,6 +1333,7 @@ class TwoStageConfig:
     stg_scale: float = 1.0  # Spatio-temporal guidance scale (0=disabled, 1.0=reference)
     stg_blocks: list[int] = None  # type: ignore[assignment]
     rescale_scale: float = 0.7  # CFG rescaling
+    modality_scale: float = 3.0  # Cross-modal attention guidance (1.0=disabled, 3.0=reference)
 
     negative_prompt: str = LTX2_DEFAULT_NEGATIVE_PROMPT
 
@@ -1471,9 +1475,16 @@ def _compute_av_velocity(
     """Compute velocity prediction for both video and audio streams.
 
     Mirrors _compute_velocity() but creates both modalities for each pass.
-    Guidance formula: v = v_cond + (cfg-1)*(v_cond - v_uncond) + stg*(v_cond - v_perturbed)
+    Full guidance formula (up to 4 forward passes):
+      v = cond + (cfg-1)*(cond - uncond)
+          + stg*(cond - perturbed)
+          + (modality_scale-1)*(cond - isolated)
 
-    STG uses PerturbationConfig for AV models (SKIP_VIDEO_SELF_ATTN).
+    Pass 1: Unconditional (negative prompts, zeros for missing audio neg embeds)
+    Pass 2: Conditional (positive prompts)
+    Pass 3: STG perturbed (skip video + audio self-attention)
+    Pass 4: Modality-isolated (skip cross-modal attention, when modality_scale > 1.0)
+
     Audio uses ctx.audio_guidance_scale when > 0, else falls back to ctx.guidance_scale.
 
     Args:
@@ -1538,6 +1549,7 @@ def _compute_av_velocity(
             audio_latents, audio_timestep, audio_positions, audio_prompt_embeds,
         )
         v_cond, a_cond = model(video=cond_video, audio=cond_audio, **fb_kwargs)
+        del cond_video, cond_audio
 
         # CFG blend -- separate guidance scale for audio when specified
         video_vel = v_cond + (ctx.guidance_scale - 1.0) * (v_cond - v_uncond)
@@ -1545,9 +1557,8 @@ def _compute_av_velocity(
         audio_vel = a_cond + (audio_cfg - 1.0) * (a_cond - a_uncond)
         del v_uncond, a_uncond
 
-        # Pass 3: Perturbed (STG) -- video self-attention skipped
+        # Pass 3: Perturbed (STG) -- skip video AND audio self-attention
         if ctx.stg_scale > 0 and ctx.stg_blocks:
-            del cond_video, cond_audio
             torch.cuda.synchronize()
             torch.cuda.empty_cache()
 
@@ -1557,12 +1568,12 @@ def _compute_av_velocity(
             stg_audio = create_audio_modality(
                 audio_latents, audio_timestep, audio_positions, audio_prompt_embeds,
             )
-            perturbation = Perturbation(
-                type=PerturbationType.SKIP_VIDEO_SELF_ATTN,
-                blocks=list(ctx.stg_blocks),
-            )
+            perturbations = [
+                Perturbation(type=PerturbationType.SKIP_VIDEO_SELF_ATTN, blocks=list(ctx.stg_blocks)),
+                Perturbation(type=PerturbationType.SKIP_AUDIO_SELF_ATTN, blocks=list(ctx.stg_blocks)),
+            ]
             perturb_config = BatchedPerturbationConfig(
-                perturbations=[PerturbationConfig(perturbations=[perturbation])],
+                perturbations=[PerturbationConfig(perturbations=perturbations)],
             )
             v_perturbed, a_perturbed = model(
                 video=stg_video, audio=stg_audio,
@@ -1574,8 +1585,35 @@ def _compute_av_velocity(
             video_vel = video_vel + ctx.stg_scale * (v_cond - v_perturbed)
             audio_vel = audio_vel + ctx.stg_scale * (a_cond - a_perturbed)
             del v_perturbed, a_perturbed
-        else:
-            del cond_video, cond_audio
+
+        # Pass 4: Modality-isolated (skip cross-modal attention)
+        if ctx.modality_scale > 1.0:
+            torch.cuda.synchronize()
+            torch.cuda.empty_cache()
+
+            iso_video = create_video_modality(
+                video_latents, video_timestep, video_positions, video_prompt_embeds,
+            )
+            iso_audio = create_audio_modality(
+                audio_latents, audio_timestep, audio_positions, audio_prompt_embeds,
+            )
+            mod_perturbations = [
+                Perturbation(type=PerturbationType.SKIP_A2V_CROSS_ATTN, blocks=None),
+                Perturbation(type=PerturbationType.SKIP_V2A_CROSS_ATTN, blocks=None),
+            ]
+            mod_perturb_config = BatchedPerturbationConfig(
+                perturbations=[PerturbationConfig(perturbations=mod_perturbations)],
+            )
+            v_isolated, a_isolated = model(
+                video=iso_video, audio=iso_audio,
+                perturbation_config=mod_perturb_config,
+                **fb_kwargs,
+            )
+            del iso_video, iso_audio
+
+            video_vel = video_vel + (ctx.modality_scale - 1.0) * (v_cond - v_isolated)
+            audio_vel = audio_vel + (ctx.modality_scale - 1.0) * (a_cond - a_isolated)
+            del v_isolated, a_isolated
 
         # CFG rescaling
         if ctx.rescale_scale > 0:
@@ -2168,7 +2206,13 @@ def generate_video_two_stage(
             ge_gamma=two_stage.ge_gamma,
             stg_scale=two_stage.stg_scale,
             stg_blocks=two_stage.stg_blocks,
+            modality_scale=two_stage.modality_scale,
         )
+
+    # Guard: audio enabled but no audio embeddings from encoder -- fall back to video-only
+    if not video_only and pos_audio_embeds is None:
+        logger.error("Audio enabled but no audio embeddings from encoder. Falling back to video-only.")
+        video_only = True
 
     if not video_only and audio_latents is not None and audio_positions is not None:
         latents, audio_latents = _denoise_av_stage(
@@ -2176,7 +2220,7 @@ def generate_video_two_stage(
             video_latents=latents,
             audio_latents=audio_latents,
             video_prompt_embeds=pos_embeds,
-            audio_prompt_embeds=pos_audio_embeds if pos_audio_embeds is not None else pos_embeds,
+            audio_prompt_embeds=pos_audio_embeds,
             sigmas=sigmas,
             video_positions=positions,
             audio_positions=audio_positions,
@@ -2360,14 +2404,14 @@ def generate_video_two_stage(
         causal_fix=True,
     )
 
-    # Denoise stage 2 (no CFG, simple denoising -- defaults to constant_schedule())
+    # Stage 2: no CFG (distilled model, guidance_scale=1.0 default), so audio_neg_embeds not needed
     if not video_only and audio_latents_noisy is not None and audio_positions is not None:
         latents_refined, audio_latents = _denoise_av_stage(
             model=model,
             video_latents=latents_noisy,
             audio_latents=audio_latents_noisy,
             video_prompt_embeds=pos_embeds,
-            audio_prompt_embeds=pos_audio_embeds if pos_audio_embeds is not None else pos_embeds,
+            audio_prompt_embeds=pos_audio_embeds,
             sigmas=distilled_sigmas,
             video_positions=positions_full,
             audio_positions=audio_positions,

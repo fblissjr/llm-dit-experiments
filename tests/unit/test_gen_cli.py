@@ -104,6 +104,12 @@ class TestArgParsing:
             "--use-two-stage",
             "--stage1-steps", "25",
             "--stage2-steps", "10",
+            "--enable-audio",
+            "--modality-scale", "3.0",
+            "--audio-guidance-scale", "7.0",
+            "--audio-negative-prompt", "noise",
+            "--rescale-scale", "0.7",
+            "--stg-blocks", "28", "29",
         ])
         assert args.num_frames == 33
         assert args.fps == 24.0
@@ -111,6 +117,34 @@ class TestArgParsing:
         assert args.use_two_stage is True
         assert args.stage1_steps == 25
         assert args.stage2_steps == 10
+        assert args.enable_audio is True
+        assert args.modality_scale == 3.0
+        assert args.audio_guidance_scale == 7.0
+        assert args.audio_negative_prompt == "noise"
+        assert args.rescale_scale == 0.7
+        assert args.stg_blocks == [28, 29]
+
+    def test_ltx2_audio_flags(self):
+        parser = create_parser()
+        args = parser.parse_args([
+            "ltx2", "--prompt", "test",
+            "--enable-audio",
+            "--modality-scale", "3.0",
+            "--audio-guidance-scale", "7.0",
+            "--audio-negative-prompt", "noise",
+        ])
+        assert args.enable_audio is True
+        assert args.modality_scale == 3.0
+        assert args.audio_guidance_scale == 7.0
+        assert args.audio_negative_prompt == "noise"
+
+    def test_ltx2_stg_blocks_list(self):
+        parser = create_parser()
+        args = parser.parse_args([
+            "ltx2", "--prompt", "test",
+            "--stg-blocks", "28", "29", "30",
+        ])
+        assert args.stg_blocks == [28, 29, 30]
 
     def test_qwen_minimal(self):
         parser = create_parser()
@@ -244,6 +278,28 @@ class TestBuildRequestBody:
         # Non-specified fields omitted
         assert "width" not in body
         assert "height" not in body
+
+    def test_ltx2_audio_body(self):
+        parser = create_parser()
+        args = parser.parse_args([
+            "ltx2", "--prompt", "ocean waves",
+            "--enable-audio",
+            "--modality-scale", "3.0",
+            "--audio-guidance-scale", "7.0",
+            "--audio-negative-prompt", "noise",
+            "--rescale-scale", "0.7",
+            "--stg-blocks", "28", "29",
+        ])
+        body = build_request_body(args)
+        assert body["enable_audio"] is True
+        assert body["modality_scale"] == 3.0
+        assert body["audio_guidance_scale"] == 7.0
+        assert body["audio_negative_prompt"] == "noise"
+        assert body["rescale_scale"] == 0.7
+        assert body["stg_blocks"] == [28, 29]
+        # Unset params should be absent
+        assert "seed" not in body
+        assert "width" not in body
 
     def test_qwen_body(self):
         parser = create_parser()

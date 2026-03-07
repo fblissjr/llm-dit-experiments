@@ -371,6 +371,7 @@ class LTX2Config:
     stg_scale: float = 1.0  # Spatio-temporal guidance scale (0=disabled, 1.0=reference)
     stg_blocks: str = "28"  # Comma-separated block indices for STG (official V2.3 default)
     rescale_scale: float = 0.7  # CFG rescaling to prevent over-saturation
+    modality_scale: float = 3.0  # Cross-modal attention guidance (1.0=disabled, 3.0=reference)
 
     # Optimization
     ge_gamma: float = 0.0  # Gradient estimation gamma (0=disabled, 2.0=reference)

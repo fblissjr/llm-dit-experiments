@@ -184,6 +184,7 @@ negative_prompt = "blurry, out of focus, overexposed, underexposed, low contrast
 stg_scale = 1.0                 # spatio-temporal guidance scale (0=disabled, 1.0=reference)
 stg_blocks = "28"               # comma-separated block indices for STG (official V2.3 default)
 rescale_scale = 0.7             # CFG rescaling to prevent over-saturation
+modality_scale = 3.0            # cross-modal attention guidance (1.0=disabled, 3.0=reference)
 
 # Optimization
 ge_gamma = 0.0                  # gradient estimation gamma (0=disabled, values up to 2.0)
