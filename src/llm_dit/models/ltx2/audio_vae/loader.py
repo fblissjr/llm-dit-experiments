@@ -34,7 +34,7 @@ import orjson
 import torch
 
 from .decoder import AudioDecoder
-from .vocoder import Vocoder
+from .vocoder import MelSTFT, Vocoder, VocoderWithBWE
 
 logger = logging.getLogger(__name__)
 
@@ -226,7 +226,7 @@ def load_audio_decoder(
 # Vocoder
 # ---------------------------------------------------------------------------
 
-# Vocoder checkpoint uses different names than our module
+# V1 vocoder checkpoint uses different names than our module
 _VOCODER_KEY_MAP = {
     "conv_in.": "conv_pre.",
     "conv_out.": "conv_post.",
@@ -236,15 +236,7 @@ _VOCODER_KEY_MAP = {
 
 
 def _map_vocoder_key(checkpoint_key: str) -> str:
-    """Map vocoder checkpoint key to our naming convention.
-
-    Checkpoint format:
-        conv_in.{weight,bias}         -> conv_pre.{weight,bias}
-        conv_out.{weight,bias}        -> conv_post.{weight,bias}
-        upsamplers.{idx}.{weight,bias} -> ups.{idx}.{weight,bias}
-        resnets.{idx}.convs{1,2}.{j}.{weight,bias}
-            -> resblocks.{idx}.convs{1,2}.{j}.{weight,bias}
-    """
+    """Map V1 vocoder checkpoint key to our naming convention."""
     key = checkpoint_key
     for old, new in _VOCODER_KEY_MAP.items():
         if key.startswith(old):
@@ -253,12 +245,70 @@ def _map_vocoder_key(checkpoint_key: str) -> str:
     return key
 
 
+# V2.3 VocoderWithBWE config (from bundled checkpoint metadata)
+_V23_BASE_VOCODER_CFG = {
+    "upsample_initial_channel": 1536,
+    "resblock": "AMP1",
+    "upsample_rates": [5, 2, 2, 2, 2, 2],
+    "resblock_kernel_sizes": [3, 7, 11],
+    "upsample_kernel_sizes": [11, 4, 4, 4, 4, 4],
+    "resblock_dilation_sizes": [[1, 3, 5], [1, 3, 5], [1, 3, 5]],
+    "stereo": True,
+    "use_tanh_at_final": False,
+    "activation": "snakebeta",
+    "use_bias_at_final": False,
+}
+
+_V23_BWE_CFG = {
+    "upsample_initial_channel": 512,
+    "resblock": "AMP1",
+    "upsample_rates": [6, 5, 2, 2, 2],
+    "resblock_kernel_sizes": [3, 7, 11],
+    "upsample_kernel_sizes": [12, 11, 4, 4, 4],
+    "resblock_dilation_sizes": [[1, 3, 5], [1, 3, 5], [1, 3, 5]],
+    "stereo": True,
+    "use_tanh_at_final": False,
+    "activation": "snakebeta",
+    "use_bias_at_final": False,
+    "apply_final_activation": False,
+    "input_sampling_rate": 16000,
+    "output_sampling_rate": 48000,
+    "hop_length": 80,
+    "n_fft": 512,
+    "num_mels": 64,
+}
+
+
+def _build_vocoder_from_cfg(cfg: dict, output_sample_rate: int | None = None) -> Vocoder:
+    """Construct a Vocoder from a config dict."""
+    return Vocoder(
+        resblock_kernel_sizes=cfg.get("resblock_kernel_sizes", [3, 7, 11]),
+        upsample_rates=cfg.get("upsample_rates", [6, 5, 2, 2, 2]),
+        upsample_kernel_sizes=cfg.get("upsample_kernel_sizes", [16, 15, 8, 4, 4]),
+        resblock_dilation_sizes=cfg.get("resblock_dilation_sizes", [[1, 3, 5]] * 3),
+        upsample_initial_channel=cfg.get("upsample_initial_channel", 1024),
+        stereo=cfg.get("stereo", True),
+        resblock=cfg.get("resblock", "1"),
+        output_sample_rate=(
+            output_sample_rate if output_sample_rate is not None
+            else cfg.get("output_sampling_rate", 24000)
+        ),
+        activation=cfg.get("activation", "snake"),
+        use_tanh_at_final=cfg.get("use_tanh_at_final", True),
+        apply_final_activation=cfg.get("apply_final_activation", True),
+        use_bias_at_final=cfg.get("use_bias_at_final", True),
+    )
+
+
 def load_vocoder(
     path: Union[str, Path],
     dtype: torch.dtype = torch.bfloat16,
     device: str = "cpu",
-) -> Vocoder:
+) -> Vocoder | VocoderWithBWE:
     """Load LTX-2 vocoder from checkpoint.
+
+    Auto-detects V2.3 format (VocoderWithBWE with AMPBlock1/SnakeBeta)
+    vs V1 format (simple HiFiGAN with ResBlock1/LeakyReLU).
 
     Args:
         path: Path to vocoder checkpoint directory or safetensors file.
@@ -266,13 +316,108 @@ def load_vocoder(
         device: Initial device for weight loading.
 
     Returns:
-        Loaded Vocoder model.
+        Vocoder (V1) or VocoderWithBWE (V2.3).
     """
     path = Path(path)
+
+    # Load weights
+    checkpoint_state_dict = _load_safetensors(path, device=device)
+
+    # Detect V2.3 format:
+    #   Bundled: all keys under vocoder.* wrapper (vocoder.vocoder.*, vocoder.bwe_generator.*)
+    #   Split: keys are vocoder.*, bwe_generator.*, mel_stft.* (no wrapper prefix)
+    has_bundled_prefix = any(k.startswith("vocoder.bwe_generator.") or k.startswith("vocoder.vocoder.") for k in checkpoint_state_dict)
+    has_bwe = any(k.startswith("bwe_generator.") for k in checkpoint_state_dict)
+
+    if has_bundled_prefix or has_bwe:
+        return _load_vocoder_v23(checkpoint_state_dict, dtype, has_bundled_prefix)
+    else:
+        return _load_vocoder_v1(path, checkpoint_state_dict, dtype)
+
+
+def _load_vocoder_v23(
+    checkpoint_state_dict: Dict[str, torch.Tensor],
+    dtype: torch.dtype,
+    has_bundled_prefix: bool,
+) -> VocoderWithBWE:
+    """Load V2.3 VocoderWithBWE (base vocoder + BWE generator + MelSTFT)."""
+    bwe_cfg = _V23_BWE_CFG
+
+    logger.info(
+        f"Loading V2.3 VocoderWithBWE: base={_V23_BASE_VOCODER_CFG['upsample_initial_channel']}ch "
+        f"({_V23_BASE_VOCODER_CFG['upsample_rates']}), "
+        f"BWE {bwe_cfg['input_sampling_rate']}Hz->{bwe_cfg['output_sampling_rate']}Hz"
+    )
+
+    # Build models
+    base_vocoder = _build_vocoder_from_cfg(
+        _V23_BASE_VOCODER_CFG,
+        output_sample_rate=bwe_cfg["input_sampling_rate"],
+    )
+    bwe_generator = _build_vocoder_from_cfg(
+        bwe_cfg,
+        output_sample_rate=bwe_cfg["output_sampling_rate"],
+    )
+    mel_stft = MelSTFT(
+        filter_length=bwe_cfg["n_fft"],
+        hop_length=bwe_cfg["hop_length"],
+        win_length=bwe_cfg["n_fft"],
+        n_mel_channels=bwe_cfg["num_mels"],
+    )
+    model = VocoderWithBWE(
+        vocoder=base_vocoder,
+        bwe_generator=bwe_generator,
+        mel_stft=mel_stft,
+        input_sampling_rate=bwe_cfg["input_sampling_rate"],
+        output_sampling_rate=bwe_cfg["output_sampling_rate"],
+        hop_length=bwe_cfg["hop_length"],
+    )
+
+    # Split and load state dict
+    # Keys in the split file: vocoder.*, bwe_generator.*, mel_stft.*
+    # VocoderWithBWE state dict expects same structure
+    our_state_dict = {}
+    for k, v in checkpoint_state_dict.items():
+        if has_bundled_prefix:
+            # Bundled format: strip top-level vocoder.* wrapper
+            our_state_dict[k.removeprefix("vocoder.")] = v.to(dtype)
+        else:
+            # Split format: keys already match VocoderWithBWE structure
+            our_state_dict[k] = v.to(dtype)
+
+    load_result = model.load_state_dict(our_state_dict, strict=False)
+
+    if load_result.missing_keys:
+        # Filter out resampler filter (not persistent, computed at init)
+        relevant_missing = [k for k in load_result.missing_keys if "resampler" not in k]
+        if relevant_missing:
+            logger.warning(f"Missing vocoder keys: {relevant_missing[:10]}...")
+
+    if load_result.unexpected_keys:
+        logger.warning(
+            f"Unexpected vocoder keys ({len(load_result.unexpected_keys)}): "
+            f"{load_result.unexpected_keys[:5]}..."
+        )
+
+    num_params = sum(p.numel() for p in model.parameters())
+    logger.info(
+        f"Loaded VocoderWithBWE: {num_params / 1e6:.1f}M params, "
+        f"output={bwe_cfg['output_sampling_rate']}Hz"
+    )
+
+    return model.to(dtype)
+
+
+def _load_vocoder_v1(
+    path: Path,
+    checkpoint_state_dict: Dict[str, torch.Tensor],
+    dtype: torch.dtype,
+) -> Vocoder:
+    """Load V1 vocoder (simple HiFiGAN with ResBlock1)."""
     config = _load_config(path)
 
     logger.info(
-        f"Loading vocoder: hidden={config.get('hidden_channels', 1024)}, "
+        f"Loading V1 vocoder: hidden={config.get('hidden_channels', 1024)}, "
         f"upsample_factors={config.get('upsample_factors', [6,5,2,2,2])}, "
         f"output_rate={config.get('output_sampling_rate', 24000)}Hz"
     )
@@ -288,29 +433,12 @@ def load_vocoder(
         output_sample_rate=config.get("output_sampling_rate", 24000),
     )
 
-    # Load weights
-    checkpoint_state_dict = _load_safetensors(path, device=device)
+    our_state_dict = {
+        _map_vocoder_key(k): v.to(dtype)
+        for k, v in checkpoint_state_dict.items()
+    }
 
-    # Detect V2.3 format (keys prefixed with `vocoder.`) vs V1 (flat keys)
-    has_vocoder_prefix = any(k.startswith("vocoder.") for k in checkpoint_state_dict)
-
-    our_state_dict = {}
-    skipped_keys = []
-    for k, v in checkpoint_state_dict.items():
-        if has_vocoder_prefix:
-            # V2.3: strip `vocoder.` prefix, skip bwe_generator/mel_stft
-            if k.startswith("vocoder."):
-                our_state_dict[k[len("vocoder."):]] = v.to(dtype)
-            else:
-                skipped_keys.append(k)
-        else:
-            # V1: apply diffusers key mapping
-            our_state_dict[_map_vocoder_key(k)] = v.to(dtype)
-
-    if skipped_keys:
-        logger.info(f"Skipped {len(skipped_keys)} non-vocoder keys (bwe_generator, mel_stft, etc.)")
-
-    load_result = vocoder.load_state_dict(our_state_dict, strict=False)
+    load_result = vocoder.load_state_dict(our_state_dict, strict=True)
 
     if load_result.missing_keys:
         logger.warning(f"Missing vocoder keys: {load_result.missing_keys[:10]}...")

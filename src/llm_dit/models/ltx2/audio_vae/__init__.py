@@ -51,7 +51,7 @@ from .blocks import (
 
 # Core models
 from .decoder import AudioDecoder
-from .vocoder import Vocoder, decode_audio
+from .vocoder import Vocoder, VocoderWithBWE, decode_audio
 
 # Loader
 from .loader import load_audio_decoder, load_vocoder
@@ -70,6 +70,7 @@ __all__ = [
     # Core models
     "AudioDecoder",
     "Vocoder",
+    "VocoderWithBWE",
     "decode_audio",
     # Loader
     "load_audio_decoder",
