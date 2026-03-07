@@ -162,7 +162,7 @@ def load_audio_decoder(
     skipped_keys = []
 
     for key, tensor in diffusers_state_dict.items():
-        # Map latents_mean/latents_std to per_channel_statistics buffers
+        # V1: latents_mean/latents_std -> per_channel_statistics buffers
         if key == "latents_mean":
             our_state_dict["per_channel_statistics.mean-of-means"] = tensor.to(dtype)
             continue
@@ -170,12 +170,17 @@ def load_audio_decoder(
             our_state_dict["per_channel_statistics.std-of-means"] = tensor.to(dtype)
             continue
 
+        # V2.3: per_channel_statistics keys pass through directly
+        if key.startswith("per_channel_statistics."):
+            our_state_dict[key] = tensor.to(dtype)
+            continue
+
         # Skip encoder keys
         if key.startswith("encoder."):
             skipped_keys.append(key)
             continue
 
-        # Skip non-decoder keys (shouldn't happen but be safe)
+        # Skip non-decoder keys
         if not key.startswith("decoder."):
             skipped_keys.append(key)
             continue
@@ -286,12 +291,26 @@ def load_vocoder(
     # Load weights
     checkpoint_state_dict = _load_safetensors(path, device=device)
 
-    our_state_dict = {
-        _map_vocoder_key(k): v.to(dtype)
-        for k, v in checkpoint_state_dict.items()
-    }
+    # Detect V2.3 format (keys prefixed with `vocoder.`) vs V1 (flat keys)
+    has_vocoder_prefix = any(k.startswith("vocoder.") for k in checkpoint_state_dict)
 
-    load_result = vocoder.load_state_dict(our_state_dict, strict=True)
+    our_state_dict = {}
+    skipped_keys = []
+    for k, v in checkpoint_state_dict.items():
+        if has_vocoder_prefix:
+            # V2.3: strip `vocoder.` prefix, skip bwe_generator/mel_stft
+            if k.startswith("vocoder."):
+                our_state_dict[k[len("vocoder."):]] = v.to(dtype)
+            else:
+                skipped_keys.append(k)
+        else:
+            # V1: apply diffusers key mapping
+            our_state_dict[_map_vocoder_key(k)] = v.to(dtype)
+
+    if skipped_keys:
+        logger.info(f"Skipped {len(skipped_keys)} non-vocoder keys (bwe_generator, mel_stft, etc.)")
+
+    load_result = vocoder.load_state_dict(our_state_dict, strict=False)
 
     if load_result.missing_keys:
         logger.warning(f"Missing vocoder keys: {load_result.missing_keys[:10]}...")
