@@ -161,14 +161,15 @@ def load_safetensors(path: Path, device: str = "cpu") -> Dict[str, torch.Tensor]
 
 
 def load_config(path: Path) -> dict:
-    """
-    Load model configuration from checkpoint directory.
+    """Load model configuration from config.json or safetensors metadata.
 
-    Args:
-        path: Path to checkpoint directory
+    Resolution order:
+      1. config.json in checkpoint directory (or parent if path is a file)
+      2. Safetensors metadata 'config' key (extracts 'transformer' sub-dict)
+      3. Hardcoded V2.3 defaults
 
     Returns:
-        Configuration dictionary
+        Configuration dictionary (flat key-value, ready for create_model_from_config).
     """
     config_path = path / "config.json" if path.is_dir() else path.parent / "config.json"
 
@@ -176,7 +177,37 @@ def load_config(path: Path) -> dict:
         with open(config_path) as f:
             return json.load(f)
 
-    # Default config if no config file
+    # Try safetensors metadata
+    sf_path = path if path.is_file() and path.suffix == ".safetensors" else None
+    if sf_path is None:
+        # Check parent dir for any safetensors with config metadata
+        parent = path if path.is_dir() else path.parent
+        candidates = sorted(parent.glob("*.safetensors"))
+        for c in candidates:
+            try:
+                from safetensors import safe_open
+                with safe_open(str(c), framework="pt") as f:
+                    meta = f.metadata() or {}
+                if "config" in meta:
+                    sf_path = c
+                    break
+            except Exception:
+                continue
+
+    if sf_path is not None:
+        try:
+            from safetensors import safe_open
+            with safe_open(str(sf_path), framework="pt") as f:
+                meta = f.metadata() or {}
+            if "config" in meta:
+                full_config = json.loads(meta["config"])
+                config = full_config.get("transformer", full_config)
+                logger.info(f"Loaded config from safetensors metadata: {sf_path.name}")
+                return config
+        except Exception as e:
+            logger.warning(f"Failed to read config from safetensors metadata: {e}")
+
+    # Hardcoded V2.3 defaults (last resort)
     return {
         "num_attention_heads": 32,
         "attention_head_dim": 128,
@@ -186,12 +217,17 @@ def load_config(path: Path) -> dict:
         "cross_attention_dim": 4096,
         "caption_channels": 3840,
         "rope_type": "split",
-        "rope_theta": 10000.0,
-        "rope_double_precision": True,
+        "positional_embedding_theta": 10000.0,
+        "positional_embedding_max_pos": [20, 2048, 2048],
         "timestep_scale_multiplier": 1000,
-        "pos_embed_max_pos": 20,
-        "base_height": 2048,
-        "base_width": 2048,
+        "apply_gated_attention": True,
+        "cross_attention_adaln": True,
+        "audio_num_attention_heads": 32,
+        "audio_attention_head_dim": 64,
+        "audio_out_channels": 128,
+        "audio_cross_attention_dim": 2048,
+        "audio_positional_embedding_max_pos": [20],
+        "frequencies_precision": "float64",
     }
 
 
@@ -217,18 +253,40 @@ def create_model_from_config(
     """
     rope_type = LTXRopeType.SPLIT if config.get("rope_type") == "split" else LTXRopeType.INTERLEAVED
 
+    # Resolve positional embedding params (safetensors metadata vs legacy keys)
+    pos_max = config.get("positional_embedding_max_pos")
+    if pos_max is None:
+        pos_max = [
+            config.get("pos_embed_max_pos", 20),
+            config.get("base_height", 2048),
+            config.get("base_width", 2048),
+        ]
+
+    rope_theta = config.get("positional_embedding_theta",
+                            config.get("rope_theta", 10000.0))
+
+    double_precision = config.get("rope_double_precision")
+    if double_precision is None:
+        double_precision = config.get("frequencies_precision", "") == "float64"
+
+    # Resolve gated attention / cross_attention_adaln: explicit args override config
+    gated = apply_gated_attention or config.get("apply_gated_attention", False)
+    ca_adaln = cross_attention_adaln or config.get("cross_attention_adaln", False)
+
     # Audio parameters (only used when model_type includes audio)
     audio_kwargs = {}
     if model_type.is_audio_enabled():
+        audio_pos_max = config.get("audio_positional_embedding_max_pos")
+        if audio_pos_max is None:
+            audio_pos_max = [config.get("audio_pos_embed_max_pos", 20)]
+
         audio_kwargs = dict(
             audio_num_attention_heads=config.get("audio_num_attention_heads", 32),
             audio_attention_head_dim=config.get("audio_attention_head_dim", 64),
             audio_in_channels=config.get("audio_in_channels", 128),
             audio_out_channels=config.get("audio_out_channels", 128),
             audio_cross_attention_dim=config.get("audio_cross_attention_dim", 2048),
-            audio_positional_embedding_max_pos=[
-                config.get("audio_pos_embed_max_pos", 20),
-            ],
+            audio_positional_embedding_max_pos=audio_pos_max,
         )
 
     model = LTX2Transformer(
@@ -240,18 +298,14 @@ def create_model_from_config(
         num_layers=config.get("num_layers", 48),
         cross_attention_dim=config.get("cross_attention_dim", 4096),
         caption_channels=config.get("caption_channels", 3840),
-        positional_embedding_theta=config.get("rope_theta", 10000.0),
-        positional_embedding_max_pos=[
-            config.get("pos_embed_max_pos", 20),
-            config.get("base_height", 2048),
-            config.get("base_width", 2048),
-        ],
+        positional_embedding_theta=rope_theta,
+        positional_embedding_max_pos=pos_max,
         timestep_scale_multiplier=config.get("timestep_scale_multiplier", 1000),
         use_middle_indices_grid=True,
         rope_type=rope_type,
-        double_precision_rope=config.get("rope_double_precision", True),
-        apply_gated_attention=apply_gated_attention,
-        cross_attention_adaln=cross_attention_adaln,
+        double_precision_rope=double_precision,
+        apply_gated_attention=gated,
+        cross_attention_adaln=ca_adaln,
         **audio_kwargs,
     )
 
@@ -303,10 +357,9 @@ def load_ltx2_transformer(
     logger.info(f"Loaded config: {config.get('num_layers', 48)} layers, "
                 f"{config.get('num_attention_heads', 32)} heads")
 
-    # Create model (always V2.3: gated attention + cross-attention AdaLN)
+    # Create model (V2.3 flags read from config metadata)
     model = create_model_from_config(
         config, dtype, model_type=model_type,
-        apply_gated_attention=True, cross_attention_adaln=True,
     )
 
     # Load weights
@@ -551,11 +604,10 @@ def load_ltx2_transformer_fp8_cast(
     )
 
     # Create model shell with meta_init (zero memory)
-    config = load_config(path.parent)
+    config = load_config(path)
     with meta_init():
         model = create_model_from_config(
             config, dtype, model_type=model_type,
-            apply_gated_attention=True, cross_attention_adaln=True,
         )
 
     # Load mixed-dtype state dict (fp8 linears + bf16 norms/embeddings)

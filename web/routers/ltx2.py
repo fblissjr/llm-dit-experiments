@@ -428,6 +428,28 @@ async def ltx2_generate_stream(request: LTX2GenerateRequest, config: ConfigDep, 
             traceback.print_exc()
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
         finally:
+            # Return persistent GGUF model to CPU if it's still on GPU after error
+            gguf = manager.ltx2_gguf_model
+            if gguf is not None:
+                device = next(gguf.parameters()).device
+                if device.type != "cpu":
+                    try:
+                        from llm_dit.utils.lora import detach_lora_deltas
+                        detach_lora_deltas(gguf)
+                    except Exception:
+                        pass
+                    gguf.to("cpu")
+                    logger.info("[LTX-2] GGUF transformer returned to CPU after error cleanup")
+            # Return cached encoder to CPU if still on GPU
+            enc = manager.ltx2_encoder
+            if enc is not None and hasattr(enc, "offload"):
+                try:
+                    enc_device = next(enc.parameters()).device
+                    if enc_device.type != "cpu":
+                        enc.offload()
+                        logger.info("[LTX-2] Encoder returned to CPU after error cleanup")
+                except StopIteration:
+                    pass
             gc.collect()
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()

@@ -74,8 +74,44 @@ COMPONENT_GROUPS = [
 ]
 
 
+def _build_component_metadata(full_config: dict, component_name: str) -> dict[str, str]:
+    """Extract the relevant config section for a component and return as metadata dict.
+
+    Args:
+        full_config: Full config dict from bundled checkpoint metadata.
+        component_name: One of the COMPONENT_GROUPS names.
+
+    Returns:
+        Metadata dict with a "config" key (JSON string), or empty if no config available.
+    """
+    import json
+
+    # Map component names to config sections
+    section_map = {
+        "transformer": "transformer",
+        "connectors": "transformer",  # connectors use transformer config for dims
+        "video-vae": "vae",
+        "audio-vae": "audio_vae",
+        "vocoder": "vocoder",
+    }
+
+    section_key = section_map.get(component_name)
+    if not section_key or section_key not in full_config:
+        return {}
+
+    section = full_config[section_key]
+
+    # For transformer: also include model_version from parent if available
+    meta = {"config": json.dumps(section)}
+
+    return meta
+
+
 def split_safetensors(input_path: Path, output_dir: Path, dry_run: bool = False) -> dict:
     """Split a bundled safetensors file into component files.
+
+    Preserves config metadata from the bundled file: each split file gets
+    the relevant config section embedded in its safetensors metadata.
 
     Args:
         input_path: Path to the bundled safetensors file.
@@ -85,6 +121,8 @@ def split_safetensors(input_path: Path, output_dir: Path, dry_run: bool = False)
     Returns:
         Dict mapping component name to key count.
     """
+    import json
+
     logger.info(f"Opening {input_path} ({input_path.stat().st_size / 1e9:.1f} GB)")
 
     results = {}
@@ -92,6 +130,15 @@ def split_safetensors(input_path: Path, output_dir: Path, dry_run: bool = False)
     with safe_open(str(input_path), framework="pt") as f:
         all_keys = list(f.keys())
         logger.info(f"Total keys: {len(all_keys)}")
+
+        # Extract full config from bundled metadata
+        source_meta = f.metadata() or {}
+        full_config = {}
+        if "config" in source_meta:
+            full_config = json.loads(source_meta["config"])
+            logger.info(f"Source config sections: {list(full_config.keys())}")
+        else:
+            logger.warning("No config metadata in source file -- split files will have no config")
 
         claimed_keys: set[str] = set()
 
@@ -129,7 +176,10 @@ def split_safetensors(input_path: Path, output_dir: Path, dry_run: bool = False)
             logger.info(f"  {group['name']}: {len(component_tensors)} keys ({dtype_str})")
 
             if not dry_run:
-                save_file(component_tensors, str(output_path))
+                component_meta = _build_component_metadata(full_config, group["name"])
+                if component_meta:
+                    logger.info(f"    embedding config metadata ({group['name']})")
+                save_file(component_tensors, str(output_path), metadata=component_meta)
                 size_gb = output_path.stat().st_size / 1e9
                 logger.info(f"    -> {output_path} ({size_gb:.2f} GB)")
 

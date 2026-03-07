@@ -2047,6 +2047,11 @@ def generate_video_two_stage(
         video_only=video_only,
     )
 
+    # Guard: if audio requested but model doesn't support it, fall back to video-only
+    if not video_only and not model.model_type.is_audio_enabled():
+        logger.warning("Audio requested but transformer is video-only. Falling back to video-only.")
+        video_only = True
+
     # Initialize latent noise at half resolution
     t_latent, h_latent, w_latent = stage1_config.latent_dims
     num_tokens = stage1_config.num_tokens
