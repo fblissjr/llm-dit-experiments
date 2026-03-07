@@ -7,9 +7,9 @@ Loads official LTX-2 audio VAE and vocoder checkpoints into our pure
 PyTorch implementations. Handles key mapping between diffusers format
 and our naming convention.
 
-Weight files:
-    - models/LTX-2/audio_vae/diffusion_pytorch_model.safetensors (102MB)
-    - models/LTX-2/vocoder/diffusion_pytorch_model.safetensors (107MB)
+Weight files (V2.3 standalone):
+    - models/LTX-2.3/ltx-2.3-audio-vae.safetensors (102MB)
+    - models/LTX-2.3/ltx-2.3-vocoder.safetensors (107MB)
 
 Key mappings:
     Audio VAE decoder keys map 1:1 (strip "decoder." prefix).

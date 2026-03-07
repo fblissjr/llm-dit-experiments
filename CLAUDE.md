@@ -318,6 +318,7 @@ For full debugging patterns, see [lessons_learned.md](internal/state/lessons_lea
 | Encoder load key mismatch (all UNEXPECTED) | Multimodal model loaded as CausalLM | HF Gemma3 is `Gemma3ForConditionalGeneration`; keys need `language_model.` prefix stripped |
 | torchao int4 "Requires mslk >= 1.0.0" | Meta-internal CUDA kernel lib not public | Use int8 fallback; q4-qat variant uses int8 until mslk ships |
 | Tokenizer not found at `model_path/tokenizer/` | V1 layout assumed separate tokenizer dir | Tokenizer is inside `text_encoder/` dir; `gemma3_variants.py` now falls back |
+| VAE/audio "No safetensors file found" | V1 subdirectory layout assumed | V2.3 uses standalone files at model root (`ltx-2.3-video-vae.safetensors` etc.); `model_manager.py` tries V2.3 first, falls back to V1 subdirs |
 
 ## quick test commands
 
