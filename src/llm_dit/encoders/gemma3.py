@@ -836,51 +836,65 @@ class Gemma3Encoder(PinnedShuttleMixin):
                     logger.info("Loaded V2.3 audio embeddings connector (8 blocks, gated)")
 
     def _load_ltx2_gemma_weights(self) -> dict:
-        """Load and remap Gemma weights from LTX-2 checkpoint shards.
+        """Load and remap Gemma weights from checkpoint shards.
 
-        The LTX-2 checkpoint stores weights with 'base_text_encoder.language_model.*' prefix,
-        but Gemma3ForCausalLM expects 'model.*' (without language_model level).
-
-        Key remapping:
-        - base_text_encoder.language_model.embed_tokens.weight -> model.embed_tokens.weight
-        - base_text_encoder.language_model.layers.X.* -> model.layers.X.*
-        - base_text_encoder.language_model.norm.weight -> model.norm.weight
+        Supports two checkpoint formats:
+        1. V1 bundled (LTX-2): diffusion_pytorch_model.safetensors.index.json
+           Keys: base_text_encoder.language_model.* -> model.*
+        2. Standard HF (Gemma3ForConditionalGeneration): model.safetensors.index.json
+           Keys: language_model.model.* -> model.*
 
         Returns:
             Dict of remapped state_dict keys/tensors ready for load_state_dict()
         """
         from safetensors import safe_open
 
-        index_path = (
-            Path(self._text_encoder_path) / "diffusion_pytorch_model.safetensors.index.json"
-        )
-        if not index_path.exists():
-            logger.error(f"Index file not found: {index_path}")
+        enc_path = Path(self._text_encoder_path)
+
+        # Detect checkpoint format
+        v1_index = enc_path / "diffusion_pytorch_model.safetensors.index.json"
+        hf_index = enc_path / "model.safetensors.index.json"
+
+        if v1_index.exists():
+            index_path = v1_index
+            prefix = "base_text_encoder.language_model."
+        elif hf_index.exists():
+            index_path = hf_index
+            prefix = "language_model."
+        else:
+            logger.error(
+                f"No index file found in {enc_path}. "
+                "Expected diffusion_pytorch_model.safetensors.index.json (V1) "
+                "or model.safetensors.index.json (HF)."
+            )
             return {}
 
-        # Parse index to find which shards contain base_text_encoder keys
+        logger.info(f"Loading Gemma weights from: {index_path.name} (prefix={prefix!r})")
+
         with open(index_path) as f:
             index = json.load(f)
 
         weight_map = index.get("weight_map", {})
 
-        # Find all shards that contain base_text_encoder.language_model.* keys
+        # Find shards containing text model keys
         shards_to_load = set()
         keys_to_load = []
         for key, shard in weight_map.items():
-            if key.startswith("base_text_encoder.language_model."):
+            if key.startswith(prefix):
                 shards_to_load.add(shard)
                 keys_to_load.append(key)
 
         logger.info(
-            f"Found {len(keys_to_load)} base_text_encoder.language_model keys across "
+            f"Found {len(keys_to_load)} text model keys across "
             f"{len(shards_to_load)} shards"
         )
 
         # Load weights from each shard and remap keys
+        # V1: base_text_encoder.language_model.X -> model.X
+        # HF: language_model.model.X -> model.X  (language_model. stripped)
         state_dict = {}
         for shard_name in sorted(shards_to_load):
-            shard_path = Path(self._text_encoder_path) / shard_name
+            shard_path = enc_path / shard_name
             if not shard_path.exists():
                 logger.warning(f"Shard not found: {shard_path}")
                 continue
@@ -888,25 +902,16 @@ class Gemma3Encoder(PinnedShuttleMixin):
             logger.debug(f"Loading shard: {shard_name}")
             with safe_open(shard_path, framework="pt") as f:
                 for key in f.keys():
-                    if key.startswith("base_text_encoder.language_model."):
-                        # Remap: base_text_encoder.language_model.* -> model.*
-                        # Gemma3ForCausalLM expects model.* (not model.language_model.*)
-                        new_key = key.replace("base_text_encoder.language_model.", "model.", 1)
+                    if key.startswith(prefix):
+                        new_key = key[len(prefix):]
+                        # V1 keys become model.* directly after stripping prefix.
+                        # HF keys become model.* after stripping "language_model.".
                         tensor = f.get_tensor(key)
                         state_dict[new_key] = tensor.to(self._dtype)
 
         logger.info(f"Loaded and remapped {len(state_dict)} Gemma weight tensors")
 
-        # Log some statistics for verification
         if state_dict:
-            sample_key = list(state_dict.keys())[0]
-            sample_tensor = state_dict[sample_key]
-            logger.info(
-                f"Sample key: {sample_key}, shape: {sample_tensor.shape}, "
-                f"dtype: {sample_tensor.dtype}"
-            )
-
-            # Check embed_tokens specifically (critical for tokenizer compatibility)
             embed_key = "model.embed_tokens.weight"
             if embed_key in state_dict:
                 embed = state_dict[embed_key]

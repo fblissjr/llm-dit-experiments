@@ -410,87 +410,59 @@ def _load_q4_qat_encoder(
     max_sequence_length: int,
     use_connector: bool,
 ) -> "Gemma3Encoder":
-    """Load Q4 QAT pre-quantized Gemma3 model (~3GB VRAM)."""
-    try:
-        from transformers import AutoTokenizer, Gemma3ForCausalLM
-    except ImportError:
-        raise ImportError("Q4 QAT loading requires transformers>=4.44.0")
+    """Load QAT-trained Gemma3 model with int8 quantization (~6GB VRAM).
 
+    Uses the same _load_model() path as bf16/fp8 variants, which handles
+    both V1 bundled and standard HF checkpoint formats. Applies int8
+    quantization post-load (int4 requires mslk which is not yet public).
+    """
     from llm_dit.encoders.gemma3 import Gemma3Encoder
 
-    logger.info("Loading Q4 QAT Gemma3 encoder with torchao quantization...")
-    logger.info(f"  Model path: {encoder_path}")
+    logger.info("Loading QAT Gemma3 encoder with int8 quantization...")
+    logger.info(f"  Encoder path: {encoder_path}")
 
-    from llm_dit.utils.availability import is_torchao_available
-    has_torchao = is_torchao_available()
-    if not has_torchao:
-        logger.warning("torchao not available, falling back to bf16 (will use ~24GB)")
-
-    # Load model on CPU
-    logger.info("Loading model on CPU for quantization...")
-    model = Gemma3ForCausalLM.from_pretrained(
-        encoder_path, torch_dtype=dtype, device_map="cpu", low_cpu_mem_usage=True,
+    encoder = Gemma3Encoder(
+        model_id=encoder_path,
+        device="cpu",
+        dtype=dtype,
+        max_sequence_length=max_sequence_length,
+        connectors_path=connectors_path,
+        tokenizer_path=tokenizer_path,
+        use_connector=use_connector,
     )
-    model.requires_grad_(False)
+    encoder._load_model()
 
-    # Apply int4 quantization
-    if has_torchao:
+    # Apply int8 quantization (int4 needs unreleased mslk package)
+    from llm_dit.utils.availability import is_torchao_available
+    if is_torchao_available() and encoder._model is not None:
         from llm_dit.quantization import quantize_component
-        logger.info("Applying int4 quantization via unified system...")
-        model, stats = quantize_component(model, method="int4", component_type="encoder")
+        logger.info("Applying int8 quantization (int4 unavailable: mslk not public)...")
+        encoder._model, stats = quantize_component(
+            encoder._model, method="int8", component_type="encoder"
+        )
         logger.info(f"Quantized: {stats['quantized_layers']}/{stats['total_layers']} layers")
-        _log_memory_usage("After int4 quantization (CPU)")
+        _log_memory_usage("After int8 quantization (CPU)")
+    else:
+        logger.warning("torchao not available, keeping bf16 (~24GB)")
 
+    # Move to target device
     target_device = device if device != "auto" else "cuda"
     logger.info(f"Moving quantized model to {target_device}...")
-    model = model.to(torch.device(target_device))
-    _log_memory_usage(f"Model on {target_device}")
-
-    # Load tokenizer
-    logger.info(f"Loading tokenizer from: {tokenizer_path}")
-    tokenizer = AutoTokenizer.from_pretrained(
-        tokenizer_path, local_files_only=True, model_max_length=max_sequence_length,
-    )
-    tokenizer.padding_side = "left"
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
-
-    # Assemble encoder wrapper via __new__ and load V2.3 connectors
-    encoder = Gemma3Encoder.__new__(Gemma3Encoder)
-    encoder._model_id = encoder_path
-    encoder._device_str = target_device
-    encoder._dtype = dtype
-    encoder._max_sequence_length = max_sequence_length
-    encoder._quantization_variant = "q4_0"
-    encoder._max_memory = None
-    encoder._connectors_path = connectors_path
-    encoder._text_encoder_path = encoder_path
-    encoder._tokenizer_path = tokenizer_path
-    encoder._use_connector = use_connector
-    encoder._model = model
-    encoder._tokenizer = tokenizer
-    encoder._feature_extractor_v2 = None
-    encoder._embeddings_connector = None
-    encoder._audio_connector = None
-    encoder._is_loaded = False
-    encoder._is_offloaded = False
-    encoder._is_pinned = False
-    encoder._pinned_shadows = {}
-
-    # Load V2.3 connectors
-    encoder._load_connector_weights()
-
-    # Move connectors to target device
-    device_obj = torch.device(target_device)
+    if encoder._model is not None:
+        encoder._model = encoder._model.to(torch.device(target_device))
     if encoder._feature_extractor_v2 is not None:
-        encoder._feature_extractor_v2 = encoder._feature_extractor_v2.to(device_obj)
+        encoder._feature_extractor_v2 = encoder._feature_extractor_v2.to(torch.device(target_device))
     if encoder._embeddings_connector is not None:
-        encoder._embeddings_connector = encoder._embeddings_connector.to(device_obj, dtype=dtype)
+        encoder._embeddings_connector = encoder._embeddings_connector.to(
+            torch.device(target_device), dtype=dtype
+        )
     if encoder._audio_connector is not None:
-        encoder._audio_connector = encoder._audio_connector.to(device_obj, dtype=dtype)
+        encoder._audio_connector = encoder._audio_connector.to(
+            torch.device(target_device), dtype=dtype
+        )
+    encoder._device_str = target_device
 
-    encoder._is_loaded = True
-    _log_memory_usage("Q4 QAT encoder loaded")
+    _log_memory_usage("QAT encoder loaded (int8)")
     return encoder
 
 
