@@ -719,15 +719,16 @@ class TestDenoiseMaskMechanics:
     """Tests for denoise mask mechanics and formulas."""
 
     def test_timestep_scaling_formula(self):
-        """Timesteps scale by denoise_mask: σ * 1000 * mask."""
+        """Timesteps scale by denoise_mask * sigma (no * 1000; transformer handles that)."""
         from llm_dit.conditioning.utils import timesteps_from_mask
 
         sigma = torch.tensor(0.5)
         denoise_mask = torch.tensor([[[1.0], [0.5], [0.0]]])  # [B, T, 1]
         timesteps = timesteps_from_mask(denoise_mask, sigma)
 
-        # LTX-2 uses sigma * 1000 range, then scaled by mask
-        expected = torch.tensor([[[500.0], [250.0], [0.0]]])
+        # Reference: denoise_mask * sigma. The transformer's _prepare_timestep
+        # multiplies by timestep_scale_multiplier (1000), so we must NOT do it here.
+        expected = torch.tensor([[[0.5], [0.25], [0.0]]])
         assert torch.allclose(timesteps, expected)
 
     def test_output_blending_formula(self):

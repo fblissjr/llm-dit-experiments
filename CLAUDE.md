@@ -1,6 +1,6 @@
-# agent context (v0.9.20)
+# agent context (v0.9.25)
 
-*last updated: 2026-03-07*
+*last updated: 2026-03-08*
 
 Quick reference for LLM agents. This is a hobbyist exploration platform -- not a product. The codebase evolves to support whatever we're curious about next.
 
@@ -95,9 +95,7 @@ This is a multi-workstream project. Encoders and core infra are shared across pi
 | Memory cleanup | `src/llm_dit/utils/memory.py` | `cleanup_memory()` -- centralized gc.collect + torch.cuda.empty_cache (CUDA guard) |
 | Quant aliases | `src/llm_dit/quantization/__init__.py` | `QUANT_ALIASES` dict -- canonical `"fp8"` -> `"fp8-dynamic"` mapping (single source of truth) |
 | FLUX.2 scheduler | `src/llm_dit/schedulers/flux2_scheduler.py` | `get_schedule()`, `compute_empirical_mu()`, `generalized_time_snr_shift()` |
-| GGUF quantization | `src/llm_dit/quantization/gguf_*.py` | `GGMLLinear` (per-forward dequant), `GGMLTensor`, GGUF loader |
 | V2 Feature Extractor | `src/llm_dit/encoders/gemma3_feature_extractor_v2.py` | Per-token RMSNorm, dual projections (video 4096, audio 2048) |
-| GGUF audit | `scripts/audit_gguf_keys.py` | Validate GGUF keys against model state dict |
 
 ### feature workflow
 

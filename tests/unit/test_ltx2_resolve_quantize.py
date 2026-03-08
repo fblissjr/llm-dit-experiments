@@ -49,3 +49,7 @@ class TestResolveQuantize:
         """QUANT_ALIASES maps 'fp8' to 'fp8-dynamic'."""
         assert "fp8" in QUANT_ALIASES
         assert QUANT_ALIASES["fp8"] == "fp8-dynamic"
+
+    def test_gguf_not_in_quant_aliases(self):
+        """GGUF support was removed -- verify it's not in aliases."""
+        assert "gguf" not in QUANT_ALIASES

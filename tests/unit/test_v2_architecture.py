@@ -1,13 +1,11 @@
 """Tests for LTX-2.3 (V2) architecture features.
 
-Last Updated: 2026-03-06
+Last Updated: 2026-03-08
 
 Verifies V2-specific additions:
 - Gated attention (per-head sigmoid gate)
 - Cross-attention AdaLN (9-param scale_shift_table)
 - FeatureExtractorV2 (per-token RMSNorm, dual projections)
-- V2 detection from state dict keys
-- GGUF infrastructure (GGMLTensor, GGMLLinear)
 - TransformerArgsPreprocessor prompt_timestep computation (V2)
 
 Run with: uv run pytest tests/unit/test_v2_architecture.py -v
@@ -23,9 +21,6 @@ from llm_dit.encoders.gemma3_feature_extractor_v2 import (
     FeatureExtractorV2,
     norm_and_concat_per_token_rms,
 )
-from llm_dit.quantization.gguf_tensor import GGMLTensor
-from llm_dit.quantization.gguf_linear import GGMLLinear, replace_linear_with_ggml
-from llm_dit.quantization.gguf_loader import detect_v2_from_state_dict
 
 
 class TestGatedAttention:
@@ -176,72 +171,6 @@ class TestNormAndConcatPerTokenRMS:
         mask = torch.ones(1, 5)
         out = norm_and_concat_per_token_rms(x, mask)
         assert out.abs().sum() > 0
-
-
-class TestV2Detection:
-    """Test V2 model detection from state dict keys."""
-
-    def test_detect_v2_with_prompt_scale_shift_table(self):
-        sd = {"blocks.0.prompt_scale_shift_table": torch.zeros(2, 128)}
-        assert detect_v2_from_state_dict(sd) is True
-
-    def test_detect_v2_with_gate_logits(self):
-        sd = {"blocks.0.attn1.to_gate_logits.weight": torch.zeros(4, 128)}
-        assert detect_v2_from_state_dict(sd) is True
-
-    def test_detect_v1(self):
-        sd = {"blocks.0.scale_shift_table": torch.zeros(6, 128)}
-        assert detect_v2_from_state_dict(sd) is False
-
-    def test_empty_state_dict(self):
-        assert detect_v2_from_state_dict({}) is False
-
-
-class TestGGMLTensor:
-    """Test GGMLTensor subclass."""
-
-    def test_logical_shape(self):
-        data = torch.zeros(100)
-        t = GGMLTensor(data, tensor_type=8, tensor_shape=torch.Size([32, 64]))
-        assert t.shape == torch.Size([32, 64])
-
-    def test_to_preserves_metadata(self):
-        data = torch.zeros(100)
-        t = GGMLTensor(data, tensor_type=8, tensor_shape=torch.Size([32, 64]))
-        t2 = t.to(dtype=torch.float32)
-        assert isinstance(t2, GGMLTensor)
-        assert t2.tensor_type == 8
-        assert t2.tensor_shape == torch.Size([32, 64])
-
-
-class TestGGMLLinear:
-    """Test GGMLLinear layer."""
-
-    def test_init_no_memory_alloc(self):
-        """GGMLLinear init should not allocate full-size weight."""
-        linear = GGMLLinear(1024, 512, bias=False)
-        assert linear.weight is None
-        assert linear.bias is None
-
-    def test_forward_with_regular_tensor(self):
-        """GGMLLinear with regular (non-quantized) weight should work like nn.Linear."""
-        linear = GGMLLinear(8, 4, bias=False)
-        linear.weight = torch.nn.Parameter(torch.randn(4, 8), requires_grad=False)
-        x = torch.randn(2, 8)
-        out = linear(x)
-        assert out.shape == (2, 4)
-
-    def test_replace_linear_with_ggml(self):
-        """Replace all nn.Linear in a module with GGMLLinear."""
-        model = torch.nn.Sequential(
-            torch.nn.Linear(8, 4),
-            torch.nn.ReLU(),
-            torch.nn.Linear(4, 2),
-        )
-        count = replace_linear_with_ggml(model)
-        assert count == 2
-        assert isinstance(model[0], GGMLLinear)
-        assert isinstance(model[2], GGMLLinear)
 
 
 class TestCreateModelV2:

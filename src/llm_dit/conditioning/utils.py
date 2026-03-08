@@ -22,18 +22,19 @@ def timesteps_from_mask(
     """
     Compute per-token timesteps from denoise mask and sigma.
 
-    LTX-2 uses timesteps in [0, 1000] range. The denoise_mask scales
-    the timestep per-token, allowing conditioned regions to have lower
-    timesteps (less denoising).
+    The denoise_mask scales sigma per-token, allowing conditioned regions
+    to have lower timesteps (less denoising). The transformer's
+    _prepare_timestep() handles the x1000 scaling internally via
+    timestep_scale_multiplier.
 
     Args:
         denoise_mask: [B, T, 1] mask where 1.0 = full denoising, 0.0 = no denoising
         sigma: Current noise level (scalar or tensor)
 
     Returns:
-        Timesteps tensor [B, T, 1] in [0, 1000] range
+        Timesteps tensor [B, T, 1] in [0, sigma] range
     """
-    return denoise_mask * sigma * 1000
+    return denoise_mask * sigma
 
 
 def post_process_latent(

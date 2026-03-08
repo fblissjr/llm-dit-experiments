@@ -1,10 +1,30 @@
-last updated: 2026-03-07
+last updated: 2026-03-08
 
 # changelog
 
 
 All notable changes to this project will be documented in this file.
 Uses [Semantic Versioning](https://semver.org/).
+
+## 0.9.25
+
+### removed
+- **GGUF infrastructure (~1,380 lines across 16 files):** Deleted `gguf_dequant.py`, `gguf_loader.py`, `gguf_linear.py`, `gguf_tensor.py`, `audit_gguf_keys.py`, and all GGUF test files. Neither the official LTX-2 repo nor DiffSynth-Studio uses GGUF -- they use fp8-cast exclusively.
+- **GGUF LoRA functions:** Removed `attach_lora_deltas()`, `detach_lora_deltas()`, `load_lora_for_gguf()`, `is_gguf_model()` from `lora.py` (~131 lines).
+- **GGUF model loader:** Removed `load_ltx2_transformer_gguf()` from `models/ltx2/loader.py` (~76 lines).
+- **GGUF config fields:** Removed `gguf_transformer_path` from `LTX2Config`, `config.toml`, `config.toml.example`.
+- **GGUF ModelManager state:** Removed `_ltx2_gguf_model` attribute, `ltx2_gguf_model` property, `_preload_ltx2_gguf_transformer()` method.
+- **torchao quantization for LTX-2 transformer:** Removed `quantize_component()` call from `_reconstruct_transformer_from_cache()`. LTX-2 transformer now uses fp8-cast (official approach) or plain bf16 only. torchao quantization remains available for FLUX.2, Gemma3, and other pipelines.
+- **`gguf` dependency** from `pyproject.toml`.
+
+### fixed
+- **`timesteps_from_mask` double-scaling bug:** Removed spurious `* 1000` from `conditioning/utils.py`. The transformer's `_prepare_timestep()` already multiplies by `timestep_scale_multiplier` (1000). This caused 1000x over-scaled AdaLN conditioning in i2v/keyframe paths. Standard text-to-video was unaffected. Matches official LTX-2 reference.
+- **`load_ltx2_transformer()` missing `assign=True`:** Added `assign=True` to `load_state_dict()` in the bf16/standard model loading path. Prevents silent fp8->bf16 cast if mixed-dtype tensors land in this path. Matches official reference.
+- **Gradient estimation `prev_velocity` storage bug:** GE was storing the corrected velocity as `prev_velocity` instead of the raw (pre-GE) model output. This caused compounding correction errors across steps when `ge_gamma > 0`. Fixed in both single-stage and AV denoising loops. Default `ge_gamma=0.0` means this bug was dormant in standard generation.
+
+### changed
+- **`_load_transformer_and_lora()` signature:** Removed `gguf_model` parameter and `is_gguf` return value. 3-way dispatch (GGUF/cache/disk) simplified to 2-way (cache/disk).
+- **`generate_video_with_offloading()` and `generate_video_two_stage()`:** Removed `gguf_model` parameter and GGUF cleanup branches.
 
 ## 0.9.24
 

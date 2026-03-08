@@ -59,20 +59,16 @@ def _resolve_quantize(quantize: str) -> tuple[bool, str]:
     """Normalize quantize string shorthand to (should_quantize, precision) tuple.
 
     Handles aliases like "fp8" -> "fp8-dynamic" and falsy values.
-    "gguf" is a special case: quantization is handled by GGMLLinear, not torchao.
 
     Args:
         quantize: Quantization method string. "none", "", or None disables
-            quantization. "fp8" is aliased to "fp8-dynamic". "gguf" means
-            quantized weights stay in GGML format.
+            quantization. "fp8" is aliased to "fp8-dynamic".
 
     Returns:
         (should_quantize, precision): Whether to quantize and the resolved method.
     """
     if quantize in (None, "", "none"):
         return False, "none"
-    if quantize == "gguf":
-        return False, "gguf"  # GGUF handles its own quantization
     precision = QUANT_ALIASES.get(quantize, quantize)
     return True, precision
 
@@ -136,7 +132,6 @@ def _apply_distilled_lora_fp8(
 
 def _load_transformer_and_lora(
     *,
-    gguf_model: Optional["LTX2Transformer"],
     cached_transformer: Optional[dict],
     model_path: Path,
     transformer_file: str,
@@ -148,22 +143,17 @@ def _load_transformer_and_lora(
     lora_paths: Optional[List[str]],
     lora_scales: Optional[List[float]],
     video_only: bool = True,
-) -> tuple["LTX2Transformer", bool]:
-    """Load transformer via GGUF/cache/disk and apply LoRA.
+) -> "LTX2Transformer":
+    """Load transformer via cache or disk and apply LoRA.
 
-    Three-branch dispatch:
-    1. GGUF: use persistent model directly (no cache/reconstruct)
-    2. Cached: reconstruct from pinned state_dict (LoRA fused at sd level for fp8-cast)
-    3. Disk: load from safetensors file (fallback)
+    Two-branch dispatch:
+    1. Cached: reconstruct from pinned state_dict (LoRA fused at sd level for fp8-cast)
+    2. Disk: load from safetensors file (fallback)
 
     Returns:
-        (model, is_gguf): Loaded model and whether it's a GGUF model.
+        Loaded transformer model.
     """
-    is_gguf = gguf_model is not None
-    if is_gguf:
-        model = gguf_model.to(transformer_device)
-        logger.info(f"Using persistent GGUF transformer on {transformer_device}")
-    elif cached_transformer is not None:
+    if cached_transformer is not None:
         model = _reconstruct_transformer_from_cache(
             cached_transformer, dtype, transformer_device,
             effective_quantize, effective_precision, granularity,
@@ -212,27 +202,17 @@ def _load_transformer_and_lora(
     # Apply LoRA if specified (skip if already fused at state-dict level)
     lora_already_fused = getattr(model, "_lora_fused_at_sd_level", False)
     if lora_paths and lora_scales and not lora_already_fused:
-        if is_gguf:
-            from llm_dit.utils.lora import load_lora_for_gguf
-            total_updated = 0
-            for path, scale in zip(lora_paths, lora_scales):
-                updated = load_lora_for_gguf(
-                    model, path, scale=scale,
-                    device=transformer_device, dtype=dtype,
-                )
-                total_updated += updated
-        else:
-            from llm_dit.utils.lora import load_lora as _load_lora
-            total_updated = 0
-            for path, scale in zip(lora_paths, lora_scales):
-                updated = _load_lora(
-                    model, path, scale=scale,
-                    device=transformer_device, dtype=dtype,
-                )
-                total_updated += updated
+        from llm_dit.utils.lora import load_lora as _load_lora
+        total_updated = 0
+        for path, scale in zip(lora_paths, lora_scales):
+            updated = _load_lora(
+                model, path, scale=scale,
+                device=transformer_device, dtype=dtype,
+            )
+            total_updated += updated
         logger.info(f"LoRA loading complete: {total_updated} layers updated")
 
-    return model, is_gguf
+    return model
 
 
 def _reconstruct_transformer_from_cache(
@@ -306,16 +286,6 @@ def _reconstruct_transformer_from_cache(
         from llm_dit.quantization.fp8_cast import amend_forward_with_upcast
         patched = amend_forward_with_upcast(model)
         logger.info(f"FP8-cast: {patched} linear layers patched for per-forward upcast")
-    elif effective_quantize and effective_precision != "none":
-        from llm_dit.quantization import quantize_component
-        model, stats = quantize_component(
-            model, method=effective_precision, component_type="transformer",
-            granularity=granularity,
-        )
-        logger.info(
-            f"Transformer quantized: {stats['quantized_layers']}/{stats['total_layers']} layers "
-            f"({effective_precision}, granularity={granularity})"
-        )
 
     model = model.to(transformer_device)
 
@@ -974,7 +944,6 @@ def generate_video_with_offloading(
     text_encoder_device: str = "cpu",
     transformer_device: str = "cuda",
     vae_device: str = "cuda",
-    gguf_model: Optional["LTX2Transformer"] = None,
     quantize: str = "fp8",
     granularity: str = "per-row",
     transformer_file: str = "",
@@ -989,11 +958,11 @@ def generate_video_with_offloading(
 
     This function implements the LTX-2 memory strategy:
     1. Load text encoder -> encode prompt -> unload (skipped if precomputed_embeddings)
-    2. Load transformer (+ optional quantization) -> denoise -> unload
+    2. Load transformer -> denoise -> unload
     3. Load VAE -> decode latents -> unload
 
     Each component is loaded and unloaded sequentially to stay within 24GB VRAM.
-    With FP8 quantization, the 13B model fits with room for activations.
+    With FP8-cast, the 22B model fits with room for activations.
 
     Args:
         prompt: Text prompt for generation (can be empty if using precomputed_embeddings)
@@ -1013,8 +982,7 @@ def generate_video_with_offloading(
         text_encoder_device: Device for Gemma3 text encoder.
         transformer_device: Device for DiT transformer.
         vae_device: Device for VAE decoder.
-        quantize: Transformer quantization method: none, fp8, fp8-weight-only,
-            fp8-dynamic, int8, int4.
+        quantize: Transformer quantization method (used for disk fallback path only).
         skip_cleanup: Skip memory cleanup between stages.
         cached_transformer: Pre-loaded transformer data from ModelManager. Dict with
             "config" (model config), "state_dict" (pinned bf16 tensors), and
@@ -1130,8 +1098,7 @@ def generate_video_with_offloading(
 
     _lora_paths, _lora_scales = _normalize_lora_args(lora_path, lora_scale)
 
-    model, is_gguf = _load_transformer_and_lora(
-        gguf_model=gguf_model,
+    model = _load_transformer_and_lora(
         cached_transformer=cached_transformer,
         model_path=model_path,
         transformer_file=transformer_file,
@@ -1182,15 +1149,7 @@ def generate_video_with_offloading(
     )
 
     # Unload transformer and connectors
-    if is_gguf:
-        # GGUF: detach LoRA deltas but keep model (persistent)
-        from llm_dit.utils.lora import detach_lora_deltas
-        detach_lora_deltas(model)
-        model.to("cpu")  # Return to CPU between requests
-        del connectors, prompt_embeds, attention_mask
-        logger.info("GGUF transformer returned to CPU (persistent)")
-    else:
-        del model, connectors, prompt_embeds, attention_mask
+    del model, connectors, prompt_embeds, attention_mask
     if not skip_cleanup:
         cleanup_memory()
         logger.info("Transformer unloaded")
@@ -1716,14 +1675,14 @@ def _denoise_stage(
                 num_steps=num_steps,
             )
 
-            # Gradient estimation correction
-            if ctx.ge_gamma > 0 and prev_velocity is not None:
-                delta_v = velocity - prev_velocity
-                velocity = ctx.ge_gamma * delta_v + prev_velocity
-
-            # Save velocity for GE (before Euler step modifies it)
+            # Gradient estimation: save raw velocity before correction,
+            # then apply GE. Reference stores pre-GE velocity for next delta.
             if ctx.ge_gamma > 0:
-                prev_velocity = velocity.clone()
+                raw_velocity = velocity.clone()
+                if prev_velocity is not None:
+                    delta_v = velocity - prev_velocity
+                    velocity = ctx.ge_gamma * delta_v + prev_velocity
+                prev_velocity = raw_velocity
 
             # Euler step: x_{t-1} = x_t + v * dt
             dt = sigma_next - sigma
@@ -1845,15 +1804,17 @@ def _denoise_av_stage(
                 num_steps=num_steps,
             )
 
-            # Gradient estimation correction (both modalities independently)
-            if ctx.ge_gamma > 0 and prev_video_vel is not None:
-                video_vel = ctx.ge_gamma * (video_vel - prev_video_vel) + prev_video_vel
-            if ctx.ge_gamma > 0 and prev_audio_vel is not None:
-                audio_vel = ctx.ge_gamma * (audio_vel - prev_audio_vel) + prev_audio_vel
-
+            # Gradient estimation: save raw velocities before correction,
+            # then apply GE. Reference stores pre-GE velocity for next delta.
             if ctx.ge_gamma > 0:
-                prev_video_vel = video_vel.clone()
-                prev_audio_vel = audio_vel.clone()
+                raw_video_vel = video_vel.clone()
+                raw_audio_vel = audio_vel.clone()
+                if prev_video_vel is not None:
+                    video_vel = ctx.ge_gamma * (video_vel - prev_video_vel) + prev_video_vel
+                if prev_audio_vel is not None:
+                    audio_vel = ctx.ge_gamma * (audio_vel - prev_audio_vel) + prev_audio_vel
+                prev_video_vel = raw_video_vel
+                prev_audio_vel = raw_audio_vel
 
             # Euler step: x_{t-1} = x_t + v * dt
             dt = sigma_next - sigma
@@ -1908,7 +1869,6 @@ def generate_video_two_stage(
     text_encoder: Optional[Any] = None,
     cached_transformer: Optional[dict] = None,
     cached_vae: Optional[Any] = None,
-    gguf_model: Optional["LTX2Transformer"] = None,
     # Audio generation params (Phase 3)
     video_only: bool = True,
     audio_negative_prompt: str = "",
@@ -2108,8 +2068,7 @@ def generate_video_two_stage(
 
     _lora_paths, _lora_scales = _normalize_lora_args(lora_path, lora_scale)
 
-    model, is_gguf = _load_transformer_and_lora(
-        gguf_model=gguf_model,
+    model = _load_transformer_and_lora(
         cached_transformer=cached_transformer,
         model_path=model_path,
         transformer_file=transformer_file,
@@ -2329,31 +2288,21 @@ def generate_video_two_stage(
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
         logger.info(f"Loading distilled LoRA: {distilled_path} (scale={two_stage.distilled_lora_scale})")
-        if is_gguf:
-            # GGUF: detach stage 1 LoRA, attach distilled LoRA
-            from llm_dit.utils.lora import detach_lora_deltas, load_lora_for_gguf
-            detach_lora_deltas(model)
-            load_lora_for_gguf(
-                model, distilled_path,
+        # Detect native fp8 weights (fp8-cast model)
+        import itertools
+        has_fp8_weights = any(
+            p.dtype in (torch.float8_e4m3fn, torch.float8_e5m2)
+            for p in itertools.islice(model.parameters(), 5)
+        )
+        if has_fp8_weights:
+            _apply_distilled_lora_fp8(
+                model, str(distilled_path),
                 scale=two_stage.distilled_lora_scale,
-                device=transformer_device, dtype=dtype,
             )
         else:
-            # Detect native fp8 weights (fp8-cast model)
-            import itertools
-            has_fp8_weights = any(
-                p.dtype in (torch.float8_e4m3fn, torch.float8_e5m2)
-                for p in itertools.islice(model.parameters(), 5)
-            )
-            if has_fp8_weights:
-                _apply_distilled_lora_fp8(
-                    model, str(distilled_path),
-                    scale=two_stage.distilled_lora_scale,
-                )
-            else:
-                from llm_dit.utils.lora import load_lora as _load_lora
-                _load_lora(
-                    model, distilled_path,
+            from llm_dit.utils.lora import load_lora as _load_lora
+            _load_lora(
+                model, distilled_path,
                     scale=two_stage.distilled_lora_scale,
                     device=transformer_device, dtype=dtype,
                 )
@@ -2434,14 +2383,7 @@ def generate_video_two_stage(
     # Reshape back to spatial: [B, T, D] -> [B, D, T_lat, H_lat, W_lat]
     latents = latents_refined.transpose(1, 2).reshape(1, 128, t_lat_full, h_lat_full, w_lat_full)
 
-    if is_gguf:
-        from llm_dit.utils.lora import detach_lora_deltas
-        detach_lora_deltas(model)
-        model.to("cpu")
-        del latents_noisy, latents_refined, pos_embeds, neg_embeds, pos_mask
-        logger.info("GGUF transformer returned to CPU (persistent)")
-    else:
-        del model, latents_noisy, latents_refined, pos_embeds, neg_embeds, pos_mask
+    del model, latents_noisy, latents_refined, pos_embeds, neg_embeds, pos_mask
     if not skip_cleanup:
         cleanup_memory()
         logger.info("Stage 2 transformer unloaded")

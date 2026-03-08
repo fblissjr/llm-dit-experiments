@@ -149,10 +149,6 @@ async def ltx2_status(config: ConfigDep) -> LTX2StatusResponse:
     if model_path:
         ltx2_configured = Path(model_path).expanduser().exists()
 
-    gguf_path = getattr(config.ltx2, "gguf_transformer_path", "") if config.ltx2 else ""
-    if gguf_path:
-        ltx2_configured = ltx2_configured or Path(gguf_path).expanduser().exists()
-
     return LTX2StatusResponse(
         available=ltx2_configured,
         loaded=False,
@@ -310,7 +306,7 @@ async def ltx2_generate_stream(request: LTX2GenerateRequest, config: ConfigDep, 
                         text_encoder=manager.ltx2_encoder,
                         cached_transformer=manager.ltx2_transformer_cache,
                         cached_vae=manager.ltx2_vae,
-                        gguf_model=manager.ltx2_gguf_model,
+
                         video_only=video_only,
                         audio_negative_prompt=audio_neg or "",
                         audio_guidance_scale=audio_guidance_scale,
@@ -341,7 +337,7 @@ async def ltx2_generate_stream(request: LTX2GenerateRequest, config: ConfigDep, 
                         text_encoder=manager.ltx2_encoder,
                         cached_transformer=manager.ltx2_transformer_cache,
                         cached_vae=manager.ltx2_vae,
-                        gguf_model=manager.ltx2_gguf_model,
+
                     )
 
             loop = asyncio.get_event_loop()
@@ -429,18 +425,6 @@ async def ltx2_generate_stream(request: LTX2GenerateRequest, config: ConfigDep, 
             traceback.print_exc()
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
         finally:
-            # Return persistent GGUF model to CPU if it's still on GPU after error
-            gguf = manager.ltx2_gguf_model
-            if gguf is not None:
-                device = next(gguf.parameters()).device
-                if device.type != "cpu":
-                    try:
-                        from llm_dit.utils.lora import detach_lora_deltas
-                        detach_lora_deltas(gguf)
-                    except Exception:
-                        pass
-                    gguf.to("cpu")
-                    logger.info("[LTX-2] GGUF transformer returned to CPU after error cleanup")
             # Return cached encoder to CPU if still on GPU
             enc = manager.ltx2_encoder
             if enc is not None and hasattr(enc, "offload"):

@@ -385,8 +385,8 @@ def load_ltx2_transformer(
         else:
             our_state_dict[our_key] = tensor.to(dtype)
 
-    # Load into model
-    load_result = model.load_state_dict(our_state_dict, strict=strict)
+    # Load into model (assign=True prevents silent fp8->bf16 cast)
+    load_result = model.load_state_dict(our_state_dict, strict=strict, assign=True)
 
     if skipped_keys:
         logger.info(f"Skipped {len(skipped_keys)} audio keys (video_only=True)")
@@ -662,79 +662,3 @@ def get_model_info(path: Union[str, Path]) -> dict:
     }
 
 
-def load_ltx2_transformer_gguf(
-    gguf_path: Union[str, Path],
-    dtype: torch.dtype = torch.bfloat16,
-    device: str = "cpu",
-    video_only: bool = False,
-    model_type: Optional[LTXModelType] = None,
-) -> LTX2Transformer:
-    """Load LTX-2 transformer from a GGUF-quantized checkpoint.
-
-    GGUF weights stay quantized in memory. GGMLLinear layers dequantize
-    per-forward, keeping peak VRAM = all quantized weights + ONE layer's bf16.
-
-    Args:
-        gguf_path: Path to GGUF file (e.g. Q4_K_M from unsloth/LTX-2.3-GGUF).
-        dtype: Computation dtype for non-quantized params.
-        device: Device to load to.
-        video_only: If True, skip audio weights.
-        model_type: Explicit model type override.
-
-    Returns:
-        LTX2Transformer with GGMLLinear layers holding quantized weights.
-    """
-    from llm_dit.quantization.gguf_loader import gguf_sd_loader
-    from llm_dit.quantization.gguf_linear import replace_linear_with_ggml
-    from llm_dit.utils.meta_init import meta_init
-
-    gguf_path = Path(gguf_path)
-    logger.info(f"Loading GGUF transformer from {gguf_path}")
-
-    # Load GGUF state dict (strips model.diffusion_model. prefix)
-    state_dict, extra = gguf_sd_loader(str(gguf_path))
-    logger.info(f"GGUF state dict: {len(state_dict)} keys, arch={extra.get('arch_str', 'unknown')}")
-
-    # Resolve model type
-    if model_type is None:
-        model_type = LTXModelType.VideoOnly if video_only else LTXModelType.AudioVideo
-    video_only = not model_type.is_audio_enabled()
-
-    # Build model config from checkpoint metadata or defaults
-    config = load_config(gguf_path)
-
-    with meta_init():
-        model = create_model_from_config(
-            config, dtype, model_type=model_type,
-        )
-
-    # Replace all nn.Linear with GGMLLinear (accepts quantized tensors)
-    num_replaced = replace_linear_with_ggml(model)
-    logger.info(f"Replaced {num_replaced} nn.Linear layers with GGMLLinear")
-
-    # Map GGUF keys to our model's key namespace
-    our_state_dict = {}
-    skipped_audio = 0
-    for key, tensor in state_dict.items():
-        if video_only and is_audio_key(key):
-            skipped_audio += 1
-            continue
-        our_key = map_key(key)
-        our_state_dict[our_key] = tensor
-
-    if skipped_audio:
-        logger.info(f"Skipped {skipped_audio} audio keys (video_only={video_only})")
-
-    # Load quantized weights (assign=True preserves GGMLTensor dtype)
-    load_result = model.load_state_dict(our_state_dict, strict=False, assign=True)
-    if load_result.missing_keys:
-        logger.warning(f"Missing keys: {load_result.missing_keys[:10]}... ({len(load_result.missing_keys)} total)")
-    if load_result.unexpected_keys:
-        logger.warning(f"Unexpected keys: {load_result.unexpected_keys[:10]}... ({len(load_result.unexpected_keys)} total)")
-
-    # Move non-quantized params (norms, embeddings) to target device
-    if device != "cpu":
-        model = model.to(device)
-
-    logger.info(f"Loaded GGUF LTX-2 transformer: {num_replaced} quantized layers on {device}")
-    return model
