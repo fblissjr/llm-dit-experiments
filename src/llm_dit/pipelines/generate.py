@@ -1849,6 +1849,12 @@ def _denoise_av_stage(
 
             step_elapsed = time.perf_counter() - step_start
             step_times.append(step_elapsed)
+            if i == 0:
+                logger.debug(
+                    f"[{stage_name}:Step 0] video latent std={video_latents.std():.4f}, "
+                    f"audio latent std={audio_latents.std():.4f}, "
+                    f"sigma={sigma:.4f}->{sigma_next:.4f}"
+                )
             if i == 0 or (i + 1) % 10 == 0 or i == num_steps - 1:
                 logger.info(f"[{stage_name}:Step {i}] {step_elapsed:.2f}s")
 
@@ -2167,6 +2173,10 @@ def generate_video_two_stage(
             stretch=config.stretch,
             terminal=config.terminal,
         ).to(transformer_device, dtype)
+    logger.debug(
+        f"Stage 1 sigmas: [{sigmas[0]:.4f} -> {sigmas[-1]:.4f}], "
+        f"{len(sigmas) - 1} steps, mode={'AV' if not video_only else 'video-only'}"
+    )
 
     # Denoise stage 1
     # Distilled mode: no CFG (guidance baked into model), no STG
@@ -2330,6 +2340,10 @@ def generate_video_two_stage(
 
     distilled_sigmas = torch.tensor(
         STAGE_2_DISTILLED_SIGMA_VALUES, device=transformer_device, dtype=dtype
+    )
+    logger.debug(
+        f"Stage 2 sigmas: [{distilled_sigmas[0]:.4f} -> {distilled_sigmas[-1]:.4f}], "
+        f"{len(distilled_sigmas) - 1} steps (distilled, no CFG)"
     )
 
     # Full-resolution latent dimensions
