@@ -581,6 +581,7 @@ class LTX2Transformer(nn.Module):
         cross_attention_adaln: bool = False,
         caption_projection_module: Optional[nn.Module] = None,
         audio_caption_projection_module: Optional[nn.Module] = None,
+        av_ca_timestep_scale_multiplier: float = 1000.0,
     ):
         super().__init__()
 
@@ -594,6 +595,7 @@ class LTX2Transformer(nn.Module):
         self.num_layers = num_layers
         self.cross_attention_adaln = cross_attention_adaln
         self.apply_gated_attention = apply_gated_attention
+        self.av_ca_timestep_scale_multiplier = av_ca_timestep_scale_multiplier
 
         if model_type.is_video_enabled():
             if positional_embedding_max_pos is None:
@@ -942,28 +944,37 @@ class LTX2Transformer(nn.Module):
         hidden_dtype = video_args.x.dtype
         timestep_mult = self.timestep_scale_multiplier
 
-        # Scale raw timesteps (same scaling used by regular AdaLN in preprocessor)
-        video_ts_scaled = (video.timesteps * timestep_mult).flatten()  # [B]
-        audio_ts_scaled = (audio.timesteps * timestep_mult).flatten()  # [B]
+        # Reference pattern (transformer_args.py:247): cross-modal AdaLN uses
+        # the OTHER modality's sigma, not the own modality's timesteps.
+        # Use scalar sigma (per-batch), NOT per-token timesteps.
+        video_sigma = video.sigma if video.sigma is not None else video.timesteps[:, 0]
+        audio_sigma = audio.sigma if audio.sigma is not None else audio.timesteps[:, 0]
 
-        # Video cross-modal timestep embeddings
-        # AdaLayerNormSingle expects raw scalars [B] and handles embedding internally
+        # Scale sigmas (same scaling used by regular AdaLN in preprocessor)
+        video_sigma_scaled = (video_sigma * timestep_mult).flatten()  # [B]
+        audio_sigma_scaled = (audio_sigma * timestep_mult).flatten()  # [B]
+
+        # Gate factor: reference uses av_ca_timestep_scale_multiplier / timestep_scale_multiplier.
+        # For checkpoint config av_ca_timestep_scale_multiplier=1000, this is 1.0.
+        av_ca_factor = self.av_ca_timestep_scale_multiplier / timestep_mult
+
+        # Video cross-modal timestep embeddings (conditioned on AUDIO sigma)
         v_cross_ss, _ = self.av_ca_video_scale_shift_adaln_single(
-            video_ts_scaled, hidden_dtype=hidden_dtype,
+            audio_sigma_scaled, hidden_dtype=hidden_dtype,
         )
         v_cross_ss = v_cross_ss.view(batch_size, -1, v_cross_ss.shape[-1])
         v_cross_gate, _ = self.av_ca_a2v_gate_adaln_single(
-            video_ts_scaled, hidden_dtype=hidden_dtype,
+            audio_sigma_scaled * av_ca_factor, hidden_dtype=hidden_dtype,
         )
         v_cross_gate = v_cross_gate.view(batch_size, -1, v_cross_gate.shape[-1])
 
-        # Audio cross-modal timestep embeddings
+        # Audio cross-modal timestep embeddings (conditioned on VIDEO sigma)
         a_cross_ss, _ = self.av_ca_audio_scale_shift_adaln_single(
-            audio_ts_scaled, hidden_dtype=hidden_dtype,
+            video_sigma_scaled, hidden_dtype=hidden_dtype,
         )
         a_cross_ss = a_cross_ss.view(batch_size, -1, a_cross_ss.shape[-1])
         a_cross_gate, _ = self.av_ca_v2a_gate_adaln_single(
-            audio_ts_scaled, hidden_dtype=hidden_dtype,
+            video_sigma_scaled * av_ca_factor, hidden_dtype=hidden_dtype,
         )
         a_cross_gate = a_cross_gate.view(batch_size, -1, a_cross_gate.shape[-1])
 

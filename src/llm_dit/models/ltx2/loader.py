@@ -306,6 +306,7 @@ def create_model_from_config(
         double_precision_rope=double_precision,
         apply_gated_attention=gated,
         cross_attention_adaln=ca_adaln,
+        av_ca_timestep_scale_multiplier=config.get("av_ca_timestep_scale_multiplier", 1000.0),
         **audio_kwargs,
     )
 
