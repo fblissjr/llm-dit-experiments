@@ -147,6 +147,7 @@ distilled_lora_scale = 1.0
 # Leave empty to use model_path/text_encoder (default).
 # Set to HF model ID or path only when encoder lives outside model_path.
 encoder_model_id = ""
+max_sequence_length = 512       # tokens through connector (128 are registers, rest are real text)
 
 # Prompt enhancement -- expand terse prompts via Gemma3 before encoding
 enhance_prompt = false
@@ -163,7 +164,7 @@ num_blocks_per_group = 2        # group mode only: DiT blocks to keep on GPU
 height = 512
 width = 768
 num_frames = 33
-fps = 24
+fps = 24.0
 num_inference_steps = 30        # stage 1 steps (official V2.3 default)
 guidance_scale = 3.0            # video CFG (reference default)
 

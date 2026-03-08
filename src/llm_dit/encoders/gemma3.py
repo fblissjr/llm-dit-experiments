@@ -819,7 +819,7 @@ class Gemma3Encoder(PinnedShuttleMixin):
                 }
 
                 # Validate hardcoded config against safetensors metadata
-                self._validate_connector_config(video_config, connectors_path)
+                self._validate_connector_config(video_config, f.metadata())
 
                 # Video connector
                 self._embeddings_connector = Embeddings1DConnector.from_config(video_config)
@@ -838,24 +838,25 @@ class Gemma3Encoder(PinnedShuttleMixin):
                     )
                     logger.info("Loaded V2.3 audio embeddings connector (8 blocks, gated)")
 
-    def _validate_connector_config(self, config: dict, connectors_path: str) -> None:
+    def _validate_connector_config(self, config: dict, metadata: Optional[dict]) -> None:
         """Compare hardcoded connector config against safetensors metadata.
 
         Logs warnings for mismatches. Does not fail -- some configs may
         intentionally differ. Guards against silent config drift like the
         max_pos [1] vs [4096] bug.
+
+        Args:
+            config: Our hardcoded connector config dict.
+            metadata: Safetensors file metadata (from f.metadata()), or None.
         """
-        from safetensors import safe_open
+        if not metadata or "config" not in metadata:
+            logger.debug("No config metadata in connectors file, skipping validation")
+            return
 
         try:
-            with safe_open(connectors_path, framework="pt") as f:
-                metadata = f.metadata()
-                if not metadata or "config" not in metadata:
-                    logger.debug("No config metadata in connectors file, skipping validation")
-                    return
-                file_config = json.loads(metadata["config"])
-        except Exception as e:
-            logger.debug(f"Could not read connector metadata for validation: {e}")
+            file_config = json.loads(metadata["config"])
+        except (json.JSONDecodeError, TypeError) as e:
+            logger.debug(f"Could not parse connector metadata config: {e}")
             return
 
         key_map = {

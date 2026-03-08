@@ -37,7 +37,8 @@ Uses [Semantic Versioning](https://semver.org/).
 - **Connector gated attention regression tests:** 10 tests in `test_connector_gated_attention.py` covering 2x sigmoid identity, gate placement, scaling range, and config validation.
 
 ### changed
-- **`max_sequence_length` default 256 -> 512:** Encoder now processes up to 384 real text tokens (512 minus 128 learnable registers). Previous default of 256 left only 128 real tokens, potentially truncating detailed prompts. Reference uses 1024; 512 is a practical middle ground for RTX 4090.
+- **`max_sequence_length` default 256 -> 512, now configurable:** Added `max_sequence_length` field to `LTX2Config` (config.toml, config.toml.example). Encoder now processes up to 384 real text tokens (512 minus 128 learnable registers). Previous default of 256 left only 128 real tokens, potentially truncating detailed prompts. Reference uses 1024; 512 is a practical middle ground for RTX 4090.
+- **FPS plumbed through config:** Added `fps` field to `GenerationConfig`, populated from `LTX2Config.fps` in the router. Eliminated all hardcoded `fps=24.0` literals from `generate.py` (3 occurrences across single-stage, two-stage stage 1, and stage 2). FPS now flows: `config.toml` -> `LTX2Config.fps` -> `GenerationConfig.fps` -> `create_position_indices` / `compute_audio_latent_frames`.
 - **`_load_transformer_and_lora()` signature:** Removed `gguf_model` parameter and `is_gguf` return value. 3-way dispatch (GGUF/cache/disk) simplified to 2-way (cache/disk).
 - **`generate_video_with_offloading()` and `generate_video_two_stage()`:** Removed `gguf_model` parameter and GGUF cleanup branches.
 - **Documentation cleanup:** Removed stale GGUF references from debugging_reference.md, post_refactor_guide.md, current.md, experiments/ltx2/CLAUDE.md. Backlog updated: 4 obsolete items removed/condensed, 3 new items from v0.9.25 reference verification (i2v E2E test, LinearQuadraticScheduler, skip_step optimization).

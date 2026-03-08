@@ -250,6 +250,7 @@ async def ltx2_generate_stream(request: LTX2GenerateRequest, config: ConfigDep, 
                     width=resolve_param(request, "width", ltx2_cfg.width),
                     guidance_scale=resolve_param(request, "guidance_scale", ltx2_cfg.guidance_scale),
                     seed=seed,
+                    fps=resolve_param(request, "fps", ltx2_cfg.fps),
                 )
 
                 # Resolve text encoder path from config (default: model_path/text_encoder)

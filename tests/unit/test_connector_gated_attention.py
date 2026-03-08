@@ -13,7 +13,6 @@ Run with: uv run pytest tests/unit/test_connector_gated_attention.py -v
 
 import json
 import logging
-from unittest.mock import MagicMock, patch
 
 import pytest
 import torch
@@ -230,16 +229,10 @@ class TestConnectorConfigValidation:
             "connector_positional_embedding_max_pos": [4096],
             "apply_gated_attention": True,
         }
-        # Mock safe_open to return matching metadata
         metadata = {"config": json.dumps(our_config)}
-        mock_file = MagicMock()
-        mock_file.__enter__ = MagicMock(return_value=mock_file)
-        mock_file.__exit__ = MagicMock(return_value=False)
-        mock_file.metadata.return_value = metadata
 
-        with patch("safetensors.safe_open", return_value=mock_file):
-            with caplog.at_level(logging.DEBUG):
-                encoder._validate_connector_config(our_config, "/fake/path.safetensors")
+        with caplog.at_level(logging.DEBUG):
+            encoder._validate_connector_config(our_config, metadata)
 
         assert "mismatch" not in caplog.text.lower()
         assert "matches" in caplog.text.lower()
@@ -258,39 +251,37 @@ class TestConnectorConfigValidation:
             "apply_gated_attention": True,  # Different
         }
         metadata = {"config": json.dumps(file_config)}
-        mock_file = MagicMock()
-        mock_file.__enter__ = MagicMock(return_value=mock_file)
-        mock_file.__exit__ = MagicMock(return_value=False)
-        mock_file.metadata.return_value = metadata
 
-        with patch("safetensors.safe_open", return_value=mock_file):
-            with caplog.at_level(logging.WARNING):
-                encoder._validate_connector_config(our_config, "/fake/path.safetensors")
+        with caplog.at_level(logging.WARNING):
+            encoder._validate_connector_config(our_config, metadata)
 
         assert "mismatch" in caplog.text.lower()
         assert "connector_positional_embedding_max_pos" in caplog.text
         assert "apply_gated_attention" in caplog.text
 
     def test_no_metadata_skips_silently(self, caplog):
-        """Missing metadata should not raise, just debug log."""
+        """None metadata should not raise, just debug log."""
         encoder = self._make_encoder()
-        mock_file = MagicMock()
-        mock_file.__enter__ = MagicMock(return_value=mock_file)
-        mock_file.__exit__ = MagicMock(return_value=False)
-        mock_file.metadata.return_value = None
 
-        with patch("safetensors.safe_open", return_value=mock_file):
-            with caplog.at_level(logging.DEBUG):
-                encoder._validate_connector_config({}, "/fake/path.safetensors")
+        with caplog.at_level(logging.DEBUG):
+            encoder._validate_connector_config({}, None)
 
         assert "skipping validation" in caplog.text.lower()
 
-    def test_file_read_error_skips_silently(self, caplog):
-        """File read errors should not raise, just debug log."""
+    def test_missing_config_key_skips_silently(self, caplog):
+        """Metadata without 'config' key should not raise, just debug log."""
         encoder = self._make_encoder()
 
-        with patch("safetensors.safe_open", side_effect=FileNotFoundError("no file")):
-            with caplog.at_level(logging.DEBUG):
-                encoder._validate_connector_config({}, "/nonexistent/path.safetensors")
+        with caplog.at_level(logging.DEBUG):
+            encoder._validate_connector_config({}, {"other_key": "value"})
 
-        assert "could not read" in caplog.text.lower()
+        assert "skipping validation" in caplog.text.lower()
+
+    def test_invalid_json_skips_silently(self, caplog):
+        """Invalid JSON in metadata config should not raise, just debug log."""
+        encoder = self._make_encoder()
+
+        with caplog.at_level(logging.DEBUG):
+            encoder._validate_connector_config({}, {"config": "not valid json {"})
+
+        assert "could not parse" in caplog.text.lower()

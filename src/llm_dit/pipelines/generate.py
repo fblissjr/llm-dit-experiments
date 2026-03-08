@@ -329,6 +329,7 @@ class GenerationConfig:
     num_inference_steps: int = 50
     guidance_scale: float = 3.0
     seed: Optional[int] = None
+    fps: float = 24.0  # LTX-2.3 native frame rate
 
     # Scheduler parameters
     base_shift: float = 0.95
@@ -697,7 +698,7 @@ def generate_video(
             height=config.height,
             width=config.width,
             device=device,
-            fps=24.0,
+            fps=config.fps,
             scale_factors=(8, 32, 32),  # LTX-2 VAE compression factors
             causal_fix=True,
         )
@@ -2113,7 +2114,7 @@ def generate_video_two_stage(
         video_only = True
 
     # Initialize latent noise at half resolution
-    fps = 24.0  # LTX-2.3 native frame rate
+    fps = config.fps
     t_latent, h_latent, w_latent = stage1_config.latent_dims
     num_tokens = stage1_config.num_tokens
 
@@ -2387,7 +2388,7 @@ def generate_video_two_stage(
         height=config.height,
         width=config.width,
         device=torch.device(transformer_device),
-        fps=24.0,
+        fps=fps,
         scale_factors=(8, 32, 32),
         causal_fix=True,
     )

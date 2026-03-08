@@ -861,7 +861,8 @@ class ModelManager:
         if encoder_model_id:
             text_encoder_path = encoder_model_id
 
-        logger.info(f"[LTX-2] Pre-loading Gemma3 encoder (variant={gemma_variant})...")
+        max_seq_len = ltx2_cfg.max_sequence_length if ltx2_cfg else 512
+        logger.info(f"[LTX-2] Pre-loading Gemma3 encoder (variant={gemma_variant}, max_seq_len={max_seq_len})...")
 
         connectors_file = ltx2_cfg.connectors_file if ltx2_cfg else "ltx-2.3-connectors.safetensors"
         if gemma_variant != "bf16":
@@ -872,7 +873,7 @@ class ModelManager:
                 text_encoder_path=text_encoder_path,
                 device="cpu",  # Load to CPU, shuttle to GPU per-request
                 dtype=torch.bfloat16,
-                max_sequence_length=512,
+                max_sequence_length=max_seq_len,
                 connectors_file=connectors_file,
             )
         else:
@@ -882,7 +883,7 @@ class ModelManager:
                 model_id=text_encoder_path,
                 device="cpu",
                 dtype=torch.bfloat16,
-                max_sequence_length=512,
+                max_sequence_length=max_seq_len,
                 connectors_path=connectors_path,
             )
             self._ltx2_encoder._load_model()

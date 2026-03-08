@@ -842,6 +842,40 @@ class TestLTX2ConfigFields:
         assert config.ltx2.model_path == "/tmp/ltx2"
         assert not hasattr(config.ltx2, "model_version")
 
+    def test_max_sequence_length_in_config(self):
+        """max_sequence_length must be a field on LTX2Config."""
+        from llm_dit.config import LTX2Config
+
+        fields = get_dataclass_fields(LTX2Config)
+        assert "max_sequence_length" in fields, (
+            "max_sequence_length should be configurable on LTX2Config"
+        )
+
+    def test_max_sequence_length_default_512(self):
+        """max_sequence_length default should be 512."""
+        from llm_dit.config import LTX2Config
+
+        cfg = LTX2Config()
+        assert cfg.max_sequence_length == 512
+
+
+class TestGenerationConfigFPS:
+    """Verify FPS flows through GenerationConfig."""
+
+    def test_generation_config_has_fps(self):
+        """GenerationConfig must have an fps field."""
+        from llm_dit.pipelines.generate import GenerationConfig
+
+        fields = get_dataclass_fields(GenerationConfig)
+        assert "fps" in fields, "GenerationConfig should carry fps"
+
+    def test_generation_config_fps_default_24(self):
+        """GenerationConfig fps default should be 24.0."""
+        from llm_dit.pipelines.generate import GenerationConfig
+
+        cfg = GenerationConfig()
+        assert cfg.fps == 24.0
+
 
 if __name__ == "__main__":
     run_consistency_check()

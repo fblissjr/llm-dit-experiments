@@ -224,7 +224,7 @@ class EncoderFactory:
         text_encoder_path: Optional[str] = None,
         device: str = "cuda",
         dtype: torch.dtype = torch.bfloat16,
-        max_sequence_length: int = 256,
+        max_sequence_length: int = 512,
         use_connector: bool = True,
     ) -> "Gemma3Encoder":
         """
@@ -247,7 +247,7 @@ class EncoderFactory:
                 For q4-qat: specify path to Q4 QAT model
             device: Device to load on ("cuda", "cpu", "auto").
             dtype: Model dtype (bfloat16 recommended).
-            max_sequence_length: Maximum sequence length (256 for LTX-2).
+            max_sequence_length: Maximum sequence length (512 for LTX-2 V2.3).
             use_connector: Whether to use Embeddings1DConnector.
 
         Returns:

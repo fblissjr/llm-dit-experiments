@@ -335,6 +335,7 @@ class LTX2Config:
 
     # Text encoder (Gemma 3-12B)
     encoder_model_id: str = ""
+    max_sequence_length: int = 512  # Token count through connector (128 are learnable registers)
     # Prompt enhancement
     enhance_prompt: bool = False  # Use Gemma3 to expand prompt before encoding
 
@@ -350,7 +351,7 @@ class LTX2Config:
     height: int = 512  # Video height (multiple of 32, ref: DEFAULT_1_STAGE_HEIGHT)
     width: int = 768  # Video width (multiple of 32, ref: DEFAULT_1_STAGE_WIDTH)
     num_frames: int = 33  # Number of frames (33-65 typical for 24GB)
-    fps: int = 24  # Output FPS
+    fps: float = 24.0  # Output FPS
     num_inference_steps: int = 30  # Stage 1 steps (official V2.3 default)
     guidance_scale: float = 3.0  # CFG scale (ref: DEFAULT_VIDEO_GUIDER_PARAMS.cfg_scale)
 
@@ -1639,7 +1640,7 @@ class RuntimeConfig:
         return self.ltx2.num_frames
 
     @property
-    def ltx2_fps(self) -> int:
+    def ltx2_fps(self) -> float:
         return self.ltx2.fps
 
     @property
