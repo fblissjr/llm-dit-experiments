@@ -372,12 +372,13 @@ async def ltx2_generate_stream(request: LTX2GenerateRequest, config: ConfigDep, 
 
             # Unpack audio+video tuple when audio is enabled
             if isinstance(gen_result, tuple):
-                video, audio_waveform = gen_result
+                video, audio_waveform, audio_sr = gen_result
                 has_audio = True
             else:
                 assert isinstance(gen_result, torch.Tensor)
                 video = gen_result
                 audio_waveform = None
+                audio_sr = 24000
                 has_audio = False
 
             yield f"data: {json.dumps({'type': 'status', 'message': 'Saving video...'})}\n\n"
@@ -398,7 +399,7 @@ async def ltx2_generate_stream(request: LTX2GenerateRequest, config: ConfigDep, 
                 audio_filename = f"audio_{timestamp}_{hash_suffix}.wav"
                 audio_path = VIDEO_OUTPUT_DIR / audio_filename
                 await asyncio.get_event_loop().run_in_executor(
-                    None, lambda: save_audio_wav(audio_waveform, str(audio_path))
+                    None, lambda: save_audio_wav(audio_waveform, str(audio_path), sample_rate=audio_sr)
                 )
 
             # Generate thumbnail (first frame)

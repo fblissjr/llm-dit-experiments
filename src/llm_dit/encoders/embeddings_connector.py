@@ -308,6 +308,8 @@ class Attention(nn.Module):
     Multi-head attention with RoPE support.
 
     Supports both self-attention and cross-attention.
+    Optional per-head gated attention (V2.3): gate = 2 * sigmoid(logits),
+    applied BEFORE to_out projection. Zero-init gives identity (2 * 0.5 = 1.0).
     """
 
     def __init__(
@@ -318,6 +320,7 @@ class Attention(nn.Module):
         dim_head: int = 128,
         norm_eps: float = 1e-6,
         rope_type: RopeType = RopeType.INTERLEAVED,
+        apply_gated_attention: bool = False,
     ):
         super().__init__()
         self.rope_type = rope_type
@@ -336,6 +339,12 @@ class Attention(nn.Module):
         # Note: naming matches checkpoint keys (norm_q, norm_k)
         self.q_norm = nn.RMSNorm(inner_dim, eps=norm_eps)
         self.k_norm = nn.RMSNorm(inner_dim, eps=norm_eps)
+
+        # Per-head gating (V2.3): applied before output projection
+        if apply_gated_attention:
+            self.to_gate_logits = nn.Linear(query_dim, heads, bias=True)
+        else:
+            self.to_gate_logits = None
 
         # Output projection
         self.to_out = nn.Sequential(
@@ -384,6 +393,15 @@ class Attention(nn.Module):
 
         # Reshape back
         out = out.transpose(1, 2).reshape(b, seq_len, self.heads * self.dim_head)
+
+        # Per-head gating: 2 * sigmoid(x), applied BEFORE to_out
+        if self.to_gate_logits is not None:
+            gate_logits = self.to_gate_logits(x)  # [B, T, heads]
+            gates = 2.0 * torch.sigmoid(gate_logits)
+            out = out.view(b, seq_len, self.heads, self.dim_head)
+            out = out * gates.unsqueeze(-1)
+            out = out.view(b, seq_len, self.heads * self.dim_head)
+
         return self.to_out(out)
 
 
@@ -410,13 +428,9 @@ class BasicTransformerBlock1D(nn.Module):
             heads=heads,
             dim_head=dim_head,
             rope_type=rope_type,
+            apply_gated_attention=apply_gated_attention,
         )
         self.ff = FeedForward(dim, dim_out=dim)
-
-        # V2.3: per-head sigmoid gate on attention output
-        self.apply_gated_attention = apply_gated_attention
-        if apply_gated_attention:
-            self.attn1.to_gate_logits = nn.Linear(dim, heads, bias=True)
 
     def forward(
         self,
@@ -424,22 +438,12 @@ class BasicTransformerBlock1D(nn.Module):
         attention_mask: Optional[torch.Tensor] = None,
         pe: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
     ) -> torch.Tensor:
-        # 1. Pre-norm self-attention
+        # 1. Pre-norm self-attention (gating handled inside Attention)
         norm_hidden_states = rms_norm(hidden_states)
         if norm_hidden_states.ndim == 4:
             norm_hidden_states = norm_hidden_states.squeeze(1)
 
         attn_output = self.attn1(norm_hidden_states, mask=attention_mask, pe=pe)
-
-        # V2.3: per-head sigmoid gate on attention output
-        if self.apply_gated_attention and hasattr(self.attn1, "to_gate_logits"):
-            gate = self.attn1.to_gate_logits(norm_hidden_states)  # [B, T, heads]
-            gate = torch.sigmoid(gate)
-            # Reshape attn_output to [B, T, heads, dim_head], apply gate, reshape back
-            b, t, d = attn_output.shape
-            attn_output = attn_output.view(b, t, self.attn1.heads, self.attn1.dim_head)
-            attn_output = attn_output * gate.unsqueeze(-1)
-            attn_output = attn_output.view(b, t, d)
 
         hidden_states = attn_output + hidden_states
 
@@ -498,7 +502,7 @@ class Embeddings1DConnector(nn.Module):
         self.inner_dim = num_attention_heads * attention_head_dim
         self.positional_embedding_theta = positional_embedding_theta
         self.positional_embedding_max_pos = (
-            positional_embedding_max_pos if positional_embedding_max_pos is not None else [1]
+            positional_embedding_max_pos if positional_embedding_max_pos is not None else [4096]
         )
         self.rope_type = rope_type
         self.use_double_precision_rope = use_double_precision_rope
@@ -664,7 +668,7 @@ class Embeddings1DConnector(nn.Module):
         """Create connector from config dict."""
         rope_type = RopeType(config.get("rope_type", "interleaved"))
         use_double_precision = config.get("rope_double_precision", False)
-        max_pos = config.get("connector_positional_embedding_max_pos", [1])
+        max_pos = config.get("connector_positional_embedding_max_pos", [4096])
 
         return cls(
             attention_head_dim=config.get("video_connector_attention_head_dim", 128),

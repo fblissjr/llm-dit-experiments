@@ -329,7 +329,7 @@ class LTX2Config:
     connectors_file: str = "ltx-2.3-connectors.safetensors"  # V2.3 connectors + aggregate embeds
 
     # Two-stage pipeline files (reference: TI2VidTwoStagesPipeline)
-    spatial_upsampler_file: str = "ltx-2-spatial-upscaler-x2-1.0.safetensors"
+    spatial_upsampler_file: str = "ltx-2.3-spatial-upscaler-x2-1.0.safetensors"
     distilled_lora_path: str = ""  # Distilled LoRA for stage 2 refinement
     distilled_lora_scale: float = 1.0  # Distilled LoRA blend strength (ref: 1.0)
 

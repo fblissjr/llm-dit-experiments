@@ -18,10 +18,10 @@ from llm_dit.models.ltx2.upsampler.model_configurator import LatentUpsamplerConf
 
 logger = logging.getLogger(__name__)
 
-# Default config matching the released ltx-2-spatial-upscaler-x2-1.0.safetensors
+# Default config matching the released ltx-2.3-spatial-upscaler-x2-1.0.safetensors
 DEFAULT_UPSAMPLER_CONFIG = {
     "in_channels": 128,
-    "mid_channels": 512,
+    "mid_channels": 1024,
     "num_blocks_per_stage": 4,
     "dims": 3,
     "spatial_upsample": True,

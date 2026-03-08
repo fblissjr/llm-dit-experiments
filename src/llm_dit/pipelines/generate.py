@@ -1849,10 +1849,10 @@ def _denoise_av_stage(
 
             step_elapsed = time.perf_counter() - step_start
             step_times.append(step_elapsed)
-            if i == 0:
+            if i == 0 or i == num_steps - 1 or (i + 1) % 5 == 0:
                 logger.debug(
-                    f"[{stage_name}:Step 0] video latent std={video_latents.std():.4f}, "
-                    f"audio latent std={audio_latents.std():.4f}, "
+                    f"[{stage_name}:Step {i}] video_std={video_latents.std():.4f}, "
+                    f"audio_std={audio_latents.std():.4f}, "
                     f"sigma={sigma:.4f}->{sigma_next:.4f}"
                 )
             if i == 0 or (i + 1) % 10 == 0 or i == num_steps - 1:
@@ -1895,7 +1895,7 @@ def generate_video_two_stage(
     audio_guidance_scale: float = 7.0,
     cached_audio_decoder: Optional[Any] = None,
     cached_vocoder: Optional[Any] = None,
-) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor, int]]:
     """Generate video using two-stage pipeline with spatial upsampling.
 
     Reference: TI2VidTwoStagesPipeline from official LTX-2 repo.
@@ -2507,8 +2507,9 @@ def generate_video_two_stage(
             vocoder = cached_vocoder.to(vae_device)
             with torch.no_grad():
                 audio_waveform = vocoder(mel)
+            audio_sample_rate = vocoder.output_sample_rate
             vocoder.to("cpu")
-            logger.info("Cached vocoder returned to CPU")
+            logger.info(f"Cached vocoder returned to CPU (output_rate={audio_sample_rate}Hz)")
         else:
             from llm_dit.models.ltx2.audio_vae.loader import load_vocoder
             vocoder = load_vocoder(
@@ -2516,6 +2517,7 @@ def generate_video_two_stage(
             )
             with torch.no_grad():
                 audio_waveform = vocoder(mel)
+            audio_sample_rate = vocoder.output_sample_rate
             del vocoder
 
         del mel, audio_latents_4d, audio_latents
@@ -2529,6 +2531,7 @@ def generate_video_two_stage(
         logger.info(f"Stage 4 complete: {stage4_elapsed:.1f}s")
     else:
         stage4_elapsed = 0.0
+        audio_sample_rate = 24000
 
     gen_elapsed = time.perf_counter() - gen_start
     timing = (
@@ -2541,5 +2544,5 @@ def generate_video_two_stage(
     logger.info(f"Two-stage generation complete: {gen_elapsed:.1f}s total ({timing})")
 
     if audio_waveform is not None:
-        return video, audio_waveform
+        return video, audio_waveform, audio_sample_rate
     return video

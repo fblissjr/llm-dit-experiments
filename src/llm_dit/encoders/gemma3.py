@@ -810,7 +810,7 @@ class Gemma3Encoder(PinnedShuttleMixin):
                     "rope_type": "interleaved",
                     "rope_theta": 10000.0,
                     "rope_double_precision": False,
-                    "connector_positional_embedding_max_pos": [1],
+                    "connector_positional_embedding_max_pos": [4096],
                     "apply_gated_attention": True,
                 }
                 audio_config = {
