@@ -371,10 +371,10 @@ class TestDocumentation:
         )
 
     def test_dry_principles_documented(self):
-        """DRY Configuration Principles should be in CLAUDE.md."""
+        """DRY configuration rules should be in CLAUDE.md."""
         claude_md = PROJECT_ROOT / "CLAUDE.md"
-        assert check_string_in_file(claude_md, "DRY Configuration Principles"), (
-            "CLAUDE.md should have DRY Configuration Principles section"
+        assert check_string_in_file(claude_md, "configuration rules"), (
+            "CLAUDE.md should have configuration rules section"
         )
 
 

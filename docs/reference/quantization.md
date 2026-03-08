@@ -314,7 +314,6 @@ Both LTX-2 and FLUX.2 Klein have official fp8 safetensors published by the model
 | Model | Repository | File |
 |-------|-----------|------|
 | LTX-2.3 dev fp8 | `Lightricks/LTX-2.3` | Split fp8 safetensors in `models/LTX-2.3/` |
-| LTX-2.3 GGUF | `unsloth/LTX-2.3-GGUF` | `ltx-2.3-22b-dev-Q6_K.gguf` |
 | FLUX.2 Klein 9B fp8 | `black-forest-labs/FLUX.2-klein-9b-fp8` | HF repo |
 | FLUX.2 Klein 4B fp8 | `black-forest-labs/FLUX.2-klein-4b-fp8` | HF repo |
 

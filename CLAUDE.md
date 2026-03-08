@@ -27,6 +27,7 @@ Quick reference for LLM agents. This is a hobbyist exploration platform -- not a
 - Adding a new config parameter: only **2 touchpoints** (dataclass field + config.toml). Validate with `tests/unit/test_dry_config.py`. Check existing fields BEFORE adding new ones.
 - All routers use `resolve_param()` from `web/param_resolver.py`. Precedence: client-sent > config.toml > schema default. Uses `model_fields_set` (NOT `or`, NOT `is not None`). Use `skip_none=True` for Optional fields where None = "no override". Falsy values (0, 0.0, "") are preserved when explicitly sent.
 - Infrastructure params (model paths, devices, quantization) always from config -- never through `resolve_param`.
+- CLI overrides for encoder config: `--hidden-layer` (int, default -2) selects Gemma3 hidden layer for feature extraction.
 - Details: [post_refactor_guide.md](internal/docs/architecture/post_refactor_guide.md)
 
 ### onboarding (3 steps)
