@@ -96,13 +96,20 @@ def save_audio_wav(waveform: torch.Tensor, path: str, sample_rate: int = 24000) 
     Returns:
         Path to saved WAV file.
     """
+    import wave
+
     import numpy as np
-    import scipy.io.wavfile
 
     audio = waveform.squeeze(0).float().cpu().clamp(-1.0, 1.0)
-    # scipy expects (samples, channels) for multichannel
-    audio_np = audio.numpy().T  # [channels, samples] -> [samples, channels]
-    scipy.io.wavfile.write(path, sample_rate, (audio_np * 32767).astype(np.int16))
+    # [channels, samples] -> [samples, channels] -> int16
+    audio_np = audio.numpy().T
+    pcm = (audio_np * 32767).astype(np.int16)
+    n_channels = pcm.shape[1] if pcm.ndim == 2 else 1
+    with wave.open(path, "wb") as wf:
+        wf.setnchannels(n_channels)
+        wf.setsampwidth(2)  # 16-bit
+        wf.setframerate(sample_rate)
+        wf.writeframes(pcm.tobytes())
     logger.info(f"[LTX-2] Saved audio to {path}")
     return path
 

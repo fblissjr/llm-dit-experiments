@@ -2029,7 +2029,10 @@ def generate_video_two_stage(
         if audio_negative_prompt:
             logger.info("Encoding audio negative prompt...")
             audio_neg_output = text_encoder.encode([audio_negative_prompt])
-            audio_neg_embeds = audio_neg_output.embeddings[0].unsqueeze(0)
+            if audio_neg_output.audio_embeddings is not None:
+                audio_neg_embeds = audio_neg_output.audio_embeddings[0].unsqueeze(0)
+            else:
+                logger.warning("Audio negative prompt produced no audio embeddings, using zeros")
         elif neg_output.audio_embeddings is not None:
             # Fall back to negative prompt's audio embeddings
             audio_neg_embeds = neg_output.audio_embeddings[0].unsqueeze(0)
