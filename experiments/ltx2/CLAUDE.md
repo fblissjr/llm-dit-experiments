@@ -182,11 +182,11 @@ hidden_states = [h * scale_factor for h in hidden_states]
 # Option 3: Use higher bit quantization (8-bit less affected than 4-bit)
 ```
 
-### GGUF Models (Encoder only -- NOT COMPATIBLE)
+### GGUF Models (NOT COMPATIBLE)
 
 **Compatibility**: **NOT COMPATIBLE for the encoder (Gemma3)**. GGUF/llama.cpp does not expose intermediate hidden states. Would require C++ modifications. Not worth pursuing.
 
-**Note:** The *transformer* (DiT) does support GGUF quantization -- see root CLAUDE.md for `gguf_transformer_path` config. This section is about the Gemma3 text *encoder* only.
+**Note:** GGUF transformer support was added in v0.9.18 and removed in v0.9.25 (neither the official LTX-2 repo nor DiffSynth-Studio uses GGUF). This section is about the Gemma3 text *encoder* only.
 
 ### Recommendation Matrix
 

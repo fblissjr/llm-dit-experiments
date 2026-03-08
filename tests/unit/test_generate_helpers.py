@@ -160,3 +160,38 @@ class TestLoadTransformerAndLora:
             )
 
         assert model is mock_model
+
+
+class TestTwoStageDivisibilityGuard:
+    """Test 64-divisibility guard in generate_video_two_stage."""
+
+    @pytest.mark.parametrize(
+        "height,width",
+        [
+            (448, 640),   # 64-divisible: should pass
+            (512, 768),   # 64-divisible: should pass
+            (256, 384),   # 64-divisible: should pass
+        ],
+    )
+    def test_valid_dimensions_pass_guard(self, height, width):
+        """64-divisible dimensions should not raise ValueError."""
+        from llm_dit.pipelines.generate import _validate_two_stage_dimensions
+
+        # Should not raise
+        _validate_two_stage_dimensions(height, width)
+
+    @pytest.mark.parametrize(
+        "height,width",
+        [
+            (480, 672),   # 672 % 64 == 32
+            (544, 736),   # 736 % 64 == 32
+            (352, 480),   # 352 % 64 == 32
+            (96, 96),     # 96 % 64 == 32
+        ],
+    )
+    def test_non_64_divisible_raises(self, height, width):
+        """Non-64-divisible dimensions should raise ValueError."""
+        from llm_dit.pipelines.generate import _validate_two_stage_dimensions
+
+        with pytest.raises(ValueError, match="divisible by 64"):
+            _validate_two_stage_dimensions(height, width)

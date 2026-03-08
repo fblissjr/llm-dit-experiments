@@ -55,6 +55,20 @@ from llm_dit.utils.memory import cleanup_memory
 logger = logging.getLogger(__name__)
 
 
+def _validate_two_stage_dimensions(height: int, width: int) -> None:
+    """Validate that dimensions are divisible by 64 for two-stage generation.
+
+    Two-stage halves both dimensions for stage 1 (height/2, width/2).
+    Since the base model requires 32-divisibility, the full resolution
+    must be 64-divisible so that the halved resolution is 32-divisible.
+    """
+    if height % 64 != 0 or width % 64 != 0:
+        raise ValueError(
+            f"Two-stage requires height and width divisible by 64, "
+            f"got {height}x{width}"
+        )
+
+
 def _resolve_quantize(quantize: str) -> tuple[bool, str]:
     """Normalize quantize string shorthand to (should_quantize, precision) tuple.
 
@@ -1930,6 +1944,8 @@ def generate_video_two_stage(
             "Without it, the base model cannot denoise in 3 steps and will produce garbage output. "
             "Set distilled_lora_scale=0 to skip the distilled LoRA entirely."
         )
+
+    _validate_two_stage_dimensions(config.height, config.width)
 
     effective_quantize, effective_precision = _resolve_quantize(quantize)
     model_path = Path(model_path)
