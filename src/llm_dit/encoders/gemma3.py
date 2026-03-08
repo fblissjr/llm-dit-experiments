@@ -485,7 +485,7 @@ class Gemma3Encoder(PinnedShuttleMixin):
         model_id: str = "models/LTX-2/text_encoder",
         device: str = "cuda",
         dtype: torch.dtype = torch.bfloat16,
-        max_sequence_length: int = 256,
+        max_sequence_length: int = 512,
         quantization_variant: str = "bf16",
         max_memory: Optional[dict] = None,
         connectors_path: Optional[str] = None,
@@ -535,7 +535,7 @@ class Gemma3Encoder(PinnedShuttleMixin):
         model_path: str = "models/LTX-2/text_encoder",
         device: str = "cuda",
         dtype: str = "bfloat16",
-        max_sequence_length: int = 256,
+        max_sequence_length: int = 512,
         quantization: Optional[str] = None,
         max_memory: Optional[dict] = None,
         connectors_path: Optional[str] = None,
@@ -818,6 +818,9 @@ class Gemma3Encoder(PinnedShuttleMixin):
                     "video_connector_attention_head_dim": 64,  # Audio uses 64 head_dim
                 }
 
+                # Validate hardcoded config against safetensors metadata
+                self._validate_connector_config(video_config, connectors_path)
+
                 # Video connector
                 self._embeddings_connector = Embeddings1DConnector.from_config(video_config)
                 load_connector_weights(
@@ -834,6 +837,48 @@ class Gemma3Encoder(PinnedShuttleMixin):
                         prefix="model.diffusion_model.audio_embeddings_connector.",
                     )
                     logger.info("Loaded V2.3 audio embeddings connector (8 blocks, gated)")
+
+    def _validate_connector_config(self, config: dict, connectors_path: str) -> None:
+        """Compare hardcoded connector config against safetensors metadata.
+
+        Logs warnings for mismatches. Does not fail -- some configs may
+        intentionally differ. Guards against silent config drift like the
+        max_pos [1] vs [4096] bug.
+        """
+        from safetensors import safe_open
+
+        try:
+            with safe_open(connectors_path, framework="pt") as f:
+                metadata = f.metadata()
+                if not metadata or "config" not in metadata:
+                    logger.debug("No config metadata in connectors file, skipping validation")
+                    return
+                file_config = json.loads(metadata["config"])
+        except Exception as e:
+            logger.debug(f"Could not read connector metadata for validation: {e}")
+            return
+
+        key_map = {
+            "video_connector_attention_head_dim": "video_connector_attention_head_dim",
+            "video_connector_num_attention_heads": "video_connector_num_attention_heads",
+            "video_connector_num_layers": "video_connector_num_layers",
+            "video_connector_num_learnable_registers": "video_connector_num_learnable_registers",
+            "connector_positional_embedding_max_pos": "connector_positional_embedding_max_pos",
+            "apply_gated_attention": "apply_gated_attention",
+        }
+        mismatches = []
+        for our_key, meta_key in key_map.items():
+            if meta_key in file_config and our_key in config:
+                if config[our_key] != file_config[meta_key]:
+                    mismatches.append(
+                        f"  {our_key}: ours={config[our_key]}, metadata={file_config[meta_key]}"
+                    )
+        if mismatches:
+            logger.warning(
+                "Connector config mismatches vs safetensors metadata:\n" + "\n".join(mismatches)
+            )
+        else:
+            logger.debug("Connector config matches safetensors metadata")
 
     def _load_ltx2_gemma_weights(self) -> dict:
         """Load and remap Gemma weights from checkpoint shards.

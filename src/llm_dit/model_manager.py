@@ -872,6 +872,7 @@ class ModelManager:
                 text_encoder_path=text_encoder_path,
                 device="cpu",  # Load to CPU, shuttle to GPU per-request
                 dtype=torch.bfloat16,
+                max_sequence_length=512,
                 connectors_file=connectors_file,
             )
         else:
@@ -881,6 +882,7 @@ class ModelManager:
                 model_id=text_encoder_path,
                 device="cpu",
                 dtype=torch.bfloat16,
+                max_sequence_length=512,
                 connectors_path=connectors_path,
             )
             self._ltx2_encoder._load_model()

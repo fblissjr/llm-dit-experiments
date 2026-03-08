@@ -68,7 +68,7 @@ def create_gemma3_encoder(
     text_encoder_path: Optional[str] = None,
     device: str = "cuda",
     dtype: torch.dtype = torch.bfloat16,
-    max_sequence_length: int = 256,
+    max_sequence_length: int = 512,
     use_connector: bool = True,
     connectors_file: str = DEFAULT_CONNECTORS_FILE,
     model_version: str = "auto",  # kept for signature compat; ignored

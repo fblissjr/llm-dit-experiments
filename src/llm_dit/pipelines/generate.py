@@ -2113,6 +2113,7 @@ def generate_video_two_stage(
         video_only = True
 
     # Initialize latent noise at half resolution
+    fps = 24.0  # LTX-2.3 native frame rate
     t_latent, h_latent, w_latent = stage1_config.latent_dims
     num_tokens = stage1_config.num_tokens
 
@@ -2133,7 +2134,7 @@ def generate_video_two_stage(
         height=stage1_config.height,
         width=stage1_config.width,
         device=torch.device(transformer_device),
-        fps=24.0,
+        fps=fps,
         scale_factors=(8, 32, 32),
         causal_fix=True,
     )
@@ -2144,7 +2145,7 @@ def generate_video_two_stage(
     audio_noise: Optional[torch.Tensor] = None
     audio_latent_frames = 0
     if not video_only:
-        audio_latent_frames = compute_audio_latent_frames(config.num_frames)
+        audio_latent_frames = compute_audio_latent_frames(config.num_frames, fps=fps)
         audio_latents = torch.randn(
             (1, audio_latent_frames, 128),
             generator=generator,
@@ -2157,8 +2158,13 @@ def generate_video_two_stage(
             device=torch.device(transformer_device),
         )
         # Save audio noise for stage 2 re-noising
-        audio_noise = torch.randn_like(audio_latents)
-        logger.info(f"Audio: {audio_latent_frames} latent frames ({config.num_frames / 24.0:.2f}s)")
+        audio_noise = torch.randn(
+            audio_latents.shape,
+            generator=generator,
+            device=audio_latents.device,
+            dtype=audio_latents.dtype,
+        )
+        logger.info(f"Audio: {audio_latent_frames} latent frames ({config.num_frames / fps:.2f}s)")
 
     # Sigma schedule for stage 1
     if two_stage.use_distilled_sigmas:
