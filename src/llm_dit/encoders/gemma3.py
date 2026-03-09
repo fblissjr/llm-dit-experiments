@@ -805,7 +805,7 @@ class Gemma3Encoder(PinnedShuttleMixin):
                     "video_connector_num_attention_heads": 32,
                     "video_connector_num_layers": 8,
                     "video_connector_num_learnable_registers": 128,
-                    "rope_type": "interleaved",
+                    "rope_type": "split",
                     "rope_theta": 10000.0,
                     "rope_double_precision": False,
                     "connector_positional_embedding_max_pos": [4096],
@@ -864,6 +864,7 @@ class Gemma3Encoder(PinnedShuttleMixin):
             "video_connector_num_learnable_registers": "video_connector_num_learnable_registers",
             "connector_positional_embedding_max_pos": "connector_positional_embedding_max_pos",
             "apply_gated_attention": "apply_gated_attention",
+            "rope_type": "rope_type",
         }
         mismatches = []
         for our_key, meta_key in key_map.items():

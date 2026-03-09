@@ -45,22 +45,23 @@ def main():
     print(f"Model path: {model_path}")
     print(f"{'='*60}\n")
 
-    # Small resolution for speed/VRAM
+    # Use distilled schedule for production-quality diagnosis
     gen_config = GenerationConfig(
         num_frames=9,       # Minimum viable (1 latent frame + 1)
-        height=256,
-        width=256,
+        height=512,
+        width=512,
         seed=42,
         fps=ltx2_cfg.fps,
     )
 
     two_stage = TwoStageConfig(
-        stage1_steps=8,     # Fewer steps for diagnosis
+        stage1_steps=8,     # Distilled 8-step schedule
         guidance_scale=3.0,
         stage2_steps=3,
         distilled_lora_path=ltx2_cfg.distilled_lora_path,
         distilled_lora_scale=1.0,
         spatial_upsampler_file=ltx2_cfg.spatial_upsampler_file,
+        use_distilled_sigmas=True,  # Use predefined distilled sigma schedule
         stg_scale=0.0,      # Disable STG for simplicity
         modality_scale=1.0,  # Disable modality guidance
         rescale_scale=0.0,   # Disable rescaling
