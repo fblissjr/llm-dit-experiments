@@ -1364,7 +1364,8 @@ class ModelManager:
             logger.info("[Qwen-Image Edit] On-demand mode")
             return LoadResult(mode="qwenimage-edit_ondemand")
         elif model_type == "ltx2":
-            return self._load_ltx2_full()
+            logger.info("[LTX-2] On-demand mode (loaded via /api/ltx2/generate)")
+            return LoadResult(pipeline=None, encoder=None, mode="ltx2_ondemand")
         elif model_type == "wan":
             return self._load_wan()
 
@@ -1448,19 +1449,6 @@ class ModelManager:
             if zimage_pipeline.vae is not None
             else None,
         )
-
-    def _load_ltx2_full(self) -> LoadResult:
-        """LTX-2 startup info (PipelineLoader compatibility)."""
-        config = self.config
-        ltx2_model_path = getattr(config, "ltx2_model_path", "")
-
-        logger.info("=" * 60)
-        logger.info("LTX-2 VIDEO MODE")
-        logger.info("=" * 60)
-        logger.info("LTX-2 uses on-demand loading via /api/ltx2/generate")
-        logger.info(f"  Model path: {ltx2_model_path}")
-
-        return LoadResult(pipeline=None, encoder=None, mode="ltx2_ondemand")
 
     def _load_encoder_only(self) -> LoadResult:
         """Load only the text encoder (PipelineLoader compatibility)."""

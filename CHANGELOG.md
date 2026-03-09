@@ -6,6 +6,26 @@ last updated: 2026-03-09
 All notable changes to this project will be documented in this file.
 Uses [Semantic Versioning](https://semver.org/).
 
+## 0.9.27
+
+### removed
+- **`use_distilled_sigmas` flag** from TwoStageConfig, LTX2Config, web schema, UI schema, config.toml. Replaced with `pipeline_mode: str` (values: `"standard"`, `"distilled"`). The boolean conflated two incompatible architectures: distilled-checkpoint-no-CFG vs base+LoRA-with-CFG.
+- **`stage2_steps` parameter** from TwoStageConfig, LTX2Config (`stage2_num_inference_steps`), web schema, UI schema. Was dead -- only used for progress callback. Stage 2 always uses hardcoded `STAGE_2_DISTILLED_SIGMA_VALUES` (3 steps).
+- **`num_inference_steps` field** from LTX2Config (duplicate of `stage1_num_inference_steps`). Single-stage was removed in v0.9.20.
+- **`load_ltx2_transformer_quantized()`** from ltx2 loader. Imported deleted `llm_dit.utils.quantization` module. Replaced by fp8-cast loading in v0.9.21.
+- **`load_ltx2_from_diffusers()`** from ltx2 loader. V2.3 doesn't use diffusers format.
+- **`get_model_info()`** from ltx2 loader. Crude parameter estimates, zero callers.
+- **`_fuse_delta_into_weight()`** from lora.py. Zero callers, replaced by `_fuse_delta()` with weight_scale handling.
+- **`_load_ltx2_full()`** from ModelManager. Only called from deprecated `_register_pipeline_loader()`.
+- **`stg_start_step` / `stg_end_step`** UI controls from ltx2 schema. Had `config_mapped=False` and no corresponding API fields.
+
+### fixed
+- **TwoStageConfig `stage1_steps` default 40 -> 30.** Was the V2.0 default; V2.3 uses 30. Config.toml already overrode to 30, but the dataclass default was wrong.
+- **Scheduler token count divergence.** `generate.py` created a `mock_latent` tensor to pass to `LTX2Scheduler.execute()`, producing resolution-dependent sigma schedules. Reference uses `default_number_of_tokens=4096` (no latent). Now passes `latent=None` to match.
+
+### added
+- **`pipeline_mode` field** on TwoStageConfig, LTX2Config, web schema, UI schema. Values: `"standard"` (base+LoRA, 30 steps, full guidance) and `"distilled"` (pre-distilled checkpoint, 8 steps, no guidance).
+
 ## 0.9.26
 
 ### fixed

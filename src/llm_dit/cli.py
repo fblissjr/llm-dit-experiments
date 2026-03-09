@@ -595,7 +595,7 @@ def _apply_cli_overrides(args: argparse.Namespace, config: RuntimeConfig) -> Run
     _set_if(args, "ltx2_num_frames", config.ltx2, "num_frames")
     _set_if(args, "ltx2_fps", config.ltx2, "fps")
     _set_if(args, "ltx2_guidance_scale", config.ltx2, "guidance_scale")
-    _set_if(args, "ltx2_steps", config.ltx2, "num_inference_steps")
+    _set_if(args, "ltx2_steps", config.ltx2, "stage1_num_inference_steps")
     _set_if(args, "ltx2_lora_path", config.ltx2, "lora_path")
     _set_if(args, "ltx2_lora_scale", config.ltx2, "lora_scale")
     _set_flag(args, "ltx2_audio", config.ltx2, "audio_enabled")

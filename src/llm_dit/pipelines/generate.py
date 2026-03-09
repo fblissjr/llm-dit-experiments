@@ -774,12 +774,9 @@ def generate_video(
     # =========================================================================
     scheduler = LTX2Scheduler()
 
-    # Create mock latent for scheduler (it needs shape for token count)
-    mock_latent = torch.empty(1, 128, t_latent, h_latent, w_latent)
-
     sigmas = scheduler.execute(
         steps=config.num_inference_steps,
-        latent=mock_latent,
+        latent=None,  # Use reference default (4096 tokens)
         max_shift=config.max_shift,
         base_shift=config.base_shift,
         stretch=config.stretch,
@@ -1364,7 +1361,7 @@ class TwoStageConfig:
     """
 
     # Stage 1 (low-res denoising)
-    stage1_steps: int = 40
+    stage1_steps: int = 30
     guidance_scale: float = 3.0
 
     # Guidance options (stage 1 only)
@@ -1379,7 +1376,6 @@ class TwoStageConfig:
     ge_gamma: float = 0.0  # 0=disabled, 2.0=reference default
 
     # Stage 2 (high-res refinement)
-    stage2_steps: int = 3
     distilled_lora_path: str = ""
     distilled_lora_scale: float = 1.0
 
@@ -1389,8 +1385,9 @@ class TwoStageConfig:
     # FBCache
     fbcache_threshold: float = 0.0  # Block-skip threshold (0=disabled, 0.05=recommended)
 
-    # Distilled pipeline mode
-    use_distilled_sigmas: bool = False  # Use predefined sigma schedule (8 stage1 + 4 stage2 steps)
+    # Pipeline mode: "standard" (base+LoRA, 30 steps, full guidance) or
+    # "distilled" (pre-distilled checkpoint, 8 steps, no guidance)
+    pipeline_mode: str = "standard"
 
     def __post_init__(self):
         if self.stg_blocks is None:
@@ -2273,16 +2270,16 @@ def generate_video_two_stage(
         logger.info(f"Audio: {audio_latent_frames} latent frames ({config.num_frames / fps:.2f}s)")
 
     # Sigma schedule for stage 1
-    if two_stage.use_distilled_sigmas:
+    is_distilled = two_stage.pipeline_mode == "distilled"
+    if is_distilled:
         from llm_dit.models.ltx2.constants import DISTILLED_SIGMA_VALUES
         sigmas = torch.tensor(DISTILLED_SIGMA_VALUES, device=transformer_device, dtype=dtype)
         logger.info(f"Stage 1: Using distilled sigma schedule ({len(sigmas) - 1} steps, no CFG)")
     else:
         scheduler = LTX2Scheduler()
-        mock_latent = torch.empty(1, 128, t_latent, h_latent, w_latent)
         sigmas = scheduler.execute(
             steps=two_stage.stage1_steps,
-            latent=mock_latent,
+            latent=None,  # Use reference default (4096 tokens)
             max_shift=config.max_shift,
             base_shift=config.base_shift,
             stretch=config.stretch,
@@ -2301,7 +2298,7 @@ def generate_video_two_stage(
 
     # Denoise stage 1
     # Distilled mode: no CFG (guidance baked into model), no STG
-    if two_stage.use_distilled_sigmas:
+    if is_distilled:
         schedule = constant_schedule(guidance_scale=1.0)
     else:
         schedule = constant_schedule(
@@ -2428,7 +2425,8 @@ def generate_video_two_stage(
     # Only the distilled LoRA needs to be applied for Stage 2's 3-step schedule.
     stage2_start = time.perf_counter()
     if callback:
-        callback("stage2_denoise", 0, two_stage.stage2_steps)
+        from llm_dit.models.ltx2.constants import STAGE_2_DISTILLED_SIGMA_VALUES
+        callback("stage2_denoise", 0, len(STAGE_2_DISTILLED_SIGMA_VALUES) - 1)
 
     logger.info("Stage 2: Applying distilled LoRA for high-res refinement (reusing Stage 1 model)...")
 

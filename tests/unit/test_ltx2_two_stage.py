@@ -27,8 +27,8 @@ class TestTwoStageConfig:
 
     def test_default_values(self):
         cfg = TwoStageConfig()
-        assert cfg.stage1_steps == 40
-        assert cfg.stage2_steps == 3
+        assert cfg.stage1_steps == 30  # V2.3 default (was 40 in V2.0)
+        assert cfg.pipeline_mode == "standard"
         assert cfg.guidance_scale == 3.0  # ref: DEFAULT_VIDEO_GUIDER_PARAMS.cfg_scale
         assert cfg.stg_scale == 1.0  # ref: DEFAULT_VIDEO_GUIDER_PARAMS.stg_scale
         assert cfg.rescale_scale == 0.7

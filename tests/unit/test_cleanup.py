@@ -1,7 +1,7 @@
 """
 Tests for codebase cleanup: dead code deletion, CUDA guards, consolidation.
 
-Last Updated: 2026-03-03
+Last Updated: 2026-03-09
 
 Covers:
 - CUDA guard consistency in model_manager unload methods
@@ -11,6 +11,8 @@ Covers:
 - EnhancementConfig preset classmethods removed
 - cleanup_memory() adoption in model_manager (no inline gc.collect)
 - Centralized QUANT_ALIASES constant
+- v0.9.27: Dead stage2_steps removal, stage1_steps default fix, scheduler
+  token count fix, pipeline_mode restructure, dead code removal
 
 Run with: uv run pytest tests/unit/test_cleanup.py -v
 """
@@ -297,4 +299,271 @@ class TestFlux2SchedulerExtracted:
         )
         assert "def generalized_time_snr_shift(" not in source, (
             "generalized_time_snr_shift should be in schedulers/flux2_scheduler.py"
+        )
+
+
+# =========================================================================
+# v0.9.27: Pipeline cleanup
+# =========================================================================
+
+
+class TestDeadStage2StepsRemoved:
+    """stage2_steps is a dead parameter -- only used for progress callback.
+    Actual stage 2 always uses hardcoded STAGE_2_DISTILLED_SIGMA_VALUES.
+    """
+
+    def test_stage2_steps_not_in_two_stage_config(self):
+        """TwoStageConfig should not have stage2_steps field."""
+        from llm_dit.pipelines.generate import TwoStageConfig
+
+        assert "stage2_steps" not in TwoStageConfig.__dataclass_fields__, (
+            "TwoStageConfig.stage2_steps should be deleted -- "
+            "stage 2 always uses hardcoded STAGE_2_DISTILLED_SIGMA_VALUES"
+        )
+
+    def test_stage2_num_inference_steps_not_in_ltx2_config(self):
+        """LTX2Config should not have stage2_num_inference_steps field."""
+        from llm_dit.config import LTX2Config
+
+        assert "stage2_num_inference_steps" not in LTX2Config.__dataclass_fields__, (
+            "LTX2Config.stage2_num_inference_steps should be deleted -- dead parameter"
+        )
+
+    def test_stage2_steps_not_in_web_schema(self):
+        """Web schema should not have stage2_steps field."""
+        from web.schemas import LTX2GenerateRequest
+
+        assert "stage2_steps" not in LTX2GenerateRequest.model_fields, (
+            "LTX2GenerateRequest.stage2_steps should be deleted -- dead parameter"
+        )
+
+    def test_stage2_steps_not_in_ui_schema(self):
+        """UI schema should not have a stage2_steps ParamSchema."""
+        from llm_dit.pipelines.schemas import get_pipeline
+
+        schema = get_pipeline("ltx2")
+        param_ids = [p.id for p in schema.params]
+        assert "stage2_steps" not in param_ids, (
+            "stage2_steps should be removed from LTX2 UI schema"
+        )
+
+
+class TestStage1StepsDefault:
+    """TwoStageConfig.stage1_steps default should be 30 (V2.3), not 40 (V2.0)."""
+
+    def test_two_stage_config_stage1_default_is_30(self):
+        """TwoStageConfig stage1_steps default should match V2.3 (30 steps)."""
+        from llm_dit.pipelines.generate import TwoStageConfig
+
+        config = TwoStageConfig()
+        assert config.stage1_steps == 30, (
+            f"TwoStageConfig.stage1_steps default is {config.stage1_steps}, should be 30 "
+            "(V2.3 default; 40 was V2.0)"
+        )
+
+    def test_ui_schema_stage1_default_is_30(self):
+        """UI schema stage1_steps default should be 30."""
+        from llm_dit.pipelines.schemas import get_pipeline
+
+        schema = get_pipeline("ltx2")
+        stage1_param = next(p for p in schema.params if p.id == "stage1_steps")
+        assert stage1_param.default == 30, (
+            f"UI schema stage1_steps default is {stage1_param.default}, should be 30"
+        )
+
+
+class TestSchedulerTokenCount:
+    """Scheduler should use default_number_of_tokens=4096 when no latent
+    provided, matching the official reference implementation."""
+
+    def test_scheduler_default_tokens_is_4096(self):
+        """LTX2Scheduler with latent=None should use 4096 tokens (MAX_SHIFT_ANCHOR)."""
+        from llm_dit.schedulers.ltx2_scheduler import LTX2Scheduler, MAX_SHIFT_ANCHOR
+
+        assert MAX_SHIFT_ANCHOR == 4096, (
+            f"MAX_SHIFT_ANCHOR is {MAX_SHIFT_ANCHOR}, should be 4096"
+        )
+
+        # When no latent is passed, scheduler uses MAX_SHIFT_ANCHOR
+        scheduler = LTX2Scheduler()
+        sigmas = scheduler.execute(steps=30, latent=None)
+        assert len(sigmas) == 31  # steps + 1
+
+    def test_generate_does_not_pass_mock_latent(self):
+        """generate.py should not create a mock_latent for scheduler.
+        It should pass latent=None to use the reference 4096 default."""
+        from llm_dit.pipelines import generate
+
+        source = inspect.getsource(generate)
+        assert "mock_latent" not in source, (
+            "generate.py still creates a mock_latent for scheduler. "
+            "Should pass latent=None to use reference 4096 default tokens."
+        )
+
+
+class TestPipelineMode:
+    """use_distilled_sigmas should be replaced with pipeline_mode enum."""
+
+    def test_use_distilled_sigmas_not_in_two_stage_config(self):
+        """TwoStageConfig should not have use_distilled_sigmas."""
+        from llm_dit.pipelines.generate import TwoStageConfig
+
+        assert "use_distilled_sigmas" not in TwoStageConfig.__dataclass_fields__, (
+            "TwoStageConfig.use_distilled_sigmas should be replaced with pipeline_mode"
+        )
+
+    def test_use_distilled_sigmas_not_in_ltx2_config(self):
+        """LTX2Config should not have use_distilled_sigmas."""
+        from llm_dit.config import LTX2Config
+
+        assert "use_distilled_sigmas" not in LTX2Config.__dataclass_fields__, (
+            "LTX2Config.use_distilled_sigmas should be replaced with pipeline_mode"
+        )
+
+    def test_use_distilled_sigmas_not_in_web_schema(self):
+        """Web schema should not have use_distilled_sigmas."""
+        from web.schemas import LTX2GenerateRequest
+
+        assert "use_distilled_sigmas" not in LTX2GenerateRequest.model_fields, (
+            "LTX2GenerateRequest.use_distilled_sigmas should be replaced with pipeline_mode"
+        )
+
+    def test_pipeline_mode_in_two_stage_config(self):
+        """TwoStageConfig should have pipeline_mode field."""
+        from llm_dit.pipelines.generate import TwoStageConfig
+
+        assert "pipeline_mode" in TwoStageConfig.__dataclass_fields__, (
+            "TwoStageConfig should have pipeline_mode field"
+        )
+
+    def test_pipeline_mode_default_is_standard(self):
+        """Default pipeline_mode should be 'standard'."""
+        from llm_dit.pipelines.generate import TwoStageConfig
+
+        config = TwoStageConfig()
+        assert config.pipeline_mode == "standard", (
+            f"TwoStageConfig.pipeline_mode default is '{config.pipeline_mode}', "
+            "should be 'standard'"
+        )
+
+    def test_pipeline_mode_in_ltx2_config(self):
+        """LTX2Config should have pipeline_mode field."""
+        from llm_dit.config import LTX2Config
+
+        assert "pipeline_mode" in LTX2Config.__dataclass_fields__, (
+            "LTX2Config should have pipeline_mode field"
+        )
+
+    def test_pipeline_mode_in_web_schema(self):
+        """Web schema should have pipeline_mode field."""
+        from web.schemas import LTX2GenerateRequest
+
+        assert "pipeline_mode" in LTX2GenerateRequest.model_fields, (
+            "LTX2GenerateRequest should have pipeline_mode field"
+        )
+
+    def test_use_distilled_sigmas_not_in_ui_schema(self):
+        """UI schema should not have use_distilled_sigmas."""
+        from llm_dit.pipelines.schemas import get_pipeline
+
+        schema = get_pipeline("ltx2")
+        param_ids = [p.id for p in schema.params]
+        assert "use_distilled_sigmas" not in param_ids, (
+            "use_distilled_sigmas should be replaced with pipeline_mode in UI schema"
+        )
+
+    def test_pipeline_mode_in_ui_schema(self):
+        """UI schema should have pipeline_mode control."""
+        from llm_dit.pipelines.schemas import get_pipeline
+
+        schema = get_pipeline("ltx2")
+        param_ids = [p.id for p in schema.params]
+        assert "pipeline_mode" in param_ids, (
+            "LTX2_PARAMS should have a pipeline_mode control"
+        )
+
+
+class TestDeadCodeRemoval:
+    """Dead functions and exports should be removed."""
+
+    def test_load_ltx2_transformer_quantized_removed(self):
+        """load_ltx2_transformer_quantized should be removed from ltx2 loader.
+        It imports deleted llm_dit.utils.quantization module."""
+        from llm_dit.models.ltx2 import loader
+
+        assert not hasattr(loader, "load_ltx2_transformer_quantized"), (
+            "load_ltx2_transformer_quantized should be deleted -- imports deleted module"
+        )
+
+    def test_load_ltx2_from_diffusers_removed(self):
+        """load_ltx2_from_diffusers should be removed. V2.3 doesn't use diffusers format."""
+        from llm_dit.models.ltx2 import loader
+
+        assert not hasattr(loader, "load_ltx2_from_diffusers"), (
+            "load_ltx2_from_diffusers should be deleted -- V2.3 does not use diffusers"
+        )
+
+    def test_get_model_info_removed_from_ltx2(self):
+        """get_model_info should be removed from ltx2 loader. Crude estimates, never called."""
+        from llm_dit.models.ltx2 import loader
+
+        assert not hasattr(loader, "get_model_info"), (
+            "ltx2 loader.get_model_info should be deleted -- crude estimates, zero callers"
+        )
+
+    def test_fuse_delta_into_weight_removed(self):
+        """_fuse_delta_into_weight should be removed from lora.py. Zero callers."""
+        from llm_dit.utils import lora
+
+        assert not hasattr(lora, "_fuse_delta_into_weight"), (
+            "_fuse_delta_into_weight should be deleted -- zero callers, "
+            "replaced by _fuse_delta with weight_scale handling"
+        )
+
+    def test_load_ltx2_full_removed(self):
+        """_load_ltx2_full should be removed from ModelManager.
+        Only called from deprecated _register_pipeline_loader()."""
+        from llm_dit.model_manager import ModelManager
+
+        assert not hasattr(ModelManager, "_load_ltx2_full"), (
+            "ModelManager._load_ltx2_full should be deleted -- "
+            "only called from deprecated _register_pipeline_loader()"
+        )
+
+    def test_dead_ui_controls_removed(self):
+        """stg_start_step and stg_end_step should be removed from UI schema.
+        They have config_mapped=False and no corresponding API fields."""
+        from llm_dit.pipelines.schemas import get_pipeline
+
+        schema = get_pipeline("ltx2")
+        param_ids = [p.id for p in schema.params]
+        assert "stg_start_step" not in param_ids, (
+            "stg_start_step should be removed from UI schema -- "
+            "config_mapped=False and no API field"
+        )
+        assert "stg_end_step" not in param_ids, (
+            "stg_end_step should be removed from UI schema -- "
+            "config_mapped=False and no API field"
+        )
+
+    def test_quantized_loader_not_in_ltx2_init_exports(self):
+        """load_ltx2_transformer_quantized should not be in ltx2 __init__ exports."""
+        import llm_dit.models.ltx2 as ltx2_pkg
+        source = inspect.getsource(ltx2_pkg)
+        assert "load_ltx2_transformer_quantized" not in source, (
+            "load_ltx2_transformer_quantized should be removed from ltx2/__init__.py exports"
+        )
+
+
+class TestDuplicateStepFields:
+    """LTX2Config should not have duplicate step count fields."""
+
+    def test_num_inference_steps_removed(self):
+        """num_inference_steps should be removed (duplicate of stage1_num_inference_steps).
+        We only support two-stage since v0.9.20."""
+        from llm_dit.config import LTX2Config
+
+        assert "num_inference_steps" not in LTX2Config.__dataclass_fields__, (
+            "LTX2Config.num_inference_steps should be deleted -- "
+            "duplicate of stage1_num_inference_steps, single-stage removed in v0.9.20"
         )

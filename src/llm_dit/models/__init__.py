@@ -10,7 +10,6 @@ LTX-2 Components (in llm_dit.models.ltx2):
     - LTX2Transformer: Pure PyTorch LTX-2.3 diffusion transformer (48 layers, 22B params)
     - LTXModelType: Model variant enum (VideoOnly, AudioVideo, AudioOnly)
     - load_ltx2_transformer: Load from official checkpoints
-    - load_ltx2_transformer_quantized: Load with FP8 quantization for 24GB GPUs
     - Modality: Input container for video/audio latents
 
 Other Models:
@@ -37,7 +36,6 @@ __all__ = [
     "LTX2Transformer",
     "LTXModelType",
     "load_ltx2_transformer",
-    "load_ltx2_transformer_quantized",
     "Modality",
     # LTX-2 Connectors (lazy loaded)
     "LTX2TextConnectors",
@@ -64,10 +62,6 @@ def __getattr__(name: str):
     if name == "load_ltx2_transformer":
         from llm_dit.models.ltx2.loader import load_ltx2_transformer
         return load_ltx2_transformer
-    if name == "load_ltx2_transformer_quantized":
-        from llm_dit.models.ltx2.loader import load_ltx2_transformer_quantized
-        return load_ltx2_transformer_quantized
-
     # LTX-2 Connectors
     if name == "LTX2TextConnectors":
         from llm_dit.models.ltx2.connectors import LTX2TextConnectors

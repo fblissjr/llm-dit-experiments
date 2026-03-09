@@ -42,7 +42,6 @@ from llm_dit.models.ltx2.loader import (
     map_key,
     is_audio_key,
     load_config,
-    get_model_info,
 )
 
 
@@ -473,12 +472,7 @@ class TestWithCheckpoint:
         assert config["num_layers"] == 48
         assert config["num_attention_heads"] == 32
 
-    def test_model_info(self, checkpoint_path):
-        """Test getting model info without loading weights."""
-        info = get_model_info(checkpoint_path)
-        assert info["num_layers"] == 48
-        assert info["hidden_dim"] == 4096
-        assert info["estimated_size_bf16_gb"] > 30  # Should be ~38GB
+    # test_model_info removed in v0.9.27 (get_model_info deleted -- crude estimates, zero callers)
 
 
 # ============================================================================

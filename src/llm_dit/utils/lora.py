@@ -729,18 +729,6 @@ def _fuse_delta(
         return weight + delta.to(weight.dtype), weight_scales
 
 
-def _fuse_delta_into_weight(weight: torch.Tensor, delta: torch.Tensor) -> torch.Tensor:
-    """Legacy: fuse a LoRA delta without weight_scale handling.
-
-    Kept for backward compatibility with tests. New code should use _fuse_delta.
-    """
-    if weight.dtype in (torch.float8_e4m3fn, torch.float8_e5m2):
-        original_dtype = weight.dtype
-        merged = weight.to(torch.bfloat16) + delta.to(torch.bfloat16)
-        return merged.to(original_dtype)
-    else:
-        return weight + delta.to(weight.dtype)
-
 
 def parse_lora_spec(spec: str) -> tuple[str, float]:
     """

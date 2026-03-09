@@ -1,6 +1,6 @@
-# agent context (v0.9.25)
+# agent context (v0.9.27)
 
-*last updated: 2026-03-08*
+*last updated: 2026-03-09*
 
 Quick reference for LLM agents. This is a hobbyist exploration platform -- not a product. The codebase evolves to support whatever we're curious about next.
 
@@ -59,6 +59,7 @@ Quick reference for LLM agents. This is a hobbyist exploration platform -- not a
 | **Debugging** | [debugging_reference.md](internal/docs/debugging_reference.md) + [lessons_learned.md](internal/state/lessons_learned.md) |
 | **Agent workflows** | [claude_workflow.md](internal/principles/claude_workflow.md) |
 | **Quantization** | [quantization.md](docs/reference/quantization.md) |
+| **LTX-2 two-stage / distilled pipeline** | [ltx2_distilled_pipeline.md](docs/reference/ltx2_distilled_pipeline.md) |
 | **Codebase map** | [codebase_map.md](internal/docs/architecture/codebase_map.md) |
 | **Logging standards** | [logging_standards.md](internal/principles/logging_standards.md) |
 | **Modular architecture (L1-L6)** | [modular_architecture.md](internal/principles/modular_architecture.md) |
@@ -79,7 +80,7 @@ This is a multi-workstream project. Encoders and core infra are shared across pi
 | Quantization | `src/llm_dit/quantization/` | All pipelines use `quantize_component()` (sole entry point) |
 | Layerwise fp8 | `src/llm_dit/quantization/layerwise_fp8.py` | Pure PyTorch fp8 hooks (no torchao); used by Gemma3 encoder |
 | Encoder variants | `src/llm_dit/encoders/gemma3_variants.py` | Gemma3 variant factory: bf16, fp8, 8bit, q4-qat |
-| LoRA | `src/llm_dit/utils/lora.py` | Pipeline-agnostic: `load_lora()`, `FusedLoRAState` tracking |
+| LoRA | `src/llm_dit/utils/lora.py` | Pipeline-agnostic: `load_lora()`, `FusedLoRAState` tracking, `fuse_lora_to_state_dict()` with scale-aware fp8 fusion |
 | Prompt rewriting | `src/llm_dit/utils/prompt_rewriter.py` | `PromptRewriter` (Qwen-Image), `Flux2PromptUpsampler` (FLUX.2) |
 | Meta init | `src/llm_dit/utils/meta_init.py` | Zero-memory model construction; use with `load_state_dict(assign=True)` |
 | Pinned shuttle | `src/llm_dit/utils/shuttle.py` | `PinnedShuttleMixin` -- pinned-memory CPU<->GPU shuttle for AutoEncoder, Qwen3, Gemma3 |
@@ -130,8 +131,10 @@ Full testing guide with all commands: [tests/CLAUDE.md](tests/CLAUDE.md)
 | config.toml defaults ignored | Missing `resolve_param()` | Verify router uses `resolve_param()` from `web/param_resolver.py` |
 | Circular import | Router imports server at module level | See architecture pattern in [post_refactor_guide.md](internal/docs/architecture/post_refactor_guide.md) |
 | fp8 weights silently become bf16 | `load_state_dict` missing `assign=True` | Always use `assign=True` for mixed-dtype models |
+| Washed-out/noisy distilled output | LoRA fused without fp8 weight_scale | `fuse_lora_to_state_dict` must dequant with `weight_scale` before adding LoRA delta; see `_fuse_delta()` in lora.py |
+| Stage 1 washed out with few steps | Wrong two-stage pipeline mode | We use TI2VidTwoStagesPipeline (base+LoRA), NOT DistilledPipeline. Stage 1 needs 30 steps + full CFG, not 8 steps. See [ltx2_distilled_pipeline.md](docs/reference/ltx2_distilled_pipeline.md) |
 
-Full 22-row table: [debugging_reference.md](internal/docs/debugging_reference.md)
+Full debugging table: [debugging_reference.md](internal/docs/debugging_reference.md)
 
 ## AFTER: update state
 
@@ -151,6 +154,7 @@ Content moved from this file to keep it compact. Search for the section heading 
 | Architecture patterns (14 bullets) | [post_refactor_guide.md](internal/docs/architecture/post_refactor_guide.md) | `implementation patterns` |
 | Request lifecycle (startup + API flow) | [post_refactor_guide.md](internal/docs/architecture/post_refactor_guide.md) | `request lifecycle` |
 | Feature implementation workflow | [feature_workflow.md](internal/docs/feature_workflow.md) | (entire file) |
-| Full debugging table (22 rows) | [debugging_reference.md](internal/docs/debugging_reference.md) | (entire file) |
+| Full debugging table (31 rows) | [debugging_reference.md](internal/docs/debugging_reference.md) | (entire file) |
 | Full test commands | [tests/CLAUDE.md](tests/CLAUDE.md) | (entire file) |
 | IndexedDB conventions | [internal/web/CLAUDE.md](internal/web/CLAUDE.md) | `IndexedDB conventions` |
+| LTX-2 two-stage / distilled reference | [ltx2_distilled_pipeline.md](docs/reference/ltx2_distilled_pipeline.md) | (entire file) |

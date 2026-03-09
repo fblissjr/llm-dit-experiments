@@ -264,7 +264,6 @@ async def ltx2_generate_stream(request: LTX2GenerateRequest, config: ConfigDep, 
 
                     two_stage_cfg = TwoStageConfig(
                         stage1_steps=resolve_param(request, "stage1_steps", ltx2_cfg.stage1_num_inference_steps, skip_none=True),
-                        stage2_steps=resolve_param(request, "stage2_steps", ltx2_cfg.stage2_num_inference_steps, skip_none=True),
                         guidance_scale=resolve_param(request, "guidance_scale", ltx2_cfg.guidance_scale),
                         stg_scale=resolve_param(request, "stg_scale", ltx2_cfg.stg_scale),
                         rescale_scale=resolve_param(request, "rescale_scale", ltx2_cfg.rescale_scale),
@@ -275,7 +274,7 @@ async def ltx2_generate_stream(request: LTX2GenerateRequest, config: ConfigDep, 
                         distilled_lora_scale=resolve_param(request, "distilled_lora_scale", ltx2_cfg.distilled_lora_scale),
                         spatial_upsampler_file=ltx2_cfg.spatial_upsampler_file if ltx2_cfg else "ltx-2-spatial-upscaler-x2-1.0.safetensors",
                         fbcache_threshold=resolve_param(request, "fbcache_threshold", ltx2_cfg.fbcache_threshold),
-                        use_distilled_sigmas=resolve_param(request, "use_distilled_sigmas", ltx2_cfg.use_distilled_sigmas),
+                        pipeline_mode=resolve_param(request, "pipeline_mode", ltx2_cfg.pipeline_mode),
                     )
                     if stg_blocks is not None:
                         two_stage_cfg.stg_blocks = stg_blocks
@@ -323,7 +322,7 @@ async def ltx2_generate_stream(request: LTX2GenerateRequest, config: ConfigDep, 
                     )
                 else:
                     # Single-stage fallback
-                    gen_config.num_inference_steps = resolve_param(request, "stage1_steps", ltx2_cfg.num_inference_steps if ltx2_cfg else 30, skip_none=True)
+                    gen_config.num_inference_steps = resolve_param(request, "stage1_steps", ltx2_cfg.stage1_num_inference_steps if ltx2_cfg else 30, skip_none=True)
                     return generate_video_with_offloading(
                         prompt=request.prompt,
                         config=gen_config,

@@ -136,29 +136,14 @@ register_pipeline(PipelineSchema(
             id="stage1_steps",
             type="slider",
             label="Stage 1 Steps",
-            default=40,
+            default=30,
             min=4,
             max=80,
             step=1,
             group="basic",
-            tooltip="Denoising steps for stage 1 (coarse generation). 40 recommended for two-stage, 8 for distilled.",
+            tooltip="Denoising steps for stage 1 (coarse generation). 30 recommended for standard, 8 for distilled.",
             dependent_defaults={
-                "use_distilled_sigmas": {"true": 8, "false": 40},
-            },
-        ),
-        ParamSchema(
-            id="stage2_steps",
-            type="slider",
-            label="Stage 2 Steps",
-            default=3,
-            min=1,
-            max=10,
-            step=1,
-            group="basic",
-            conditional={"use_two_stage": True},
-            tooltip="Refinement steps for stage 2. 3 recommended, 4 for distilled.",
-            dependent_defaults={
-                "use_distilled_sigmas": {"true": 4, "false": 3},
+                "pipeline_mode": {"distilled": 8, "standard": 30},
             },
         ),
         ParamSchema(
@@ -172,7 +157,7 @@ register_pipeline(PipelineSchema(
             group="basic",
             tooltip="Classifier-free guidance scale. 3.0 recommended. Forced to 1.0 in distilled mode.",
             dependent_defaults={
-                "use_distilled_sigmas": {"true": 1.0, "false": 3.0},
+                "pipeline_mode": {"distilled": 1.0, "standard": 3.0},
             },
         ),
         ParamSchema(
@@ -253,12 +238,13 @@ register_pipeline(PipelineSchema(
 
         # === Advanced ===
         ParamSchema(
-            id="use_distilled_sigmas",
-            type="checkbox",
-            label="Distilled Mode",
-            default=False,
+            id="pipeline_mode",
+            type="select",
+            label="Pipeline Mode",
+            default="standard",
+            options=["standard", "distilled"],
             group="advanced",
-            tooltip="Use predefined 8+4 step sigma schedule. Forces guidance_scale=1.0 and disables STG.",
+            tooltip="standard: base+LoRA, 30 steps, full guidance. distilled: pre-distilled checkpoint, 8 steps, no guidance.",
         ),
         ParamSchema(
             id="stg_enabled",
@@ -269,7 +255,7 @@ register_pipeline(PipelineSchema(
             tooltip="Spatio-Temporal Guidance for better motion consistency. Disabled in distilled mode.",
             config_mapped=False,
             dependent_defaults={
-                "use_distilled_sigmas": {"true": False, "false": True},
+                "pipeline_mode": {"distilled": False, "standard": True},
             },
         ),
         ParamSchema(
@@ -283,32 +269,6 @@ register_pipeline(PipelineSchema(
             group="advanced",
             conditional={"stg_enabled": True},
             tooltip="STG strength.",
-        ),
-        ParamSchema(
-            id="stg_start_step",
-            type="slider",
-            label="STG Start",
-            default=0.0,
-            min=0.0,
-            max=1.0,
-            step=0.05,
-            group="advanced",
-            conditional={"stg_enabled": True},
-            tooltip="When to start STG (fraction of steps).",
-            config_mapped=False,
-        ),
-        ParamSchema(
-            id="stg_end_step",
-            type="slider",
-            label="STG End",
-            default=0.5,
-            min=0.0,
-            max=1.0,
-            step=0.05,
-            group="advanced",
-            conditional={"stg_enabled": True},
-            tooltip="When to end STG (fraction of steps).",
-            config_mapped=False,
         ),
         ParamSchema(
             id="rescale_scale",

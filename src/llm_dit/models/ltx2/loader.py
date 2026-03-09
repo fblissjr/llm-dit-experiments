@@ -27,7 +27,7 @@ Usage:
 import json
 import logging
 from pathlib import Path
-from typing import Dict, Literal, Optional, Union
+from typing import Dict, Optional, Union
 
 import torch
 
@@ -407,121 +407,6 @@ def load_ltx2_transformer(
     return model
 
 
-def load_ltx2_from_diffusers(
-    repo_or_path: str = "Lightricks/LTX-Video-2",
-    dtype: torch.dtype = torch.bfloat16,
-) -> LTX2Transformer:
-    """
-    Load LTX-2 transformer from HuggingFace diffusers checkpoint.
-
-    This is a convenience wrapper that handles downloading from HuggingFace
-    if needed.
-
-    Args:
-        repo_or_path: HuggingFace repo ID or local path
-        dtype: Model dtype
-
-    Returns:
-        Loaded LTX2Transformer model
-    """
-    from pathlib import Path
-
-    # Check if local path
-    local_path = Path(repo_or_path)
-    if local_path.exists():
-        return load_ltx2_transformer(local_path, dtype=dtype)  # type: ignore[return-value]
-
-    # Download from HuggingFace
-    try:
-        from huggingface_hub import snapshot_download
-    except ImportError:
-        raise ImportError("huggingface_hub required. Install: pip install huggingface_hub")
-
-    logger.info(f"Downloading {repo_or_path} from HuggingFace...")
-    local_dir = snapshot_download(
-        repo_or_path,
-        allow_patterns=["transformer/*", "config.json"],
-    )
-
-    return load_ltx2_transformer(Path(local_dir) / "transformer", dtype=dtype)
-
-
-QuantizationPrecision = Literal["fp8-quanto", "int8-quanto", "int4-quanto"]
-
-
-def load_ltx2_transformer_quantized(
-    path: Union[str, Path],
-    precision: QuantizationPrecision = "fp8-quanto",
-    dtype: torch.dtype = torch.bfloat16,
-    video_only: bool = True,
-    verbose: bool = True,
-) -> LTX2Transformer:
-    """
-    Load and quantize LTX-2 transformer for memory-efficient inference.
-
-    Uses block-by-block quantization strategy from LTX-2 official implementation.
-    This enables loading the 13B model on 24GB GPUs like RTX 4090.
-
-    Memory usage:
-    - bf16 (default): ~26GB (won't fit on 24GB GPU)
-    - fp8-quanto: ~13GB (fits on 24GB GPU with room for activations)
-    - int8-quanto: ~13GB
-    - int4-quanto: ~6.5GB
-
-    Args:
-        path: Path to checkpoint file or directory
-        precision: Quantization precision. One of:
-            - "fp8-quanto": FP8 quantization (~13GB, best quality/size tradeoff)
-            - "int8-quanto": INT8 quantization (~13GB)
-            - "int4-quanto": INT4 quantization (~6.5GB, lowest quality)
-        dtype: Original dtype before quantization (bf16 recommended)
-        video_only: If True, skip audio weights
-        verbose: Print progress during quantization
-
-    Returns:
-        Quantized LTX2Transformer model on CPU (call .to('cuda') after)
-
-    Example:
-        >>> model = load_ltx2_transformer_quantized("models/LTX-2/transformer/")
-        >>> model = model.to("cuda")  # Now fits in 24GB VRAM
-
-    Note:
-        Requires optimum-quanto: pip install optimum-quanto
-    """
-    from llm_dit.utils.quantization import quantize_model, estimate_quantized_size
-
-    # Load model to CPU first
-    if verbose:
-        logger.info(f"Loading model to CPU (dtype={dtype})")
-
-    model = load_ltx2_transformer(
-        path,
-        dtype=dtype,
-        device="cpu",
-        video_only=video_only,
-        strict=False,
-    )
-
-    # Estimate memory savings
-    num_params = model.get_num_params()
-    original_size = num_params * 2 / 1e9  # bf16
-    quantized_size = estimate_quantized_size(num_params, precision)
-
-    if verbose:
-        logger.info(f"Model: {num_params / 1e9:.2f}B params")
-        logger.info(f"Memory: {original_size:.1f}GB (bf16) → {quantized_size:.1f}GB ({precision})")
-
-    # Quantize using block-by-block strategy
-    quantized_model = quantize_model(
-        model,
-        precision=precision,
-        quantize_activations=False,
-        device="cuda",  # Quantize on GPU (fast)
-        verbose=verbose,
-    )
-
-    # Cast return type (quantize_model preserves model type)
-    return quantized_model  # type: ignore[return-value]
 
 
 def _attach_weight_scales(
@@ -688,34 +573,5 @@ def load_ltx2_transformer_fp8_cast(
     return model
 
 
-def get_model_info(path: Union[str, Path]) -> dict:
-    """
-    Get information about a checkpoint without loading it.
-
-    Args:
-        path: Path to checkpoint
-
-    Returns:
-        Dict with model info (num_params, dtype, config, etc.)
-    """
-    path = Path(path)
-    config = load_config(path)
-
-    # Calculate approximate parameter count
-    num_layers = config.get("num_layers", 48)
-    hidden_dim = config.get("num_attention_heads", 32) * config.get("attention_head_dim", 128)
-    cross_dim = config.get("cross_attention_dim", 4096)
-
-    # Rough estimate: ~800M params per layer + overhead
-    estimated_params = num_layers * 800_000_000 + 500_000_000
-
-    return {
-        "config": config,
-        "num_layers": num_layers,
-        "hidden_dim": hidden_dim,
-        "cross_attention_dim": cross_dim,
-        "estimated_params": estimated_params,
-        "estimated_size_bf16_gb": estimated_params * 2 / 1e9,
-    }
 
 

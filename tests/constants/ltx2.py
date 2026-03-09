@@ -52,7 +52,6 @@ SMOKE = {
     "fp8": True,
     "use_two_stage": True,
     "stage1_num_inference_steps": 4,
-    "stage2_num_inference_steps": 2,
 }
 
 STANDARD = {
@@ -65,7 +64,6 @@ STANDARD = {
     "fp8": True,
     "use_two_stage": True,
     "stage1_num_inference_steps": 8,
-    "stage2_num_inference_steps": 4,
 }
 
 

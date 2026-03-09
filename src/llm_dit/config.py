@@ -352,7 +352,7 @@ class LTX2Config:
     width: int = 768  # Video width (multiple of 32, ref: DEFAULT_1_STAGE_WIDTH)
     num_frames: int = 33  # Number of frames (33-65 typical for 24GB)
     fps: float = 24.0  # Output FPS
-    num_inference_steps: int = 30  # Stage 1 steps (official V2.3 default)
+    # num_inference_steps removed in v0.9.27 (duplicate of stage1_num_inference_steps)
     guidance_scale: float = 3.0  # CFG scale (ref: DEFAULT_VIDEO_GUIDER_PARAMS.cfg_scale)
 
     # Audio generation
@@ -365,7 +365,7 @@ class LTX2Config:
     # Two-stage pipeline settings (matching reference TI2VidTwoStagesPipeline)
     use_two_stage: bool = True  # Enable two-stage generation
     stage1_num_inference_steps: int = 30  # Full denoising for stage 1 (official V2.3 default)
-    stage2_num_inference_steps: int = 3  # Distilled refinement for stage 2
+    # stage2_num_inference_steps removed in v0.9.27 (dead parameter, stage 2 uses hardcoded sigmas)
     negative_prompt: str = LTX2_DEFAULT_NEGATIVE_PROMPT
 
     # Guidance (stage 1 only; stage 2 uses simple denoising)
@@ -378,8 +378,9 @@ class LTX2Config:
     ge_gamma: float = 0.0  # Gradient estimation gamma (0=disabled, 2.0=reference)
     fbcache_threshold: float = 0.0  # FBCache block-skip threshold (0=disabled, 0.05=recommended)
 
-    # Distilled pipeline mode
-    use_distilled_sigmas: bool = False  # Use predefined sigma schedule (8+4 steps, no CFG)
+    # Pipeline mode: "standard" (base+LoRA, 30 steps, full guidance) or
+    # "distilled" (pre-distilled checkpoint, 8 steps, no guidance)
+    pipeline_mode: str = "standard"
 
     # Image-to-video (optional)
     input_image: str = ""  # Path to input image for I2V mode
@@ -491,7 +492,7 @@ class LTX2Config:
             "width": self.width,
             "num_frames": self.num_frames,
             "fps": self.fps,
-            "num_inference_steps": self.num_inference_steps,
+            "num_inference_steps": self.stage1_num_inference_steps,
             "guidance_scale": self.guidance_scale,
             "audio_enabled": self.audio_enabled,
             "audio_negative_prompt": self.audio_negative_prompt,
@@ -1649,7 +1650,7 @@ class RuntimeConfig:
 
     @property
     def ltx2_steps(self) -> int | None:
-        return getattr(self.ltx2, "num_inference_steps", None)
+        return self.ltx2.stage1_num_inference_steps
 
     @property
     def ltx2_encoder_model_id(self) -> str:
@@ -1994,6 +1995,16 @@ class Config:
         zimage_data = data.pop("zimage", {})
         qwen_image_data = data.pop("qwen_image", {})
         ltx2_data = data.pop("ltx2", {})
+        # v0.9.27 migrations
+        if "use_distilled_sigmas" in ltx2_data:
+            if ltx2_data.pop("use_distilled_sigmas"):
+                ltx2_data.setdefault("pipeline_mode", "distilled")
+            else:
+                ltx2_data.setdefault("pipeline_mode", "standard")
+            logger.warning("[config] Migrated use_distilled_sigmas -> pipeline_mode")
+        ltx2_data.pop("stage2_num_inference_steps", None)  # dead param
+        if "num_inference_steps" in ltx2_data:
+            ltx2_data.setdefault("stage1_num_inference_steps", ltx2_data.pop("num_inference_steps"))
         flux2_data = data.pop("flux2", {})
         dype_data = data.pop("dype", {})
         slg_data = data.pop("slg", {})

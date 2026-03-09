@@ -13,7 +13,6 @@ guidance_scale = 3.0
 offload_mode = "model"
 use_two_stage = true
 stage1_num_inference_steps = 8
-stage2_num_inference_steps = 4
 
 [server]
 host = "127.0.0.1"

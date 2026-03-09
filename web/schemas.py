@@ -660,7 +660,6 @@ class LTX2GenerateRequest(BaseModel):
     # Two-stage settings
     use_two_stage: bool = True
     stage1_steps: Optional[int] = None  # Override stage 1 steps (default: from config)
-    stage2_steps: Optional[int] = None  # Override stage 2 steps (default: from config)
     guidance_scale: float = 3.0
 
     # Guidance (stage 1 only)
@@ -677,7 +676,7 @@ class LTX2GenerateRequest(BaseModel):
     # Optimization
     ge_gamma: float = 0.0
     fbcache_threshold: float = 0.0  # FBCache block-skip threshold (0=disabled, 0.05=recommended)
-    use_distilled_sigmas: bool = False  # Use predefined sigma schedule (8+4 steps, no CFG)
+    pipeline_mode: str = "standard"  # "standard" or "distilled"
 
 
 class Flux2GenerateRequest(BaseModel):
