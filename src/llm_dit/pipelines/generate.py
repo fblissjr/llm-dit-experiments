@@ -54,6 +54,38 @@ from llm_dit.utils.memory import cleanup_memory
 
 logger = logging.getLogger(__name__)
 
+# Diagnostic logger -- separate from main logger so it can be enabled independently
+_diag = logging.getLogger(__name__ + ".diagnostics")
+
+
+def _tensor_stats(name: str, t: torch.Tensor) -> str:
+    """Format tensor stats for diagnostic logging."""
+    f = t.float()
+    return (
+        f"[DIAG] {name}: shape={list(t.shape)}, dtype={t.dtype}, "
+        f"mean={f.mean():.6f}, std={f.std():.6f}, "
+        f"min={f.min():.6f}, max={f.max():.6f}"
+    )
+
+
+def _resolve_v23_component_path(model_path: Path, component: str) -> Path:
+    """Resolve V2.3 component path with V1 fallback.
+
+    V2.3 stores components as standalone safetensors files (e.g. ltx-2.3-video-vae.safetensors).
+    V1 used subdirectories (e.g. model_path/vae/). This mirrors model_manager.py logic.
+    """
+    v23_names = {
+        "vae": "ltx-2.3-video-vae.safetensors",
+        "audio_vae": "ltx-2.3-audio-vae.safetensors",
+        "vocoder": "ltx-2.3-vocoder.safetensors",
+    }
+    v23_name = v23_names.get(component)
+    if v23_name:
+        v23_path = model_path / v23_name
+        if v23_path.exists():
+            return v23_path
+    return model_path / component
+
 
 def _validate_two_stage_dimensions(height: int, width: int) -> None:
     """Validate that dimensions are divisible by 64 for two-stage generation.
@@ -1189,7 +1221,7 @@ def generate_video_with_offloading(
     else:
         from llm_dit.models.ltx2.vae import load_ltx2_vae_decoder
         vae = load_ltx2_vae_decoder(
-            model_path / "vae", dtype=dtype, device="cpu",
+            _resolve_v23_component_path(model_path, "vae"), dtype=dtype, device="cpu",
         ).to(vae_device)
 
     logger.info("Decoding latents to video...")
@@ -1320,7 +1352,7 @@ class TwoStageConfig:
     distilled_lora_scale: float = 1.0
 
     # Spatial upsampler
-    spatial_upsampler_file: str = "ltx-2-spatial-upscaler-x2-1.0.safetensors"
+    spatial_upsampler_file: str = "ltx-2.3-spatial-upscaler-x2-1.0.safetensors"
 
     # FBCache
     fbcache_threshold: float = 0.0  # Block-skip threshold (0=disabled, 0.05=recommended)
@@ -1683,12 +1715,28 @@ def _denoise_stage(
             else:
                 timestep = sigma.expand(1, num_tokens)
 
+            # -- DIAGNOSTIC: Checkpoint 5 - Per-step stats --
+            _log_step = (i <= 2) or (i == num_steps - 1)
+            if _log_step:
+                _diag.info(
+                    f"[DIAG] [{stage_name}:step {i}] PRE: latent_std={latents.float().std():.6f}, "
+                    f"sigma={sigma:.6f}, sigma_next={sigma_next:.6f}, dt={sigma_next - sigma:.6f}"
+                )
+
             velocity = _compute_velocity(
                 model, latents, timestep, positions, prompt_embeds, ctx,
                 fbcache_threshold=fbcache_threshold,
                 step_index=i,
                 num_steps=num_steps,
             )
+
+            if _log_step:
+                vf = velocity.float()
+                _diag.info(
+                    f"[DIAG] [{stage_name}:step {i}] velocity: mean={vf.mean():.6f}, "
+                    f"std={vf.std():.6f}, min={vf.min():.6f}, max={vf.max():.6f}, "
+                    f"has_nan={torch.isnan(vf).any().item()}, has_inf={torch.isinf(vf).any().item()}"
+                )
 
             # Gradient estimation: save raw velocity before correction,
             # then apply GE. Reference stores pre-GE velocity for next delta.
@@ -1708,6 +1756,11 @@ def _denoise_stage(
                 latents = post_process_latent(denoised, denoise_mask, clean_latent)
             else:
                 latents = denoised
+
+            if _log_step:
+                _diag.info(
+                    f"[DIAG] [{stage_name}:step {i}] POST: latent_std={latents.float().std():.6f}"
+                )
 
             del velocity
             if (i + 1) % 5 == 0:
@@ -2008,11 +2061,16 @@ def generate_video_two_stage(
     pos_embeds = pos_output.embeddings[0].unsqueeze(0)
     pos_mask = pos_output.attention_masks[0].unsqueeze(0)
 
+    # -- DIAGNOSTIC: Checkpoint 1 - Text encoding output --
+    _diag.info(_tensor_stats("pos_embeds", pos_embeds))
+    _diag.info(f"[DIAG] pos_mask: shape={list(pos_mask.shape)}, sum={pos_mask.sum().item():.0f}")
+
     # Extract audio embeddings (2048-dim) from encoder output
     pos_audio_embeds: Optional[torch.Tensor] = None
     if not video_only and pos_output.audio_embeddings is not None:
         pos_audio_embeds = pos_output.audio_embeddings[0].unsqueeze(0)
         logger.info(f"Audio embeddings: {pos_audio_embeds.shape}")
+        _diag.info(_tensor_stats("pos_audio_embeds", pos_audio_embeds))
     elif not video_only:
         logger.warning("Audio mode but encoder returned no audio embeddings")
 
@@ -2129,6 +2187,13 @@ def generate_video_two_stage(
         dtype=dtype,
     )
 
+    # -- DIAGNOSTIC: Checkpoint 2 - Noise initialization --
+    _diag.info(_tensor_stats("stage1_noise", latents))
+    _diag.info(
+        f"[DIAG] stage1_latent_dims: t={t_latent}, h={h_latent}, w={w_latent}, "
+        f"tokens={num_tokens}, half_res={stage1_config.height}x{stage1_config.width}"
+    )
+
     positions = create_position_indices(
         batch_size=1,
         num_frames=config.num_frames,
@@ -2138,6 +2203,14 @@ def generate_video_two_stage(
         fps=fps,
         scale_factors=(8, 32, 32),
         causal_fix=True,
+    )
+
+    # -- DIAGNOSTIC: Checkpoint 3 - Position indices --
+    _diag.info(_tensor_stats("video_positions", positions))
+    _diag.info(
+        f"[DIAG] positions_detail: temporal=[{positions[0,0,:,0].min():.2f},{positions[0,0,:,1].max():.2f}], "
+        f"height=[{positions[0,1,:,0].min():.2f},{positions[0,1,:,1].max():.2f}], "
+        f"width=[{positions[0,2,:,0].min():.2f},{positions[0,2,:,1].max():.2f}]"
     )
 
     # Initialize audio latents and positions if audio enabled
@@ -2186,6 +2259,12 @@ def generate_video_two_stage(
     logger.debug(
         f"Stage 1 sigmas: [{sigmas[0]:.4f} -> {sigmas[-1]:.4f}], "
         f"{len(sigmas) - 1} steps, mode={'AV' if not video_only else 'video-only'}"
+    )
+
+    # -- DIAGNOSTIC: Checkpoint 4 - Sigma schedule --
+    _diag.info(
+        f"[DIAG] stage1_sigmas: first={sigmas[0]:.6f}, last={sigmas[-1]:.6f}, "
+        f"steps={len(sigmas)-1}, all={[f'{s:.4f}' for s in sigmas.tolist()]}"
     )
 
     # Denoise stage 1
@@ -2238,6 +2317,9 @@ def generate_video_two_stage(
             fbcache_threshold=two_stage.fbcache_threshold,
         )
 
+    # -- DIAGNOSTIC: Checkpoint 6 - Post-stage1 latents --
+    _diag.info(_tensor_stats("post_stage1_latents", latents))
+
     # Reshape to spatial format for upsampler: [B, T, D] -> [B, D, T_lat, H_lat, W_lat]
     latents = latents.transpose(1, 2).reshape(1, 128, t_latent, h_latent, w_latent)
 
@@ -2273,7 +2355,7 @@ def generate_video_two_stage(
     else:
         from llm_dit.models.ltx2.vae import load_ltx2_vae_decoder
         vae_for_stats = load_ltx2_vae_decoder(
-            model_path / "vae", dtype=dtype, device="cpu"
+            _resolve_v23_component_path(model_path, "vae"), dtype=dtype, device="cpu"
         )
         per_channel_stats = vae_for_stats.per_channel_statistics
         per_channel_stats = per_channel_stats.to(transformer_device)
@@ -2281,8 +2363,13 @@ def generate_video_two_stage(
     # Un-normalize, upsample, re-normalize
     latents = latents.to(transformer_device)
     latents = per_channel_stats.un_normalize(latents)
+    _diag.info(_tensor_stats("pre_upsample_unnorm", latents))
     latents = upsampler(latents)
+    _diag.info(_tensor_stats("post_upsample", latents))
     latents = per_channel_stats.normalize(latents)
+
+    # -- DIAGNOSTIC: Checkpoint 7 - Post-upsample latents --
+    _diag.info(_tensor_stats("post_upsample_renorm", latents))
 
     del upsampler
     if cached_vae is None:
@@ -2374,6 +2461,10 @@ def generate_video_two_stage(
     latents_noisy = (1 - noise_scale) * latents_flat + noise_scale * noise
     del noise, latents_flat
 
+    # -- DIAGNOSTIC: Checkpoint 8 - Stage 2 re-noised latents --
+    _diag.info(_tensor_stats("stage2_renoised", latents_noisy))
+    _diag.info(f"[DIAG] stage2_noise_scale={noise_scale:.6f}")
+
     # Re-noise audio latents for stage 2 (same flow-matching interpolation)
     if not video_only and audio_latents is not None and audio_noise is not None:
         audio_latents_noisy = (1 - noise_scale) * audio_latents + noise_scale * audio_noise
@@ -2420,6 +2511,9 @@ def generate_video_two_stage(
             fbcache_threshold=two_stage.fbcache_threshold,
         )
 
+    # -- DIAGNOSTIC: Checkpoint 9 - Post-stage2 latents --
+    _diag.info(_tensor_stats("post_stage2_latents", latents_refined))
+
     # Reshape back to spatial: [B, T, D] -> [B, D, T_lat, H_lat, W_lat]
     latents = latents_refined.transpose(1, 2).reshape(1, 128, t_lat_full, h_lat_full, w_lat_full)
 
@@ -2447,7 +2541,7 @@ def generate_video_two_stage(
     else:
         from llm_dit.models.ltx2.vae import load_ltx2_vae_decoder
         vae = load_ltx2_vae_decoder(
-            model_path / "vae", dtype=dtype, device="cpu"
+            _resolve_v23_component_path(model_path, "vae"), dtype=dtype, device="cpu"
         ).to(vae_device)
 
     logger.info("Decoding latents to video...")
@@ -2458,9 +2552,16 @@ def generate_video_two_stage(
     decode_elapsed = time.perf_counter() - decode_start
     logger.info(f"[Decode] VAE decode {decode_elapsed:.1f}s")
 
+    # -- DIAGNOSTIC: Checkpoint 10 - VAE output --
+    _diag.info(_tensor_stats("vae_output_raw", video))
+
     # Convert to [F, H, W, C] uint8
     video = video.squeeze(0).permute(1, 2, 3, 0)
     video = ((video + 1) / 2 * 255).clamp(0, 255).to(torch.uint8)
+    _diag.info(
+        f"[DIAG] vae_output_uint8: shape={list(video.shape)}, "
+        f"mean={video.float().mean():.1f}, min={video.min().item()}, max={video.max().item()}"
+    )
 
     # Return or unload VAE
     if vae_is_borrowed:
@@ -2503,7 +2604,7 @@ def generate_video_two_stage(
         else:
             from llm_dit.models.ltx2.audio_vae.loader import load_audio_decoder
             audio_decoder = load_audio_decoder(
-                model_path / "audio_vae", dtype=dtype, device=vae_device,
+                _resolve_v23_component_path(model_path, "audio_vae"), dtype=dtype, device=vae_device,
             )
             with torch.no_grad():
                 mel = audio_decoder(audio_latents_4d.to(vae_device))
@@ -2520,7 +2621,7 @@ def generate_video_two_stage(
         else:
             from llm_dit.models.ltx2.audio_vae.loader import load_vocoder
             vocoder = load_vocoder(
-                model_path / "vocoder", dtype=dtype, device=vae_device,
+                _resolve_v23_component_path(model_path, "vocoder"), dtype=dtype, device=vae_device,
             )
             with torch.no_grad():
                 audio_waveform = vocoder(mel)

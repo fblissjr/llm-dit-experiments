@@ -135,14 +135,12 @@ def clean_enhanced_prompt(text: str) -> str:
 # Default paths to LTX-2 model components
 # CRITICAL: Tokenizer is in tokenizer/ folder, model weights are in text_encoder/
 # Using wrong tokenizer causes completely wrong token IDs -> garbage output
-DEFAULT_TOKENIZER_PATH = "models/LTX-2/tokenizer"  # tokenizer.model, tokenizer.json
-DEFAULT_TEXT_ENCODER_PATH = "models/LTX-2/text_encoder"  # Gemma model weights + config
+DEFAULT_TOKENIZER_PATH = "models/LTX-2.3/text_encoder"  # tokenizer.model, tokenizer.json
+DEFAULT_TEXT_ENCODER_PATH = "models/LTX-2.3/text_encoder"  # Gemma model weights + config
 DEFAULT_CONNECTOR_WEIGHTS_SHARD = (
-    "models/LTX-2/text_encoder/diffusion_pytorch_model-00011-of-00012.safetensors"
+    "models/LTX-2.3/text_encoder/diffusion_pytorch_model-00011-of-00012.safetensors"
 )
-# Legacy paths (kept for reference, do NOT use)
-_LEGACY_CONNECTORS_PATH = "models/LTX-2/connectors/diffusion_pytorch_model.safetensors"
-DEFAULT_CONNECTORS_CONFIG = "models/LTX-2/connectors/config.json"
+DEFAULT_CONNECTORS_CONFIG = "models/LTX-2.3/connectors/config.json"
 
 
 class SubLayerExtractor:
@@ -1136,6 +1134,10 @@ class Gemma3Encoder(PinnedShuttleMixin):
                 mask = (out_mask.squeeze(1).squeeze(1) >= -9000.0).float()
             return out, mask
 
+        # Save original mask before video connector modifies it via register replacement.
+        # Audio connector needs the original tokenizer mask, not the all-valid post-register mask.
+        original_mask = attention_mask
+
         if self._embeddings_connector is not None:
             embeddings, attention_mask = _run_connector(
                 embeddings, self._embeddings_connector, attention_mask,
@@ -1146,9 +1148,10 @@ class Gemma3Encoder(PinnedShuttleMixin):
             )
 
         # V2: also run audio through its own connector
+        # CRITICAL: Use original_mask, not post-register attention_mask (which is all-valid)
         if audio_embeds is not None and self._audio_connector is not None:
             audio_embeds, _ = _run_connector(
-                audio_embeds, self._audio_connector, attention_mask,
+                audio_embeds, self._audio_connector, original_mask,
             )
             logger.debug(f"Audio connector output: shape={audio_embeds.shape}")
 
