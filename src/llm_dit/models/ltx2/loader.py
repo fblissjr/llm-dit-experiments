@@ -524,6 +524,45 @@ def load_ltx2_transformer_quantized(
     return quantized_model  # type: ignore[return-value]
 
 
+def _attach_weight_scales(
+    model: torch.nn.Module,
+    weight_scales: Dict[str, torch.Tensor],
+) -> int:
+    """Attach per-tensor weight scales to nn.Linear modules as plain attributes.
+
+    Scales are stored as plain attributes (not buffers/parameters) so they don't
+    appear in state_dict(). This keeps the cache path clean -- weight_scales are
+    stored separately in the cache dict and re-attached during reconstruction.
+
+    Args:
+        model: Model with nn.Linear layers.
+        weight_scales: Dict mapping weight param names (e.g.
+            "transformer_blocks.0.attn1.to_q.weight") to scale tensors.
+
+    Returns:
+        Number of scales attached.
+    """
+    if not weight_scales:
+        return 0
+
+    count = 0
+    for name, module in model.named_modules():
+        if not isinstance(module, torch.nn.Linear):
+            continue
+        weight_key = f"{name}.weight"
+        if weight_key in weight_scales:
+            module._weight_scale = weight_scales[weight_key]  # type: ignore[attr-defined]
+            count += 1
+
+    if count != len(weight_scales):
+        logger.warning(
+            f"Weight scale mismatch: {len(weight_scales)} scales provided, "
+            f"{count} attached to nn.Linear modules"
+        )
+
+    return count
+
+
 def load_ltx2_transformer_fp8_cast(
     path: Union[str, Path],
     dtype: torch.dtype = torch.bfloat16,
@@ -573,7 +612,8 @@ def load_ltx2_transformer_fp8_cast(
     )
 
     our_sd: Dict[str, torch.Tensor] = {}
-    skipped = {"audio": 0, "non_transformer": 0, "scale": 0}
+    weight_scales: Dict[str, torch.Tensor] = {}
+    skipped = {"audio": 0, "non_transformer": 0, "input_scale": 0}
 
     for key, tensor in raw_sd.items():
         if key.startswith(non_transformer_prefixes):
@@ -586,9 +626,16 @@ def load_ltx2_transformer_fp8_cast(
             skipped["audio"] += 1
             continue
 
-        # Skip scale tensors -- we use the fp8 values directly
-        if stripped_key.endswith((".weight_scale", ".input_scale")):
-            skipped["scale"] += 1
+        # Collect weight_scale for per-tensor dequantization (scaled FP8 checkpoints).
+        # input_scale is only used by fp8-scaled-mm (TensorRT-LLM) -- skip it.
+        if stripped_key.endswith(".weight_scale"):
+            # Map the corresponding weight key name
+            weight_key = stripped_key.replace(".weight_scale", ".weight")
+            our_weight_key = map_key(weight_key)
+            weight_scales[our_weight_key] = tensor
+            continue
+        if stripped_key.endswith(".input_scale"):
+            skipped["input_scale"] += 1
             continue
 
         our_key = map_key(stripped_key)
@@ -600,7 +647,8 @@ def load_ltx2_transformer_fp8_cast(
 
     logger.info(
         f"FP8-cast: {len(our_sd)} keys loaded, "
-        f"skipped {skipped['scale']} scales, "
+        f"{len(weight_scales)} weight_scales collected, "
+        f"skipped {skipped['input_scale']} input_scales, "
         f"{skipped['audio']} audio, {skipped['non_transformer']} non-transformer"
     )
 
@@ -617,6 +665,14 @@ def load_ltx2_transformer_fp8_cast(
         logger.warning(f"Missing keys: {load_result.missing_keys[:10]}... ({len(load_result.missing_keys)} total)")
     if load_result.unexpected_keys:
         logger.warning(f"Unexpected keys: {load_result.unexpected_keys[:10]}... ({len(load_result.unexpected_keys)} total)")
+
+    # Attach weight_scale to each nn.Linear for scaled FP8 dequantization.
+    # The per-forward upcast multiplies: w_bf16 = fp8_weight.to(bf16) * weight_scale
+    # Stored as plain attributes (not buffers/params) to avoid polluting state_dict.
+    # The cache path stores these separately in the cache dict.
+    scales_attached = _attach_weight_scales(model, weight_scales)
+    if scales_attached > 0:
+        logger.info(f"FP8-cast: attached {scales_attached} weight_scale values to nn.Linear layers")
 
     # Patch nn.Linear forwards for per-forward upcast
     patched = amend_forward_with_upcast(model)

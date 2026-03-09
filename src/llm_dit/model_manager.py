@@ -736,6 +736,15 @@ class ModelManager:
         from llm_dit.models.ltx2.loader import load_config
         config = load_config(tf_path)
 
+        # Extract weight_scales from model (plain attrs on nn.Linear, not in state_dict)
+        weight_scales: dict[str, torch.Tensor] = {}
+        if is_fp8_file:
+            for name, module in model.named_modules():
+                if hasattr(module, "_weight_scale"):
+                    weight_scales[f"{name}.weight"] = module._weight_scale.pin_memory()
+            if weight_scales:
+                logger.info(f"  Cached {len(weight_scales)} weight_scale tensors for FP8 dequantization")
+
         # Extract state dict and pin memory for fast DMA transfers
         sd = {}
         for k, v in model.state_dict().items():
@@ -751,7 +760,7 @@ class ModelManager:
         del model
         return {
             "config": config, "state_dict": sd, "video_only": video_only,
-            "fp8_cast": is_fp8_file,
+            "fp8_cast": is_fp8_file, "weight_scales": weight_scales,
         }
 
     def _pin_model_memory(self, model: torch.nn.Module, label: str) -> int:

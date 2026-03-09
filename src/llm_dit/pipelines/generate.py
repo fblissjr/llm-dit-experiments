@@ -328,6 +328,13 @@ def _reconstruct_transformer_from_cache(
     model.load_state_dict(sd, assign=True)
 
     if is_fp8_cast:
+        # Re-attach weight scales from cache (plain attributes, not in state_dict)
+        weight_scales = cached_transformer.get("weight_scales", {})
+        if weight_scales:
+            from llm_dit.models.ltx2.loader import _attach_weight_scales
+            attached = _attach_weight_scales(model, weight_scales)
+            logger.info(f"FP8-cast: re-attached {attached} weight_scales from cache")
+
         # FP8-cast: patch forwards for per-forward upcast (no torchao)
         from llm_dit.quantization.fp8_cast import amend_forward_with_upcast
         patched = amend_forward_with_upcast(model)

@@ -437,13 +437,9 @@ async def ltx2_generate_stream(request: LTX2GenerateRequest, config: ConfigDep, 
             # Return cached encoder to CPU if still on GPU
             enc = manager.ltx2_encoder
             if enc is not None and hasattr(enc, "offload"):
-                try:
-                    enc_device = next(enc.parameters()).device
-                    if enc_device.type != "cpu":
-                        enc.offload()
-                        logger.info("[LTX-2] Encoder returned to CPU after error cleanup")
-                except StopIteration:
-                    pass
+                if hasattr(enc, "_is_offloaded") and not enc._is_offloaded:
+                    enc.offload()
+                    logger.info("[LTX-2] Encoder returned to CPU after error cleanup")
             gc.collect()
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()

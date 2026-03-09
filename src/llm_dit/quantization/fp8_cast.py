@@ -1,10 +1,23 @@
 """FP8-cast quantization for LTX-2.3 transformer.
 
-Last Updated: 2026-03-06
+Last Updated: 2026-03-09
 
-Aligned with the official Lightricks approach (ltx-core/quantization/fp8_cast.py):
-stores weights as float8_e4m3fn, patches nn.Linear.forward to upcast to the
-input dtype per-forward. Original fp8 weights are never mutated.
+Supports two FP8 checkpoint formats:
+
+1. **Scaled FP8** (official release, e.g. ltx-2.3-transformer-fp8.safetensors):
+   Weights quantized with per-tensor scaling. FP8 values span the full [-448, 448]
+   range. Each layer has a `weight_scale` factor. Dequantization:
+     original_weight = fp8_weight * weight_scale
+   Without applying scale, weights are ~1000x too large.
+
+2. **Naive FP8** (from bf16 truncation):
+   Weights simply cast from bf16 to fp8 with `.to(float8_e4m3fn)`. Values preserve
+   original magnitude. No scale needed for upcast. This is what the official
+   ltx-core fp8-cast path assumes (it starts from bf16 and downcasts at runtime).
+
+The loader detects which format is in use by checking for weight_scale keys in
+the state dict. When scales are present, they're attached to each nn.Linear as
+`_weight_scale` and applied during the per-forward upcast.
 
 Memory footprint: ~12GB for 22B model (vs ~26GB bf16, ~42GB dequant+requant).
 
@@ -24,6 +37,10 @@ logger = logging.getLogger(__name__)
 def _replace_fwd_with_upcast(layer: nn.Linear) -> None:
     """Replace linear.forward with a version that upcasts fp8 weight per-forward.
 
+    If the layer has a `_weight_scale` attribute (set by the loader for scaled FP8
+    checkpoints), the upcast weight is multiplied by the scale to recover the
+    original magnitude. Without scale, this is a simple dtype cast.
+
     The original forward is stashed as `layer.original_forward` for introspection.
     Weight data is NOT mutated -- upcast creates a temporary bf16 copy.
     """
@@ -32,6 +49,10 @@ def _replace_fwd_with_upcast(layer: nn.Linear) -> None:
     def new_forward(*args, **_kwargs) -> torch.Tensor:
         x = args[0]
         w = layer.weight.to(x.dtype)
+        # Apply per-tensor weight scale if present (scaled FP8 checkpoint)
+        scale = getattr(layer, "_weight_scale", None)
+        if scale is not None:
+            w = w * scale.to(x.dtype)
         b = layer.bias.to(x.dtype) if layer.bias is not None else None
         return torch.nn.functional.linear(x, w, b)
 
@@ -55,6 +76,7 @@ def amend_forward_with_upcast(
         Number of linear layers patched.
     """
     count = 0
+    scaled = 0
     for name, module in model.named_modules():
         if not isinstance(module, nn.Linear):
             continue
@@ -63,6 +85,14 @@ def amend_forward_with_upcast(
             continue
         _replace_fwd_with_upcast(module)
         count += 1
+        if hasattr(module, "_weight_scale"):
+            scaled += 1
 
-    logger.info(f"fp8-cast: patched {count} nn.Linear layers for per-forward upcast")
+    if scaled > 0:
+        logger.info(
+            f"fp8-cast: patched {count} nn.Linear layers "
+            f"({scaled} with weight_scale, {count - scaled} without)"
+        )
+    else:
+        logger.info(f"fp8-cast: patched {count} nn.Linear layers for per-forward upcast")
     return count

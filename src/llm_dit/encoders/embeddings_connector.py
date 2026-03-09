@@ -113,7 +113,7 @@ def _apply_split_rotary_emb(
     output = rearrange(output, "... d r -> ... (d r)")
     if needs_reshape:
         # At this point output is [b, h, t, d] - reshape back to [b, t, h*d]
-        b_out, h_out, t_out, _ = output.shape
+        b_out, _, t_out, _ = output.shape
         output = output.swapaxes(1, 2).reshape(b_out, t_out, -1)
 
     return output
@@ -536,8 +536,14 @@ class Embeddings1DConnector(nn.Module):
         """
         Replace padding tokens with learnable registers.
 
-        This moves valid tokens to the end of the sequence and fills
-        the beginning with learnable register tokens.
+        Valid tokens are compacted to the LEFT of the sequence, with
+        learnable registers filling the remaining RIGHT positions.
+        This matches the reference LTX-2 implementation and how the model
+        was trained (valid tokens at positions 0..N-1, registers at N..seq_len-1).
+
+        The reference uses a flip-based approach: extract valid tokens,
+        left-align them in a zero-padded buffer, then use the flipped binary
+        mask to select tokens vs registers element-wise.
         """
         seq_len = hidden_states.shape[1]
         assert seq_len % self.num_learnable_registers == 0, (
@@ -547,44 +553,45 @@ class Embeddings1DConnector(nn.Module):
 
         num_duplications = seq_len // self.num_learnable_registers
         learnable_registers = self.learnable_registers.repeat(num_duplications, 1)
-        learnable_registers = learnable_registers.to(hidden_states.dtype)
+        learnable_registers = learnable_registers.to(
+            device=hidden_states.device, dtype=hidden_states.dtype
+        )
 
-        # Convert additive mask to binary mask
+        # Convert additive mask to binary [B, T, 1]: 1 = valid, 0 = padding
         # Additive mask: 0 = valid, -10000 = padding
         attention_mask_binary = (attention_mask.squeeze(1).squeeze(1).unsqueeze(-1) >= -9000.0).int()
 
-        # Extract non-padded tokens and right-align them
+        # Per-batch: extract valid tokens, left-align, then fill right with registers.
+        # This matches the reference _replace_padded_with_learnable_registers behavior.
         batch_size = hidden_states.shape[0]
         results = []
 
         for b in range(batch_size):
-            mask_b = attention_mask_binary[b, :, 0].bool()
-            valid_tokens = hidden_states[b, mask_b, :]
+            mask_b = attention_mask_binary[b, :, 0].bool()  # [T]
+            valid_tokens = hidden_states[b, mask_b, :]       # [num_valid, D]
             num_valid = valid_tokens.shape[0]
             pad_length = seq_len - num_valid
 
-            # Pad with zeros on the left, valid tokens on the right
-            padded = torch.cat([
-                torch.zeros(pad_length, self.inner_dim, device=hidden_states.device, dtype=hidden_states.dtype),
-                valid_tokens,
-            ], dim=0)
+            # Left-align valid tokens, pad zeros on the right (same as reference F.pad)
+            adjusted = torch.nn.functional.pad(
+                valid_tokens.unsqueeze(0), (0, 0, 0, pad_length)
+            ).squeeze(0)  # [seq_len, D]
 
-            # Replace zeros with learnable registers
-            mask_expanded = torch.cat([
-                torch.zeros(pad_length, dtype=torch.bool, device=hidden_states.device),
-                torch.ones(num_valid, dtype=torch.bool, device=hidden_states.device),
-            ])
+            # Flip the per-sample mask along the sequence dim.
+            # Original mask (left-padded input): [0,0,...,1,1,...] (padding left, valid right)
+            # Flipped: [1,1,...,0,0,...] -- ones at the left where valid tokens now sit.
+            mask_1d = attention_mask_binary[b, :, 0]  # [T] int
+            flipped_mask = mask_1d.flip(0).unsqueeze(-1)  # [T, 1] int, 1 where valid lands
 
-            result = torch.where(
-                mask_expanded.unsqueeze(-1),
-                padded,
-                learnable_registers.to(hidden_states.device),
+            result = (
+                flipped_mask * adjusted
+                + (1 - flipped_mask) * learnable_registers
             )
             results.append(result)
 
         hidden_states = torch.stack(results, dim=0)
 
-        # Create all-valid mask (registers are valid)
+        # Create all-valid additive mask (registers are now valid tokens)
         attention_mask = torch.full_like(
             attention_mask, 0.0,
             dtype=attention_mask.dtype,

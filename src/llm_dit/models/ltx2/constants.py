@@ -1,7 +1,7 @@
 """
 LTX-2 Official Reference Constants.
 
-Last Updated: 2026-01-18
+Last Updated: 2026-03-09
 
 Reference values from the official LTX-2 repository for 1:1 comparison testing.
 These match the defaults in coderef/LTX-2/packages/ltx-pipelines/src/ltx_pipelines/utils/constants.py
@@ -32,7 +32,7 @@ DEFAULT_FRAME_RATE = 24.0
 
 # Diffusion parameters
 DEFAULT_NUM_INFERENCE_STEPS = 30  # T2V default (official V2.3)
-DEFAULT_GUIDANCE_SCALE = 4.0  # CFG strength
+DEFAULT_GUIDANCE_SCALE = 3.0  # CFG strength (V2.3 default)
 
 # Reproducibility
 DEFAULT_SEED = 10
@@ -78,7 +78,7 @@ SCHEDULER_STRETCH = True
 
 TWO_STAGE_HEIGHT_STAGE1 = 512
 TWO_STAGE_WIDTH_STAGE1 = 768
-TWO_STAGE_STEPS_STAGE1 = 40
+TWO_STAGE_STEPS_STAGE1 = 30  # V2.3 default (V2.0 was 40)
 
 TWO_STAGE_HEIGHT_STAGE2 = 1024  # 2x upsampled
 TWO_STAGE_WIDTH_STAGE2 = 1536   # 2x upsampled
