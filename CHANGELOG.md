@@ -1,10 +1,22 @@
-last updated: 2026-03-08
+last updated: 2026-03-09
 
 # changelog
 
 
 All notable changes to this project will be documented in this file.
 Uses [Semantic Versioning](https://semver.org/).
+
+## 0.9.26
+
+### fixed
+- **LoRA fusion with scaled FP8 weights (washed-out distilled output):** `fuse_lora_to_state_dict` was upcasting raw fp8 values (~[-448, 448]) to bf16 and adding LoRA deltas (~0.001) without applying `weight_scale` first. The delta was negligible relative to the unscaled fp8 magnitude, making the distilled LoRA effectively a no-op. Fix: dequantize with weight_scale to real values, fuse in f32, re-quantize with new per-tensor scale. Matches official LTX-2 `_fuse_delta_with_scaled_fp8` pattern. Both callers updated (`_apply_distilled_lora_fp8` and `_reconstruct_transformer_from_cache`).
+
+### added
+- **`quantize_to_fp8_per_tensor()`** in `fp8_cast.py`: Per-tensor FP8 re-quantization helper matching official `quantize_weight_to_fp8_per_tensor`. Computes global max abs, derives scale, clamps and casts to `float8_e4m3fn`.
+- **`weight_scales` parameter on `fuse_lora_to_state_dict()`**: When passed, enables scale-aware fusion and returns `(state_dict, updated_weight_scales)` tuple. Without it, returns plain dict (backward compatible).
+- **`_fuse_delta()` in lora.py**: New unified fusion function handling three paths: scaled fp8 (dequant/fuse/requant), unscaled fp8 (upcast/fuse/downcast), and bf16 (direct addition).
+- **Distilled pipeline reference documentation** in `docs/reference/ltx2_distilled_pipeline.md`.
+- 6 new unit tests: 3 for scaled fp8 LoRA fusion roundtrip, 1 for backward compat, 2 for `_apply_distilled_lora_fp8` with weight_scales.
 
 ## 0.9.25
 

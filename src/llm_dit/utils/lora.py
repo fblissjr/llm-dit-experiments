@@ -596,11 +596,16 @@ def fuse_lora_to_state_dict(
     lora_paths: list[Union[str, Path]],
     lora_scales: list[float],
     device: str = "cpu",
-) -> Dict[str, torch.Tensor]:
+    weight_scales: Optional[Dict[str, torch.Tensor]] = None,
+) -> Union[Dict[str, torch.Tensor], tuple[Dict[str, torch.Tensor], Dict[str, torch.Tensor]]]:
     """Fuse LoRA deltas into a state dict (supports fp8 + bf16 weights).
 
     Matches official LTX-2 fuse_loras.py pattern:
-    - fp8 weights: upcast to bf16, add delta, downcast back to fp8
+    - Scaled fp8 weights (with weight_scales): dequantize, add delta in f32,
+      re-quantize with new per-tensor scale. This is critical for the distilled
+      pipeline where raw fp8 values (~[-448, 448]) would dwarf the LoRA delta
+      (~0.001) without proper dequantization.
+    - Unscaled fp8 weights: upcast to bf16, add delta, downcast back to fp8
     - bf16 weights: direct addition
     - LoRA deltas always computed in bf16
 
@@ -612,9 +617,13 @@ def fuse_lora_to_state_dict(
         lora_paths: List of paths to LoRA .safetensors files.
         lora_scales: Scale factor for each LoRA (same length as lora_paths).
         device: Device for delta computation (typically "cpu").
+        weight_scales: Optional dict mapping weight keys (e.g. "blocks.0.attn.qkv.weight")
+            to per-tensor scale tensors for scaled FP8 dequantization. When provided,
+            returns a tuple of (state_dict, updated_weight_scales).
 
     Returns:
-        New state dict with LoRA deltas fused into matching weight keys.
+        When weight_scales is None: new state dict with fused weights.
+        When weight_scales is provided: (new_state_dict, updated_weight_scales).
     """
     if len(lora_paths) != len(lora_scales):
         raise ValueError(
@@ -624,6 +633,7 @@ def fuse_lora_to_state_dict(
 
     # Clone so we don't mutate the cache
     result = {k: v.clone() for k, v in state_dict.items()}
+    new_weight_scales: Dict[str, torch.Tensor] = dict(weight_scales) if weight_scales else {}
 
     loader = LoRALoader(device=device, dtype=torch.bfloat16)
 
@@ -646,7 +656,9 @@ def fuse_lora_to_state_dict(
                 w1 = raw_sd[w1_key].to(device=device, dtype=torch.bfloat16)
                 w2 = raw_sd[w2_key].to(device=device, dtype=torch.bfloat16)
                 delta = scale * torch.kron(w1, w2)
-                result[weight_key] = _fuse_delta_into_weight(result[weight_key], delta)
+                result[weight_key], new_weight_scales = _fuse_delta(
+                    result[weight_key], delta, weight_key, new_weight_scales,
+                )
         else:
             std_sd = loader.convert_state_dict(raw_sd)
             layer_names = {
@@ -665,18 +677,62 @@ def fuse_lora_to_state_dict(
                     delta = scale * torch.mm(lora_B, lora_A).unsqueeze(2).unsqueeze(3)
                 else:
                     delta = scale * torch.mm(lora_B, lora_A)
-                result[weight_key] = _fuse_delta_into_weight(result[weight_key], delta)
+                result[weight_key], new_weight_scales = _fuse_delta(
+                    result[weight_key], delta, weight_key, new_weight_scales,
+                )
 
         logger.info(f"State-dict LoRA fusion: {lora_path.name} (scale={scale})")
 
+    if weight_scales is not None:
+        return result, new_weight_scales
     return result
 
 
-def _fuse_delta_into_weight(weight: torch.Tensor, delta: torch.Tensor) -> torch.Tensor:
-    """Fuse a LoRA delta into a weight tensor, handling fp8 dtype.
+def _fuse_delta(
+    weight: torch.Tensor,
+    delta: torch.Tensor,
+    weight_key: str,
+    weight_scales: Dict[str, torch.Tensor],
+) -> tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+    """Fuse a LoRA delta into a weight tensor, handling scaled fp8/unscaled fp8/bf16.
 
-    - fp8: upcast to bf16, add delta, downcast back to fp8
-    - bf16/fp32: direct addition
+    For scaled fp8 (weight_key found in weight_scales): dequantize to f32,
+    add delta, re-quantize to fp8 with a new per-tensor scale. This matches
+    the official LTX-2 `_fuse_delta_with_scaled_fp8` pattern.
+
+    For unscaled fp8: upcast to bf16, add delta, downcast back to fp8.
+    For bf16/fp32: direct addition.
+
+    Returns:
+        (fused_weight, updated_weight_scales dict).
+    """
+    is_fp8 = weight.dtype in (torch.float8_e4m3fn, torch.float8_e5m2)
+    has_scale = weight_key in weight_scales
+
+    if is_fp8 and has_scale:
+        # Scaled fp8: dequant -> fuse in f32 -> re-quant with new scale
+        from llm_dit.quantization.fp8_cast import quantize_to_fp8_per_tensor
+
+        ws = weight_scales[weight_key]
+        real_weight = weight.to(torch.float32) * ws.to(torch.float32)
+        merged = real_weight + delta.to(torch.float32)
+        new_fp8, new_scale = quantize_to_fp8_per_tensor(merged)
+        weight_scales[weight_key] = new_scale
+        return new_fp8, weight_scales
+    elif is_fp8:
+        # Unscaled fp8 (cast-only): simple upcast/downcast
+        original_dtype = weight.dtype
+        merged = weight.to(torch.bfloat16) + delta.to(torch.bfloat16)
+        return merged.to(original_dtype), weight_scales
+    else:
+        # bf16/fp32: direct addition
+        return weight + delta.to(weight.dtype), weight_scales
+
+
+def _fuse_delta_into_weight(weight: torch.Tensor, delta: torch.Tensor) -> torch.Tensor:
+    """Legacy: fuse a LoRA delta without weight_scale handling.
+
+    Kept for backward compatibility with tests. New code should use _fuse_delta.
     """
     if weight.dtype in (torch.float8_e4m3fn, torch.float8_e5m2):
         original_dtype = weight.dtype

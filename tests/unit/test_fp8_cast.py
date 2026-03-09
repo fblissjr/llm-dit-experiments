@@ -240,6 +240,55 @@ class TestFP8CastDistilledLoRA:
         # Weight should still be fp8 after fusion
         assert model[0].weight.dtype == torch.float8_e4m3fn
 
+    def test_distilled_lora_with_weight_scales(self, tmp_path):
+        """Distilled LoRA on scaled fp8 model: dequant, fuse, re-quant with updated scales.
+
+        This verifies the fix for the bug where raw fp8 values (~300) dwarfed
+        the LoRA delta (~0.001), making the LoRA negligible.
+        """
+        from llm_dit.pipelines.generate import _apply_distilled_lora_fp8
+        from safetensors.torch import save_file
+
+        # Build a model with properly scaled fp8 weights
+        model = nn.Sequential(nn.Linear(32, 64, bias=False))
+        real_weight = torch.randn(64, 32, dtype=torch.float32) * 0.02
+        fp8_max = torch.finfo(torch.float8_e4m3fn).max
+        max_abs = real_weight.abs().amax()
+        quant_scale = fp8_max / max_abs
+        raw_fp8 = (real_weight * quant_scale).clamp(-fp8_max, fp8_max).to(torch.float8_e4m3fn)
+        weight_scale = quant_scale.reciprocal()
+
+        model[0].weight = nn.Parameter(raw_fp8, requires_grad=False)
+        model[0]._weight_scale = weight_scale
+
+        # Dequantize to get baseline real values
+        baseline_real = raw_fp8.to(torch.float32) * weight_scale
+
+        # Write a LoRA file with meaningful magnitude
+        lora_sd = {
+            "0.lora_A.weight": torch.randn(4, 32, dtype=torch.bfloat16) * 0.1,
+            "0.lora_B.weight": torch.randn(64, 4, dtype=torch.bfloat16) * 0.1,
+        }
+        lora_path = str(tmp_path / "distilled.safetensors")
+        save_file(lora_sd, lora_path)
+
+        _apply_distilled_lora_fp8(model, lora_path, scale=1.0)
+
+        # Weight should still be fp8
+        assert model[0].weight.dtype == torch.float8_e4m3fn
+        # Should have an updated weight_scale
+        assert hasattr(model[0], "_weight_scale")
+
+        # Dequantize result to real values
+        result_real = model[0].weight.to(torch.float32) * model[0]._weight_scale
+
+        # The LoRA should have made a meaningful change
+        delta_magnitude = (result_real - baseline_real).abs().mean()
+        assert delta_magnitude > 1e-4, (
+            f"LoRA delta too small ({delta_magnitude:.2e}) -- "
+            "weight_scale not applied during fusion"
+        )
+
 
 class TestFP8PreservationGuard:
     """Test FP8 preservation guard raises RuntimeError."""

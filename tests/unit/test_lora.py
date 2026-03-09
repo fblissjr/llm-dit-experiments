@@ -778,6 +778,88 @@ class TestFuseLoraToStateDict:
         assert result["layer.weight"].dtype == torch.bfloat16
         assert not torch.allclose(result["layer.weight"], base_sd["layer.weight"])
 
+    def test_scaled_fp8_dequant_fuse_requant(self, tmp_path):
+        """Scaled fp8 weights: dequant with weight_scale, fuse in f32, re-quant.
+
+        This is the critical path for LTX-2.3 distilled LoRA. Without proper
+        dequantization, raw fp8 values (~300) dwarf the LoRA delta (~0.001),
+        making the LoRA negligible.
+        """
+        from llm_dit.utils.lora import fuse_lora_to_state_dict
+
+        # Create a "real" weight in bf16, then quantize to scaled fp8
+        real_weight = torch.randn(64, 32, dtype=torch.float32) * 0.02  # typical magnitude
+        fp8_max = torch.finfo(torch.float8_e4m3fn).max
+        max_abs = real_weight.abs().amax()
+        quant_scale = fp8_max / max_abs
+        raw_fp8 = (real_weight * quant_scale).clamp(-fp8_max, fp8_max).to(torch.float8_e4m3fn)
+        weight_scale = quant_scale.reciprocal()  # max_abs / fp8_max
+
+        base_sd = {"layer.weight": raw_fp8}
+        weight_scales = {"layer.weight": weight_scale}
+
+        lora_path = self._write_lora_file(tmp_path, "layer", 64, 32, 8)
+        result_sd, new_scales = fuse_lora_to_state_dict(
+            base_sd, [lora_path], [1.0], weight_scales=weight_scales,
+        )
+
+        # Result should be fp8 with an updated scale
+        assert result_sd["layer.weight"].dtype == torch.float8_e4m3fn
+        assert "layer.weight" in new_scales
+        assert new_scales["layer.weight"].dtype == torch.float32
+
+        # Dequantize result and compare to original real weight
+        result_real = result_sd["layer.weight"].to(torch.float32) * new_scales["layer.weight"]
+        original_real = raw_fp8.to(torch.float32) * weight_scale
+
+        # The LoRA should have made a meaningful change (not negligible)
+        delta_magnitude = (result_real - original_real).abs().mean()
+        assert delta_magnitude > 1e-4, (
+            f"LoRA delta too small ({delta_magnitude:.2e}) -- "
+            "weight_scale likely not applied during fusion"
+        )
+
+    def test_scaled_fp8_roundtrip_accuracy(self, tmp_path):
+        """Verify that dequant -> fuse -> requant preserves reasonable accuracy."""
+        from llm_dit.utils.lora import fuse_lora_to_state_dict
+
+        real_weight = torch.randn(64, 32, dtype=torch.float32) * 0.02
+        fp8_max = torch.finfo(torch.float8_e4m3fn).max
+        max_abs = real_weight.abs().amax()
+        quant_scale = fp8_max / max_abs
+        raw_fp8 = (real_weight * quant_scale).clamp(-fp8_max, fp8_max).to(torch.float8_e4m3fn)
+        weight_scale = quant_scale.reciprocal()
+
+        base_sd = {"layer.weight": raw_fp8}
+        weight_scales = {"layer.weight": weight_scale}
+
+        # Use scale=0 LoRA (zero delta) to test roundtrip
+        lora_path = self._write_lora_file(tmp_path, "layer", 64, 32, 8)
+        result_sd, new_scales = fuse_lora_to_state_dict(
+            base_sd, [lora_path], [0.0], weight_scales=weight_scales,
+        )
+
+        # Dequantized values should be close (within fp8 quantization error)
+        result_real = result_sd["layer.weight"].to(torch.float32) * new_scales["layer.weight"]
+        original_real = raw_fp8.to(torch.float32) * weight_scale
+        max_error = (result_real - original_real).abs().max()
+        # fp8 has ~7 mantissa levels, roundtrip error should be small relative to values
+        assert max_error < real_weight.abs().max() * 0.1, (
+            f"Roundtrip error too large: {max_error:.2e}"
+        )
+
+    def test_backward_compat_no_weight_scales(self, tmp_path):
+        """Without weight_scales, return type is plain dict (not tuple)."""
+        from llm_dit.utils.lora import fuse_lora_to_state_dict
+
+        base_sd = {"layer.weight": torch.randn(64, 32, dtype=torch.bfloat16)}
+        lora_path = self._write_lora_file(tmp_path, "layer", 64, 32, 8)
+
+        result = fuse_lora_to_state_dict(base_sd, [lora_path], [1.0])
+        # Should be a plain dict, not a tuple
+        assert isinstance(result, dict)
+        assert "layer.weight" in result
+
 
 # ============================================================================
 # _normalize_lora_args Tests (from generate.py)

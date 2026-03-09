@@ -34,6 +34,32 @@ from torch import nn
 logger = logging.getLogger(__name__)
 
 
+def quantize_to_fp8_per_tensor(weight: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    """Quantize a weight tensor to FP8 (float8_e4m3fn) with per-tensor scaling.
+
+    Matches the official LTX-2 `quantize_weight_to_fp8_per_tensor` pattern:
+    compute global max abs, derive scale, clamp and cast.
+
+    Note: reference transposes for cuBLAS layout. We do NOT transpose since
+    we use standard PyTorch [out, in] layout with F.linear.
+
+    Args:
+        weight: Any-dtype weight tensor.
+
+    Returns:
+        (quantized_fp8_weight, weight_scale) where
+        weight_scale = max_abs / fp8_max (reciprocal of quantization scale).
+        Dequantize: real_weight = fp8_weight * weight_scale.
+    """
+    w = weight.to(torch.float32)
+    fp8_max = torch.finfo(torch.float8_e4m3fn).max
+    max_abs = w.abs().amax().clamp(min=1e-12)
+    scale = fp8_max / max_abs
+    quantized = (w * scale).clamp(-fp8_max, fp8_max).to(torch.float8_e4m3fn)
+    weight_scale = scale.reciprocal()
+    return quantized, weight_scale
+
+
 def _replace_fwd_with_upcast(layer: nn.Linear) -> None:
     """Replace linear.forward with a version that upcasts fp8 weight per-forward.
 

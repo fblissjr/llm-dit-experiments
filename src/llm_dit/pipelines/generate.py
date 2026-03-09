@@ -162,18 +162,40 @@ def _apply_distilled_lora_fp8(
 ) -> None:
     """Apply distilled LoRA to a live model with native fp8 weights.
 
-    Uses state-dict-level fusion: extract state dict, fuse LoRA deltas,
-    reload with assign=True. The existing patched forwards (from
-    amend_forward_with_upcast during cache reconstruction) survive
-    load_state_dict(assign=True) because it replaces parameters, not
-    forward methods -- closures access layer.weight at call time.
+    Uses state-dict-level fusion with proper FP8 dequantization:
+    1. Extract weight_scales from model (per-tensor scale factors)
+    2. Fuse LoRA: dequantize fp8 -> add delta in f32 -> re-quantize with new scale
+    3. Reload state dict with assign=True
+    4. Re-attach updated weight_scales
+
+    The existing patched forwards (from amend_forward_with_upcast during cache
+    reconstruction) survive load_state_dict(assign=True) because it replaces
+    parameters, not forward methods -- closures access layer.weight at call time.
     """
+    from llm_dit.models.ltx2.loader import _attach_weight_scales
     from llm_dit.utils.lora import fuse_lora_to_state_dict
 
+    # Extract weight_scales (plain attributes on nn.Linear, not in state_dict)
+    weight_scales: dict[str, torch.Tensor] = {}
+    for name, module in model.named_modules():
+        if hasattr(module, "_weight_scale"):
+            weight_scales[f"{name}.weight"] = module._weight_scale
+
     sd = model.state_dict()
-    sd = fuse_lora_to_state_dict(sd, [lora_path], [scale])
+    sd, new_scales = fuse_lora_to_state_dict(
+        sd, [lora_path], [scale], weight_scales=weight_scales,
+    )
     model.load_state_dict(sd, assign=True)
-    logger.info("FP8-cast distilled LoRA: sd-level fusion applied")
+
+    # Re-attach updated weight_scales (scale factors change after re-quantization)
+    if new_scales:
+        attached = _attach_weight_scales(model, new_scales)
+        logger.info(
+            f"FP8-cast distilled LoRA: sd-level fusion applied "
+            f"({attached} weight_scales updated)"
+        )
+    else:
+        logger.info("FP8-cast distilled LoRA: sd-level fusion applied")
 
 
 def _load_transformer_and_lora(
@@ -311,13 +333,17 @@ def _reconstruct_transformer_from_cache(
     model_type = LTXModelType.VideoOnly if cache_video_only else LTXModelType.AudioVideo
 
     # For fp8_cast models, fuse LoRA into the state dict BEFORE load_state_dict.
-    # Native fp8 tensors can't do fp8+bf16 addition, so we upcast/fuse/downcast
-    # at the state-dict level (matching official LTX-2 fuse_loras.py pattern).
+    # Native fp8 tensors can't do fp8+bf16 addition, so we dequantize using
+    # weight_scales, fuse in f32, and re-quantize (matching official LTX-2
+    # _fuse_delta_with_scaled_fp8 pattern).
     sd = cached_transformer["state_dict"]
+    weight_scales = cached_transformer.get("weight_scales", {})
     lora_fused_at_sd_level = False
     if is_fp8_cast and lora_paths and lora_scales:
         from llm_dit.utils.lora import fuse_lora_to_state_dict
-        sd = fuse_lora_to_state_dict(sd, lora_paths, lora_scales)
+        sd, weight_scales = fuse_lora_to_state_dict(
+            sd, lora_paths, lora_scales, weight_scales=weight_scales,
+        )
         lora_fused_at_sd_level = True
         logger.info(f"LoRA fused at state-dict level ({len(lora_paths)} LoRA(s))")
 
@@ -328,12 +354,11 @@ def _reconstruct_transformer_from_cache(
     model.load_state_dict(sd, assign=True)
 
     if is_fp8_cast:
-        # Re-attach weight scales from cache (plain attributes, not in state_dict)
-        weight_scales = cached_transformer.get("weight_scales", {})
+        # Re-attach weight scales (updated by LoRA fusion or original from cache)
         if weight_scales:
             from llm_dit.models.ltx2.loader import _attach_weight_scales
             attached = _attach_weight_scales(model, weight_scales)
-            logger.info(f"FP8-cast: re-attached {attached} weight_scales from cache")
+            logger.info(f"FP8-cast: attached {attached} weight_scales")
 
         # FP8-cast: patch forwards for per-forward upcast (no torchao)
         from llm_dit.quantization.fp8_cast import amend_forward_with_upcast
