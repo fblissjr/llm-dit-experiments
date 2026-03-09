@@ -763,24 +763,6 @@ class ModelManager:
             "fp8_cast": is_fp8_file, "weight_scales": weight_scales,
         }
 
-    def _pin_model_memory(self, model: torch.nn.Module, label: str) -> int:
-        """Pin all parameter and buffer memory for fast DMA shuttle.
-
-        Returns number of tensors pinned.
-        """
-        pinned = 0
-        for param in model.parameters():
-            if not param.data.is_pinned():
-                param.data = param.data.pin_memory()
-                pinned += 1
-        for _name, buf in model.named_buffers():
-            if not buf.data.is_pinned():
-                buf.data = buf.data.pin_memory()
-                pinned += 1
-        num_params = sum(p.numel() for p in model.parameters())
-        logger.info(f"  {label} cached: {num_params / 1e6:.1f}M params, {pinned} tensors pinned")
-        return pinned
-
     def _preload_ltx2_vae(self, model_path: Path) -> Any:
         """Load VAE decoder and cache on CPU with pinned memory.
 
@@ -796,7 +778,7 @@ class ModelManager:
         vae = load_ltx2_vae_decoder(
             vae_path, dtype=torch.bfloat16, device="cpu"
         )
-        self._pin_model_memory(vae, "VAE")
+        vae.offload_to_pinned()
         return vae
 
     def _preload_ltx2_audio_decoder(self, model_path: Path, audio_vae_path: str = "") -> Any:
@@ -810,7 +792,7 @@ class ModelManager:
             v23_path = model_path / "ltx-2.3-audio-vae.safetensors"
             path = v23_path if v23_path.exists() else model_path / "audio_vae"
         decoder = load_audio_decoder(path, dtype=torch.bfloat16, device="cpu")
-        self._pin_model_memory(decoder, "Audio decoder")
+        decoder.offload_to_pinned()
         return decoder
 
     def _preload_ltx2_vocoder(self, model_path: Path, vocoder_path: str = "") -> Any:
@@ -824,7 +806,7 @@ class ModelManager:
             v23_path = model_path / "ltx-2.3-vocoder.safetensors"
             path = v23_path if v23_path.exists() else model_path / "vocoder"
         vocoder = load_vocoder(path, dtype=torch.bfloat16, device="cpu")
-        self._pin_model_memory(vocoder, "Vocoder")
+        vocoder.offload_to_pinned()
         return vocoder
 
     def _load_ltx2(self) -> LoadResult:

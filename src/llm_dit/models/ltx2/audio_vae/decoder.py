@@ -29,6 +29,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from llm_dit.utils.shuttle import PinnedShuttleMixin
+
 from ..vae.normalization import NormType, build_normalization_layer
 
 from .blocks import (
@@ -44,7 +46,7 @@ from .patchifier import AudioPatchifier
 from .types import AudioLatentShape, AUDIO_LATENT_DOWNSAMPLE_FACTOR
 
 
-class AudioDecoder(nn.Module):
+class AudioDecoder(PinnedShuttleMixin, nn.Module):
     """Decodes audio latents to mel spectrograms.
 
     Symmetric decoder that reconstructs audio spectrograms from latent
@@ -91,7 +93,8 @@ class AudioDecoder(nn.Module):
         is_causal: bool = True,
         mel_bins: int | None = 64,
     ) -> None:
-        super().__init__()
+        nn.Module.__init__(self)
+        self._init_shuttle_state()
 
         if attn_resolutions is None:
             attn_resolutions = set()

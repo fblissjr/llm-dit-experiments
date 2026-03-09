@@ -6,6 +6,26 @@ last updated: 2026-03-09
 All notable changes to this project will be documented in this file.
 Uses [Semantic Versioning](https://semver.org/).
 
+## 0.9.28
+
+### removed
+- **`offload_mode` field** from LTX2Config, config.toml, config.toml.example, UI schema, config_mgmt mapping. Dead code -- no generation function ever read it. Actual offloading is hardcoded as sequential component offloading with pinned memory.
+- **`num_blocks_per_group` field** from LTX2Config, config.toml, config.toml.example. Only used by offload_mode validation.
+- **`OFFLOAD_OPTIONS` constant** from ltx2 pipeline schema.
+- **`offload_type` UI control** from ltx2 pipeline schema.
+- **`use_fp8` UI control** from ltx2 pipeline schema and config_mgmt mapping. Infrastructure concern -- transformer is loaded as fp8 at cache time, changing per-generation is misleading.
+- **`_pin_model_memory()`** from ModelManager. All callers migrated to `PinnedShuttleMixin.offload_to_pinned()`.
+
+### fixed
+- **VAE pinned memory round-trip.** `_pin_model_memory(vae)` pinned tensors at startup, but `vae.to("cpu")` in generate.py created new unpinned tensors, orphaning the pinned originals. Now uses `PinnedShuttleMixin.offload()` which copies CUDA tensors into pre-allocated pinned buffers.
+- **AudioDecoder / VocoderWithBWE pinned memory.** Same fix as VAE -- migrated from `_pin_model_memory()` + bare `.to()` to `PinnedShuttleMixin` for proper round-trips.
+
+### changed
+- **VideoDecoder** now inherits from `PinnedShuttleMixin` (same pattern as FLUX.2 AutoEncoder).
+- **AudioDecoder** now inherits from `PinnedShuttleMixin`.
+- **VocoderWithBWE** now inherits from `PinnedShuttleMixin`.
+- Config migration silently strips `offload_mode` and `num_blocks_per_group` from old config.toml files.
+
 ## 0.9.27
 
 ### removed

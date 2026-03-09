@@ -1246,7 +1246,10 @@ def generate_video_with_offloading(
     vae_is_borrowed = cached_vae is not None
     if vae_is_borrowed:
         logger.info("Using cached VAE, shuttling to GPU...")
-        vae = cached_vae.to(vae_device)
+        vae = cached_vae
+        needs_sync = vae.to_device(torch.device(vae_device))
+        if needs_sync:
+            torch.cuda.synchronize()
     else:
         from llm_dit.models.ltx2.vae import load_ltx2_vae_decoder
         vae = load_ltx2_vae_decoder(
@@ -1272,7 +1275,7 @@ def generate_video_with_offloading(
 
     # Return or unload VAE
     if vae_is_borrowed:
-        vae.to("cpu")  # Return to CPU pinned memory
+        vae.offload()
         logger.info("Cached VAE returned to CPU")
     else:
         del vae
@@ -2567,7 +2570,10 @@ def generate_video_two_stage(
     vae_is_borrowed = cached_vae is not None
     if vae_is_borrowed:
         logger.info("Using cached VAE, shuttling to GPU...")
-        vae = cached_vae.to(vae_device)
+        vae = cached_vae
+        needs_sync = vae.to_device(torch.device(vae_device))
+        if needs_sync:
+            torch.cuda.synchronize()
     else:
         from llm_dit.models.ltx2.vae import load_ltx2_vae_decoder
         vae = load_ltx2_vae_decoder(
@@ -2595,7 +2601,7 @@ def generate_video_two_stage(
 
     # Return or unload VAE
     if vae_is_borrowed:
-        vae.to("cpu")  # Return to CPU pinned memory
+        vae.offload()
         logger.info("Cached VAE returned to CPU")
     else:
         del vae
@@ -2626,10 +2632,13 @@ def generate_video_two_stage(
 
         # Audio decoder: latents -> mel spectrogram
         if cached_audio_decoder is not None:
-            audio_decoder = cached_audio_decoder.to(vae_device)
+            audio_decoder = cached_audio_decoder
+            needs_sync = audio_decoder.to_device(torch.device(vae_device))
+            if needs_sync:
+                torch.cuda.synchronize()
             with torch.no_grad():
                 mel = audio_decoder(audio_latents_4d.to(vae_device))
-            audio_decoder.to("cpu")
+            audio_decoder.offload()
             logger.info("Cached audio decoder returned to CPU")
         else:
             from llm_dit.models.ltx2.audio_vae.loader import load_audio_decoder
@@ -2642,11 +2651,14 @@ def generate_video_two_stage(
 
         # Vocoder: mel -> waveform
         if cached_vocoder is not None:
-            vocoder = cached_vocoder.to(vae_device)
+            vocoder = cached_vocoder
+            needs_sync = vocoder.to_device(torch.device(vae_device))
+            if needs_sync:
+                torch.cuda.synchronize()
             with torch.no_grad():
                 audio_waveform = vocoder(mel)
             audio_sample_rate = vocoder.output_sample_rate
-            vocoder.to("cpu")
+            vocoder.offload()
             logger.info(f"Cached vocoder returned to CPU (output_rate={audio_sample_rate}Hz)")
         else:
             from llm_dit.models.ltx2.audio_vae.loader import load_vocoder

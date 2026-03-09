@@ -343,10 +343,6 @@ class LTX2Config:
     lora_path: str = ""  # Path to LoRA safetensors
     lora_scale: float = 1.0  # LoRA blend scale (0.0-1.0)
 
-    # CPU offloading during generation
-    offload_mode: str = "model"  # none, model, sequential, group
-    num_blocks_per_group: int = 2  # For group offload: DiT blocks to keep on GPU
-
     # Video generation defaults
     height: int = 512  # Video height (multiple of 32, ref: DEFAULT_1_STAGE_HEIGHT)
     width: int = 768  # Video width (multiple of 32, ref: DEFAULT_1_STAGE_WIDTH)
@@ -443,20 +439,6 @@ class LTX2Config:
 
     def validate(self) -> None:
         """Validate configuration settings."""
-        valid_offload_modes = ("none", "model", "sequential", "group")
-        if self.offload_mode not in valid_offload_modes:
-            raise ValueError(
-                f"Invalid offload_mode='{self.offload_mode}'. "
-                f"Valid options: {', '.join(valid_offload_modes)}"
-            )
-
-        # Validate num_blocks_per_group for group offload mode
-        if self.offload_mode == "group" and self.num_blocks_per_group <= 0:
-            raise ValueError(
-                f"num_blocks_per_group must be > 0 for group offload mode, "
-                f"got {self.num_blocks_per_group}"
-            )
-
         # Validate dimensions are multiples of 32
         if self.height % 32 != 0:
             raise ValueError(f"height must be multiple of 32, got {self.height}")
@@ -486,8 +468,6 @@ class LTX2Config:
             "encoder_model_id": self.encoder_model_id,
             "lora_path": self.lora_path,
             "lora_scale": self.lora_scale,
-            "offload_mode": self.offload_mode,
-            "num_blocks_per_group": self.num_blocks_per_group,
             "height": self.height,
             "width": self.width,
             "num_frames": self.num_frames,
@@ -1995,6 +1975,9 @@ class Config:
         zimage_data = data.pop("zimage", {})
         qwen_image_data = data.pop("qwen_image", {})
         ltx2_data = data.pop("ltx2", {})
+        # v0.9.28 migrations
+        ltx2_data.pop("offload_mode", None)
+        ltx2_data.pop("num_blocks_per_group", None)
         # v0.9.27 migrations
         if "use_distilled_sigmas" in ltx2_data:
             if ltx2_data.pop("use_distilled_sigmas"):

@@ -35,6 +35,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from llm_dit.utils.shuttle import PinnedShuttleMixin
+
 
 LRELU_SLOPE = 0.1
 
@@ -525,7 +527,7 @@ class MelSTFT(nn.Module):
         return log_mel, magnitude, phase, energy
 
 
-class VocoderWithBWE(nn.Module):
+class VocoderWithBWE(PinnedShuttleMixin, nn.Module):
     """Vocoder with bandwidth extension (BWE) upsampling.
 
     Chains a mel-to-wav vocoder with a BWE module that upsamples the output
@@ -545,7 +547,8 @@ class VocoderWithBWE(nn.Module):
         output_sampling_rate: int,
         hop_length: int,
     ) -> None:
-        super().__init__()
+        nn.Module.__init__(self)
+        self._init_shuttle_state()
         self.vocoder = vocoder
         self.bwe_generator = bwe_generator
         self.mel_stft = mel_stft

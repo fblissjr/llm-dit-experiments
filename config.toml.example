@@ -1,5 +1,5 @@
 # llm-dit-experiments configuration template
-# last updated: 2026-03-06
+# last updated: 2026-03-09
 #
 # Copy to config.toml and edit paths for your setup:
 #   cp config.toml.example config.toml
@@ -155,10 +155,6 @@ enhance_prompt = false
 # LoRA
 lora_path = ""
 lora_scale = 1.0                # blend scale (0.0-1.0)
-
-# Offload mode: none (>48GB), model (~20-50% slower), sequential (~3-5x slower), group (configurable)
-offload_mode = "model"
-num_blocks_per_group = 2        # group mode only: DiT blocks to keep on GPU
 
 # Video defaults
 height = 512

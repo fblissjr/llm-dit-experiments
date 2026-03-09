@@ -24,10 +24,6 @@ VIDEO_DIMENSION_PRESETS = [
     "Custom",     # Set when width/height are modified directly
 ]
 
-# Offload strategies
-OFFLOAD_OPTIONS = ["none", "model", "sequential", "group"]
-
-
 register_pipeline(PipelineSchema(
     id="ltx2",
     name="LTX-2",
@@ -207,23 +203,6 @@ register_pipeline(PipelineSchema(
         ),
 
         # === Memory & Performance ===
-        ParamSchema(
-            id="offload_type",
-            type="select",
-            label="Offload Strategy",
-            default="group",
-            options=OFFLOAD_OPTIONS,
-            group="optimization",
-            tooltip="Memory management: none (fastest), model (balanced), sequential/group (low VRAM).",
-        ),
-        ParamSchema(
-            id="use_fp8",
-            type="checkbox",
-            label="Use FP8",
-            default=True,
-            group="optimization",
-            tooltip="Enable FP8 quantization (native on RTX 4090, saves ~40% VRAM).",
-        ),
         ParamSchema(
             id="fbcache_threshold",
             type="slider",

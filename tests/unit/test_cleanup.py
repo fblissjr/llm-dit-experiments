@@ -13,6 +13,7 @@ Covers:
 - Centralized QUANT_ALIASES constant
 - v0.9.27: Dead stage2_steps removal, stage1_steps default fix, scheduler
   token count fix, pipeline_mode restructure, dead code removal
+- v0.9.28: Dead offload_mode/use_fp8 removal, VAE PinnedShuttleMixin
 
 Run with: uv run pytest tests/unit/test_cleanup.py -v
 """
@@ -566,4 +567,170 @@ class TestDuplicateStepFields:
         assert "num_inference_steps" not in LTX2Config.__dataclass_fields__, (
             "LTX2Config.num_inference_steps should be deleted -- "
             "duplicate of stage1_num_inference_steps, single-stage removed in v0.9.20"
+        )
+
+
+# =========================================================================
+# v0.9.28: Offloading audit & cleanup
+# =========================================================================
+
+
+class TestDeadOffloadModeRemoved:
+    """offload_mode and num_blocks_per_group are dead config fields.
+    No generation function ever reads them. The actual offloading is
+    hardcoded as sequential component offloading with pinned memory."""
+
+    def test_offload_mode_not_in_ltx2_config(self):
+        """offload_mode should be removed from LTX2Config."""
+        from llm_dit.config import LTX2Config
+
+        assert "offload_mode" not in LTX2Config.__dataclass_fields__, (
+            "LTX2Config.offload_mode should be deleted -- dead code, "
+            "no generation function reads it"
+        )
+
+    def test_num_blocks_per_group_not_in_ltx2_config(self):
+        """num_blocks_per_group should be removed from LTX2Config."""
+        from llm_dit.config import LTX2Config
+
+        assert "num_blocks_per_group" not in LTX2Config.__dataclass_fields__, (
+            "LTX2Config.num_blocks_per_group should be deleted -- dead code, "
+            "only used by offload_mode validation"
+        )
+
+    def test_offload_type_not_in_ui_schema(self):
+        """UI schema should not have offload_type ParamSchema."""
+        from llm_dit.pipelines.schemas import get_pipeline
+
+        schema = get_pipeline("ltx2")
+        param_ids = [p.id for p in schema.params]
+        assert "offload_type" not in param_ids, (
+            "offload_type should be removed from LTX2 UI schema -- dead control"
+        )
+
+    def test_offload_type_not_in_config_mgmt_map(self):
+        """config_mgmt should not have offload_type mapping."""
+        from web.routers.config_mgmt import _PARAM_NAME_MAPS
+
+        ltx2_map = _PARAM_NAME_MAPS.get("ltx2", {})
+        assert "offload_type" not in ltx2_map, (
+            "offload_type mapping should be removed from config_mgmt._PARAM_NAME_MAPS"
+        )
+
+    def test_offload_options_constant_removed(self):
+        """OFFLOAD_OPTIONS constant should be removed from ltx2 schema."""
+        from llm_dit.pipelines.schemas import ltx2 as ltx2_schema
+
+        assert not hasattr(ltx2_schema, "OFFLOAD_OPTIONS"), (
+            "OFFLOAD_OPTIONS should be deleted from ltx2 schema module"
+        )
+
+    def test_config_migration_strips_offload_mode(self):
+        """Old config.toml with offload_mode should not crash during parsing."""
+        from llm_dit.config import Config
+
+        # Simulate old config data with dead fields
+        data = {
+            "ltx2": {
+                "model_path": "/tmp/test",
+                "offload_mode": "model",
+                "num_blocks_per_group": 2,
+            }
+        }
+        config = Config.from_dict(data)
+        assert not hasattr(config.ltx2, "offload_mode")
+
+
+class TestDeadUseFp8Removed:
+    """use_fp8 maps to LTX2Config.quantize via config_mgmt. The quantize field
+    IS consumed, but use_fp8 is an infrastructure concern -- the transformer is
+    loaded as fp8 or not at cache time. Changing per-generation is misleading."""
+
+    def test_use_fp8_not_in_ui_schema(self):
+        """UI schema should not have use_fp8 ParamSchema."""
+        from llm_dit.pipelines.schemas import get_pipeline
+
+        schema = get_pipeline("ltx2")
+        param_ids = [p.id for p in schema.params]
+        assert "use_fp8" not in param_ids, (
+            "use_fp8 should be removed from LTX2 UI schema -- "
+            "infrastructure concern, not a per-generation param"
+        )
+
+    def test_use_fp8_not_in_config_mgmt_map(self):
+        """config_mgmt should not have use_fp8 mapping."""
+        from web.routers.config_mgmt import _PARAM_NAME_MAPS
+
+        ltx2_map = _PARAM_NAME_MAPS.get("ltx2", {})
+        assert "use_fp8" not in ltx2_map, (
+            "use_fp8 mapping should be removed from config_mgmt._PARAM_NAME_MAPS"
+        )
+
+
+class TestVAEPinnedShuttleMixin:
+    """VideoDecoder should use PinnedShuttleMixin for proper pinned memory
+    round-trips instead of _pin_model_memory + bare .to() calls."""
+
+    def test_video_decoder_has_shuttle_mixin(self):
+        """VideoDecoder should inherit from PinnedShuttleMixin."""
+        from llm_dit.models.ltx2.vae.video_vae import VideoDecoder
+        from llm_dit.utils.shuttle import PinnedShuttleMixin
+
+        assert issubclass(VideoDecoder, PinnedShuttleMixin), (
+            "VideoDecoder should inherit from PinnedShuttleMixin "
+            "for proper pinned memory round-trips"
+        )
+
+    def test_video_decoder_has_offload_to_pinned(self):
+        """VideoDecoder should have offload_to_pinned method (from mixin)."""
+        from llm_dit.models.ltx2.vae.video_vae import VideoDecoder
+
+        assert hasattr(VideoDecoder, "offload_to_pinned")
+
+    def test_video_decoder_has_offload(self):
+        """VideoDecoder should have offload method (from mixin)."""
+        from llm_dit.models.ltx2.vae.video_vae import VideoDecoder
+
+        assert hasattr(VideoDecoder, "offload")
+
+    def test_video_decoder_has_to_device(self):
+        """VideoDecoder should have to_device method (from mixin)."""
+        from llm_dit.models.ltx2.vae.video_vae import VideoDecoder
+
+        assert hasattr(VideoDecoder, "to_device")
+
+
+class TestAudioComponentsShuttleMixin:
+    """AudioDecoder and Vocoder/VocoderWithBWE should use PinnedShuttleMixin."""
+
+    def test_audio_decoder_has_shuttle_mixin(self):
+        """AudioDecoder should inherit from PinnedShuttleMixin."""
+        from llm_dit.models.ltx2.audio_vae.decoder import AudioDecoder
+        from llm_dit.utils.shuttle import PinnedShuttleMixin
+
+        assert issubclass(AudioDecoder, PinnedShuttleMixin), (
+            "AudioDecoder should inherit from PinnedShuttleMixin"
+        )
+
+    def test_vocoder_with_bwe_has_shuttle_mixin(self):
+        """VocoderWithBWE should inherit from PinnedShuttleMixin."""
+        from llm_dit.models.ltx2.audio_vae.vocoder import VocoderWithBWE
+        from llm_dit.utils.shuttle import PinnedShuttleMixin
+
+        assert issubclass(VocoderWithBWE, PinnedShuttleMixin), (
+            "VocoderWithBWE should inherit from PinnedShuttleMixin"
+        )
+
+
+class TestPinModelMemoryRemoved:
+    """_pin_model_memory should be removed after all callers migrate to
+    PinnedShuttleMixin.offload_to_pinned()."""
+
+    def test_pin_model_memory_removed(self):
+        """_pin_model_memory should not exist on ModelManager."""
+        from llm_dit.model_manager import ModelManager
+
+        assert not hasattr(ModelManager, "_pin_model_memory"), (
+            "ModelManager._pin_model_memory should be deleted -- "
+            "all callers migrated to PinnedShuttleMixin.offload_to_pinned()"
         )

@@ -60,8 +60,6 @@ _PIPELINE_CONFIG_KEYS: dict[str, str] = {
 _PARAM_NAME_MAPS: dict[str, dict[str, str]] = {
     "ltx2": {
         "stage1_steps": "stage1_num_inference_steps",
-        "offload_type": "offload_mode",
-        "use_fp8": "quantize",
         "enable_audio": "audio_enabled",
     },
     "flux2": {

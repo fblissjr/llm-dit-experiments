@@ -1,4 +1,4 @@
-# agent context (v0.9.27)
+# agent context (v0.9.28)
 
 *last updated: 2026-03-09*
 

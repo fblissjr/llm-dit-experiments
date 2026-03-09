@@ -25,6 +25,8 @@ import torch
 from einops import rearrange
 from torch import nn
 
+from llm_dit.utils.shuttle import PinnedShuttleMixin
+
 from .convolution import make_conv_nd
 from .enums import LogVarianceType, NormLayerType, PaddingModeType
 from .normalization import PixelNorm
@@ -411,7 +413,7 @@ def _make_decoder_block(
     return block, out_channels
 
 
-class VideoDecoder(nn.Module):
+class VideoDecoder(PinnedShuttleMixin, nn.Module):
     """
     Video VAE Decoder: Decodes latent representation into video frames.
 
@@ -457,7 +459,8 @@ class VideoDecoder(nn.Module):
             timestep_conditioning: Whether to condition on timestep for denoising.
             decoder_spatial_padding_mode: Padding mode for convolutions.
         """
-        super().__init__()
+        nn.Module.__init__(self)
+        self._init_shuttle_state()
 
         # Scale factors for upsampling
         self.video_downscale_factors = SpatioTemporalScaleFactors(time=8, width=32, height=32)
