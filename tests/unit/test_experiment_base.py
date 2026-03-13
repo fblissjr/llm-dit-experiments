@@ -467,7 +467,7 @@ class TestExperimentRunnerBase:
 
     def test_known_pipelines_contains_expected(self):
         """Test KNOWN_PIPELINES contains the expected pipeline identifiers."""
-        expected = ["ltx2", "z_image", "wan", "qwen3_vl"]
+        expected = ["ltx2", "z_image", "qwen3_vl"]
         assert ExperimentRunnerBase.KNOWN_PIPELINES == expected
 
     def test_unknown_pipeline_logs_warning(self, caplog):

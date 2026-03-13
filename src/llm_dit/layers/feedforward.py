@@ -9,7 +9,7 @@ into a single, configurable canonical implementation.
 Previous implementations:
 - ltx2/components.py: FeedForward (GELU tanh, standard MLP)
 - z_image/components.py: FeedForward (SwiGLU, bias=False)
-- wan_text_encoder.py: T5FeedForward (GeGLU, dropout)
+- DiffSynth-Studio: T5FeedForward (GeGLU, dropout)
 - embeddings_connector.py: FeedForward (duplicate of ltx2)
 - flux2/transformer.py: SiLUActivation + nn.Sequential (split tensor gating)
 
@@ -172,7 +172,7 @@ class FeedForward(nn.Module):
 
         Structure: fc1(x) * gelu(gate(x)) -> dropout -> fc2 -> dropout
         """
-        # Match wan_text_encoder.py T5FeedForward structure
+        # Match T5 FeedForward structure (GeGLU gating)
         self.gate = nn.Sequential(nn.Linear(dim, hidden_dim, bias=bias), _GELU())
         self.fc1 = nn.Linear(dim, hidden_dim, bias=bias)
         self.fc2 = nn.Linear(hidden_dim, dim, bias=bias)
@@ -250,7 +250,7 @@ class _GELU(nn.Module):
     """
     GELU activation matching T5 implementation (tanh approximation).
 
-    Internal use for GeGLU to match wan_text_encoder.py exactly.
+    Internal use for GeGLU to match T5 implementation exactly.
     """
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:

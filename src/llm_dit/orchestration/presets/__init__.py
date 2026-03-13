@@ -6,7 +6,7 @@ Last Updated: 2026-01-12
 Presets are factory functions that create pre-configured orchestrators
 for common use cases:
 - music_video: Audio → Transcribe → Prompts → Frames → Video → Stitch
-- image_to_video: Image → Wan I2V → Video
+- image_to_video: Image → LTX-2 I2V → Video
 - style_transfer: Image → Describe → Z-Image regenerate
 """
 

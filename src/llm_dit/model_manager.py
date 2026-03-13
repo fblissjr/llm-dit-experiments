@@ -1255,18 +1255,6 @@ class ModelManager:
         cleanup_memory("unload_qwen_image_t2i")
         return True
 
-    def _unload_generic(self, pid: str, display_name: str) -> bool:
-        """Generic unload for pipelines without special cleanup needs."""
-        pipeline = self._pipelines.get(pid)
-        if pipeline is None:
-            return False
-
-        logger.info(f"[VRAM] Unloading {display_name} pipeline...")
-        del pipeline
-        self._pipelines.pop(pid, None)
-        cleanup_memory(f"unload_{pid}")
-        return True
-
     # -- PipelineLoader compatibility (used by scripts/generate.py) --
 
     def load_pipeline_from_loader(

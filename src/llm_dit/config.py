@@ -1085,7 +1085,7 @@ class RuntimeConfig:
 
     # Top-level settings (not pipeline-specific)
     default_pipeline: str = "none"  # none, z-image, qwen-image, flux2, ltx2
-    model_type: str = "zimage"  # zimage, qwenimage-t2i, qwenimage-edit, ltx2, wan
+    model_type: str = "zimage"  # zimage, qwenimage-t2i, qwenimage-edit, ltx2, flux2
     model_path: str = ""  # Z-Image model path (legacy, prefer zimage.model_path)
     text_encoder_path: str | None = None
     templates_dir: str | None = None

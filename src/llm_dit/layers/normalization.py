@@ -30,8 +30,7 @@ class RMSNorm(nn.Module):
     Canonical implementation supporting all model variants:
     - Z-Image (eps=1e-5)
     - FLUX.2 Klein (eps=1e-6)
-    - Wan DiT (eps=1e-6, DiffSynth-matched)
-    - HuMo (eps=1e-6)
+    - DiffSynth-Studio (eps=1e-6)
     - LTX-2 (uses F.rms_norm internally)
 
     Args:
@@ -139,7 +138,7 @@ def _rms_norm_manual(
     """
     input_dtype = x.dtype
 
-    # Cast to float32 for precision (matches Wan DiT, FLUX.2 implementations)
+    # Cast to float32 for precision (matches DiffSynth, FLUX.2 implementations)
     x = x.float()
 
     # RMS = sqrt(mean(x^2))

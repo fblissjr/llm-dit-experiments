@@ -36,7 +36,7 @@ class ModelSpec:
     Specification for a loadable model.
 
     Attributes:
-        model_class: The model class to instantiate (e.g., WanTextEncoder)
+        model_class: The model class to instantiate (e.g., LTX2Transformer)
         path: Path to model weights (file or directory)
         dtype: Data type when loaded (default bfloat16)
         device: Target device when active (default cuda)
@@ -100,9 +100,9 @@ class ModelPool:
         pool = ModelPool(vram_budget_gb=24.0)
 
         # Register models
-        pool.register("umt5-xxl", ModelSpec(
-            model_class=WanTextEncoder,
-            path="~/Storage/Wan2.1-T2V-1.3B/",
+        pool.register("gemma3", ModelSpec(
+            model_class=Gemma3Encoder,
+            path="models/LTX-2.3/text_encoder/",
             dtype=torch.bfloat16,
         ))
 

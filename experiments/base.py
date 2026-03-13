@@ -51,7 +51,7 @@ class ExperimentConfig:
     """
     Pipeline-agnostic experiment configuration.
 
-    Used by all experiment runners regardless of pipeline (LTX-2, Z-Image, Wan, etc.).
+    Used by all experiment runners regardless of pipeline (LTX-2, Z-Image, etc.).
     Pipeline-specific parameters go in the `extra` dict.
     """
 
@@ -152,7 +152,7 @@ class ExperimentRunnerBase(ABC):
     """
 
     # Known pipelines for validation and discovery
-    KNOWN_PIPELINES = ["ltx2", "z_image", "wan", "qwen3_vl"]
+    KNOWN_PIPELINES = ["ltx2", "z_image", "qwen3_vl"]
 
     def __init__(
         self,
@@ -196,7 +196,7 @@ class ExperimentRunnerBase(ABC):
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
         # Create standard subdirectories based on pipeline type
-        if self.pipeline in ["ltx2", "wan"]:
+        if self.pipeline == "ltx2":
             # Video pipelines
             (self.output_dir / "videos").mkdir(exist_ok=True)
             (self.output_dir / "frames").mkdir(exist_ok=True)  # For frame extraction

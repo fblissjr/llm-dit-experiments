@@ -23,7 +23,7 @@ from .models import ExperimentImage, ExperimentRun
 RESULTS_DIR = Path(__file__).parent.parent / "results"
 
 # Known pipelines for organized structure
-KNOWN_PIPELINES = ["ltx2", "z_image", "wan", "qwen3_vl"]
+KNOWN_PIPELINES = ["ltx2", "z_image", "qwen3_vl"]
 
 
 def discover_experiments(results_dir: Path | None = None) -> list[ExperimentRun]:

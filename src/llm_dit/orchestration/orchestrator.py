@@ -98,7 +98,7 @@ class Orchestrator:
             output_mapping={"image": "reference_frame"},  # Rename output
         )
         orchestrator.add_step(
-            WanVideoAdapter(),
+            LTX2VideoAdapter(),
             input_mapping={"reference_image": "reference_frame"},  # Wire to previous
         )
 
