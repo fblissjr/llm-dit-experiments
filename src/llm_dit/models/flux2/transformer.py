@@ -41,6 +41,7 @@ from torch import Tensor, nn
 
 from llm_dit.models.flux2.rope import EmbedND, apply_rope
 from llm_dit.models.flux2.constants import Klein9BParams, Klein4BParams, Flux2Params
+from llm_dit.utils.attention import attention_forward
 
 logger = logging.getLogger(__name__)
 
@@ -155,9 +156,7 @@ def causal_attn_fn(
         q_txt_img = torch.cat([q_txt, q_img], dim=2)
         k_all = torch.cat([k_txt, k_ref, k_img], dim=2)
         v_all = torch.cat([v_txt, v_ref, v_img], dim=2)
-        out = torch.nn.functional.scaled_dot_product_attention(
-            q_txt_img, k_all, v_all, is_causal=False,
-        )
+        out = attention_forward(q_txt_img, k_all, v_all, is_causal=False)
     else:
         # Extract path: input layout is [txt, ref, img]
         ref_start = num_txt_tokens
@@ -177,16 +176,12 @@ def causal_attn_fn(
         q_txt_img = torch.cat([q_txt, q_img], dim=2)
         k_all = torch.cat([k_txt, k_ref, k_img], dim=2)
         v_all = torch.cat([v_txt, v_ref, v_img], dim=2)
-        attn_txt_img = torch.nn.functional.scaled_dot_product_attention(
-            q_txt_img, k_all, v_all, is_causal=False,
-        )
+        attn_txt_img = attention_forward(q_txt_img, k_all, v_all, is_causal=False)
         attn_txt = attn_txt_img[:, :, :ref_start, :]
         attn_img = attn_txt_img[:, :, ref_start:, :]
 
         # ref only attends to itself
-        attn_ref = torch.nn.functional.scaled_dot_product_attention(
-            q_ref, k_ref, v_ref, is_causal=False,
-        )
+        attn_ref = attention_forward(q_ref, k_ref, v_ref, is_causal=False)
 
         out = torch.cat([attn_txt, attn_ref, attn_img], dim=2)
 

@@ -214,6 +214,53 @@ class TestCausalAttnFn:
         assert not torch.allclose(out1, out2, atol=1e-5), \
             "Different ref caches should produce different outputs"
 
+    def test_uses_attention_forward_backend(self, attn_dims):
+        """causal_attn_fn should use attention_forward() instead of raw F.sdpa."""
+        from unittest.mock import patch
+        from llm_dit.utils.attention import attention_forward
+
+        B, H, D = attn_dims["B"], attn_dims["H"], attn_dims["D"]
+        num_txt, num_ref, num_img = 5, 4, 6
+        L = num_txt + num_ref + num_img
+
+        q = torch.randn(B, H, L, D)
+        k = torch.randn(B, H, L, D)
+        v = torch.randn(B, H, L, D)
+
+        # Patch attention_forward and verify it's called
+        with patch("llm_dit.models.flux2.transformer.attention_forward", wraps=attention_forward) as mock_attn:
+            causal_attn_fn(q, k, v, num_txt, num_ref)
+            # Extract path calls attention_forward twice:
+            # once for txt+img attending to all, once for ref self-attention
+            assert mock_attn.call_count == 2, (
+                f"Expected 2 calls to attention_forward, got {mock_attn.call_count}"
+            )
+
+    def test_cached_path_uses_attention_forward(self, attn_dims):
+        """Cached path should also use attention_forward()."""
+        from unittest.mock import patch
+        from llm_dit.utils.attention import attention_forward
+
+        B, H, D = attn_dims["B"], attn_dims["H"], attn_dims["D"]
+        num_txt, num_ref, num_img = 5, 4, 6
+        L_cached = num_txt + num_img
+
+        q = torch.randn(B, H, L_cached, D)
+        k = torch.randn(B, H, L_cached, D)
+        v = torch.randn(B, H, L_cached, D)
+
+        kv_cache = {
+            "k_ref": torch.randn(B, H, num_ref, D),
+            "v_ref": torch.randn(B, H, num_ref, D),
+        }
+
+        with patch("llm_dit.models.flux2.transformer.attention_forward", wraps=attention_forward) as mock_attn:
+            causal_attn_fn(q, k, v, num_txt, num_ref, kv_cache)
+            # Cached path calls attention_forward once
+            assert mock_attn.call_count == 1, (
+                f"Expected 1 call to attention_forward, got {mock_attn.call_count}"
+            )
+
 
 # ============================================================================
 # Modulation Blending Tests

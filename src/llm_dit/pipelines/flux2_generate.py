@@ -1045,7 +1045,7 @@ def generate_image(
     # ===========================================================================
 
     # Temporarily offload persistent transformer during text encoding.
-    # Prevents simultaneous transformer (~18GB) + encoder (~6GB) exceeding 24GB.
+    # Only needed for bf16 models (~18GB). FP8-cast models (~4.5GB) fit alongside encoder.
     # Skip for compiled models -- device move invalidates compiled graphs.
     transformer_was_offloaded = False
     is_compiled = hasattr(transformer, "_orig_mod") if transformer is not None else False

@@ -6,6 +6,17 @@ last updated: 2026-03-13
 All notable changes to this project will be documented in this file.
 Uses [Semantic Versioning](https://semver.org/).
 
+## 0.9.30
+
+### changed
+- **FLUX.2 FP8-cast loading**: FP8 models now keep weights as fp8 on GPU (~4.5GB) and upcast to bf16 per-forward pass, replacing the dequant-at-load path (~18GB bf16). Eliminates the transformer offload dance during text encoding. Uses the same `fp8_cast.py` infrastructure as LTX-2.
+- **Attention backend for FLUX.2**: `causal_attn_fn()` now uses `attention_forward()` from `utils/attention.py` instead of raw `F.scaled_dot_product_attention`. Enables automatic use of Flash Attention 2 or Sage INT8/FP16 on RTX 4090.
+- **FP8 validation**: `_validate_transformer_weights()` now skips fp8 params (isnan/isinf not implemented for float8_e4m3fn).
+- Post-load torchao quantization skipped for fp8 models (already using fp8-cast).
+
+### added
+- 8 new unit tests: fp8-cast loading (6 tests), attention backend mock (2 tests).
+
 ## 0.9.29
 
 ### added

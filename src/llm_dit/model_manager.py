@@ -582,9 +582,8 @@ class ModelManager:
         if compile_transformer and quantization == "none":
             logger.warning(
                 "[FLUX.2] compile=true with quantization='none' may OOM on 24GB GPUs. "
-                "The bf16 transformer (~18GB) cannot be offloaded during encoding "
-                "because torch.compile invalidates graphs on device move. "
-                "Recommended: set [flux2].quantization = 'fp8' to reduce to ~9GB."
+                "FP8 models use fp8-cast (~4.5GB) by default. "
+                "For bf16 models, set [flux2].quantization = 'fp8' to reduce VRAM."
             )
 
         logger.info(
