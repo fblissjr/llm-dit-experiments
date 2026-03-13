@@ -21,6 +21,9 @@ FLUX2_MODELS = [
     # Distilled models (fast, 4 steps)
     "klein-9b",
     "klein-9b-fp8",
+    # KV-cache models (fast, 4 steps, reference-image editing)
+    "klein-9b-kv",
+    "klein-9b-kv-fp8",
     # Base models (quality, 50 steps)
     "klein-base-9b",
     "klein-base-9b-fp8",
@@ -153,6 +156,8 @@ register_pipeline(PipelineSchema(
                 "model_name": {
                     "klein-9b": 4,
                     "klein-9b-fp8": 4,
+                    "klein-9b-kv": 4,
+                    "klein-9b-kv-fp8": 4,
                     "klein-4b": 4,
                     "klein-4b-fp8": 4,
                     "klein-base-9b": 50,
@@ -176,6 +181,8 @@ register_pipeline(PipelineSchema(
                 "model_name": {
                     "klein-9b": 1.0,
                     "klein-9b-fp8": 1.0,
+                    "klein-9b-kv": 1.0,
+                    "klein-9b-kv-fp8": 1.0,
                     "klein-4b": 1.0,
                     "klein-4b-fp8": 1.0,
                     "klein-base-9b": 4.0,

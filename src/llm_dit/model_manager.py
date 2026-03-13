@@ -601,7 +601,10 @@ class ModelManager:
 
             model_path_obj = Path(model_path).expanduser()
             if not model_path_obj.exists():
-                raise ValueError(f"FLUX.2 model path does not exist: {model_path}")
+                logger.warning(
+                    f"[FLUX.2] model_path '{model_path}' does not exist. "
+                    "Loader will try sibling directories, env vars, and HuggingFace."
+                )
 
             # Stage 1: Load encoder
             model_info = FLUX2_MODEL_INFO.get(model_name.lower(), {})

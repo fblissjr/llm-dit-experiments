@@ -3136,17 +3136,6 @@
             ],
             "title": "Stage1 Steps"
           },
-          "stage2_steps": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Stage2 Steps"
-          },
           "guidance_scale": {
             "type": "number",
             "title": "Guidance Scale",
@@ -3181,6 +3170,11 @@
             "title": "Rescale Scale",
             "default": 0.7
           },
+          "modality_scale": {
+            "type": "number",
+            "title": "Modality Scale",
+            "default": 3.0
+          },
           "distilled_lora_path": {
             "anyOf": [
               {
@@ -3206,11 +3200,6 @@
             "type": "number",
             "title": "Fbcache Threshold",
             "default": 0.0
-          },
-          "use_distilled_sigmas": {
-            "type": "boolean",
-            "title": "Use Distilled Sigmas",
-            "default": false
           }
         },
         "type": "object",

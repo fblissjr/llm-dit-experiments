@@ -963,10 +963,6 @@ export type Ltx2GenerateRequest = {
      */
     stage1_steps?: number | null;
     /**
-     * Stage2 Steps
-     */
-    stage2_steps?: number | null;
-    /**
      * Guidance Scale
      */
     guidance_scale?: number;
@@ -987,6 +983,10 @@ export type Ltx2GenerateRequest = {
      */
     rescale_scale?: number;
     /**
+     * Modality Scale
+     */
+    modality_scale?: number;
+    /**
      * Distilled Lora Path
      */
     distilled_lora_path?: string | null;
@@ -1002,10 +1002,6 @@ export type Ltx2GenerateRequest = {
      * Fbcache Threshold
      */
     fbcache_threshold?: number;
-    /**
-     * Use Distilled Sigmas
-     */
-    use_distilled_sigmas?: boolean;
 };
 
 /**

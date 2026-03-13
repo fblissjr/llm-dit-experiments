@@ -100,8 +100,10 @@ variant = "turbo"
 # 4B/9B image generation. Encoder: Qwen3-8B.
 
 [flux2]
-# model_path = "/path/to/FLUX.2-klein-9b-fp8"
-# vae_path = "/path/to/FLUX.2-klein-9B"
+# Transformer weights directory. Sibling directories are also searched when
+# switching models (e.g., model_path points to kv/ but frontend selects kv-fp8).
+# model_path = "/path/to/FLUX.2-klein-9b-kv"
+# vae_path = "/path/to/FLUX.2-klein-9b-kv"
 # encoder_path = "/path/to/Qwen3-8B"
 
 # Model variant (sets default steps + guidance automatically):

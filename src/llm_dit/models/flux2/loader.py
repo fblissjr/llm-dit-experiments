@@ -250,7 +250,19 @@ def _get_model_weight_path(model_name: str, model_path: str | None = None) -> st
             matches = list(model_path_obj.glob(pattern))
             if matches:
                 return str(matches[0])
-            # Last fallback: any single safetensors file
+            # Sibling directory fallback: when model_path points to one variant
+            # (e.g., FLUX.2-klein-9b-kv/) but we need a different variant
+            # (e.g., klein-9b-kv-fp8), check sibling directories for the file.
+            # This must come BEFORE "any single safetensors" which could match
+            # the wrong variant's weights.
+            parent = model_path_obj.parent
+            if parent.is_dir():
+                for sibling in parent.iterdir():
+                    if sibling.is_dir() and sibling != model_path_obj:
+                        candidate = sibling / config["filename"]
+                        if candidate.exists():
+                            return str(candidate)
+            # Last fallback: any single safetensors file in model_path
             matches = list(model_path_obj.glob("*.safetensors"))
             if len(matches) == 1:
                 return str(matches[0])

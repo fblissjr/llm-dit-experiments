@@ -8,14 +8,20 @@ Uses [Semantic Versioning](https://semver.org/).
 
 ## 0.9.32
 
+### added
+- **FLUX.2 KV-cache models in frontend**: `klein-9b-kv` and `klein-9b-kv-fp8` now appear in the model dropdown with correct `dependent_defaults` for steps (4) and guidance (1.0).
+- **Sibling directory resolution**: FLUX.2 loader searches sibling directories when `model_path` doesn't contain the requested model's weights. Enables switching between variants (e.g., kv and kv-fp8) stored in separate directories.
+
 ### removed
 - **Wan/HuMo pipeline**: Removed all Wan pipeline code (not in project scope). Files deleted: `wan_video.py`, `wan_dit.py`, `wan_text_encoder.py`, `wan_vae.py`, `humo_transformer.py`, orchestration adapter, generation script. `WanConfig` removed from config.py. Old `[wan]` config sections silently migrated.
 - **`WAN_T5_FFN_PRESET`**: No active pipeline uses GeGLU. Preset removed from `layers/feedforward.py`.
+- **`_unload_generic()`**: Dead method in model_manager.py (sole caller was deleted Wan unload branch).
 
 ### changed
 - **`log_memory_debug` keyword-only args**: `component` and `device` are now keyword-only (PEP 3102). Prevents the footgun where `device` is passed as positional arg 2, silently assigning `torch.device` to `component: str`.
 - **Stage 2 constant renames**: `STAGE_2_DISTILLED_SIGMA_VALUES` -> `STAGE_2_SIGMA_SCHEDULE`, `TWO_STAGE_STEPS_STAGE2` -> `STAGE_2_STEPS`. Drops confusing "DISTILLED" and uses consistent `STAGE_2_` prefix.
 - **`dependent_defaults` docstring**: Added usage guidelines -- use for user-facing variant choices, not infrastructure state.
+- **model_manager early path check**: Relaxed `model_path` existence check from hard error to warning. Loader handles resolution via sibling dirs, env vars, or HuggingFace.
 
 ## 0.9.31
 
