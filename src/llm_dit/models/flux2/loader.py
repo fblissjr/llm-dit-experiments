@@ -25,14 +25,14 @@ Usage:
     vae = load_flux2_vae("klein-9b", device="cuda")
 """
 
-import gc
 import logging
 import os
 from pathlib import Path
 
 import torch
-from torch import nn
 from safetensors.torch import load_file as load_sft
+
+from llm_dit.utils.memory import cleanup_memory
 
 logger = logging.getLogger(__name__)
 
@@ -446,8 +446,9 @@ def load_flux2_transformer(
     with torch.device("meta"):
         model = Flux2Transformer(params).to(dtype)
 
-    # Load weights - for FP8, load to CPU first to avoid GPU memory spike during casting
-    load_device = "cpu" if is_fp8 else str(device)
+    # Load weights to CPU when fp8 (small, moved to GPU after patching) or block_offload
+    # (blocks stay on CPU, moved to GPU one at a time). Avoids GPU memory spike.
+    load_device = "cpu" if (is_fp8 or block_offload) else str(device)
     logger.debug(f"[FLUX2:Loader] Loading safetensors to device: {load_device}")
     sd = load_sft(weight_path, device=load_device)
     _log_memory_state("After load_sft")
@@ -467,7 +468,6 @@ def load_flux2_transformer(
             del sd[k]
 
         if weight_scales:
-            print(f"FP8-cast: {len(weight_scales)} weight scales extracted (keeping fp8 weights)")
             logger.info(f"[FLUX2:Loader] FP8-cast mode: {len(weight_scales)} weight scales")
 
         # Load fp8 weights directly (assign=True preserves fp8 dtype)
@@ -476,12 +476,9 @@ def load_flux2_transformer(
         _log_memory_state("After fp8 load_state_dict")
 
         # Attach per-tensor weight scales to nn.Linear modules
+        from llm_dit.models.ltx2.loader import _attach_weight_scales
         from llm_dit.quantization.fp8_cast import amend_forward_with_upcast
-        for name, module in model.named_modules():
-            if isinstance(module, nn.Linear):
-                weight_key = f"{name}.weight"
-                if weight_key in weight_scales:
-                    module._weight_scale = weight_scales[weight_key]
+        _attach_weight_scales(model, weight_scales)
 
         # Patch forward methods for per-forward upcast (fp8 -> bf16)
         count = amend_forward_with_upcast(model)
@@ -494,16 +491,11 @@ def load_flux2_transformer(
 
         # Free scale dict
         del weight_scales, sd
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+        cleanup_memory()
 
     else:
         # Non-FP8 path: load bf16 weights, move to device
-        if block_offload:
-            logger.debug("[FLUX2:Loader] Non-FP8 model with block_offload: keeping weights on CPU")
-            sd = {k: v.to("cpu") for k, v in sd.items()}
-            _log_memory_state("After moving non-FP8 to CPU")
+        # (block_offload models already loaded to CPU via load_device)
 
         # Log sample tensor dtypes and devices for debugging
         sample_keys = list(sd.keys())[:5]
@@ -521,14 +513,11 @@ def load_flux2_transformer(
 
         # Free state dict memory
         del sd
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+        cleanup_memory()
         _log_memory_state("After freeing state dict")
 
         if block_offload:
-            print("Block offloading enabled: blocks will be moved to GPU one at a time")
-            logger.debug("[FLUX2:Loader] Enabling block offload")
+            logger.info("[FLUX2:Loader] Block offload: blocks will move to GPU one at a time")
             model = model.enable_block_offload(device=device, offload_device="cpu")
             _log_memory_state("After enable_block_offload")
         else:

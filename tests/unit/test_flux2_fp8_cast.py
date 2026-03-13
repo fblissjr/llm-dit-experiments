@@ -15,6 +15,7 @@ from torch import nn
 from llm_dit.models.flux2.transformer import Flux2Transformer
 from llm_dit.models.flux2.constants import Klein9BParams
 from llm_dit.models.flux2.rope import create_image_ids, create_text_ids
+from llm_dit.models.ltx2.loader import _attach_weight_scales
 from llm_dit.quantization.fp8_cast import amend_forward_with_upcast, quantize_to_fp8_per_tensor
 
 
@@ -67,11 +68,7 @@ def _setup_fp8_cast_model():
     model.load_state_dict(fp8_sd, strict=False, assign=True)
 
     # Attach weight scales to modules
-    for name, module in model.named_modules():
-        if isinstance(module, nn.Linear):
-            weight_key = f"{name}.weight"
-            if weight_key in weight_scales:
-                module._weight_scale = weight_scales[weight_key]
+    _attach_weight_scales(model, weight_scales)
 
     amend_forward_with_upcast(model)
     return model, weight_scales
@@ -135,11 +132,7 @@ class TestFp8CastLoader:
         for k in [k for k in fp8_sd if k.endswith(".weight_scale")]:
             del fp8_sd[k]
         model.load_state_dict(fp8_sd, strict=False, assign=True)
-        for name, module in model.named_modules():
-            if isinstance(module, nn.Linear):
-                wk = f"{name}.weight"
-                if wk in weight_scales:
-                    module._weight_scale = weight_scales[wk]
+        _attach_weight_scales(model, weight_scales)
 
         count = amend_forward_with_upcast(model)
         assert count > 0, "Expected some nn.Linear layers to be patched"
@@ -184,11 +177,7 @@ class TestFp8CastLoader:
         model_fp8cast = _build_mini_model()
         fp8_only_sd = {k: v for k, v in fp8_sd.items() if not k.endswith(".weight_scale")}
         model_fp8cast.load_state_dict(fp8_only_sd, strict=False, assign=True)
-        for name, module in model_fp8cast.named_modules():
-            if isinstance(module, nn.Linear):
-                weight_key = f"{name}.weight"
-                if weight_key in weight_scales:
-                    module._weight_scale = weight_scales[weight_key]
+        _attach_weight_scales(model_fp8cast, weight_scales)
         amend_forward_with_upcast(model_fp8cast)
 
         # Same input for both (float32 to match model dtype)
