@@ -6,6 +6,17 @@ last updated: 2026-03-13
 All notable changes to this project will be documented in this file.
 Uses [Semantic Versioning](https://semver.org/).
 
+## 0.9.32
+
+### removed
+- **Wan/HuMo pipeline**: Removed all Wan pipeline code (not in project scope). Files deleted: `wan_video.py`, `wan_dit.py`, `wan_text_encoder.py`, `wan_vae.py`, `humo_transformer.py`, orchestration adapter, generation script. `WanConfig` removed from config.py. Old `[wan]` config sections silently migrated.
+- **`WAN_T5_FFN_PRESET`**: No active pipeline uses GeGLU. Preset removed from `layers/feedforward.py`.
+
+### changed
+- **`log_memory_debug` keyword-only args**: `component` and `device` are now keyword-only (PEP 3102). Prevents the footgun where `device` is passed as positional arg 2, silently assigning `torch.device` to `component: str`.
+- **Stage 2 constant renames**: `STAGE_2_DISTILLED_SIGMA_VALUES` -> `STAGE_2_SIGMA_SCHEDULE`, `TWO_STAGE_STEPS_STAGE2` -> `STAGE_2_STEPS`. Drops confusing "DISTILLED" and uses consistent `STAGE_2_` prefix.
+- **`dependent_defaults` docstring**: Added usage guidelines -- use for user-facing variant choices, not infrastructure state.
+
 ## 0.9.31
 
 ### removed
