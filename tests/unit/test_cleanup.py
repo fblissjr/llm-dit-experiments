@@ -801,3 +801,70 @@ class TestAttachWeightScalesLocation:
         assert "_attach_weight_scales" not in func_names, (
             "_attach_weight_scales should be moved to quantization/fp8_cast.py"
         )
+
+
+class TestFormatMemoryGb:
+    """format_memory_gb should live in utils/memory.py."""
+
+    def test_format_zero(self):
+        from llm_dit.utils.memory import format_memory_gb
+        assert format_memory_gb(0) == "0.00GB"
+
+    def test_format_one_gb(self):
+        from llm_dit.utils.memory import format_memory_gb
+        assert format_memory_gb(1e9) == "1.00GB"
+
+    def test_format_fractional(self):
+        from llm_dit.utils.memory import format_memory_gb
+        assert format_memory_gb(1.5e9) == "1.50GB"
+
+
+class TestLogMemoryDebug:
+    """log_memory_debug should not crash regardless of CUDA availability."""
+
+    def test_no_crash(self):
+        from llm_dit.utils.memory import log_memory_debug
+        # Should not raise
+        log_memory_debug("test", component="Test")
+
+
+class TestMemoryFunctionConsolidation:
+    """Neither flux2/loader.py nor flux2/transformer.py should define
+    local _format_memory_gb or _log_memory_state functions."""
+
+    def _get_local_func_names(self, module):
+        filepath = inspect.getfile(module)
+        with open(filepath) as f:
+            tree = ast.parse(f.read(), filename=filepath)
+        return [
+            node.name for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef)
+        ]
+
+    def test_no_format_memory_gb_in_loader(self):
+        from llm_dit.models.flux2 import loader
+        names = self._get_local_func_names(loader)
+        assert "_format_memory_gb" not in names, (
+            "flux2/loader.py should import format_memory_gb from utils/memory.py"
+        )
+
+    def test_no_format_memory_gb_in_transformer(self):
+        from llm_dit.models.flux2 import transformer
+        names = self._get_local_func_names(transformer)
+        assert "_format_memory_gb" not in names, (
+            "flux2/transformer.py should import format_memory_gb from utils/memory.py"
+        )
+
+    def test_no_log_memory_state_in_loader(self):
+        from llm_dit.models.flux2 import loader
+        names = self._get_local_func_names(loader)
+        assert "_log_memory_state" not in names, (
+            "flux2/loader.py should import log_memory_debug from utils/memory.py"
+        )
+
+    def test_no_log_memory_state_in_transformer(self):
+        from llm_dit.models.flux2 import transformer
+        names = self._get_local_func_names(transformer)
+        assert "_log_memory_state" not in names, (
+            "flux2/transformer.py should import log_memory_debug from utils/memory.py"
+        )

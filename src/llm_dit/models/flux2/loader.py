@@ -32,43 +32,9 @@ from pathlib import Path
 import torch
 from safetensors.torch import load_file as load_sft
 
-from llm_dit.utils.memory import cleanup_memory
+from llm_dit.utils.memory import cleanup_memory, format_memory_gb, log_memory_debug
 
 logger = logging.getLogger(__name__)
-
-try:
-    import psutil
-    _psutil = psutil  # Bind to a variable for type checker
-    PSUTIL_AVAILABLE = True
-except ImportError:
-    _psutil = None
-    PSUTIL_AVAILABLE = False
-
-
-def _format_memory_gb(bytes_val: int | float) -> str:
-    """Format memory value in GB with 2 decimal places."""
-    return f"{bytes_val / 1e9:.2f}GB"
-
-
-def _log_memory_state(prefix: str = "") -> None:
-    """Log current GPU and CPU memory state."""
-    if not logger.isEnabledFor(logging.DEBUG):
-        return
-
-    msg_parts = [f"[FLUX2:Loader:{prefix}]" if prefix else "[FLUX2:Loader]"]
-
-    if torch.cuda.is_available():
-        allocated = torch.cuda.memory_allocated()
-        reserved = torch.cuda.memory_reserved()
-        msg_parts.append(f"GPU allocated: {_format_memory_gb(allocated)}")
-        msg_parts.append(f"reserved: {_format_memory_gb(reserved)}")
-
-    if PSUTIL_AVAILABLE and _psutil is not None:
-        process = _psutil.Process()
-        mem_info = process.memory_info()
-        msg_parts.append(f"CPU RSS: {_format_memory_gb(mem_info.rss)}")
-
-    logger.debug(" → ".join(msg_parts))
 
 from llm_dit.models.flux2.constants import FLUX2_MODEL_INFO
 from llm_dit.models.flux2.transformer import Flux2Transformer
@@ -436,7 +402,7 @@ def load_flux2_transformer(
     weight_path = _get_model_weight_path(model_name, model_path)
     logger.info(f"Loading {model_name} from {weight_path}")
     logger.debug(f"[FLUX2:Loader] Loading weights from {weight_path}")
-    _log_memory_state("Before load")
+    log_memory_debug("Before load")
 
     # Check if this is an FP8 model (from registry or filename)
     is_fp8 = config.get("fp8", False) or "fp8" in weight_path.lower()
@@ -451,7 +417,7 @@ def load_flux2_transformer(
     load_device = "cpu" if (is_fp8 or block_offload) else str(device)
     logger.debug(f"[FLUX2:Loader] Loading safetensors to device: {load_device}")
     sd = load_sft(weight_path, device=load_device)
-    _log_memory_state("After load_sft")
+    log_memory_debug("After load_sft")
 
     # FP8-cast: keep weights as fp8, upcast to bf16 per-forward pass.
     # This drops transformer VRAM from ~18GB (dequant) to ~4.5GB (fp8).
@@ -473,7 +439,7 @@ def load_flux2_transformer(
         # Load fp8 weights directly (assign=True preserves fp8 dtype)
         logger.debug("[FLUX2:Loader] Loading fp8 state dict with assign=True")
         model.load_state_dict(sd, strict=False, assign=True)
-        _log_memory_state("After fp8 load_state_dict")
+        log_memory_debug("After fp8 load_state_dict")
 
         # Attach per-tensor weight scales to nn.Linear modules
         from llm_dit.quantization.fp8_cast import _attach_weight_scales, amend_forward_with_upcast
@@ -486,7 +452,7 @@ def load_flux2_transformer(
         # FP8 model is small (~4.5GB) -- can stay on GPU even with block_offload
         target_device = "cpu" if block_offload else device
         model = model.to(target_device)
-        _log_memory_state("After fp8 model.to(device)")
+        log_memory_debug("After fp8 model.to(device)")
 
         # Free scale dict
         del weight_scales, sd
@@ -503,26 +469,26 @@ def load_flux2_transformer(
             tensor_size = tensor.numel() * tensor.element_size()
             logger.debug(
                 f"[FLUX2:Loader] Sample tensor {k}: dtype={tensor.dtype}, "
-                f"device={tensor.device}, shape={list(tensor.shape)}, size={_format_memory_gb(tensor_size)}"
+                f"device={tensor.device}, shape={list(tensor.shape)}, size={format_memory_gb(tensor_size)}"
             )
 
         logger.debug("[FLUX2:Loader] Calling load_state_dict with assign=True")
         model.load_state_dict(sd, strict=True, assign=True)
-        _log_memory_state("After load_state_dict")
+        log_memory_debug("After load_state_dict")
 
         # Free state dict memory
         del sd
         cleanup_memory()
-        _log_memory_state("After freeing state dict")
+        log_memory_debug("After freeing state dict")
 
         if block_offload:
             logger.info("[FLUX2:Loader] Block offload: blocks will move to GPU one at a time")
             model = model.enable_block_offload(device=device, offload_device="cpu")
-            _log_memory_state("After enable_block_offload")
+            log_memory_debug("After enable_block_offload")
         else:
             logger.debug(f"[FLUX2:Loader] Moving entire model to {device}")
             model = model.to(device)
-            _log_memory_state("After model.to(device)")
+            log_memory_debug("After model.to(device)")
 
     # Validate loaded weights (catches FP8 dequantization issues)
     if validate:
@@ -533,7 +499,7 @@ def load_flux2_transformer(
     if quantize_to and quantize_to != "none" and not is_fp8 and not block_offload:
         from llm_dit.quantization import quantize_component
         logger.info(f"[FLUX2:Loader] Applying {quantize_to} quantization...")
-        _log_memory_state("Before quantization")
+        log_memory_debug("Before quantization")
         model, stats = quantize_component(  # type: ignore[assignment]
             model,
             method=quantize_to,
@@ -543,7 +509,7 @@ def load_flux2_transformer(
             f"[FLUX2:Loader] Quantization complete: "
             f"{stats['quantized_layers']}/{stats['total_layers']} layers quantized"
         )
-        _log_memory_state("After quantization")
+        log_memory_debug("After quantization")
     elif quantize_to and quantize_to != "none" and block_offload:
         raise ValueError(
             f"quantize_to='{quantize_to}' is incompatible with block_offload=True. "

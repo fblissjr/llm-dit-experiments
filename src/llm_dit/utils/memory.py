@@ -1,7 +1,7 @@
 """
 Memory management utilities for LTX-2 and other video generation pipelines.
 
-Last Updated: 2026-01-17
+Last Updated: 2026-03-13
 
 Provides memory cleanup, monitoring, and estimation functions for
 running on memory-constrained GPUs (e.g., RTX 4090 24GB).
@@ -27,6 +27,53 @@ from typing import Optional
 import torch
 
 logger = logging.getLogger(__name__)
+
+try:
+    import psutil
+    _psutil = psutil
+    _PSUTIL_AVAILABLE = True
+except ImportError:
+    _psutil = None
+    _PSUTIL_AVAILABLE = False
+
+
+def format_memory_gb(bytes_val: int | float) -> str:
+    """Format memory value in GB with 2 decimal places."""
+    return f"{bytes_val / 1e9:.2f}GB"
+
+
+def log_memory_debug(
+    prefix: str,
+    component: str = "",
+    device: torch.device | str | None = None,
+) -> None:
+    """Log GPU allocated/reserved + CPU RSS at DEBUG level.
+
+    Gated on DEBUG -- zero cost when not debugging.
+
+    Args:
+        prefix: Label for this log point (e.g. "After load_state_dict").
+        component: Component name for the log tag (e.g. "FLUX2:Loader").
+        device: CUDA device for memory queries (None = default device).
+    """
+    if not logger.isEnabledFor(logging.DEBUG):
+        return
+
+    tag = f"[{component}:{prefix}]" if component else f"[{prefix}]"
+    msg_parts = [tag]
+
+    if torch.cuda.is_available():
+        allocated = torch.cuda.memory_allocated(device)
+        reserved = torch.cuda.memory_reserved(device)
+        msg_parts.append(f"GPU allocated: {format_memory_gb(allocated)}")
+        msg_parts.append(f"reserved: {format_memory_gb(reserved)}")
+
+    if _PSUTIL_AVAILABLE and _psutil is not None:
+        process = _psutil.Process()
+        mem_info = process.memory_info()
+        msg_parts.append(f"CPU RSS: {format_memory_gb(mem_info.rss)}")
+
+    logger.debug(" -> ".join(msg_parts))
 
 
 def cleanup_memory(label: str = "") -> None:

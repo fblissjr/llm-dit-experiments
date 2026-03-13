@@ -42,42 +42,9 @@ from torch import Tensor, nn
 from llm_dit.models.flux2.rope import EmbedND, apply_rope
 from llm_dit.models.flux2.constants import Klein9BParams, Klein4BParams, Flux2Params
 from llm_dit.utils.attention import attention_forward
+from llm_dit.utils.memory import format_memory_gb, log_memory_debug
 
 logger = logging.getLogger(__name__)
-
-try:
-    import psutil
-    _psutil = psutil  # Bind to a variable for type checker
-    PSUTIL_AVAILABLE = True
-except ImportError:
-    _psutil = None
-    PSUTIL_AVAILABLE = False
-
-
-def _format_memory_gb(bytes_val: int | float) -> str:
-    """Format memory value in GB with 2 decimal places."""
-    return f"{bytes_val / 1e9:.2f}GB"
-
-
-def _log_memory_state(prefix: str = "", device: torch.device | str | None = None) -> None:
-    """Log current GPU and CPU memory state."""
-    if not logger.isEnabledFor(logging.DEBUG):
-        return
-
-    msg_parts = [f"[FLUX2:Transformer:{prefix}]" if prefix else "[FLUX2:Transformer]"]
-
-    if torch.cuda.is_available():
-        allocated = torch.cuda.memory_allocated(device)
-        reserved = torch.cuda.memory_reserved(device)
-        msg_parts.append(f"GPU allocated: {_format_memory_gb(allocated)}")
-        msg_parts.append(f"reserved: {_format_memory_gb(reserved)}")
-
-    if PSUTIL_AVAILABLE and _psutil is not None:
-        process = _psutil.Process()
-        mem_info = process.memory_info()
-        msg_parts.append(f"CPU RSS: {_format_memory_gb(mem_info.rss)}")
-
-    logger.debug(" → ".join(msg_parts))
 
 
 def timestep_embedding(t: Tensor, dim: int, max_period: int = 10000, time_factor: float = 1000.0) -> Tensor:
@@ -793,7 +760,7 @@ class Flux2Transformer(nn.Module):
             self for method chaining
         """
         logger.debug("[FLUX2:Transformer] Enabling block offload")
-        _log_memory_state("Before enable_block_offload", device)
+        log_memory_debug("Before enable_block_offload", device=device)
 
         self._block_offload_enabled = True
         self._compute_device = torch.device(device)
@@ -818,15 +785,15 @@ class Flux2Transformer(nn.Module):
             small_layer_memory += layer_params
             layer.to(self._compute_device)
             if name in ["img_in", "txt_in", "time_in"]:  # Log a few examples
-                logger.debug(f"[FLUX2:Transformer]   {name}: {_format_memory_gb(layer_params)}")
+                logger.debug(f"[FLUX2:Transformer]   {name}: {format_memory_gb(layer_params)}")
 
         if self.use_guidance_embed:
             self.guidance_in.to(self._compute_device)
             guidance_params = sum(p.numel() * p.element_size() for p in self.guidance_in.parameters())
             small_layer_memory += guidance_params
 
-        logger.debug(f"[FLUX2:Transformer] Total small layers on GPU: {_format_memory_gb(small_layer_memory)}")
-        _log_memory_state("After moving small layers to GPU", self._compute_device)
+        logger.debug(f"[FLUX2:Transformer] Total small layers on GPU: {format_memory_gb(small_layer_memory)}")
+        log_memory_debug("After moving small layers to GPU", device=self._compute_device)
 
         # Move all blocks to offload device (CPU)
         logger.debug(
@@ -840,7 +807,7 @@ class Flux2Transformer(nn.Module):
             double_block_memory += block_params
             block.to(self._offload_device)
             if i == 0:  # Log first block as example
-                logger.debug(f"[FLUX2:Transformer]   double_block.0: {_format_memory_gb(block_params)}")
+                logger.debug(f"[FLUX2:Transformer]   double_block.0: {format_memory_gb(block_params)}")
 
         single_block_memory = 0
         for i, block in enumerate(self.single_blocks):
@@ -848,16 +815,16 @@ class Flux2Transformer(nn.Module):
             single_block_memory += block_params
             block.to(self._offload_device)
             if i == 0:  # Log first block as example
-                logger.debug(f"[FLUX2:Transformer]   single_block.0: {_format_memory_gb(block_params)}")
+                logger.debug(f"[FLUX2:Transformer]   single_block.0: {format_memory_gb(block_params)}")
 
         total_block_memory = double_block_memory + single_block_memory
         logger.debug(
             f"[FLUX2:Transformer] Total blocks on {self._offload_device}: "
-            f"{_format_memory_gb(total_block_memory)} "
-            f"(double: {_format_memory_gb(double_block_memory)}, "
-            f"single: {_format_memory_gb(single_block_memory)})"
+            f"{format_memory_gb(total_block_memory)} "
+            f"(double: {format_memory_gb(double_block_memory)}, "
+            f"single: {format_memory_gb(single_block_memory)})"
         )
-        _log_memory_state("After enable_block_offload", self._compute_device)
+        log_memory_debug("After enable_block_offload", device=self._compute_device)
 
         return self
 
@@ -882,7 +849,7 @@ class Flux2Transformer(nn.Module):
             block_params = sum(p.numel() * p.element_size() for p in block.parameters())
             logger.debug(
                 f"[FLUX2:Transformer] Moving {block_name} to {device} "
-                f"({_format_memory_gb(block_params)})"
+                f"({format_memory_gb(block_params)})"
             )
         block.to(device, non_blocking=True)
 
@@ -937,7 +904,7 @@ class Flux2Transformer(nn.Module):
                 f"[FLUX2:Transformer:forward] Starting forward pass - "
                 f"x: {list(x.shape)}, ctx: {list(ctx.shape)}"
             )
-            _log_memory_state("forward:start", self._compute_device if self._block_offload_enabled else x.device)
+            log_memory_debug("forward:start", device=self._compute_device if self._block_offload_enabled else x.device)
 
         num_txt_tokens = ctx.shape[1]
 
@@ -966,7 +933,7 @@ class Flux2Transformer(nn.Module):
                 f"[FLUX2:Transformer:forward] After embeddings - "
                 f"img: {list(img.shape)}, txt: {list(txt.shape)}"
             )
-            _log_memory_state("forward:after_embeddings", img.device)
+            log_memory_debug("forward:after_embeddings", device=img.device)
 
         # Compute positional embeddings
         pe_x = self.pe_embedder(x_ids)
@@ -983,7 +950,7 @@ class Flux2Transformer(nn.Module):
                     num_ref_tokens=0,
                 )
             if not _tracing and (i == 0 or i == len(self.double_blocks) - 1):
-                _log_memory_state(f"forward:double_block.{i}:after", img.device)
+                log_memory_debug(f"forward:double_block.{i}:after", device=img.device)
 
         # Concatenate for single-stream processing
         if not _tracing:
@@ -992,7 +959,7 @@ class Flux2Transformer(nn.Module):
         pe = torch.cat((pe_ctx, pe_x), dim=2)
         if not _tracing:
             logger.debug(f"[FLUX2:Transformer:forward] Concatenated sequence: {list(img.shape)}")
-            _log_memory_state("forward:after_concat", img.device)
+            log_memory_debug("forward:after_concat", device=img.device)
 
         # Single-stream blocks (unified attention)
         if not _tracing:
@@ -1003,7 +970,7 @@ class Flux2Transformer(nn.Module):
                     img, pe, single_block_mod, num_txt_tokens, num_ref_tokens=0,
                 )
             if not _tracing and (i == 0 or i == len(self.single_blocks) - 1):
-                _log_memory_state(f"forward:single_block.{i}:after", img.device)
+                log_memory_debug(f"forward:single_block.{i}:after", device=img.device)
 
         # Extract image tokens (remove prepended text tokens)
         if not _tracing:
@@ -1015,7 +982,7 @@ class Flux2Transformer(nn.Module):
             logger.debug("[FLUX2:Transformer:forward] Final output projection")
         img = self.final_layer(img, vec)
         if not _tracing:
-            _log_memory_state("forward:end", img.device)
+            log_memory_debug("forward:end", device=img.device)
 
         return img
 
