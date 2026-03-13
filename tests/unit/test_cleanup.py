@@ -777,3 +777,27 @@ class TestNoPrintStatements:
         assert lines == [], (
             f"wan_dit.py has print() at lines {lines}. Use logger instead."
         )
+
+
+class TestAttachWeightScalesLocation:
+    """_attach_weight_scales should live in quantization/fp8_cast.py,
+    not models/ltx2/loader.py."""
+
+    def test_importable_from_fp8_cast(self):
+        """_attach_weight_scales should be importable from quantization.fp8_cast."""
+        from llm_dit.quantization.fp8_cast import _attach_weight_scales
+        assert callable(_attach_weight_scales)
+
+    def test_not_defined_in_ltx2_loader(self):
+        """ltx2/loader.py should not define _attach_weight_scales."""
+        from llm_dit.models.ltx2 import loader
+        filepath = inspect.getfile(loader)
+        with open(filepath) as f:
+            tree = ast.parse(f.read(), filename=filepath)
+        func_names = [
+            node.name for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef)
+        ]
+        assert "_attach_weight_scales" not in func_names, (
+            "_attach_weight_scales should be moved to quantization/fp8_cast.py"
+        )

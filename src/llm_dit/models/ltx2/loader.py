@@ -407,47 +407,6 @@ def load_ltx2_transformer(
     return model
 
 
-
-
-def _attach_weight_scales(
-    model: torch.nn.Module,
-    weight_scales: Dict[str, torch.Tensor],
-) -> int:
-    """Attach per-tensor weight scales to nn.Linear modules as plain attributes.
-
-    Scales are stored as plain attributes (not buffers/parameters) so they don't
-    appear in state_dict(). This keeps the cache path clean -- weight_scales are
-    stored separately in the cache dict and re-attached during reconstruction.
-
-    Args:
-        model: Model with nn.Linear layers.
-        weight_scales: Dict mapping weight param names (e.g.
-            "transformer_blocks.0.attn1.to_q.weight") to scale tensors.
-
-    Returns:
-        Number of scales attached.
-    """
-    if not weight_scales:
-        return 0
-
-    count = 0
-    for name, module in model.named_modules():
-        if not isinstance(module, torch.nn.Linear):
-            continue
-        weight_key = f"{name}.weight"
-        if weight_key in weight_scales:
-            module._weight_scale = weight_scales[weight_key]  # type: ignore[attr-defined]
-            count += 1
-
-    if count != len(weight_scales):
-        logger.warning(
-            f"Weight scale mismatch: {len(weight_scales)} scales provided, "
-            f"{count} attached to nn.Linear modules"
-        )
-
-    return count
-
-
 def load_ltx2_transformer_fp8_cast(
     path: Union[str, Path],
     dtype: torch.dtype = torch.bfloat16,
@@ -473,7 +432,7 @@ def load_ltx2_transformer_fp8_cast(
     Returns:
         LTX2Transformer with fp8 weights and patched forward methods.
     """
-    from llm_dit.quantization.fp8_cast import amend_forward_with_upcast
+    from llm_dit.quantization.fp8_cast import _attach_weight_scales, amend_forward_with_upcast
     from llm_dit.utils.meta_init import meta_init
 
     path = Path(path)

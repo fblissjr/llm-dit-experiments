@@ -476,8 +476,7 @@ def load_flux2_transformer(
         _log_memory_state("After fp8 load_state_dict")
 
         # Attach per-tensor weight scales to nn.Linear modules
-        from llm_dit.models.ltx2.loader import _attach_weight_scales
-        from llm_dit.quantization.fp8_cast import amend_forward_with_upcast
+        from llm_dit.quantization.fp8_cast import _attach_weight_scales, amend_forward_with_upcast
         _attach_weight_scales(model, weight_scales)
 
         # Patch forward methods for per-forward upcast (fp8 -> bf16)

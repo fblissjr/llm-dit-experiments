@@ -15,8 +15,7 @@ from torch import nn
 from llm_dit.models.flux2.transformer import Flux2Transformer
 from llm_dit.models.flux2.constants import Klein9BParams
 from llm_dit.models.flux2.rope import create_image_ids, create_text_ids
-from llm_dit.models.ltx2.loader import _attach_weight_scales
-from llm_dit.quantization.fp8_cast import amend_forward_with_upcast, quantize_to_fp8_per_tensor
+from llm_dit.quantization.fp8_cast import _attach_weight_scales, amend_forward_with_upcast, quantize_to_fp8_per_tensor
 
 
 # ============================================================================

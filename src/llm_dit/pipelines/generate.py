@@ -172,7 +172,7 @@ def _apply_distilled_lora_fp8(
     reconstruction) survive load_state_dict(assign=True) because it replaces
     parameters, not forward methods -- closures access layer.weight at call time.
     """
-    from llm_dit.models.ltx2.loader import _attach_weight_scales
+    from llm_dit.quantization.fp8_cast import _attach_weight_scales
     from llm_dit.utils.lora import fuse_lora_to_state_dict
 
     # Extract weight_scales (plain attributes on nn.Linear, not in state_dict)
@@ -356,7 +356,7 @@ def _reconstruct_transformer_from_cache(
     if is_fp8_cast:
         # Re-attach weight scales (updated by LoRA fusion or original from cache)
         if weight_scales:
-            from llm_dit.models.ltx2.loader import _attach_weight_scales
+            from llm_dit.quantization.fp8_cast import _attach_weight_scales
             attached = _attach_weight_scales(model, weight_scales)
             logger.info(f"FP8-cast: attached {attached} weight_scales")
 

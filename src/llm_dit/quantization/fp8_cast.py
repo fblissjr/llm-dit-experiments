@@ -1,6 +1,6 @@
-"""FP8-cast quantization for LTX-2.3 transformer.
+"""FP8-cast quantization utilities.
 
-Last Updated: 2026-03-09
+Last Updated: 2026-03-13
 
 Supports two FP8 checkpoint formats:
 
@@ -121,4 +121,43 @@ def amend_forward_with_upcast(
         )
     else:
         logger.info(f"fp8-cast: patched {count} nn.Linear layers for per-forward upcast")
+    return count
+
+
+def _attach_weight_scales(
+    model: nn.Module,
+    weight_scales: dict[str, torch.Tensor],
+) -> int:
+    """Attach per-tensor weight scales to nn.Linear modules as plain attributes.
+
+    Scales are stored as plain attributes (not buffers/parameters) so they don't
+    appear in state_dict(). This keeps the cache path clean -- weight_scales are
+    stored separately in the cache dict and re-attached during reconstruction.
+
+    Args:
+        model: Model with nn.Linear layers.
+        weight_scales: Dict mapping weight param names (e.g.
+            "transformer_blocks.0.attn1.to_q.weight") to scale tensors.
+
+    Returns:
+        Number of scales attached.
+    """
+    if not weight_scales:
+        return 0
+
+    count = 0
+    for name, module in model.named_modules():
+        if not isinstance(module, nn.Linear):
+            continue
+        weight_key = f"{name}.weight"
+        if weight_key in weight_scales:
+            module._weight_scale = weight_scales[weight_key]  # type: ignore[attr-defined]
+            count += 1
+
+    if count != len(weight_scales):
+        logger.warning(
+            f"Weight scale mismatch: {len(weight_scales)} scales provided, "
+            f"{count} attached to nn.Linear modules"
+        )
+
     return count
