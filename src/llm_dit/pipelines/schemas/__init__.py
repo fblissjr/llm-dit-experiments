@@ -55,6 +55,11 @@ class ParamSchema:
                      Format: {trigger_param_id: {trigger_value: new_default}}
                      e.g., {"model_name": {"klein-base-9b": 50}} -- when
                      model_name="klein-base-9b", this param's default becomes 50.
+                     USE for user-facing variant choices with genuinely different
+                     optimal defaults (e.g., model_name -> steps/guidance).
+                     DO NOT USE for infrastructure state (checkpoint existence,
+                     device placement, quantization mode) -- those belong in
+                     config.toml and should flow through resolve_param().
     """
     id: str
     type: ParamType

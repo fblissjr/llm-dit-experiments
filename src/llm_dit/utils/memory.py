@@ -44,6 +44,7 @@ def format_memory_gb(bytes_val: int | float) -> str:
 
 def log_memory_debug(
     prefix: str,
+    *,
     component: str = "",
     device: torch.device | str | None = None,
 ) -> None:
