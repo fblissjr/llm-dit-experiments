@@ -1,4 +1,9 @@
-Last Updated: 2026-03-09
+Last Updated: 2026-03-13
+
+> **v0.9.31:** `pipeline_mode="distilled"` and `DISTILLED_SIGMA_VALUES` removed.
+> The distilled code path required a pre-distilled checkpoint that doesn't exist.
+> We use `TI2VidTwoStagesPipeline` (base + distilled LoRA) exclusively.
+> Stage 2 sigma schedule (`STAGE_2_DISTILLED_SIGMA_VALUES`) is kept.
 
 # LTX-2.3 Distilled Pipeline Reference
 

@@ -137,10 +137,7 @@ register_pipeline(PipelineSchema(
             max=80,
             step=1,
             group="basic",
-            tooltip="Denoising steps for stage 1 (coarse generation). 30 recommended for standard, 8 for distilled.",
-            dependent_defaults={
-                "pipeline_mode": {"distilled": 8, "standard": 30},
-            },
+            tooltip="Denoising steps for stage 1 (coarse generation). 30 recommended.",
         ),
         ParamSchema(
             id="guidance_scale",
@@ -151,10 +148,7 @@ register_pipeline(PipelineSchema(
             max=10.0,
             step=0.1,
             group="basic",
-            tooltip="Classifier-free guidance scale. 3.0 recommended. Forced to 1.0 in distilled mode.",
-            dependent_defaults={
-                "pipeline_mode": {"distilled": 1.0, "standard": 3.0},
-            },
+            tooltip="Classifier-free guidance scale. 3.0 recommended.",
         ),
         ParamSchema(
             id="seed",
@@ -217,25 +211,13 @@ register_pipeline(PipelineSchema(
 
         # === Advanced ===
         ParamSchema(
-            id="pipeline_mode",
-            type="select",
-            label="Pipeline Mode",
-            default="standard",
-            options=["standard", "distilled"],
-            group="advanced",
-            tooltip="standard: base+LoRA, 30 steps, full guidance. distilled: pre-distilled checkpoint, 8 steps, no guidance.",
-        ),
-        ParamSchema(
             id="stg_enabled",
             type="checkbox",
             label="Enable STG",
             default=True,
             group="advanced",
-            tooltip="Spatio-Temporal Guidance for better motion consistency. Disabled in distilled mode.",
+            tooltip="Spatio-Temporal Guidance for better motion consistency.",
             config_mapped=False,
-            dependent_defaults={
-                "pipeline_mode": {"distilled": False, "standard": True},
-            },
         ),
         ParamSchema(
             id="stg_scale",

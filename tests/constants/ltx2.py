@@ -29,12 +29,7 @@ REFERENCE_STG = 1.0                    # stg_scale
 REFERENCE_RESCALE = 0.7                # rescale_scale
 REFERENCE_FPS = 24.0                   # DEFAULT_FRAME_RATE
 
-# Noise schedule for distilled pipeline (verbatim from reference)
-DISTILLED_SIGMA_VALUES = [
-    1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0,
-]
-
-# Reduced schedule for super-resolution stage 2
+# Stage 2 distilled sigma schedule (used unconditionally by standard pipeline)
 STAGE_2_DISTILLED_SIGMA_VALUES = [0.909375, 0.725, 0.421875, 0.0]
 
 

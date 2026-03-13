@@ -405,86 +405,84 @@ class TestSchedulerTokenCount:
         )
 
 
-class TestPipelineMode:
-    """use_distilled_sigmas should be replaced with pipeline_mode enum."""
+class TestPipelineModeRemoved:
+    """pipeline_mode="distilled" is dead code -- requires a nonexistent
+    pre-distilled checkpoint. We use TI2VidTwoStagesPipeline (base + LoRA)."""
 
-    def test_use_distilled_sigmas_not_in_two_stage_config(self):
-        """TwoStageConfig should not have use_distilled_sigmas."""
+    def test_no_pipeline_mode_in_two_stage_config(self):
+        """TwoStageConfig should not have pipeline_mode field."""
         from llm_dit.pipelines.generate import TwoStageConfig
 
-        assert "use_distilled_sigmas" not in TwoStageConfig.__dataclass_fields__, (
-            "TwoStageConfig.use_distilled_sigmas should be replaced with pipeline_mode"
+        assert "pipeline_mode" not in TwoStageConfig.__dataclass_fields__, (
+            "TwoStageConfig.pipeline_mode should be deleted -- dead distilled code path"
         )
 
-    def test_use_distilled_sigmas_not_in_ltx2_config(self):
-        """LTX2Config should not have use_distilled_sigmas."""
+    def test_no_pipeline_mode_in_ltx2_config(self):
+        """LTX2Config should not have pipeline_mode field."""
         from llm_dit.config import LTX2Config
 
-        assert "use_distilled_sigmas" not in LTX2Config.__dataclass_fields__, (
-            "LTX2Config.use_distilled_sigmas should be replaced with pipeline_mode"
+        assert "pipeline_mode" not in LTX2Config.__dataclass_fields__, (
+            "LTX2Config.pipeline_mode should be deleted -- dead distilled code path"
         )
 
-    def test_use_distilled_sigmas_not_in_web_schema(self):
-        """Web schema should not have use_distilled_sigmas."""
+    def test_no_pipeline_mode_in_web_schema(self):
+        """Web schema should not have pipeline_mode field."""
         from web.schemas import LTX2GenerateRequest
 
-        assert "use_distilled_sigmas" not in LTX2GenerateRequest.model_fields, (
-            "LTX2GenerateRequest.use_distilled_sigmas should be replaced with pipeline_mode"
+        assert "pipeline_mode" not in LTX2GenerateRequest.model_fields, (
+            "LTX2GenerateRequest.pipeline_mode should be deleted"
         )
 
-    def test_pipeline_mode_in_two_stage_config(self):
-        """TwoStageConfig should have pipeline_mode field."""
-        from llm_dit.pipelines.generate import TwoStageConfig
-
-        assert "pipeline_mode" in TwoStageConfig.__dataclass_fields__, (
-            "TwoStageConfig should have pipeline_mode field"
-        )
-
-    def test_pipeline_mode_default_is_standard(self):
-        """Default pipeline_mode should be 'standard'."""
-        from llm_dit.pipelines.generate import TwoStageConfig
-
-        config = TwoStageConfig()
-        assert config.pipeline_mode == "standard", (
-            f"TwoStageConfig.pipeline_mode default is '{config.pipeline_mode}', "
-            "should be 'standard'"
-        )
-
-    def test_pipeline_mode_in_ltx2_config(self):
-        """LTX2Config should have pipeline_mode field."""
-        from llm_dit.config import LTX2Config
-
-        assert "pipeline_mode" in LTX2Config.__dataclass_fields__, (
-            "LTX2Config should have pipeline_mode field"
-        )
-
-    def test_pipeline_mode_in_web_schema(self):
-        """Web schema should have pipeline_mode field."""
-        from web.schemas import LTX2GenerateRequest
-
-        assert "pipeline_mode" in LTX2GenerateRequest.model_fields, (
-            "LTX2GenerateRequest should have pipeline_mode field"
-        )
-
-    def test_use_distilled_sigmas_not_in_ui_schema(self):
-        """UI schema should not have use_distilled_sigmas."""
+    def test_no_pipeline_mode_in_ui_schema(self):
+        """UI schema should not have pipeline_mode control."""
         from llm_dit.pipelines.schemas import get_pipeline
 
         schema = get_pipeline("ltx2")
         param_ids = [p.id for p in schema.params]
-        assert "use_distilled_sigmas" not in param_ids, (
-            "use_distilled_sigmas should be replaced with pipeline_mode in UI schema"
+        assert "pipeline_mode" not in param_ids, (
+            "pipeline_mode should be removed from LTX2 UI schema"
         )
 
-    def test_pipeline_mode_in_ui_schema(self):
-        """UI schema should have pipeline_mode control."""
-        from llm_dit.pipelines.schemas import get_pipeline
+    def test_no_distilled_sigma_values_constant(self):
+        """DISTILLED_SIGMA_VALUES (stage 1, 8-step) should be removed."""
+        from llm_dit.models.ltx2 import constants
 
-        schema = get_pipeline("ltx2")
-        param_ids = [p.id for p in schema.params]
-        assert "pipeline_mode" in param_ids, (
-            "LTX2_PARAMS should have a pipeline_mode control"
+        assert not hasattr(constants, "DISTILLED_SIGMA_VALUES"), (
+            "DISTILLED_SIGMA_VALUES should be deleted -- only used by dead distilled path"
         )
+
+    def test_stage2_sigma_values_still_exist(self):
+        """STAGE_2_DISTILLED_SIGMA_VALUES must be kept (used by standard pipeline)."""
+        from llm_dit.models.ltx2.constants import STAGE_2_DISTILLED_SIGMA_VALUES
+
+        assert len(STAGE_2_DISTILLED_SIGMA_VALUES) == 4
+
+    def test_config_migration_strips_pipeline_mode(self):
+        """Old config.toml with pipeline_mode should not crash."""
+        from llm_dit.config import Config
+
+        data = {
+            "ltx2": {
+                "model_path": "/tmp/test",
+                "pipeline_mode": "distilled",
+            }
+        }
+        config = Config.from_dict(data)
+        assert not hasattr(config.ltx2, "pipeline_mode")
+
+    def test_config_migration_strips_use_distilled_sigmas(self):
+        """Old config.toml with use_distilled_sigmas should not crash."""
+        from llm_dit.config import Config
+
+        data = {
+            "ltx2": {
+                "model_path": "/tmp/test",
+                "use_distilled_sigmas": True,
+            }
+        }
+        config = Config.from_dict(data)
+        assert not hasattr(config.ltx2, "use_distilled_sigmas")
+        assert not hasattr(config.ltx2, "pipeline_mode")
 
 
 class TestDeadCodeRemoval:

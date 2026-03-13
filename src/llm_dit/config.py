@@ -374,10 +374,6 @@ class LTX2Config:
     ge_gamma: float = 0.0  # Gradient estimation gamma (0=disabled, 2.0=reference)
     fbcache_threshold: float = 0.0  # FBCache block-skip threshold (0=disabled, 0.05=recommended)
 
-    # Pipeline mode: "standard" (base+LoRA, 30 steps, full guidance) or
-    # "distilled" (pre-distilled checkpoint, 8 steps, no guidance)
-    pipeline_mode: str = "standard"
-
     # Image-to-video (optional)
     input_image: str = ""  # Path to input image for I2V mode
     image_weight: float = 0.7  # Blend weight for input image (0.0-1.0)
@@ -1978,13 +1974,9 @@ class Config:
         # v0.9.28 migrations
         ltx2_data.pop("offload_mode", None)
         ltx2_data.pop("num_blocks_per_group", None)
-        # v0.9.27 migrations
-        if "use_distilled_sigmas" in ltx2_data:
-            if ltx2_data.pop("use_distilled_sigmas"):
-                ltx2_data.setdefault("pipeline_mode", "distilled")
-            else:
-                ltx2_data.setdefault("pipeline_mode", "standard")
-            logger.warning("[config] Migrated use_distilled_sigmas -> pipeline_mode")
+        # v0.9.31 migrations
+        ltx2_data.pop("pipeline_mode", None)
+        ltx2_data.pop("use_distilled_sigmas", None)
         ltx2_data.pop("stage2_num_inference_steps", None)  # dead param
         if "num_inference_steps" in ltx2_data:
             ltx2_data.setdefault("stage1_num_inference_steps", ltx2_data.pop("num_inference_steps"))

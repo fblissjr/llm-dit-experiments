@@ -9,7 +9,6 @@ Run with: uv run pytest tests/unit/test_ltx2_two_stage.py -v
 import torch
 
 from llm_dit.models.ltx2.constants import (
-    DISTILLED_SIGMA_VALUES,
     STAGE_2_DISTILLED_SIGMA_VALUES,
     TWO_STAGE_STEPS_STAGE2,
 )
@@ -28,7 +27,6 @@ class TestTwoStageConfig:
     def test_default_values(self):
         cfg = TwoStageConfig()
         assert cfg.stage1_steps == 30  # V2.3 default (was 40 in V2.0)
-        assert cfg.pipeline_mode == "standard"
         assert cfg.guidance_scale == 3.0  # ref: DEFAULT_VIDEO_GUIDER_PARAMS.cfg_scale
         assert cfg.stg_scale == 1.0  # ref: DEFAULT_VIDEO_GUIDER_PARAMS.stg_scale
         assert cfg.rescale_scale == 0.7
@@ -50,25 +48,13 @@ class TestTwoStageConfig:
         assert "AI artifacts" in cfg.negative_prompt
 
 
-class TestDistilledSigmaSchedules:
-    """Tests for distilled sigma constant correctness."""
-
-    def test_distilled_sigma_monotonically_decreasing(self):
-        """Full distilled schedule should be monotonically decreasing."""
-        for i in range(len(DISTILLED_SIGMA_VALUES) - 1):
-            assert DISTILLED_SIGMA_VALUES[i] > DISTILLED_SIGMA_VALUES[i + 1], (
-                f"Non-monotonic at index {i}: {DISTILLED_SIGMA_VALUES[i]} <= {DISTILLED_SIGMA_VALUES[i + 1]}"
-            )
+class TestStage2SigmaSchedule:
+    """Tests for stage 2 distilled sigma constant correctness."""
 
     def test_stage2_sigma_monotonically_decreasing(self):
         """Stage 2 distilled schedule should be monotonically decreasing."""
         for i in range(len(STAGE_2_DISTILLED_SIGMA_VALUES) - 1):
             assert STAGE_2_DISTILLED_SIGMA_VALUES[i] > STAGE_2_DISTILLED_SIGMA_VALUES[i + 1]
-
-    def test_distilled_sigma_bounds(self):
-        """Distilled sigmas should be in [0, 1]."""
-        assert DISTILLED_SIGMA_VALUES[0] == 1.0
-        assert DISTILLED_SIGMA_VALUES[-1] == 0.0
 
     def test_stage2_sigma_ends_at_zero(self):
         assert STAGE_2_DISTILLED_SIGMA_VALUES[-1] == 0.0
@@ -76,13 +62,6 @@ class TestDistilledSigmaSchedules:
     def test_stage2_steps_match_sigma_count(self):
         """Stage 2 steps should be len(sigmas) - 1."""
         assert TWO_STAGE_STEPS_STAGE2 == len(STAGE_2_DISTILLED_SIGMA_VALUES) - 1
-
-    def test_stage2_sigmas_are_subset_of_full(self):
-        """Stage 2 sigmas should be a subset of the full distilled schedule."""
-        for sigma in STAGE_2_DISTILLED_SIGMA_VALUES:
-            assert sigma in DISTILLED_SIGMA_VALUES, (
-                f"Stage 2 sigma {sigma} not found in full distilled schedule"
-            )
 
     def test_stage2_starts_below_one(self):
         """Stage 2 should start at a partial noise level (not full noise)."""

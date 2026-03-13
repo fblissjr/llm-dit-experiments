@@ -100,13 +100,13 @@ class TestLTX2Constants:
         assert FULL_REFERENCE["guidance_scale"] == REFERENCE_CFG
         assert FULL_REFERENCE["seed"] == REFERENCE_SEED
 
-    def test_distilled_sigma_values_length(self):
-        """Distilled sigma schedule has expected length."""
-        from tests.constants.ltx2 import DISTILLED_SIGMA_VALUES
+    def test_stage2_sigma_values_length(self):
+        """Stage 2 distilled sigma schedule has expected length."""
+        from tests.constants.ltx2 import STAGE_2_DISTILLED_SIGMA_VALUES
 
-        assert len(DISTILLED_SIGMA_VALUES) == 9
-        assert DISTILLED_SIGMA_VALUES[0] == 1.0
-        assert DISTILLED_SIGMA_VALUES[-1] == 0.0
+        assert len(STAGE_2_DISTILLED_SIGMA_VALUES) == 4
+        assert STAGE_2_DISTILLED_SIGMA_VALUES[0] == 0.909375
+        assert STAGE_2_DISTILLED_SIGMA_VALUES[-1] == 0.0
 
 
 class TestLTX2TomlConsistency:

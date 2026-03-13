@@ -138,23 +138,6 @@ class TestSigmaScheduleMatchesReference:
                 f"Step {i}: ours={our_sigmas[i]:.6f} vs DS={ds_sigmas[i]:.6f} (diff={diff:.6f})"
             )
 
-    def test_8_steps_distilled(self):
-        """Distilled stage 1 sigma values should match reference."""
-        from llm_dit.models.ltx2.constants import DISTILLED_SIGMA_VALUES
-
-        ds_sigmas, _ = diffsynth_set_timesteps_ltx2(special_case="ditilled_stage1")
-
-        # Our constants (includes trailing 0.0)
-        our_sigmas = DISTILLED_SIGMA_VALUES
-
-        assert len(our_sigmas) == len(ds_sigmas) + 1, (
-            f"Ours: {len(our_sigmas)}, DS: {len(ds_sigmas)} (expected DS+1)"
-        )
-        for i in range(len(ds_sigmas)):
-            assert abs(our_sigmas[i] - ds_sigmas[i].item()) < 1e-6, (
-                f"Distilled step {i}: ours={our_sigmas[i]:.6f} vs DS={ds_sigmas[i]:.6f}"
-            )
-
     def test_stage2_distilled(self):
         """Stage 2 distilled sigma values should match reference."""
         from llm_dit.models.ltx2.constants import STAGE_2_DISTILLED_SIGMA_VALUES
@@ -306,11 +289,11 @@ class TestEulerStepConsistency:
 
     def test_final_step_goes_to_zero(self):
         """Final denoising step should bring sigma to 0."""
-        from llm_dit.models.ltx2.constants import DISTILLED_SIGMA_VALUES
+        from llm_dit.models.ltx2.constants import STAGE_2_DISTILLED_SIGMA_VALUES
 
-        sigmas = torch.tensor(DISTILLED_SIGMA_VALUES)
+        sigmas = torch.tensor(STAGE_2_DISTILLED_SIGMA_VALUES)
         num_steps = len(sigmas) - 1
 
         # Last step: sigma_next = sigmas[-1] = 0.0
         assert sigmas[-1] == 0.0
-        assert num_steps == 8  # 9 values, 8 steps
+        assert num_steps == 3  # 4 values, 3 steps

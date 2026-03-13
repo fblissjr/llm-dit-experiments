@@ -1388,10 +1388,6 @@ class TwoStageConfig:
     # FBCache
     fbcache_threshold: float = 0.0  # Block-skip threshold (0=disabled, 0.05=recommended)
 
-    # Pipeline mode: "standard" (base+LoRA, 30 steps, full guidance) or
-    # "distilled" (pre-distilled checkpoint, 8 steps, no guidance)
-    pipeline_mode: str = "standard"
-
     def __post_init__(self):
         if self.stg_blocks is None:
             self.stg_blocks = [28]
@@ -2273,21 +2269,15 @@ def generate_video_two_stage(
         logger.info(f"Audio: {audio_latent_frames} latent frames ({config.num_frames / fps:.2f}s)")
 
     # Sigma schedule for stage 1
-    is_distilled = two_stage.pipeline_mode == "distilled"
-    if is_distilled:
-        from llm_dit.models.ltx2.constants import DISTILLED_SIGMA_VALUES
-        sigmas = torch.tensor(DISTILLED_SIGMA_VALUES, device=transformer_device, dtype=dtype)
-        logger.info(f"Stage 1: Using distilled sigma schedule ({len(sigmas) - 1} steps, no CFG)")
-    else:
-        scheduler = LTX2Scheduler()
-        sigmas = scheduler.execute(
-            steps=two_stage.stage1_steps,
-            latent=None,  # Use reference default (4096 tokens)
-            max_shift=config.max_shift,
-            base_shift=config.base_shift,
-            stretch=config.stretch,
-            terminal=config.terminal,
-        ).to(transformer_device, dtype)
+    scheduler = LTX2Scheduler()
+    sigmas = scheduler.execute(
+        steps=two_stage.stage1_steps,
+        latent=None,  # Use reference default (4096 tokens)
+        max_shift=config.max_shift,
+        base_shift=config.base_shift,
+        stretch=config.stretch,
+        terminal=config.terminal,
+    ).to(transformer_device, dtype)
     logger.debug(
         f"Stage 1 sigmas: [{sigmas[0]:.4f} -> {sigmas[-1]:.4f}], "
         f"{len(sigmas) - 1} steps, mode={'AV' if not video_only else 'video-only'}"

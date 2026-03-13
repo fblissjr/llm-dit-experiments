@@ -6,6 +6,16 @@ last updated: 2026-03-13
 All notable changes to this project will be documented in this file.
 Uses [Semantic Versioning](https://semver.org/).
 
+## 0.9.31
+
+### removed
+- **`pipeline_mode="distilled"` dead code**: Removed `pipeline_mode` from LTX2Config, TwoStageConfig, web schema, UI schema, router, and config.toml. The distilled code path required a pre-distilled checkpoint that doesn't exist. `DISTILLED_SIGMA_VALUES` (8-step stage 1) removed. `STAGE_2_DISTILLED_SIGMA_VALUES` kept (used by standard pipeline).
+- **`print()` calls**: Converted 11 `print()` calls to `logger` in `flux2/loader.py` and `wan_dit.py`.
+
+### changed
+- **`_attach_weight_scales` moved** from `models/ltx2/loader.py` to `quantization/fp8_cast.py` (pipeline-agnostic FP8 utility).
+- **Memory debug utilities consolidated**: `_format_memory_gb`/`_log_memory_state` from `flux2/loader.py` and `flux2/transformer.py` replaced with shared `format_memory_gb`/`log_memory_debug` in `utils/memory.py`.
+
 ## 0.9.30
 
 ### changed

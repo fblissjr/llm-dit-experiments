@@ -676,7 +676,6 @@ class LTX2GenerateRequest(BaseModel):
     # Optimization
     ge_gamma: float = 0.0
     fbcache_threshold: float = 0.0  # FBCache block-skip threshold (0=disabled, 0.05=recommended)
-    pipeline_mode: str = "standard"  # "standard" or "distilled"
 
 
 class Flux2GenerateRequest(BaseModel):

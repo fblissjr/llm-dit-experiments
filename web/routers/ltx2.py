@@ -274,7 +274,6 @@ async def ltx2_generate_stream(request: LTX2GenerateRequest, config: ConfigDep, 
                         distilled_lora_scale=resolve_param(request, "distilled_lora_scale", ltx2_cfg.distilled_lora_scale),
                         spatial_upsampler_file=ltx2_cfg.spatial_upsampler_file if ltx2_cfg else "ltx-2-spatial-upscaler-x2-1.0.safetensors",
                         fbcache_threshold=resolve_param(request, "fbcache_threshold", ltx2_cfg.fbcache_threshold),
-                        pipeline_mode=resolve_param(request, "pipeline_mode", ltx2_cfg.pipeline_mode),
                     )
                     if stg_blocks is not None:
                         two_stage_cfg.stg_blocks = stg_blocks
