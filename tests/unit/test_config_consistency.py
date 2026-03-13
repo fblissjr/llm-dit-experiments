@@ -102,11 +102,11 @@ class TestLTX2Constants:
 
     def test_stage2_sigma_values_length(self):
         """Stage 2 distilled sigma schedule has expected length."""
-        from tests.constants.ltx2 import STAGE_2_DISTILLED_SIGMA_VALUES
+        from tests.constants.ltx2 import STAGE_2_SIGMA_SCHEDULE
 
-        assert len(STAGE_2_DISTILLED_SIGMA_VALUES) == 4
-        assert STAGE_2_DISTILLED_SIGMA_VALUES[0] == 0.909375
-        assert STAGE_2_DISTILLED_SIGMA_VALUES[-1] == 0.0
+        assert len(STAGE_2_SIGMA_SCHEDULE) == 4
+        assert STAGE_2_SIGMA_SCHEDULE[0] == 0.909375
+        assert STAGE_2_SIGMA_SCHEDULE[-1] == 0.0
 
 
 class TestLTX2TomlConsistency:

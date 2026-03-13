@@ -82,12 +82,15 @@ TWO_STAGE_STEPS_STAGE1 = 30  # V2.3 default (V2.0 was 40)
 
 TWO_STAGE_HEIGHT_STAGE2 = 1024  # 2x upsampled
 TWO_STAGE_WIDTH_STAGE2 = 1536   # 2x upsampled
-TWO_STAGE_STEPS_STAGE2 = 3      # Distilled model
+# Stage 2 refinement: pre-computed noise schedule from the official reference repo.
+# 4 sigma values define 3 denoising steps. Stage 2 re-noises the upsampled
+# stage 1 output to sigma[0]=0.909375, then denoises through each step to 0.
+# Used unconditionally by the two-stage pipeline (not configurable per-request).
+# Source: coderef/LTX-2/packages/ltx-pipelines/src/ltx_pipelines/utils/constants.py
+STAGE_2_SIGMA_SCHEDULE = [0.909375, 0.725, 0.421875, 0.0]
 
-# Stage 2 distilled sigma schedule (from reference constants.py)
-# Pre-computed sigma values for the refinement stage of the two-stage pipeline.
-# Used unconditionally by stage 2 (standard pipeline with distilled LoRA).
-STAGE_2_DISTILLED_SIGMA_VALUES = [0.909375, 0.725, 0.421875, 0.0]
+# Number of denoising steps in stage 2 = len(STAGE_2_SIGMA_SCHEDULE) - 1.
+STAGE_2_STEPS = 3
 
 
 # =============================================================================

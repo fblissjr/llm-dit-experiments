@@ -3,7 +3,7 @@ Last Updated: 2026-03-13
 > **v0.9.31:** `pipeline_mode="distilled"` and `DISTILLED_SIGMA_VALUES` removed.
 > The distilled code path required a pre-distilled checkpoint that doesn't exist.
 > We use `TI2VidTwoStagesPipeline` (base + distilled LoRA) exclusively.
-> Stage 2 sigma schedule (`STAGE_2_DISTILLED_SIGMA_VALUES`) is kept.
+> Stage 2 sigma schedule (`STAGE_2_SIGMA_SCHEDULE`) is kept.
 
 # LTX-2.3 Distilled Pipeline Reference
 
@@ -21,7 +21,7 @@ The reference repo provides two distinct two-stage pipeline classes:
 - Both stage 1 and stage 2 use `simple_denoising_func` -- a **single forward pass per step** with no CFG, STG, or any guidance.
 - No negative prompt encoding. Only the positive prompt is encoded (line 95: `encode_prompts([prompt], ...)`).
 - Stage 1: 8 denoising steps using `DISTILLED_SIGMA_VALUES`.
-- Stage 2: 3 denoising steps using `STAGE_2_DISTILLED_SIGMA_VALUES`.
+- Stage 2: 3 denoising steps using `STAGE_2_SIGMA_SCHEDULE`.
 
 ### TI2VidTwoStagesPipeline (`coderef/LTX-2/packages/ltx-pipelines/src/ltx_pipelines/ti2vid_two_stages.py`)
 
@@ -30,7 +30,7 @@ The reference repo provides two distinct two-stage pipeline classes:
 - Stage 2 uses `simple_denoising_func` -- **single forward pass**, no guidance.
 - Both positive and negative prompts are encoded (line 105: `encode_prompts([prompt, negative_prompt], ...)`).
 - Stage 1: `num_inference_steps` steps (30 for V2.3, 40 for V2.0) with dynamic sigma schedule from `LTX2Scheduler`.
-- Stage 2: 3 steps using `STAGE_2_DISTILLED_SIGMA_VALUES`.
+- Stage 2: 3 steps using `STAGE_2_SIGMA_SCHEDULE`.
 
 ### When to Use Which
 
@@ -58,7 +58,7 @@ DISTILLED_SIGMA_VALUES = [1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725,
 ### Stage 2 Distilled (3 steps)
 
 ```python
-STAGE_2_DISTILLED_SIGMA_VALUES = [0.909375, 0.725, 0.421875, 0.0]
+STAGE_2_SIGMA_SCHEDULE = [0.909375, 0.725, 0.421875, 0.0]
 ```
 
 4 values define 3 denoising steps. This is a strict suffix of `DISTILLED_SIGMA_VALUES` (the last 4 values). Stage 2 starts at sigma 0.909375, not 1.0, because the upsampled stage 1 output is re-noised to this level.

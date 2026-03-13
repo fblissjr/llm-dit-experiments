@@ -2418,8 +2418,8 @@ def generate_video_two_stage(
     # Only the distilled LoRA needs to be applied for Stage 2's 3-step schedule.
     stage2_start = time.perf_counter()
     if callback:
-        from llm_dit.models.ltx2.constants import STAGE_2_DISTILLED_SIGMA_VALUES
-        callback("stage2_denoise", 0, len(STAGE_2_DISTILLED_SIGMA_VALUES) - 1)
+        from llm_dit.models.ltx2.constants import STAGE_2_SIGMA_SCHEDULE
+        callback("stage2_denoise", 0, len(STAGE_2_SIGMA_SCHEDULE) - 1)
 
     logger.info("Stage 2: Applying distilled LoRA for high-res refinement (reusing Stage 1 model)...")
 
@@ -2456,10 +2456,10 @@ def generate_video_two_stage(
         logger.info("Stage 2: Skipping distilled LoRA (scale=0 or no path)")
 
     # Stage 2 uses distilled sigma schedule (pre-computed, not from scheduler)
-    from llm_dit.models.ltx2.constants import STAGE_2_DISTILLED_SIGMA_VALUES
+    from llm_dit.models.ltx2.constants import STAGE_2_SIGMA_SCHEDULE
 
     distilled_sigmas = torch.tensor(
-        STAGE_2_DISTILLED_SIGMA_VALUES, device=transformer_device, dtype=dtype
+        STAGE_2_SIGMA_SCHEDULE, device=transformer_device, dtype=dtype
     )
     logger.debug(
         f"Stage 2 sigmas: [{distilled_sigmas[0]:.4f} -> {distilled_sigmas[-1]:.4f}], "

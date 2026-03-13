@@ -9,8 +9,8 @@ Run with: uv run pytest tests/unit/test_ltx2_two_stage.py -v
 import torch
 
 from llm_dit.models.ltx2.constants import (
-    STAGE_2_DISTILLED_SIGMA_VALUES,
-    TWO_STAGE_STEPS_STAGE2,
+    STAGE_2_SIGMA_SCHEDULE,
+    STAGE_2_STEPS,
 )
 from llm_dit.pipelines.generate import (
     GenerationConfig,
@@ -48,25 +48,52 @@ class TestTwoStageConfig:
         assert "AI artifacts" in cfg.negative_prompt
 
 
+class TestStage2ConstantNames:
+    """Stage 2 constants should use the new naming convention."""
+
+    def test_stage_2_sigma_schedule_importable(self):
+        """STAGE_2_SIGMA_SCHEDULE should be importable with 4 values."""
+        from llm_dit.models.ltx2.constants import STAGE_2_SIGMA_SCHEDULE
+
+        assert len(STAGE_2_SIGMA_SCHEDULE) == 4
+
+    def test_stage_2_steps_importable(self):
+        """STAGE_2_STEPS should be importable and equal 3."""
+        from llm_dit.models.ltx2.constants import STAGE_2_STEPS
+
+        assert STAGE_2_STEPS == 3
+
+    def test_old_names_removed(self):
+        """Old constant names should no longer exist."""
+        from llm_dit.models.ltx2 import constants
+
+        assert not hasattr(constants, "STAGE_2_DISTILLED_SIGMA_VALUES"), (
+            "STAGE_2_DISTILLED_SIGMA_VALUES should be renamed to STAGE_2_SIGMA_SCHEDULE"
+        )
+        assert not hasattr(constants, "TWO_STAGE_STEPS_STAGE2"), (
+            "TWO_STAGE_STEPS_STAGE2 should be renamed to STAGE_2_STEPS"
+        )
+
+
 class TestStage2SigmaSchedule:
-    """Tests for stage 2 distilled sigma constant correctness."""
+    """Tests for stage 2 sigma constant correctness."""
 
     def test_stage2_sigma_monotonically_decreasing(self):
-        """Stage 2 distilled schedule should be monotonically decreasing."""
-        for i in range(len(STAGE_2_DISTILLED_SIGMA_VALUES) - 1):
-            assert STAGE_2_DISTILLED_SIGMA_VALUES[i] > STAGE_2_DISTILLED_SIGMA_VALUES[i + 1]
+        """Stage 2 schedule should be monotonically decreasing."""
+        for i in range(len(STAGE_2_SIGMA_SCHEDULE) - 1):
+            assert STAGE_2_SIGMA_SCHEDULE[i] > STAGE_2_SIGMA_SCHEDULE[i + 1]
 
     def test_stage2_sigma_ends_at_zero(self):
-        assert STAGE_2_DISTILLED_SIGMA_VALUES[-1] == 0.0
+        assert STAGE_2_SIGMA_SCHEDULE[-1] == 0.0
 
     def test_stage2_steps_match_sigma_count(self):
         """Stage 2 steps should be len(sigmas) - 1."""
-        assert TWO_STAGE_STEPS_STAGE2 == len(STAGE_2_DISTILLED_SIGMA_VALUES) - 1
+        assert STAGE_2_STEPS == len(STAGE_2_SIGMA_SCHEDULE) - 1
 
     def test_stage2_starts_below_one(self):
         """Stage 2 should start at a partial noise level (not full noise)."""
-        assert STAGE_2_DISTILLED_SIGMA_VALUES[0] < 1.0
-        assert STAGE_2_DISTILLED_SIGMA_VALUES[0] == 0.909375
+        assert STAGE_2_SIGMA_SCHEDULE[0] < 1.0
+        assert STAGE_2_SIGMA_SCHEDULE[0] == 0.909375
 
 
 class TestHalfResolution:
