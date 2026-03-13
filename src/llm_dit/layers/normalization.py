@@ -9,9 +9,7 @@ into a single, configurable canonical implementation.
 Previous implementations:
 - z_image/components.py: RMSNorm (eps=1e-5)
 - flux2/transformer.py: RMSNorm (eps=1e-6 fixed, param named 'scale')
-- wan_dit.py: RMSNorm (DiffSynth-matched)
-- wan_text_encoder.py: T5LayerNorm
-- humo_transformer.py: RMSNorm (uses sqrt instead of rsqrt)
+- DiffSynth-Studio: RMSNorm (DiffSynth-matched)
 - ltx2/components.py: rms_norm function
 - embeddings_connector.py: rms_norm function (duplicate)
 

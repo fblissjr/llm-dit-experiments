@@ -24,7 +24,7 @@ from typing import Literal, get_args
 from .config import Config, RuntimeConfig
 
 # Supported model types
-ModelType = Literal["zimage", "qwenimage-t2i", "qwenimage-edit", "ltx2", "wan", "flux2"]
+ModelType = Literal["zimage", "qwenimage-t2i", "qwenimage-edit", "ltx2", "flux2"]
 SUPPORTED_MODEL_TYPES: tuple[str, ...] = get_args(ModelType)
 
 logger = logging.getLogger(__name__)
@@ -138,7 +138,7 @@ def create_base_parser(
         type=str,
         choices=list(SUPPORTED_MODEL_TYPES),
         default=None,
-        help="Model type: zimage, qwenimage-t2i, qwenimage-edit, ltx2, wan, flux2. Default: zimage",
+        help="Model type: zimage, qwenimage-t2i, qwenimage-edit, ltx2, flux2. Default: zimage",
     )
     model_group.add_argument(
         "--model-path",
@@ -265,35 +265,6 @@ def create_base_parser(
         help="Skip memory cleanup between stages (faster, needs more VRAM)")
     ltx2_opt.add_argument("--ltx2-gemma-variant", choices=["bf16", "8bit", "q4-qat"], default=None,
         help="Gemma3 backbone variant: bf16 (full), 8bit (TorchAO), q4-qat (pre-quantized). Default: bf16")
-
-    # Wan/HuMo video generation
-    wan_group = parser.add_argument_group("Wan/HuMo Video Generation")
-    wan_group.add_argument("--wan-humo-path", type=str, default=None,
-        help="Path to HuMo transformer (e.g., ~/Storage/HuMo)")
-    wan_group.add_argument("--wan-base-path", type=str, default=None,
-        help="Path to Wan2.1-T2V for VAE/text encoder")
-    wan_group.add_argument("--wan-whisper-path", type=str, default=None,
-        help="Path to Whisper for audio (optional)")
-    wan_group.add_argument("--wan-humo-variant", type=str, choices=["17B", "1.7B"], default=None,
-        help="HuMo variant (default: 17B)")
-    wan_group.add_argument("--wan-num-frames", type=int, default=None,
-        help="Number of video frames (default: 97, ~3.9s at 25fps)")
-    wan_group.add_argument("--wan-fps", type=int, default=None,
-        help="Output framerate (default: 25 for HuMo)")
-    wan_group.add_argument("--wan-height", type=int, default=None,
-        help="Video height (default: 720, multiple of 16)")
-    wan_group.add_argument("--wan-width", type=int, default=None,
-        help="Video width (default: 1280, multiple of 16)")
-    wan_group.add_argument("--wan-guidance-scale", type=float, default=None,
-        help="Text guidance scale_t (default: 5.0)")
-    wan_group.add_argument("--wan-audio-scale", type=float, default=None,
-        help="Audio guidance scale_a (default: 0.0, set >0 for audio mode)")
-    wan_group.add_argument("--wan-steps", type=int, default=None,
-        help="Diffusion steps (default: 50 for HuMo)")
-    wan_group.add_argument("--wan-offload-mode", type=str, choices=["none", "model", "sequential"],
-        default=None, help="CPU offload mode (default: model for 24GB VRAM)")
-    wan_group.add_argument("--wan-output", type=str, default=None,
-        help="Output video path (default: wan_output.mp4)")
 
     # FLUX.2 Klein image generation
     flux2_group = parser.add_argument_group("FLUX.2 Klein Image Generation")
@@ -608,21 +579,6 @@ def _apply_cli_overrides(args: argparse.Namespace, config: RuntimeConfig) -> Run
     _set_if(args, "ltx2_quantize", config.ltx2, "quantize")
     _set_flag(args, "ltx2_skip_cleanup", config.ltx2, "skip_cleanup")
     _set_if(args, "ltx2_gemma_variant", config.ltx2, "gemma_variant")
-
-    # Wan/HuMo overrides
-    _set_if(args, "wan_humo_path", config.wan, "humo_path")
-    _set_if(args, "wan_base_path", config.wan, "base_path")
-    _set_if(args, "wan_whisper_path", config.wan, "whisper_path")
-    _set_if(args, "wan_humo_variant", config.wan, "humo_variant")
-    _set_if(args, "wan_num_frames", config.wan, "num_frames")
-    _set_if(args, "wan_fps", config.wan, "fps")
-    _set_if(args, "wan_height", config.wan, "height")
-    _set_if(args, "wan_width", config.wan, "width")
-    _set_if(args, "wan_guidance_scale", config.wan, "guidance_scale")
-    _set_if(args, "wan_audio_scale", config.wan, "audio_scale")
-    _set_if(args, "wan_steps", config.wan, "num_inference_steps")
-    _set_if(args, "wan_offload_mode", config.wan, "offload_mode")
-    _set_if(args, "wan_output", config.wan, "output_path")
 
     # FLUX.2 Klein overrides
     _set_if(args, "flux2_model_name", config.flux2, "default_model")

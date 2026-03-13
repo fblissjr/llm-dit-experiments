@@ -313,7 +313,7 @@ class TestFlux2SchedulerExtracted:
 
 class TestDeadStage2StepsRemoved:
     """stage2_steps is a dead parameter -- only used for progress callback.
-    Actual stage 2 always uses hardcoded STAGE_2_DISTILLED_SIGMA_VALUES.
+    Actual stage 2 always uses hardcoded STAGE_2_SIGMA_SCHEDULE.
     """
 
     def test_stage2_steps_not_in_two_stage_config(self):
@@ -322,7 +322,7 @@ class TestDeadStage2StepsRemoved:
 
         assert "stage2_steps" not in TwoStageConfig.__dataclass_fields__, (
             "TwoStageConfig.stage2_steps should be deleted -- "
-            "stage 2 always uses hardcoded STAGE_2_DISTILLED_SIGMA_VALUES"
+            "stage 2 always uses hardcoded STAGE_2_SIGMA_SCHEDULE"
         )
 
     def test_stage2_num_inference_steps_not_in_ltx2_config(self):
@@ -452,10 +452,10 @@ class TestPipelineModeRemoved:
         )
 
     def test_stage2_sigma_values_still_exist(self):
-        """STAGE_2_DISTILLED_SIGMA_VALUES must be kept (used by standard pipeline)."""
-        from llm_dit.models.ltx2.constants import STAGE_2_DISTILLED_SIGMA_VALUES
+        """STAGE_2_SIGMA_SCHEDULE must be kept (used by standard pipeline)."""
+        from llm_dit.models.ltx2.constants import STAGE_2_SIGMA_SCHEDULE
 
-        assert len(STAGE_2_DISTILLED_SIGMA_VALUES) == 4
+        assert len(STAGE_2_SIGMA_SCHEDULE) == 4
 
     def test_config_migration_strips_pipeline_mode(self):
         """Old config.toml with pipeline_mode should not crash."""
@@ -767,14 +767,39 @@ class TestNoPrintStatements:
             f"flux2/loader.py has print() at lines {lines}. Use logger instead."
         )
 
-    def test_no_print_in_wan_dit(self):
-        """wan_dit.py should have zero print() calls."""
-        from llm_dit.models import wan_dit
-        filepath = inspect.getfile(wan_dit)
-        lines = _count_print_calls(filepath)
-        assert lines == [], (
-            f"wan_dit.py has print() at lines {lines}. Use logger instead."
-        )
+
+class TestWanRemoved:
+    """All Wan/HuMo pipeline code should be removed (not in project scope)."""
+
+    def test_no_wan_config_dataclass(self):
+        from llm_dit import config as cfg_mod
+        assert not hasattr(cfg_mod, "WanConfig")
+
+    def test_no_wan_in_model_type(self):
+        from llm_dit.cli import SUPPORTED_MODEL_TYPES
+        assert "wan" not in SUPPORTED_MODEL_TYPES
+
+    def test_no_wan_pipeline_import(self):
+        from llm_dit.pipelines import __all__ as exports
+        assert "WanVideoPipeline" not in exports
+        assert "WanVideoOutput" not in exports
+
+    def test_no_wan_model_import(self):
+        from llm_dit.models import __all__ as exports
+        assert "WanVAE" not in exports
+        assert "HuMoTransformer" not in exports
+
+    def test_wan_source_files_deleted(self):
+        from pathlib import Path
+        src = Path(__file__).resolve().parent.parent.parent / "src" / "llm_dit"
+        for f in ["pipelines/wan_video.py", "models/wan_dit.py",
+                   "models/wan_text_encoder.py", "models/wan_vae.py",
+                   "models/humo_transformer.py"]:
+            assert not (src / f).exists(), f"{f} should be deleted"
+
+    def test_no_wan_in_pipeline_ids(self):
+        from llm_dit.model_manager import PIPELINE_IDS
+        assert "wan" not in PIPELINE_IDS
 
 
 class TestAttachWeightScalesLocation:
@@ -815,6 +840,35 @@ class TestFormatMemoryGb:
     def test_format_fractional(self):
         from llm_dit.utils.memory import format_memory_gb
         assert format_memory_gb(1.5e9) == "1.50GB"
+
+
+class TestLogMemoryDebugKeywordOnly:
+    """log_memory_debug component/device args must be keyword-only (PEP 3102).
+
+    Prevents the footgun where device is passed as positional arg 2,
+    silently assigning a torch.device to the component: str parameter.
+    """
+
+    def test_positional_component_raises(self):
+        """Passing component as positional arg should raise TypeError."""
+        from llm_dit.utils.memory import log_memory_debug
+
+        with pytest.raises(TypeError):
+            log_memory_debug("test", "SomeComponent")
+
+    def test_positional_device_raises(self):
+        """Passing device as positional arg should raise TypeError."""
+        from llm_dit.utils.memory import log_memory_debug
+
+        with pytest.raises(TypeError):
+            log_memory_debug("test", "c", "cuda")
+
+    def test_keyword_form_works(self):
+        """Keyword form should work without error."""
+        from llm_dit.utils.memory import log_memory_debug
+
+        # Should not raise
+        log_memory_debug("test", component="Test", device=None)
 
 
 class TestLogMemoryDebug:

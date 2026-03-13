@@ -1068,24 +1068,6 @@ class LoggingConfig:
     log_prompts: bool = True  # Log prompt text in generation requests
 
 
-@dataclass
-class WanConfig:
-    """Configuration for Wan/HuMo video generation."""
-
-    humo_path: str = ""  # Path to HuMo transformer
-    base_path: str = ""  # Path to Wan2.1-T2V for VAE/text encoder
-    whisper_path: str = ""  # Path to Whisper (optional, for audio)
-    humo_variant: str = "17B"  # "17B" or "1.7B"
-    num_frames: int = 97  # Number of frames (97 = ~3.9s at 25fps)
-    fps: int = 25  # Output framerate
-    height: int = 720  # Video height (multiple of 16)
-    width: int = 1280  # Video width (multiple of 16)
-    guidance_scale: float = 5.0  # Text guidance (scale_t)
-    audio_scale: float = 0.0  # Audio guidance (scale_a), 0 = T2V mode
-    num_inference_steps: int = 50  # Diffusion steps
-    offload_mode: str = "model"  # none, model, sequential
-    output_path: str = "wan_output.mp4"  # Output video path
-
 
 @dataclass
 class RuntimeConfig:
@@ -1133,7 +1115,6 @@ class RuntimeConfig:
     ltx2: LTX2Config = field(default_factory=LTX2Config)
     zimage: ZImageConfig = field(default_factory=ZImageConfig)
     qwen_image: QwenImageConfig = field(default_factory=QwenImageConfig)
-    wan: WanConfig = field(default_factory=WanConfig)
 
     # Feature configs
     dype: DyPEConfig = field(default_factory=DyPEConfig)
@@ -1919,8 +1900,6 @@ class RuntimeConfig:
         rc.fmtt = toml_config.fmtt
         rc.fbcache = toml_config.fbcache
 
-        rc.wan = toml_config.wan
-
         return rc
 
 
@@ -1952,7 +1931,6 @@ class Config:
     slg: SLGConfig = field(default_factory=SLGConfig)
     fmtt: FMTTConfig = field(default_factory=FMTTConfig)
     fbcache: FBCacheRuntimeConfig = field(default_factory=FBCacheRuntimeConfig)
-    wan: WanConfig = field(default_factory=WanConfig)
     enhancement: EnhancementConfig = field(default_factory=EnhancementConfig)
 
     @classmethod
@@ -1985,7 +1963,7 @@ class Config:
         slg_data = data.pop("slg", {})
         fmtt_data = data.pop("fmtt", {})
         fbcache_data = data.pop("fbcache", {})
-        wan_data = data.pop("wan", {})
+        data.pop("wan", None)  # v0.9.32: Wan pipeline removed
         enhancement_data = data.pop("enhancement", {})
 
         return cls(
@@ -2010,7 +1988,6 @@ class Config:
             slg=SLGConfig(**_strip_unknown(SLGConfig, slg_data)),
             fmtt=FMTTConfig(**_strip_unknown(FMTTConfig, fmtt_data)),
             fbcache=FBCacheRuntimeConfig(**_strip_unknown(FBCacheRuntimeConfig, fbcache_data)),
-            wan=WanConfig(**_strip_unknown(WanConfig, wan_data)),
             enhancement=EnhancementConfig(**_strip_unknown(EnhancementConfig, enhancement_data)),
         )
 

@@ -18,7 +18,6 @@ from llm_dit.layers.feedforward import (
     FFNType,
     LTX2_FFN_PRESET,
     ZIMAGE_FFN_PRESET,
-    WAN_T5_FFN_PRESET,
     CONNECTOR_FFN_PRESET,
 )
 
@@ -196,9 +195,9 @@ class TestFeedForwardPresets:
         # Check bias=False
         assert not ff.w1.bias
 
-    def test_wan_t5_preset_creates_geglu(self):
-        """Wan T5 preset should create GeGLU FFN."""
-        ff = FeedForward(4096, hidden_dim=10240, **WAN_T5_FFN_PRESET)
+    def test_geglu_ffn_creates_geglu(self):
+        """GeGLU FFN should be created with correct parameters."""
+        ff = FeedForward(4096, hidden_dim=10240, ffn_type=FFNType.GEGLU, dropout=0.1, bias=False)
         assert ff.ffn_type == FFNType.GEGLU
         assert ff.hidden_dim == 10240
         assert ff.dropout_prob == 0.1
@@ -318,7 +317,7 @@ class TestFeedForwardEquivalence:
         x = torch.randn(2, 128, dim)
 
         # Our implementation
-        our_ff = FeedForward(dim, hidden_dim=dim_ffn, **WAN_T5_FFN_PRESET)
+        our_ff = FeedForward(dim, hidden_dim=dim_ffn, ffn_type=FFNType.GEGLU, dropout=0.1, bias=False)
         t5_ff = T5FeedForward(dim, dim_ffn, dropout=0.1)
 
         # Sync weights

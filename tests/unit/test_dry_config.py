@@ -216,20 +216,6 @@ class TestCLIToRuntimeConfig:
             "flux2_input_image",  # CLI maps to config.flux2.input_images
             "flux2_offload",  # Action flag (sets offload_between_stages=true)
             "flux2_no_offload",  # Action flag (sets offload_between_stages=false)
-            "wan_output",  # CLI maps to config.wan.output_path
-            # WAN CLI args access sub-config directly (backward-compat properties removed)
-            "wan_humo_path",
-            "wan_base_path",
-            "wan_whisper_path",
-            "wan_humo_variant",
-            "wan_num_frames",
-            "wan_fps",
-            "wan_height",
-            "wan_width",
-            "wan_guidance_scale",
-            "wan_audio_scale",
-            "wan_steps",
-            "wan_offload_mode",
             "torch_dtype",  # Legacy dtype flag, maps to config.encoder.dtype
             # CLI names that intentionally differ from sub-config field names
             # (wired correctly in _apply_cli_overrides)
@@ -439,7 +425,7 @@ def run_consistency_check():
             "config", "config_name", "profile", "lora", "loras", "output",
             "prompts", "version", "embeddings_file", "ltx2_output",
             "flux2_output", "flux2_input_image", "flux2_offload",
-            "flux2_no_offload", "wan_output", "torch_dtype",
+            "flux2_no_offload", "torch_dtype",
         }
 
         rc = RuntimeConfig()

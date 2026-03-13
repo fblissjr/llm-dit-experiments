@@ -284,12 +284,6 @@ ZIMAGE_FFN_PRESET = dict(
 )
 """Z-Image FeedForward: SwiGLU with 8/3x hidden, bias=False."""
 
-WAN_T5_FFN_PRESET = dict(
-    ffn_type=FFNType.GEGLU,
-    dropout=0.1,
-    bias=False,
-)
-"""Wan T5 FeedForward: GeGLU with dropout=0.1, bias=False. Requires hidden_dim=10240."""
 
 CONNECTOR_FFN_PRESET = dict(
     ffn_type=FFNType.STANDARD,

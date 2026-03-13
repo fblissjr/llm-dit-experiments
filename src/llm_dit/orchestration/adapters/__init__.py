@@ -1,7 +1,7 @@
 """
 Pipeline adapters - Wrap existing pipelines as orchestration steps.
 
-Last Updated: 2026-01-12
+Last Updated: 2026-03-13
 
 Adapters enable existing pipelines to work in orchestration
 without modification. They:
@@ -12,14 +12,4 @@ without modification. They:
 Note: Pipelines continue to work standalone - adapters are optional.
 """
 
-from .wan_video import (
-    WanVideoAdapter,
-    WanTextEncoderStep,
-    WanVAEDecodeStep,
-)
-
-__all__ = [
-    "WanVideoAdapter",
-    "WanTextEncoderStep",
-    "WanVAEDecodeStep",
-]
+__all__: list[str] = []

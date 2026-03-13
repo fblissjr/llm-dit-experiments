@@ -44,7 +44,7 @@ logger = logging.getLogger(__name__)
 
 
 # Pipeline identifiers (canonical names used internally)
-PIPELINE_IDS = {"zimage", "flux2", "ltx2", "qwen_image", "qwen_image_t2i", "wan"}
+PIPELINE_IDS = {"zimage", "flux2", "ltx2", "qwen_image", "qwen_image_t2i"}
 
 # Aliases that map to canonical IDs
 PIPELINE_ALIASES = {
@@ -283,7 +283,6 @@ class ModelManager:
                     "ltx2": self._load_ltx2,
                     "qwen_image": self._load_qwen_image,
                     "qwen_image_t2i": self._load_qwen_image_t2i,
-                    "wan": self._load_wan,
                 }.get(pid)
 
                 if loader is None:
@@ -1019,53 +1018,6 @@ class ModelManager:
             mode="qwen_image_t2i",
         )
 
-    def _load_wan(self) -> LoadResult:
-        """Load Wan/HuMo video generation pipeline."""
-        config = self.config
-
-        from llm_dit.pipelines import WanVideoPipeline
-
-        humo_path = getattr(config, "wan_humo_path", "")
-        wan_path = getattr(config, "wan_base_path", "")
-        whisper_path = getattr(config, "wan_whisper_path", "")
-        humo_variant = getattr(config, "wan_humo_variant", "17B")
-        wan_offload_mode = getattr(config, "wan_offload_mode", "model")
-
-        if not humo_path:
-            raise ValueError(
-                "Wan/HuMo path not configured. "
-                "Set wan.humo_path in config.toml"
-            )
-
-        logger.info("[Wan] Loading HuMo video pipeline...")
-        logger.info(f"  HuMo path: {humo_path}")
-        logger.info(f"  Variant: {humo_variant}")
-        logger.info(f"  Offload: {wan_offload_mode}")
-
-        start = time.time()
-        enable_cpu_offload = wan_offload_mode in ("model", "sequential")
-
-        wan_pipeline = WanVideoPipeline.from_pretrained(
-            humo_path=humo_path,
-            wan_path=wan_path,
-            whisper_path=whisper_path or None,
-            humo_variant=humo_variant,
-            dtype=config.get_dtype(),
-            enable_cpu_offload=enable_cpu_offload,
-        )
-
-        load_time = time.time() - start
-        self._pipelines["wan"] = wan_pipeline
-
-        logger.info(f"[Wan] Pipeline loaded in {load_time:.1f}s")
-        logger.info(f"  Mode: {wan_pipeline.mode.upper()}")
-
-        return LoadResult(
-            pipeline=wan_pipeline,
-            load_time=load_time,
-            mode=f"wan_{wan_pipeline.mode}",
-        )
-
     # -- shared optimization helpers --
 
     def _apply_optimizations(self, pipeline: Any) -> None:
@@ -1163,8 +1115,6 @@ class ModelManager:
             return self._unload_qwen_image()
         elif pid == "qwen_image_t2i":
             return self._unload_qwen_image_t2i()
-        elif pid == "wan":
-            return self._unload_generic(pid, "Wan")
         return False
 
     def _unload_zimage(self) -> bool:
@@ -1349,9 +1299,6 @@ class ModelManager:
         elif model_type == "ltx2":
             logger.info("[LTX-2] On-demand mode (loaded via /api/ltx2/generate)")
             return LoadResult(pipeline=None, encoder=None, mode="ltx2_ondemand")
-        elif model_type == "wan":
-            return self._load_wan()
-
         # Z-Image paths
         edit_only = getattr(config, "qwen_image_edit_only", False)
         has_edit_model = bool(getattr(config, "qwen_image_edit_model_path", ""))

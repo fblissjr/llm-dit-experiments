@@ -172,10 +172,9 @@ class TestRMSNormEquivalence:
 
         assert torch.allclose(out_ours, out_zimage, rtol=1e-4, atol=1e-5)
 
-    def test_equivalent_to_wan_implementation(self):
-        """Should be numerically equivalent to Wan DiT RMSNorm."""
-        # Wan DiT implementation (from wan_dit.py)
-        class WanRMSNorm(nn.Module):
+    def test_equivalent_to_diffsynth_rms_norm(self):
+        """Should be numerically equivalent to DiffSynth-Studio RMSNorm."""
+        class DiffSynthRMSNorm(nn.Module):
             def __init__(self, dim: int, eps: float = 1e-6):
                 super().__init__()
                 self.eps = eps
@@ -191,16 +190,16 @@ class TestRMSNormEquivalence:
         x = torch.randn(2, 128, dim, dtype=torch.bfloat16)
 
         our_norm = RMSNorm(dim, eps=1e-6)
-        wan_norm = WanRMSNorm(dim, eps=1e-6)
+        ds_norm = DiffSynthRMSNorm(dim, eps=1e-6)
 
         # Sync weights
-        wan_norm.weight.data = our_norm.weight.data.clone()
+        ds_norm.weight.data = our_norm.weight.data.clone()
 
         out_ours = our_norm(x)
-        out_wan = wan_norm(x)
+        out_ds = ds_norm(x)
 
         # Compare in float32 to avoid dtype mismatch
-        assert torch.allclose(out_ours.float(), out_wan.float(), rtol=1e-3, atol=1e-4)
+        assert torch.allclose(out_ours.float(), out_ds.float(), rtol=1e-3, atol=1e-4)
 
     def test_equivalent_to_flux2_implementation(self):
         """Should be numerically equivalent to FLUX.2 RMSNorm."""

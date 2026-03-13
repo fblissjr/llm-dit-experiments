@@ -44,7 +44,7 @@ We organize code into six levels of granularity. **Reusability increases as you 
 | Level | Role | Key Components | Reusability | Why |
 |:------|:-----|:---------------|:------------|:----|
 | **L1: Orchestration** | The Conductor | `Orchestrator`, `ModelPool`, `PipelineSteps`, `DAG Engine` | **Total (100%)** | Model-agnostic. Coordinates pipelines, manages VRAM, resolves parameters. |
-| **L2: Pipelines** | The Workflow | `ZImagePipeline`, `LTX2Pipeline`, `WanVideoPipeline` | **Paradigm-Based** | Reusable for any model sharing the same math (e.g., Flow Matching). |
+| **L2: Pipelines** | The Workflow | `ZImagePipeline`, `LTX2Pipeline` | **Paradigm-Based** | Reusable for any model sharing the same math (e.g., Flow Matching). |
 | **L3: Backbones** | The Models | `DiT Transformer`, `Gemma3/Qwen3 LLMs`, `VideoVAE` | **Zero (Atomic)** | Tied to specific weights. These are the fixed blocks. |
 | **L4: Behaviors** | The Logic | `Schedulers`, `Guidance (SLG/FMTT)`, `Conditioning` | **High (Structural)** | Pluggable into any backbone with standard structure. |
 | **L5: Primitives** | The Math | `Attention Backends`, `Quantization`, `DyPE/YaRN` | **Absolute (Universal)** | Math primitives at the Tensor/Linear level. |
@@ -164,7 +164,6 @@ The `resolve_param()` function is the resolution primitive. Any future orchestra
 | Z-Image Turbo | text-to-image | Qwen3-4B | Production |
 | Z-Image Base | text-to-image | Qwen3-4B | Production |
 | Qwen-Image | editing/decomposition | Qwen2.5-VL-7B | Production |
-| Wan Video | text-to-video | UMT5-XXL | Phase 1 |
 
 ---
 

@@ -35,7 +35,6 @@ Useful for benchmarking, profiling, and reference comparisons. Kept for future u
 | `analyze_test_runs.py` | Experiment result analysis |
 | `inspect_image.py` | Image inspection and metadata extraction |
 | `generate_reference_video.py` | LTX-2 reference video generation for comparisons |
-| `generate_wan_video.py` | Wan pipeline video generation (pipeline in DEVELOPMENT) |
 | `generate_encoder_baselines.py` | Encoder output comparison across variants |
 
 ## deleted (2026-02-14)

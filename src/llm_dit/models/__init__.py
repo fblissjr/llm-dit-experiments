@@ -1,7 +1,7 @@
 """
 LLM-DiT model components.
 
-Last Updated: 2026-03-06
+Last Updated: 2026-03-13
 
 Provides pure PyTorch implementations of model components that can be used
 standalone or integrated with diffusers pipelines.
@@ -11,10 +11,6 @@ LTX-2 Components (in llm_dit.models.ltx2):
     - LTXModelType: Model variant enum (VideoOnly, AudioVideo, AudioOnly)
     - load_ltx2_transformer: Load from official checkpoints
     - Modality: Input container for video/audio latents
-
-Other Models:
-    - HuMoTransformer: Human motion generation
-    - WanVAE: WAN video VAE
 """
 
 from llm_dit.models.context_refiner import (
@@ -41,9 +37,6 @@ __all__ = [
     "LTX2TextConnectors",
     "LTX2ConnectorTransformer1d",
     "load_ltx2_connectors",
-    # Other models (lazy loaded)
-    "HuMoTransformer",
-    "WanVAE",
 ]
 
 
@@ -72,13 +65,5 @@ def __getattr__(name: str):
     if name == "load_ltx2_connectors":
         from llm_dit.models.ltx2.connectors import load_ltx2_connectors
         return load_ltx2_connectors
-
-    # Other models
-    if name == "HuMoTransformer":
-        from llm_dit.models.humo_transformer import HuMoTransformer
-        return HuMoTransformer
-    if name == "WanVAE":
-        from llm_dit.models.wan_vae import WanVAE
-        return WanVAE
 
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

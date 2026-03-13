@@ -24,7 +24,6 @@ from llm_dit.layers.feedforward import (
     FFNType,
     LTX2_FFN_PRESET,
     ZIMAGE_FFN_PRESET,
-    WAN_T5_FFN_PRESET,
     CONNECTOR_FFN_PRESET,
 )
 from llm_dit.layers.attention import (
@@ -45,7 +44,6 @@ __all__ = [
     "FFNType",
     "LTX2_FFN_PRESET",
     "ZIMAGE_FFN_PRESET",
-    "WAN_T5_FFN_PRESET",
     "CONNECTOR_FFN_PRESET",
     # Attention
     "Attention",
