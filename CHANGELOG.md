@@ -1,10 +1,35 @@
-last updated: 2026-03-09
+last updated: 2026-03-13
 
 # changelog
 
 
 All notable changes to this project will be documented in this file.
 Uses [Semantic Versioning](https://semver.org/).
+
+## 0.9.29
+
+### added
+- **FLUX.2 KV-cache support** for reference-image editing. New model variants `klein-9b-kv` and `klein-9b-kv-fp8` in constants registry with `use_kv_cache` flag.
+- **`causal_attn_fn()`** in transformer.py -- causal attention where reference tokens self-attend only, while txt+img attend to everything. Supports both extract (with ref tokens) and cached (injected ref KV) paths.
+- **Modulation blending helpers** (`_blend_mod_triple`, `_blend_double_mods`, `_blend_single_mods`) for separate ref/img timestep conditioning during KV-cache extraction.
+- **Block-level KV methods**: `DoubleStreamBlock.forward_kv_extract/forward_kv_cached` and `SingleStreamBlock.forward_kv_extract/forward_kv_cached` with shared `_prepare_qkv`/`_apply_residuals`/`_qkv`/`_out` helpers.
+- **Model-level KV methods**: `Flux2Transformer.forward_kv_extract()` (full forward with ref tokens, extracts per-block KV cache) and `forward_kv_cached()` (cached forward without ref tokens). Both support block offloading.
+- **`denoise_cached()`** in flux2_generate.py -- denoising loop that processes reference tokens once on step 0 and reuses cached KV on subsequent steps. ~1.78x speedup for 1 ref image, ~2.16x for 2, ~2.66x for 4.
+- **`supports_kv_cache()`** helper in constants.py.
+- **`use_kv_cache` flag** stored in ModelManager pipeline dict for queryability.
+- 28 unit tests covering causal attention, modulation blending, block-level KV, model-level KV, and denoise_cached pipeline function.
+
+### changed
+- `generate_image()` dispatch now checks `supports_kv_cache(model_name)` -- routes to `denoise_cached()` when KV model + reference images present, falls back to `denoise()`/`denoise_cfg()` otherwise.
+- FLUX.2 status endpoint lists KV model variants in supported_models.
+- **Unified forward path**: `Flux2Transformer.forward()` now delegates to `block.forward_kv_extract(num_ref_tokens=0)` at the block level, matching the BFL reference. Functionally identical for T2I and non-KV editing.
+- **DRY block offload**: Replaced 6 copy-pasted offload blocks with `_offload_block()` context manager. All three forward methods (`forward`, `forward_kv_extract`, `forward_kv_cached`) share the same offload logic.
+- Removed redundant `.contiguous()` calls from `causal_attn_fn()` -- `torch.cat` always returns contiguous tensors.
+- Removed per-block peak memory delta logging from offload path (one-time debug aid, cluttered code).
+
+### removed
+- **`DoubleStreamBlock.forward()`** and **`SingleStreamBlock.forward()`** -- dead after unification. All callers now use `forward_kv_extract(num_ref_tokens=0)`.
+- **`attention()`** from `rope.py` -- sole consumers were the removed block `forward()` methods. `apply_rope()` and `EmbedND` remain.
 
 ## 0.9.28
 

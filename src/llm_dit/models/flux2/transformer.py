@@ -33,12 +33,13 @@ Usage:
 
 import logging
 import math
+from contextlib import contextmanager
 
 import torch
 from einops import rearrange
 from torch import Tensor, nn
 
-from llm_dit.models.flux2.rope import EmbedND, attention
+from llm_dit.models.flux2.rope import EmbedND, apply_rope
 from llm_dit.models.flux2.constants import Klein9BParams, Klein4BParams, Flux2Params
 
 logger = logging.getLogger(__name__)
@@ -107,6 +108,151 @@ def timestep_embedding(t: Tensor, dim: int, max_period: int = 10000, time_factor
         embedding = embedding.to(t)
 
     return embedding
+
+
+# =============================================================================
+# KV-Cache Attention and Modulation Blending Helpers
+# =============================================================================
+
+
+def causal_attn_fn(
+    q: Tensor,
+    k: Tensor,
+    v: Tensor,
+    num_txt_tokens: int,
+    num_ref_tokens: int,
+    kv_cache: dict | None = None,
+) -> Tensor:
+    """Causal attention where reference tokens only attend to themselves.
+
+    Without cache: layout is [txt, ref, img]. txt+img attend to all, ref self-attends.
+    With cache: layout is [txt, img]. Cached ref K/V injected into attention.
+
+    Args:
+        q: Query [B, H, L, D] (after RoPE)
+        k: Key [B, H, L, D] (after RoPE)
+        v: Value [B, H, L, D]
+        num_txt_tokens: Number of text tokens
+        num_ref_tokens: Number of reference tokens
+        kv_cache: Optional dict with "k_ref" and "v_ref" from step 0
+
+    Returns:
+        Attention output [B, L, H*D]
+    """
+    if kv_cache is not None:
+        # Cached path: input layout is [txt, img], inject cached ref K/V
+        k_ref = kv_cache["k_ref"]
+        v_ref = kv_cache["v_ref"]
+
+        q_txt = q[:, :, :num_txt_tokens, :]
+        q_img = q[:, :, num_txt_tokens:, :]
+        k_txt = k[:, :, :num_txt_tokens, :]
+        v_txt = v[:, :, :num_txt_tokens, :]
+        k_img = k[:, :, num_txt_tokens:, :]
+        v_img = v[:, :, num_txt_tokens:, :]
+
+        # txt+img attend to all (txt + cached ref + img)
+        q_txt_img = torch.cat([q_txt, q_img], dim=2)
+        k_all = torch.cat([k_txt, k_ref, k_img], dim=2)
+        v_all = torch.cat([v_txt, v_ref, v_img], dim=2)
+        out = torch.nn.functional.scaled_dot_product_attention(
+            q_txt_img, k_all, v_all, is_causal=False,
+        )
+    else:
+        # Extract path: input layout is [txt, ref, img]
+        ref_start = num_txt_tokens
+        ref_end = num_txt_tokens + num_ref_tokens
+
+        q_txt = q[:, :, :ref_start, :]
+        q_ref = q[:, :, ref_start:ref_end, :]
+        q_img = q[:, :, ref_end:, :]
+        k_txt = k[:, :, :ref_start, :]
+        v_txt = v[:, :, :ref_start, :]
+        k_ref = k[:, :, ref_start:ref_end, :]
+        v_ref = v[:, :, ref_start:ref_end, :]
+        k_img = k[:, :, ref_end:, :]
+        v_img = v[:, :, ref_end:, :]
+
+        # txt+img attend to all keys
+        q_txt_img = torch.cat([q_txt, q_img], dim=2)
+        k_all = torch.cat([k_txt, k_ref, k_img], dim=2)
+        v_all = torch.cat([v_txt, v_ref, v_img], dim=2)
+        attn_txt_img = torch.nn.functional.scaled_dot_product_attention(
+            q_txt_img, k_all, v_all, is_causal=False,
+        )
+        attn_txt = attn_txt_img[:, :, :ref_start, :]
+        attn_img = attn_txt_img[:, :, ref_start:, :]
+
+        # ref only attends to itself
+        attn_ref = torch.nn.functional.scaled_dot_product_attention(
+            q_ref, k_ref, v_ref, is_causal=False,
+        )
+
+        out = torch.cat([attn_txt, attn_ref, attn_img], dim=2)
+
+    return rearrange(out, "b h n d -> b n (h d)")
+
+
+def _blend_mod_triple(
+    img_m: tuple[Tensor, ...],
+    ref_m: tuple[Tensor, ...],
+    num_ref: int,
+    seq_len: int,
+) -> tuple[Tensor, ...]:
+    """Blend a (shift, scale, gate) triple: first num_ref positions get ref_m, rest get img_m."""
+    blended = []
+    for im, rm in zip(img_m, ref_m):
+        if im.ndim == 2:
+            im = im[:, None, :]
+            rm = rm[:, None, :]
+        B = im.shape[0]
+        blended.append(
+            torch.cat(
+                [rm.expand(B, num_ref, -1), im.expand(B, seq_len, -1)[:, num_ref:, :]],
+                dim=1,
+            )
+        )
+    return tuple(blended)
+
+
+def _blend_double_mods(
+    img_mod: tuple[tuple[Tensor, ...], tuple[Tensor, ...]],
+    ref_mod: tuple[tuple[Tensor, ...], tuple[Tensor, ...]],
+    num_ref: int,
+    seq_len: int,
+) -> tuple[tuple[Tensor, ...], tuple[Tensor, ...]]:
+    """Blend double block modulations (mod1, mod2) for [ref, img] layout."""
+    img_mod1, img_mod2 = img_mod
+    ref_mod1, ref_mod2 = ref_mod
+    return (
+        _blend_mod_triple(img_mod1, ref_mod1, num_ref, seq_len),
+        _blend_mod_triple(img_mod2, ref_mod2, num_ref, seq_len),
+    )
+
+
+def _blend_single_mods(
+    single_mod: tuple[Tensor, ...],
+    ref_mod: tuple[Tensor, ...],
+    num_txt: int,
+    num_ref: int,
+    seq_len: int,
+) -> tuple[Tensor, ...]:
+    """Blend single block modulations for [txt, ref, img] layout."""
+    blended = []
+    for im, rm in zip(single_mod, ref_mod):
+        if im.ndim == 2:
+            im = im[:, None, :]
+            rm = rm[:, None, :]
+        B = im.shape[0]
+        im_expanded = im.expand(B, seq_len, -1)
+        rm_expanded = rm.expand(B, num_ref, -1)
+        blended.append(
+            torch.cat(
+                [im_expanded[:, :num_txt, :], rm_expanded, im_expanded[:, num_txt + num_ref:, :]],
+                dim=1,
+            )
+        )
+    return tuple(blended)
 
 
 class RMSNorm(nn.Module):
@@ -301,28 +447,20 @@ class DoubleStreamBlock(nn.Module):
             nn.Linear(mlp_hidden_dim, hidden_size, bias=False),
         )
 
-    def forward(
+    def _prepare_qkv(
         self,
         img: Tensor,
         txt: Tensor,
         pe: Tensor,
         pe_ctx: Tensor,
-        mod_img: tuple[tuple[Tensor, Tensor, Tensor], tuple[Tensor, Tensor, Tensor]],
-        mod_txt: tuple[tuple[Tensor, Tensor, Tensor], tuple[Tensor, Tensor, Tensor]],
-    ) -> tuple[Tensor, Tensor]:
-        """
-        Forward pass with joint attention.
-
-        Args:
-            img: Image tokens [B, img_len, D]
-            txt: Text tokens [B, txt_len, D]
-            pe: Image positional embeddings
-            pe_ctx: Text positional embeddings
-            mod_img: Image modulation ((shift1, scale1, gate1), (shift2, scale2, gate2))
-            mod_txt: Text modulation ((shift1, scale1, gate1), (shift2, scale2, gate2))
+        mod_img: tuple[tuple[Tensor, ...], tuple[Tensor, ...]],
+        mod_txt: tuple[tuple[Tensor, ...], tuple[Tensor, ...]],
+    ) -> tuple[Tensor, Tensor, Tensor, Tensor, int, tuple]:
+        """Shared QKV preparation for all forward paths.
 
         Returns:
-            Updated (img, txt) tensors
+            (q, k, v, pe_full, num_txt_tokens, mods) where mods is a flat
+            tuple of gate/shift/scale tensors for _apply_residuals.
         """
         img_mod1, img_mod2 = mod_img
         txt_mod1, txt_mod2 = mod_txt
@@ -351,32 +489,93 @@ class DoubleStreamBlock(nn.Module):
         txt_q, txt_k = self.txt_attn.norm(txt_q, txt_k, txt_v)
 
         # Joint attention: concatenate K, V from both streams
-        q = torch.cat((txt_q, img_q), dim=2)  # [B, H, txt_len + img_len, D]
+        q = torch.cat((txt_q, img_q), dim=2)
         k = torch.cat((txt_k, img_k), dim=2)
         v = torch.cat((txt_v, img_v), dim=2)
 
-        # Concatenate positional embeddings
-        pe = torch.cat((pe_ctx, pe), dim=2)
+        num_txt_tokens = txt_q.shape[2]
+        pe_full = torch.cat((pe_ctx, pe), dim=2)
 
-        # Compute attention
-        attn = attention(q, k, v, pe)
+        mods = (
+            img_mod1_gate, img_mod2_shift, img_mod2_scale, img_mod2_gate,
+            txt_mod1_gate, txt_mod2_shift, txt_mod2_scale, txt_mod2_gate,
+        )
 
-        # Split attention output
-        txt_attn, img_attn = attn[:, : txt_q.shape[2]], attn[:, txt_q.shape[2] :]
+        return q, k, v, pe_full, num_txt_tokens, mods
 
-        # Update image with residual
+    def _apply_residuals(
+        self,
+        img: Tensor,
+        txt: Tensor,
+        img_attn: Tensor,
+        txt_attn: Tensor,
+        mods: tuple,
+    ) -> tuple[Tensor, Tensor]:
+        """Shared residual connections for all forward paths."""
+        (
+            img_mod1_gate, img_mod2_shift, img_mod2_scale, img_mod2_gate,
+            txt_mod1_gate, txt_mod2_shift, txt_mod2_scale, txt_mod2_gate,
+        ) = mods
+
         img = img + img_mod1_gate * self.img_attn.proj(img_attn)
         img = img + img_mod2_gate * self.img_mlp(
             (1 + img_mod2_scale) * (self.img_norm2(img)) + img_mod2_shift
         )
 
-        # Update text with residual
         txt = txt + txt_mod1_gate * self.txt_attn.proj(txt_attn)
         txt = txt + txt_mod2_gate * self.txt_mlp(
             (1 + txt_mod2_scale) * (self.txt_norm2(txt)) + txt_mod2_shift
         )
-
         return img, txt
+
+    def forward_kv_extract(
+        self,
+        img: Tensor,
+        txt: Tensor,
+        pe: Tensor,
+        pe_ctx: Tensor,
+        mod_img: tuple[tuple[Tensor, ...], tuple[Tensor, ...]],
+        mod_txt: tuple[tuple[Tensor, ...], tuple[Tensor, ...]],
+        num_ref_tokens: int,
+    ) -> tuple[Tensor, Tensor, dict]:
+        """Forward with causal attention. img has layout [ref, img]. Extracts ref KV cache."""
+        q, k, v, pe_full, num_txt_tokens, mods = self._prepare_qkv(
+            img, txt, pe, pe_ctx, mod_img, mod_txt,
+        )
+        q, k = apply_rope(q, k, pe_full)
+
+        ref_start = num_txt_tokens
+        ref_end = num_txt_tokens + num_ref_tokens
+        cache = {
+            "k_ref": k[:, :, ref_start:ref_end, :].clone(),
+            "v_ref": v[:, :, ref_start:ref_end, :].clone(),
+        }
+
+        attn = causal_attn_fn(q, k, v, num_txt_tokens, num_ref_tokens)
+        txt_attn, img_attn = attn[:, :num_txt_tokens], attn[:, num_txt_tokens:]
+        img, txt = self._apply_residuals(img, txt, img_attn, txt_attn, mods)
+        return img, txt, cache
+
+    def forward_kv_cached(
+        self,
+        img: Tensor,
+        txt: Tensor,
+        pe: Tensor,
+        pe_ctx: Tensor,
+        mod_img: tuple[tuple[Tensor, ...], tuple[Tensor, ...]],
+        mod_txt: tuple[tuple[Tensor, ...], tuple[Tensor, ...]],
+        kv_cache: dict,
+    ) -> tuple[Tensor, Tensor]:
+        """Forward using cached ref KV. img has layout [img] only (no ref)."""
+        q, k, v, pe_full, num_txt_tokens, mods = self._prepare_qkv(
+            img, txt, pe, pe_ctx, mod_img, mod_txt,
+        )
+        q, k = apply_rope(q, k, pe_full)
+
+        num_ref_tokens = kv_cache["k_ref"].shape[2]
+        attn = causal_attn_fn(q, k, v, num_txt_tokens, num_ref_tokens, kv_cache)
+        txt_attn, img_attn = attn[:, :num_txt_tokens], attn[:, num_txt_tokens:]
+        return self._apply_residuals(img, txt, img_attn, txt_attn, mods)
 
 
 class SingleStreamBlock(nn.Module):
@@ -412,46 +611,67 @@ class SingleStreamBlock(nn.Module):
         self.pre_norm = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
         self.mlp_act = SiLUActivation()
 
-    def forward(
-        self,
-        x: Tensor,
-        pe: Tensor,
-        mod: tuple[Tensor, Tensor, Tensor],
-    ) -> Tensor:
-        """
-        Forward pass with unified attention.
-
-        Args:
-            x: Combined (txt, img) sequence [B, txt_len + img_len, D]
-            pe: Combined positional embeddings
-            mod: Modulation tuple (shift, scale, gate)
+    def _qkv(self, x: Tensor, mod: tuple[Tensor, ...]) -> tuple[Tensor, Tensor, Tensor, Tensor, Tensor]:
+        """Shared QKV + MLP split for all forward paths.
 
         Returns:
-            Updated sequence tensor
+            (q, k, v, mlp, mod_gate)
         """
         mod_shift, mod_scale, mod_gate = mod
 
-        # Apply modulated pre-norm
         x_mod = (1 + mod_scale) * self.pre_norm(x) + mod_shift
 
-        # Project to Q, K, V + MLP input in one operation
         qkv, mlp = torch.split(
             self.linear1(x_mod),
             [3 * self.hidden_size, self.mlp_hidden_dim * self.mlp_mult_factor],
             dim=-1,
         )
 
-        # Reshape Q, K, V
         q, k, v = rearrange(qkv, "B L (K H D) -> K B H L D", K=3, H=self.num_heads)
         q, k = self.norm(q, k, v)
+        return q, k, v, mlp, mod_gate
 
-        # Compute attention with RoPE
-        attn = attention(q, k, v, pe)
-
-        # Combine attention output with activated MLP
+    def _out(self, x: Tensor, attn: Tensor, mlp: Tensor, mod_gate: Tensor) -> Tensor:
+        """Shared output projection for all forward paths."""
         output = self.linear2(torch.cat((attn, self.mlp_act(mlp)), 2))
-
         return x + mod_gate * output
+
+    def forward_kv_extract(
+        self,
+        x: Tensor,
+        pe: Tensor,
+        mod: tuple[Tensor, ...],
+        num_txt_tokens: int,
+        num_ref_tokens: int,
+    ) -> tuple[Tensor, dict]:
+        """Forward with causal attention. Extracts and returns ref KV cache."""
+        q, k, v, mlp, mod_gate = self._qkv(x, mod)
+        q, k = apply_rope(q, k, pe)
+
+        ref_start = num_txt_tokens
+        ref_end = num_txt_tokens + num_ref_tokens
+        cache = {
+            "k_ref": k[:, :, ref_start:ref_end, :].clone(),
+            "v_ref": v[:, :, ref_start:ref_end, :].clone(),
+        }
+
+        attn = causal_attn_fn(q, k, v, num_txt_tokens, num_ref_tokens)
+        return self._out(x, attn, mlp, mod_gate), cache
+
+    def forward_kv_cached(
+        self,
+        x: Tensor,
+        pe: Tensor,
+        mod: tuple[Tensor, ...],
+        num_txt_tokens: int,
+        kv_cache: dict,
+    ) -> Tensor:
+        """Forward using cached ref KV. Input x has layout [txt, img] (no ref)."""
+        q, k, v, mlp, mod_gate = self._qkv(x, mod)
+        q, k = apply_rope(q, k, pe)
+        num_ref_tokens = kv_cache["k_ref"].shape[2]
+        attn = causal_attn_fn(q, k, v, num_txt_tokens, num_ref_tokens, kv_cache)
+        return self._out(x, attn, mlp, mod_gate)
 
 
 class Flux2Transformer(nn.Module):
@@ -671,6 +891,19 @@ class Flux2Transformer(nn.Module):
             )
         block.to(device, non_blocking=True)
 
+    @contextmanager
+    def _offload_block(self, block: nn.Module, name: str):
+        """Move block to compute device, yield, move back to offload device."""
+        if self._block_offload_enabled:
+            self._move_block_to_device(block, self._compute_device, name)
+            if self._compute_device.type == "cuda":
+                torch.cuda.synchronize()
+        try:
+            yield
+        finally:
+            if self._block_offload_enabled:
+                self._move_block_to_device(block, self._offload_device, name)
+
     def forward(
         self,
         x: Tensor,
@@ -747,59 +980,15 @@ class Flux2Transformer(nn.Module):
         # Double-stream blocks (joint attention)
         if not _tracing:
             logger.debug(f"[FLUX2:Transformer:forward] Processing {len(self.double_blocks)} double blocks")
-        if self._block_offload_enabled and self._compute_device and self._offload_device:
-            # Block-by-block offloading mode (incompatible with torch.compile)
-            if not _tracing:
-                logger.debug("[FLUX2:Transformer:forward] Using block offload mode")
-            for i, block in enumerate(self.double_blocks):
-                # Track peak memory during block processing
-                peak_before = torch.cuda.max_memory_allocated(self._compute_device) if torch.cuda.is_available() else 0
-
-                # Move block to GPU
-                self._move_block_to_device(block, self._compute_device, f"double_block.{i}")
-                if self._compute_device.type == "cuda":
-                    torch.cuda.synchronize()
-                if not _tracing:
-                    _log_memory_state(f"forward:double_block.{i}:after_load", self._compute_device)
-
-                img, txt = block(
-                    img,
-                    txt,
-                    pe_x,
-                    pe_ctx,
-                    double_block_mod_img,
-                    double_block_mod_txt,
+        for i, block in enumerate(self.double_blocks):
+            with self._offload_block(block, f"double_block.{i}"):
+                img, txt, _ = block.forward_kv_extract(
+                    img, txt, pe_x, pe_ctx,
+                    double_block_mod_img, double_block_mod_txt,
+                    num_ref_tokens=0,
                 )
-
-                # Log peak memory during forward pass
-                if not _tracing:
-                    peak_after = torch.cuda.max_memory_allocated(self._compute_device) if torch.cuda.is_available() else 0
-                    peak_delta = peak_after - peak_before
-                    if logger.isEnabledFor(logging.DEBUG) and torch.cuda.is_available():
-                        logger.debug(
-                            f"[FLUX2:Transformer:forward] double_block.{i} peak memory delta: "
-                            f"{_format_memory_gb(peak_delta)}"
-                        )
-
-                # Move block back to CPU
-                self._move_block_to_device(block, self._offload_device, f"double_block.{i}")
-                if not _tracing:
-                    _log_memory_state(f"forward:double_block.{i}:after_unload", self._compute_device)
-        else:
-            # Standard mode - all blocks on same device
-            if not _tracing:
-                logger.debug("[FLUX2:Transformer:forward] Using standard mode (all blocks on device)")
-            for i, block in enumerate(self.double_blocks):
-                img, txt = block(
-                    img,
-                    txt,
-                    pe_x,
-                    pe_ctx,
-                    double_block_mod_img,
-                    double_block_mod_txt,
-                )
-                if not _tracing and (i == 0 or i == len(self.double_blocks) - 1):
-                    _log_memory_state(f"forward:double_block.{i}:after", img.device)
+            if not _tracing and (i == 0 or i == len(self.double_blocks) - 1):
+                _log_memory_state(f"forward:double_block.{i}:after", img.device)
 
         # Concatenate for single-stream processing
         if not _tracing:
@@ -813,49 +1002,13 @@ class Flux2Transformer(nn.Module):
         # Single-stream blocks (unified attention)
         if not _tracing:
             logger.debug(f"[FLUX2:Transformer:forward] Processing {len(self.single_blocks)} single blocks")
-        if self._block_offload_enabled and self._compute_device and self._offload_device:
-            # Block-by-block offloading mode (incompatible with torch.compile)
-            for i, block in enumerate(self.single_blocks):
-                # Track peak memory during block processing
-                peak_before = torch.cuda.max_memory_allocated(self._compute_device) if torch.cuda.is_available() else 0
-
-                # Move block to GPU
-                self._move_block_to_device(block, self._compute_device, f"single_block.{i}")
-                if self._compute_device.type == "cuda":
-                    torch.cuda.synchronize()
-                if not _tracing:
-                    _log_memory_state(f"forward:single_block.{i}:after_load", self._compute_device)
-
-                img = block(
-                    img,
-                    pe,
-                    single_block_mod,
+        for i, block in enumerate(self.single_blocks):
+            with self._offload_block(block, f"single_block.{i}"):
+                img, _ = block.forward_kv_extract(
+                    img, pe, single_block_mod, num_txt_tokens, num_ref_tokens=0,
                 )
-
-                # Log peak memory during forward pass
-                if not _tracing:
-                    peak_after = torch.cuda.max_memory_allocated(self._compute_device) if torch.cuda.is_available() else 0
-                    peak_delta = peak_after - peak_before
-                    if logger.isEnabledFor(logging.DEBUG) and torch.cuda.is_available():
-                        logger.debug(
-                            f"[FLUX2:Transformer:forward] single_block.{i} peak memory delta: "
-                            f"{_format_memory_gb(peak_delta)}"
-                        )
-
-                # Move block back to CPU
-                self._move_block_to_device(block, self._offload_device, f"single_block.{i}")
-                if not _tracing:
-                    _log_memory_state(f"forward:single_block.{i}:after_unload", self._compute_device)
-        else:
-            # Standard mode
-            for i, block in enumerate(self.single_blocks):
-                img = block(
-                    img,
-                    pe,
-                    single_block_mod,
-                )
-                if not _tracing and (i == 0 or i == len(self.single_blocks) - 1):
-                    _log_memory_state(f"forward:single_block.{i}:after", img.device)
+            if not _tracing and (i == 0 or i == len(self.single_blocks) - 1):
+                _log_memory_state(f"forward:single_block.{i}:after", img.device)
 
         # Extract image tokens (remove prepended text tokens)
         if not _tracing:
@@ -869,6 +1022,195 @@ class Flux2Transformer(nn.Module):
         if not _tracing:
             _log_memory_state("forward:end", img.device)
 
+        return img
+
+    def forward_kv_extract(
+        self,
+        x: Tensor,
+        x_ids: Tensor,
+        timesteps: Tensor,
+        ctx: Tensor,
+        ctx_ids: Tensor,
+        guidance: Tensor | None,
+        x_seq_concat: Tensor,
+        x_seq_concat_ids: Tensor,
+        ref_fixed_timestep: float = 0.0,
+    ) -> tuple[Tensor, dict]:
+        """First denoising step with reference tokens.
+
+        Runs full forward pass with reference tokens concatenated and extracts
+        KV cache for reference tokens to reuse on subsequent steps.
+
+        Input x layout becomes [ref, img] after concatenation.
+
+        Args:
+            x: Image latents [B, img_len, in_channels]
+            x_ids: Image position IDs [B, img_len, 4]
+            timesteps: Diffusion timesteps [B]
+            ctx: Text context [B, txt_len, context_in_dim]
+            ctx_ids: Text position IDs [B, txt_len, 4]
+            guidance: Optional guidance scale [B]
+            x_seq_concat: Reference image tokens [B, ref_len, in_channels]
+            x_seq_concat_ids: Reference position IDs [B, ref_len, 4]
+            ref_fixed_timestep: Fixed timestep for reference modulation (default 0.0)
+
+        Returns:
+            (prediction [B, img_len, in_channels], kv_cache dict)
+        """
+        num_txt_tokens = ctx.shape[1]
+        num_ref_tokens = x_seq_concat.shape[1]
+
+        # Concatenate reference tokens with image tokens: [ref, img]
+        x = torch.cat([x_seq_concat, x], dim=1)
+        x_ids = torch.cat([x_seq_concat_ids, x_ids], dim=1)
+
+        # Timestep embeddings -- separate for img and ref
+        timestep_emb = timestep_embedding(timesteps, 256)
+        vec = self.time_in(timestep_emb)
+        ref_vec = self.time_in(
+            timestep_embedding(torch.full_like(timesteps, ref_fixed_timestep), 256)
+        )
+
+        if self.use_guidance_embed:
+            if guidance is None:
+                raise ValueError("Guidance embedding enabled but guidance not provided")
+            guidance_emb = timestep_embedding(guidance, 256)
+            vec = vec + self.guidance_in(guidance_emb)
+            ref_vec = ref_vec + self.guidance_in(guidance_emb)
+
+        # Modulations
+        double_block_mod_img = self.double_stream_modulation_img(vec)
+        double_block_mod_txt = self.double_stream_modulation_txt(vec)
+        single_block_mod, _ = self.single_stream_modulation(vec)
+
+        ref_double_mod = self.double_stream_modulation_img(ref_vec)
+        ref_single_mod, _ = self.single_stream_modulation(ref_vec)
+
+        # Project inputs
+        img = self.img_in(x)
+        txt = self.txt_in(ctx)
+
+        pe_x = self.pe_embedder(x_ids)
+        pe_ctx = self.pe_embedder(ctx_ids)
+
+        # Blend double block modulations: [ref_mod, img_mod]
+        L_img = img.shape[1]
+        double_block_mod_img = _blend_double_mods(
+            double_block_mod_img, ref_double_mod, num_ref_tokens, L_img,
+        )
+
+        # Double blocks with KV extraction
+        double_block_cache = []
+        for i, block in enumerate(self.double_blocks):
+            with self._offload_block(block, f"double_block.{i}"):
+                img, txt, cache = block.forward_kv_extract(
+                    img, txt, pe_x, pe_ctx,
+                    double_block_mod_img, double_block_mod_txt,
+                    num_ref_tokens,
+                )
+            double_block_cache.append(cache)
+
+        # Concatenate for single-stream
+        img = torch.cat((txt, img), dim=1)
+        pe = torch.cat((pe_ctx, pe_x), dim=2)
+
+        # Blend single block modulations: [txt_mod, ref_mod, img_mod]
+        L = img.shape[1]
+        single_block_mod = _blend_single_mods(
+            single_block_mod, ref_single_mod, num_txt_tokens, num_ref_tokens, L,
+        )
+
+        # Single blocks with KV extraction
+        single_block_cache = []
+        for i, block in enumerate(self.single_blocks):
+            with self._offload_block(block, f"single_block.{i}"):
+                img, cache = block.forward_kv_extract(
+                    img, pe, single_block_mod, num_txt_tokens, num_ref_tokens,
+                )
+            single_block_cache.append(cache)
+
+        # Strip txt + ref tokens, keep only img tokens
+        img = img[:, num_txt_tokens + num_ref_tokens:, ...]
+        img = self.final_layer(img, vec)
+
+        kv_cache = {
+            "double_blocks": double_block_cache,
+            "single_blocks": single_block_cache,
+            "num_ref_tokens": num_ref_tokens,
+        }
+        return img, kv_cache
+
+    def forward_kv_cached(
+        self,
+        x: Tensor,
+        x_ids: Tensor,
+        timesteps: Tensor,
+        ctx: Tensor,
+        ctx_ids: Tensor,
+        guidance: Tensor | None,
+        kv_cache: dict,
+    ) -> Tensor:
+        """Subsequent denoising steps using cached KV for reference tokens.
+
+        Input x has layout [img] only (no ref tokens).
+
+        Args:
+            x: Image latents [B, img_len, in_channels]
+            x_ids: Image position IDs [B, img_len, 4]
+            timesteps: Diffusion timesteps [B]
+            ctx: Text context [B, txt_len, context_in_dim]
+            ctx_ids: Text position IDs [B, txt_len, 4]
+            guidance: Optional guidance scale [B]
+            kv_cache: Cache dict from forward_kv_extract
+
+        Returns:
+            Velocity prediction [B, img_len, in_channels]
+        """
+        num_txt_tokens = ctx.shape[1]
+
+        timestep_emb = timestep_embedding(timesteps, 256)
+        vec = self.time_in(timestep_emb)
+
+        if self.use_guidance_embed:
+            if guidance is None:
+                raise ValueError("Guidance embedding enabled but guidance not provided")
+            guidance_emb = timestep_embedding(guidance, 256)
+            vec = vec + self.guidance_in(guidance_emb)
+
+        double_block_mod_img = self.double_stream_modulation_img(vec)
+        double_block_mod_txt = self.double_stream_modulation_txt(vec)
+        single_block_mod, _ = self.single_stream_modulation(vec)
+
+        img = self.img_in(x)
+        txt = self.txt_in(ctx)
+
+        pe_x = self.pe_embedder(x_ids)
+        pe_ctx = self.pe_embedder(ctx_ids)
+
+        # Double blocks with cached KV
+        for i, block in enumerate(self.double_blocks):
+            with self._offload_block(block, f"double_block.{i}"):
+                img, txt = block.forward_kv_cached(
+                    img, txt, pe_x, pe_ctx,
+                    double_block_mod_img, double_block_mod_txt,
+                    kv_cache["double_blocks"][i],
+                )
+
+        # Concatenate for single-stream
+        img = torch.cat((txt, img), dim=1)
+        pe = torch.cat((pe_ctx, pe_x), dim=2)
+
+        # Single blocks with cached KV
+        for i, block in enumerate(self.single_blocks):
+            with self._offload_block(block, f"single_block.{i}"):
+                img = block.forward_kv_cached(
+                    img, pe, single_block_mod, num_txt_tokens,
+                    kv_cache["single_blocks"][i],
+                )
+
+        # Strip txt tokens (no ref tokens in sequence)
+        img = img[:, num_txt_tokens:, ...]
+        img = self.final_layer(img, vec)
         return img
 
     def get_num_params(self, non_embedding: bool = True) -> int:

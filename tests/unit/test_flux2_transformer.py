@@ -268,7 +268,9 @@ class TestDoubleStreamBlock:
         mod_img = make_mod()
         mod_txt = make_mod()
 
-        img_out, txt_out = block(img, txt, pe_img, pe_txt, mod_img, mod_txt)
+        img_out, txt_out, _ = block.forward_kv_extract(
+            img, txt, pe_img, pe_txt, mod_img, mod_txt, num_ref_tokens=0,
+        )
 
         assert img_out.shape == img.shape, \
             f"Image output shape {img_out.shape} != input {img.shape}"
@@ -318,7 +320,9 @@ class TestSingleStreamBlock:
     def test_single_block_output_shape(self, block, params):
         """Test SingleStreamBlock preserves input shape."""
         batch = 2
-        seq_len = 1124  # Combined txt (100) + img (1024)
+        num_txt = 100
+        num_img = 1024
+        seq_len = num_txt + num_img
 
         x = torch.randn(batch, seq_len, params.hidden_size)
 
@@ -330,7 +334,7 @@ class TestSingleStreamBlock:
         )
 
         # Create combined position IDs
-        txt_ids = create_text_ids(batch, 100)
+        txt_ids = create_text_ids(batch, num_txt)
         img_ids = create_image_ids(batch, 32, 32)
         combined_ids = torch.cat([txt_ids, img_ids], dim=1)
         pe = embed(combined_ids)
@@ -342,7 +346,7 @@ class TestSingleStreamBlock:
             torch.ones(batch, 1, params.hidden_size),
         )
 
-        out = block(x, pe, mod)
+        out, _ = block.forward_kv_extract(x, pe, mod, num_txt, num_ref_tokens=0)
 
         assert out.shape == x.shape
 

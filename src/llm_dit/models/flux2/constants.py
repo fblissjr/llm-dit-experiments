@@ -227,6 +227,30 @@ FLUX2_MODEL_INFO = {
         "fixed_params": set(),
         "fp8": True,
     },
+    # KV-cache distilled models (reference-image editing with caching)
+    "klein-9b-kv": {
+        "repo_id": "black-forest-labs/FLUX.2-klein-9B-kv",
+        "filename": "flux-2-klein-9b-kv.safetensors",
+        "filename_ae": "ae.safetensors",
+        "params_cls": Klein9BParams,
+        "text_encoder": "Qwen/Qwen3-8B-FP8",
+        "distilled": True,
+        "defaults": {"guidance": 1.0, "num_steps": 4},
+        "fixed_params": {"guidance", "num_steps"},
+        "use_kv_cache": True,
+    },
+    "klein-9b-kv-fp8": {
+        "repo_id": "black-forest-labs/FLUX.2-klein-9B-kv",
+        "filename": "flux-2-klein-9b-kv-fp8.safetensors",
+        "filename_ae": "ae.safetensors",
+        "params_cls": Klein9BParams,
+        "text_encoder": "Qwen/Qwen3-8B-FP8",
+        "distilled": True,
+        "defaults": {"guidance": 1.0, "num_steps": 4},
+        "fixed_params": {"guidance", "num_steps"},
+        "fp8": True,
+        "use_kv_cache": True,
+    },
 }
 
 
@@ -308,6 +332,11 @@ def is_distilled(model_name: str) -> bool:
     if model_name not in FLUX2_MODEL_INFO:
         raise ValueError(f"Unknown model: {model_name}")
     return FLUX2_MODEL_INFO[model_name]["distilled"]
+
+
+def supports_kv_cache(model_name: str) -> bool:
+    """Check if a model supports KV-cache optimization for reference images."""
+    return FLUX2_MODEL_INFO.get(model_name.lower(), {}).get("use_kv_cache", False)
 
 
 def calculate_latent_shape(height: int, width: int) -> tuple[int, int, int]:

@@ -283,35 +283,3 @@ def create_reference_ids(
         return torch.zeros(batch_size, 0, 4, device=device, dtype=dtype)
 
 
-def attention(q: Tensor, k: Tensor, v: Tensor, pe: Tensor) -> Tensor:
-    """
-    Scaled dot-product attention with rotary position embeddings.
-
-    This is the core attention computation used in FLUX.2. It applies RoPE
-    to Q and K before computing attention.
-
-    Args:
-        q: Query tensor [B, H, seq_len, head_dim]
-        k: Key tensor [B, H, seq_len, head_dim]
-        v: Value tensor [B, H, seq_len, head_dim]
-        pe: Positional embeddings from EmbedND
-
-    Returns:
-        Attention output [B, seq_len, H*head_dim]
-    """
-    # Apply rotary position embeddings
-    q, k = apply_rope(q, k, pe)
-
-    # Ensure tensors are contiguous for Flash Attention 2 dispatch
-    # SDPA only uses FA2 when tensors are contiguous in memory
-    q = q.contiguous()
-    k = k.contiguous()
-    v = v.contiguous()
-
-    # Compute scaled dot-product attention (dispatches to FA2 when available)
-    x = torch.nn.functional.scaled_dot_product_attention(q, k, v)
-
-    # Reshape from [B, H, L, D] to [B, L, H*D]
-    x = rearrange(x, "B H L D -> B L (H D)")
-
-    return x

@@ -106,6 +106,7 @@ variant = "turbo"
 
 # Model variant (sets default steps + guidance automatically):
 #   Distilled (4 steps, guidance=1.0): klein-4b, klein-9b, klein-4b-fp8, klein-9b-fp8
+#   KV-cache (4 steps, guidance=1.0):  klein-9b-kv, klein-9b-kv-fp8
 #   Base (50 steps, guidance=4.0):     klein-base-4b, klein-base-9b, klein-base-4b-fp8, klein-base-9b-fp8
 default_model = "klein-9b-fp8"
 

@@ -80,6 +80,7 @@ MODEL_PATH_ENV_VARS = {
     "klein-9b": "FLUX2_KLEIN_9B_PATH",
     "klein-base-4b": "FLUX2_KLEIN_BASE_4B_PATH",
     "klein-base-9b": "FLUX2_KLEIN_BASE_9B_PATH",
+    "klein-9b-kv": "FLUX2_KLEIN_9B_KV_PATH",
 }
 
 VAE_PATH_ENV_VAR = "FLUX2_VAE_PATH"

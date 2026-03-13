@@ -666,11 +666,13 @@ class ModelManager:
             load_time = time.time() - start
 
             # Store persistent model references (only after all three succeed)
+            from llm_dit.models.flux2.constants import supports_kv_cache as _supports_kv
             self._pipelines["flux2"] = {
                 "encoder": loaded_encoder,
                 "transformer": loaded_transformer,
                 "vae": loaded_vae,
                 "model_name": model_name,
+                "use_kv_cache": _supports_kv(model_name),
             }
 
             logger.info(f"[FLUX.2] Pipeline loaded in {load_time:.1f}s")

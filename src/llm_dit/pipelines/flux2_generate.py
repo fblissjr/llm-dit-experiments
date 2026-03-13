@@ -1,7 +1,7 @@
 """
 FLUX.2 Klein Image Generation Pipeline.
 
-Last Updated: 2026-01-24
+Last Updated: 2026-03-13
 
 Pure PyTorch implementation of FLUX.2 Klein image generation with
 three-stage offloading for memory efficiency on consumer GPUs.
@@ -71,6 +71,7 @@ from llm_dit.models.flux2.constants import (
     LATENT_CHANNELS_AFTER_PATCHIFY,
     FLUX2_MODEL_INFO,
     get_encoder_preset,
+    supports_kv_cache,
 )
 from llm_dit.utils.memory import cleanup_memory
 
@@ -614,6 +615,152 @@ def denoise(
     return img
 
 
+def denoise_cached(
+    model,
+    img: torch.Tensor,
+    img_ids: torch.Tensor,
+    txt: torch.Tensor,
+    txt_ids: torch.Tensor,
+    timesteps: list[float],
+    guidance: float | None = None,
+    img_cond_seq: torch.Tensor | None = None,
+    img_cond_seq_ids: torch.Tensor | None = None,
+    progress_callback: Callable | None = None,
+) -> torch.Tensor:
+    """
+    FLUX.2 denoising loop with KV caching for reference image tokens.
+
+    Step 0: Full forward pass with reference tokens, extracts per-block KV cache.
+    Steps 1+: Only img+txt tokens in sequence, cached ref KV injected into attention.
+
+    This provides ~1.78x speedup for 1 reference image, ~2.16x for 2, ~2.66x for 4,
+    since reference tokens are only processed once instead of every step.
+
+    Args:
+        model: FLUX.2 transformer with forward_kv_extract/forward_kv_cached methods
+        img: Initial noise [B, seq_len, channels]
+        img_ids: Image position IDs [B, seq_len, 4]
+        txt: Text embeddings [B, txt_len, context_dim]
+        txt_ids: Text position IDs [B, txt_len, 4]
+        timesteps: List of timesteps from ~1 to ~0
+        guidance: Guidance scale (None for distilled models)
+        img_cond_seq: Reference image tokens [B, ref_tokens, channels] (required)
+        img_cond_seq_ids: Reference image position IDs [B, ref_tokens, 4] (required)
+        progress_callback: Optional callback(step, total, stage) for progress updates
+
+    Returns:
+        Denoised latents [B, seq_len, channels]
+    """
+    assert img_cond_seq is not None, "denoise_cached requires reference tokens"
+    assert img_cond_seq_ids is not None, "denoise_cached requires reference token IDs"
+
+    num_steps = len(timesteps) - 1
+
+    logger.debug("=" * 60)
+    logger.debug("[DenoiseCached] Starting KV-cached denoising loop")
+    logger.debug(f"[DenoiseCached] num_steps={num_steps}")
+    logger.debug(f"[DenoiseCached] img shape={img.shape}, ref shape={img_cond_seq.shape}")
+    logger.debug(f"[DenoiseCached] Step 0: full forward with ref tokens (extract KV cache)")
+    logger.debug(f"[DenoiseCached] Steps 1+: cached forward without ref tokens")
+
+    # Track peak memory
+    peak_allocated = 0.0
+    if torch.cuda.is_available():
+        torch.cuda.reset_peak_memory_stats()
+
+    initial_alloc, _ = _log_denoise_memory(0, "init")
+
+    # Prepare guidance vector
+    guidance_vec = None
+    if guidance is not None:
+        guidance_vec = torch.full(
+            (img.shape[0],), guidance, device=img.device, dtype=img.dtype
+        )
+
+    denoise_start = time.perf_counter()
+    step_times: list[float] = []
+    kv_cache = None
+
+    for step_idx, (t_curr, t_prev) in enumerate(
+        tqdm(zip(timesteps[:-1], timesteps[1:]), total=num_steps, desc="Denoising (cached)")
+    ):
+        step_start = time.perf_counter()
+
+        if progress_callback is not None:
+            progress_callback(step_idx + 1, num_steps, "Denoising")
+
+        t_vec = torch.full(
+            (img.shape[0],), t_curr, dtype=img.dtype, device=img.device
+        )
+
+        with torch.no_grad():
+            if step_idx == 0:
+                # Step 0: full forward with reference tokens, extract KV cache
+                pred, kv_cache = model.forward_kv_extract(
+                    x=img,
+                    x_ids=img_ids,
+                    timesteps=t_vec,
+                    ctx=txt,
+                    ctx_ids=txt_ids,
+                    guidance=guidance_vec,
+                    x_seq_concat=img_cond_seq,
+                    x_seq_concat_ids=img_cond_seq_ids,
+                )
+                logger.debug(
+                    f"[DenoiseCached:Step 0] Extracted KV cache: "
+                    f"{len(kv_cache.get('double', []))} double + "
+                    f"{len(kv_cache.get('single', []))} single blocks"
+                )
+            else:
+                # Steps 1+: cached forward -- no ref tokens in sequence
+                pred = model.forward_kv_cached(
+                    x=img,
+                    x_ids=img_ids,
+                    timesteps=t_vec,
+                    ctx=txt,
+                    ctx_ids=txt_ids,
+                    guidance=guidance_vec,
+                    kv_cache=kv_cache,
+                )
+
+        # Euler step: x_{t-1} = x_t + (t_prev - t_curr) * v
+        img = img + (t_prev - t_curr) * pred
+
+        step_elapsed = time.perf_counter() - step_start
+        step_times.append(step_elapsed)
+
+        if step_idx == 0 and step_elapsed > 5.0:
+            logger.info(
+                f"[DenoiseCached:Step 0] {step_elapsed:.1f}s "
+                "(torch.compile warmup -- subsequent steps will be fast)"
+            )
+        else:
+            logger.info(f"[DenoiseCached:Step {step_idx}] {step_elapsed:.2f}s")
+
+        if torch.cuda.is_available():
+            step_alloc, _ = _log_denoise_memory(step_idx, "end")
+            peak_allocated = max(peak_allocated, step_alloc)
+
+    # Summary
+    denoise_elapsed = time.perf_counter() - denoise_start
+    logger.debug("=" * 60)
+    logger.info(
+        f"[DenoiseCached] {num_steps} steps in {denoise_elapsed:.1f}s "
+        f"({', '.join(f'{t:.2f}s' for t in step_times)})"
+    )
+
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+        pytorch_peak = torch.cuda.max_memory_allocated()
+        logger.debug(f"[DenoiseCached] Peak (PyTorch): {_format_gb(pytorch_peak)} allocated")
+        if pytorch_peak > 20e9:
+            logger.warning(f"[DenoiseCached] HIGH PEAK MEMORY: {_format_gb(pytorch_peak)}")
+
+    logger.debug("=" * 60)
+
+    return img
+
+
 def denoise_cfg(
     model,
     img: torch.Tensor,
@@ -1122,7 +1269,27 @@ def generate_image(
     log_memory_snapshot("Pre-denoise")
 
     # Dispatch to appropriate denoising function based on model type
-    if distilled:
+    use_kv = supports_kv_cache(model_name) and ref_tokens is not None
+
+    if use_kv:
+        # KV-cached denoising: ref tokens processed once (step 0), cached for rest
+        logger.info(
+            f"[Denoise] Using KV-cached denoising "
+            f"({ref_tokens.shape[1]} ref tokens cached after step 0)"
+        )
+        latents = denoise_cached(
+            model=transformer,
+            img=img,
+            img_ids=img_ids,
+            txt=txt_embeddings,
+            txt_ids=txt_ids,
+            timesteps=timesteps,
+            guidance=config.guidance,
+            img_cond_seq=ref_tokens,
+            img_cond_seq_ids=ref_ids,
+            progress_callback=progress_callback,
+        )
+    elif distilled:
         # Distilled models: pass guidance as embedding vector, single forward pass
         latents = denoise(
             model=transformer,

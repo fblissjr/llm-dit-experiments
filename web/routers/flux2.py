@@ -180,7 +180,8 @@ async def flux2_status(config: ConfigDep, manager: ManagerDep) -> Flux2StatusRes
         compile_vae_enabled=getattr(config, "flux2_compile_vae", False),
         supported_models=[
             "klein-9b", "klein-9b-fp8", "klein-4b", "klein-4b-fp8",
-            "klein-base-9b", "klein-base-9b-fp8", "klein-base-4b", "klein-base-4b-fp8"
+            "klein-base-9b", "klein-base-9b-fp8", "klein-base-4b", "klein-base-4b-fp8",
+            "klein-9b-kv", "klein-9b-kv-fp8",
         ],
     )
 
