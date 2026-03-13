@@ -1,7 +1,7 @@
 """
 Tests for codebase cleanup: dead code deletion, CUDA guards, consolidation.
 
-Last Updated: 2026-03-09
+Last Updated: 2026-03-13
 
 Covers:
 - CUDA guard consistency in model_manager unload methods
@@ -14,10 +14,13 @@ Covers:
 - v0.9.27: Dead stage2_steps removal, stage1_steps default fix, scheduler
   token count fix, pipeline_mode restructure, dead code removal
 - v0.9.28: Dead offload_mode/use_fp8 removal, VAE PinnedShuttleMixin
+- v0.9.31: print() -> logger, _attach_weight_scales move, memory util
+  consolidation, pipeline_mode="distilled" dead code removal
 
 Run with: uv run pytest tests/unit/test_cleanup.py -v
 """
 
+import ast
 import inspect
 
 import pytest
@@ -733,4 +736,44 @@ class TestPinModelMemoryRemoved:
         assert not hasattr(ModelManager, "_pin_model_memory"), (
             "ModelManager._pin_model_memory should be deleted -- "
             "all callers migrated to PinnedShuttleMixin.offload_to_pinned()"
+        )
+
+
+# =========================================================================
+# v0.9.31: Tech debt cleanup
+# =========================================================================
+
+
+def _count_print_calls(filepath: str) -> list[int]:
+    """AST-parse a file and return line numbers of print() calls."""
+    with open(filepath) as f:
+        tree = ast.parse(f.read(), filename=filepath)
+    lines = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            func = node.func
+            if isinstance(func, ast.Name) and func.id == "print":
+                lines.append(node.lineno)
+    return lines
+
+
+class TestNoPrintStatements:
+    """Production code should use logger, not print()."""
+
+    def test_no_print_in_flux2_loader(self):
+        """flux2/loader.py should have zero print() calls."""
+        from llm_dit.models.flux2 import loader
+        filepath = inspect.getfile(loader)
+        lines = _count_print_calls(filepath)
+        assert lines == [], (
+            f"flux2/loader.py has print() at lines {lines}. Use logger instead."
+        )
+
+    def test_no_print_in_wan_dit(self):
+        """wan_dit.py should have zero print() calls."""
+        from llm_dit.models import wan_dit
+        filepath = inspect.getfile(wan_dit)
+        lines = _count_print_calls(filepath)
+        assert lines == [], (
+            f"wan_dit.py has print() at lines {lines}. Use logger instead."
         )

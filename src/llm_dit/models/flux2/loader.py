@@ -114,7 +114,7 @@ def _convert_diffusers_vae_keys(state_dict: dict) -> dict:
     if not has_diffusers_keys:
         return state_dict  # Already in native format
 
-    print("Converting Diffusers VAE to native FLUX format (keys + shapes)...")
+    logger.info("Converting Diffusers VAE to native FLUX format (keys + shapes)...")
 
     new_sd = {}
     num_up_blocks = 4  # Standard VAE has 4 up/down blocks
@@ -221,7 +221,7 @@ def _convert_diffusers_vae_keys(state_dict: dict) -> dict:
         new_sd["bn.running_var"] = torch.ones(128)
         new_sd["bn.num_batches_tracked"] = torch.tensor(0, dtype=torch.long)
 
-    print(f"Converted {len(new_sd)} VAE keys (including shape fixes)")
+    logger.info(f"Converted {len(new_sd)} VAE keys (including shape fixes)")
     return new_sd
 
 
@@ -239,10 +239,10 @@ def _try_huggingface_download(repo_id: str, filename: str) -> str | None:
             repo_type="model",
         )
     except ImportError:
-        print("huggingface_hub not installed. Install with: pip install huggingface_hub")
+        logger.warning("huggingface_hub not installed. Install with: pip install huggingface_hub")
         return None
     except Exception as e:
-        print(f"Failed to download {filename} from {repo_id}: {e}")
+        logger.warning(f"Failed to download {filename} from {repo_id}: {e}")
         return None
 
 
@@ -300,7 +300,7 @@ def _get_model_weight_path(model_name: str, model_path: str | None = None) -> st
         weight_path = os.environ[env_var]
         if os.path.exists(weight_path):
             return weight_path
-        print(f"Warning: {env_var} set but path doesn't exist: {weight_path}")
+        logger.warning(f"{env_var} set but path doesn't exist: {weight_path}")
 
     # 3. Try HuggingFace download
     weight_path = _try_huggingface_download(config["repo_id"], config["filename"])
@@ -369,7 +369,7 @@ def _get_vae_weight_path(model_name: str, vae_path: str | None = None) -> str:
         weight_path = os.environ[VAE_PATH_ENV_VAR]
         if os.path.exists(weight_path):
             return weight_path
-        print(f"Warning: {VAE_PATH_ENV_VAR} set but path doesn't exist: {weight_path}")
+        logger.warning(f"{VAE_PATH_ENV_VAR} set but path doesn't exist: {weight_path}")
 
     # 3. Try HuggingFace download from model's repo
     # FLUX.2-klein repos have vae/diffusion_pytorch_model.safetensors (Diffusers format)
@@ -428,13 +428,13 @@ def load_flux2_transformer(
         # Minimal model for testing
         params.depth = 1
         params.depth_single_blocks = 1
-        print(f"Debug mode: creating minimal {model_name} model (1 double, 1 single block)")
+        logger.debug(f"Debug mode: creating minimal {model_name} model (1 double, 1 single block)")
         with torch.device(device):
             return Flux2Transformer(params).to(dtype)
 
     # Get weights path (native single-file format only)
     weight_path = _get_model_weight_path(model_name, model_path)
-    print(f"Loading {model_name} from {weight_path}")
+    logger.info(f"Loading {model_name} from {weight_path}")
     logger.debug(f"[FLUX2:Loader] Loading weights from {weight_path}")
     _log_memory_state("Before load")
 
@@ -629,7 +629,7 @@ def load_flux2_vae(
     """
     # Get weights path
     weight_path = _get_vae_weight_path(model_name, vae_path)
-    print(f"Loading VAE from {weight_path}")
+    logger.info(f"Loading VAE from {weight_path}")
 
     # Create model on meta device
     with torch.device("meta"):

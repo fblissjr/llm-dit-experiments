@@ -24,10 +24,13 @@ Weight key mapping (matched to official Wan weights):
 - head.head.*, head.modulation -> output projection
 """
 
+import logging
 import math
 from typing import Optional, Tuple
 
 import torch
+
+logger = logging.getLogger(__name__)
 import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange
@@ -650,8 +653,8 @@ class WanDiT(nn.Module):
         # Load state dict
         missing, unexpected = model.load_state_dict(state_dict, strict=False)
         if missing:
-            print(f"Missing keys: {missing}")
+            logger.warning(f"Missing keys: {missing}")
         if unexpected:
-            print(f"Unexpected keys: {unexpected}")
+            logger.warning(f"Unexpected keys: {unexpected}")
 
         return model.to(device=device, dtype=dtype)
