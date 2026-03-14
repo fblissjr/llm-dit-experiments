@@ -17,7 +17,7 @@ from PIL import Image
 
 from web.dependencies import ConfigDep, ManagerDep
 from web.param_resolver import resolve_param
-from web.schemas import Flux2GenerateRequest, Flux2StatusResponse, ImageGenerationResult
+from web.schemas import Flux2GenerateRequest, Flux2StatusResponse, Flux2UpsampleRequest, ImageGenerationResult
 from web.utils import create_image_response
 
 logger = logging.getLogger(__name__)
@@ -227,6 +227,37 @@ async def flux2_model_info(model_name: str):
 
 
 # =============================================================================
+# Prompt Upsampling
+# =============================================================================
+
+
+@router.post("/api/flux2/upsample-prompt")
+async def flux2_upsample_prompt(request: Flux2UpsampleRequest, config: ConfigDep):
+    """Upsample a FLUX.2 prompt without generating an image.
+
+    Calls the configured LLM API to expand the prompt. When reference_images
+    are provided, the first image is passed to the vision model for
+    context-aware upsampling.
+
+    Returns {"prompt": "upsampled text"}.
+    """
+    try:
+        first_ref_b64 = request.reference_images[0] if request.reference_images else None
+        upsampled, warning = _upsample_prompt(
+            config,
+            request.prompt,
+            has_reference_images=bool(request.reference_images),
+            reference_image_b64=first_ref_b64,
+        )
+        if warning:
+            logger.warning(f"[FLUX.2] upsample-prompt: {warning}")
+        return {"prompt": upsampled}
+    except Exception as e:
+        logger.error(f"[FLUX.2] upsample-prompt failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
 # Generation
 # =============================================================================
 
@@ -389,6 +420,7 @@ async def flux2_generate(request: Flux2GenerateRequest, config: ConfigDep, manag
             seed=gen_config.seed,
             generation_time=gen_time,
             warnings=warnings,
+            enhanced_prompt=prompt if prompt != request.prompt else None,
         )
 
     except RuntimeError as e:
@@ -620,7 +652,7 @@ async def flux2_generate_stream(request: Flux2GenerateRequest, config: ConfigDep
             img_b64 = base64.b64encode(img_bytes.getvalue()).decode("ascii")
             data_url = f"data:image/png;base64,{img_b64}"
 
-            # Yield final result (include warnings if any)
+            # Yield final result (include warnings and enhanced_prompt if applicable)
             complete_data = {
                 'type': 'complete',
                 'urls': [data_url],
@@ -630,6 +662,8 @@ async def flux2_generate_stream(request: Flux2GenerateRequest, config: ConfigDep
             }
             if stream_warnings:
                 complete_data['warnings'] = stream_warnings
+            if prompt != request.prompt:
+                complete_data['enhanced_prompt'] = prompt
             yield f"data: {json.dumps(complete_data)}\n\n"
 
         except RuntimeError as e:

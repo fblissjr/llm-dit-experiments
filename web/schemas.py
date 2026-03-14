@@ -149,6 +149,7 @@ class ImageGenerationResult(CamelModel):
     seed: int = -1
     generation_time: float = 0.0
     warnings: List[str] = Field(default_factory=list)
+    enhanced_prompt: Optional[str] = None
 
 
 class ClearCacheResponse(CamelModel):
@@ -676,6 +677,13 @@ class LTX2GenerateRequest(BaseModel):
     # Optimization
     ge_gamma: float = 0.0
     fbcache_threshold: float = 0.0  # FBCache block-skip threshold (0=disabled, 0.05=recommended)
+
+
+class Flux2UpsampleRequest(BaseModel):
+    """Request to upsample a FLUX.2 prompt without generating an image."""
+
+    prompt: str
+    reference_images: Optional[List[str]] = None
 
 
 class Flux2GenerateRequest(BaseModel):

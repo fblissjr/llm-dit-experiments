@@ -31,6 +31,12 @@ interface ParamControlProps {
   formValues: FormValues;
   errors: ValidationError[];
   disabled?: boolean;
+  /** For textarea controls: called when the inline action button is clicked. */
+  onAction?: () => void;
+  /** Accessible tooltip/title for the action button. */
+  actionLabel?: string;
+  /** When true, the action button shows a loading spinner. */
+  actionLoading?: boolean;
 }
 
 function arePropsEqual(
@@ -54,6 +60,11 @@ function arePropsEqual(
   // tooltip may change when isFixed toggles (the spread in PipelineForm)
   if (prev.param.tooltip !== next.param.tooltip) return false;
 
+  // Action button props (only relevant for textarea, but compare for all)
+  if (prev.onAction !== next.onAction) return false;
+  if (prev.actionLoading !== next.actionLoading) return false;
+  if (prev.actionLabel !== next.actionLabel) return false;
+
   // For formValues: only compare keys that matter for this param's conditional
   if (prev.param.conditional) {
     for (const key of Object.keys(prev.param.conditional)) {
@@ -76,6 +87,9 @@ export const ParamControl = memo(function ParamControl({
   formValues,
   errors,
   disabled = false,
+  onAction,
+  actionLabel,
+  actionLoading,
 }: ParamControlProps) {
   // Check conditional visibility
   if (param.conditional) {
@@ -102,6 +116,9 @@ export const ParamControl = memo(function ParamControl({
           required={param.required}
           disabled={disabled}
           error={error}
+          onAction={onAction}
+          actionLabel={actionLabel}
+          actionLoading={actionLoading}
         />
       );
 

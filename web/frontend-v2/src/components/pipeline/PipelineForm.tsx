@@ -5,13 +5,17 @@
  * Groups parameters by their group field and handles preset loading.
  */
 
-import { useMemo, useCallback } from 'react';
+import { useMemo, useCallback, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { useAppStore, useFormStore } from '@/stores';
 import type { GroupType, ParamSchema, FormValues, ValidationError } from '@/api/types';
 import { ParamGroup } from './ParamGroup';
 import { ParamControl } from './ParamControl';
 import { PresetBrowser } from '@/components/preset';
+import { upsamplePrompt } from '@/api/client';
+import { logger } from '@/utils/logger';
+
+const log = logger('PipelineForm');
 
 // FLUX.2 distilled models have fixed num_steps and guidance.
 // Distilled = all variants without "base" in the name.
@@ -64,6 +68,9 @@ export function PipelineForm() {
 
   const setValue = useFormStore((s) => s.setValue);
   const applyDependentDefaults = useFormStore((s) => s.applyDependentDefaults);
+
+  // Upsample loading state (flux2 prompt only)
+  const [isUpsampling, setIsUpsampling] = useState(false);
 
   // Handle value change with dimension_preset <-> width/height sync.
   // Reads both formValues and pipeline from store directly (getState) to
@@ -122,6 +129,34 @@ export function PipelineForm() {
     [selectedPipelineId, setValue, applyDependentDefaults]
   );
 
+  // Prompt upsample action (flux2 only).
+  // Reads current prompt and reference_images from store at call time
+  // (not from the reactive formValues selector) to avoid stale closures.
+  const handleUpsamplePrompt = useCallback(async () => {
+    if (!selectedPipelineId || isUpsampling) return;
+
+    const currentValues = useFormStore.getState().getResolvedValues(selectedPipelineId);
+    const prompt = String(currentValues.prompt ?? '');
+    if (!prompt.trim()) return;
+
+    // Collect reference images if present (array of base64 strings with possible data URL prefix)
+    const refImages = Array.isArray(currentValues.reference_images)
+      ? (currentValues.reference_images as string[]).filter(Boolean)
+      : undefined;
+
+    setIsUpsampling(true);
+    try {
+      const upsampled = await upsamplePrompt(prompt, refImages?.length ? refImages : undefined);
+      if (upsampled && upsampled !== prompt) {
+        setValue(selectedPipelineId, 'prompt', upsampled);
+      }
+    } catch (err) {
+      log.error('Prompt upsample failed:', err);
+    } finally {
+      setIsUpsampling(false);
+    }
+  }, [selectedPipelineId, isUpsampling, setValue]);
+
   // Memoize per-param onChange callbacks so each ParamControl gets a stable
   // reference. Recomputed only when pipeline params change or handleChange
   // changes (which only depends on selectedPipelineId + action refs).
@@ -165,6 +200,9 @@ export function PipelineForm() {
   // Set CSS variable for pipeline color
   const pipelineColor = getPipelineColor(selectedPipelineId);
 
+  // Upsample action is only available for the prompt field on the flux2 pipeline
+  const showUpsampleAction = selectedPipelineId === 'flux2';
+
   return (
     <form
       className="space-y-6"
@@ -184,6 +222,17 @@ export function PipelineForm() {
             {params.map((param) => {
               // Disable fixed params for distilled FLUX.2 models
               const isFixed = isFixedParam(selectedPipelineId, param.id, formValues);
+
+              // Attach upsample action to the prompt textarea on flux2
+              const isPromptField = param.id === 'prompt' && param.type === 'textarea';
+              const actionProps = showUpsampleAction && isPromptField
+                ? {
+                    onAction: handleUpsamplePrompt,
+                    actionLabel: 'Upsample prompt',
+                    actionLoading: isUpsampling,
+                  }
+                : {};
+
               return (
                 <div key={param.id} className="relative">
                   <ParamControl
@@ -193,6 +242,7 @@ export function PipelineForm() {
                     formValues={formValues}
                     errors={errors}
                     disabled={isFixed}
+                    {...actionProps}
                   />
                   {isFixed && (
                     <div className="text-xs text-amber-500/70 mt-1 ml-1">

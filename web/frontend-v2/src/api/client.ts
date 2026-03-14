@@ -292,4 +292,23 @@ export async function clearCache(): Promise<ClearCacheResponse> {
   );
 }
 
+/**
+ * Upsample a FLUX.2 prompt via the configured LLM API.
+ * Returns the upsampled prompt string. Passes reference images when provided
+ * so the vision model can write context-aware editing instructions.
+ */
+export async function upsamplePrompt(
+  prompt: string,
+  referenceImages?: string[]
+): Promise<string> {
+  const result = await request<{ prompt: string }>('/api/flux2/upsample-prompt', {
+    method: 'POST',
+    body: JSON.stringify({
+      prompt,
+      reference_images: referenceImages ?? null,
+    }),
+  });
+  return result.prompt;
+}
+
 export { APIError };
