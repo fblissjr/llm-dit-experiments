@@ -71,8 +71,12 @@ def _upsample_prompt(
     config,
     prompt: str,
     has_reference_images: bool,
+    reference_image_b64: str | None = None,
 ) -> tuple[str, str | None]:
     """Upsample a prompt via heylookitsanllm, reading URL/model from config.
+
+    When a reference image is provided, it's sent to the vision model so
+    Mistral can see the image and write context-aware editing instructions.
 
     Returns (upsampled_prompt, warning_message_or_none).
     Falls back to original prompt on API error or missing config.
@@ -84,13 +88,22 @@ def _upsample_prompt(
         return prompt, "Prompt upsampling requested but no API URL configured."
 
     api_model: str = getattr(config, "rewriter_api_model", "")
-    if api_model:
-        upsampler = Flux2PromptUpsampler(api_url=api_url, api_model=api_model)
-    else:
-        upsampler = Flux2PromptUpsampler(api_url=api_url)
+    system_prompt_t2i = getattr(config, "upsample_system_prompt_t2i", None) or None
+    system_prompt_i2i = getattr(config, "upsample_system_prompt_i2i", None) or None
+
+    upsampler = Flux2PromptUpsampler(
+        api_url=api_url,
+        api_model=api_model or "Mistral-Small-3.2-24B-Instruct-2506-MLX-8bit",
+        system_prompt_t2i=system_prompt_t2i,
+        system_prompt_i2i=system_prompt_i2i,
+    )
 
     original = prompt
-    prompt = upsampler.upsample(prompt, has_reference_images=has_reference_images)
+    prompt = upsampler.upsample(
+        prompt,
+        has_reference_images=has_reference_images,
+        reference_image_b64=reference_image_b64,
+    )
     if prompt != original:
         logger.info(f"[FLUX.2] Prompt upsampled: {len(original)} -> {len(prompt)} chars")
         return prompt, f"Prompt upsampled from: {original[:100]}"
@@ -241,8 +254,12 @@ async def flux2_generate(request: Flux2GenerateRequest, config: ConfigDep, manag
         # Prompt upsampling (optional, requires heylookitsanllm API)
         prompt = request.prompt
         if request.upsample_prompt:
+            # Pass first reference image to vision model for context-aware upsampling
+            first_ref_b64 = request.reference_images[0] if request.reference_images else None
             prompt, upsample_warning = _upsample_prompt(
-                config, prompt, has_reference_images=bool(request.reference_images),
+                config, prompt,
+                has_reference_images=bool(request.reference_images),
+                reference_image_b64=first_ref_b64,
             )
             if upsample_warning:
                 warnings.append(upsample_warning)
@@ -449,8 +466,11 @@ async def flux2_generate_stream(request: Flux2GenerateRequest, config: ConfigDep
             prompt = request.prompt
             if request.upsample_prompt:
                 yield f"data: {json.dumps({'type': 'status', 'message': 'Upsampling prompt...'})}\n\n"
+                first_ref_b64 = request.reference_images[0] if request.reference_images else None
                 prompt, upsample_warning = _upsample_prompt(
-                    config, prompt, has_reference_images=bool(request.reference_images),
+                    config, prompt,
+                    has_reference_images=bool(request.reference_images),
+                    reference_image_b64=first_ref_b64,
                 )
                 if upsample_warning:
                     stream_warnings.append(upsample_warning)

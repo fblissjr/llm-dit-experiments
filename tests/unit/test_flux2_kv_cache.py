@@ -1,7 +1,7 @@
 """
 Tests for FLUX.2 KV-cache support for reference-image editing.
 
-Last Updated: 2026-03-13
+Last Updated: 2026-03-14
 
 Tests causal_attn_fn, modulation blending, block-level KV extract/cached,
 and model-level forward_kv_extract/forward_kv_cached.
@@ -870,3 +870,27 @@ class TestDenoiseCached:
         # They will differ because the attention paths differ
         # (standard: ref in every step, cached: ref only step 0 then cached KV)
         assert out_standard.shape == out_cached.shape
+
+
+# =============================================================================
+# KV cache logging key consistency
+# =============================================================================
+
+
+class TestKVCacheLogging:
+    """Logging must use the same dict keys as the cache structure."""
+
+    def test_log_uses_correct_cache_keys(self):
+        """denoise_cached log string must reference 'double_blocks'/'single_blocks',
+        not bare 'double'/'single'."""
+        import inspect
+        from llm_dit.pipelines import flux2_generate
+
+        source = inspect.getsource(flux2_generate.denoise_cached)
+        # The cache dict uses 'double_blocks' and 'single_blocks'
+        assert "double_blocks" in source, (
+            "denoise_cached must reference 'double_blocks' (not bare 'double')"
+        )
+        assert "single_blocks" in source, (
+            "denoise_cached must reference 'single_blocks' (not bare 'single')"
+        )

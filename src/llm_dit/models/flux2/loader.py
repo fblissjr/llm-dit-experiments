@@ -529,6 +529,7 @@ def load_flux2_transformer(
             "Set block_offload=false or quantization='none'."
         )
 
+    model.eval()
     return model
 
 

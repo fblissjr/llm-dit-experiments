@@ -1,4 +1,4 @@
-last updated: 2026-03-13
+last updated: 2026-03-14
 
 # changelog
 
@@ -11,6 +11,12 @@ Uses [Semantic Versioning](https://semver.org/).
 ### added
 - **FLUX.2 KV-cache models in frontend**: `klein-9b-kv` and `klein-9b-kv-fp8` now appear in the model dropdown with correct `dependent_defaults` for steps (4) and guidance (1.0).
 - **Sibling directory resolution**: FLUX.2 loader searches sibling directories when `model_path` doesn't contain the requested model's weights. Enables switching between variants (e.g., kv and kv-fp8) stored in separate directories.
+- **Vision-aware prompt upsampling**: `Flux2PromptUpsampler` sends the first reference image to the vision LLM (Mistral) during I2I upsampling, so it can see the image and write context-aware editing instructions instead of working blind.
+- **Configurable upsampling system prompts**: `[rewriter]` config now has `upsample_system_prompt_t2i` and `upsample_system_prompt_i2i` fields to override the default BFL system prompts.
+
+### fixed
+- **KV cache logging keys**: `denoise_cached` debug log reported "0 double + 0 single blocks" because it checked `kv_cache.get('double')` / `kv_cache.get('single')` instead of `'double_blocks'` / `'single_blocks'`. Cache was populated correctly -- only the log was wrong.
+- **FLUX.2 transformer inference mode**: Loader now sets the model to evaluation mode before returning, matching BFL reference commit `50fe516`.
 
 ### removed
 - **Wan/HuMo pipeline**: Removed all Wan pipeline code (not in project scope). Files deleted: `wan_video.py`, `wan_dit.py`, `wan_text_encoder.py`, `wan_vae.py`, `humo_transformer.py`, orchestration adapter, generation script. `WanConfig` removed from config.py. Old `[wan]` config sections silently migrated.

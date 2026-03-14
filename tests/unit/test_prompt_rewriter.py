@@ -224,6 +224,76 @@ class TestCreateRewriterFromConfig:
         assert rewriter.api_url is None
 
 
+class TestFlux2PromptUpsamplerVision:
+    """Test Flux2PromptUpsampler accepts reference images for vision upsampling."""
+
+    def test_upsample_accepts_reference_image_b64(self):
+        """upsample() should accept a reference_image_b64 parameter."""
+        import inspect
+        from llm_dit.utils.prompt_rewriter import Flux2PromptUpsampler
+
+        sig = inspect.signature(Flux2PromptUpsampler.upsample)
+        assert "reference_image_b64" in sig.parameters, (
+            "upsample() must accept reference_image_b64 parameter"
+        )
+
+    def test_upsample_builds_vision_content(self):
+        """When reference_image_b64 is provided, message content should include image_url."""
+        from unittest.mock import patch, MagicMock
+        import orjson
+        from llm_dit.utils.prompt_rewriter import Flux2PromptUpsampler
+
+        upsampler = Flux2PromptUpsampler(api_url="http://fake:8080")
+        fake_b64 = "iVBORw0KGgoAAAANSUhEUg=="  # tiny fake base64
+
+        mock_resp = MagicMock()
+        mock_resp.content = b'{"choices":[{"message":{"content":"test output"}}]}'
+        mock_resp.raise_for_status = MagicMock()
+
+        with patch("httpx.post", return_value=mock_resp) as mock_post:
+            upsampler.upsample("make it dramatic", reference_image_b64=fake_b64)
+
+            # Extract the request body from the httpx.post call
+            call_kwargs = mock_post.call_args
+            body = orjson.loads(call_kwargs.kwargs["content"])
+
+            # User message content should be a list with image_url and text parts
+            user_msg = body["messages"][-1]
+            assert isinstance(user_msg["content"], list), (
+                "With vision, content must be a list of content parts"
+            )
+            types = [part["type"] for part in user_msg["content"]]
+            assert "image_url" in types
+            assert "text" in types
+
+            # resize_max should be set for vision requests
+            assert body.get("resize_max") == 768
+
+    def test_upsample_without_image_sends_string_content(self):
+        """Without reference image, message content should be a plain string."""
+        from unittest.mock import patch, MagicMock
+        import orjson
+        from llm_dit.utils.prompt_rewriter import Flux2PromptUpsampler
+
+        upsampler = Flux2PromptUpsampler(api_url="http://fake:8080")
+
+        mock_resp = MagicMock()
+        mock_resp.content = b'{"choices":[{"message":{"content":"test output"}}]}'
+        mock_resp.raise_for_status = MagicMock()
+
+        with patch("httpx.post", return_value=mock_resp) as mock_post:
+            upsampler.upsample("a beautiful landscape")
+
+            body = orjson.loads(mock_post.call_args.kwargs["content"])
+
+            user_msg = body["messages"][-1]
+            assert isinstance(user_msg["content"], str), (
+                "Without vision, content should be a plain string"
+            )
+
+            # resize_max should NOT be set for text-only requests
+            assert "resize_max" not in body
+
 class TestLLMBackendProtocol:
     """Test LLMBackend protocol interface."""
 

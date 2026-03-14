@@ -1051,6 +1051,9 @@ class RewriterConfig:
     max_tokens: int = 1024  # Maximum tokens to generate
     # API timeout settings
     timeout: float = 120.0  # API request timeout in seconds
+    # Custom system prompts for FLUX.2 upsampling (empty = use defaults)
+    upsample_system_prompt_t2i: str = ""  # Override T2I upsampling system prompt
+    upsample_system_prompt_i2i: str = ""  # Override I2I upsampling system prompt
 
 
 @dataclass
@@ -1736,6 +1739,14 @@ class RuntimeConfig:
     @property
     def rewriter_timeout(self) -> float:
         return self.rewriter.timeout
+
+    @property
+    def upsample_system_prompt_t2i(self) -> str:
+        return self.rewriter.upsample_system_prompt_t2i
+
+    @property
+    def upsample_system_prompt_i2i(self) -> str:
+        return self.rewriter.upsample_system_prompt_i2i
 
     # -----------------------------------------------------------------------
     # Methods

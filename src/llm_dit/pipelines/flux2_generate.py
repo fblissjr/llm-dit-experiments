@@ -708,8 +708,8 @@ def denoise_cached(
                 )
                 logger.debug(
                     f"[DenoiseCached:Step 0] Extracted KV cache: "
-                    f"{len(kv_cache.get('double', []))} double + "
-                    f"{len(kv_cache.get('single', []))} single blocks"
+                    f"{len(kv_cache.get('double_blocks', []))} double + "
+                    f"{len(kv_cache.get('single_blocks', []))} single blocks"
                 )
             else:
                 # Steps 1+: cached forward -- no ref tokens in sequence

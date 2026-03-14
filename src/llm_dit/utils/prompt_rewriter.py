@@ -11,7 +11,7 @@ Supports:
 
 Based on: coderef/HF-Space-Qwen-Image-2512/app.py
 
-last updated: 2026-01-03
+last updated: 2026-03-14
 """
 
 import logging
@@ -346,16 +346,14 @@ class PromptRewriter:
         temperature: float = 0.7,
     ) -> str:
         """Call heylookitsanllm API (OpenAI-compatible)."""
-        import json
-        import urllib.request
-        import urllib.error
+        import httpx
+        import orjson
 
         if not self.api_url:
             raise RuntimeError("No API URL configured for PromptRewriter")
 
-        # Construct chat completion request
         url = f"{self.api_url.rstrip('/')}/chat/completions"
-        data = {
+        payload = {
             "model": self.api_model,
             "messages": [
                 {"role": "system", "content": system_prompt},
@@ -365,23 +363,18 @@ class PromptRewriter:
             "temperature": temperature,
         }
 
-        headers = {
-            "Content-Type": "application/json",
-        }
-
-        req = urllib.request.Request(
-            url,
-            data=json.dumps(data).encode("utf-8"),
-            headers=headers,
-            method="POST",
-        )
-
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as response:
-                result = json.loads(response.read().decode("utf-8"))
-                return result["choices"][0]["message"]["content"]
-        except urllib.error.URLError as e:
-            logger.error(f"API request failed: {e}")
+            resp = httpx.post(
+                url,
+                content=orjson.dumps(payload),
+                headers={"Content-Type": "application/json"},
+                timeout=self.timeout,
+            )
+            resp.raise_for_status()
+            result = orjson.loads(resp.content)
+            return result["choices"][0]["message"]["content"]
+        except httpx.HTTPStatusError as e:
+            logger.error(f"API request failed: {e.response.status_code} {e.response.text[:200]}")
             raise
         except (KeyError, IndexError) as e:
             logger.error(f"Unexpected API response format: {e}")
@@ -476,7 +469,8 @@ class PromptRewriter:
 # FLUX.2 Prompt Upsampling (BFL official system prompts)
 # =============================================================================
 
-# From coderef/flux2/src/flux2/system_messages.py
+# Default system prompts (based on coderef/flux2/src/flux2/system_messages.py).
+# Overridable via config.toml [rewriter] upsample_system_prompt_t2i / _i2i.
 FLUX2_SYSTEM_MESSAGE_T2I = (
     "You are an expert prompt engineer for FLUX.2 by Black Forest Labs. "
     "Rewrite user prompts to be more descriptive while strictly preserving "
@@ -504,14 +498,15 @@ FLUX2_SYSTEM_MESSAGE_I2I = (
     "- Specify what changes AND what stays the same (face, lighting, composition)\n"
     "- Reference actual image elements\n"
     "- Turn negatives into positives (\"don't change X\" -> \"keep X\")\n"
-    "- Make abstractions concrete (\"futuristic\" -> \"glowing cyan neon, metallic panels\")\n"
-    "- Keep content PG-13\n\n"
+    "- Make abstractions concrete (\"futuristic\" -> \"glowing cyan neon, metallic panels\")\n\n"
     "Output only the final instruction in plain text and nothing else."
 )
 
 # BFL sampling params for upsampling
 FLUX2_UPSAMPLE_TEMPERATURE = 0.15
 FLUX2_UPSAMPLE_MAX_TOKENS = 512
+# Max image dimension sent to upsampler (BFL uses 768**2 total pixels)
+FLUX2_UPSAMPLE_RESIZE_MAX = 768
 
 
 class Flux2PromptUpsampler:
@@ -523,6 +518,7 @@ class Flux2PromptUpsampler:
 
     T2I mode: Expands prompts with visual details, textures, lighting.
     I2I mode: Condenses editing requests into clear 50-80 word instructions.
+           When a reference image is provided, Mistral sees it for context.
     """
 
     def __init__(
@@ -530,24 +526,33 @@ class Flux2PromptUpsampler:
         api_url: str,
         api_model: str = "Mistral-Small-3.2-24B-Instruct-2506-bf16-mlx",
         timeout: float = 60.0,
+        system_prompt_t2i: str | None = None,
+        system_prompt_i2i: str | None = None,
     ):
         self.api_url = api_url
         self.api_model = api_model
         self.timeout = timeout
+        self.system_prompt_t2i = system_prompt_t2i or FLUX2_SYSTEM_MESSAGE_T2I
+        self.system_prompt_i2i = system_prompt_i2i or FLUX2_SYSTEM_MESSAGE_I2I
 
     def upsample(
         self,
         prompt: str,
         has_reference_images: bool = False,
+        reference_image_b64: str | None = None,
     ) -> str:
         """
         Upsample a prompt using BFL's official system prompts.
 
         Selects T2I or I2I mode based on whether reference images are present.
+        When a reference image is provided as base64, it's sent to the vision
+        model so Mistral can see what it's editing and give concrete instructions.
 
         Args:
             prompt: User's original prompt
             has_reference_images: Whether the request includes reference images
+            reference_image_b64: First reference image as base64 (optional).
+                When provided, sent to vision model for context-aware upsampling.
 
         Returns:
             Upsampled prompt text (falls back to original on error)
@@ -556,39 +561,57 @@ class Flux2PromptUpsampler:
             return prompt
 
         system_prompt = (
-            FLUX2_SYSTEM_MESSAGE_I2I if has_reference_images
-            else FLUX2_SYSTEM_MESSAGE_T2I
+            self.system_prompt_i2i if has_reference_images
+            else self.system_prompt_t2i
         )
         mode = "I2I" if has_reference_images else "T2I"
 
+        # Build user message content -- vision multimodal or plain text
+        if reference_image_b64:
+            # Strip data URL prefix if present
+            img_data = reference_image_b64
+            if "," in img_data and img_data.startswith("data:"):
+                img_data = img_data.split(",", 1)[1]
+            user_content: str | list = [
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/png;base64,{img_data}"},
+                },
+                {"type": "text", "text": prompt},
+            ]
+            mode = "I2I+Vision"
+        else:
+            user_content = prompt
+
         try:
-            import json
-            import urllib.request
+            import httpx
+            import orjson
 
             url = f"{self.api_url.rstrip('/')}/v1/chat/completions"
-            data = {
+            payload: dict = {
                 "model": self.api_model,
                 "messages": [
                     {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": prompt},
+                    {"role": "user", "content": user_content},
                 ],
                 "max_tokens": FLUX2_UPSAMPLE_MAX_TOKENS,
                 "temperature": FLUX2_UPSAMPLE_TEMPERATURE,
                 "enable_thinking": False,
             }
-
-            headers = {"Content-Type": "application/json"}
-            req = urllib.request.Request(
-                url,
-                data=json.dumps(data).encode("utf-8"),
-                headers=headers,
-                method="POST",
-            )
+            # Let heylookitsanllm resize the image server-side
+            if reference_image_b64:
+                payload["resize_max"] = FLUX2_UPSAMPLE_RESIZE_MAX
 
             logger.info(f"[FLUX2:Upsample] {mode} upsampling via {self.api_model}")
-            with urllib.request.urlopen(req, timeout=self.timeout) as response:
-                result = json.loads(response.read().decode("utf-8"))
-                upsampled = result["choices"][0]["message"]["content"].strip()
+            resp = httpx.post(
+                url,
+                content=orjson.dumps(payload),
+                headers={"Content-Type": "application/json"},
+                timeout=self.timeout,
+            )
+            resp.raise_for_status()
+            result = orjson.loads(resp.content)
+            upsampled = result["choices"][0]["message"]["content"].strip()
 
             logger.info(
                 f"[FLUX2:Upsample] {mode}: {len(prompt)} -> {len(upsampled)} chars"
