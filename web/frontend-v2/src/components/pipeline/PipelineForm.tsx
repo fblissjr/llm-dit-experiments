@@ -5,7 +5,7 @@
  * Groups parameters by their group field and handles preset loading.
  */
 
-import { useMemo, useCallback, useState } from 'react';
+import { useMemo, useCallback, useState, useRef } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { useAppStore, useFormStore } from '@/stores';
 import type { GroupType, ParamSchema, FormValues, ValidationError } from '@/api/types';
@@ -69,8 +69,10 @@ export function PipelineForm() {
   const setValue = useFormStore((s) => s.setValue);
   const applyDependentDefaults = useFormStore((s) => s.applyDependentDefaults);
 
-  // Upsample loading state (flux2 prompt only)
+  // Upsample loading state (flux2 prompt only).
+  // Use a ref for the guard so the callback reference stays stable.
   const [isUpsampling, setIsUpsampling] = useState(false);
+  const isUpsamplingRef = useRef(false);
 
   // Handle value change with dimension_preset <-> width/height sync.
   // Reads both formValues and pipeline from store directly (getState) to
@@ -132,8 +134,11 @@ export function PipelineForm() {
   // Prompt upsample action (flux2 only).
   // Reads current prompt and reference_images from store at call time
   // (not from the reactive formValues selector) to avoid stale closures.
+  // Uses ref for the in-flight guard so the callback identity stays stable
+  // (putting isUpsampling in deps would recreate the callback on every
+  // loading toggle, causing ParamControl to re-render with a new onAction).
   const handleUpsamplePrompt = useCallback(async () => {
-    if (!selectedPipelineId || isUpsampling) return;
+    if (!selectedPipelineId || isUpsamplingRef.current) return;
 
     const currentValues = useFormStore.getState().getResolvedValues(selectedPipelineId);
     const prompt = String(currentValues.prompt ?? '');
@@ -144,6 +149,7 @@ export function PipelineForm() {
       ? (currentValues.reference_images as string[]).filter(Boolean)
       : undefined;
 
+    isUpsamplingRef.current = true;
     setIsUpsampling(true);
     try {
       const upsampled = await upsamplePrompt(prompt, refImages?.length ? refImages : undefined);
@@ -153,9 +159,10 @@ export function PipelineForm() {
     } catch (err) {
       log.error('Prompt upsample failed:', err);
     } finally {
+      isUpsamplingRef.current = false;
       setIsUpsampling(false);
     }
-  }, [selectedPipelineId, isUpsampling, setValue]);
+  }, [selectedPipelineId, setValue]);
 
   // Memoize per-param onChange callbacks so each ParamControl gets a stable
   // reference. Recomputed only when pipeline params change or handleChange

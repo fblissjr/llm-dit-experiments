@@ -113,7 +113,7 @@ export function Textarea({
            */
           <button
             type="button"
-            onClick={onAction}
+            onClick={(e) => { e.stopPropagation(); e.preventDefault(); onAction?.(); }}
             disabled={disabled || actionLoading}
             title={actionLabel}
             aria-label={actionLabel}
