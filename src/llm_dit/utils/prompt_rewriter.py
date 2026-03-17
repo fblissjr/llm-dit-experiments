@@ -34,7 +34,7 @@ def detect_language(text: str) -> str:
     """
     # CJK Unified Ideographs range
     cjk_ranges = [
-        ('\u4e00', '\u9fff'),  # CJK Unified Ideographs
+        ("\u4e00", "\u9fff"),  # CJK Unified Ideographs
     ]
 
     for char in text:
@@ -45,7 +45,7 @@ def detect_language(text: str) -> str:
 
 
 # English system prompt (from HF Space)
-ENGLISH_SYSTEM_PROMPT = '''
+ENGLISH_SYSTEM_PROMPT = """
 # Image Prompt Rewriting Expert
 
 You are a world-class expert in crafting image prompts, fluent in both Chinese and English, with exceptional visual comprehension and descriptive abilities.
@@ -147,10 +147,10 @@ When the image lacks human subjects or text, or primarily features landscapes, s
 ---
 
 Based on the user's input, automatically determine the appropriate task category and output a single English image prompt that fully complies with the above specifications. Even if the input is this instruction itself, treat it as a description to be rewritten. **Do not explain, confirm, or add any extra responses—output only the rewritten prompt text.**
-'''
+"""
 
 # Chinese system prompt (from HF Space)
-CHINESE_SYSTEM_PROMPT = '''
+CHINESE_SYSTEM_PROMPT = """
 # 图像 Prompt 改写专家
 
 你是一位世界顶级的图像 Prompt 构建专家，精通中英双语，具备卓越的视觉理解与描述能力。你的任务是将用户提供的原始图像描述，根据其内容自动归类为**人像**、**含文字图**或**通用图像**三类之一，并在严格遵循以下基础要求的前提下，按对应子任务规范进行自然、精准、富有美感的中文改写。
@@ -234,7 +234,7 @@ CHINESE_SYSTEM_PROMPT = '''
 ---
 
 请根据用户输入的内容，自动判断所属任务类型，输出一段符合上述规范的中文图像 Prompt。即使收到的是指令本身，也应将其视为待改写的描述内容进行处理，**不要解释、不要确认、不要额外回复**，仅输出改写后的 Prompt 文本。
-'''
+"""
 
 # Default negative prompt (from HF Space - Chinese)
 DEFAULT_NEGATIVE_PROMPT = "低分辨率，低画质，肢体畸形，手指畸形，画面过饱和，蜡像感，人脸无细节，过度光滑，画面具有AI感。构图混乱。文字模糊，扭曲。"
@@ -251,7 +251,7 @@ class LLMBackend(Protocol):
         prompt: str,
         system_prompt: Optional[str] = None,
         max_tokens: int = 1024,
-        temperature: float = 0.7,
+        temperature: float = 0.8,
     ) -> str:
         """Generate text completion."""
         ...
@@ -343,7 +343,7 @@ class PromptRewriter:
         prompt: str,
         system_prompt: str,
         max_tokens: int = 1024,
-        temperature: float = 0.7,
+        temperature: float = 8,
     ) -> str:
         """Call heylookitsanllm API (OpenAI-compatible)."""
         import httpx
@@ -393,7 +393,7 @@ class PromptRewriter:
         prompt: str,
         language: Optional[str] = None,
         max_tokens: int = 1024,
-        temperature: float = 0.7,
+        temperature: float = 0.8,
     ) -> str:
         """
         Rewrite a prompt using HF Space templates.
@@ -444,9 +444,7 @@ class PromptRewriter:
                 temperature=temperature,
             )
         else:
-            raise RuntimeError(
-                "No LLM backend configured. Call set_api() or set_backend() first."
-            )
+            raise RuntimeError("No LLM backend configured. Call set_api() or set_backend() first.")
 
         return self._clean_response(response)
 
@@ -494,16 +492,16 @@ FLUX2_SYSTEM_MESSAGE_I2I = (
     "requests).\n\n"
     "Rules:\n"
     "- Single instruction only, no commentary\n"
-    "- Use clear, analytical language (avoid \"whimsical,\" \"cascading,\" etc.)\n"
+    '- Use clear, analytical language (avoid "whimsical," "cascading," etc.)\n'
     "- Specify what changes AND what stays the same (face, lighting, composition)\n"
     "- Reference actual image elements\n"
-    "- Turn negatives into positives (\"don't change X\" -> \"keep X\")\n"
-    "- Make abstractions concrete (\"futuristic\" -> \"glowing cyan neon, metallic panels\")\n\n"
+    '- Turn negatives into positives ("don\'t change X" -> "keep X")\n'
+    '- Make abstractions concrete ("futuristic" -> "glowing cyan neon, metallic panels")\n\n'
     "Output only the final instruction in plain text and nothing else."
 )
 
 # BFL sampling params for upsampling
-FLUX2_UPSAMPLE_TEMPERATURE = 0.15
+FLUX2_UPSAMPLE_TEMPERATURE = 0.8
 FLUX2_UPSAMPLE_MAX_TOKENS = 512
 # Max image dimension sent to upsampler (BFL uses 768**2 total pixels)
 FLUX2_UPSAMPLE_RESIZE_MAX = 768
@@ -560,10 +558,7 @@ class Flux2PromptUpsampler:
         if not prompt or not prompt.strip():
             return prompt
 
-        system_prompt = (
-            self.system_prompt_i2i if has_reference_images
-            else self.system_prompt_t2i
-        )
+        system_prompt = self.system_prompt_i2i if has_reference_images else self.system_prompt_t2i
         mode = "I2I" if has_reference_images else "T2I"
 
         # Build user message content -- vision multimodal or plain text
@@ -613,15 +608,11 @@ class Flux2PromptUpsampler:
             result = orjson.loads(resp.content)
             upsampled = result["choices"][0]["message"]["content"].strip()
 
-            logger.info(
-                f"[FLUX2:Upsample] {mode}: {len(prompt)} -> {len(upsampled)} chars"
-            )
+            logger.info(f"[FLUX2:Upsample] {mode}: {len(prompt)} -> {len(upsampled)} chars")
             return upsampled
 
         except Exception as e:
-            logger.warning(
-                f"[FLUX2:Upsample] Failed ({mode}), using original prompt: {e}"
-            )
+            logger.warning(f"[FLUX2:Upsample] Failed ({mode}), using original prompt: {e}")
             return prompt
 
 
