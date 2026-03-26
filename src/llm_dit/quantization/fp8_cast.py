@@ -111,6 +111,16 @@ def _replace_fwd_with_scaled_mm(layer: nn.Linear) -> None:
     def new_forward(*args, **_kwargs) -> torch.Tensor:
         x = args[0]
 
+        # Guard: weight may not be fp8 (e.g. after LoRA fusion converts fp8->bf16,
+        # or non-quantized layers in mixed models). Fall back to standard linear.
+        if layer.weight.dtype != torch.float8_e4m3fn:
+            w = layer.weight.to(x.dtype)
+            ws = getattr(layer, "_weight_scale", None)
+            if ws is not None:
+                w = w * ws.to(x.dtype)
+            b = layer.bias.to(x.dtype) if layer.bias is not None else None
+            return torch.nn.functional.linear(x, w, b)
+
         # Lazy-init scales on first call (now on the correct device)
         if not _cache:
             dev = x.device
