@@ -1,6 +1,6 @@
 """FP8-cast quantization utilities.
 
-Last Updated: 2026-03-25
+Last Updated: 2026-03-26
 
 Supports two FP8 checkpoint formats:
 
@@ -32,12 +32,17 @@ Usage:
 """
 
 import logging
+import os
 from functools import lru_cache
 
 import torch
 from torch import nn
 
 logger = logging.getLogger(__name__)
+
+# Diagnostic escape hatch: force upcast path even when scaled_mm is available.
+# Set LLM_DIT_FORCE_FP8_UPCAST=1 to bypass scaled_mm for debugging.
+_FORCE_UPCAST = os.environ.get("LLM_DIT_FORCE_FP8_UPCAST", "").lower() in ("1", "true")
 
 
 @lru_cache(maxsize=1)
@@ -102,11 +107,11 @@ def _replace_fwd_with_scaled_mm(layer: nn.Linear) -> None:
     """
     layer.original_forward = layer.forward  # type: ignore[attr-defined]
 
-    # Mutable cache for scale tensors. Populated lazily on first forward call
-    # because models are often patched on CPU then moved to CUDA via model.to().
-    _cache: dict[str, torch.Tensor] = {}
-
-    ws_raw = getattr(layer, "_weight_scale", None)
+    # Mutable cache for scale tensors stored as module attribute (not closure var)
+    # so it can be cleared externally via invalidate_scaled_mm_caches() after LoRA
+    # fusion updates _weight_scale. Populated lazily on first forward call because
+    # models are often patched on CPU then moved to CUDA via model.to().
+    layer._smm_cache = {}  # type: ignore[attr-defined]
 
     def new_forward(*args, **_kwargs) -> torch.Tensor:
         x = args[0]
@@ -121,14 +126,18 @@ def _replace_fwd_with_scaled_mm(layer: nn.Linear) -> None:
             b = layer.bias.to(x.dtype) if layer.bias is not None else None
             return torch.nn.functional.linear(x, w, b)
 
-        # Lazy-init scales on first call (now on the correct device)
-        if not _cache:
+        # Lazy-init scales on first call (now on the correct device).
+        # Reads _weight_scale fresh (not captured at patch time) so that
+        # cache invalidation after LoRA fusion picks up the new scale.
+        cache = layer._smm_cache
+        if not cache:
             dev = x.device
-            _cache["one"] = torch.tensor(1.0, device=dev, dtype=torch.float32)
-            if ws_raw is not None:
-                _cache["b"] = ws_raw.to(device=dev, dtype=torch.float32)
+            cache["one"] = torch.tensor(1.0, device=dev, dtype=torch.float32)
+            ws = getattr(layer, "_weight_scale", None)
+            if ws is not None:
+                cache["b"] = ws.to(device=dev, dtype=torch.float32)
             else:
-                _cache["b"] = _cache["one"]
+                cache["b"] = cache["one"]
 
         x_2d = x.reshape(-1, x.shape[-1])
         x_fp8 = x_2d.to(torch.float8_e4m3fn)
@@ -136,7 +145,7 @@ def _replace_fwd_with_scaled_mm(layer: nn.Linear) -> None:
         # weight.T is a view with stride(0)==1 (column-major) -- no copy
         result = torch._scaled_mm(
             x_fp8, layer.weight.T,
-            scale_a=_cache["one"], scale_b=_cache["b"],
+            scale_a=cache["one"], scale_b=cache["b"],
             out_dtype=x.dtype,
         )
 
@@ -195,9 +204,11 @@ def amend_forward_with_upcast(
     Returns:
         Number of linear layers patched.
     """
-    use_smm = is_scaled_mm_available()
+    use_smm = is_scaled_mm_available() and not _FORCE_UPCAST
     patch_fn = _replace_fwd_with_scaled_mm if use_smm else _replace_fwd_with_upcast
     method = "scaled_mm" if use_smm else "upcast"
+    if _FORCE_UPCAST and is_scaled_mm_available():
+        logger.info("fp8-cast: LLM_DIT_FORCE_FP8_UPCAST=1 -- forcing upcast path")
 
     count = 0
     scaled = 0
@@ -253,4 +264,27 @@ def _attach_weight_scales(
             f"{count} attached to nn.Linear modules"
         )
 
+    return count
+
+
+def invalidate_scaled_mm_caches(model: nn.Module) -> int:
+    """Clear cached scale tensors in scaled_mm forward closures.
+
+    Must be called after modifying _weight_scale attributes (e.g., after LoRA
+    fusion re-quantizes weights) so the next forward call re-initializes the
+    cache with updated scales.
+
+    Args:
+        model: Model whose nn.Linear layers may have _smm_cache dicts.
+
+    Returns:
+        Number of caches cleared.
+    """
+    count = 0
+    for module in model.modules():
+        if isinstance(module, nn.Linear) and hasattr(module, "_smm_cache"):
+            module._smm_cache.clear()  # type: ignore[attr-defined]
+            count += 1
+    if count:
+        logger.debug(f"Invalidated {count} scaled_mm caches")
     return count

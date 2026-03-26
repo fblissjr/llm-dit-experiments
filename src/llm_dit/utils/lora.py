@@ -361,6 +361,7 @@ class LoRALoader:
 
         updated_num = 0
         requant_num = 0
+        fp8_cast_num = 0
         state_dict = self.convert_state_dict(state_dict)
 
         # Lazy-init: re-quantization config loaded on first quantized layer
@@ -394,6 +395,14 @@ class LoRALoader:
                 state_dict_base = module.state_dict()
                 base_weight = state_dict_base["weight"]
 
+                # Detect fp8-cast native tensors: plain torch.Tensor with fp8
+                # dtype + optional _weight_scale. These are NOT torchao subclasses
+                # so they fail the `type(x) is not torch.Tensor` check below.
+                is_fp8_cast = (
+                    type(base_weight) is torch.Tensor
+                    and base_weight.dtype in _QUANTIZED_STORAGE_DTYPES
+                )
+
                 # Dequantize quantized tensors (e.g., torchao Float8Tensor)
                 # before LoRA merge. Float8Tensor.to(dtype=bf16) returns another
                 # Float8Tensor, and aten.add is not implemented for that type.
@@ -404,11 +413,39 @@ class LoRALoader:
                     else:
                         base_weight = base_weight.float()
 
-                merged_weight = (
-                    base_weight.to(device=self.device, dtype=self.dtype) + weight_lora
-                )
+                if is_fp8_cast:
+                    # fp8-cast path: dequant with weight_scale, fuse in f32,
+                    # re-quantize with quantize_to_fp8_per_tensor. This matches
+                    # the _fuse_delta() pattern in fuse_lora_to_state_dict.
+                    from llm_dit.quantization.fp8_cast import quantize_to_fp8_per_tensor
 
-                if is_quantized:
+                    ws = getattr(module, "_weight_scale", None)
+                    if ws is not None:
+                        real_weight = base_weight.to(torch.float32) * ws.to(torch.float32)
+                    else:
+                        real_weight = base_weight.to(self.dtype)
+
+                    merged_weight = real_weight.to(device=self.device, dtype=self.dtype) + weight_lora
+
+                    if ws is not None:
+                        new_fp8, new_scale = quantize_to_fp8_per_tensor(merged_weight)
+                        module.weight = nn.Parameter(new_fp8, requires_grad=False)
+                        module._weight_scale = new_scale
+                    else:
+                        module.weight = nn.Parameter(
+                            merged_weight.to(base_weight.dtype), requires_grad=False
+                        )
+
+                    fp8_cast_num += 1
+
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+
+                elif is_quantized:
+                    merged_weight = (
+                        base_weight.to(device=self.device, dtype=self.dtype) + weight_lora
+                    )
+
                     # Cannot use load_state_dict on quantized modules --
                     # Float8Tensor.copy_() expects qdata on the source tensor.
                     # Directly replace the parameter instead.
@@ -443,6 +480,9 @@ class LoRALoader:
                     if torch.cuda.is_available():
                         torch.cuda.empty_cache()
                 else:
+                    merged_weight = (
+                        base_weight.to(device=self.device, dtype=self.dtype) + weight_lora
+                    )
                     state_dict_base["weight"] = merged_weight
                     module.load_state_dict(state_dict_base)
 
@@ -450,6 +490,11 @@ class LoRALoader:
 
         if requant_num:
             logger.info(f"Re-quantized {requant_num} layers to fp8 during fusion")
+        if fp8_cast_num:
+            logger.info(f"Re-quantized {fp8_cast_num} fp8-cast layers during fusion")
+            # Invalidate scaled_mm caches so next forward reads updated _weight_scale
+            from llm_dit.quantization.fp8_cast import invalidate_scaled_mm_caches
+            invalidate_scaled_mm_caches(model)
 
         logger.info(f"Fused {updated_num} LoRA layers (alpha={alpha})")
         return updated_num

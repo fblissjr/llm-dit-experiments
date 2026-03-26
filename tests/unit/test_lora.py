@@ -862,6 +862,122 @@ class TestFuseLoraToStateDict:
 
 
 # ============================================================================
+# fuse_lora_to_base_model with fp8-cast native tensors
+# ============================================================================
+
+
+class TestFuseLoraFP8Cast:
+    """Test in-place LoRA fusion on models with native fp8 weights + _weight_scale.
+
+    This covers the fp8-cast loading path (FLUX.2 Klein FP8, LTX-2 FP8) where
+    weights are torch.Tensor with dtype=float8_e4m3fn and per-tensor _weight_scale
+    attributes. Before the fix, these were NOT detected as quantized (type IS
+    torch.Tensor), so LoRA deltas were added in the wrong scale and lost on
+    truncation back to fp8.
+    """
+
+    def test_fp8_cast_lora_changes_dequantized_weight(self):
+        """LoRA fusion on fp8-cast model should produce a meaningful weight change.
+
+        Without the fix, the LoRA delta is negligible because it's added to raw
+        fp8 numeric values (~300) instead of dequantized real values (~0.02).
+        """
+        from llm_dit.quantization.fp8_cast import quantize_to_fp8_per_tensor
+        from llm_dit.utils.lora import LoRALoader
+
+        # Create a model with native fp8 weights + weight_scale
+        model = nn.Module()
+        model.layer = nn.Linear(32, 64, bias=False)
+
+        # Simulate fp8-cast loading: quantize real weights to scaled fp8
+        real_weight = torch.randn(64, 32) * 0.02  # typical magnitude
+        fp8_weight, weight_scale = quantize_to_fp8_per_tensor(real_weight)
+        model.layer.weight = nn.Parameter(fp8_weight, requires_grad=False)
+        model.layer._weight_scale = weight_scale
+
+        # Record dequantized original weight
+        original_real = fp8_weight.float() * weight_scale
+
+        # Create LoRA state dict
+        lora_rank = 8
+        state_dict = {
+            "layer.lora_B.weight": torch.randn(64, lora_rank) * 0.01,
+            "layer.lora_A.weight": torch.randn(lora_rank, 32) * 0.01,
+        }
+
+        loader = LoRALoader(device="cpu", dtype=torch.bfloat16)
+        updated = loader.fuse_lora_to_base_model(model, state_dict, alpha=1.0)
+        assert updated == 1
+
+        # Weight should still be fp8
+        assert model.layer.weight.dtype == torch.float8_e4m3fn
+
+        # Dequantize the fused weight using the (possibly updated) scale
+        fused_scale = getattr(model.layer, "_weight_scale", weight_scale)
+        fused_real = model.layer.weight.float() * fused_scale
+
+        # The LoRA should have produced a meaningful change
+        delta = (fused_real - original_real).abs().mean()
+        assert delta > 1e-4, (
+            f"LoRA delta too small ({delta:.2e}) -- "
+            "fp8-cast fusion likely not dequanting before merge"
+        )
+
+    def test_fp8_cast_lora_updates_weight_scale(self):
+        """After fp8-cast LoRA fusion, _weight_scale should be updated."""
+        from llm_dit.quantization.fp8_cast import quantize_to_fp8_per_tensor
+        from llm_dit.utils.lora import LoRALoader
+
+        model = nn.Module()
+        model.layer = nn.Linear(32, 64, bias=False)
+
+        real_weight = torch.randn(64, 32) * 0.02
+        fp8_weight, weight_scale = quantize_to_fp8_per_tensor(real_weight)
+        model.layer.weight = nn.Parameter(fp8_weight, requires_grad=False)
+        model.layer._weight_scale = weight_scale
+        original_scale = weight_scale.clone()
+
+        lora_rank = 8
+        state_dict = {
+            "layer.lora_B.weight": torch.randn(64, lora_rank) * 0.01,
+            "layer.lora_A.weight": torch.randn(lora_rank, 32) * 0.01,
+        }
+
+        loader = LoRALoader(device="cpu", dtype=torch.bfloat16)
+        loader.fuse_lora_to_base_model(model, state_dict, alpha=1.0)
+
+        # Scale should exist and may have changed (re-quantization changes scale)
+        assert hasattr(model.layer, "_weight_scale")
+        new_scale = model.layer._weight_scale
+        assert new_scale.dtype == torch.float32
+
+    def test_fp8_cast_no_weight_scale_still_works(self):
+        """fp8 weights without _weight_scale (naive fp8) should still fuse correctly."""
+        from llm_dit.utils.lora import LoRALoader
+
+        model = nn.Module()
+        model.layer = nn.Linear(32, 64, bias=False)
+
+        # Naive fp8: just cast to fp8 without scaling
+        model.layer.weight = nn.Parameter(
+            torch.randn(64, 32).to(torch.float8_e4m3fn),
+            requires_grad=False,
+        )
+        original_weight = model.layer.weight.clone()
+
+        lora_rank = 8
+        state_dict = {
+            "layer.lora_B.weight": torch.randn(64, lora_rank) * 0.1,
+            "layer.lora_A.weight": torch.randn(lora_rank, 32) * 0.1,
+        }
+
+        loader = LoRALoader(device="cpu", dtype=torch.bfloat16)
+        updated = loader.fuse_lora_to_base_model(model, state_dict, alpha=1.0)
+        assert updated == 1
+        assert model.layer.weight.dtype == torch.float8_e4m3fn
+
+
+# ============================================================================
 # _normalize_lora_args Tests (from generate.py)
 # ============================================================================
 

@@ -453,6 +453,56 @@ class TestScaledMM:
         assert linear.weight.dtype == torch.float8_e4m3fn
 
 
+class TestScaledMMCacheInvalidation:
+    """Tests for invalidating scaled_mm cache after LoRA fusion."""
+
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
+    def test_cache_invalidation_picks_up_new_weight_scale(self):
+        """After updating _weight_scale and invalidating cache, forward uses new scale."""
+        from llm_dit.quantization.fp8_cast import (
+            _replace_fwd_with_scaled_mm,
+            invalidate_scaled_mm_caches,
+            quantize_to_fp8_per_tensor,
+        )
+
+        # Create linear with scaled fp8 weight
+        linear = nn.Linear(64, 128, bias=False, device="cuda")
+        real_weight = linear.weight.data.clone()
+        fp8_weight, weight_scale = quantize_to_fp8_per_tensor(real_weight)
+        linear.weight = nn.Parameter(fp8_weight.to("cuda"), requires_grad=False)
+        linear._weight_scale = weight_scale.to("cuda")
+
+        _replace_fwd_with_scaled_mm(linear)
+
+        # First forward -- populates cache
+        x = torch.randn(4, 64, device="cuda", dtype=torch.bfloat16)
+        y1 = linear(x)
+
+        # Update weight_scale (simulates what LoRA fusion does after re-quantization)
+        new_scale = weight_scale * 2.0  # 2x scale = 2x output
+        linear._weight_scale = new_scale.to("cuda")
+
+        # Without invalidation, should still use OLD scale
+        y_stale = linear(x)
+        assert torch.allclose(y_stale, y1, atol=1e-3), (
+            "Expected stale cache to produce same output"
+        )
+
+        # Invalidate cache
+        model = nn.Module()
+        model.linear = linear
+        count = invalidate_scaled_mm_caches(model)
+        assert count >= 1
+
+        # After invalidation, should use NEW scale (output ~2x)
+        y_new = linear(x)
+        ratio = y_new.abs().mean() / y1.abs().mean()
+        assert ratio > 1.5, (
+            f"Expected ~2x output after scale update, got ratio={ratio:.2f}. "
+            "Cache invalidation likely didn't clear the cached scale."
+        )
+
+
 class TestFP8CastTransformerLoader:
     """Tests for loading LTX-2.3 transformer with fp8-cast."""
 
