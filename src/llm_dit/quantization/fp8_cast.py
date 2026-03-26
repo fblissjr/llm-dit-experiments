@@ -133,6 +133,9 @@ def _replace_fwd_with_scaled_mm(layer: nn.Linear) -> None:
         if not cache:
             dev = x.device
             cache["one"] = torch.tensor(1.0, device=dev, dtype=torch.float32)
+            cache["fp8_max"] = torch.tensor(
+                torch.finfo(torch.float8_e4m3fn).max, device=dev, dtype=torch.float32
+            )
             ws = getattr(layer, "_weight_scale", None)
             if ws is not None:
                 cache["b"] = ws.to(device=dev, dtype=torch.float32)
@@ -140,12 +143,19 @@ def _replace_fwd_with_scaled_mm(layer: nn.Linear) -> None:
                 cache["b"] = cache["one"]
 
         x_2d = x.reshape(-1, x.shape[-1])
-        x_fp8 = x_2d.to(torch.float8_e4m3fn)
+
+        # Dynamic per-tensor activation scaling: scale x to fill fp8 range
+        # without clamping. Without this, values > fp8_max (~448) are clipped,
+        # producing NaN/garbage after multi-layer residual accumulation.
+        x_abs_max = x_2d.abs().amax().clamp(min=1e-12)
+        x_scale = cache["fp8_max"] / x_abs_max
+        x_fp8 = (x_2d * x_scale).to(torch.float8_e4m3fn)
+        scale_a = x_scale.reciprocal()
 
         # weight.T is a view with stride(0)==1 (column-major) -- no copy
         result = torch._scaled_mm(
             x_fp8, layer.weight.T,
-            scale_a=cache["one"], scale_b=cache["b"],
+            scale_a=scale_a, scale_b=cache["b"],
             out_dtype=x.dtype,
         )
 

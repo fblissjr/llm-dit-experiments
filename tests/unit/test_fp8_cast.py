@@ -453,6 +453,55 @@ class TestScaledMM:
         assert linear.weight.dtype == torch.float8_e4m3fn
 
 
+class TestScaledMMActivationClamping:
+    """Test that scaled_mm handles large activations without clamping."""
+
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
+    def test_large_activations_produce_correct_output(self):
+        """Activations > fp8 max (448) should not produce garbled output.
+
+        Without dynamic activation scaling, x.to(fp8) clamps values > 448,
+        losing information and producing all-zeros or black images.
+        """
+        from llm_dit.quantization.fp8_cast import (
+            _replace_fwd_with_scaled_mm,
+            _replace_fwd_with_upcast,
+            quantize_to_fp8_per_tensor,
+        )
+
+        # Create linear with scaled fp8 weights
+        linear_smm = nn.Linear(64, 128, bias=False, device="cuda")
+        real_weight = linear_smm.weight.data.clone()
+        fp8_weight, weight_scale = quantize_to_fp8_per_tensor(real_weight)
+        linear_smm.weight = nn.Parameter(fp8_weight.to("cuda"), requires_grad=False)
+        linear_smm._weight_scale = weight_scale.to("cuda")
+
+        linear_up = nn.Linear(64, 128, bias=False, device="cuda")
+        linear_up.weight = nn.Parameter(fp8_weight.to("cuda").clone(), requires_grad=False)
+        linear_up._weight_scale = weight_scale.to("cuda")
+
+        _replace_fwd_with_scaled_mm(linear_smm)
+        _replace_fwd_with_upcast(linear_up)
+
+        # Large activations (values ~1000, well above fp8 max of 448)
+        x = torch.randn(4, 64, device="cuda", dtype=torch.bfloat16) * 1000.0
+
+        y_smm = linear_smm(x)
+        y_up = linear_up(x)
+
+        # Must not produce NaN/inf (the failure mode without dynamic scaling)
+        assert not torch.isnan(y_smm).any(), "scaled_mm produced NaN with large activations"
+        assert not torch.isinf(y_smm).any(), "scaled_mm produced inf with large activations"
+
+        # Relative error within fp8 precision bounds (~20% for values scaled 1000x)
+        rel_err = (y_smm - y_up).abs() / (y_up.abs() + 1e-6)
+        mean_rel_err = rel_err.mean().item()
+        assert mean_rel_err < 0.25, (
+            f"scaled_mm with large activations has {mean_rel_err:.2%} mean relative error "
+            f"(likely missing dynamic activation scaling)"
+        )
+
+
 class TestScaledMMCacheInvalidation:
     """Tests for invalidating scaled_mm cache after LoRA fusion."""
 
