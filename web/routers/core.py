@@ -420,7 +420,7 @@ async def generate(request: GenerateRequest, config: ConfigDep, manager: Manager
 
         # Negative prompt: only use for base variant (turbo has CFG=0, so it has no effect)
         negative_prompt_to_use = None
-        if config.zimage_variant == "base":
+        if variant == "base":
             negative_prompt_to_use = request.negative_prompt
 
         start = time.time()
@@ -732,7 +732,7 @@ async def generate_stream(request: GenerateRequest, config: ConfigDep, manager: 
 
             # Negative prompt: only use for base variant
             negative_prompt_to_use = None
-            if config.zimage_variant == "base":
+            if variant == "base":
                 negative_prompt_to_use = request.negative_prompt
 
             # SLG config
@@ -1028,7 +1028,7 @@ async def img2img(request: Img2ImgRequest, config: ConfigDep, manager: ManagerDe
 
         # Negative prompt: only use for base variant (turbo has CFG=0, so it has no effect)
         negative_prompt_to_use = None
-        if config.zimage_variant == "base":
+        if variant == "base":
             negative_prompt_to_use = request.negative_prompt
 
         start = time.time()
