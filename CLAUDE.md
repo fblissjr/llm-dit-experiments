@@ -1,6 +1,6 @@
 # agent context (v0.9.28)
 
-*last updated: 2026-03-09*
+*last updated: 2026-03-26*
 
 Quick reference for LLM agents. This is a hobbyist exploration platform -- not a product. The codebase evolves to support whatever we're curious about next.
 
@@ -97,7 +97,7 @@ This is a multi-workstream project. Encoders and core infra are shared across pi
 | CLI-over-API | `scripts/gen.py` | Thin httpx client (~440 lines): `flux2`, `zimage`, `ltx2`, `qwen`, `status` subcommands. Tests: `tests/unit/test_gen_cli.py` (52 tests) |
 | Memory cleanup | `src/llm_dit/utils/memory.py` | `cleanup_memory()` -- centralized gc.collect + torch.cuda.empty_cache (CUDA guard) |
 | Quant aliases | `src/llm_dit/quantization/__init__.py` | `QUANT_ALIASES` dict -- canonical `"fp8"` -> `"fp8-dynamic"` mapping (single source of truth) |
-| FP8 forward | `src/llm_dit/quantization/fp8_cast.py` | `amend_forward_with_upcast()` -- dual-path: `torch._scaled_mm` (SM89+, 2x faster) or bf16 upcast fallback |
+| FP8 forward | `src/llm_dit/quantization/fp8_cast.py` | `amend_forward_with_upcast()` -- dual-path: `torch._scaled_mm` (SM89+, 2x faster, dynamic activation scaling) or bf16 upcast fallback. `invalidate_scaled_mm_caches()` after LoRA fusion. `LLM_DIT_FORCE_FP8_UPCAST=1` env var forces upcast path. |
 | FLUX.2 scheduler | `src/llm_dit/schedulers/flux2_scheduler.py` | `get_schedule()`, `compute_empirical_mu()`, `generalized_time_snr_shift()` |
 | V2 Feature Extractor | `src/llm_dit/encoders/gemma3_feature_extractor_v2.py` | Per-token RMSNorm, dual projections (video 4096, audio 2048) |
 
@@ -133,6 +133,8 @@ Full testing guide with all commands: [tests/CLAUDE.md](tests/CLAUDE.md)
 | Circular import | Router imports server at module level | See architecture pattern in [post_refactor_guide.md](internal/docs/architecture/post_refactor_guide.md) |
 | fp8 weights silently become bf16 | `load_state_dict` missing `assign=True` | Always use `assign=True` for mixed-dtype models |
 | `_scaled_mm` CUBLAS error | Wrong scale shapes or matrix layout | B needs `stride(0)==1` (`.T` view). Trailing dim divisible by 16. Scalar scales for TensorWise |
+| FP8 scaled_mm black images | Activations > fp8 max (~448) clamped | Fixed: dynamic per-tensor activation scaling in `_replace_fwd_with_scaled_mm`. Test with `LLM_DIT_FORCE_FP8_UPCAST=1` to isolate. |
+| LoRA no effect on fp8-cast model | `fuse_lora_to_base_model` didn't detect native fp8 | Fixed: detects `dtype in _QUANTIZED_STORAGE_DTYPES`, dequants with `_weight_scale`, re-quants via `quantize_to_fp8_per_tensor()` |
 | Washed-out/noisy distilled output | LoRA fused without fp8 weight_scale | `fuse_lora_to_state_dict` must dequant with `weight_scale` before adding LoRA delta; see `_fuse_delta()` in lora.py |
 | Stage 1 washed out with few steps | Wrong two-stage pipeline mode | We use TI2VidTwoStagesPipeline (base+LoRA), NOT DistilledPipeline. Stage 1 needs 30 steps + full CFG, not 8 steps. See [ltx2_distilled_pipeline.md](docs/reference/ltx2_distilled_pipeline.md) |
 

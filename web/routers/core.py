@@ -19,6 +19,7 @@ from PIL import Image
 from starlette.responses import StreamingResponse
 
 from web.dependencies import ConfigDep, ManagerDep
+from web.param_resolver import resolve_param
 from web.schemas import (
     DyPEConfigResponse,
     DyPEStatusResponse,
@@ -54,14 +55,13 @@ def resolve_zimage_variant(
     """Resolve the Z-Image variant from request or config.
 
     Priority: request.variant (if sent) > config.zimage_variant > "turbo".
+    Uses resolve_param for standard client > config precedence, then maps
+    "auto" to "turbo".
     """
     if config is None:
         return "turbo"
-    # Use request variant if client sent it explicitly
-    if hasattr(request, "variant") and "variant" in request.model_fields_set and request.variant:
-        return request.variant
-    variant = config.zimage_variant
-    if variant == "auto":
+    variant = resolve_param(request, "variant", config.zimage_variant, skip_none=True)
+    if not variant or variant == "auto":
         return "turbo"
     return variant
 
@@ -103,13 +103,12 @@ def apply_zimage_variant_defaults(
 
 
 def _ensure_correct_zimage_variant(variant: str, manager, config) -> None:
-    """Reload Z-Image pipeline if the loaded variant doesn't match the request.
+    """Ensure config and loaded pipeline match the requested variant.
 
-    Updates config.zimage.model_path and config.zimage.variant before reloading.
+    If the pipeline is not yet loaded, updates config so the next load uses the
+    correct model path. If the pipeline IS loaded with a different variant,
+    updates config and triggers a reload.
     """
-    if not manager.is_loaded("zimage"):
-        return
-
     current_variant = config.zimage_variant
     if current_variant == variant:
         return
@@ -121,13 +120,17 @@ def _ensure_correct_zimage_variant(variant: str, manager, config) -> None:
             f"Set [zimage].{variant}_model_path in config.toml"
         )
 
+    config.zimage.model_path = new_path
+    config.zimage.variant = variant
+
+    if not manager.is_loaded("zimage"):
+        logger.debug(f"[Z-Image] Config set to variant='{variant}' for first load")
+        return
+
     logger.info(
         f"[Z-Image] Variant mismatch: loaded='{current_variant}', "
         f"requested='{variant}'. Reloading from {new_path}..."
     )
-
-    config.zimage.model_path = new_path
-    config.zimage.variant = variant
     manager.reload_zimage()
     logger.info(f"[Z-Image] Reload complete: variant='{variant}'")
 
@@ -351,15 +354,13 @@ async def generate(request: GenerateRequest, config: ConfigDep, manager: Manager
     variant = resolve_zimage_variant(request, config)
     apply_zimage_variant_defaults(request, config, variant)
 
+    # Ensure config/pipeline match requested variant (handles both first-load
+    # config setup and reload of already-loaded pipeline)
+    _ensure_correct_zimage_variant(variant, manager, config)
+
     # Load Z-Image pipeline on-demand if not already loaded
     zimage = manager.get_pipeline("zimage")
     if zimage is None:
-        # Set correct model path before first load
-        if variant != config.zimage_variant:
-            new_path = config.zimage.resolve_model_path(variant)
-            if new_path:
-                config.zimage.model_path = new_path
-                config.zimage.variant = variant
         try:
             _ensure_zimage_loaded(manager)
             zimage = manager.get_pipeline("zimage")
@@ -369,9 +370,6 @@ async def generate(request: GenerateRequest, config: ConfigDep, manager: Manager
                 status_code=503,
                 detail=f"Z-Image pipeline failed to load: {str(e)}",
             )
-    else:
-        # Reload if variant changed
-        _ensure_correct_zimage_variant(variant, manager, config)
 
     # LoRA: check mismatch and reload if needed, then fuse
     _ensure_zimage_lora(manager, request.loras)
@@ -699,14 +697,12 @@ async def generate_stream(request: GenerateRequest, config: ConfigDep, manager: 
             status_code=400, detail="Server running in encoder-only mode. Use /api/encode instead."
         )
 
+    # Ensure config/pipeline match requested variant
+    _ensure_correct_zimage_variant(variant, manager, config)
+
     # Load Z-Image pipeline on-demand if not already loaded
     zimage = manager.get_pipeline("zimage")
     if zimage is None:
-        if variant != config.zimage_variant:
-            new_path = config.zimage.resolve_model_path(variant)
-            if new_path:
-                config.zimage.model_path = new_path
-                config.zimage.variant = variant
         try:
             _ensure_zimage_loaded(manager)
             zimage = manager.get_pipeline("zimage")
@@ -716,8 +712,6 @@ async def generate_stream(request: GenerateRequest, config: ConfigDep, manager: 
                 status_code=503,
                 detail=f"Z-Image pipeline failed to load: {str(e)}",
             )
-    else:
-        _ensure_correct_zimage_variant(variant, manager, config)
 
     # LoRA: check mismatch and reload if needed, then fuse
     _ensure_zimage_lora(manager, request.loras)
