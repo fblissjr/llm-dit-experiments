@@ -52,6 +52,16 @@ register_pipeline(PipelineSchema(
     params=[
         # === Basic Parameters ===
         ParamSchema(
+            id="variant",
+            type="select",
+            label="Model Variant",
+            default="turbo",
+            options=["turbo", "base"],
+            group="basic",
+            tooltip="Turbo: fast 9-step distilled (CFG baked in). Base: quality 40-step with full CFG control.",
+            config_mapped=False,
+        ),
+        ParamSchema(
             id="preset",
             type="select",
             label="Preset",
@@ -81,7 +91,7 @@ register_pipeline(PipelineSchema(
             placeholder="Elements to avoid (blur, artifacts, etc.)...",
             rows=2,
             group="basic",
-            conditional={"_variant": "base"},  # Only show for base variant
+            conditional={"variant": "base"},  # Only show for base variant
             tooltip="What to avoid. Preset populates this - edit to customize.",
             config_mapped=False,
         ),
@@ -130,6 +140,12 @@ register_pipeline(PipelineSchema(
             group="basic",
             tooltip="Number of denoising steps. 4-12 for turbo mode, 20-50 for quality.",
             config_mapped=False,
+            dependent_defaults={
+                "variant": {
+                    "turbo": 9,
+                    "base": 40,
+                },
+            },
         ),
         ParamSchema(
             id="guidance_scale",
@@ -142,6 +158,12 @@ register_pipeline(PipelineSchema(
             group="basic",
             tooltip="Classifier-free guidance scale. 0.0 for turbo mode, 3.5-7.5 for standard.",
             config_mapped=False,
+            dependent_defaults={
+                "variant": {
+                    "turbo": 0.0,
+                    "base": 4.0,
+                },
+            },
         ),
         ParamSchema(
             id="seed",
@@ -168,6 +190,12 @@ register_pipeline(PipelineSchema(
             group="scheduler",
             tooltip="Flow matching shift parameter. Higher = more denoising in early steps.",
             config_mapped=False,
+            dependent_defaults={
+                "variant": {
+                    "turbo": 3.0,
+                    "base": 6.0,
+                },
+            },
         ),
         ParamSchema(
             id="dynamic_shift",

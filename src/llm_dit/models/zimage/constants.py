@@ -1,7 +1,7 @@
 """
 Z-Image model constants and variant detection.
 
-Last Updated: 2026-01-27
+Last Updated: 2026-03-26
 
 This module defines variant configurations and provides utilities for
 auto-detecting which Z-Image variant is being used based on scheduler settings.
@@ -41,6 +41,7 @@ ZIMAGE_VARIANTS: dict[str, dict[str, Any]] = {
             "cfg_normalization": 0.0,
             "negative_prompt": None,
         },
+        "fixed_params": {"guidance_scale"},
         "description": "Turbo distilled (fast, 8-9 steps, CFG baked in)",
     },
     "base": {
@@ -52,6 +53,7 @@ ZIMAGE_VARIANTS: dict[str, dict[str, Any]] = {
             "cfg_normalization": 0.0,
             "negative_prompt": "",
         },
+        "fixed_params": set(),
         "description": "Base model (quality, 28-50 steps, full CFG)",
     },
 }

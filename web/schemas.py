@@ -494,6 +494,7 @@ class DyPEConfigRequest(BaseModel):
 
 class GenerateRequest(BaseModel):
     prompt: str
+    variant: Optional[str] = None  # "turbo" or "base" (None = use config default)
     negative_prompt: Optional[str] = None
     system_prompt: Optional[str] = None
     thinking_content: Optional[str] = None
@@ -537,6 +538,7 @@ class Img2ImgRequest(BaseModel):
     """Request for image-to-image generation with optional differential mask."""
 
     prompt: str
+    variant: Optional[str] = None  # "turbo" or "base" (None = use config default)
     negative_prompt: Optional[str] = None
     image: str
     mask_image: Optional[str] = None

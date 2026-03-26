@@ -547,13 +547,23 @@ class ZImageConfig:
     infrastructure settings (paths, variant selection).
     """
 
-    model_path: str = ""  # Path to Z-Image model (turbo or base)
+    model_path: str = ""  # Path to Z-Image model (legacy fallback)
+    turbo_model_path: str = ""  # Path to Z-Image-Turbo model
+    base_model_path: str = ""  # Path to Z-Image (base) model
     text_encoder_path: str = ""  # Optional separate path for text encoder
     variant: str = "auto"  # auto, turbo, base (auto-detects from scheduler_config.json)
 
     # Preset configuration - defines steps, guidance_scale, shift, negative_prompt
     # Presets are loaded from presets/zimage/{preset_name}.md
     default_preset: str = ""  # Default preset to load (e.g., "photorealistic")
+
+    def resolve_model_path(self, variant: str) -> str:
+        """Get the model path for a specific variant, with fallback to model_path."""
+        if variant == "turbo" and self.turbo_model_path:
+            return self.turbo_model_path
+        if variant == "base" and self.base_model_path:
+            return self.base_model_path
+        return self.model_path
 
 
 @dataclass

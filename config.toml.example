@@ -90,7 +90,9 @@ scales = []
 # Variants: turbo (9 steps, no CFG), base (35 steps, CFG=4.0), auto
 
 [zimage]
-# model_path = "/path/to/Z-Image-Turbo"
+# model_path = "/path/to/Z-Image-Turbo"  # legacy fallback
+# turbo_model_path = "/path/to/Z-Image-Turbo"
+# base_model_path = "/path/to/Z-Image"
 variant = "turbo"
 
 

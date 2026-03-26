@@ -48,38 +48,47 @@ router = APIRouter()
 # =============================================================================
 
 
-def apply_zimage_variant_defaults(request: Union[GenerateRequest, Img2ImgRequest], config) -> None:
+def resolve_zimage_variant(
+    request: Union[GenerateRequest, Img2ImgRequest], config
+) -> str:
+    """Resolve the Z-Image variant from request or config.
+
+    Priority: request.variant (if sent) > config.zimage_variant > "turbo".
+    """
+    if config is None:
+        return "turbo"
+    # Use request variant if client sent it explicitly
+    if hasattr(request, "variant") and "variant" in request.model_fields_set and request.variant:
+        return request.variant
+    variant = config.zimage_variant
+    if variant == "auto":
+        return "turbo"
+    return variant
+
+
+def apply_zimage_variant_defaults(
+    request: Union[GenerateRequest, Img2ImgRequest], config, variant: str | None = None
+) -> None:
     """Apply Z-Image variant-aware defaults to request in-place.
 
-    The Pydantic request classes have hardcoded Turbo defaults (steps=9, shift=3.0,
-    guidance_scale=0.0). When the server is running with the Base variant, we need
-    to apply the correct defaults if the client didn't explicitly set them.
-
     Uses model_fields_set to detect whether the client sent a value explicitly.
-    This fixes the old equality-comparison approach where a client intentionally
-    sending steps=9 for the base variant would get it overwritten.
+    Only modifies values the client did NOT send.
 
     Args:
         request: GenerateRequest or Img2ImgRequest to modify in-place
         config: RuntimeConfig instance
-
-    Note:
-        - Only applies when config is available and variant is "base"
-        - Only modifies values NOT in model_fields_set (client didn't send them)
-        - Turbo variant needs no changes (Pydantic defaults are already Turbo values)
+        variant: Resolved variant (if None, resolves from request/config)
     """
-    # Skip if no config or not base variant
     if config is None:
         return
-    if config.zimage_variant != "base":
-        return
 
-    # Get variant defaults from constants
+    if variant is None:
+        variant = resolve_zimage_variant(request, config)
+
     from llm_dit.models.zimage.constants import get_variant_defaults
 
-    variant_defaults = get_variant_defaults("base")
+    variant_defaults = get_variant_defaults(variant)
 
-    # Apply variant defaults only for fields the client did NOT explicitly send
     if hasattr(request, "steps") and "steps" not in request.model_fields_set:
         request.steps = variant_defaults["num_inference_steps"]
         logger.debug(f"Applied variant default: steps={request.steps}")
@@ -91,6 +100,36 @@ def apply_zimage_variant_defaults(request: Union[GenerateRequest, Img2ImgRequest
     if hasattr(request, "shift") and "shift" not in request.model_fields_set:
         request.shift = variant_defaults["shift"]
         logger.debug(f"Applied variant default: shift={request.shift}")
+
+
+def _ensure_correct_zimage_variant(variant: str, manager, config) -> None:
+    """Reload Z-Image pipeline if the loaded variant doesn't match the request.
+
+    Updates config.zimage.model_path and config.zimage.variant before reloading.
+    """
+    if not manager.is_loaded("zimage"):
+        return
+
+    current_variant = config.zimage_variant
+    if current_variant == variant:
+        return
+
+    new_path = config.zimage.resolve_model_path(variant)
+    if not new_path:
+        raise ValueError(
+            f"No model path configured for Z-Image variant '{variant}'. "
+            f"Set [zimage].{variant}_model_path in config.toml"
+        )
+
+    logger.info(
+        f"[Z-Image] Variant mismatch: loaded='{current_variant}', "
+        f"requested='{variant}'. Reloading from {new_path}..."
+    )
+
+    config.zimage.model_path = new_path
+    config.zimage.variant = variant
+    manager.reload_zimage()
+    logger.info(f"[Z-Image] Reload complete: variant='{variant}'")
 
 
 # =============================================================================
@@ -308,9 +347,19 @@ async def generate(request: GenerateRequest, config: ConfigDep, manager: Manager
             status_code=400, detail="Server running in encoder-only mode. Use /api/encode instead."
         )
 
+    # Resolve variant and apply defaults
+    variant = resolve_zimage_variant(request, config)
+    apply_zimage_variant_defaults(request, config, variant)
+
     # Load Z-Image pipeline on-demand if not already loaded
     zimage = manager.get_pipeline("zimage")
     if zimage is None:
+        # Set correct model path before first load
+        if variant != config.zimage_variant:
+            new_path = config.zimage.resolve_model_path(variant)
+            if new_path:
+                config.zimage.model_path = new_path
+                config.zimage.variant = variant
         try:
             _ensure_zimage_loaded(manager)
             zimage = manager.get_pipeline("zimage")
@@ -320,14 +369,14 @@ async def generate(request: GenerateRequest, config: ConfigDep, manager: Manager
                 status_code=503,
                 detail=f"Z-Image pipeline failed to load: {str(e)}",
             )
+    else:
+        # Reload if variant changed
+        _ensure_correct_zimage_variant(variant, manager, config)
 
     # LoRA: check mismatch and reload if needed, then fuse
     _ensure_zimage_lora(manager, request.loras)
     zimage = manager.get_pipeline("zimage")  # Re-fetch after potential reload
     _apply_zimage_loras(zimage, request.loras)
-
-    # Apply variant-aware defaults (Base vs Turbo)
-    apply_zimage_variant_defaults(request, config)
 
     try:
         logger.info("=" * 60)
@@ -641,8 +690,9 @@ async def generate_stream(request: GenerateRequest, config: ConfigDep, manager: 
     - {"type": "complete", ...} - Final result with image data
     - {"type": "error", "message": "..."} - Error occurred
     """
-    # Apply variant-aware defaults (Base vs Turbo)
-    apply_zimage_variant_defaults(request, config)
+    # Resolve variant and apply defaults
+    variant = resolve_zimage_variant(request, config)
+    apply_zimage_variant_defaults(request, config, variant)
 
     if srv.encoder_only_mode:
         raise HTTPException(
@@ -652,6 +702,11 @@ async def generate_stream(request: GenerateRequest, config: ConfigDep, manager: 
     # Load Z-Image pipeline on-demand if not already loaded
     zimage = manager.get_pipeline("zimage")
     if zimage is None:
+        if variant != config.zimage_variant:
+            new_path = config.zimage.resolve_model_path(variant)
+            if new_path:
+                config.zimage.model_path = new_path
+                config.zimage.variant = variant
         try:
             _ensure_zimage_loaded(manager)
             zimage = manager.get_pipeline("zimage")
@@ -661,6 +716,8 @@ async def generate_stream(request: GenerateRequest, config: ConfigDep, manager: 
                 status_code=503,
                 detail=f"Z-Image pipeline failed to load: {str(e)}",
             )
+    else:
+        _ensure_correct_zimage_variant(variant, manager, config)
 
     # LoRA: check mismatch and reload if needed, then fuse
     _ensure_zimage_lora(manager, request.loras)
@@ -881,8 +938,9 @@ async def img2img(request: Img2ImgRequest, config: ConfigDep, manager: ManagerDe
     - White (255): Allow full editing
     - Gray: Partial editing
     """
-    # Apply variant-aware defaults (Base vs Turbo)
-    apply_zimage_variant_defaults(request, config)
+    # Resolve variant and apply defaults
+    variant = resolve_zimage_variant(request, config)
+    apply_zimage_variant_defaults(request, config, variant)
 
     if srv.encoder_only_mode:
         raise HTTPException(
@@ -892,6 +950,8 @@ async def img2img(request: Img2ImgRequest, config: ConfigDep, manager: ManagerDe
     zimage = manager.get_pipeline("zimage")
     if zimage is None:
         raise HTTPException(status_code=503, detail="Pipeline not loaded")
+
+    _ensure_correct_zimage_variant(variant, manager, config)
 
     # LoRA: check mismatch and reload if needed, then fuse
     _ensure_zimage_lora(manager, request.loras)

@@ -20,13 +20,20 @@ const log = logger('PipelineForm');
 // FLUX.2 distilled models have fixed num_steps and guidance.
 // Distilled = all variants without "base" in the name.
 const FLUX2_FIXED_PARAMS = new Set(['num_steps', 'guidance']);
+// Z-Image turbo has guidance baked in (CFG=0)
+const ZIMAGE_TURBO_FIXED = new Set(['guidance_scale']);
 
 function isFixedParam(pipelineId: string, paramId: string, formValues: FormValues): boolean {
-  if (pipelineId !== 'flux2') return false;
-  if (!FLUX2_FIXED_PARAMS.has(paramId)) return false;
-  const modelName = String(formValues.model_name ?? '');
-  // Base models allow overriding; distilled models do not
-  return !modelName.includes('base');
+  if (pipelineId === 'flux2') {
+    if (!FLUX2_FIXED_PARAMS.has(paramId)) return false;
+    const modelName = String(formValues.model_name ?? '');
+    return !modelName.includes('base');
+  }
+  if (pipelineId === 'zimage') {
+    if (!ZIMAGE_TURBO_FIXED.has(paramId)) return false;
+    return String(formValues.variant ?? 'turbo') === 'turbo';
+  }
+  return false;
 }
 
 // Define group order for consistent rendering
