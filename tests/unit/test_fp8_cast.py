@@ -1,10 +1,11 @@
 """
 FP8-cast quantization tests.
 
-Last Updated: 2026-03-06
+Last Updated: 2026-03-25
 
 Tests for the fp8-cast module that patches nn.Linear forward methods to
 upcast FP8 weights per-forward, aligned with the official LTX-2.3 approach.
+Includes tests for native FP8 tensor core matmul via torch._scaled_mm.
 
 Run with: uv run pytest tests/unit/test_fp8_cast.py -v
 """
@@ -326,6 +327,130 @@ class TestFP8PreservationGuard:
                             effective_precision="none",
                             granularity="per-row",
                         )
+
+
+class TestScaledMM:
+    """Tests for native FP8 tensor core matmul via torch._scaled_mm."""
+
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
+    def test_scaled_mm_available(self):
+        """torch._scaled_mm should be available."""
+        from llm_dit.quantization.fp8_cast import is_scaled_mm_available
+
+        # RTX 4090 (SM89) supports _scaled_mm
+        assert is_scaled_mm_available() is True
+
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
+    def test_scaled_mm_forward_produces_correct_output(self):
+        """Scaled MM forward should match upcast forward numerically."""
+        from llm_dit.quantization.fp8_cast import (
+            _replace_fwd_with_scaled_mm,
+            _replace_fwd_with_upcast,
+            quantize_to_fp8_per_tensor,
+        )
+
+        # Create a linear with scaled fp8 weights
+        linear_smm = nn.Linear(64, 128, bias=False, device="cuda")
+        real_weight = linear_smm.weight.data.clone()
+
+        # Quantize
+        fp8_weight, weight_scale = quantize_to_fp8_per_tensor(real_weight)
+        linear_smm.weight = nn.Parameter(fp8_weight.to("cuda"), requires_grad=False)
+        linear_smm._weight_scale = weight_scale.to("cuda")
+
+        # Create identical upcast linear for comparison
+        linear_up = nn.Linear(64, 128, bias=False, device="cuda")
+        linear_up.weight = nn.Parameter(fp8_weight.to("cuda").clone(), requires_grad=False)
+        linear_up._weight_scale = weight_scale.to("cuda")
+
+        _replace_fwd_with_scaled_mm(linear_smm)
+        _replace_fwd_with_upcast(linear_up)
+
+        x = torch.randn(4, 64, device="cuda", dtype=torch.bfloat16)
+        y_smm = linear_smm(x)
+        y_up = linear_up(x)
+
+        assert y_smm.dtype == torch.bfloat16
+        assert y_smm.shape == (4, 128)
+        # Allow fp8 quantization noise (larger tolerance than bf16-bf16)
+        assert (y_smm - y_up).abs().max() < 0.5, (
+            f"scaled_mm vs upcast too different: max_diff={(y_smm - y_up).abs().max():.4f}"
+        )
+
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
+    def test_scaled_mm_without_weight_scale(self):
+        """Scaled MM should work without weight_scale (naive fp8)."""
+        from llm_dit.quantization.fp8_cast import _replace_fwd_with_scaled_mm
+
+        linear = nn.Linear(64, 128, bias=False, device="cuda")
+        linear.weight.data = linear.weight.data.to(torch.float8_e4m3fn)
+        # No _weight_scale attr
+
+        _replace_fwd_with_scaled_mm(linear)
+
+        x = torch.randn(4, 64, device="cuda", dtype=torch.bfloat16)
+        y = linear(x)
+        assert y.dtype == torch.bfloat16
+        assert y.shape == (4, 128)
+
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
+    def test_scaled_mm_with_bias(self):
+        """Scaled MM should handle bias correctly."""
+        from llm_dit.quantization.fp8_cast import _replace_fwd_with_scaled_mm
+
+        linear = nn.Linear(64, 128, bias=True, device="cuda")
+        linear.weight.data = linear.weight.data.to(torch.float8_e4m3fn)
+        # Keep bias as bf16
+
+        _replace_fwd_with_scaled_mm(linear)
+
+        x = torch.randn(4, 64, device="cuda", dtype=torch.bfloat16)
+        y = linear(x)
+        assert y.dtype == torch.bfloat16
+        assert y.shape == (4, 128)
+
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
+    def test_scaled_mm_3d_input(self):
+        """Scaled MM should handle 3D inputs (batch, seq, dim)."""
+        from llm_dit.quantization.fp8_cast import _replace_fwd_with_scaled_mm
+
+        linear = nn.Linear(64, 128, bias=False, device="cuda")
+        linear.weight.data = linear.weight.data.to(torch.float8_e4m3fn)
+
+        _replace_fwd_with_scaled_mm(linear)
+
+        x = torch.randn(2, 16, 64, device="cuda", dtype=torch.bfloat16)
+        y = linear(x)
+        assert y.shape == (2, 16, 128)
+
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
+    def test_amend_forward_prefers_scaled_mm(self, caplog):
+        """amend_forward_with_upcast should use scaled_mm on CUDA when available."""
+        import logging
+        from llm_dit.quantization.fp8_cast import amend_forward_with_upcast
+
+        model = nn.Sequential(nn.Linear(64, 128, device="cuda"))
+        model[0].weight.data = model[0].weight.data.to(torch.float8_e4m3fn)
+
+        with caplog.at_level(logging.INFO, logger="llm_dit.quantization.fp8_cast"):
+            count = amend_forward_with_upcast(model)
+
+        assert count == 1
+        assert "via scaled_mm" in caplog.text
+
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
+    def test_weight_stays_fp8_after_scaled_mm_forward(self):
+        """Weight should remain fp8 after forward (not mutated)."""
+        from llm_dit.quantization.fp8_cast import _replace_fwd_with_scaled_mm
+
+        linear = nn.Linear(64, 128, bias=False, device="cuda")
+        linear.weight.data = linear.weight.data.to(torch.float8_e4m3fn)
+
+        _replace_fwd_with_scaled_mm(linear)
+
+        x = torch.randn(4, 64, device="cuda", dtype=torch.bfloat16)
+        _ = linear(x)
+        assert linear.weight.dtype == torch.float8_e4m3fn
 
 
 class TestFP8CastTransformerLoader:

@@ -9,7 +9,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     # PyTorch with CUDA 13.0 - see [tool.uv.sources] for index config
-    "torch",
+    "torch>=2.11",
     "torchvision",
     "huggingface_hub",
     # For now, LTX-2 requires diffusers 0.37+ with LTX2Pipeline (local coderef build)

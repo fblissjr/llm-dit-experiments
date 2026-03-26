@@ -85,6 +85,9 @@ _outputs_dir = Path(__file__).resolve().parent.parent / "outputs"
 if _outputs_dir.is_dir():
     app.mount("/outputs", StaticFiles(directory=str(_outputs_dir)), name="outputs")
 
+# React frontend build directory (populated by `bun run build` in web/frontend-v2/)
+_frontend_dist = Path(__file__).resolve().parent / "frontend-v2" / "dist"
+
 # Global server state (non-pipeline lifecycle).
 # Routers access these via `import web.server as srv; srv.rewriter_backend` etc.
 # Pipeline state is managed exclusively by ModelManager.
@@ -109,13 +112,21 @@ server_start_time = None  # For uptime tracking
 
 @app.get("/")
 async def index():
-    """Serve the main page."""
-    return FileResponse(Path(__file__).parent / "index.html")
+    """Serve the main page (React SPA build, or fallback message)."""
+    spa_index = _frontend_dist / "index.html"
+    if spa_index.is_file():
+        return FileResponse(spa_index)
+    return {"message": "Frontend not built. Run 'bun run build' in web/frontend-v2/ or use Vite dev server on :5175"}
 
 
 def main():
     # Register routers (deferred to avoid circular imports with web.routers.*)
     _register_routers()
+
+    # Serve React frontend build as SPA (catch-all AFTER API routes)
+    if _frontend_dist.is_dir():
+        app.mount("/", StaticFiles(directory=str(_frontend_dist), html=True), name="spa")
+        logger.info(f"Serving frontend from {_frontend_dist}")
 
     # Use shared CLI argument parser
     from llm_dit.cli import create_base_parser, load_runtime_config, setup_logging
@@ -150,6 +161,12 @@ def main():
     global runtime_config, rewriter_backend, encoder_only_mode, model_manager
     runtime_config = load_runtime_config(args)
     setup_logging(runtime_config)
+
+    # Enable TF32 for ~2x faster fp32/bf16 matmul on Ampere+ (RTX 4090, A100, etc.)
+    import torch
+    if torch.cuda.is_available():
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
 
     # Initialize model manager
     model_manager = ModelManager(runtime_config)

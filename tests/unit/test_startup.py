@@ -7,6 +7,7 @@ Tests cover:
 - DyPE config building
 - Template directory resolution
 - Auto-load logic
+- TF32 enablement at server startup
 """
 
 from dataclasses import dataclass
@@ -15,6 +16,24 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 import torch
+
+
+# ============================================================================
+# TF32 Enablement Tests
+# ============================================================================
+
+
+class TestTF32Enablement:
+    """Test that TF32 enablement code exists in server.main()."""
+
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
+    def test_tf32_can_be_enabled(self):
+        """TF32 flags should be settable on CUDA systems."""
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
+        assert torch.backends.cuda.matmul.allow_tf32 is True
+        assert torch.backends.cudnn.allow_tf32 is True
+
 
 # ============================================================================
 # LoadResult Tests

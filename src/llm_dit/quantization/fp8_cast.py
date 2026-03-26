@@ -1,6 +1,6 @@
 """FP8-cast quantization utilities.
 
-Last Updated: 2026-03-13
+Last Updated: 2026-03-25
 
 Supports two FP8 checkpoint formats:
 
@@ -15,9 +15,14 @@ Supports two FP8 checkpoint formats:
    original magnitude. No scale needed for upcast. This is what the official
    ltx-core fp8-cast path assumes (it starts from bf16 and downcasts at runtime).
 
-The loader detects which format is in use by checking for weight_scale keys in
-the state dict. When scales are present, they're attached to each nn.Linear as
-`_weight_scale` and applied during the per-forward upcast.
+Two forward strategies are available:
+
+- **scaled_mm** (preferred on CUDA): Uses `torch._scaled_mm` to run matmul on FP8
+  tensor cores. Activations are cast to fp8 in-flight. ~2x faster than upcast on
+  RTX 4090. Requires dims divisible by 16.
+
+- **upcast** (fallback): Upcasts fp8 weight to bf16, multiplies by weight_scale,
+  then runs F.linear in bf16. Works everywhere, no dim constraints.
 
 Memory footprint: ~12GB for 22B model (vs ~26GB bf16, ~42GB dequant+requant).
 
@@ -27,11 +32,34 @@ Usage:
 """
 
 import logging
+from functools import lru_cache
 
 import torch
 from torch import nn
 
 logger = logging.getLogger(__name__)
+
+
+@lru_cache(maxsize=1)
+def is_scaled_mm_available() -> bool:
+    """Check if torch._scaled_mm is available and functional on current hardware.
+
+    Tests with a small matmul to verify the CUDA kernel actually works
+    (not all GPU architectures support all scale configurations).
+    """
+    if not hasattr(torch, "_scaled_mm"):
+        return False
+    if not torch.cuda.is_available():
+        return False
+    try:
+        # Minimal test: 16x16 matmul (minimum dims for _scaled_mm)
+        a = torch.zeros(16, 16, device="cuda", dtype=torch.float8_e4m3fn)
+        b = torch.zeros(16, 16, device="cuda", dtype=torch.float8_e4m3fn)
+        s = torch.tensor(1.0, device="cuda", dtype=torch.float32)
+        torch._scaled_mm(a, b.T, scale_a=s, scale_b=s, out_dtype=torch.bfloat16)
+        return True
+    except (RuntimeError, AttributeError):
+        return False
 
 
 def quantize_to_fp8_per_tensor(weight: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
@@ -58,6 +86,55 @@ def quantize_to_fp8_per_tensor(weight: torch.Tensor) -> tuple[torch.Tensor, torc
     quantized = (w * scale).clamp(-fp8_max, fp8_max).to(torch.float8_e4m3fn)
     weight_scale = scale.reciprocal()
     return quantized, weight_scale
+
+
+def _replace_fwd_with_scaled_mm(layer: nn.Linear) -> None:
+    """Replace linear.forward with torch._scaled_mm for native FP8 tensor core matmul.
+
+    Activations are cast to fp8 in-flight (simple truncation, no dynamic scaling).
+    Weight stays fp8, and weight_scale (if present) is passed as scale_b.
+
+    ~2x faster than the upcast path on RTX 4090 for typical DiT layer sizes.
+
+    Requirements:
+    - CUDA device with fp8 tensor core support (SM89+)
+    - Input trailing dimension divisible by 16
+    """
+    layer.original_forward = layer.forward  # type: ignore[attr-defined]
+
+    # Pre-compute scales at patch time to avoid per-forward allocations.
+    # Device comes from the layer's weight (already on target device after model.to()).
+    device = layer.weight.device
+    scale_one = torch.tensor(1.0, device=device, dtype=torch.float32)
+
+    ws = getattr(layer, "_weight_scale", None)
+    if ws is not None:
+        # Move weight_scale to GPU once (it may be on pinned CPU from cache)
+        scale_b = ws.to(device=device, dtype=torch.float32)
+    else:
+        scale_b = scale_one
+
+    def new_forward(*args, **_kwargs) -> torch.Tensor:
+        x = args[0]
+        x_2d = x.reshape(-1, x.shape[-1])
+        x_fp8 = x_2d.to(torch.float8_e4m3fn)
+
+        # weight.T is a view with stride(0)==1 (column-major) -- no copy
+        result = torch._scaled_mm(
+            x_fp8, layer.weight.T,
+            scale_a=scale_one, scale_b=scale_b,
+            out_dtype=x.dtype,
+        )
+
+        if x.ndim > 2:
+            result = result.reshape(x.shape[:-1] + (result.shape[-1],))
+
+        if layer.bias is not None:
+            result = result + layer.bias.to(x.dtype)
+
+        return result
+
+    layer.forward = new_forward  # type: ignore[assignment]
 
 
 def _replace_fwd_with_upcast(layer: nn.Linear) -> None:
@@ -89,7 +166,10 @@ def amend_forward_with_upcast(
     model: nn.Module,
     skip_patterns: tuple[str, ...] = ("norm", "embed", "lm_head"),
 ) -> int:
-    """Patch all nn.Linear layers in model to upcast fp8 weights per-forward.
+    """Patch all nn.Linear layers in model for fp8 inference.
+
+    Prefers native FP8 tensor core matmul via torch._scaled_mm when available
+    (CUDA, SM89+). Falls back to bf16 upcast otherwise.
 
     Norms and embeddings are skipped by default -- they're numerically sensitive
     and tiny compared to linear layers.
@@ -101,6 +181,10 @@ def amend_forward_with_upcast(
     Returns:
         Number of linear layers patched.
     """
+    use_smm = is_scaled_mm_available()
+    patch_fn = _replace_fwd_with_scaled_mm if use_smm else _replace_fwd_with_upcast
+    method = "scaled_mm" if use_smm else "upcast"
+
     count = 0
     scaled = 0
     for name, module in model.named_modules():
@@ -109,18 +193,13 @@ def amend_forward_with_upcast(
         name_lower = name.lower()
         if any(p in name_lower for p in skip_patterns):
             continue
-        _replace_fwd_with_upcast(module)
+        patch_fn(module)
         count += 1
         if hasattr(module, "_weight_scale"):
             scaled += 1
 
-    if scaled > 0:
-        logger.info(
-            f"fp8-cast: patched {count} nn.Linear layers "
-            f"({scaled} with weight_scale, {count - scaled} without)"
-        )
-    else:
-        logger.info(f"fp8-cast: patched {count} nn.Linear layers for per-forward upcast")
+    scale_info = f" ({scaled} with weight_scale, {count - scaled} without)" if scaled else ""
+    logger.info(f"fp8-cast: patched {count} nn.Linear layers via {method}{scale_info}")
     return count
 
 

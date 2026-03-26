@@ -42,13 +42,14 @@ import torch.nn.functional as F
 logger = logging.getLogger(__name__)
 
 # Type for attention backend names
-# Priority order: FA3 > FA2 > sage_int8_fp8_sm90 > sage_int8_fp16 > sage > xformers > sdpa
+# Priority order: FA3 > FA2 > sage_int8_fp8_sm90 > sage_int8_fp16 > sage > sparge > xformers > sdpa
 AttentionBackend = Literal[
     "flash_attn_3",
     "flash_attn_2",
     "sage_int8_fp8_sm90",  # SM90+ (H100), INT8 Q/K + FP8 P/V
     "sage_int8_fp16",      # SM80+ (RTX 4090), INT8 Q/K + FP16 P/V
     "sage",                # Basic sage attention
+    "sparge",              # Sparse + sage hybrid (spas_sage_attn)
     "xformers",
     "sdpa"
 ]
@@ -93,8 +94,9 @@ def get_available_backends() -> list[AttentionBackend]:
     3. Sage INT8/FP8 SM90 (H100 only)
     4. Sage INT8/FP16 (RTX 4090 / SM80+) - best for memory efficiency on consumer GPUs
     5. Sage basic
-    6. xFormers
-    7. SDPA (always available)
+    6. SpargeAttention (sparse + sage hybrid)
+    7. xFormers
+    8. SDPA (always available)
     """
     global _AVAILABLE_BACKENDS
 
@@ -150,6 +152,15 @@ def get_available_backends() -> list[AttentionBackend]:
         available.append("sage")
         logger.debug("Sage Attention (basic) available")
 
+    except ImportError:
+        pass
+
+    # SpargeAttention (sparse + sage hybrid)
+    try:
+        from spas_sage_attn import spas_sage2_attn_meansim_cuda  # noqa: F401
+
+        available.append("sparge")
+        logger.debug("SpargeAttention (sparse + sage) available")
     except ImportError:
         pass
 
@@ -286,6 +297,8 @@ def attention_forward(
         return _sage_int8_fp16_forward(q, k, v, scale, is_causal)
     elif backend == "sage":
         return _sage_forward(q, k, v, scale, is_causal)
+    elif backend == "sparge":
+        return _sparge_forward(q, k, v, scale, is_causal)
     elif backend == "xformers":
         return _xformers_forward(q, k, v, mask, dropout_p, scale)
     else:  # sdpa
@@ -419,6 +432,30 @@ def _sage_int8_fp8_sm90_forward(
     return out
 
 
+def _sparge_forward(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    scale: Optional[float] = None,
+    is_causal: bool = False,
+) -> torch.Tensor:
+    """SpargeAttention (sparse + sage hybrid) forward pass.
+
+    Uses mean-similarity thresholds to skip low-importance attention computations.
+    Requires spas_sage_attn package.
+    """
+    from spas_sage_attn import spas_sage2_attn_meansim_cuda
+
+    # Sparge expects (B, H, S, D) - same as our format
+    out = spas_sage2_attn_meansim_cuda(
+        q, k, v,
+        is_causal=is_causal,
+        sm_scale=scale,
+    )
+
+    return out
+
+
 def _xformers_forward(
     q: torch.Tensor,
     k: torch.Tensor,
@@ -487,6 +524,8 @@ def log_attention_info() -> None:
         logger.info("  Uses INT8 quantization for Q/K, FP16 for P/V")
     elif current == "sage":
         logger.info("  Sage Attention (basic) - good balance of speed and memory")
+    elif current == "sparge":
+        logger.info("  SpargeAttention (sparse + sage hybrid) - skips low-importance attention")
     elif current == "xformers":
         logger.info("  xFormers memory efficient attention")
     elif current == "sdpa":
