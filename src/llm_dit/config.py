@@ -2150,6 +2150,8 @@ class Config:
             },
             "zimage": {
                 "model_path": self.zimage.model_path,
+                "turbo_model_path": self.zimage.turbo_model_path,
+                "base_model_path": self.zimage.base_model_path,
                 "text_encoder_path": self.zimage.text_encoder_path,
                 "variant": self.zimage.variant,
                 "default_preset": self.zimage.default_preset,
