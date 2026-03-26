@@ -31,6 +31,8 @@ interface ParamControlProps {
   formValues: FormValues;
   errors: ValidationError[];
   disabled?: boolean;
+  /** Pipeline ID for context-aware controls (e.g., LoRA filtering). */
+  pipelineId?: string;
   /** For textarea controls: called when the inline action button is clicked. */
   onAction?: () => void;
   /** Accessible tooltip/title for the action button. */
@@ -87,6 +89,7 @@ export const ParamControl = memo(function ParamControl({
   formValues,
   errors,
   disabled = false,
+  pipelineId,
   onAction,
   actionLabel,
   actionLoading,
@@ -206,6 +209,7 @@ export const ParamControl = memo(function ParamControl({
           value={(value as string[]) ?? []}
           onChange={onChange}
           disabled={disabled}
+          pipelineId={pipelineId}
         />
       );
 

@@ -249,6 +249,7 @@ export function PipelineForm() {
                     formValues={formValues}
                     errors={errors}
                     disabled={isFixed}
+                    pipelineId={selectedPipelineId ?? undefined}
                     {...actionProps}
                   />
                   {isFixed && (

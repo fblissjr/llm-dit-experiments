@@ -17,6 +17,8 @@ interface LoRAListProps {
   value: string[];
   onChange: (value: string[]) => void;
   disabled?: boolean;
+  /** Pipeline ID for filtering LoRAs (e.g., "flux2", "zimage"). */
+  pipelineId?: string;
 }
 
 // Parse "path:scale" format into components
@@ -40,7 +42,7 @@ function formatLoraSpec(path: string, scale: number): string {
   return `${path}:${scale.toFixed(2)}`;
 }
 
-export function LoRAList({ param, value, onChange, disabled = false }: LoRAListProps) {
+export function LoRAList({ param, value, onChange, disabled = false, pipelineId }: LoRAListProps) {
   const scaleMin = param.scale_min ?? -2.0;
   const scaleMax = param.scale_max ?? 2.0;
   const maxCount = param.max_count ?? 5;
@@ -51,7 +53,7 @@ export function LoRAList({ param, value, onChange, disabled = false }: LoRAListP
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    fetchAvailableLoras()
+    fetchAvailableLoras(pipelineId)
       .then((response) => {
         setAvailableLoras(response.loras ?? []);
         setIsLoading(false);
@@ -60,7 +62,7 @@ export function LoRAList({ param, value, onChange, disabled = false }: LoRAListP
         setError(err.message || 'Failed to load LoRAs');
         setIsLoading(false);
       });
-  }, []);
+  }, [pipelineId]);
 
   // Parse all specs into structured form for editing
   const items = (value || []).map(parseLoraSpec);

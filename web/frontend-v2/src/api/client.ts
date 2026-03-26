@@ -252,10 +252,11 @@ export async function unloadModel(pipelineId: string): Promise<ModelStatusRespon
  */
 
 /**
- * Fetch all available LoRA files from configured directories
+ * Fetch available LoRA files, optionally filtered by pipeline.
  */
-export async function fetchAvailableLoras(): Promise<LoRAListResponse> {
-  return request<LoRAListResponse>('/api/loras');
+export async function fetchAvailableLoras(pipelineId?: string): Promise<LoRAListResponse> {
+  const url = pipelineId ? `/api/loras/${pipelineId}` : '/api/loras';
+  return request<LoRAListResponse>(url);
 }
 
 /**
