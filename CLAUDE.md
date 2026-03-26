@@ -25,6 +25,7 @@ Quick reference for LLM agents. This is a hobbyist exploration platform -- not a
 - `config.toml` is source of truth. Never auto-detect when a config value exists.
 - Composed sub-configs in `src/llm_dit/config.py`: access via `config.flux2.model_path` (not flat `config.flux2_model_path`). RuntimeConfig is in config.py (cli.py re-exports it).
 - Adding a new config parameter: only **2 touchpoints** (dataclass field + config.toml). Validate with `tests/unit/test_dry_config.py`. Check existing fields BEFORE adding new ones.
+- `config.toml` is **gitignored**. Only `config.toml.example` is tracked. When adding config fields, update both but only `git add` the example.
 - Config type consistency: dataclass type, config.toml value type, and downstream consumers must agree. E.g., `fps: float = 24.0` everywhere, not `int` in config and `float` in pipeline.
 - All routers use `resolve_param()` from `web/param_resolver.py`. Precedence: client-sent > config.toml > schema default. Uses `model_fields_set` (NOT `or`, NOT `is not None`). Use `skip_none=True` for Optional fields where None = "no override". Falsy values (0, 0.0, "") are preserved when explicitly sent.
 - Infrastructure params (model paths, devices, quantization) always from config -- never through `resolve_param`.
