@@ -102,27 +102,31 @@ def _replace_fwd_with_scaled_mm(layer: nn.Linear) -> None:
     """
     layer.original_forward = layer.forward  # type: ignore[attr-defined]
 
-    # Pre-compute scales at patch time to avoid per-forward allocations.
-    # Device comes from the layer's weight (already on target device after model.to()).
-    device = layer.weight.device
-    scale_one = torch.tensor(1.0, device=device, dtype=torch.float32)
+    # Mutable cache for scale tensors. Populated lazily on first forward call
+    # because models are often patched on CPU then moved to CUDA via model.to().
+    _cache: dict[str, torch.Tensor] = {}
 
-    ws = getattr(layer, "_weight_scale", None)
-    if ws is not None:
-        # Move weight_scale to GPU once (it may be on pinned CPU from cache)
-        scale_b = ws.to(device=device, dtype=torch.float32)
-    else:
-        scale_b = scale_one
+    ws_raw = getattr(layer, "_weight_scale", None)
 
     def new_forward(*args, **_kwargs) -> torch.Tensor:
         x = args[0]
+
+        # Lazy-init scales on first call (now on the correct device)
+        if not _cache:
+            dev = x.device
+            _cache["one"] = torch.tensor(1.0, device=dev, dtype=torch.float32)
+            if ws_raw is not None:
+                _cache["b"] = ws_raw.to(device=dev, dtype=torch.float32)
+            else:
+                _cache["b"] = _cache["one"]
+
         x_2d = x.reshape(-1, x.shape[-1])
         x_fp8 = x_2d.to(torch.float8_e4m3fn)
 
         # weight.T is a view with stride(0)==1 (column-major) -- no copy
         result = torch._scaled_mm(
             x_fp8, layer.weight.T,
-            scale_a=scale_one, scale_b=scale_b,
+            scale_a=_cache["one"], scale_b=_cache["b"],
             out_dtype=x.dtype,
         )
 
