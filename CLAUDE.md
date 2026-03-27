@@ -1,4 +1,4 @@
-# agent context (v0.9.28)
+# agent context (v0.9.33)
 
 *last updated: 2026-03-26*
 
@@ -89,13 +89,14 @@ This is a multi-workstream project. Encoders and core infra are shared across pi
 | AV Blocks | `src/llm_dit/models/ltx2/av_block.py` | `BasicAVTransformerBlock` -- video-only, audio-only, or dual-stream with cross-modal attention |
 | Param resolution | `web/param_resolver.py` | `resolve_param()` -- all routers use for generation param defaults |
 | Model lifecycle | `src/llm_dit/model_manager.py` | `ModelManager` -- load/unload/reload any pipeline |
-| API layer | `web/routers/`, `web/schemas.py` | 7 domain routers + Pydantic models (~560 lines) |
+| API layer | `web/routers/`, `web/schemas.py` | 8 domain routers + Pydantic models (~740 lines) |
 | Pipelines | `src/llm_dit/pipelines/` | Each pipeline has its own file |
 | Frontend | `web/frontend-v2/` | React 19 + Zustand 5 + Vite 7 + Tailwind 4 + Bun. Schema-driven forms from OpenAPI. See [web CLAUDE.md](internal/web/CLAUDE.md) |
 | Frontend logger | `web/frontend-v2/src/utils/logger.ts` | Namespaced logging factory; `VITE_LOG_LEVEL` env var; zero raw console calls |
 | Media utilities | `web/frontend-v2/src/utils/media.ts` | `detectKind()`, `mediaItemFromResult()`, `mediaItemFromHistory()` -- unified `MediaItem` type |
 | VRAM bar | `web/frontend-v2/src/components/common/VRAMBar.tsx` | Shared VRAM usage bar component used by StatusBar and SettingsMenu |
-| CLI-over-API | `scripts/gen.py` | Thin httpx client (~440 lines): `flux2`, `zimage`, `ltx2`, `qwen`, `status` subcommands. Tests: `tests/unit/test_gen_cli.py` (52 tests) |
+| CLI-over-API | `scripts/gen.py` | Thin httpx client (~550 lines): `flux2`, `zimage`, `ltx2`, `qwen`, `status` subcommands. Tests: `tests/unit/test_gen_cli.py` (55 tests) |
+| SSE helpers | `web/utils.py` | `sse_event()` formatter (orjson-based), `create_image_response()` factory; used by all streaming routers |
 | Memory cleanup | `src/llm_dit/utils/memory.py` | `cleanup_memory()` -- centralized gc.collect + torch.cuda.empty_cache (CUDA guard) |
 | Quant aliases | `src/llm_dit/quantization/__init__.py` | `QUANT_ALIASES` dict -- canonical `"fp8"` -> `"fp8-dynamic"` mapping (single source of truth) |
 | FP8 forward | `src/llm_dit/quantization/fp8_cast.py` | `amend_forward_with_upcast()` -- dual-path: `torch._scaled_mm` (SM89+, 2x faster, dynamic activation scaling) or bf16 upcast fallback. `invalidate_scaled_mm_caches()` after LoRA fusion. `LLM_DIT_FORCE_FP8_UPCAST=1` env var forces upcast path. |
@@ -124,7 +125,7 @@ Full testing guide with all commands: [tests/CLAUDE.md](tests/CLAUDE.md)
 | **LTX-2** | [quickstart](internal/docs/ltx2/quickstart.md) | [comprehensive ref](internal/docs/ltx2/ltx2_comprehensive_reference.md) |
 | **Z-Image** | [quickstart](internal/docs/z_image/quickstart.md) | [guides](internal/guides/) |
 
-### top-5 failure modes
+### top-10 failure modes
 
 | Symptom | Likely Cause | Check |
 |---------|--------------|-------|

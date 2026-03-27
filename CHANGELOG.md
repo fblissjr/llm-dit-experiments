@@ -1,10 +1,30 @@
-last updated: 2026-03-14
+last updated: 2026-03-26
 
 # changelog
 
 
 All notable changes to this project will be documented in this file.
 Uses [Semantic Versioning](https://semver.org/).
+
+## 0.9.33
+
+### added
+- **Z-Image runtime variant selector**: Dropdown in UI to switch between turbo/base variants at runtime. `dependent_defaults` cascade steps, guidance_scale, and shift. Reloads pipeline automatically on variant change. Config: `turbo_model_path`/`base_model_path` with `model_path` fallback.
+- **Pipeline-filtered LoRA dropdown**: Each pipeline tab now only shows LoRAs from its corresponding directory (FLUX.2, LTX-2, Z-Image). Uses existing `/api/loras/{pipeline_id}` endpoint.
+- **`sse_event()` shared helper**: `web/utils.py` -- orjson-based SSE formatter used by all streaming routers. Replaces per-router `json.dumps` inline calls.
+- **`invalidate_scaled_mm_caches()`**: Clears cached scale tensors after LoRA fusion updates `_weight_scale`.
+- **`LLM_DIT_FORCE_FP8_UPCAST=1` env var**: Diagnostic escape hatch to bypass scaled_mm and force bf16 upcast path.
+
+### fixed
+- **FP8 scaled_mm black images**: Activations cast to fp8 with `scale_a=1.0` clipped values > 448, destroying information. Now uses dynamic per-tensor activation scaling.
+- **LoRA fusion no-op on fp8-cast models**: Native fp8 tensors (dtype=float8_e4m3fn) were not detected as quantized by `fuse_lora_to_base_model()`. Now dequants with `_weight_scale`, fuses in f32, re-quantizes via `quantize_to_fp8_per_tensor()`.
+- **Stale scaled_mm cache after LoRA**: `_replace_fwd_with_scaled_mm` captured `ws_raw` at patch time. Moved cache to module attribute `_smm_cache`, reads `_weight_scale` fresh at init.
+- **SSE payload bloat**: Complete events sent base64 image 2-3x (both `url` and `urls[0]`, plus `thumbnail_url`). Now sends only `urls`.
+- **O(n^2) SSE buffer concatenation**: Frontend `generateStream()` used `buffer += chunk` in read loop. Now uses array-based buffering.
+- **Z-Image negative_prompt used config variant instead of resolved variant**: Three places checked `config.zimage_variant` instead of the request-resolved `variant`.
+
+### changed
+- **SSE serialization**: All streaming routers now use `orjson` via shared `sse_event()` instead of stdlib `json.dumps`.
 
 ## 0.9.32
 
