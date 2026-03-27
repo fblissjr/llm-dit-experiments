@@ -5,7 +5,6 @@ import base64
 import binascii
 import gc
 import io
-import json
 import logging
 import re
 import time
@@ -20,6 +19,7 @@ from starlette.responses import StreamingResponse
 
 from web.dependencies import ConfigDep, ManagerDep
 from web.param_resolver import resolve_param
+from web.utils import sse_event as _sse
 from web.schemas import (
     DyPEConfigResponse,
     DyPEStatusResponse,
@@ -722,7 +722,7 @@ async def generate_stream(request: GenerateRequest, config: ConfigDep, manager: 
         """Async generator for SSE events."""
         try:
             # Initial status
-            yield f"data: {json.dumps({'type': 'status', 'message': 'Starting generation...'})}\n\n"
+            yield _sse({'type': 'status', 'message': 'Starting generation...'})
 
             # Set up generator for reproducibility
             generator = None
@@ -855,7 +855,7 @@ async def generate_stream(request: GenerateRequest, config: ConfigDep, manager: 
                         its = 0
                         remaining = 0
 
-                    yield f"data: {json.dumps({'type': 'progress', 'step': step, 'total_steps': total, 'elapsed': round(elapsed, 1), 'estimated_remaining_ms': int(remaining * 1000), 'message': f'Step {step}/{total}'})}\n\n"
+                    yield _sse({'type': 'progress', 'step': step, 'total_steps': total, 'elapsed': round(elapsed, 1), 'estimated_remaining_ms': int(remaining * 1000), 'message': f'Step {step}/{total}'})
                     last_step = step
 
             # Get result
@@ -895,18 +895,16 @@ async def generate_stream(request: GenerateRequest, config: ConfigDep, manager: 
                 'id': gen_id,
                 'pipeline_id': 'zimage',
                 'output_type': 'image',
-                'url': data_url,
                 'urls': [data_url],
-                'thumbnail_url': data_url,
                 'seed': actual_seed,
                 'generation_time': gen_time,
             }
-            yield f"data: {json.dumps(complete_event)}\n\n"
+            yield _sse(complete_event)
 
         except Exception as e:
             logger.error(f"[Stream] Generation failed: {e}")
             traceback.print_exc()
-            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+            yield _sse({'type': 'error', 'message': str(e)})
         finally:
             gc.collect()
             if torch.cuda.is_available():

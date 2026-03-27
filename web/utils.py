@@ -8,11 +8,18 @@ import io
 import time
 from typing import Optional, Union
 
+import orjson
+
 from PIL import Image
 
 from pathlib import Path
 
 from web.schemas import ImageGenerationResult, LoRAInfo
+
+
+def sse_event(data: dict) -> str:
+    """Format a dict as an SSE data line. Used by all streaming endpoints."""
+    return f"data: {orjson.dumps(data).decode()}\n\n"
 
 
 def create_image_response(

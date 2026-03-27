@@ -4,7 +4,6 @@ import asyncio
 import base64
 import gc
 import io
-import json
 import logging
 import time
 import traceback
@@ -23,6 +22,9 @@ from web.utils import create_image_response
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+from web.utils import sse_event as _sse
 
 
 def _resolve_flux2_params(
@@ -481,7 +483,7 @@ async def flux2_generate_stream(request: Flux2GenerateRequest, config: ConfigDep
         try:
             # Auto-load on first request (like LTX-2 pattern)
             if not manager.is_loaded("flux2"):
-                yield f"data: {json.dumps({'type': 'status', 'message': 'Loading FLUX.2 models (first request, will be cached)...'})}\n\n"
+                yield _sse({'type': 'status', 'message': 'Loading FLUX.2 models (first request, will be cached)...'})
                 await asyncio.get_event_loop().run_in_executor(None, lambda: manager.load("flux2"))
 
             # Verify loaded model matches request; reload if mismatched
@@ -497,7 +499,7 @@ async def flux2_generate_stream(request: Flux2GenerateRequest, config: ConfigDep
             # Prompt upsampling (optional, requires heylookitsanllm API)
             prompt = request.prompt
             if request.upsample_prompt:
-                yield f"data: {json.dumps({'type': 'status', 'message': 'Upsampling prompt...'})}\n\n"
+                yield _sse({'type': 'status', 'message': 'Upsampling prompt...'})
                 first_ref_b64 = request.reference_images[0] if request.reference_images else None
                 prompt, upsample_warning = _upsample_prompt(
                     config, prompt,
@@ -507,16 +509,16 @@ async def flux2_generate_stream(request: Flux2GenerateRequest, config: ConfigDep
                 if upsample_warning:
                     stream_warnings.append(upsample_warning)
 
-            yield f"data: {json.dumps({'type': 'status', 'message': 'Processing request...'})}\n\n"
+            yield _sse({'type': 'status', 'message': 'Processing request...'})
 
             # Emit warnings as SSE events
             for w in stream_warnings:
-                yield f"data: {json.dumps({'type': 'warning', 'message': w})}\n\n"
+                yield _sse({'type': 'warning', 'message': w})
 
             # Process reference images if provided
             ref_images = []
             if request.reference_images:
-                yield f"data: {json.dumps({'type': 'status', 'message': f'Processing {len(request.reference_images)} reference image(s)...'})}\n\n"
+                yield _sse({'type': 'status', 'message': f'Processing {len(request.reference_images)} reference image(s)...'})
                 for ref_b64 in request.reference_images:
                     # Remove data URL prefix if present
                     if "," in ref_b64:
@@ -629,7 +631,7 @@ async def flux2_generate_stream(request: Flux2GenerateRequest, config: ConfigDep
                     progress = await asyncio.wait_for(progress_queue.get(), timeout=0.5)
                     if progress["step"] != last_step:
                         last_step = progress["step"]
-                        yield f"data: {json.dumps({'type': 'progress', 'step': progress['step'], 'total_steps': progress['total'], 'message': progress.get('stage', '')})}\n\n"
+                        yield _sse({'type': 'progress', 'step': progress['step'], 'total_steps': progress['total'], 'message': progress.get('stage', '')})
                 except asyncio.TimeoutError:
                     continue
 
@@ -647,16 +649,18 @@ async def flux2_generate_stream(request: Flux2GenerateRequest, config: ConfigDep
             logger.info(f"[FLUX.2] Generation complete in {gen_time:.1f}s")
 
             # Convert image to base64
+            encode_start = time.time()
             img_bytes = io.BytesIO()
             image.save(img_bytes, format="PNG")
             img_b64 = base64.b64encode(img_bytes.getvalue()).decode("ascii")
             data_url = f"data:image/png;base64,{img_b64}"
+            encode_time = time.time() - encode_start
+            logger.info(f"[FLUX.2] Image encode: {encode_time:.2f}s ({len(img_b64) // 1024}KB base64)")
 
             # Yield final result (include warnings and enhanced_prompt if applicable)
             complete_data = {
                 'type': 'complete',
                 'urls': [data_url],
-                'url': data_url,
                 'seed': gen_config.seed,
                 'generation_time': gen_time,
             }
@@ -664,31 +668,31 @@ async def flux2_generate_stream(request: Flux2GenerateRequest, config: ConfigDep
                 complete_data['warnings'] = stream_warnings
             if prompt != request.prompt:
                 complete_data['enhanced_prompt'] = prompt
-            yield f"data: {json.dumps(complete_data)}\n\n"
+            yield _sse(complete_data)
 
         except RuntimeError as e:
             if "LoRA mismatch" in str(e):
                 logger.warning(f"[FLUX.2] {e}")
-                yield f"data: {json.dumps({'type': 'error', 'message': str(e), 'code': 409})}\n\n"
+                yield _sse({'type': 'error', 'message': str(e), 'code': 409})
             else:
                 logger.error(f"[FLUX.2] Stream generation failed: {e}")
                 traceback.print_exc()
-                yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+                yield _sse({'type': 'error', 'message': str(e)})
         except (AttributeError, TypeError) as e:
             if not manager.is_loaded("flux2"):
                 logger.warning(
                     "[FLUX.2] Model was unloaded during stream generation. "
                     "Returning error event."
                 )
-                yield f"data: {json.dumps({'type': 'error', 'message': 'FLUX.2 model was unloaded during generation. Please retry.'})}\n\n"
+                yield _sse({'type': 'error', 'message': 'FLUX.2 model was unloaded during generation. Please retry.'})
             else:
                 logger.error(f"[FLUX.2] Stream generation failed: {e}")
                 traceback.print_exc()
-                yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+                yield _sse({'type': 'error', 'message': str(e)})
         except Exception as e:
             logger.error(f"[FLUX.2] Stream generation failed: {e}")
             traceback.print_exc()
-            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+            yield _sse({'type': 'error', 'message': str(e)})
         finally:
             gc.collect()
             if torch.cuda.is_available():

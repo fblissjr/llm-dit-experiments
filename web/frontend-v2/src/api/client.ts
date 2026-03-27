@@ -151,16 +151,31 @@ export async function* generateStream(
 
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
-  let buffer = '';
+  // Use array-based buffering to avoid O(n^2) string concatenation for large
+  // SSE events (e.g., 5MB base64 image delivered in many small chunks).
+  const pending: string[] = [];
 
   try {
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
 
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() ?? '';
+      const text = decoder.decode(value, { stream: true });
+
+      // Fast path: no newlines means incomplete line, just accumulate
+      if (!text.includes('\n')) {
+        pending.push(text);
+        continue;
+      }
+
+      // Join accumulated chunks + current text, then split into lines
+      pending.push(text);
+      const combined = pending.join('');
+      pending.length = 0;
+
+      const lines = combined.split('\n');
+      const remainder = lines.pop() ?? '';
+      if (remainder) pending.push(remainder);
 
       for (const line of lines) {
         if (line.startsWith('data: ')) {
