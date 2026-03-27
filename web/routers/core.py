@@ -944,10 +944,11 @@ async def img2img(request: Img2ImgRequest, config: ConfigDep, manager: ManagerDe
         raise HTTPException(status_code=503, detail="Pipeline not loaded")
 
     _ensure_correct_zimage_variant(variant, manager, config)
+    zimage = manager.get_pipeline("zimage")  # Re-fetch after potential variant reload
 
     # LoRA: check mismatch and reload if needed, then fuse
     _ensure_zimage_lora(manager, request.loras)
-    zimage = manager.get_pipeline("zimage")  # Re-fetch after potential reload
+    zimage = manager.get_pipeline("zimage")  # Re-fetch after potential LoRA reload
     _apply_zimage_loras(zimage, request.loras)
 
     try:

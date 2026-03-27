@@ -250,7 +250,7 @@ export function PipelineForm() {
               return (
                 <div key={param.id} className="relative">
                   <ParamControl
-                    param={isFixed ? { ...param, tooltip: `Fixed for distilled models (${param.tooltip ?? ''})` } : param}
+                    param={isFixed ? { ...param, tooltip: `Fixed for this model variant (${param.tooltip ?? ''})` } : param}
                     value={formValues[param.id]}
                     onChange={paramCallbacks.get(param.id) ?? (() => {})}
                     formValues={formValues}
@@ -261,7 +261,7 @@ export function PipelineForm() {
                   />
                   {isFixed && (
                     <div className="text-xs text-amber-500/70 mt-1 ml-1">
-                      Fixed for distilled models
+                      Fixed for this model variant
                     </div>
                   )}
                 </div>

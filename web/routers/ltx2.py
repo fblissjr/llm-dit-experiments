@@ -3,7 +3,6 @@
 import asyncio
 import gc
 import hashlib
-import json
 import logging
 import time
 import traceback
@@ -18,6 +17,7 @@ from PIL import Image
 from llm_dit.config import RuntimeConfig
 from web.dependencies import ConfigDep, ManagerDep
 from web.param_resolver import csv_to_int_list, resolve_param
+from web.utils import sse_event as _sse
 from web.schemas import LTX2GenerateRequest, LTX2StatusResponse
 
 logger = logging.getLogger(__name__)
@@ -174,7 +174,7 @@ async def ltx2_generate_stream(request: LTX2GenerateRequest, config: ConfigDep, 
     async def generate() -> AsyncIterator[str]:
         """Async generator for SSE events."""
         try:
-            yield f"data: {json.dumps({'type': 'status', 'message': 'Validating LTX-2 configuration...'})}\n\n"
+            yield _sse({'type': 'status', 'message': 'Validating LTX-2 configuration...'})
 
             model_path = await asyncio.get_event_loop().run_in_executor(
                 None, lambda: get_ltx2_model_path(config)
@@ -182,13 +182,13 @@ async def ltx2_generate_stream(request: LTX2GenerateRequest, config: ConfigDep, 
 
             # Lazy-load and cache LTX-2 components on first request
             if not manager.is_loaded("ltx2"):
-                yield f"data: {json.dumps({'type': 'status', 'message': 'Loading LTX-2 models (first request, will be cached)...'})}\n\n"
+                yield _sse({'type': 'status', 'message': 'Loading LTX-2 models (first request, will be cached)...'})
                 await asyncio.get_event_loop().run_in_executor(
                     None, lambda: manager.load("ltx2")
                 )
 
             mode = "two-stage" if request.use_two_stage else "single-stage"
-            yield f"data: {json.dumps({'type': 'status', 'message': f'Starting {mode} generation...'})}\n\n"
+            yield _sse({'type': 'status', 'message': f'Starting {mode} generation...'})
 
             # Progress tracking -- shared dict updated by generation thread
             progress_state = {"stage": "", "step": 0, "total": 0}
@@ -359,12 +359,12 @@ async def ltx2_generate_stream(request: LTX2GenerateRequest, config: ConfigDep, 
                 elapsed = time.time() - start_time
 
                 if stage == "enhancing" and not enhancing_status_sent:
-                    yield f"data: {json.dumps({'type': 'status', 'message': 'Enhancing prompt via Gemma3...'})}\n\n"
+                    yield _sse({'type': 'status', 'message': 'Enhancing prompt via Gemma3...'})
                     enhancing_status_sent = True
                 elif stage and step > 0 and total > 0:
                     eta = (elapsed / step) * (total - step)
                     its = step / elapsed if elapsed > 0 else 0
-                    yield f"data: {json.dumps({'type': 'progress', 'stage': stage, 'step': step, 'total': total, 'elapsed': round(elapsed, 1), 'eta': round(eta, 1), 'its': round(its, 2)})}\n\n"
+                    yield _sse({'type': 'progress', 'stage': stage, 'step': step, 'total': total, 'elapsed': round(elapsed, 1), 'eta': round(eta, 1), 'its': round(its, 2)})
 
             gen_result = await gen_task
             generation_time = time.time() - start_time
@@ -380,7 +380,7 @@ async def ltx2_generate_stream(request: LTX2GenerateRequest, config: ConfigDep, 
                 audio_sr = 24000
                 has_audio = False
 
-            yield f"data: {json.dumps({'type': 'status', 'message': 'Saving video...'})}\n\n"
+            yield _sse({'type': 'status', 'message': 'Saving video...'})
 
             timestamp = time.strftime("%Y%m%d_%H%M%S")
             hash_suffix = hashlib.md5(f"{request.prompt}{seed}".encode()).hexdigest()[:8]
@@ -425,12 +425,12 @@ async def ltx2_generate_stream(request: LTX2GenerateRequest, config: ConfigDep, 
                 "two_stage": request.use_two_stage,
                 "enhanced_prompt": enhanced_prompt_ref[0],
             }
-            yield f"data: {json.dumps(result)}\n\n"
+            yield _sse(result)
 
         except Exception as e:
             logger.error(f"[LTX-2] Generation failed: {e}")
             traceback.print_exc()
-            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+            yield _sse({'type': 'error', 'message': str(e)})
         finally:
             # Return cached encoder to CPU if still on GPU
             enc = manager.ltx2_encoder
