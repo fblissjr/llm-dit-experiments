@@ -68,11 +68,11 @@ def _resolve_flux2_params(
     return num_steps, guidance, warnings
 
 
-def _resolve_offload(config, model_name: str) -> bool:
-    """Models that fit in VRAM skip stage offloading."""
+def _resolve_offload(model_name: str) -> bool:
+    """Models that fit in VRAM skip stage offloading; others must offload."""
     if fits_in_vram(model_name):
         return False
-    return getattr(config, "flux2_offload_between_stages", True)
+    return True
 
 
 def _upsample_prompt(
@@ -322,7 +322,7 @@ async def flux2_generate(request: Flux2GenerateRequest, config: ConfigDep, manag
             except (ValueError, IndexError):
                 match_image_size = None
 
-        offload_between_stages = _resolve_offload(config, request.model_name)
+        offload_between_stages = _resolve_offload(request.model_name)
 
         # Create generation config
         gen_config = Flux2GenerationConfig(
@@ -533,7 +533,7 @@ async def flux2_generate_stream(request: Flux2GenerateRequest, config: ConfigDep
                 except (ValueError, IndexError):
                     match_image_size = None
 
-            offload_between_stages = _resolve_offload(config, request.model_name)
+            offload_between_stages = _resolve_offload(request.model_name)
 
             # Create generation config
             gen_config = Flux2GenerationConfig(
