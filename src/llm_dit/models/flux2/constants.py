@@ -343,14 +343,20 @@ def fits_in_vram(model_name: str) -> bool:
     """Check if model + encoder + VAE fit in 24GB VRAM without stage offloading.
 
     Uses FLUX2_MODEL_INFO to check param class and fp8 flag.
-    Only BF16 9B models (~26GB) exceed the budget; all FP8 models
-    (~8-17GB) and all 4B models (~8-12GB) fit.
+    BF16 9B models (~26GB) exceed the budget. FP8 9B KV-cache models
+    also don't fit: fp8 weights expand to ~19GB on .to(device) via
+    amend_forward_with_upcast, and the KV cache for reference tokens
+    adds 2-4GB on top. All 4B models and non-KV FP8 9B models fit.
     """
     info = FLUX2_MODEL_INFO.get(model_name.lower())
     if not info:
         return False
-    # BF16 9B: ~26GB (doesn't fit). Everything else: <=17GB (fits).
-    return info["params_cls"] is Klein4BParams or info.get("fp8", False)
+    if info["params_cls"] is Klein4BParams:
+        return True
+    # FP8 9B KV-cache: ~19GB after fp8 expansion + KV cache overhead
+    if info.get("fp8", False) and info.get("use_kv_cache", False):
+        return False
+    return info.get("fp8", False)
 
 
 def calculate_latent_shape(height: int, width: int) -> tuple[int, int, int]:
