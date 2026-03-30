@@ -143,6 +143,7 @@ Full testing guide with all commands: [tests/CLAUDE.md](tests/CLAUDE.md)
 | Stage 1 washed out with few steps | Wrong two-stage pipeline mode | We use TI2VidTwoStagesPipeline (base+LoRA), NOT DistilledPipeline. Stage 1 needs 30 steps + full CFG, not 8 steps. See [ltx2_distilled_pipeline.md](docs/reference/ltx2_distilled_pipeline.md) |
 | FLUX.2 4B model garbled output | Wrong encoder loaded (8B for 4B model) | `_resolve_encoder_spec()` in model_manager.py picks encoder by size class. Verify `encoder_path_4b` in `[flux2]` config.toml points to Qwen3-4B. |
 | Encoder shuttles unnecessarily | Wrong shuttle predicate | `_is_pinned` = permanent (pinned memory exists). `_is_offloaded` = current residency (changes per shuttle). Check both: `_is_pinned and not _is_offloaded`. |
+| Starlette deprecated API | `@router.on_event()` used in router | Removed in Starlette 1.0. Startup logic goes in `server.py:main()`. Regression test: `test_starlette_compat.py` |
 
 Full debugging table: [debugging_reference.md](internal/docs/debugging_reference.md)
 

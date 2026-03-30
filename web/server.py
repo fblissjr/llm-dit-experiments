@@ -123,6 +123,10 @@ def main():
     # Register routers (deferred to avoid circular imports with web.routers.*)
     _register_routers()
 
+    from web.routers.ltx2 import cleanup_old_videos
+
+    cleanup_old_videos(max_age_hours=24)
+
     # Serve React frontend build as SPA (catch-all AFTER API routes)
     if _frontend_dist.is_dir():
         app.mount("/", StaticFiles(directory=str(_frontend_dist), html=True), name="spa")

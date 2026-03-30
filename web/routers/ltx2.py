@@ -29,7 +29,7 @@ VIDEO_OUTPUT_DIR = Path(__file__).parent.parent.parent / "outputs" / "videos"
 VIDEO_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 
-async def cleanup_old_videos(max_age_hours: int = 24) -> int:
+def cleanup_old_videos(max_age_hours: int = 24) -> int:
     """Delete videos older than max_age_hours.
 
     Called on startup to prevent unbounded storage growth.
@@ -46,9 +46,7 @@ async def cleanup_old_videos(max_age_hours: int = 24) -> int:
                 if age > max_age_seconds:
                     video_file.unlink()
                     deleted_count += 1
-                    thumb = video_file.with_suffix(".png")
-                    if thumb.exists():
-                        thumb.unlink()
+                    video_file.with_suffix(".png").unlink(missing_ok=True)
             except OSError as e:
                 logger.warning(f"Failed to delete old video {video_file}: {e}")
 
@@ -56,12 +54,6 @@ async def cleanup_old_videos(max_age_hours: int = 24) -> int:
         logger.info(f"[Cleanup] Deleted {deleted_count} videos older than {max_age_hours}h")
 
     return deleted_count
-
-
-@router.on_event("startup")
-async def startup_video_cleanup():
-    """Clean up old videos on server startup."""
-    await cleanup_old_videos(max_age_hours=24)
 
 
 def get_ltx2_model_path(config: RuntimeConfig) -> Path:
