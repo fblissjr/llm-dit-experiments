@@ -172,6 +172,7 @@ def create_parser() -> argparse.ArgumentParser:
     parser.add_argument("--height", type=int, default=None)
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--match-image-size", default=None, help='e.g. "0 (First Image)"')
+    parser.add_argument("--loras", nargs="+", default=None, help="LoRA specs (path:scale)")
 
     # Batch control
     parser.add_argument("--server", default=None, help="Server URL (default: from config.toml)")
