@@ -339,13 +339,18 @@ def supports_kv_cache(model_name: str) -> bool:
     return FLUX2_MODEL_INFO.get(model_name.lower(), {}).get("use_kv_cache", False)
 
 
-def is_small_model(model_name: str) -> bool:
-    """Check if a model is small enough to skip offloading (4B class).
+def fits_in_vram(model_name: str) -> bool:
+    """Check if model + encoder + VAE fit in 24GB VRAM without stage offloading.
 
-    Small models (~4-8GB transformer + ~4-8GB encoder + ~0.3GB VAE) fit
-    entirely in 24GB VRAM without stage-based offloading.
+    Uses FLUX2_MODEL_INFO to check param class and fp8 flag.
+    Only BF16 9B models (~26GB) exceed the budget; all FP8 models
+    (~8-17GB) and all 4B models (~8-12GB) fit.
     """
-    return "4b" in model_name.lower()
+    info = FLUX2_MODEL_INFO.get(model_name.lower())
+    if not info:
+        return False
+    # BF16 9B: ~26GB (doesn't fit). Everything else: <=17GB (fits).
+    return info["params_cls"] is Klein4BParams or info.get("fp8", False)
 
 
 def calculate_latent_shape(height: int, width: int) -> tuple[int, int, int]:

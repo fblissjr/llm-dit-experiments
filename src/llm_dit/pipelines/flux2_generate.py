@@ -1049,7 +1049,7 @@ def generate_image(
     # Skip for compiled models -- device move invalidates compiled graphs.
     transformer_was_offloaded = False
     is_compiled = hasattr(transformer, "_orig_mod") if transformer is not None else False
-    if transformer_is_persistent and transformer is not None and not is_compiled:
+    if transformer_is_persistent and transformer is not None and not is_compiled and config.offload_between_stages:
         log_gpu_memory("before transformer offload for encoding")
         logger.info("Temporarily offloading transformer for text encoding...")
         transformer.to("cpu")
@@ -1112,14 +1112,18 @@ def generate_image(
         dtype=torch.float32,
     )
 
-    # Offload encoder
-    if config.offload_between_stages or encoder_is_persistent:
+    # Offload encoder (skip when model fits in VRAM and encoder is persistent)
+    if config.offload_between_stages:
         logger.info("Offloading encoder...")
         encoder.offload()
         if not encoder_is_persistent:
             del encoder
             cleanup_memory()
         log_gpu_memory("after encoder offload + cleanup")
+    elif encoder_is_persistent and getattr(encoder, "_is_pinned", False) and not getattr(encoder, "_is_offloaded", False):
+        logger.info("Offloading encoder to pinned memory...")
+        encoder.offload()
+        log_gpu_memory("after encoder offload")
 
     # Reload transformer to GPU after encoder frees VRAM
     if transformer_was_offloaded:

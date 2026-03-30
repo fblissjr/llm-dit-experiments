@@ -54,12 +54,11 @@ def _resolve_encoder_spec(
     - 4B models use encoder_path_4b (or HF fallback)
     - 9B models use encoder_path (or HF fallback)
     """
-    from llm_dit.models.flux2.constants import FLUX2_MODEL_INFO, is_small_model
+    from llm_dit.models.flux2.constants import FLUX2_MODEL_INFO, Klein4BParams
 
-    hf_fallback = FLUX2_MODEL_INFO.get(model_name.lower(), {}).get(
-        "text_encoder", "Qwen/Qwen3-8B-FP8"
-    )
-    if is_small_model(model_name):
+    info = FLUX2_MODEL_INFO.get(model_name.lower(), {})
+    hf_fallback = info.get("text_encoder", "Qwen/Qwen3-8B-FP8")
+    if info.get("params_cls") is Klein4BParams:
         return encoder_path_4b or hf_fallback
     return encoder_path or hf_fallback
 
@@ -618,7 +617,7 @@ class ModelManager:
 
         try:
             from llm_dit.encoders.qwen3_unified import Qwen3UnifiedEncoder
-            from llm_dit.models.flux2.constants import get_encoder_preset
+            from llm_dit.models.flux2.constants import fits_in_vram, get_encoder_preset
             from llm_dit.models.flux2.loader import load_flux2_transformer, load_flux2_vae
 
             model_path_obj = Path(model_path).expanduser()
@@ -637,9 +636,11 @@ class ModelManager:
             loaded_encoder = Qwen3UnifiedEncoder.from_preset(
                 preset, model_path=text_encoder_spec, device="cuda"
             )
-            # Offload to CPU with pinned memory for fast GPU shuttle via DMA
-            loaded_encoder.offload_to_pinned()
-            logger.info("[FLUX.2] Encoder loaded and offloaded to CPU with pinned memory")
+            if fits_in_vram(model_name):
+                logger.info("[FLUX.2] Encoder stays on GPU (model fits in VRAM)")
+            else:
+                loaded_encoder.offload_to_pinned()
+                logger.info("[FLUX.2] Encoder offloaded to CPU with pinned memory")
 
             # Stage 2: Load transformer
             logger.info(f"[FLUX.2] Stage 2: Loading transformer ({model_name})")

@@ -339,21 +339,34 @@ class TestFLUX2Constants:
         assert SMOKE["num_inference_steps"] <= STANDARD["num_inference_steps"]
 
 
-    def test_is_small_model_4b(self):
-        from llm_dit.models.flux2.constants import is_small_model
+    def test_fits_in_vram_4b_models(self):
+        from llm_dit.models.flux2.constants import fits_in_vram
 
-        assert is_small_model("klein-4b") is True
-        assert is_small_model("klein-4b-fp8") is True
-        assert is_small_model("klein-base-4b") is True
-        assert is_small_model("klein-base-4b-fp8") is True
+        assert fits_in_vram("klein-4b") is True
+        assert fits_in_vram("klein-4b-fp8") is True
+        assert fits_in_vram("klein-base-4b") is True
+        assert fits_in_vram("klein-base-4b-fp8") is True
 
-    def test_is_small_model_9b(self):
-        from llm_dit.models.flux2.constants import is_small_model
+    def test_fits_in_vram_fp8_9b_models(self):
+        """FP8 9B models (~17GB total) fit in 24GB VRAM."""
+        from llm_dit.models.flux2.constants import fits_in_vram
 
-        assert is_small_model("klein-9b") is False
-        assert is_small_model("klein-9b-fp8") is False
-        assert is_small_model("klein-9b-kv") is False
-        assert is_small_model("klein-base-9b") is False
+        assert fits_in_vram("klein-9b-fp8") is True
+        assert fits_in_vram("klein-base-9b-fp8") is True
+        assert fits_in_vram("klein-9b-kv-fp8") is True
+
+    def test_fits_in_vram_bf16_9b_models(self):
+        """BF16 9B models (~26GB total) do NOT fit in 24GB VRAM."""
+        from llm_dit.models.flux2.constants import fits_in_vram
+
+        assert fits_in_vram("klein-9b") is False
+        assert fits_in_vram("klein-base-9b") is False
+        assert fits_in_vram("klein-9b-kv") is False
+
+    def test_fits_in_vram_unknown_model(self):
+        from llm_dit.models.flux2.constants import fits_in_vram
+
+        assert fits_in_vram("nonexistent-model") is False
 
 
 class TestZImageConstants:

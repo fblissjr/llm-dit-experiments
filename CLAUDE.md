@@ -100,7 +100,7 @@ This is a multi-workstream project. Encoders and core infra are shared across pi
 | Memory cleanup | `src/llm_dit/utils/memory.py` | `cleanup_memory()` -- centralized gc.collect + torch.cuda.empty_cache (CUDA guard) |
 | Quant aliases | `src/llm_dit/quantization/__init__.py` | `QUANT_ALIASES` dict -- canonical `"fp8"` -> `"fp8-dynamic"` mapping (single source of truth) |
 | FP8 forward | `src/llm_dit/quantization/fp8_cast.py` | `amend_forward_with_upcast()` -- dual-path: `torch._scaled_mm` (SM89+, 2x faster, dynamic activation scaling) or bf16 upcast fallback. `invalidate_scaled_mm_caches()` after LoRA fusion. `LLM_DIT_FORCE_FP8_UPCAST=1` env var forces upcast path. |
-| FLUX.2 constants | `src/llm_dit/models/flux2/constants.py` | `FLUX2_MODEL_INFO`, `is_small_model()`, `get_encoder_preset()`, `get_fixed_params()` -- model metadata used by router + model_manager |
+| FLUX.2 constants | `src/llm_dit/models/flux2/constants.py` | `FLUX2_MODEL_INFO`, `fits_in_vram()`, `get_encoder_preset()`, `get_fixed_params()` -- model metadata used by router + model_manager |
 | FLUX.2 scheduler | `src/llm_dit/schedulers/flux2_scheduler.py` | `get_schedule()`, `compute_empirical_mu()`, `generalized_time_snr_shift()` |
 | V2 Feature Extractor | `src/llm_dit/encoders/gemma3_feature_extractor_v2.py` | Per-token RMSNorm, dual projections (video 4096, audio 2048) |
 
@@ -111,6 +111,7 @@ Trace the full data flow before implementing any feature. 4 steps: identify touc
 ### quick test commands
 
 ```bash
+uv run web/server.py                             # Start dev server (port 7860)
 uv run pytest tests/unit/ -v                    # Unit tests (no GPU, fast)
 uv run pytest tests/unit/test_dry_config.py -v   # Config DRY validation
 uv run pytest tests/e2e/api/test_ltx2_smoke.py -v -s  # E2E smoke (GPU)
@@ -141,6 +142,7 @@ Full testing guide with all commands: [tests/CLAUDE.md](tests/CLAUDE.md)
 | Washed-out/noisy distilled output | LoRA fused without fp8 weight_scale | `fuse_lora_to_state_dict` must dequant with `weight_scale` before adding LoRA delta; see `_fuse_delta()` in lora.py |
 | Stage 1 washed out with few steps | Wrong two-stage pipeline mode | We use TI2VidTwoStagesPipeline (base+LoRA), NOT DistilledPipeline. Stage 1 needs 30 steps + full CFG, not 8 steps. See [ltx2_distilled_pipeline.md](docs/reference/ltx2_distilled_pipeline.md) |
 | FLUX.2 4B model garbled output | Wrong encoder loaded (8B for 4B model) | `_resolve_encoder_spec()` in model_manager.py picks encoder by size class. Verify `encoder_path_4b` in `[flux2]` config.toml points to Qwen3-4B. |
+| Encoder shuttles unnecessarily | Wrong shuttle predicate | `_is_pinned` = permanent (pinned memory exists). `_is_offloaded` = current residency (changes per shuttle). Check both: `_is_pinned and not _is_offloaded`. |
 
 Full debugging table: [debugging_reference.md](internal/docs/debugging_reference.md)
 

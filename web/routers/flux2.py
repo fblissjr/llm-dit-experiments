@@ -14,7 +14,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from PIL import Image
 
-from llm_dit.models.flux2.constants import FLUX2_MODEL_INFO, get_fixed_params, is_small_model
+from llm_dit.models.flux2.constants import FLUX2_MODEL_INFO, fits_in_vram, get_fixed_params
 from web.dependencies import ConfigDep, ManagerDep
 from web.param_resolver import resolve_param
 from web.schemas import Flux2GenerateRequest, Flux2StatusResponse, Flux2UpsampleRequest, ImageGenerationResult
@@ -69,8 +69,8 @@ def _resolve_flux2_params(
 
 
 def _resolve_offload(config, model_name: str) -> bool:
-    """Small models (4B) fit in 24GB VRAM; large models use stage offloading."""
-    if is_small_model(model_name):
+    """Models that fit in VRAM skip stage offloading."""
+    if fits_in_vram(model_name):
         return False
     return getattr(config, "flux2_offload_between_stages", True)
 
