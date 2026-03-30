@@ -339,6 +339,15 @@ def supports_kv_cache(model_name: str) -> bool:
     return FLUX2_MODEL_INFO.get(model_name.lower(), {}).get("use_kv_cache", False)
 
 
+def is_small_model(model_name: str) -> bool:
+    """Check if a model is small enough to skip offloading (4B class).
+
+    Small models (~4-8GB transformer + ~4-8GB encoder + ~0.3GB VAE) fit
+    entirely in 24GB VRAM without stage-based offloading.
+    """
+    return "4b" in model_name.lower()
+
+
 def calculate_latent_shape(height: int, width: int) -> tuple[int, int, int]:
     """
     Calculate latent dimensions for a given image size.

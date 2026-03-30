@@ -16,15 +16,18 @@ from . import register_pipeline, PipelineSchema, ParamSchema
 
 
 # FLUX.2 model variants - must match keys in FLUX2_MODEL_INFO
-# Note: Only 9B variants included (4B not in use)
 FLUX2_MODELS = [
     # Distilled models (fast, 4 steps)
+    "klein-4b",
+    "klein-4b-fp8",
     "klein-9b",
     "klein-9b-fp8",
     # KV-cache models (fast, 4 steps, reference-image editing)
     "klein-9b-kv",
     "klein-9b-kv-fp8",
     # Base models (quality, 50 steps)
+    "klein-base-4b",
+    "klein-base-4b-fp8",
     "klein-base-9b",
     "klein-base-9b-fp8",
 ]

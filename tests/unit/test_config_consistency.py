@@ -339,6 +339,23 @@ class TestFLUX2Constants:
         assert SMOKE["num_inference_steps"] <= STANDARD["num_inference_steps"]
 
 
+    def test_is_small_model_4b(self):
+        from llm_dit.models.flux2.constants import is_small_model
+
+        assert is_small_model("klein-4b") is True
+        assert is_small_model("klein-4b-fp8") is True
+        assert is_small_model("klein-base-4b") is True
+        assert is_small_model("klein-base-4b-fp8") is True
+
+    def test_is_small_model_9b(self):
+        from llm_dit.models.flux2.constants import is_small_model
+
+        assert is_small_model("klein-9b") is False
+        assert is_small_model("klein-9b-fp8") is False
+        assert is_small_model("klein-9b-kv") is False
+        assert is_small_model("klein-base-9b") is False
+
+
 class TestZImageConstants:
     """Basic validation of Z-Image constants."""
 

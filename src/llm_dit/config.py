@@ -493,7 +493,8 @@ class Flux2Config:
 
     model_path: str = ""  # Path to transformer weights (file or directory)
     vae_path: str = ""  # Path to VAE weights (file or directory)
-    encoder_path: str = ""  # Path to Qwen3 encoder (optional, uses HuggingFace if empty)
+    encoder_path: str = ""  # Path to Qwen3-8B encoder for 9B models (optional, uses HuggingFace if empty)
+    encoder_path_4b: str = ""  # Path to Qwen3-4B encoder for 4B models (optional, uses HuggingFace if empty)
     default_model: str = "klein-9b-fp8"  # Default model variant
     block_offload: bool = False  # Enable block-by-block GPU offloading (slower but uses ~5GB less VRAM)
     offload_between_stages: bool = True  # Three-stage offloading: encoder -> transformer -> VAE
@@ -1376,6 +1377,10 @@ class RuntimeConfig:
     @property
     def flux2_encoder_path(self) -> str | None:
         return self.flux2.encoder_path
+
+    @property
+    def flux2_encoder_path_4b(self) -> str | None:
+        return self.flux2.encoder_path_4b
 
     @property
     def flux2_model_name(self) -> str:

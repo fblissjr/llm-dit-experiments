@@ -43,6 +43,27 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _resolve_encoder_spec(
+    model_name: str,
+    encoder_path: str | None,
+    encoder_path_4b: str | None = None,
+) -> str:
+    """Resolve the text encoder path for a FLUX.2 model variant.
+
+    Picks the right encoder for the model's size class:
+    - 4B models use encoder_path_4b (or HF fallback)
+    - 9B models use encoder_path (or HF fallback)
+    """
+    from llm_dit.models.flux2.constants import FLUX2_MODEL_INFO, is_small_model
+
+    hf_fallback = FLUX2_MODEL_INFO.get(model_name.lower(), {}).get(
+        "text_encoder", "Qwen/Qwen3-8B-FP8"
+    )
+    if is_small_model(model_name):
+        return encoder_path_4b or hf_fallback
+    return encoder_path or hf_fallback
+
+
 # Pipeline identifiers (canonical names used internally)
 PIPELINE_IDS = {"zimage", "flux2", "ltx2", "qwen_image", "qwen_image_t2i"}
 
@@ -565,6 +586,7 @@ class ModelManager:
         compile_mode = getattr(config, "flux2_compile_mode", "max-autotune-no-cudagraphs")
         compile_dynamic = getattr(config, "flux2_compile_dynamic", False)
         encoder_path = getattr(config, "flux2_encoder_path", None)
+        encoder_path_4b = getattr(config, "flux2_encoder_path_4b", None)
         vae_path = getattr(config, "flux2_vae_path", None)
 
         # Resolve quantization from unified config
@@ -596,7 +618,7 @@ class ModelManager:
 
         try:
             from llm_dit.encoders.qwen3_unified import Qwen3UnifiedEncoder
-            from llm_dit.models.flux2.constants import FLUX2_MODEL_INFO, get_encoder_preset
+            from llm_dit.models.flux2.constants import get_encoder_preset
             from llm_dit.models.flux2.loader import load_flux2_transformer, load_flux2_vae
 
             model_path_obj = Path(model_path).expanduser()
@@ -607,9 +629,8 @@ class ModelManager:
                 )
 
             # Stage 1: Load encoder
-            model_info = FLUX2_MODEL_INFO.get(model_name.lower(), {})
             preset = get_encoder_preset(model_name)
-            text_encoder_spec = encoder_path or model_info.get("text_encoder", "Qwen/Qwen3-8B")
+            text_encoder_spec = _resolve_encoder_spec(model_name, encoder_path, encoder_path_4b)
 
             logger.info(f"[FLUX.2] Stage 1: Loading encoder from {text_encoder_spec}")
             start = time.time()

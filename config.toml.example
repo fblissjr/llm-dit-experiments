@@ -99,14 +99,15 @@ variant = "turbo"
 # ==========================================================================
 # Pipeline: FLUX.2 Klein
 # ==========================================================================
-# 4B/9B image generation. Encoder: Qwen3-8B.
+# 4B/9B image generation. Encoder: Qwen3-8B (9B models) or Qwen3-4B (4B models).
 
 [flux2]
 # Transformer weights directory. Sibling directories are also searched when
 # switching models (e.g., model_path points to kv/ but frontend selects kv-fp8).
 # model_path = "/path/to/FLUX.2-klein-9b-kv"
 # vae_path = "/path/to/FLUX.2-klein-9b-kv"
-# encoder_path = "/path/to/Qwen3-8B"
+# encoder_path = "/path/to/Qwen3-8B"       # 9B models (auto-selected per variant)
+# encoder_path_4b = "/path/to/Qwen3-4B"    # 4B models (auto-selected per variant)
 
 # Model variant (sets default steps + guidance automatically):
 #   Distilled (4 steps, guidance=1.0): klein-4b, klein-9b, klein-4b-fp8, klein-9b-fp8

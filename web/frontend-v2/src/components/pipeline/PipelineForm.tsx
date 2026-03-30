@@ -17,25 +17,6 @@ import { logger } from '@/utils/logger';
 
 const log = logger('PipelineForm');
 
-// FLUX.2 distilled models have fixed num_steps and guidance.
-// Distilled = all variants without "base" in the name.
-const FLUX2_FIXED_PARAMS = new Set(['num_steps', 'guidance']);
-// Z-Image turbo has guidance baked in (CFG=0)
-const ZIMAGE_TURBO_FIXED = new Set(['guidance_scale']);
-
-function isFixedParam(pipelineId: string, paramId: string, formValues: FormValues): boolean {
-  if (pipelineId === 'flux2') {
-    if (!FLUX2_FIXED_PARAMS.has(paramId)) return false;
-    const modelName = String(formValues.model_name ?? '');
-    return !modelName.includes('base');
-  }
-  if (pipelineId === 'zimage') {
-    if (!ZIMAGE_TURBO_FIXED.has(paramId)) return false;
-    return String(formValues.variant ?? 'turbo') === 'turbo';
-  }
-  return false;
-}
-
 // Define group order for consistent rendering
 const groupOrder: GroupType[] = [
   'basic',
@@ -234,9 +215,6 @@ export function PipelineForm() {
         return (
           <ParamGroup key={groupId} groupId={groupId}>
             {params.map((param) => {
-              // Disable fixed params for distilled FLUX.2 models
-              const isFixed = isFixedParam(selectedPipelineId, param.id, formValues);
-
               // Attach upsample action to the prompt textarea on flux2
               const isPromptField = param.id === 'prompt' && param.type === 'textarea';
               const actionProps = showUpsampleAction && isPromptField
@@ -248,23 +226,16 @@ export function PipelineForm() {
                 : {};
 
               return (
-                <div key={param.id} className="relative">
-                  <ParamControl
-                    param={isFixed ? { ...param, tooltip: `Fixed for this model variant (${param.tooltip ?? ''})` } : param}
-                    value={formValues[param.id]}
-                    onChange={paramCallbacks.get(param.id) ?? (() => {})}
-                    formValues={formValues}
-                    errors={errors}
-                    disabled={isFixed}
-                    pipelineId={selectedPipelineId ?? undefined}
-                    {...actionProps}
-                  />
-                  {isFixed && (
-                    <div className="text-xs text-amber-500/70 mt-1 ml-1">
-                      Fixed for this model variant
-                    </div>
-                  )}
-                </div>
+                <ParamControl
+                  key={param.id}
+                  param={param}
+                  value={formValues[param.id]}
+                  onChange={paramCallbacks.get(param.id) ?? (() => {})}
+                  formValues={formValues}
+                  errors={errors}
+                  pipelineId={selectedPipelineId ?? undefined}
+                  {...actionProps}
+                />
               );
             })}
           </ParamGroup>

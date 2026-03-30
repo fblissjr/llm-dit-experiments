@@ -370,6 +370,109 @@ class TestFactoryFunction:
         assert result == mock_encoder
 
 
+class TestEncoderPresetSizeAlignment:
+    """Test that encoder preset aligns with model size class.
+
+    When config.toml has encoder_path pointing to a specific encoder (e.g., Qwen3-8B),
+    we must detect when the selected model variant (e.g., klein-4b) needs a different
+    encoder size class and fall back to model_info['text_encoder'].
+    """
+
+    def test_get_encoder_preset_4b_models(self):
+        """4B model variants should return klein-4b preset."""
+        from llm_dit.models.flux2.constants import get_encoder_preset
+
+        assert get_encoder_preset("klein-4b") == "klein-4b"
+        assert get_encoder_preset("klein-4b-fp8") == "klein-4b"
+        assert get_encoder_preset("klein-base-4b") == "klein-4b"
+        assert get_encoder_preset("klein-base-4b-fp8") == "klein-4b"
+
+    def test_get_encoder_preset_9b_models(self):
+        """9B model variants should return klein-9b preset."""
+        from llm_dit.models.flux2.constants import get_encoder_preset
+
+        assert get_encoder_preset("klein-9b") == "klein-9b"
+        assert get_encoder_preset("klein-9b-fp8") == "klein-9b"
+        assert get_encoder_preset("klein-base-9b") == "klein-9b"
+        assert get_encoder_preset("klein-base-9b-fp8") == "klein-9b"
+        assert get_encoder_preset("klein-9b-kv") == "klein-9b"
+        assert get_encoder_preset("klein-9b-kv-fp8") == "klein-9b"
+
+    def test_4b_model_info_references_4b_encoder(self):
+        """FLUX2_MODEL_INFO for 4B models must reference Qwen3-4B encoder."""
+        from llm_dit.models.flux2.constants import FLUX2_MODEL_INFO
+
+        for name in ("klein-4b", "klein-4b-fp8", "klein-base-4b", "klein-base-4b-fp8"):
+            info = FLUX2_MODEL_INFO[name]
+            assert "4B" in info["text_encoder"], (
+                f"{name} should reference Qwen3-4B encoder, got {info['text_encoder']}"
+            )
+
+    def test_9b_model_info_references_8b_encoder(self):
+        """FLUX2_MODEL_INFO for 9B models must reference Qwen3-8B encoder."""
+        from llm_dit.models.flux2.constants import FLUX2_MODEL_INFO
+
+        for name in ("klein-9b", "klein-9b-fp8", "klein-base-9b", "klein-base-9b-fp8"):
+            info = FLUX2_MODEL_INFO[name]
+            assert "8B" in info["text_encoder"], (
+                f"{name} should reference Qwen3-8B encoder, got {info['text_encoder']}"
+            )
+
+    def test_resolve_encoder_spec_4b_uses_4b_path(self):
+        """4B model uses encoder_path_4b when provided."""
+        from llm_dit.model_manager import _resolve_encoder_spec
+
+        spec = _resolve_encoder_spec(
+            model_name="klein-4b",
+            encoder_path="models/Qwen3-8B-FP8",
+            encoder_path_4b="models/Qwen3-4B",
+        )
+        assert spec == "models/Qwen3-4B"
+
+    def test_resolve_encoder_spec_4b_fallback_to_hf(self):
+        """4B model with no encoder_path_4b falls back to HF model ID."""
+        from llm_dit.models.flux2.constants import FLUX2_MODEL_INFO
+        from llm_dit.model_manager import _resolve_encoder_spec
+
+        spec = _resolve_encoder_spec(
+            model_name="klein-4b",
+            encoder_path="models/Qwen3-8B-FP8",
+        )
+        expected = FLUX2_MODEL_INFO["klein-4b"]["text_encoder"]
+        assert spec == expected
+
+    def test_resolve_encoder_spec_9b_uses_encoder_path(self):
+        """9B model uses encoder_path."""
+        from llm_dit.model_manager import _resolve_encoder_spec
+
+        spec = _resolve_encoder_spec(
+            model_name="klein-9b",
+            encoder_path="models/Qwen3-8B-FP8",
+            encoder_path_4b="models/Qwen3-4B",
+        )
+        assert spec == "models/Qwen3-8B-FP8"
+
+    def test_resolve_encoder_spec_no_paths(self):
+        """When no paths configured, use HF fallback."""
+        from llm_dit.models.flux2.constants import FLUX2_MODEL_INFO
+        from llm_dit.model_manager import _resolve_encoder_spec
+
+        spec = _resolve_encoder_spec(model_name="klein-4b", encoder_path=None)
+        expected = FLUX2_MODEL_INFO["klein-4b"]["text_encoder"]
+        assert spec == expected
+
+    def test_resolve_encoder_spec_empty_paths(self):
+        """Empty strings treated as no path."""
+        from llm_dit.models.flux2.constants import FLUX2_MODEL_INFO
+        from llm_dit.model_manager import _resolve_encoder_spec
+
+        spec = _resolve_encoder_spec(
+            model_name="klein-4b", encoder_path="", encoder_path_4b=""
+        )
+        expected = FLUX2_MODEL_INFO["klein-4b"]["text_encoder"]
+        assert spec == expected
+
+
 class TestQwen3BaseMixin:
     """Test Qwen3EncoderMixin functionality."""
 

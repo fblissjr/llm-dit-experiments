@@ -14,6 +14,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from PIL import Image
 
+from llm_dit.models.flux2.constants import FLUX2_MODEL_INFO, get_fixed_params, is_small_model
 from web.dependencies import ConfigDep, ManagerDep
 from web.param_resolver import resolve_param
 from web.schemas import Flux2GenerateRequest, Flux2StatusResponse, Flux2UpsampleRequest, ImageGenerationResult
@@ -35,8 +36,6 @@ def _resolve_flux2_params(
 
     Returns (num_steps, guidance, warnings).
     """
-    from llm_dit.models.flux2.constants import FLUX2_MODEL_INFO, get_fixed_params
-
     model_info = FLUX2_MODEL_INFO.get(request.model_name.lower(), {})
     model_defaults = model_info.get("defaults", {"guidance": 1.0, "num_steps": 4})
     fixed = get_fixed_params(request.model_name)
@@ -67,6 +66,13 @@ def _resolve_flux2_params(
         logger.warning(f"[FLUX.2] {warnings[-1]}")
 
     return num_steps, guidance, warnings
+
+
+def _resolve_offload(config, model_name: str) -> bool:
+    """Small models (4B) fit in 24GB VRAM; large models use stage offloading."""
+    if is_small_model(model_name):
+        return False
+    return getattr(config, "flux2_offload_between_stages", True)
 
 
 def _upsample_prompt(
@@ -212,8 +218,6 @@ async def flux2_model_info(model_name: str):
 
     Used by frontend to conditionally disable controls for distilled models.
     """
-    from llm_dit.models.flux2.constants import FLUX2_MODEL_INFO
-
     model_name_lower = model_name.lower()
     if model_name_lower not in FLUX2_MODEL_INFO:
         raise HTTPException(status_code=404, detail=f"Unknown model: {model_name}")
@@ -318,13 +322,7 @@ async def flux2_generate(request: Flux2GenerateRequest, config: ConfigDep, manag
             except (ValueError, IndexError):
                 match_image_size = None
 
-        # Get offload settings from runtime config (config.toml)
-        offload_between_stages = True
-        offload_between_stages = getattr(config, "flux2_offload_between_stages", True)
-
-        # Force offload when models aren't pre-loaded (encoder would stay on GPU during transformer load)
-        if not manager.is_loaded("flux2"):
-            offload_between_stages = True
+        offload_between_stages = _resolve_offload(config, request.model_name)
 
         # Create generation config
         gen_config = Flux2GenerationConfig(
@@ -535,13 +533,7 @@ async def flux2_generate_stream(request: Flux2GenerateRequest, config: ConfigDep
                 except (ValueError, IndexError):
                     match_image_size = None
 
-            # Get offload settings from runtime config (config.toml)
-            offload_between_stages = True
-            offload_between_stages = getattr(config, "flux2_offload_between_stages", True)
-
-            # Force offload when models aren't pre-loaded (encoder would stay on GPU during transformer load)
-            if not manager.is_loaded("flux2"):
-                offload_between_stages = True
+            offload_between_stages = _resolve_offload(config, request.model_name)
 
             # Create generation config
             gen_config = Flux2GenerationConfig(
