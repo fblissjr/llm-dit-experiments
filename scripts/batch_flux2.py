@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import datetime
 import sys
 import time
 from pathlib import Path
@@ -52,6 +53,7 @@ _LOCAL_FIELDS = frozenset({
     "timeout",
     "no_resume",
     "config",
+    "label",
 })
 
 
@@ -176,6 +178,7 @@ def create_parser() -> argparse.ArgumentParser:
     parser.add_argument("--timeout", type=int, default=300, help="Per-image timeout (seconds)")
     parser.add_argument("--no-resume", action="store_true", default=False,
                         help="Regenerate even if output exists")
+    parser.add_argument("--label", default=None, help="Label for this run (used in metrics filename)")
 
     return parser
 
@@ -318,6 +321,7 @@ def main(argv: list[str] | None = None) -> int:
     base_timeout = httpx.Timeout(connect=10.0, read=float(args.timeout), write=10.0, pool=5.0)
     completed = 0
     failed = 0
+    timings: list[dict[str, Any]] = []
     batch_start = time.monotonic()
 
     with httpx.Client(timeout=base_timeout) as client:
@@ -347,6 +351,7 @@ def main(argv: list[str] | None = None) -> int:
 
             if result is None or result.get("type") != "complete":
                 print(f"    FAILED ({gen_time:.1f}s)")
+                timings.append({"file": img_path.name, "time": gen_time, "status": "failed"})
                 failed += 1
                 continue
 
@@ -356,15 +361,51 @@ def main(argv: list[str] | None = None) -> int:
             out_path = output_path_for(output_dir, img_path)
             if url and _save_image(client, server_url, url, out_path):
                 print(f"    OK {gen_time:.1f}s -> {out_path.name}")
+                timings.append({"file": img_path.name, "time": gen_time, "status": "ok"})
                 completed += 1
             else:
                 print(f"    FAILED to save ({gen_time:.1f}s)")
+                timings.append({"file": img_path.name, "time": gen_time, "status": "save_failed"})
                 failed += 1
 
     total_time = time.monotonic() - batch_start
+    ok_times = [t["time"] for t in timings if t["status"] == "ok"]
+
+    # Summary
     print()
     print(f"Done: {completed} completed, {failed} failed, {skipped} skipped")
-    print(f"Total time: {total_time / 60:.1f}m ({total_time / max(completed, 1):.1f}s/image)")
+    print(f"Total time: {total_time / 60:.1f}m")
+    if ok_times:
+        avg = sum(ok_times) / len(ok_times)
+        fastest = min(ok_times)
+        slowest = max(ok_times)
+        its = len(ok_times) / sum(ok_times) if sum(ok_times) > 0 else 0
+        print(f"Per image:  avg {avg:.1f}s, min {fastest:.1f}s, max {slowest:.1f}s")
+        print(f"Throughput: {its:.2f} it/s")
+
+    # Write metrics JSON
+    metrics = {
+        "timestamp": datetime.datetime.now().isoformat(timespec="seconds"),
+        "label": args.label,
+        "model_name": args.model_name,
+        "prompt": args.prompt,
+        "total": total,
+        "completed": completed,
+        "failed": failed,
+        "skipped": skipped,
+        "total_time": round(total_time, 2),
+        "avg_time": round(sum(ok_times) / len(ok_times), 2) if ok_times else None,
+        "min_time": round(min(ok_times), 2) if ok_times else None,
+        "max_time": round(max(ok_times), 2) if ok_times else None,
+        "throughput_its": round(len(ok_times) / sum(ok_times), 3) if ok_times and sum(ok_times) > 0 else None,
+        "per_image": timings,
+    }
+    label = args.label or args.model_name or "batch"
+    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    metrics_path = output_dir / f"metrics_{label}_{ts}.json"
+    metrics_path.write_bytes(orjson.dumps(metrics, option=orjson.OPT_INDENT_2))
+    print(f"Metrics:    {metrics_path}")
+
     return 1 if failed > 0 else 0
 
 
