@@ -30,6 +30,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import base64
 import sys
 import time
 from pathlib import Path
@@ -179,6 +180,18 @@ def create_parser() -> argparse.ArgumentParser:
 # ---------------------------------------------------------------------------
 
 
+def _encode_reference_images(paths: list[str]) -> list[str]:
+    """Base64-encode file paths; pass through already-encoded strings."""
+    result = []
+    for item in paths:
+        p = Path(item)
+        if p.is_file():
+            result.append(base64.b64encode(p.read_bytes()).decode("ascii"))
+        else:
+            result.append(item)
+    return result
+
+
 def build_request_body(args: argparse.Namespace) -> dict[str, Any]:
     """Convert parsed args to a JSON-serializable request body.
 
@@ -188,6 +201,8 @@ def build_request_body(args: argparse.Namespace) -> dict[str, Any]:
 
     CLI arg names map directly to Pydantic schema field names (argparse
     converts --num-steps to num_steps, which matches the schema).
+
+    File paths in reference_images are automatically base64-encoded.
     """
     body: dict[str, Any] = {}
     for key, value in vars(args).items():
@@ -196,6 +211,10 @@ def build_request_body(args: argparse.Namespace) -> dict[str, Any]:
         if value is None:
             continue
         body[key] = value
+
+    if "reference_images" in body:
+        body["reference_images"] = _encode_reference_images(body["reference_images"])
+
     return body
 
 

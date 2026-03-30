@@ -95,7 +95,8 @@ This is a multi-workstream project. Encoders and core infra are shared across pi
 | Frontend logger | `web/frontend-v2/src/utils/logger.ts` | Namespaced logging factory; `VITE_LOG_LEVEL` env var; zero raw console calls |
 | Media utilities | `web/frontend-v2/src/utils/media.ts` | `detectKind()`, `mediaItemFromResult()`, `mediaItemFromHistory()` -- unified `MediaItem` type |
 | VRAM bar | `web/frontend-v2/src/components/common/VRAMBar.tsx` | Shared VRAM usage bar component used by StatusBar and SettingsMenu |
-| CLI-over-API | `scripts/gen.py` | Thin httpx client (~550 lines): `flux2`, `zimage`, `ltx2`, `qwen`, `status` subcommands. Tests: `tests/unit/test_gen_cli.py` (55 tests) |
+| CLI-over-API | `scripts/gen.py` | Thin httpx client (~550 lines): `flux2`, `zimage`, `ltx2`, `qwen`, `status` subcommands. Tests: `tests/unit/test_gen_cli.py` (57 tests) |
+| Batch generation | `scripts/batch_flux2.py` | Batch FLUX.2: same prompt, different reference images. Reads `config.toml` for server/model defaults. Resume support. Tests: `tests/unit/test_batch_flux2.py` (25 tests) |
 | SSE helpers | `web/utils.py` | `sse_event()` formatter (orjson-based), `create_image_response()` factory; used by all streaming routers |
 | Memory cleanup | `src/llm_dit/utils/memory.py` | `cleanup_memory()` -- centralized gc.collect + torch.cuda.empty_cache (CUDA guard) |
 | Quant aliases | `src/llm_dit/quantization/__init__.py` | `QUANT_ALIASES` dict -- canonical `"fp8"` -> `"fp8-dynamic"` mapping (single source of truth) |

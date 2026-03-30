@@ -334,6 +334,39 @@ class TestBuildRequestBody:
         body = build_request_body(args)
         assert "loras" not in body
 
+    def test_reference_images_file_paths_encoded_to_base64(self, tmp_path):
+        """File paths in --reference-images should be base64-encoded."""
+        import base64
+
+        img = tmp_path / "test.png"
+        raw = b"\x89PNG\r\n\x1a\n" + b"\x00" * 50
+        img.write_bytes(raw)
+
+        parser = create_parser()
+        args = parser.parse_args([
+            "flux2", "--prompt", "test",
+            "--reference-images", str(img),
+        ])
+        body = build_request_body(args)
+        assert "reference_images" in body
+        # Should be base64, not a file path
+        decoded = base64.b64decode(body["reference_images"][0])
+        assert decoded == raw
+
+    def test_reference_images_base64_passed_through(self):
+        """Already-base64 strings should pass through unchanged."""
+        import base64
+
+        b64 = base64.b64encode(b"fake image data").decode()
+
+        parser = create_parser()
+        args = parser.parse_args([
+            "flux2", "--prompt", "test",
+            "--reference-images", b64,
+        ])
+        body = build_request_body(args)
+        assert body["reference_images"] == [b64]
+
     def test_global_flags_excluded_from_body(self):
         """Global flags (server, output, timeout, etc.) must not leak into request body."""
         parser = create_parser()

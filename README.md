@@ -43,6 +43,27 @@ UI on `http://localhost:5175`. Vite proxies `/api` to the backend.
 uv run scripts/gen.py flux2 --prompt "A photo of a cat" --seed 42
 ```
 
+### 4. Batch Generation
+
+Process a directory of images with the same prompt and model. Reads `config.toml` for server URL and default model.
+
+```bash
+# Basic -- uses config.toml defaults for server + model
+uv run scripts/batch_flux2.py \
+  --input-dir /path/to/images \
+  --prompt "make this a watercolor painting"
+
+# Override model, match output size to input
+uv run scripts/batch_flux2.py \
+  --input-dir /path/to/images \
+  --output-dir /path/to/outputs \
+  --prompt "transform this" \
+  --model-name klein-9b-kv-fp8 \
+  --match-image-size "0 (First Image)"
+```
+
+Supports resume -- interrupted runs skip already-completed images. Use `--no-resume` to regenerate all.
+
 ## API
 
 | Endpoint | Method | Description |
