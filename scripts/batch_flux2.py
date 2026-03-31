@@ -118,9 +118,9 @@ def encode_image_b64(path: Path) -> str:
     return base64.b64encode(path.read_bytes()).decode("ascii")
 
 
-def output_path_for(output_dir: Path, input_path: Path) -> Path:
-    """Generate output path preserving the input filename."""
-    return output_dir / input_path.name
+def output_path_for(output_dir: Path, input_path: Path, ext: str = ".png") -> Path:
+    """Generate output path: input stem + _edited suffix + .png extension."""
+    return output_dir / (input_path.stem + "_edited" + ext)
 
 
 def should_skip(output_dir: Path, filename: str) -> bool:
@@ -299,11 +299,11 @@ def main(argv: list[str] | None = None) -> int:
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Build skip set once (single stat pass, reused in loop)
+    # Build skip set using output filenames (.png), not input filenames
     total = len(images)
     skip_set: set[str] = set()
     if not args.no_resume:
-        skip_set = {img.name for img in images if should_skip(output_dir, img.name)}
+        skip_set = {img.name for img in images if should_skip(output_dir, output_path_for(output_dir, img).name)}
     skipped = len(skip_set)
 
     print(f"Batch FLUX.2 Generation")

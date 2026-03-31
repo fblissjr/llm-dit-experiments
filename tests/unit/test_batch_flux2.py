@@ -302,10 +302,10 @@ class TestShouldSkip:
 class TestOutputPath:
     """Verify output filename generation."""
 
-    def test_preserves_stem_and_extension(self):
+    def test_adds_edited_suffix_and_png(self):
         result = output_path_for(Path("/out"), Path("/in/photo_001.png"))
-        assert result == Path("/out/photo_001.png")
+        assert result == Path("/out/photo_001_edited.png")
 
-    def test_preserves_original_extension(self):
+    def test_jpg_input_becomes_png_output(self):
         result = output_path_for(Path("/out"), Path("/in/shot.jpg"))
-        assert result == Path("/out/shot.jpg")
+        assert result == Path("/out/shot_edited.png")
